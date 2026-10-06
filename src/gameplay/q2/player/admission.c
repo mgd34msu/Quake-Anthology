@@ -407,6 +407,7 @@ static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
+    if (!q2_player_trail_destroy(g, id, e)) return false;
     q2_client_state *s = a->client;
     char text[96];
     snprintf(text, sizeof(text), "%s disconnected\n", s->info.name);

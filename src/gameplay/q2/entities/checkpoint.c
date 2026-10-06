@@ -8,6 +8,7 @@ void qa_q2_entity_checkpoint_free(qa_q2_entity_checkpoint *s) {
     free(s->value.mover);
     free(s->value.turret);
     free(s->value.q64);
+    free(s->value.trail);
     *s = (qa_q2_entity_checkpoint){0};
 }
 static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to, qa_error *e) {
@@ -15,6 +16,7 @@ static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to, 
     to->mover = NULL;
     to->turret = NULL;
     to->q64 = NULL;
+    to->trail = NULL;
     void *copy;
     if (!q2_saved_array(from->fields, from->field_count, sizeof(*from->fields), &copy, e))
         return false;
@@ -28,6 +30,9 @@ static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to, 
     if (!q2_saved_array(from->q64, from->q64 ? 1 : 0, sizeof(*from->q64), &copy, e))
         return false;
     to->q64 = copy;
+    if (!q2_saved_array(from->trail, from->trail ? 1 : 0, sizeof(*from->trail), &copy, e))
+        return false;
+    to->trail = copy;
     return true;
 }
 bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint *out,
@@ -124,6 +129,10 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
         if (!s->fields[i].key || !q2_saved_resource(g, s->fields[i].key) ||
             !q2_saved_resource(g, s->fields[i].value))
             return false;
+    if (s->trail && ((unsigned)s->trail->owner.kind > QA_ACTOR_REFERENCE_SOURCE ||
+        (unsigned)s->trail->older.kind > QA_ACTOR_REFERENCE_SOURCE ||
+        (unsigned)s->trail->newer.kind > QA_ACTOR_REFERENCE_SOURCE))
+        return false;
     if (s->mover && !valid_mover(s->mover))
         return false;
     if (s->turret) {
@@ -207,6 +216,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
         free(previous->mover);
         free(previous->turret);
         free(previous->q64);
+        free(previous->trail);
         free(previous);
     }
     return true;
@@ -215,6 +225,7 @@ fail:
     free(s->mover);
     free(s->turret);
     free(s->q64);
+    free(s->trail);
     free(s);
     return false;
 }

@@ -70,7 +70,13 @@ static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     if (!optional(io, &extension, sizeof(*s->q64))) return false;
     s->q64 = extension;
     if (s->q64 && !q64(io, s->q64)) return false;
-    Q2I(animation_first); Q2I(animation_end); Q2I(clock_value); Q2U(scenery); return true;
+    Q2I(animation_first); Q2I(animation_end); Q2I(clock_value); Q2U(scenery);
+    extension = s->trail;
+    if (!optional(io, &extension, sizeof(*s->trail))) return false;
+    s->trail = extension;
+    return !s->trail || (q2_save_actor_pointer(io, &s->trail->owner) &&
+        q2_save_actor_pointer(io, &s->trail->older) &&
+        q2_save_actor_pointer(io, &s->trail->newer));
 }
 bool q2_save_entity(q2_save_io *io, qa_q2_entity_checkpoint *s) {
     Q2B(present);

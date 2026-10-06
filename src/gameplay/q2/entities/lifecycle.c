@@ -401,7 +401,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
         count += s->team != 0;
     }
     if (!count)
-        return true;
+        return q2_player_trail_begin(g, e);
     if (count > SIZE_MAX / sizeof(team_member)) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Too many Q2 team members");
         return false;
@@ -468,5 +468,5 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
         first = end;
     }
     free(members);
-    return true;
+    return q2_player_trail_begin(g, e);
 }

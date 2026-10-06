@@ -259,6 +259,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
     q2_client_state *s = a->client;
+    if (!s->corpse && !q2_player_trail_destroy(g, a->id, e)) return false;
     qa_combat_state combat;
     qa_body_state body;
     if (!qa_combat_read(g->services.combat, a->id, &combat, e) ||

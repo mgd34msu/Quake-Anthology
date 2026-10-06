@@ -62,7 +62,8 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         !a->client->info.connected || g->player_runtime->intermission)
         return true;
     if (qa_q2_player_controlled(g, a->id))
-        return !q2_actor_live(g, a->id) || qa_q2_clear_input(g, a->id, e);
+        return !q2_actor_live(g, a->id) ||
+            (qa_q2_clear_input(g, a->id, e) && q2_player_trail_step(g, a->id, e));
     q2_client_state *s = a->client;
     q2_players *p = g->player_runtime;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
@@ -137,18 +138,7 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         return true;
     }
-    if (!g->options.deathmatch) {
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, a->id, &body, e))
-            return false;
-        if (!q2_player_emit(g,
-                            &(qa_q2_player_event){.kind = QA_Q2_PLAYER_TRAIL,
-                                                  .actor = a->id,
-                                                  .origin = body.origin,
-                                                  .time_ns = g->now_ns},
-                            e))
-            return false;
-    }
+    if (!q2_player_trail_step(g, a->id, e)) return false;
     s->latched_buttons = 0;
     return true;
 }

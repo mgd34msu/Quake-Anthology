@@ -6,19 +6,14 @@
 enum { Q2M_TRAIL_POINTS = 8 };
 
 static float vector_yaw(qa_vec3 direction);
-
-typedef struct q2m_trail_point {
-  qa_vec3 origin;
-  uint64_t time_ns;
-  float yaw;
-} q2m_trail_point;
+static bool trail_length(qa_q2_game *, qa_actor_reference, size_t *, qa_error *);
 
 typedef struct q2m_player_trail {
   qa_actor_id actor;
-  qa_vec3 previous_origin;
-  q2m_trail_point points[Q2M_TRAIL_POINTS];
+  qa_actor_reference head, tail;
   size_t count;
-  bool has_previous;
+  uint64_t updated_ns;
+  bool updated;
 } q2m_player_trail;
 
 typedef struct q2m_alert {
@@ -34,6 +29,9 @@ struct q2_monsters_runtime {
   q2m_alert *alerts;
   size_t alert_count, alert_capacity;
   qa_actor_id sight_client, sight_observer;
+  qa_actor_reference classic_trail[Q2M_TRAIL_POINTS];
+  uint32_t classic_trail_head;
+  bool classic_trail_active;
   uint64_t sight_time_ns, last_frame_ns;
   bool began_frame;
 };
@@ -210,9 +208,12 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
       .sight_time_ns = runtime->sight_time_ns,
       .last_frame_ns = runtime->last_frame_ns,
       .began_frame = runtime->began_frame,
-      .trail_count = runtime->trail_count,
+      .trail_count = game->options.edition == QA_Q2_RERELEASE ? runtime->trail_count : 0,
       .alert_count = runtime->alert_count,
+      .classic_trail_head = runtime->classic_trail_head,
+      .classic_trail_active = runtime->classic_trail_active,
   };
+  memcpy(saved.classic_trail, runtime->classic_trail, sizeof(saved.classic_trail));
   if (saved.trail_count != 0) {
     if (saved.trail_count > SIZE_MAX / sizeof(saved.trails[0])) {
       qa_error_set(error, QA_ERROR_MEMORY, saved.trail_count,
@@ -249,19 +250,11 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
     qa_q2_monsters_checkpoint_free(&saved);
     return false;
   }
-  for (size_t index = 0; index < runtime->trail_count; ++index) {
+  for (size_t index = 0; index < saved.trail_count; ++index) {
     const q2m_player_trail *source = &runtime->trails[index];
     qa_q2_monster_trail_checkpoint *target = &saved.trails[index];
-    target->previous_origin = source->previous_origin;
-    target->count = source->count;
-    target->has_previous = source->has_previous;
-    for (size_t point = 0; point < source->count; ++point) {
-      target->points[point] = (qa_q2_monster_trail_point_checkpoint){
-          .origin = source->points[point].origin,
-          .time_ns = source->points[point].time_ns,
-          .yaw = source->points[point].yaw,
-      };
-    }
+    target->head = source->head;
+    target->tail = source->tail;
     if (!q2_save_reference(game, source->actor, &target->actor, error)) {
       qa_q2_monsters_checkpoint_free(&saved);
       return false;
@@ -288,6 +281,7 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   if (game == NULL || saved == NULL || game->monster_runtime == NULL ||
       (saved->trail_count != 0 && saved->trails == NULL) ||
       (saved->alert_count != 0 && saved->alerts == NULL) ||
+      saved->classic_trail_head >= Q2M_TRAIL_POINTS ||
       saved->trail_count > SIZE_MAX / sizeof(q2m_player_trail) ||
       saved->alert_count > SIZE_MAX / sizeof(q2m_alert)) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
@@ -324,31 +318,12 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
     goto failure;
   for (size_t index = 0; index < saved->trail_count; ++index) {
     const qa_q2_monster_trail_checkpoint *source = &saved->trails[index];
-    if (source->count > Q2M_TRAIL_POINTS ||
-        !qa_vec_finite(source->previous_origin)) {
-      qa_error_set(error, QA_ERROR_FORMAT, index,
-                   "Invalid Q2 monster trail checkpoint");
-      goto failure;
-    }
     q2m_player_trail *target = &trails[index];
     if (!q2_resolve_reference(game, source->actor, &target->actor, error))
       goto failure;
-    target->previous_origin = source->previous_origin;
-    target->count = source->count;
-    target->has_previous = source->has_previous;
-    for (size_t point = 0; point < source->count; ++point) {
-      if (!qa_vec_finite(source->points[point].origin) ||
-          !isfinite(source->points[point].yaw)) {
-        qa_error_set(error, QA_ERROR_FORMAT, point,
-                     "Invalid Q2 monster trail point checkpoint");
-        goto failure;
-      }
-      target->points[point] = (q2m_trail_point){
-          .origin = source->points[point].origin,
-          .time_ns = source->points[point].time_ns,
-          .yaw = source->points[point].yaw,
-      };
-    }
+    target->head = source->head;
+    target->tail = source->tail;
+    if (!trail_length(game, target->tail, &target->count, error)) goto failure;
   }
   for (size_t index = 0; index < saved->alert_count; ++index) {
     const qa_q2_monster_alert_checkpoint *source = &saved->alerts[index];
@@ -375,6 +350,9 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   runtime->sight_time_ns = saved->sight_time_ns;
   runtime->last_frame_ns = saved->last_frame_ns;
   runtime->began_frame = saved->began_frame;
+  memcpy(runtime->classic_trail, saved->classic_trail, sizeof(runtime->classic_trail));
+  runtime->classic_trail_head = saved->classic_trail_head;
+  runtime->classic_trail_active = saved->classic_trail_active;
   return true;
 
 failure:
@@ -401,6 +379,12 @@ void q2_monsters_release_actor(qa_q2_game *game, qa_actor_id actor) {
   if (game == NULL || game->monster_runtime == NULL)
     return;
   q2_monsters_runtime *runtime = game->monster_runtime;
+  for (size_t i = 0; i < runtime->trail_count; ++i)
+    if (qa_actor_id_equal(runtime->trails[i].actor, actor)) {
+      if (!q2_player_trail_destroy(game, actor, &game->release_error))
+        game->release_failed = true;
+      break;
+    }
   if (qa_actor_id_equal(runtime->sight_client, actor))
     runtime->sight_client = (qa_actor_id){0};
   if (qa_actor_id_equal(runtime->sight_observer, actor)) {
@@ -431,6 +415,255 @@ static q2m_player_trail *trail_for(q2_monsters_runtime *runtime,
   q2m_player_trail *trail = &runtime->trails[runtime->trail_count++];
   *trail = (q2m_player_trail){.actor = actor};
   return trail;
+}
+
+static q2_actor *trail_node(qa_q2_game *game, qa_actor_id id) {
+  q2_actor *node = q2_actor_get(game, id, false, NULL);
+  return node && node->entity && node->entity->trail ? node : NULL;
+}
+
+static q2_actor *trail_reference(qa_q2_game *game, qa_actor_reference reference) {
+  return trail_node(game, qa_actor_reference_resolve(
+      qa_session_actors(game->services.session), reference));
+}
+
+static bool trail_length(qa_q2_game *game, qa_actor_reference marker,
+                           size_t *count, qa_error *error) {
+  *count = 0;
+  while (qa_actor_reference_present(marker)) {
+    q2_actor *node = trail_reference(game, marker);
+    if (!node || *count == Q2M_TRAIL_POINTS) {
+      qa_error_set(error, QA_ERROR_FORMAT, *count, "Invalid original Q2 client trail chain");
+      return false;
+    }
+    ++*count;
+    marker = node->entity->trail->newer;
+  }
+  return true;
+}
+
+static q2_actor *classic_node(qa_q2_game *game, uint32_t index) {
+  return q2_actor_get(game, qa_actor_reference_resolve(
+      qa_session_actors(game->services.session),
+      game->monster_runtime->classic_trail[index]), false, NULL);
+}
+
+bool q2_player_trail_begin(qa_q2_game *game, qa_error *error) {
+  if (!q2_monsters_init(game, error)) return false;
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  if (game->options.edition == QA_Q2_RERELEASE || game->options.deathmatch ||
+      runtime->classic_trail_active) return true;
+  for (uint32_t i = 0; i < Q2M_TRAIL_POINTS; ++i) {
+    q2_actor *node;
+    if (!q2_entity_native_spawn(game, "player_trail", &(qa_body_state){0},
+                                Q2E_POINT, &node, error)) return false;
+    node->physics.motion = QA_PHYSICS_STATIONARY;
+    node->physics.solid = QA_PHYSICS_NOT_SOLID;
+    node->physics_bound = true;
+    runtime->classic_trail[i] = qa_actor_reference_from_actor(
+        qa_session_actors(game->services.session), game->options.owner, node->id);
+  }
+  runtime->classic_trail_head = 0;
+  runtime->classic_trail_active = true;
+  return true;
+}
+
+void q2_player_trail_read_level(qa_q2_game *game) {
+  if (game->options.edition == QA_Q2_CLASSIC)
+    game->monster_runtime->classic_trail_head = 0;
+}
+
+bool q2_player_trail_client(qa_q2_game *game, qa_actor_id player, bool reading,
+                            qa_actor_reference *head, qa_actor_reference *tail, qa_error *error) {
+  q2m_player_trail *trail = trail_for(game->monster_runtime, player, reading, error);
+  if (!trail) {
+    if (reading) return false;
+    *head = *tail = (qa_actor_reference){0};
+    return true;
+  }
+  if (!reading) { *head = trail->head; *tail = trail->tail; return true; }
+  trail->head = *head;
+  trail->tail = *tail;
+  return trail_length(game, trail->tail, &trail->count, error);
+}
+
+bool q2_player_trail_destroy(qa_q2_game *game, qa_actor_id player, qa_error *error) {
+  if (!game || game->options.edition != QA_Q2_RERELEASE || !game->monster_runtime)
+    return true;
+  for (q2_actor *actor = game->first_actor, *next; actor; actor = next) {
+    next = actor->live_next;
+    if (trail_node(game, actor->id) && (!player.registry ||
+        qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(game->services.session),
+            actor->entity->trail->owner), player)))
+      if (!qa_session_release(game->services.session, actor->id, error)) return false;
+  }
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  for (size_t i = 0; i < runtime->trail_count; ++i)
+    if (!player.registry || qa_actor_id_equal(runtime->trails[i].actor, player)) {
+      runtime->trails[i].head = runtime->trails[i].tail = (qa_actor_reference){0};
+      runtime->trails[i].count = 0;
+    }
+  return true;
+}
+
+static bool trail_visible(qa_q2_game *game, qa_actor_id observer,
+                           const qa_body_state *body, float view_height,
+                           q2_actor *node, bool *visible, qa_error *error) {
+  qa_body_state point;
+  if (!node) { *visible = false; return true; }
+  if (!qa_world_body_read(game->services.world, node->id, &point, error)) return false;
+  qa_trace_query query = {
+      .start = qa_vec_add(body->origin, qa_v3(0, 0, view_height)),
+      .end = point.origin, .pass_actor = observer,
+      .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+  query.policy.contents_mask = Q2M_OPAQUE_MASK;
+  qa_trace_result trace;
+  if (!qa_world_trace(game->services.world, &query, &trace, error)) return false;
+  *visible = trace.fraction == 1.0f;
+  return true;
+}
+
+static bool trail_add(qa_q2_game *game, q2m_player_trail *trail,
+                       qa_vec3 origin, qa_error *error) {
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  q2_actor *node;
+  qa_body_state body = {.origin = origin};
+  if (game->options.edition == QA_Q2_CLASSIC) {
+    if (!runtime->classic_trail_active) return true;
+    uint32_t index = runtime->classic_trail_head;
+    node = classic_node(game, index);
+    q2_actor *previous = classic_node(game, (index + Q2M_TRAIL_POINTS - 1) & 7u);
+    qa_body_state previous_body;
+    if (!node || !previous ||
+        !qa_world_body_read(game->services.world, previous->id, &previous_body, error)) return false;
+    body.angles.y = vector_yaw(qa_vec_sub(origin, previous_body.origin));
+    runtime->classic_trail_head = (index + 1) & 7u;
+  } else {
+    if (trail->count == Q2M_TRAIL_POINTS) {
+      node = trail_reference(game, trail->tail);
+      q2_actor *next = node ? trail_reference(game, node->entity->trail->newer) : NULL;
+      if (!next) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 player trail lost its actual tail");
+        return false;
+      }
+      trail->tail = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, next->id);
+      next->entity->trail->older = (qa_actor_reference){0};
+      node->entity->trail->newer = node->entity->trail->older = (qa_actor_reference){0};
+    } else {
+      if (!q2_entity_native_spawn(game, "player_trail", &body, Q2E_POINT, &node, error))
+        return false;
+      node->entity->trail = calloc(1, sizeof(*node->entity->trail));
+      if (!node->entity->trail) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 player trail links");
+        qa_session_release(game->services.session, node->id, NULL);
+        return false;
+      }
+      node->physics.motion = QA_PHYSICS_STATIONARY;
+      node->physics.solid = QA_PHYSICS_NOT_SOLID;
+      node->physics_bound = true;
+      ++trail->count;
+    }
+    q2_actor *head = trail_reference(game, trail->head);
+    qa_actor_reference reference = qa_actor_reference_from_actor(
+        qa_session_actors(game->services.session), game->options.owner, node->id);
+    if (head) head->entity->trail->newer = reference;
+    node->entity->trail->older = trail->head;
+    node->entity->trail->owner = qa_actor_reference_from_actor(
+        qa_session_actors(game->services.session), game->options.owner, trail->actor);
+    trail->head = reference;
+    if (!qa_actor_reference_present(trail->tail)) trail->tail = reference;
+  }
+  node->entity->timestamp_ns = game->now_ns;
+  return qa_world_body_write(game->services.world, node->id, &body, error);
+}
+
+bool q2_player_trail_step(qa_q2_game *game, qa_actor_id player, qa_error *error) {
+  if (game->options.deathmatch || game->player_runtime->intermission) return true;
+  qa_builtin_actor_traits traits = {0};
+  qa_combat_state combat;
+  if (!q2_actor_live(game, player) || !game->services.actor_traits ||
+      !game->services.actor_traits(game->services.context, player, &traits) ||
+      !traits.player || traits.spectator) return true;
+  if (!qa_combat_read(game->services.combat, player, &combat, error)) return false;
+  if (combat.health <= 0) return true;
+  q2m_player_trail *trail = trail_for(game->monster_runtime, player, true, error);
+  if (!trail) return false;
+  if (trail->updated && trail->updated_ns == game->now_ns) return true;
+  qa_body_state body;
+  if (!qa_world_body_read(game->services.world, player, &body, error)) return false;
+  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  q2_actor *last = rerelease ? trail_reference(game, trail->head) :
+      runtime->classic_trail_active ? classic_node(game,
+          (runtime->classic_trail_head + Q2M_TRAIL_POINTS - 1) & 7u) : NULL;
+  bool visible;
+  if (!trail_visible(game, player, &body, traits.view_height, last, &visible, error))
+    return false;
+  q2_actor *client = q2_actor_get(game, player, false, NULL);
+  bool eligible = !rerelease || (qa_actor_reference_present(body.ground) &&
+      (!client || !client->client || !client->client->info.noclip));
+  if (!visible && eligible && !trail_add(game, trail, body.origin, error)) return false;
+  trail->updated_ns = game->now_ns;
+  trail->updated = true;
+  return true;
+}
+
+static bool trail_pick(q2m_context *context, bool next, q2_actor **out,
+                        qa_error *error) {
+  qa_q2_game *game = context->game;
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  *out = NULL;
+  if (game->options.edition == QA_Q2_CLASSIC) {
+    if (!runtime->classic_trail_active) return true;
+    uint32_t index = runtime->classic_trail_head;
+    for (unsigned i = 0; i < Q2M_TRAIL_POINTS; ++i) {
+      q2_actor *node = classic_node(game, index);
+      if (!node || !node->entity) return true;
+      if (node->entity->timestamp_ns > context->monster->trail_ns) break;
+      index = (index + 1) & 7u;
+    }
+    q2_actor *marker = classic_node(game, index);
+    if (!next) {
+      bool visible;
+      if (!trail_visible(game, context->actor->id, &context->body,
+                           context->monster->view_height, marker, &visible, error)) return false;
+      if (!visible) {
+        q2_actor *prior = classic_node(game, (index + Q2M_TRAIL_POINTS - 1) & 7u);
+        if (!trail_visible(game, context->actor->id, &context->body,
+                             context->monster->view_height, prior, &visible, error)) return false;
+        if (visible) marker = prior;
+      }
+    }
+    *out = marker;
+    return true;
+  }
+  q2m_player_trail *trail = trail_for(runtime, context->monster->enemy, false, NULL);
+  if (!trail) return true;
+  q2_actor *marker = trail_reference(game, trail->head);
+  while (marker && marker->entity->timestamp_ns <= context->monster->trail_ns)
+    marker = trail_reference(game, marker->entity->trail->older);
+  if (next) {
+    q2_actor *closest = NULL;
+    float closest_distance = INFINITY;
+    for (q2_actor *node = marker; node; node = trail_reference(game, node->entity->trail->older)) {
+      qa_body_state point;
+      if (!qa_world_body_read(game->services.world, node->id, &point, error)) return false;
+      qa_vec3 delta = qa_vec_sub(point.origin, context->body.origin);
+      float distance = qa_vec_dot(delta, delta);
+      if (distance < closest_distance) { closest = node; closest_distance = distance; }
+    }
+    marker = closest ? trail_reference(game, closest->entity->trail->newer) : NULL;
+  } else {
+    while (marker) {
+      bool visible;
+      if (!trail_visible(game, context->actor->id, &context->body,
+                           context->monster->view_height, marker, &visible, error)) return false;
+      if (visible) break;
+      marker = trail_reference(game, marker->entity->trail->older);
+    }
+  }
+  *out = marker;
+  return true;
 }
 
 static q2m_alert *alert_for(q2_monsters_runtime *runtime, qa_actor_id player,
@@ -499,55 +732,11 @@ bool q2m_perception_begin(qa_q2_game *game, qa_error *error) {
   }
 
   bool result = true;
-  for (size_t index = 0; index < count; ++index) {
-    qa_actor_id player = players->snapshot.ids[index];
-    qa_builtin_actor_traits traits;
-    qa_body_state body;
-    qa_error ignored = {0};
-    if (!runtime_targetable(game, player, &traits) ||
-        !qa_world_body_read(game->services.world, player, &body, &ignored))
-      continue;
-    q2m_player_trail *trail = trail_for(runtime, player, true, error);
-    if (trail == NULL) {
+  for (size_t index = 0; index < count; ++index)
+    if (!q2_player_trail_step(game, players->snapshot.ids[index], error)) {
       result = false;
       break;
     }
-    bool record = trail->count == 0;
-    if (!record) {
-      qa_trace_query query = {
-          .start = qa_vec_add(body.origin, qa_v3(0, 0, traits.view_height)),
-          .end = trail->points[trail->count - 1].origin,
-          .pass_actor = player,
-          .policy = qa_collision_default_policy(QA_COLLISION_Q2),
-      };
-      query.policy.contents_mask = Q2M_OPAQUE_MASK;
-      qa_trace_result trace;
-      if (!qa_world_trace(game->services.world, &query, &trace, error)) {
-        result = false;
-        break;
-      }
-      record = trace.fraction != 1.0f;
-    }
-    if (record) {
-      qa_vec3 origin = trail->has_previous ? trail->previous_origin
-                                           : body.origin;
-      float yaw = body.angles.y;
-      if (trail->count != 0)
-        yaw = vector_yaw(
-            qa_vec_sub(origin, trail->points[trail->count - 1].origin));
-      if (trail->count == Q2M_TRAIL_POINTS) {
-        memmove(&trail->points[0], &trail->points[1],
-                (Q2M_TRAIL_POINTS - 1) * sizeof(trail->points[0]));
-        --trail->count;
-      }
-      trail->points[trail->count++] =
-          (q2m_trail_point){.origin = origin,
-                            .time_ns = game->now_ns,
-                            .yaw = yaw};
-    }
-    trail->previous_origin = body.origin;
-    trail->has_previous = true;
-  }
   qa_builtin_snapshot_release(players);
   return result;
 }
@@ -2816,46 +3005,18 @@ static bool pursuit_goal(q2m_context *context, float distance, qa_vec3 *goal,
       monster->last_sighting = monster->saved_goal;
       new_goal = true;
     } else {
-      q2m_player_trail *trail =
-          context->game->monster_runtime == NULL
-              ? NULL
-              : trail_for(context->game->monster_runtime, monster->enemy,
-                          false, NULL);
-      size_t marker = SIZE_MAX;
-      if (trail != NULL)
-        for (size_t index = 0; index < trail->count; ++index)
-          if (trail->points[index].time_ns > monster->trail_ns) {
-            marker = index;
-            break;
-          }
-      if (monster->pursuit_last_seen && marker != SIZE_MAX) {
-        qa_trace_result current;
-        if (!pursuit_trace(context, trail->points[marker].origin, false,
-                           &current, error))
-          return false;
-        if (!q2m_alive(context))
-          return true;
-        if (current.fraction != 1.0f && marker != 0) {
-          qa_trace_result prior;
-          if (!pursuit_trace(context, trail->points[marker - 1].origin, false,
-                             &prior, error))
-            return false;
-          if (!q2m_alive(context))
-            return true;
-          if (prior.fraction == 1.0f)
-            --marker;
-        }
-      }
+      q2_actor *marker;
+      if (!trail_pick(context, !monster->pursuit_last_seen, &marker, error)) return false;
       monster->pursuit_last_seen = false;
-      if (marker != SIZE_MAX) {
-        const q2m_trail_point *point = &trail->points[marker];
-        monster->last_sighting = point->origin;
-        monster->trail_ns = point->time_ns;
-        monster->ideal_yaw = point->yaw;
-        if (!set_body_yaw(context, point->yaw, error))
+      if (marker) {
+        qa_body_state point;
+        if (!qa_world_body_read(context->game->services.world, marker->id, &point, error))
           return false;
-        if (!q2m_alive(context))
-          return true;
+        monster->last_sighting = point.origin;
+        monster->trail_ns = marker->entity->timestamp_ns;
+        monster->ideal_yaw = point.angles.y;
+        if (!set_body_yaw(context, point.angles.y, error)) return false;
+        if (!q2m_alive(context)) return true;
         new_goal = true;
       }
     }

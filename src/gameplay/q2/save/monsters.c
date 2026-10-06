@@ -69,22 +69,17 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
 bool q2_save_monsters(q2_save_io *io, qa_q2_monsters_checkpoint *s) {
     Q2R(sight_client); Q2R(sight_observer); Q2T(sight_time_ns);
     Q2T(last_frame_ns); Q2B(began_frame);
+    for (size_t i = 0; i < QA_Q2_MONSTER_TRAIL_POINTS; ++i)
+        if (!q2_save_actor_pointer(io, &s->classic_trail[i])) return false;
+    Q2U(classic_trail_head); Q2B(classic_trail_active);
     void *trails = s->trails;
-    if (!q2_save_count(io, &s->trail_count, 21, sizeof(*s->trails), &trails)) return false;
+    if (!q2_save_count(io, &s->trail_count, 3, sizeof(*s->trails), &trails)) return false;
     s->trails = trails;
     for (size_t i = 0; i < s->trail_count; ++i) {
         qa_q2_monster_trail_checkpoint *trail = s->trails + i;
-        if (!q2_save_ref(io, &trail->actor) || !q2_save_vec(io, &trail->previous_origin) ||
-            !q2_save_bool(io, &trail->has_previous)) return false;
-        uint32_t count = (uint32_t)trail->count;
-        if ((!io->reading && trail->count > QA_Q2_MONSTER_TRAIL_POINTS) ||
-            !q2_save_u32(io, &count) || count > QA_Q2_MONSTER_TRAIL_POINTS)
-            return q2_save_fail(io, "Invalid Q2 trail point count");
-        trail->count = count;
-        for (size_t j = 0; j < trail->count; ++j)
-            if (!q2_save_vec(io, &trail->points[j].origin) ||
-                !q2_save_u64(io, &trail->points[j].time_ns) ||
-                !q2_save_f32(io, &trail->points[j].yaw)) return false;
+        if (!q2_save_ref(io, &trail->actor)) return false;
+        if (!q2_save_actor_pointer(io, &trail->head) ||
+            !q2_save_actor_pointer(io, &trail->tail)) return false;
     }
     void *alerts = s->alerts;
     if (!q2_save_count(io, &s->alert_count, 18, sizeof(*s->alerts), &alerts)) return false;

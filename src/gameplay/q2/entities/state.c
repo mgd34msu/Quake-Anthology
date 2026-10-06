@@ -61,6 +61,7 @@ void q2_entity_release_state(q2_actor *a) {
     free(a->entity->mover);
     free(a->entity->turret);
     free(a->entity->q64);
+    free(a->entity->trail);
     free(a->entity);
     a->entity = NULL;
     if (!a->item)

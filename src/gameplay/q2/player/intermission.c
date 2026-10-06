@@ -166,6 +166,7 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
     qa_string_id map_id = 0;
     if (*map && !qa_builtin_resource(&g->services, map, &map_id, e))
         return false;
+    if (!q2_player_trail_destroy(g, (qa_actor_id){0}, e)) return false;
     p->intermission = true;
     p->intermission_flags = flags;
     p->fade_ns = 0;
@@ -211,6 +212,7 @@ bool qa_q2_players_finish_camera(qa_q2_game *g, qa_error *e) {
         return false;
     }
     q2_players *p = g->player_runtime;
+    if (!q2_player_trail_destroy(g, (qa_actor_id){0}, e)) return false;
     p->intermission = true;
     p->intermission_ns = g->now_ns;
     const char *map = qa_strings_cstr(qa_session_strings(g->services.session), p->next_map);

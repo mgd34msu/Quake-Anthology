@@ -330,6 +330,12 @@ bool q2_definitions(qa_q2_game *, qa_error *);
 bool q2_monsters_init(qa_q2_game *, qa_error *);
 void q2_monsters_close(qa_q2_game *);
 void q2_monsters_begin_map(qa_q2_game *);
+bool q2_player_trail_begin(qa_q2_game *, qa_error *);
+bool q2_player_trail_step(qa_q2_game *, qa_actor_id, qa_error *);
+bool q2_player_trail_destroy(qa_q2_game *, qa_actor_id, qa_error *);
+bool q2_player_trail_client(qa_q2_game *, qa_actor_id, bool reading,
+                            qa_actor_reference *head, qa_actor_reference *tail, qa_error *);
+void q2_player_trail_read_level(qa_q2_game *);
 void q2_monsters_reclaim(qa_q2_game *);
 void q2_monsters_release_actor(qa_q2_game *, qa_actor_id);
 bool q2_monster_tick(qa_q2_game *, q2_actor *, qa_error *);

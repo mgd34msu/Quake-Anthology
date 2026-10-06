@@ -324,6 +324,9 @@ typedef enum q2_scenery_kind {
     Q2S_NUKE,
     Q2S_MAL_LASER
 } q2_scenery_kind;
+typedef struct q2_player_trail_node {
+    qa_actor_reference owner, older, newer;
+} q2_player_trail_node;
 typedef struct qa_q2_entity_state {
     q2_entity_kind kind;
     q2_entity_think think;
@@ -346,6 +349,7 @@ typedef struct qa_q2_entity_state {
     q2_q64 *q64;
     int animation_first, animation_end, clock_value;
     q2_scenery_kind scenery;
+    q2_player_trail_node *trail;
 } qa_q2_entity_state;
 typedef struct q2_healthbar {
     qa_actor_id controller, target;

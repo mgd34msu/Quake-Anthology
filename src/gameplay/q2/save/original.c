@@ -1,3 +1,4 @@
+#include "original_trails.h"
 #include "original_internal.h"
 #include "original_symbols.h"
 #include "original_edicts.h"
@@ -685,18 +686,41 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
     return true;
 }
 
+bool q2_original_config_layout(qa_q2_edition edition, const qa_q2_save_level *level,
+    qa_q2_config_layout *layout, qa_error *error)
+{
+    if (!level || level->rerelease != (edition == QA_Q2_RERELEASE)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Original Q2 resource table differs from its actual GAME edition");
+        return false;
+    }
+    /* The shared layout reads only protocol and wire_flags, not frame state. */
+    qa_q2_codec codec;
+    codec.protocol = (qa_net_protocol_id){.kind = level->rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+    codec.wire_flags = 0;
+    return qa_q2_config_layout_read(&codec, layout, error);
+}
+
 bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     const qa_q2_save_level *level, const char *name, uint16_t base, uint16_t xatrix,
     uint16_t rogue, uint32_t table_base, qa_string_id *resource)
 {
+    qa_q2_config_layout layout;
+    if (!q2_original_config_layout(io->edition, level, &layout, io->error)) return false;
+    uint32_t count;
+    switch (table_base) {
+        case 32: table_base = layout.models; count = layout.max_models; break;
+        case 288: table_base = layout.sounds; count = layout.max_sounds; break;
+        case 544: table_base = layout.images; count = layout.max_images; break;
+        default: return fail(io, table_base, "Original Q2 resource has no actual engine namespace");
+    }
+    uint32_t width = qa_q2_save_configstring_width(level);
     int32_t index = 0;
     if (!io->reading && *resource) {
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), *resource);
-        if (!level || !text) return fail(io, *resource, "Q2 original resource has no actual engine table");
-        for (uint32_t i = 1; i < 256; ++i)
-            if (!strncmp(qa_q2_save_configstring(level, table_base + i), text, 64)) {
-                index = (int32_t)i;
-                break;
+        if (!text) return fail(io, *resource, "Q2 original resource has no actual engine table");
+        for (uint32_t i = 1; i < count; ++i)
+            if (!strcmp(qa_q2_save_configstring(level, table_base + i), text)) {
+                index = (int32_t)i; break;
             }
         if (!index) {
             qa_error_set(io->error, QA_ERROR_UNSUPPORTED, *resource,
@@ -706,12 +730,11 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
     }
     if (!q2_original_scalar(io, name, Q2_ORIGINAL_I32, base, xatrix, rogue, &index)) return false;
     if (io->reading) {
-        if (index < 0 || index >= 256) return fail(io, (size_t)(uint32_t)index,
+        if (index < 0 || (uint32_t)index >= count) return fail(io, (size_t)(uint32_t)index,
             "Original Q2 resource exceeds its engine table");
         if (!index) { *resource = 0; return true; }
-        if (!level) return fail(io, (size_t)index, "Original Q2 resource has no saved engine table");
         const char *text = qa_q2_save_configstring(level, table_base + (uint32_t)index);
-        if (!*text || !memchr(text, 0, 64)) return fail(io, (size_t)index,
+        if (!*text || !memchr(text, 0, width)) return fail(io, (size_t)index,
             "Original Q2 resource index has no terminated engine string");
         return qa_strings_intern_cstr(qa_session_strings(g->services.session), text, resource, io->error);
     }
@@ -1240,7 +1263,8 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
             size_t stride = q2_original_client_size(g->options.product);
             io.output = (qa_buffer){encoded.data + 16 + 1564 + (size_t)slot * stride, stride};
         } else qa_json_writer_object(&writer);
-        if (okay) okay = q2_original_client_record(g, &io, level, &client);
+        if (okay) okay = q2_original_client_record(g, &io, level, &client) &&
+            q2_original_trail_client(g, &io, actor ? actor->id : (qa_actor_id){0});
         if (io.edition == QA_Q2_RERELEASE) qa_json_writer_end(&writer);
         q2_original_client_free(&client);
     }

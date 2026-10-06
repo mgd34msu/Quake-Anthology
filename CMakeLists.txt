@@ -381,6 +381,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/save/original_monsters.c
     src/gameplay/q2/save/original_entities.c
     src/gameplay/q2/save/original_projectiles.c
+    src/gameplay/q2/save/original_trails.c
     src/gameplay/q2/save/original_fields.c
     src/gameplay/q2/save/original_symbols.c
     src/gameplay/q2/definitions.c

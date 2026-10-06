@@ -6,6 +6,7 @@
 #include "original_monsters.h"
 #include "original_items.h"
 #include "original_projectiles.h"
+#include "original_trails.h"
 #include "internal.h"
 
 static bool level_copy_text(char *out, size_t capacity, const char *text, qa_error *error)
@@ -233,6 +234,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     q2_original_client_state client = {0};
     q2_original_level_file level = {0};
     bool live_level = false;
+    q2_original_record_io client_io = {0};
     bool okay = q2_original_game_open(game, game_bytes, &document, &io, &globals, error);
     if (okay && slot >= globals.clients)
         okay = level_error(error, slot, "Original Q2 client is outside its GAME file");
@@ -245,6 +247,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             io.input = (qa_bytes){game_bytes.data + 16 + 1564 + (size_t)slot * stride, stride};
         }
         okay = q2_original_client_record(game, &io, engine_level, &client);
+        client_io = io;
     }
     qa_body_state body = {0};
     int32_t view_height = 22, health = 0, maximum_health = 0, dead = 0, motion = 0;
@@ -341,6 +344,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             okay = q2_original_edict_visual(game, &io, target, engine_level, error);
         }
     }
+    if (okay) okay = q2_original_trail_client(game, &client_io, actor);
     if (okay && live_level) {
         io = (q2_original_record_io){.reading = true, .edition = game->options.edition,
             .product = game->options.product, .document = level.document, .object = level.level_object,
@@ -391,8 +395,12 @@ static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *a
 static bool original_edict(qa_q2_game *g, q2_original_record_io *io,
     q2_actor *actor, const qa_q2_save_level *engine, qa_error *error)
 {
+    bool trail;
     if (!q2_original_edict_record(g, io, actor, engine, error) ||
-        !q2_original_monster_record(g, io, actor, engine, error) ||
+        !q2_original_trail_record(g, io, actor, &trail)) return false;
+    if (trail) return !io->reading ? source_strings(g, io, actor) :
+        io->references_only || q2_original_edict_visual(g, io, actor, engine, error);
+    if (!q2_original_monster_record(g, io, actor, engine, error) ||
         !q2_original_item_record(g, io, actor, engine, error) ||
         !q2_original_projectile_record(g, io, actor, engine, error) ||
         !q2_original_entity_record(g, io, actor, engine, error)) return false;
@@ -797,6 +805,7 @@ bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
     q2_original_level_file file = {0};
     bool okay = q2_original_level_open(game, bytes, &file, error) &&
         level_clock(game, &file.state, error) && level_admit(game, &file, error);
+    if (okay) q2_player_trail_read_level(game);
     for (size_t i = 0; okay && i < file.count; ++i) {
         const q2_original_edict_row *row = file.rows + i;
         if (row->number > 0 && row->number <= game->wire_clients) continue;

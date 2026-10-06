@@ -63,18 +63,9 @@ typedef struct qa_q2_monster_sound_checkpoint {
 
 enum { QA_Q2_MONSTER_TRAIL_POINTS = 8 };
 
-typedef struct qa_q2_monster_trail_point_checkpoint {
-  qa_vec3 origin;
-  uint64_t time_ns;
-  float yaw;
-} qa_q2_monster_trail_point_checkpoint;
-
 typedef struct qa_q2_monster_trail_checkpoint {
   qa_q2_saved_reference actor;
-  qa_vec3 previous_origin;
-  qa_q2_monster_trail_point_checkpoint points[QA_Q2_MONSTER_TRAIL_POINTS];
-  size_t count;
-  bool has_previous;
+  qa_actor_reference head, tail;
 } qa_q2_monster_trail_checkpoint;
 
 typedef struct qa_q2_monster_alert_checkpoint {
@@ -86,6 +77,9 @@ typedef struct qa_q2_monsters_checkpoint {
   qa_q2_saved_reference sight_client, sight_observer;
   uint64_t sight_time_ns, last_frame_ns;
   bool began_frame;
+  qa_actor_reference classic_trail[QA_Q2_MONSTER_TRAIL_POINTS];
+  uint32_t classic_trail_head;
+  bool classic_trail_active;
   qa_q2_monster_trail_checkpoint *trails;
   size_t trail_count;
   qa_q2_monster_alert_checkpoint *alerts;
