@@ -60,6 +60,11 @@ typedef struct control_input {
     bool q1_source_deferred;
     struct application_control_turn *turn;
 } control_input;
+typedef struct control_input_slot {
+    control_input value;
+    struct control_input_slot *next;
+    bool listed;
+} control_input_slot;
 typedef struct control_group {
     struct control_group *next;
     qa_actor_id actor;
@@ -77,7 +82,7 @@ typedef struct control_group {
 } control_group;
 struct application_control_frames {
     qa_application *application;
-    control_input *inputs;
+    control_input_slot *inputs, *first_input;
     uint32_t capacity;
     control_group *head, *tail;
     const application_control_context *current;
@@ -90,6 +95,29 @@ struct application_control_frames {
     size_t touched_count, touched_capacity;
     bool draining;
 };
+
+static control_input *input_enroll(struct application_control_frames *owner, uint32_t index)
+{
+    control_input_slot *slot = &owner->inputs[index];
+    if (!slot->listed) {
+        control_input_slot **link = &owner->first_input;
+        while (*link && *link < slot) link = &(*link)->next;
+        slot->next = *link; *link = slot; slot->listed = true;
+    }
+    return &slot->value;
+}
+
+static void inputs_prune(struct application_control_frames *owner)
+{
+    control_input_slot **link = &owner->first_input;
+    while (*link) {
+        control_input_slot *slot = *link;
+        const control_input *input = &slot->value;
+        if (input->actor.registry || input->turn || input->source_turn_actor.registry ||
+            input->q1_source_actor.registry || input->frame_owned) link = &slot->next;
+        else { *link = slot->next; slot->next = NULL; slot->listed = false; }
+    }
+}
 
 static int32_t command_word(uint32_t bits)
 {
@@ -581,9 +609,10 @@ bool application_control_body_request(qa_application *app, qa_actor_id actor, qa
     if (!record->active || !qa_actor_id_equal(record->actor, actor) || !source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Body request lost its selected movement owner");
     if (!body_base_owner(source, record->state.kind)) return true;
-    control_input *input = &app->control_frames->inputs[actor.slot];
+    control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (!qa_actor_id_equal(input->actor, actor)) {
         if (!outputs->has_body_bounds) return true;
+        (void)input_enroll(app->control_frames, actor.slot);
         if (input->actor.registry || input->turn) *input = (control_input){0};
         input->actor = actor; input->provider = source->owner;
         input->retained = source_client(source) && source->component.clock.kind == QA_CLOCK_NETQUAKE &&
@@ -606,7 +635,7 @@ bool application_control_body_request(qa_application *app, qa_actor_id actor, qa
 void application_control_body_reset(qa_application *app, qa_actor_id actor)
 {
     if (!app || !app->control_frames || actor.slot >= app->control_frames->capacity) return;
-    control_input *input = &app->control_frames->inputs[actor.slot];
+    control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->actor, actor)) {
         input->has_body_base = false;
         if (!input->seen && !input->retained && !input->turn) {
@@ -659,8 +688,8 @@ void application_control_frames_free(struct application_control_frames *frames)
     while (frames->head) {
         control_group *group = frames->head; frames->head = group->next; free(group);
     }
-    for (uint32_t i = 0; i < frames->capacity; ++i)
-        (void)application_control_turn_abort(frames->inputs[i].turn, NULL);
+    for (control_input_slot *slot = frames->first_input; slot; slot = slot->next)
+        (void)application_control_turn_abort(slot->value.turn, NULL);
     free(frames->touched); free(frames->inputs); free(frames);
 }
 
@@ -669,8 +698,8 @@ bool application_control_frames_idle(const qa_application *app)
     const struct application_control_frames *frames = app ? app->control_frames : NULL;
     if (!frames) return true;
     if (frames->current || frames->draining || frames->state || frames->q3_group || frames->mod_inputs) return false;
-    for (uint32_t i = 0; i < frames->capacity; ++i)
-        if (frames->inputs[i].turn || frames->inputs[i].source_turn_actor.registry) return false;
+    for (const control_input_slot *slot = frames->first_input; slot; slot = slot->next)
+        if (slot->value.turn || slot->value.source_turn_actor.registry) return false;
     return true;
 }
 
@@ -681,17 +710,19 @@ bool application_control_frames_abort(qa_application *app, qa_error *error)
     if (owner->current || owner->draining || owner->state)
         return application_fail(error, QA_ERROR_ARGUMENT, "Input cleanup cannot interrupt a current source call");
     bool ok = true; qa_error first = {0};
-    for (uint32_t i = 0; i < owner->capacity; ++i) {
-        struct application_control_turn *turn = owner->inputs[i].turn;
-        owner->inputs[i].turn = NULL; qa_error current = {0};
-        owner->inputs[i].source_turn_actor = (qa_actor_id){0};
-        owner->inputs[i].source_turn_provider = 0;
-        owner->inputs[i].source_turn_frame_number = 0;
+    for (control_input_slot *slot = owner->first_input; slot; slot = slot->next) {
+        control_input *input = &slot->value;
+        struct application_control_turn *turn = input->turn;
+        input->turn = NULL; qa_error current = {0};
+        input->source_turn_actor = (qa_actor_id){0};
+        input->source_turn_provider = 0;
+        input->source_turn_frame_number = 0;
         if (!application_control_turn_abort(turn, &current)) { if (ok) first = current; ok = false; }
     }
     owner->touched_count = 0;
     qa_error components = {0};
     if (!application_control_mod_abort_all(app, &components)) { if (ok) first = components; ok = false; }
+    inputs_prune(owner);
     if (!ok && error) *error = first;
     return ok;
 }
@@ -727,7 +758,7 @@ void application_control_frames_release(qa_application *app, qa_actor_id actor)
     struct application_control_frames *frames = app ? app->control_frames : NULL;
     if (!frames || actor.slot >= frames->capacity) return;
     application_control_frames_state(app, actor, NULL);
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->source_turn_actor, actor)) {
         input->source_turn_actor = (qa_actor_id){0}; input->source_turn_provider = 0;
         input->source_turn_frame_number = 0;
@@ -749,8 +780,8 @@ bool application_control_frames_sequence(const qa_application *app, qa_actor_id 
     if (!record->active || !qa_actor_id_equal(record->actor, actor)) return false;
     *seen = record->command_seen; *sequence = record->command_sequence;
     const struct application_control_frames *frames = app->control_frames;
-    if (frames && qa_actor_id_equal(frames->inputs[actor.slot].actor, actor) && frames->inputs[actor.slot].seen) {
-        *seen = true; *sequence = frames->inputs[actor.slot].sequence;
+    if (frames && qa_actor_id_equal(frames->inputs[actor.slot].value.actor, actor) && frames->inputs[actor.slot].value.seen) {
+        *seen = true; *sequence = frames->inputs[actor.slot].value.sequence;
     }
     return true;
 }
@@ -761,7 +792,7 @@ bool application_control_frames_q1_prepared(const qa_application *app, qa_actor_
     qa_source_frame actual;
     if (!app || !app->control_frames || actor.slot >= app->control_frames->capacity ||
         !qa_session_active_frame(app->session, provider, &actual)) return false;
-    const control_input *input = &app->control_frames->inputs[actor.slot];
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
     return qa_actor_id_equal(input->q1_source_actor, actor) && input->q1_source_provider == provider &&
         input->q1_source_frame_number == actual.number && !input->q1_source_deferred;
 }
@@ -772,7 +803,7 @@ bool application_control_frames_q1_command_ready(const qa_application *app, qa_a
     qa_source_frame actual;
     if (!app || !app->control_frames || actor.slot >= app->control_frames->capacity ||
         !qa_session_active_frame(app->session, provider, &actual)) return false;
-    const control_input *input = &app->control_frames->inputs[actor.slot];
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (!input->q1_source_deferred || !qa_actor_id_equal(input->q1_source_actor, actor) ||
         input->q1_source_provider != provider || input->q1_source_frame_number != actual.number) return true;
     return command && command->sequence == input->q1_source_sequence;
@@ -786,7 +817,8 @@ bool application_control_frames_q1_complete(qa_application *app, qa_actor_id act
         !qa_session_active_frame(app->session, provider, &actual) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source preparation lost its real frame");
-    control_input *input = &app->control_frames->inputs[actor.slot];
+    control_input *input = &app->control_frames->inputs[actor.slot].value;
+    (void)input_enroll(app->control_frames, actor.slot);
     input->q1_source_actor = actor; input->q1_source_provider = provider;
     input->q1_source_frame_number = actual.number;
     input->q1_source_deferred = false; input->q1_source_sequence = 0;
@@ -810,7 +842,7 @@ void application_control_frames_consume_impulse(qa_application *app, qa_actor_id
 {
     struct application_control_frames *owner = app ? app->control_frames : NULL;
     if (!owner || actor.slot >= owner->capacity) return;
-    control_input *input = &owner->inputs[actor.slot];
+    control_input *input = &owner->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->actor, actor) && input->seen && input->sequence == sequence) {
         input->latest.impulse = input->impulse = 0;
         if (input->domain == CONTROL_COMMAND_UNIFIED) consume_unified_impulse(&input->unified);
@@ -880,7 +912,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
     if (seen && sequence <= previous)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q3 input sequence was already admitted");
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q3 intake cannot interrupt a retained input turn");
     control_group *group = deferred ? NULL : malloc(sizeof(*group) + sizeof(qa_movement_command));
@@ -903,6 +935,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
          !qa_q3_client_received_command(provider->state.q3, actor, &received, error))) {
         free(group); application_fault(app, error); return false;
     }
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_Q3_SOURCE;
@@ -965,7 +998,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input differs from its physical Source command fields");
     bool seen; uint64_t previous;
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if ((seen && sequence <= previous) || input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input sequence or retained turn is invalid");
     control_group *group = malloc(sizeof(*group) + sizeof(qa_movement_command));
@@ -978,6 +1011,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
         .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q2_SOURCE,
         .source_time_ns = clock.frame.time_ns};
     group->commands[0] = command;
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_Q2_SOURCE;
@@ -1009,7 +1043,7 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     if (!nq_selected_sources_ready(app, actor))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Retained NQ input needs the selected external source's staged movement and weapon bridge");
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     bool seen; uint64_t previous;
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
     qa_movement_command command = {.kind = QA_MOVEMENT_NETQUAKE, .sequence = sequence,
@@ -1024,6 +1058,7 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
             return application_fail(error, QA_ERROR_ARGUMENT, "Raw NQ input cannot replace queued selected input");
     if (app->q1_paused) return true;
     if (!qc_receipt(app, actor, 0, &command, error)) { application_fault(app, error); return false; }
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
     input->retained = true; input->domain = CONTROL_COMMAND_NQ_SOURCE;
@@ -1074,7 +1109,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     uint64_t source_time = clock.frame.time_ns + clock.debt_ns;
     if (receipt_time > source_time)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source receipt clock exceeds its real admission");
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw QW intake cannot interrupt a retained turn");
     control_group *group = malloc(sizeof(*group) + count * sizeof(*commands));
@@ -1088,6 +1123,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
             free(group); application_fault(app, error); return false;
         }
     }
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = commands[0].sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->accepted_time_ns = input->source_time_ns = source_time;
@@ -1105,7 +1141,7 @@ bool application_control_last_qw_command(const qa_application *app, qa_actor_id 
         !app->controls[actor.slot].active || !qa_actor_id_equal(app->controls[actor.slot].actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source input read needs a current full control actor");
     *out = (qa_movement_command){0}; *time_ns = 0; *present = false;
-    const control_input *input = &app->control_frames->inputs[actor.slot];
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (!qa_actor_id_equal(input->actor, actor) || !input->seen || input->domain != CONTROL_COMMAND_QW_SOURCE ||
         input->latest.kind != QA_MOVEMENT_QUAKEWORLD)
         return true;
@@ -1147,7 +1183,7 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
         frames->current || frames->draining || !unified_valid(&receipt) ||
         receipt.movement.kind != record->state.kind || (seen && receipt.sequence <= previous))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input lost its selected actor, dialect or sequence");
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input cannot interrupt a prepared Source turn");
     if (app->q1_paused) return true;
@@ -1164,6 +1200,7 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
             .before_source = before_source(source), .domain = CONTROL_COMMAND_UNIFIED, .unified = receipt};
         group->commands[0] = marker;
     }
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = source->owner; input->sequence = receipt.sequence; input->seen = true;
     input->retained = retained; input->domain = CONTROL_COMMAND_UNIFIED;
@@ -1239,7 +1276,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
             .quakeworld = quakeworld, .before_source = before_source(provider)};
     }
-    control_input *input = &frames->inputs[actor.slot];
+    control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn) { free(group); return application_fail(error, QA_ERROR_ARGUMENT, "Retained input preparation is open"); }
     qa_movement_command latest = {0};
     for (size_t i = 0; i < count; ++i) {
@@ -1249,6 +1286,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         }
         if (group) group->commands[i] = latest;
     }
+    (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true; input->retained = retained;
     input->domain = CONTROL_COMMAND_SELECTED; input->source_time_ns = 0; input->accepted_time_ns = accepted_clock.frame.time_ns; input->qw_receipt_time_ns = 0;
@@ -1273,7 +1311,7 @@ bool application_control_frames_receive_bot(qa_application *app, qa_actor_id act
         return application_fail(error, QA_ERROR_ARGUMENT, "Bot input needs its actual producer and selected item owner");
     if (!application_control_frames_receive(app, actor, command, 1, error)) return false;
     if (app->q1_paused) return true;
-    control_input *input = &app->control_frames->inputs[actor.slot];
+    control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (input->retained || input->domain == CONTROL_COMMAND_Q3_SOURCE) {
         input->arsenal = arsenal; input->weapon = weapon;
         if (app->control_frames->tail && qa_actor_id_equal(app->control_frames->tail->actor, actor) &&
@@ -1297,7 +1335,7 @@ bool application_control_last_mod_command(const qa_application *app, qa_actor_id
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
         !qa_actor_id_equal(app->controls[actor.slot].actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component command needs its admitted actual actor");
-    const control_input *input = &app->control_frames->inputs[actor.slot];
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
     application_provider *source = source_provider((qa_application *)app, actor);
     if (!qa_actor_id_equal(input->actor, actor) || !input->seen || !source ||
         !source->constructed || !source->attached || source->close_pending || source->owner != input->provider)
@@ -1431,7 +1469,7 @@ bool application_control_frames_q3_move(qa_application *app, const qa_source_com
         .stage = APPLICATION_CONTROL_COMMAND, .retained = true, .command_only = true,
         .command = *admission, .source_elapsed_ns = source_interval(command->kind, admission->elapsed_ns),
         .source_usercmd = true, .source_holdable = use_holdable};
-    const control_input *input = &owner->inputs[admission->actor.slot];
+    const control_input *input = &owner->inputs[admission->actor.slot].value;
     if (owner->q3_group && qa_actor_id_equal(owner->q3_group->actor, admission->actor)) {
         current.arsenal = owner->q3_group->arsenal; current.weapon = owner->q3_group->weapon;
     } else if (qa_actor_id_equal(input->actor, admission->actor)) {
@@ -1454,8 +1492,8 @@ bool application_control_frames_q3_move(qa_application *app, const qa_source_com
     owner->current = previous;
     if (ok && qa_actor_id_equal(input->actor, admission->actor) &&
         (!owner->q3_group || input->sequence == owner->q3_group->commands[0].sequence)) {
-        owner->inputs[admission->actor.slot].arsenal = 0;
-        owner->inputs[admission->actor.slot].weapon = 0;
+        owner->inputs[admission->actor.slot].value.arsenal = 0;
+        owner->inputs[admission->actor.slot].value.weapon = 0;
     }
     return ok;
 }
@@ -1505,7 +1543,7 @@ bool application_control_frames_owns(const qa_application *app, qa_actor_id acto
     application_provider *provider = source_provider((qa_application *)app, actor);
     qa_source_frame frame;
     if (!source_client(provider) || !qa_session_active_frame(app->session, provider->owner, &frame)) return false;
-    const control_input *input = &app->control_frames->inputs[actor.slot];
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->actor, actor) && input->provider == provider->owner &&
         (input->turn || (input->frame_owned && input->owned_frame_number == frame.number))) return true;
     for (const control_group *group = app->control_frames->head; group; group = group->next)
@@ -1558,7 +1596,7 @@ static bool apply(qa_application *app, qa_actor_id actor, const qa_movement_comm
     current.source_elapsed_ns = source_interval(command->kind, host_elapsed);
     const application_control_context *previous = owner->current;
     owner->current = &current;
-    control_input *input = &owner->inputs[actor.slot];
+    control_input *input = &owner->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->actor, actor) && input->provider == frame->provider) {
         input->frame_owned = true; input->owned_frame_number = frame->number;
     }
@@ -1605,7 +1643,7 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
         application_control_record *record = &app->controls[i];
         if (!record->active || !qa_actors_get(qa_session_actors(session), record->actor)) continue;
         application_provider *provider = source_provider(app, record->actor);
-        control_input *input = &app->control_frames->inputs[i];
+        control_input *input = &app->control_frames->inputs[i].value;
         if (!source_client(provider) || provider->component.clock.kind != QA_CLOCK_NETQUAKE ||
             (record->state.kind != QA_MOVEMENT_NETQUAKE &&
              (!qa_actor_id_equal(input->actor, record->actor) || input->domain != CONTROL_COMMAND_NQ_SOURCE))) continue;
@@ -1615,6 +1653,7 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
             struct application_control_turn *turn = input->turn; input->turn = NULL;
             if (!application_control_turn_abort(turn, error)) return false;
         }
+        (void)input_enroll(app->control_frames, i);
         if (!qa_actor_id_equal(input->actor, record->actor)) *input = (control_input){.actor = record->actor,
             .provider = provider->owner, .retained = true};
         if (input->provider != provider->owner || input->turn)
@@ -2086,7 +2125,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         current.arsenal = call->index == 0 ? group->arsenal : 0;
         current.weapon = call->index == 0 ? group->weapon : 0;
         owner->current = &current;
-        control_input *input = &owner->inputs[group->actor.slot];
+        control_input *input = &owner->inputs[group->actor.slot].value;
         qa_source_frame frame;
         if (qa_actor_id_equal(input->actor, group->actor) && input->provider == group->provider &&
             qa_session_active_frame(session, group->provider, &frame)) {
@@ -2234,14 +2273,14 @@ bool application_control_frames_commands(void *opaque, qa_session *session, cons
     if (due) for (uint32_t i = 0; i < app->control_capacity; ++i) {
         application_control_record *record = &app->controls[i];
         if (!record->active || record->state.kind == QA_MOVEMENT_NETQUAKE ||
-            (qa_actor_id_equal(app->control_frames->inputs[i].actor, record->actor) &&
-             app->control_frames->inputs[i].domain == CONTROL_COMMAND_NQ_SOURCE) ||
+            (qa_actor_id_equal(app->control_frames->inputs[i].value.actor, record->actor) &&
+             app->control_frames->inputs[i].value.domain == CONTROL_COMMAND_NQ_SOURCE) ||
             !qa_q1_player_source_present(map->state.q1, record->actor)) continue;
         const qa_movement_command *received = NULL;
         for (const control_group *group = app->control_frames->head; group; group = group->next)
             if (!group->bot && qa_actor_id_equal(group->actor, record->actor))
                 received = &group->commands[group->count - 1];
-        control_input *input = &app->control_frames->inputs[i];
+        control_input *input = &app->control_frames->inputs[i].value;
         qa_movement_command unified_received;
         if (received && input->domain == CONTROL_COMMAND_UNIFIED) {
             if (!unified_command(app, record->actor, &input->unified, &unified_received, error)) return false;
@@ -2253,6 +2292,7 @@ bool application_control_frames_commands(void *opaque, qa_session *session, cons
             qa_source_frame actual;
             if (!qa_session_active_frame(app->session, map->owner, &actual))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Deferred Q1 source input lost its real map frame");
+            (void)input_enroll(app->control_frames, i);
             input->q1_source_actor = record->actor; input->q1_source_provider = map->owner;
             input->q1_source_frame_number = actual.number; input->q1_source_sequence = received->sequence;
             input->q1_source_deferred = true;
@@ -2278,15 +2318,15 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         actor.slot < app->control_capacity && app->controls[actor.slot].active &&
         qa_actor_id_equal(app->controls[actor.slot].actor, actor) &&
         (app->controls[actor.slot].state.kind == QA_MOVEMENT_NETQUAKE ||
-         (qa_actor_id_equal(app->control_frames->inputs[actor.slot].actor, actor) &&
-          app->control_frames->inputs[actor.slot].domain == CONTROL_COMMAND_NQ_SOURCE)) &&
+         (qa_actor_id_equal(app->control_frames->inputs[actor.slot].value.actor, actor) &&
+          app->control_frames->inputs[actor.slot].value.domain == CONTROL_COMMAND_NQ_SOURCE)) &&
         provider->component.clock.kind == QA_CLOCK_NETQUAKE &&
         provider->component.command_actor &&
         provider->component.command_actor(provider->component.state, session, actor);
     *handled = reserved || physical_nq || application_control_frames_owns(app, actor);
     if (!*handled) return true;
     if (physical_nq && frame->provider != provider->owner) return true;
-    control_input *input = &app->control_frames->inputs[actor.slot];
+    control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (qa_actor_id_equal(input->source_turn_actor, actor) &&
         input->source_turn_provider == frame->provider && input->source_turn_frame_number == frame->number)
         return true;
@@ -2310,6 +2350,7 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         return okay;
     }
     if (!input->turn || !qa_actor_id_equal(input->actor, actor)) {
+        (void)input_enroll(app->control_frames, actor.slot);
         input->source_turn_actor = actor; input->source_turn_provider = frame->provider;
         input->source_turn_frame_number = frame->number;
         return true;
@@ -2329,6 +2370,7 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
             app->controls[actor.slot].command_sequence = input->sequence;
             app->controls[actor.slot].command_seen = true;
         }
+        (void)input_enroll(app->control_frames, actor.slot);
         input->source_turn_actor = actor; input->source_turn_provider = frame->provider;
         input->source_turn_frame_number = frame->number;
     }
@@ -2342,8 +2384,8 @@ bool application_control_frames_end(void *opaque, qa_session *session, const qa_
     (void)host_ns; qa_application *app = opaque;
     if (!app || session != app->session || !app->control_frames)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command completion lost its source owner");
-    for (uint32_t i = 0; i < app->control_frames->capacity; ++i) {
-        control_input *input = &app->control_frames->inputs[i];
+    for (control_input_slot *slot = app->control_frames->first_input; slot; slot = slot->next) {
+        control_input *input = &slot->value;
         if (input->turn) {
             struct application_control_turn *turn = input->turn; input->turn = NULL;
             if (!application_control_turn_abort(turn, error)) return false;
@@ -2357,10 +2399,10 @@ bool application_control_frames_end(void *opaque, qa_session *session, const qa_
         input->q1_source_deferred = false;
     }
     bool ok = drain(app, frames, count, true, false, error);
-    for (uint32_t i = 0; i < app->control_frames->capacity; ++i) {
-        app->control_frames->inputs[i].frame_owned = false;
-        app->control_frames->inputs[i].owned_frame_number = 0;
+    for (control_input_slot *slot = app->control_frames->first_input; slot; slot = slot->next) {
+        slot->value.frame_owned = false; slot->value.owned_frame_number = 0;
     }
+    inputs_prune(app->control_frames);
     return ok;
 }
 
@@ -2471,14 +2513,16 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         if (!owner->inputs) { free(owner); return application_fail(error, QA_ERROR_MEMORY, "Allocating saved retained inputs"); }
     }
     size_t count = 0;
-    if (!reading && owner) for (uint32_t i = 0; i < owner->capacity; ++i) if (owner->inputs[i].actor.registry) ++count;
+    if (!reading && owner) for (const control_input_slot *slot = owner->first_input; slot; slot = slot->next)
+        if (slot->value.actor.registry) ++count;
     bool ok = qa_source_save_count(io, &count, app->control_capacity);
     uint32_t previous = 0;
+    const control_input_slot *saved = owner ? owner->first_input : NULL;
     for (size_t i = 0; ok && i < count; ++i) {
         control_input value = {0};
         if (!reading) {
-            while (previous < owner->capacity && !owner->inputs[previous].actor.registry) ++previous;
-            value = owner->inputs[previous++];
+            while (!saved->value.actor.registry) saved = saved->next;
+            value = saved->value;
         }
         ok = qa_source_save_actor(io, &value.actor) && qa_source_save_string(io, &value.provider) &&
             qa_source_save_bool(io, &value.seen) && qa_source_save_bool(io, &value.retained) &&
@@ -2531,7 +2575,8 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         bool retained = source_client(source) && source->component.clock.kind == QA_CLOCK_NETQUAKE &&
             (controls[value.actor.slot].state.kind == QA_MOVEMENT_NETQUAKE || value.domain == CONTROL_COMMAND_NQ_SOURCE);
         if (value.retained != retained) { ok = application_fail(error, QA_ERROR_FORMAT, "Saved input retention differs from source ownership"); break; }
-        if (reading) { previous = value.actor.slot; owner->inputs[value.actor.slot] = value; }
+        if (reading) { previous = value.actor.slot; *input_enroll(owner, value.actor.slot) = value; }
+        else saved = saved->next;
     }
     count = 0;
     if (!reading && owner) for (control_group *group = owner->head; group; group = group->next) ++count;
@@ -2557,8 +2602,8 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             !actor_source || actor_source->owner != value.provider ||
             value.domain == CONTROL_COMMAND_NQ_SOURCE ||
             !domain_owner(app, actor_source, value.actor, value.domain, value.source_time_ns, reading) ||
-            !qa_actor_id_equal(owner->inputs[value.actor.slot].actor, value.actor) ||
-            owner->inputs[value.actor.slot].retained || (!value.bot && (value.arsenal || value.weapon)) ||
+            !qa_actor_id_equal(owner->inputs[value.actor.slot].value.actor, value.actor) ||
+            owner->inputs[value.actor.slot].value.retained || (!value.bot && (value.arsenal || value.weapon)) ||
             !weapon_owner(app, value.actor, value.arsenal, value.weapon)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved input group has no exact control owner");
         bool qw = value.domain != CONTROL_COMMAND_UNIFIED && actor_source && source_client(actor_source) && actor_source->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
@@ -2588,13 +2633,13 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
                 (value.domain != CONTROL_COMMAND_Q2_SOURCE || command.kind ==
                     (actor_source->component.clock.kind == QA_CLOCK_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC)) &&
                 (j && value.quakeworld ? command.sequence == last : !seen || command.sequence > last) &&
-                command.sequence <= owner->inputs[value.actor.slot].sequence;
+                command.sequence <= owner->inputs[value.actor.slot].value.sequence;
             if (ok) { seen = true; last = command.sequence; if (reading) group->commands[j] = command; }
         }
         if (!reading && source) source = source->next;
     }
-    for (uint32_t i = 0; ok && owner && i < owner->capacity; ++i) {
-        const control_input *input = &owner->inputs[i];
+    for (const control_input_slot *slot = owner ? owner->first_input : NULL; ok && slot; slot = slot->next) {
+        const control_input *input = &slot->value;
         if (!input->actor.registry || input->retained) continue;
         const control_group *tail = NULL;
         for (const control_group *group = owner->head; group; group = group->next)
