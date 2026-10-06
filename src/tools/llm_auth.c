@@ -1,5 +1,4 @@
 #include "llm_internal.h"
-#include "qa/hash.h"
 #include "qa/text.h"
 #include <math.h>
 #include <limits.h>
@@ -74,6 +73,69 @@ static size_t encode64(const uint8_t *in, size_t n, char *out) {
     for (size_t i = 0; i < n; ++i) { value = (value << 8) | in[i]; bits += 8; while (bits >= 6) { bits -= 6; out[j++] = alphabet[(value >> bits) & 63]; } }
     if (bits) out[j++] = alphabet[(value << (6 - bits)) & 63];
     out[j] = 0; return j;
+}
+static uint32_t pkce_rotate(uint32_t value, unsigned shift) {
+    return (value >> shift) | (value << (32 - shift));
+}
+/* The locally generated 32-byte verifier is always 43 base64url characters.
+ * RFC 7636 S256 therefore requires exactly one padded SHA-256 block. */
+static void pkce_challenge(const char verifier[43], char challenge[44]) {
+    static const uint32_t rounds[64] = {
+        0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
+        0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
+        0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
+        0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
+        0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu,
+        0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+        0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
+        0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
+        0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
+        0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+        0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u,
+        0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+        0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u,
+        0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+        0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+        0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
+    };
+    uint8_t block[64] = {0}, digest[32];
+    memcpy(block, verifier, 43);
+    block[43] = 0x80;
+    block[62] = (uint8_t)((43 * 8) >> 8);
+    block[63] = (uint8_t)(43 * 8);
+    uint32_t words[64];
+    for (size_t i = 0; i < 16; ++i) {
+        const uint8_t *p = block + i * 4;
+        words[i] = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+            ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+    }
+    for (size_t i = 16; i < 64; ++i) {
+        uint32_t x = words[i - 15], y = words[i - 2];
+        uint32_t first = pkce_rotate(x, 7) ^ pkce_rotate(x, 18) ^ (x >> 3);
+        uint32_t second = pkce_rotate(y, 17) ^ pkce_rotate(y, 19) ^ (y >> 10);
+        words[i] = words[i - 16] + first + words[i - 7] + second;
+    }
+    uint32_t state[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
+        0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
+    for (size_t i = 0; i < 64; ++i) {
+        uint32_t first = h + (pkce_rotate(e, 6) ^ pkce_rotate(e, 11) ^ pkce_rotate(e, 25)) +
+            ((e & f) ^ (~e & g)) + rounds[i] + words[i];
+        uint32_t second = (pkce_rotate(a, 2) ^ pkce_rotate(a, 13) ^ pkce_rotate(a, 22)) +
+            ((a & b) ^ (a & c) ^ (b & c));
+        h = g; g = f; f = e; e = d + first;
+        d = c; c = b; b = a; a = first + second;
+    }
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+    for (size_t i = 0; i < 8; ++i) {
+        digest[i * 4] = (uint8_t)(state[i] >> 24);
+        digest[i * 4 + 1] = (uint8_t)(state[i] >> 16);
+        digest[i * 4 + 2] = (uint8_t)(state[i] >> 8);
+        digest[i * 4 + 3] = (uint8_t)state[i];
+    }
+    encode64(digest, sizeof digest, challenge);
 }
 bool llm_session_id(char out[37], qa_error *error) {
     uint8_t bytes[16]; if (!entropy(bytes, sizeof bytes, error)) return false;
@@ -170,7 +232,7 @@ bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
     if (!s || s->busy || s->pending_restore) return llm_fail(error, "subscription sign-in requires restored continuation and returned callbacks");
     llm_auth_cancel(s); s->auth_error = (qa_error){0};
     llm_auth *a = auth_new(s, false, error); if (!a) return false;
-    uint8_t bytes[32]; char challenge[44]; qa_sha256_digest digest; llm_text query = {0}, url = {0}; bool ok = false;
+    uint8_t bytes[32]; char challenge[44]; llm_text query = {0}, url = {0}; bool ok = false;
     double now = llm_wall_milliseconds(s);
     if (!isfinite(now) || !isfinite(now + s->options.callback_timeout_ms)) { llm_fail(error, "invalid subscription clock"); goto done; }
     a->deadline = now + s->options.callback_timeout_ms;
@@ -178,7 +240,7 @@ bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
     encode64(bytes, sizeof bytes, a->state);
     if (!entropy(bytes, sizeof bytes, error)) goto done;
     encode64(bytes, sizeof bytes, a->verifier);
-    qa_sha256((qa_bytes){(const uint8_t *)a->verifier, strlen(a->verifier)}, &digest); encode64(digest.bytes, sizeof digest.bytes, challenge);
+    pkce_challenge(a->verifier, challenge);
 #ifdef _WIN32
     WSADATA data; if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { llm_fail(error, "could not initialize subscription callback sockets"); goto done; } a->winsock = true;
 #endif
