@@ -347,6 +347,14 @@ bool q1_classnamed(qa_q1_game *g, qa_actor_id actor, const char *name) {
     qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
     return text.size == strlen(name) && !memcmp(text.data, name, text.size);
 }
+float q1_actor_view_height(const q1_actor *entity, bool player) {
+    return player ? 22
+        : entity && entity->kind == Q1_MONSTER &&
+                entity->state.monster.species->species == QA_Q1_LAVA_MAN ? 48
+        : entity && entity->kind == Q1_MONSTER &&
+                entity->state.monster.addon.boss == Q1_BOSS_OLDNEW ? 24
+        : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10 : 25;
+}
 bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
     if (g->host.target && g->host.target(g->host.context, actor, target))
         return true;
@@ -368,15 +376,7 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
         .player = player && (player->source_client || player->arsenal || player->character),
         .notarget = player && player->source_client && player->source_no_target,
         .aimed_damage = entity && entity->aimed_damage,
-        .view_height = player ? 22
-                       : entity && entity->kind == Q1_MONSTER &&
-                               entity->state.monster.species->species == QA_Q1_LAVA_MAN
-                           ? 48
-                       : entity && entity->kind == Q1_MONSTER &&
-                               entity->state.monster.addon.boss == Q1_BOSS_OLDNEW
-                           ? 24
-                       : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
-                                                                                 : 25,
+        .view_height = q1_actor_view_height(entity, player != NULL),
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,
         .hostile_until = player ? player->hostile_until
                          : entity && entity->kind == Q1_MONSTER
@@ -1797,15 +1797,7 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         .max_health = entity ? entity->max_health : player->max_health,
         .gib_health =
             entity && entity->kind == Q1_MONSTER ? entity->state.monster.species->gib_health : -40,
-        .view_height = is_player ? 22
-                       : entity && entity->kind == Q1_MONSTER &&
-                               entity->state.monster.species->species == QA_Q1_LAVA_MAN
-                           ? 48
-                       : entity && entity->kind == Q1_MONSTER &&
-                               entity->state.monster.addon.boss == Q1_BOSS_OLDNEW
-                           ? 24
-                       : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
-                                                                                 : 25,
+        .view_height = q1_actor_view_height(entity, is_player),
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,
         .hostile_until_ns =
             player && player->hostile_until > 0 ? hostile_deadline_ns(player->hostile_until)

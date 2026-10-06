@@ -165,10 +165,19 @@ static const original_field map_fields[] = {
     FIELD(q1_map_state, width, "t_width", FLOAT),
     FIELD(q1_map_state, length, "t_length", FLOAT),
     FIELD(q1_map_state, pause_time, "pausetime", FLOAT),
+    FIELD(q1_map_state, cooldown, "attack_finished", DOUBLE),
     FIELD(q1_map_state, sounds, "sounds", I32),
     FIELD(q1_map_state, style, "style", I32),
     FIELD(q1_map_state, color_map, "colormap", I32)
 };
+static const original_field mover_fields[] = {
+    FIELD(q1_map_movement, pos1, "pos1", VECTOR),
+    FIELD(q1_map_movement, pos2, "pos2", VECTOR),
+    FIELD(q1_map_movement, dest1, "dest1", VECTOR),
+    FIELD(q1_map_movement, dest2, "dest2", VECTOR),
+    FIELD(q1_map_movement, destination, "finaldest", VECTOR)
+};
+static const unsigned mover_states[] = {1, 2, 0, 3};
 static const original_field world_fields[] = {
     FIELD(qa_q1_options, world_type, "worldtype", I32)
 };
@@ -775,7 +784,6 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !mover_sounds(entity,record,error) || !map_functions(entity, record, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
-            static const unsigned state[] = {1, 2, 0, 3};
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
                 size_t member = 0;
                 while (member < move->group->count && !q1_ref_equal(move->group->members[member],q1_ref_from(game,entity->id))) ++member;
@@ -783,10 +791,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 if (!actor(receipt,record,"owner",move->group->members[0],false,error) ||
                     !actor(receipt,record,"enemy",move->group->members[(member+1)%move->group->count],false,error)) return false;
             }
-            if (!vector(record, "pos1", move->pos1, error) || !vector(record, "pos2", move->pos2, error) ||
-                !vector(record, "dest1", move->dest1, error) || !vector(record, "dest2", move->dest2, error) ||
-                !vector(record, "finaldest", move->destination, error) ||
-                !number(record, "state", state[move->position], false, error) ||
+            if (!FIELDS(receipt, record, move, mover_fields, error) ||
+                !number(record, "state", mover_states[move->position], false, error) ||
                 !callback(record, "think1", map_think(move->done), error)) return false;
         }
     }
@@ -1126,7 +1132,8 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     if (touch && (!strcmp(touch,"plat_center_touch") || !strcmp(touch,"plat_outside_touch"))) map = Q1_MAP_PLAT_TRIGGER;
     if (think && !strcmp(think,"DelayThink")) map = Q1_MAP_DELAY;
     if (think && !strcmp(think,"barrel_explode")) map = Q1_MAP_BARREL;
-    if (think && !strcmp(think,"fire_fly")) map = Q1_MAP_FIREBALL;
+    if (think && !strcmp(think,"fire_fly")) map = Q1_MAP_FIREBALL_SOURCE;
+    else if (touch && !strcmp(touch,"fire_touch")) map = Q1_MAP_FIREBALL;
     bool body=name && (!strcmp(name,"bodyque") || !strcmp(name,"bodyqueue"));
     q1_entity_kind kind = body ? Q1_BODY : species ? Q1_MONSTER : projectile ? Q1_PROJECTILE :
         map != Q1_MAP_FIELDS ? Q1_MAP : Q1_ENTITY;
@@ -1215,11 +1222,8 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
         entity->model = QA_STRING_NONE;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
-        if (!saved_vector(saved(record,"pos1"), &move->pos1, error) ||
-            !saved_vector(saved(record,"pos2"), &move->pos2, error) ||
-            !saved_vector(saved(record,"dest1"), &move->dest1, error) ||
-            !saved_vector(saved(record,"dest2"), &move->dest2, error) ||
-            !saved_vector(saved(record,"finaldest"), &move->destination, error)) return false;
+        if (!restore_fields(strings, source, record, move, mover_fields,
+            sizeof(mover_fields) / sizeof(*mover_fields), slots, count, error)) return false;
         float position = saved_number(record,"state");
         move->position = position == 0 ? Q1_MAP_TOP : position == 1 ? Q1_MAP_BOTTOM :
             position == 2 ? Q1_MAP_UP : Q1_MAP_DOWN;
@@ -1395,6 +1399,34 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
     }
     return true;
 }
+static bool original_map_supported(q1_map_kind kind) {
+    switch (kind) {
+    case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION:
+    case Q1_MAP_WALL: case Q1_MAP_GATE: case Q1_MAP_AMBIENT: case Q1_MAP_COOP_POINT:
+    case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_RELAY: case Q1_MAP_TELEPORT:
+    case Q1_MAP_HURT: case Q1_MAP_PUSH: case Q1_MAP_CHANGELEVEL: case Q1_MAP_SETSKILL:
+    case Q1_MAP_REGISTERED: case Q1_MAP_MONSTERJUMP: case Q1_MAP_LIGHT:
+    case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER:
+    case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
+        return true;
+    default:
+        return false;
+    }
+}
+static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
+    if (action==Q1_MAP_IDLE) return true;
+    switch (kind) {
+    case Q1_MAP_MULTI: return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
+    case Q1_MAP_HURT: return action==Q1_MAP_REARM;
+    case Q1_MAP_CHANGELEVEL: return action==Q1_MAP_BEGIN_LEVEL;
+    case Q1_MAP_DOOR:
+        return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_TOP ||
+            action==Q1_MAP_DOOR_BOTTOM || action==Q1_MAP_DOOR_DOWN;
+    case Q1_MAP_FIREBALL_SOURCE: return action==Q1_MAP_FIREBALL_FLY;
+    case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
+    default: return false;
+    }
+}
 static bool admit_entity(original_admission *admission,qa_q1_program program,
     size_t slot,qa_error *error) {
     const qa_q1_save_record *record=admission->record;
@@ -1475,9 +1507,9 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     } else {
         original_class source;
         if (!original_classify(record,&source,error)) goto done;
-        bool map_supported=source.map==Q1_MAP_FIELDS || source.map==Q1_MAP_WORLD ||
-            source.map==Q1_MAP_POINT || source.map==Q1_MAP_PATH || source.map==Q1_MAP_DESTINATION;
-        if (source.kind==Q1_PICKUP || !map_supported || source.kind==Q1_ENTITY) {
+        if (source.kind==Q1_PICKUP ||
+            (source.map!=Q1_MAP_FIELDS && !original_map_supported(source.map)) ||
+            source.kind==Q1_ENTITY) {
             unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
         }
         q1_actor entity={.kind=source.kind};q1_map_state map={.kind=source.map};
@@ -1488,6 +1520,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         if (entity.kind==Q1_MONSTER) {
             q1_monster *monster=&entity.state.monster;monster->species=source.species;
             if (!ADMIT_FIELDS(admission,monster,monster_fields,error)) goto done;
+            entity.physics=physics;
+            if (!admit_vector(admission,"view_ofs",qa_v3(0,0,q1_actor_view_height(&entity,false)),error)) goto done;
             if (source.species->species==QA_Q1_EEL && !ADMIT_FIELDS(admission,monster,eel_fields,error)) goto done;
             if (source.species->species==QA_Q1_SCOURGE && !ADMIT_FIELDS(admission,monster,scourge_fields,error)) goto done;
             if (!restore_monster_callbacks(monster,record,error)) goto done;
@@ -1505,9 +1539,24 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 qa_q1_options options={0};
                 if (slot || !admit_text(admission,"classname","worldspawn",error) ||
                     !ADMIT_FIELDS(admission,&options,world_fields,error)) goto done;
-            } else if (!slot || entity.think!=Q1_THINK_NONE || entity.next_think!=0 ||
+            } else if (!slot || !isfinite(entity.next_think) ||
+                (entity.think==Q1_THINK_NONE && entity.next_think!=0) ||
+                (entity.think!=Q1_THINK_NONE && (entity.think!=Q1_THINK_MAP ||
+                    !original_map_continuation(source.map,map.action))) ||
                 saved_number(record,"movetype")==3 || saved_number(record,"solid")==3) {
-                unsupported(error,"Source map point has an unrepresented scheduled continuation");goto done;
+                unsupported(error,"Source map has an unrepresented scheduled continuation");goto done;
+            }
+            if (q1_map_is_mover(source.map)) {
+                q1_map_movement *move=&map.pending.mover;
+                if (!ADMIT_FIELDS(admission,move,mover_fields,error) ||
+                    !admit_number(admission,"state",(float)mover_states[move->position],error) ||
+                    !admit_text(admission,"think1",map_think(move->done),error)) goto done;
+                if (!original_map_continuation(source.map,move->done)) {
+                    unsupported(error,"Source mover completion differs from its native owner");goto done;
+                }
+                if (source.map==Q1_MAP_DOOR &&
+                    (!admit_text(admission,"noise1",q1_map_door_sound(&entity,false),error) ||
+                     !admit_text(admission,"noise2",q1_map_door_sound(&entity,true),error))) goto done;
             }
             if (!map_functions(&entity,&callbacks,error)) goto done;
         } else if (source.projectile) {
