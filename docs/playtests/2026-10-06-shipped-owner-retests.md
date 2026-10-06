@@ -141,3 +141,45 @@ removed and the installed artifact remained unchanged. The nonfatal classic
 load demo-recording warning remains. Audio, Original RR gameplay and CPU speed
 are not qualified by these visuals. Receipt:
 `owner-cpu-renderer-10b63336-proof.json`.
+
+## Original Q2 rerelease startup, installed `d81a2d66`
+
+The canonical player reader in `d3a009a5` preserved the real module's values
+and exposed the failure precisely: spawn origin `(128,-320,33)`, velocity
+`(0,0,0)` and view `(0,135,0)` were finite; all view-offset components were
+NaN. The error appeared before cleanup at 60.688 seconds, followed by natural
+exit 1. Receipt: `original-rr-import-boundary-50spm2j9/summary.json`.
+
+Qsrc's fresh weapon-kick timers divide zero by zero at level time zero. The
+native lifecycle omitted the two pre-client world turns from the original
+server. `d81a2d66` restores actual `RunFrame(false)` turns for complete classic
+and rerelease GAME modules, before `ReadLevel`. False matters: the rerelease
+skips true turns before a player is spawned. References are
+`quake-2/server/sv_init.c:258-266`, `q2repro/src/server/init.c:195-211`, and
+`rerelease/p_weapon.cpp:63-80`. Both complete compiler builds and their
+registered checks passed before installing the fix.
+
+The new 90-second and 240-second installed retries produced neither a public
+frame nor an application error before their cutoff. Static retail attribution
+places the later sampled PCs inside the real JSON save writer. The application
+starts that capture only after settling and client admission, so the late
+work has progressed beyond the earlier motion rejection. The longer run's
+mapping count grew from 6,869 at 135 seconds to 13,734 at 225 seconds. The
+current byte allocator gives each small C++ allocation its own page/backing;
+that design remains the next implementation target. Successful gameplay and
+a complete autosave remain unproven.
+
+Two separate six-second userspace profiles during that longer startup collected
+39 parent and 298 child samples, with no lost samples or debugger. The sparse
+parent capture includes backing lookup and allocation/mapping work. Most
+child PCs are runtime-generated or unresolved; these profiles do not establish
+a dominant percentage or qualify frame-time performance. All actual owned
+processes and private display were removed. Receipts:
+`original-rr-import-boundary-0vozfexn/summary.json`,
+`original-rr-import-boundary-y24pu7ya/summary.json`.
+
+The targeted installed Original classic Q2 regression could not begin: this
+content installation has no original classic module. It exited 1 before
+input/HUD actions and cleaned its process/display without changing settings
+or the artifact. No classic gameplay success is claimed from that attempt.
+Receipt: `original-classic-q2-d81a2d66-smoke-proof.json`.
