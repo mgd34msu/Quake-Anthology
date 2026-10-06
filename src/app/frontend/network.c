@@ -3840,7 +3840,7 @@ bool frontend_network_declarations(qa_cvars *cvars,qa_error *error)
 static bool detached_transport(const qa_net_address *,qa_net_transport **,qa_error *);
 static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *error)
 {
-    if (f->network) return true;
+    if (f->network) return q2_local_groups_prepare(f->network,error);
     if ((f->options.network_connect && f->options.network_protocol.kind != QA_NET_Q3_68 &&
          !q2_host_protocol(f->options.network_protocol) && !q1_client_protocol(f->options.network_protocol) &&
          f->options.network_protocol.kind!=QA_NET_UNIFIED_1) ||
