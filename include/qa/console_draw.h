@@ -31,6 +31,8 @@ typedef struct qa_console_draw_options {
     const qa_font_selection *font;
     const qa_console_buffer *buffer;
     const qa_field_view *field;
+    /* With no history buffer, draw only this prompt and editable field. */
+    const char *prompt;
     const qa_console_discovery_entry *selected;
     const qa_scene_image *background;
     double now_milliseconds;

@@ -341,27 +341,28 @@ static bool help_lines(qa_scene_frame *frame, const qa_console_discovery_entry *
     return true;
 }
 
-static bool draw_field(draw_context *context, const qa_field_view *field, double now, float x,
+static bool draw_field(draw_context *context, const qa_field_view *field, const char *prompt, double now, float x,
                        float y, float available) {
+    size_t prefix = scalar_count(prompt);
     size_t scroll = field->scroll < field->cursor ? field->scroll : field->cursor;
-    double occupied = ((double)(field->cursor - scroll) + 2.0) * context->cell_width;
+    double occupied = ((double)(field->cursor - scroll) + (double)prefix + 1.0) * context->cell_width;
     while (scroll < field->cursor && occupied > available) {
         ++scroll;
         occupied -= context->cell_width;
     }
     size_t maximum = 0;
-    double room = available - 2.0 * context->cell_width;
+    double room = available - ((double)prefix + 1.0) * context->cell_width;
     if (room > 0)
         maximum = cells_that_fit(room, context->cell_width);
     const qa_scene_vec4 white = {1, 1, 1, 1};
-    if (!draw_scalar(context, ']', x, y, white, false) ||
-        !draw_string_range(context, field->text, scroll, maximum, x + context->cell_width, y, white,
+    if (!draw_string_range(context, prompt, 0, prefix, x, y, white, NULL) ||
+        !draw_string_range(context, field->text, scroll, maximum, x + (float)prefix * context->cell_width, y, white,
                            NULL))
         return false;
     double phase = fmod(trunc(now / 256.0), 2.0);
     if (phase == 0 &&
         !draw_scalar(context, field->overstrike ? '_' : '|',
-                     x + (float)((double)(field->cursor - scroll) + 1.0) * context->cell_width, y,
+                     x + (float)((double)(field->cursor - scroll) + (double)prefix) * context->cell_width, y,
                      white, false))
         return false;
     return true;
@@ -369,7 +370,8 @@ static bool draw_field(draw_context *context, const qa_field_view *field, double
 
 bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *options,
                      qa_error *error) {
-    if (!frame || !options || !options->font || !options->buffer || !options->target.width ||
+    if (!frame || !options || !options->font ||
+        (!options->buffer && (!options->prompt || !options->field)) || !options->target.width ||
         !options->target.height || !isfinite(options->height) || options->height < 0 ||
         !isfinite(options->scale) || !(options->scale > 0) || !isfinite(options->cell_width) ||
         options->cell_width < 0 || !isfinite(options->now_milliseconds) ||
@@ -410,7 +412,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
 
     size_t maximum_rows = total_rows - field_lines - help_count;
     size_t first = 0;
-    size_t row_count = qa_console_buffer_visible(options->buffer, maximum_rows, &first);
+    size_t row_count = options->buffer ? qa_console_buffer_visible(options->buffer, maximum_rows, &first) : 0;
     draw_context context = {
         .frame = frame,
         .target = options->target,
@@ -447,7 +449,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         y += line_height;
     }
     if (options->field) {
-        if (!draw_field(&context, options->field, options->now_milliseconds, x0, y, available))
+        if (!draw_field(&context, options->field, options->prompt ? options->prompt : "]", options->now_milliseconds, x0, y, available))
             return false;
         y += line_height;
         const qa_scene_vec4 help_color = {0.65f, 0.85f, 1, 1};

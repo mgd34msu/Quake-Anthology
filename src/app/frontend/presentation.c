@@ -487,14 +487,20 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 .panel = {.05f, .05f, .05f, .85f}, .scale = preferences.hud_scale}, &frontend->frame, error)) return false;
         if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale,
             preferences.high_contrast, !(live || native_rendered || remote_rendered || source.source_world), error)) return false;
-        if (qa_input_seat_focus(seat->input) == QA_INPUT_CONSOLE) {
+        qa_input_focus field_focus = qa_input_seat_focus(seat->input);
+        if (field_focus == QA_INPUT_CONSOLE || field_focus == QA_INPUT_CHAT) {
+            bool message = field_focus == QA_INPUT_CHAT;
             qa_font_selection console_fonts;
             if (!frontend_console_font_selection(frontend, i, &console_fonts, error)) return false;
-            qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, false));
+            qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, message));
+            float scale = preferences.text_scale *
+                (message && qa_seat_console_context_read(seat->console).dialect == QA_CONSOLE_Q3 ? 2.0f : 1.0f);
             qa_console_draw_options console = {.target = rect, .font = &console_fonts,
-                .buffer = qa_seat_console_buffer(seat->console), .field = &field,
-                .background = frontend->console_background, .now_milliseconds = (double)frontend->time_ns / 1000000,
-                .height = (float)rect.height * .6f, .scale = preferences.text_scale};
+                .buffer = message ? NULL : qa_seat_console_buffer(seat->console), .field = &field,
+                .prompt = message ? (seat->chat_team ? "say_team: " : "say: ") : NULL,
+                .background = message ? NULL : frontend->console_background,
+                .now_milliseconds = (double)frontend->time_ns / 1000000,
+                .height = message ? scale * 10.0f : (float)rect.height * .6f, .scale = scale};
             if (!qa_console_draw(&frontend->frame, &console, error)) return false;
         }
         if (!frontend_q3_generic_overlay_end(frontend,error)) return false;
