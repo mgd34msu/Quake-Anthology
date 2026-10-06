@@ -1,6 +1,9 @@
 #include "brush_spans.h"
 #include "surface_cache.h"
 #include "fog_span_private.h"
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include <float.h>
 #include <limits.h>
@@ -535,6 +538,23 @@ static int64_t fixed_texel(float value, uint32_t extent, int64_t minimum) {
   if (value >= (float)maximum) return maximum;
   return (int64_t)value;
 }
+#if defined(__SSE2__)
+static __m128 mip_channels(const uint8_t *pixel) {
+  int32_t packed;
+  memcpy(&packed, pixel, sizeof(packed));
+  __m128i channels = _mm_cvtsi32_si128(packed);
+  channels = _mm_unpacklo_epi8(channels, _mm_setzero_si128());
+  channels = _mm_unpacklo_epi16(channels, _mm_setzero_si128());
+  return _mm_cvtepi32_ps(channels);
+}
+#endif
+static void mip_point_color(const uint8_t *pixel, float color[4]) {
+#if defined(__SSE2__)
+  _mm_storeu_ps(color, mip_channels(pixel));
+#else
+  for (size_t channel = 0; channel < 4; ++channel) color[channel] = pixel[channel];
+#endif
+}
 static void mip_sample(const cpu_surface_mip *mip, int64_t s, int64_t t,
                          float color[4]) {
   int64_t sx = s - INT64_C(32768), sy = t - INT64_C(32768);
@@ -556,11 +576,20 @@ static void mip_sample(const cpu_surface_mip *mip, int64_t s, int64_t t,
   const uint8_t *b = mip->pixels + (size_t)y * mip->stride + (size_t)x1 * 4;
   const uint8_t *c = mip->pixels + (size_t)y1 * mip->stride + (size_t)x * 4;
   const uint8_t *d = mip->pixels + (size_t)y1 * mip->stride + (size_t)x1 * 4;
+#if defined(__SSE2__)
+  __m128 av = mip_channels(a), bv = mip_channels(b);
+  __m128 cv = mip_channels(c), dv = mip_channels(d);
+  __m128 top = _mm_add_ps(av, _mm_mul_ps(_mm_sub_ps(bv, av), _mm_set1_ps(u)));
+  __m128 bottom = _mm_add_ps(cv, _mm_mul_ps(_mm_sub_ps(dv, cv), _mm_set1_ps(u)));
+  _mm_storeu_ps(color, _mm_add_ps(top,
+      _mm_mul_ps(_mm_sub_ps(bottom, top), _mm_set1_ps(v))));
+#else
   for (size_t channel = 0; channel < 4; ++channel) {
     float top = a[channel] + ((float)b[channel] - a[channel]) * u;
     float bottom = c[channel] + ((float)d[channel] - c[channel]) * u;
     color[channel] = top + (bottom - top) * v;
   }
+#endif
 }
 static const uint8_t *mip_point(const cpu_surface_mip *mip, int64_t s, int64_t t) {
   uint32_t x = (uint32_t)((uint64_t)s >> 16), y = (uint32_t)((uint64_t)t >> 16);
@@ -621,23 +650,33 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
         } else {
           float color[4];
           if (surface->linear) mip_sample(first, s, t, color);
-          else {
-            const uint8_t *pixel = mip_point(first, s, t);
-            for (size_t channel = 0; channel < 4; ++channel) color[channel] = pixel[channel];
-          }
+          else mip_point_color(mip_point(first, s, t), color);
           if (blend > 0) {
             float next[4];
             int64_t ms = s >> mip_shift, mt = t >> mip_shift;
             if (surface->linear) mip_sample(second, ms, mt, next);
-            else {
-              const uint8_t *pixel = mip_point(second, ms, mt);
-              for (size_t channel = 0; channel < 4; ++channel) next[channel] = pixel[channel];
-            }
+            else mip_point_color(mip_point(second, ms, mt), next);
+#if defined(__SSE2__)
+            __m128 first_color = _mm_loadu_ps(color);
+            __m128 next_color = _mm_loadu_ps(next);
+            _mm_storeu_ps(color, _mm_add_ps(first_color,
+                _mm_mul_ps(_mm_sub_ps(next_color, first_color), _mm_set1_ps(blend))));
+#else
             for (size_t channel = 0; channel < 4; ++channel)
               color[channel] += (next[channel] - color[channel]) * blend;
+#endif
           }
+#if defined(__SSE2__)
+          __m128 rounded = _mm_add_ps(_mm_loadu_ps(color), _mm_set1_ps(.5f));
+          __m128i channels = _mm_cvttps_epi32(rounded);
+          channels = _mm_packs_epi32(channels, _mm_setzero_si128());
+          channels = _mm_packus_epi16(channels, _mm_setzero_si128());
+          int32_t packed = _mm_cvtsi128_si32(channels);
+          memcpy(output, &packed, sizeof(packed));
+#else
           for (size_t channel = 0; channel < 4; ++channel)
             output[channel] = (uint8_t)(color[channel] + 0.5f);
+#endif
         }
         if (surface->fog.enabled)
           cpu_fog_span_apply(output, &surface->fog, fog.amount, buffer->alpha);

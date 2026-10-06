@@ -1,5 +1,8 @@
 #include "internal.h"
 #include <fenv.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 bool cpu_texture_components_init(qa_cpu_renderer *renderer, qa_error *error) {
   fenv_t environment;
@@ -110,11 +113,27 @@ static void sample_level(const cpu_sampler *sampler, size_t index, double u,
         pixels + ((size_t)sy1 * level->width + (size_t)sx0) * 4,
         pixels + ((size_t)sy1 * level->width + (size_t)sx1) * 4};
     const double *components = sampler->components;
+#if defined(__SSE2__)
+    __m128d vx = _mm_set1_pd(fx), vy = _mm_set1_pd(fy);
+    __m128d inverse_x = _mm_set1_pd(1 - fx), inverse_y = _mm_set1_pd(1 - fy);
+    for (size_t c = 0; c < 4; c += 2) {
+      __m128d a = _mm_set_pd(components[taps[0][c + 1]], components[taps[0][c]]);
+      __m128d b = _mm_set_pd(components[taps[1][c + 1]], components[taps[1][c]]);
+      __m128d d = _mm_set_pd(components[taps[2][c + 1]], components[taps[2][c]]);
+      __m128d e = _mm_set_pd(components[taps[3][c + 1]], components[taps[3][c]]);
+      __m128d value = _mm_add_pd(_mm_mul_pd(_mm_mul_pd(a, inverse_x), inverse_y),
+                                _mm_mul_pd(_mm_mul_pd(b, vx), inverse_y));
+      value = _mm_add_pd(value, _mm_mul_pd(_mm_mul_pd(d, inverse_x), vy));
+      value = _mm_add_pd(value, _mm_mul_pd(_mm_mul_pd(e, vx), vy));
+      _mm_storeu_pd(out + c, value);
+    }
+#else
     for (size_t c = 0; c < (sampler->alpha ? 4u : 3u); ++c)
       out[c] = components[taps[0][c]] * (1 - fx) * (1 - fy) +
                components[taps[1][c]] * fx * (1 - fy) +
                components[taps[2][c]] * (1 - fx) * fy +
                components[taps[3][c]] * fx * fy;
+#endif
     if (!sampler->alpha)
       out[3] = (1 - fx) * (1 - fy) + fx * (1 - fy) +
                (1 - fx) * fy + fx * fy;
