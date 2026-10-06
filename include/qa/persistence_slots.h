@@ -20,8 +20,8 @@ typedef struct qa_q1_save_slot_metadata {
 } qa_q1_save_slot_metadata;
 
 typedef struct qa_q2_save_slot_metadata {
-    char comment[QA_Q2_SAVE_COMMENT_BYTES];
-    char map_command[QA_Q2_SAVE_MAP_COMMAND_BYTES];
+    char comment[QA_Q2_SAVE_DESCRIPTION_CAPACITY];
+    char map_command[QA_Q2_SAVE_MAP_COMMAND_CAPACITY];
     char game_directory[QA_Q2_SAVE_CVAR_BYTES];
 } qa_q2_save_slot_metadata;
 

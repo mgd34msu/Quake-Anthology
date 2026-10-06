@@ -44,15 +44,9 @@ static qa_q2_save_data *copy_save(const qa_q2_save_data *source, qa_error *error
 {
     qa_q2_save_data *out=calloc(1,sizeof(*out));
     if (!out) { application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 import"); return NULL; }
-    out->server=source->server; out->server.cvars=NULL;
-    bool ok=source->server.cvar_count<=SIZE_MAX/sizeof(*out->server.cvars) &&
-        source->level_count<=SIZE_MAX/sizeof(*out->levels);
+    bool ok=source->level_count<=SIZE_MAX/sizeof(*out->levels);
     if (!ok) application_fail(error,QA_ERROR_FORMAT,"Original Q2 roster exceeds memory");
-    if (ok && source->server.cvar_count) {
-        out->server.cvars=malloc(source->server.cvar_count*sizeof(*out->server.cvars));
-        ok=out->server.cvars!=NULL;
-        if (ok) memcpy(out->server.cvars,source->server.cvars,source->server.cvar_count*sizeof(*out->server.cvars));
-    }
+    if (ok) ok=qa_q2_save_server_copy(&source->server,&out->server,error);
     if (ok) ok=copy_bytes((qa_bytes){source->game.data,source->game.size},&out->game,error);
     if (ok && source->level_count) { out->levels=calloc(source->level_count,sizeof(*out->levels)); ok=out->levels!=NULL; }
     for (size_t i=0;ok && i<source->level_count;++i) {
@@ -151,36 +145,53 @@ static bool capture_server(qa_application *app,application_provider *source,
     if (ok && tail && (tail<10 || strncmp(next,"gamemap \"",9) || next[tail-1]!='\"'))
         ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Original Q2 save has a non-Source nextserver command");
     if (ok) {
-        int length=snprintf(out->map_command,sizeof(out->map_command),"%s%s%s%s%s%.*s",
+        size_t map_capacity=out->rerelease?sizeof(out->map_command):QA_Q2_SAVE_MAP_COMMAND_BYTES;
+        int length=snprintf(out->map_command,map_capacity,"%s%s%s%s%s%.*s",
             start && *start=='*'?"*":"",map,*spawn?"$":"",spawn,tail?"+":"",
             (int)(tail?tail-10:0),tail?next+9:"");
-        if (length<0 || (size_t)length>=sizeof(out->map_command))
+        if (length<0 || (size_t)length>=map_capacity)
             ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Q2 original map chain exceeds its Source extent");
     }
     const char *name=map;
     for (size_t i=0;i<count;++i) if (!configs[i].index) {name=configs[i].value;break;}
     if (ok && purpose==QA_SAVE_LEVEL_ENTRY)
-        (void)snprintf(out->comment,sizeof(out->comment),"ENTERING %s",name?name:"");
+        (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"ENTERING %s",name?name:"");
     else if (ok) {
         time_t now=time(NULL); struct tm *local=localtime(&now);
         if (!local) ok=application_fail(error,QA_ERROR_IO,"Reading original Q2 save time");
-        else (void)snprintf(out->comment,sizeof(out->comment),"%2i:%02i %2i/%2i  %s",
+        else (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"%2i:%02i %2i/%2i  %s",
             local->tm_hour,local->tm_min,local->tm_mon+1,local->tm_mday,name?name:"");
     }
-    for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row))
-        if ((row->flags&QA_Q2_CVAR_LATCH) && strlen(row->name)<QA_Q2_SAVE_CVAR_BYTES-1 &&
-            strlen(row->value)<QA_Q2_SAVE_CVAR_BYTES-1) ++out->cvar_count;
-    if (ok && out->cvar_count) {
-        out->cvars=calloc(out->cvar_count,sizeof(*out->cvars));
-        if (!out->cvars) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 latched cvars");
-    }
-    size_t at=0;
-    for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row))
-        if ((row->flags&QA_Q2_CVAR_LATCH) && strlen(row->name)<QA_Q2_SAVE_CVAR_BYTES-1 &&
-            strlen(row->value)<QA_Q2_SAVE_CVAR_BYTES-1) {
-            memcpy(out->cvars[at].name,row->name,strlen(row->name));
-            memcpy(out->cvars[at++].value,row->value,strlen(row->value));
+    size_t text_size=0;
+    for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row)) {
+        if (!(row->flags&QA_Q2_CVAR_LATCH)) continue;
+        size_t name_size=strlen(row->name)+1, value_size=strlen(row->value)+1;
+        /* Original 3.20 skips cvars which do not fit its fixed rows. */
+        if (!out->rerelease && (name_size>=QA_Q2_SAVE_CVAR_BYTES || value_size>=QA_Q2_SAVE_CVAR_BYTES)) continue;
+        size_t size=out->rerelease?name_size+value_size:QA_Q2_SAVE_CVAR_BYTES*2;
+        if (size<name_size || text_size>SIZE_MAX-size || out->cvar_count==SIZE_MAX/sizeof(*out->cvars)) {
+            ok=application_fail(error,QA_ERROR_MEMORY,"Original Q2 latched cvars exceed memory"); break;
         }
+        ++out->cvar_count; text_size+=size;
+    }
+    if (ok && out->cvar_count) {
+        out->cvars=malloc(out->cvar_count*sizeof(*out->cvars));
+        out->cvar_text=(qa_buffer){.data=calloc(1,text_size),.size=text_size};
+        if (!out->cvars || !out->cvar_text.data)
+            ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 latched cvars");
+    }
+    size_t at=0, offset=0;
+    for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row)) {
+        if (!(row->flags&QA_Q2_CVAR_LATCH)) continue;
+        size_t name_size=strlen(row->name)+1, value_size=strlen(row->value)+1;
+        if (!out->rerelease && (name_size>=QA_Q2_SAVE_CVAR_BYTES || value_size>=QA_Q2_SAVE_CVAR_BYTES)) continue;
+        out->cvars[at].name=(char *)out->cvar_text.data+offset;
+        memcpy(out->cvars[at].name,row->name,name_size);
+        offset+=out->rerelease?name_size:QA_Q2_SAVE_CVAR_BYTES;
+        out->cvars[at].value=(char *)out->cvar_text.data+offset;
+        memcpy(out->cvars[at++].value,row->value,value_size);
+        offset+=out->rerelease?value_size:QA_Q2_SAVE_CVAR_BYTES;
+    }
     return ok;
 }
 

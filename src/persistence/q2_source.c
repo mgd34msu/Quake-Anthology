@@ -202,71 +202,192 @@ bool qa_q2_save_configstrings_io(qa_source_save_io *io, qa_q2_save_level *level)
 void qa_q2_save_server_dispose(qa_q2_save_server *server)
 {
     if (!server) return;
-    free(server->cvars);
+    free(server->cvars); qa_buffer_free(&server->cvar_text);
     *server = (qa_q2_save_server){0};
+}
+
+static bool cvar_text(const qa_q2_save_server *server, const char *text)
+{
+    uintptr_t begin = (uintptr_t)server->cvar_text.data, at = (uintptr_t)text;
+    if (!text || !begin || at < begin || at - begin >= server->cvar_text.size) return false;
+    size_t remaining = server->cvar_text.size - (size_t)(at - begin);
+    if (!server->rerelease && remaining < QA_Q2_SAVE_CVAR_BYTES) return false;
+    return memchr(text, 0, server->rerelease ? remaining : QA_Q2_SAVE_CVAR_BYTES) != NULL;
 }
 
 static bool server_text(const qa_q2_save_server *server, qa_error *error)
 {
-    if (!memchr(server->comment, 0, sizeof(server->comment)) ||
-        !memchr(server->map_command, 0, sizeof(server->map_command)) || !server->map_command[0] ||
-        (server->cvar_count && !server->cvars))
+    size_t comment = server->rerelease ? sizeof(server->comment) : QA_Q2_SAVE_COMMENT_BYTES;
+    size_t map = server->rerelease ? sizeof(server->map_command) : QA_Q2_SAVE_MAP_COMMAND_BYTES;
+    if (!memchr(server->comment, 0, comment) || !memchr(server->map_command, 0, map) ||
+        !server->map_command[0] || (server->cvar_count && !server->cvars))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server save fields are unterminated or absent");
     for (size_t i = 0; i < server->cvar_count; ++i) {
         const qa_q2_save_cvar *cvar = server->cvars + i;
-        if (!cvar->name[0] || !memchr(cvar->name, 0, sizeof(cvar->name)) ||
-            !memchr(cvar->value, 0, sizeof(cvar->value)))
-            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II latched cvar field is unterminated or absent");
+        if (!cvar_text(server, cvar->name) || !*cvar->name || !cvar_text(server, cvar->value))
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II latched cvar has no actual text backing");
+    }
+    return true;
+}
+
+bool qa_q2_save_server_copy(const qa_q2_save_server *source, qa_q2_save_server *out, qa_error *error)
+{
+    if (!source || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server copy requires its actual owner");
+    if (!server_text(source, error)) return false;
+    qa_q2_save_server value = *source;
+    value.cvars = NULL; value.cvar_text = (qa_buffer){0};
+    if (source->cvar_count > SIZE_MAX / sizeof(*value.cvars))
+        return persistence_fail(error, QA_ERROR_MEMORY, "Quake II cvar roster exceeds memory");
+    if (source->cvar_count) value.cvars = malloc(source->cvar_count * sizeof(*value.cvars));
+    if (source->cvar_text.size) value.cvar_text.data = malloc(source->cvar_text.size);
+    value.cvar_text.size = source->cvar_text.size;
+    if ((source->cvar_count && !value.cvars) || (value.cvar_text.size && !value.cvar_text.data)) {
+        qa_q2_save_server_dispose(&value);
+        return persistence_fail(error, QA_ERROR_MEMORY, "Copying original Quake II server state");
+    }
+    if (value.cvar_text.size) memcpy(value.cvar_text.data, source->cvar_text.data, value.cvar_text.size);
+    for (size_t i = 0; i < value.cvar_count; ++i) {
+        value.cvars[i].name = (char *)value.cvar_text.data +
+            ((uintptr_t)source->cvars[i].name - (uintptr_t)source->cvar_text.data);
+        value.cvars[i].value = (char *)value.cvar_text.data +
+            ((uintptr_t)source->cvars[i].value - (uintptr_t)source->cvar_text.data);
+    }
+    *out = value; return true;
+}
+
+/* KEX sv_save.cpp writes little-endian lengths and bytes without a NUL. */
+static bool read_text(qa_bytes bytes, size_t *cursor, qa_bytes *text, qa_error *error)
+{
+    if (*cursor > bytes.size || bytes.size - *cursor < 4)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv text length is truncated");
+    uint32_t size = qa_load_u32le(bytes.data + *cursor); *cursor += 4;
+    if (size > bytes.size - *cursor || memchr(bytes.data + *cursor, 0, size))
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv text leaves its file or contains a NUL");
+    *text = (qa_bytes){bytes.data + *cursor, size}; *cursor += size; return true;
+}
+
+static bool rerelease_server_decode(qa_bytes bytes, qa_q2_save_server *server, qa_error *error)
+{
+    if (bytes.size < 5 || bytes.data[4] > 1)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS autosave field is invalid");
+    server->rerelease = true; server->autosave = bytes.data[4] != 0;
+    size_t cursor = 5; qa_bytes text;
+    if (!read_text(bytes, &cursor, &text, error)) return false;
+    if (text.size >= sizeof(server->comment))
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS description exceeds CS_NAME");
+    memcpy(server->comment, text.data, text.size);
+    if (bytes.size - cursor < 8)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS timestamp is truncated");
+    server->timestamp = qa_load_u64le(bytes.data + cursor); cursor += 8;
+    if (!read_text(bytes, &cursor, &text, error)) return false;
+    if (!text.size || text.size >= sizeof(server->map_command))
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS map command exceeds the original reader");
+    memcpy(server->map_command, text.data, text.size);
+    size_t begin = cursor, count = 0, extent = 0;
+    while (cursor < bytes.size) {
+        qa_bytes name, value;
+        if (!read_text(bytes, &cursor, &name, error) || !read_text(bytes, &cursor, &value, error)) return false;
+        if (!name.size || name.size > SIZE_MAX - value.size - 2 || extent > SIZE_MAX - name.size - value.size - 2 ||
+            count == SIZE_MAX / sizeof(*server->cvars))
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS cvar roster exceeds its text extent");
+        ++count; extent += name.size + value.size + 2;
+    }
+    if (count) server->cvars = malloc(count * sizeof(*server->cvars));
+    server->cvar_text = (qa_buffer){.data = extent ? malloc(extent) : NULL, .size = extent};
+    if ((count && !server->cvars) || (extent && !server->cvar_text.data))
+        return persistence_fail(error, QA_ERROR_MEMORY, "Retaining original rerelease latched cvars");
+    server->cvar_count = count; cursor = begin; size_t at = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_bytes name, value;
+        if (!read_text(bytes, &cursor, &name, error) || !read_text(bytes, &cursor, &value, error)) return false;
+        server->cvars[i].name = (char *)server->cvar_text.data + at;
+        memcpy(server->cvar_text.data + at, name.data, name.size);
+        server->cvar_text.data[at + name.size] = 0; at += name.size + 1;
+        server->cvars[i].value = (char *)server->cvar_text.data + at;
+        memcpy(server->cvar_text.data + at, value.data, value.size);
+        server->cvar_text.data[at + value.size] = 0; at += value.size + 1;
     }
     return true;
 }
 
 bool qa_q2_save_server_decode(qa_bytes bytes, qa_q2_save_server *out, qa_error *error)
 {
-    if (!out || !bytes.data || bytes.size < Q2_SERVER_HEADER ||
-        (bytes.size - Q2_SERVER_HEADER) % Q2_SERVER_CVAR)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv has a truncated fixed record");
-    if (!memcmp(bytes.data, "SSV2", 4))
-        return persistence_fail(error, QA_ERROR_UNSUPPORTED, "This Quake II engine save container requires its original dialect");
-    qa_q2_save_server server = {0};
-    memcpy(server.comment, bytes.data, sizeof(server.comment));
-    memcpy(server.map_command, bytes.data + sizeof(server.comment), sizeof(server.map_command));
-    server.cvar_count = (bytes.size - Q2_SERVER_HEADER) / Q2_SERVER_CVAR;
-    if (server.cvar_count) {
-        server.cvars = malloc(server.cvar_count * sizeof(*server.cvars));
-        if (!server.cvars)
-            return persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II latched cvars");
-        for (size_t i = 0; i < server.cvar_count; ++i) {
-            memcpy(server.cvars[i].name, bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR,
-                sizeof(server.cvars[i].name));
-            memcpy(server.cvars[i].value, bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR + QA_Q2_SAVE_CVAR_BYTES,
-                sizeof(server.cvars[i].value));
+    if (!out || !bytes.data)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server.ssv requires its actual bytes");
+    qa_q2_save_server server = {0}; bool ok;
+    if (bytes.size >= 4 && !memcmp(bytes.data, "EVAS", 4)) {
+        ok = rerelease_server_decode(bytes, &server, error);
+    } else {
+        if (bytes.size < Q2_SERVER_HEADER || (bytes.size - Q2_SERVER_HEADER) % Q2_SERVER_CVAR)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server.ssv has a truncated fixed record");
+        memcpy(server.comment, bytes.data, QA_Q2_SAVE_COMMENT_BYTES);
+        memcpy(server.map_command, bytes.data + QA_Q2_SAVE_COMMENT_BYTES, QA_Q2_SAVE_MAP_COMMAND_BYTES);
+        server.cvar_count = (bytes.size - Q2_SERVER_HEADER) / Q2_SERVER_CVAR;
+        server.cvar_text.size = server.cvar_count * Q2_SERVER_CVAR;
+        if (server.cvar_count) {
+            server.cvars = malloc(server.cvar_count * sizeof(*server.cvars));
+            server.cvar_text.data = malloc(server.cvar_text.size);
+            if (!server.cvars || !server.cvar_text.data) {
+                qa_q2_save_server_dispose(&server);
+                return persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II latched cvars");
+            }
+            memcpy(server.cvar_text.data, bytes.data + Q2_SERVER_HEADER, server.cvar_text.size);
+            for (size_t i = 0; i < server.cvar_count; ++i) {
+                server.cvars[i].name = (char *)server.cvar_text.data + i * Q2_SERVER_CVAR;
+                server.cvars[i].value = server.cvars[i].name + QA_Q2_SAVE_CVAR_BYTES;
+            }
         }
+        ok = true;
     }
-    if (!server_text(&server, error)) { qa_q2_save_server_dispose(&server); return false; }
-    *out = server;
-    return true;
+    if (!ok || !server_text(&server, error)) { qa_q2_save_server_dispose(&server); return false; }
+    *out = server; return true;
+}
+
+static void write_text(uint8_t *data, size_t *cursor, const char *text)
+{
+    size_t size = strlen(text); qa_store_u32le(data + *cursor, (uint32_t)size); *cursor += 4;
+    memcpy(data + *cursor, text, size); *cursor += size;
 }
 
 bool qa_q2_save_server_encode(const qa_q2_save_server *server, qa_buffer *out, qa_error *error)
 {
     if (!server || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server save owner/output are required");
     if (!server_text(server, error)) return false;
-    if (server->cvar_count > (SIZE_MAX - Q2_SERVER_HEADER) / Q2_SERVER_CVAR)
-        return persistence_fail(error, QA_ERROR_MEMORY, "Quake II latched cvars exceed their file extent");
-    qa_buffer bytes = {.size = Q2_SERVER_HEADER + server->cvar_count * Q2_SERVER_CVAR};
-    bytes.data = malloc(bytes.size);
-    if (!bytes.data) return persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II server.ssv");
-    memcpy(bytes.data, server->comment, sizeof(server->comment));
-    memcpy(bytes.data + sizeof(server->comment), server->map_command, sizeof(server->map_command));
-    for (size_t i = 0; i < server->cvar_count; ++i) {
-        memcpy(bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR, server->cvars[i].name,
-            sizeof(server->cvars[i].name));
-        memcpy(bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR + QA_Q2_SAVE_CVAR_BYTES, server->cvars[i].value,
-            sizeof(server->cvars[i].value));
+    size_t size;
+    if (server->rerelease) {
+        size = 21 + strlen(server->comment) + strlen(server->map_command);
+        for (size_t i = 0; i < server->cvar_count; ++i) {
+            size_t name = strlen(server->cvars[i].name), value = strlen(server->cvars[i].value);
+            if (name > UINT32_MAX || value > UINT32_MAX || name > SIZE_MAX - value - 8 || size > SIZE_MAX - name - value - 8)
+                return persistence_fail(error, QA_ERROR_MEMORY, "Quake II EVAS cvars exceed their file extent");
+            size += name + value + 8;
+        }
+    } else {
+        if (server->cvar_count > (SIZE_MAX - Q2_SERVER_HEADER) / Q2_SERVER_CVAR)
+            return persistence_fail(error, QA_ERROR_MEMORY, "Quake II latched cvars exceed their file extent");
+        size = Q2_SERVER_HEADER + server->cvar_count * Q2_SERVER_CVAR;
     }
-    *out = bytes;
-    return true;
+    qa_buffer bytes = {.data = malloc(size), .size = size};
+    if (!bytes.data) return persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II server.ssv");
+    if (server->rerelease) {
+        memcpy(bytes.data, "EVAS", 4); bytes.data[4] = server->autosave;
+        size_t cursor = 5; write_text(bytes.data, &cursor, server->comment);
+        qa_store_u64le(bytes.data + cursor, server->timestamp); cursor += 8;
+        write_text(bytes.data, &cursor, server->map_command);
+        for (size_t i = 0; i < server->cvar_count; ++i) {
+            write_text(bytes.data, &cursor, server->cvars[i].name);
+            write_text(bytes.data, &cursor, server->cvars[i].value);
+        }
+    } else {
+        memcpy(bytes.data, server->comment, QA_Q2_SAVE_COMMENT_BYTES);
+        memcpy(bytes.data + QA_Q2_SAVE_COMMENT_BYTES, server->map_command, QA_Q2_SAVE_MAP_COMMAND_BYTES);
+        for (size_t i = 0; i < server->cvar_count; ++i) {
+            memcpy(bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR, server->cvars[i].name, QA_Q2_SAVE_CVAR_BYTES);
+            memcpy(bytes.data + Q2_SERVER_HEADER + i * Q2_SERVER_CVAR + QA_Q2_SAVE_CVAR_BYTES,
+                server->cvars[i].value, QA_Q2_SAVE_CVAR_BYTES);
+        }
+    }
+    *out = bytes; return true;
 }
 
 static bool level_name(const char *name, qa_error *error)
@@ -329,14 +450,96 @@ static bool write_file(qa_fs_root *root, const char *directory, const char *name
     return ok;
 }
 
-static bool level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *error)
+bool qa_q2_save_level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *error)
 {
-    if (bytes.size != Q2_LEVEL_BYTES)
-        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
-    if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
-    for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
-        level->portal_open[i] = qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
-    return true;
+    if (!level || !bytes.data) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II .sv2 requires its actual bytes");
+    if (!level->rerelease) {
+        if (bytes.size != Q2_LEVEL_BYTES)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
+        if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
+        for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
+            level->portal_open[i] = qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
+        level->portal_count = 0; return true;
+    }
+    uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+    qa_buffer table = {.data = calloc(rows, width), .size = (size_t)rows * width};
+    if (!table.data) return persistence_fail(error, QA_ERROR_MEMORY, "Reading Quake II rerelease config rows");
+    size_t cursor = 0; bool ok = true;
+    /* Each Source writer visits physical rows in ascending order. */
+    int32_t previous = -1;
+    for (;;) {
+        if (bytes.size - cursor < 4) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its terminator"); break; }
+        int32_t index = qa_load_i32le(bytes.data + cursor); cursor += 4;
+        if (index == -1) break;
+        if (index < 0 || (uint32_t)index >= rows || index <= previous || cursor == bytes.size) {
+            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row leaves its physical table"); break;
+        }
+        uint8_t size = bytes.data[cursor++];
+        if (size > width || size > bytes.size - cursor) {
+            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row is truncated or too wide"); break;
+        }
+        memcpy(table.data + (size_t)index * width, bytes.data + cursor, size);
+        cursor += size; previous = index;
+    }
+    uint16_t portals = 0;
+    if (ok) {
+        if (bytes.size - cursor < 2) ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its portal count");
+        else {
+            portals = qa_load_u16le(bytes.data + cursor); cursor += 2;
+            if (portals > QA_Q2_SAVE_AREA_PORTALS || bytes.size - cursor != portals)
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portal bytes leave the loaded CM extent");
+        }
+    }
+    if (ok) ok = qa_q2_save_configstrings_capture(level, (qa_bytes){table.data, table.size}, error);
+    if (ok) {
+        memset(level->portal_open, 0, sizeof(level->portal_open));
+        for (uint16_t i = 0; i < portals; ++i) level->portal_open[i] = bytes.data[cursor + i];
+        level->portal_count = portals;
+    }
+    qa_buffer_free(&table); return ok;
+}
+
+bool qa_q2_save_level_encode(const qa_q2_save_level *level, qa_buffer *out, qa_error *error)
+{
+    if (!level || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II .sv2 requires its actual level owner");
+    qa_buffer table = {0};
+    if (!qa_q2_save_configstrings_expand(level, &table, error)) return false;
+    size_t size = Q2_LEVEL_BYTES;
+    if (level->rerelease) {
+        if (level->portal_count > QA_Q2_SAVE_AREA_PORTALS) {
+            qa_buffer_free(&table); return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portals exceed CM capacity");
+        }
+        size = 6 + level->portal_count;
+        uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+        for (uint32_t i = 0; i < rows; ++i) {
+            const uint8_t *row = table.data + (size_t)i * width;
+            if (!*row) continue;
+            const uint8_t *end = memchr(row, 0, width);
+            size += 5 + (end ? (size_t)(end - row) : width);
+        }
+    }
+    qa_buffer bytes = {.data = malloc(size), .size = size};
+    if (!bytes.data) { qa_buffer_free(&table); return persistence_fail(error, QA_ERROR_MEMORY, "Writing original Quake II .sv2"); }
+    if (!level->rerelease) {
+        memcpy(bytes.data, table.data, Q2_LEVEL_STRINGS);
+        for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
+            qa_store_u32le(bytes.data + Q2_LEVEL_STRINGS + i * 4, (uint32_t)level->portal_open[i]);
+    } else {
+        size_t cursor = 0;
+        uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
+        for (uint32_t i = 0; i < rows; ++i) {
+            const uint8_t *row = table.data + (size_t)i * width;
+            if (!*row) continue;
+            const uint8_t *end = memchr(row, 0, width);
+            size_t length = end ? (size_t)(end - row) : width;
+            qa_store_u32le(bytes.data + cursor, i); bytes.data[cursor + 4] = (uint8_t)length; cursor += 5;
+            memcpy(bytes.data + cursor, row, length); cursor += length;
+        }
+        qa_store_u32le(bytes.data + cursor, UINT32_MAX); cursor += 4;
+        qa_store_u16le(bytes.data + cursor, level->portal_count); cursor += 2;
+        for (uint16_t i = 0; i < level->portal_count; ++i) bytes.data[cursor + i] = (uint8_t)level->portal_open[i];
+    }
+    qa_buffer_free(&table); *out = bytes; return true;
 }
 
 void qa_q2_save_destroy(qa_q2_save_data *save)
@@ -376,11 +579,11 @@ bool qa_q2_save_directory_read(qa_fs_root *root, const char *directory,
         if (!next) { ok = persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II saved level"); break; }
         save->levels = next;
         qa_q2_save_level *level = next + save->level_count++;
-        *level = (qa_q2_save_level){0}; memcpy(level->name, name, size + 1);
+        *level = (qa_q2_save_level){.rerelease = save->server.rerelease}; memcpy(level->name, name, size + 1);
         qa_buffer engine = {0};
         ok = read_file(root, directory, name, ".sav", &level->game, error) &&
             read_file(root, directory, name, ".sv2", &engine, error) &&
-            level_decode((qa_bytes){engine.data, engine.size}, level, error);
+            qa_q2_save_level_decode((qa_bytes){engine.data, engine.size}, level, error);
         qa_buffer_free(&engine);
         if (ok && !level->game.size)
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved LEVEL file is empty");
@@ -431,24 +634,17 @@ bool qa_q2_save_directory_write(qa_fs_root *root, const char *directory,
     }
     qa_fs_listing_free(&files);
     if (ok) ok = write_file(root, directory, "game.ssv", "", (qa_bytes){save->game.data, save->game.size}, nonce, error);
-    qa_buffer engine = {0};
-    if (ok && save->level_count) {
-        engine = (qa_buffer){.data = malloc(Q2_LEVEL_BYTES), .size = Q2_LEVEL_BYTES};
-        if (!engine.data) ok = persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II configstrings and portals");
-    }
     for (size_t i = 0; ok && i < save->level_count; ++i) {
         const qa_q2_save_level *level = save->levels + i;
-        qa_buffer configs = {0};
-        ok = qa_q2_save_configstrings_expand(level, &configs, error);
-        if (!ok) break;
-        memcpy(engine.data, configs.data, Q2_LEVEL_STRINGS);
-        qa_buffer_free(&configs);
-        for (size_t portal = 0; portal < QA_Q2_SAVE_AREA_PORTALS; ++portal)
-            qa_store_u32le(engine.data + Q2_LEVEL_STRINGS + portal * 4, (uint32_t)level->portal_open[portal]);
-        ok = write_file(root, directory, level->name, ".sav", (qa_bytes){level->game.data, level->game.size}, nonce, error) &&
+        qa_buffer engine = {0};
+        if (level->rerelease != save->server.rerelease)
+            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved level does not belong to its engine");
+        if (ok) ok = qa_q2_save_level_encode(level, &engine, error) &&
+            write_file(root, directory, level->name, ".sav", (qa_bytes){level->game.data, level->game.size}, nonce, error) &&
             write_file(root, directory, level->name, ".sv2", (qa_bytes){engine.data, engine.size}, nonce, error);
+        qa_buffer_free(&engine);
     }
     if (ok) ok = write_file(root, directory, "server.ssv", "", (qa_bytes){server.data, server.size}, nonce, error);
-    qa_buffer_free(&engine); qa_buffer_free(&server);
+    qa_buffer_free(&server);
     return ok;
 }

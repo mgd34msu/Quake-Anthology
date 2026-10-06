@@ -54,11 +54,17 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
             for (size_t i = 0; i < server.cvar_count; ++i)
                 if (!strcmp(server.cvars[i].name, "game")) {
                     memset(metadata.game_directory, 0, sizeof(metadata.game_directory));
-                    memcpy(metadata.game_directory, server.cvars[i].value, sizeof(metadata.game_directory));
+                    size_t length = strlen(server.cvars[i].value);
+                    if (length >= sizeof(metadata.game_directory)) {
+                        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved game directory exceeds MAX_QPATH"); break;
+                    }
+                    memcpy(metadata.game_directory, server.cvars[i].value, length);
                     if (!metadata.game_directory[0]) memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
                 }
-            *format = QA_SAVE_SLOT_Q2_CLASSIC; *out = (qa_save_metadata){0};
-            *original = (qa_q1_save_slot_metadata){0}; if (q2) *q2 = metadata;
+            if (ok) {
+                *format = QA_SAVE_SLOT_Q2_CLASSIC; *out = (qa_save_metadata){0};
+                *original = (qa_q1_save_slot_metadata){0}; if (q2) *q2 = metadata;
+            }
         }
         qa_q2_save_server_dispose(&server);
         return ok;

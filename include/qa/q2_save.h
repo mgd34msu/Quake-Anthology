@@ -13,17 +13,22 @@ enum {
     QA_Q2_SAVE_CONFIGSTRING_BYTES = 64,
     QA_Q2_SAVE_AREA_PORTALS = 1024,
     QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS = 12448,
-    QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES = 96
+    QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES = 96,
+    QA_Q2_SAVE_DESCRIPTION_CAPACITY = 97,
+    QA_Q2_SAVE_MAP_COMMAND_CAPACITY = 511
 };
 
 typedef struct qa_q2_save_cvar {
-    char name[QA_Q2_SAVE_CVAR_BYTES], value[QA_Q2_SAVE_CVAR_BYTES];
+    char *name, *value;
 } qa_q2_save_cvar;
 typedef struct qa_q2_save_server {
-    char comment[QA_Q2_SAVE_COMMENT_BYTES];
-    char map_command[QA_Q2_SAVE_MAP_COMMAND_BYTES];
+    bool rerelease, autosave;
+    uint64_t timestamp; /* Original rerelease platform metadata, retained verbatim. */
+    char comment[QA_Q2_SAVE_DESCRIPTION_CAPACITY];
+    char map_command[QA_Q2_SAVE_MAP_COMMAND_CAPACITY];
     qa_q2_save_cvar *cvars;
     size_t cvar_count;
+    qa_buffer cvar_text; /* One owned backing, including classic fixed padding. */
 } qa_q2_save_server;
 typedef struct qa_q2_save_config_span {
     uint32_t index, rows;
@@ -40,6 +45,7 @@ typedef struct qa_q2_save_level {
     qa_buffer game;
     bool rerelease;
     qa_q2_save_configstrings configstrings;
+    uint16_t portal_count; /* Actual rerelease CM portal extent. */
     int32_t portal_open[QA_Q2_SAVE_AREA_PORTALS];
 } qa_q2_save_level;
 typedef struct qa_q2_save_data {
@@ -63,10 +69,14 @@ bool qa_q2_save_configstrings_io(struct qa_source_save_io *, qa_q2_save_level *)
 bool qa_q2_save_level_copy(const qa_q2_save_level *, qa_q2_save_level *, qa_error *);
 void qa_q2_save_level_dispose(qa_q2_save_level *);
 
-/* Server fields have original fixed extents. Decoding retains their exact
- * padding and owns the latched cvar rows. Output is unchanged on failure. */
+/* The server signature selects the original engine grammar. Classic fixed
+ * padding is retained; rerelease text is length-delimited. Outputs are unchanged
+ * on failure and each server owns one latched-cvar text backing. */
 bool qa_q2_save_server_decode(qa_bytes, qa_q2_save_server *, qa_error *);
 bool qa_q2_save_server_encode(const qa_q2_save_server *, qa_buffer *, qa_error *);
+bool qa_q2_save_server_copy(const qa_q2_save_server *, qa_q2_save_server *, qa_error *);
+bool qa_q2_save_level_decode(qa_bytes, qa_q2_save_level *, qa_error *);
+bool qa_q2_save_level_encode(const qa_q2_save_level *, qa_buffer *, qa_error *);
 void qa_q2_save_server_dispose(qa_q2_save_server *);
 bool qa_q2_save_server_read(qa_fs_root *, const char *, qa_q2_save_server *, qa_error *);
 /* A new-level autosave may have no per-map files. Every admitted level has

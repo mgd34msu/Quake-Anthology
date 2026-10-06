@@ -746,7 +746,7 @@ bool application_campaign_fields(qa_source_save_io *io, qa_application *app, boo
             if (!level) ok=application_fail(io->error,reading?QA_ERROR_MEMORY:QA_ERROR_FORMAT,
                 "Campaign original Q2 LEVEL owner is unavailable");
             if (ok) ok=qa_source_save_bytes(io,level->name,sizeof(level->name)) &&
-                qa_q2_save_configstrings_io(io,level);
+                qa_q2_save_configstrings_io(io,level) && qa_source_save_u16(io,&level->portal_count);
             size_t portals=0, cursor=0;
             if (ok && !reading)
                 for (size_t j=0;j<QA_Q2_SAVE_AREA_PORTALS;++j)
