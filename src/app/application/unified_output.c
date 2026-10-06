@@ -9,6 +9,7 @@
 #include "qa/unified_frame_player.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/application_network.h"
+#include "qa/application_selected_effects.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q2_wire.h"
 #include <stdio.h>
@@ -222,6 +223,14 @@ bool application_unified_output_world(qa_application *app, const application_uni
     qa_unified_world_frame *v = qa_unified_world_frame_create(pool, error);
     if (!v) return false;
     v->source = source->frame;
+    qa_application_selected_effects clock;
+    if (!qa_application_effects_producer_read(app,source->owner,&clock,error)) {
+        qa_unified_world_frame_destroy(v);return false;
+    }
+    v->presentation_seconds=clock.kind==QA_APPLICATION_EFFECTS_Q3 ? (double)clock.q3_time_ms/1000.0 :
+        (double)clock.source_time_ns/1000000000.0;
+    if (source->family==QA_GAME_Q1 && clock.launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD)
+        v->presentation_seconds=(float)v->presentation_seconds;
     v->actors = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->actors), error) : NULL;
     v->bodies = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->bodies), error) : NULL;
     v->collisions = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->collisions), error) : NULL;

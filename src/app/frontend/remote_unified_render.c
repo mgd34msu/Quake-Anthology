@@ -228,7 +228,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     const qa_unified_frame *received=qa_unified_document_frame(frame);
     bool okay=received && received->world && received->player && received->visuals && qa_unified_document_retain(frame,&r->frame,e);
     if (!okay) { free(r); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified renderer requires its actual typed world/player/visual frame"); }
-    r->seconds=(double)received->world->source.time_ns/1e9;
+    r->seconds=received->world->presentation_seconds;
     if (r->seconds*1e9>=18446744073709551616.0) okay=frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received clock exceeds renderer time storage");
     if (okay && received->world->area_bits.size) {
         r->area_bits.data=malloc(received->world->area_bits.size);
@@ -546,7 +546,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     if(okay && children && children->status_replacement)
         okay=children->status_replacement(children->context,&source_status,e);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=(uint64_t)(r->seconds*1e9),.viewport=view.viewport,.safe_area=output,.scale=1,.visible=true,
+        .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=1,.visible=true,
         .source_status_native=source_status},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);

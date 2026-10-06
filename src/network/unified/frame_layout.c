@@ -859,6 +859,7 @@ static const qa_unified_record_layout qa_clock_config_layout = QA_UNIFIED_LAYOUT
 
 static const qa_unified_field qa_unified_world_frame_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_world_frame, source, qa_source_frame_layout),
+    QA_UNIFIED_FIELD(qa_unified_world_frame, presentation_seconds, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, collisions, collision_count, qa_spatial_actor_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, actors, actor_count, qa_unified_actor_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, bodies, body_count, qa_unified_body_state_layout, 65536),

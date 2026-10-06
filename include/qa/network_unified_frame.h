@@ -50,6 +50,7 @@ typedef struct qa_unified_world_frame {
     qa_unified_frame_lease *lease;
     size_t references;
     qa_source_frame source;
+    double presentation_seconds;
     qa_unified_actor_state *actors;
     size_t actor_count;
     qa_unified_body_state *bodies;
