@@ -1,0 +1,1418 @@
+{
+  "artifact": "qfiles/qa-c",
+  "shipped_commit": "fe1c0a0767c8aa9d2060c5487bab0634cfee549a",
+  "artifact_bytes": 137704144,
+  "source_fixes": [
+    "3f6bfe23",
+    "79b43a30",
+    "9c9e841b",
+    "59c89987",
+    "9fa7449c",
+    "1c57954a"
+  ],
+  "status": {
+    "MIKE-13": "fixed for the bounded base1 aim, sound, interpolation and pacing checks",
+    "MIKE-14": "audio, aim and 25ms Source cadence fixed; CPU smoothness remains open"
+  },
+  "live_runs": [
+    {
+      "receipt": "actual-q2-classic-baseq2-cpu-nh5go4_j",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "purpose": "fire",
+      "app_exit": 0,
+      "gdb_inferior_mutations": false,
+      "source_interval_ns": 100000000,
+      "observed_source_samples": 31,
+      "intermediate_client_frames": 30,
+      "weapon_projections": [
+        {
+          "phase": "fire-blaster",
+          "actor": [
+            1,
+            388,
+            0
+          ],
+          "rerelease": false,
+          "hand": 2,
+          "angles": [
+            0.0,
+            133.41796875,
+            0.0
+          ],
+          "offset": [
+            24.0,
+            8.0,
+            -8.0
+          ],
+          "input_angles": [
+            0.0,
+            133.41796875,
+            0.0
+          ],
+          "eye": [
+            12.0,
+            -197.625,
+            46.125
+          ],
+          "success": true,
+          "muzzle": [
+            -4.495567321777344,
+            -180.1923828125,
+            38.125
+          ],
+          "direction": [
+            -0.6873152852058411,
+            0.7263591885566711,
+            -0.0
+          ],
+          "muzzle_error": 2.676334872422963e-06,
+          "direction_error": 6.497167099448575e-08,
+          "previous_render_dot": 0.9999999860391441
+        },
+        {
+          "phase": "fire-blaster",
+          "actor": [
+            1,
+            388,
+            0
+          ],
+          "rerelease": false,
+          "hand": 2,
+          "angles": [
+            0.0,
+            133.41796875,
+            0.0
+          ],
+          "offset": [
+            24.0,
+            8.0,
+            -8.0
+          ],
+          "input_angles": [
+            0.0,
+            133.41796875,
+            0.0
+          ],
+          "eye": [
+            12.0,
+            -197.625,
+            46.125
+          ],
+          "success": true,
+          "muzzle": [
+            -4.495567321777344,
+            -180.1923828125,
+            38.125
+          ],
+          "direction": [
+            -0.6873152852058411,
+            0.7263591885566711,
+            -0.0
+          ],
+          "muzzle_error": 2.676334872422963e-06,
+          "direction_error": 6.497167099448575e-08,
+          "previous_render_dot": 0.9998476932910241
+        }
+      ],
+      "voices": [
+        {
+          "name": "sound/weapons/blastf1a.wav",
+          "voice": 8,
+          "actor": 1,
+          "owner": 1,
+          "channel": 1,
+          "volume": 1.0,
+          "output_frame": 252116,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            12.0,
+            -197.625,
+            24.125
+          ],
+          "phase": "fire-blaster"
+        },
+        {
+          "name": "sound/weapons/blastf1a.wav",
+          "voice": 9,
+          "actor": 1,
+          "owner": 1,
+          "channel": 1,
+          "volume": 1.0,
+          "output_frame": 274376,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            12.0,
+            -197.625,
+            24.125
+          ],
+          "phase": "fire-blaster"
+        }
+      ],
+      "accepted_nonzero_pcm_queues": 39,
+      "positive_loops": []
+    },
+    {
+      "receipt": "actual-q2-rerelease-baseq2-gl-qyy8zrlg",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "purpose": "fire",
+      "app_exit": 0,
+      "gdb_inferior_mutations": false,
+      "source_interval_ns": 25000000,
+      "observed_source_samples": 31,
+      "intermediate_client_frames": 8,
+      "weapon_projections": [
+        {
+          "phase": "fire-blaster",
+          "actor": [
+            1,
+            535,
+            0
+          ],
+          "rerelease": true,
+          "hand": 0,
+          "angles": [
+            0.0,
+            133.41600036621094,
+            0.0
+          ],
+          "offset": [
+            24.0,
+            8.0,
+            -8.0
+          ],
+          "input_angles": [
+            0.0,
+            133.41600036621094,
+            0.0
+          ],
+          "eye": [
+            -38.808135986328125,
+            -143.70394897460938,
+            46.03125
+          ],
+          "eye_trace": {
+            "end": [
+              -114.1930160522461,
+              -64.03125,
+              46.03125
+            ],
+            "fraction": 0.013389181345701218,
+            "contents": 134217729,
+            "start_solid": false
+          },
+          "success": true,
+          "muzzle": [
+            -49.492042541503906,
+            -120.7724380493164,
+            38.03125
+          ],
+          "direction": [
+            -0.7486123442649841,
+            0.6565148830413818,
+            0.0925627276301384
+          ],
+          "muzzle_error": 1.5351506105035644e-06,
+          "direction_error": 5.916159158682403e-08,
+          "previous_render_dot": 1.0000000069204478
+        },
+        {
+          "phase": "fire-blaster",
+          "actor": [
+            1,
+            535,
+            0
+          ],
+          "rerelease": true,
+          "hand": 0,
+          "angles": [
+            0.0,
+            133.41600036621094,
+            0.0
+          ],
+          "offset": [
+            24.0,
+            8.0,
+            -8.0
+          ],
+          "input_angles": [
+            0.0,
+            133.41600036621094,
+            0.0
+          ],
+          "eye": [
+            -38.808135986328125,
+            -143.70394897460938,
+            46.03125
+          ],
+          "eye_trace": {
+            "end": [
+              -114.1930160522461,
+              -64.03125,
+              46.03125
+            ],
+            "fraction": 0.013389181345701218,
+            "contents": 134217729,
+            "start_solid": false
+          },
+          "success": true,
+          "muzzle": [
+            -49.492042541503906,
+            -120.7724380493164,
+            38.03125
+          ],
+          "direction": [
+            -0.7486123442649841,
+            0.6565148830413818,
+            0.0925627276301384
+          ],
+          "muzzle_error": 1.5351506105035644e-06,
+          "direction_error": 5.916159158682403e-08,
+          "previous_render_dot": 0.9998477141720683
+        }
+      ],
+      "voices": [
+        {
+          "name": "sound/weapons/blastf1a.wav",
+          "voice": 9,
+          "actor": 1,
+          "owner": 1,
+          "channel": 1,
+          "volume": 1.0,
+          "output_frame": 376859,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            -38.808135986328125,
+            -143.70394897460938,
+            24.03125
+          ],
+          "phase": "fire-blaster"
+        },
+        {
+          "name": "sound/weapons/blastf1a.wav",
+          "voice": 11,
+          "actor": 1,
+          "owner": 1,
+          "channel": 1,
+          "volume": 1.0,
+          "output_frame": 418749,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            -38.808135986328125,
+            -143.70394897460938,
+            24.03125
+          ],
+          "phase": "fire-blaster"
+        }
+      ],
+      "accepted_nonzero_pcm_queues": 56,
+      "positive_loops": []
+    },
+    {
+      "receipt": "actual-q2-classic-baseq2-gl-mnexp3ku",
+      "product": "q2-classic-baseq2",
+      "renderer": "gl",
+      "purpose": "pickup and door",
+      "app_exit": 0,
+      "gdb_inferior_mutations": false,
+      "source_interval_ns": 100000000,
+      "observed_source_samples": 52,
+      "intermediate_client_frames": 48,
+      "weapon_projections": [],
+      "voices": [
+        {
+          "name": "sound/misc/w_pkup.wav",
+          "voice": 8,
+          "actor": 1,
+          "owner": 1,
+          "channel": 3,
+          "volume": 1.0,
+          "output_frame": 297978,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            195.75,
+            45.25,
+            15.875
+          ],
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_strt.wav",
+          "voice": 20,
+          "actor": 80,
+          "owner": 1,
+          "channel": 2,
+          "volume": 1.0,
+          "output_frame": 871713,
+          "gain_left": 106.0,
+          "gain_right": 107.0,
+          "origin_kind": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_end.wav",
+          "voice": 25,
+          "actor": 80,
+          "owner": 1,
+          "channel": 2,
+          "volume": 1.0,
+          "output_frame": 1025782,
+          "gain_left": 48.0,
+          "gain_right": 48.0,
+          "origin_kind": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            148.0
+          ],
+          "phase": "door-walk"
+        }
+      ],
+      "accepted_nonzero_pcm_queues": 436,
+      "positive_loops": [
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "listener": [
+            -1025.625,
+            1532.125,
+            37.125
+          ],
+          "gain_left": 65.0,
+          "gain_right": 66.0,
+          "frame": 336,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "listener": [
+            -1045.25,
+            1554.625,
+            37.125
+          ],
+          "gain_left": 99.0,
+          "gain_right": 100.0,
+          "frame": 337,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            16.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            26.0
+          ],
+          "listener": [
+            -1064.75,
+            1577.0,
+            37.125
+          ],
+          "gain_left": 126.0,
+          "gain_right": 128.0,
+          "frame": 337,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            26.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            26.0
+          ],
+          "listener": [
+            -1064.75,
+            1577.0,
+            37.125
+          ],
+          "gain_left": 126.0,
+          "gain_right": 128.0,
+          "frame": 338,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            36.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            36.0
+          ],
+          "listener": [
+            -1107.25,
+            1625.75,
+            37.125
+          ],
+          "gain_left": 118.0,
+          "gain_right": 136.0,
+          "frame": 339,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            46.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            46.0
+          ],
+          "listener": [
+            -1133.625,
+            1656.0,
+            37.125
+          ],
+          "gain_left": 125.0,
+          "gain_right": 129.0,
+          "frame": 340,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            56.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            56.0
+          ],
+          "listener": [
+            -1155.875,
+            1681.5,
+            37.125
+          ],
+          "gain_left": 126.0,
+          "gain_right": 128.0,
+          "frame": 341,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            66.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            66.0
+          ],
+          "listener": [
+            -1186.25,
+            1716.25,
+            37.125
+          ],
+          "gain_left": 85.0,
+          "gain_right": 86.0,
+          "frame": 342,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 80,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1632.0,
+            76.0
+          ],
+          "spatial_origin": [
+            -1112.0,
+            1632.0,
+            76.0
+          ],
+          "listener": [
+            -1220.875,
+            1756.0,
+            37.125
+          ],
+          "gain_left": 24.0,
+          "gain_right": 24.0,
+          "frame": 343,
+          "phase": "door-walk"
+        }
+      ]
+    },
+    {
+      "receipt": "actual-q2-rerelease-baseq2-gl-_5l28j78",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "purpose": "pickup and door",
+      "app_exit": 0,
+      "gdb_inferior_mutations": false,
+      "source_interval_ns": 25000000,
+      "observed_source_samples": 40,
+      "intermediate_client_frames": 8,
+      "weapon_projections": [],
+      "voices": [
+        {
+          "name": "sound/misc/w_pkup.wav",
+          "voice": 8,
+          "actor": 1,
+          "owner": 1,
+          "channel": 3,
+          "volume": 1.0,
+          "output_frame": 255190,
+          "gain_left": 255.0,
+          "gain_right": 255.0,
+          "origin_kind": 0,
+          "origin": [
+            194.57156372070312,
+            34.42176055908203,
+            16.55290985107422
+          ],
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_strt.wav",
+          "voice": 13,
+          "actor": 72,
+          "owner": 1,
+          "channel": 2,
+          "volume": 1.0,
+          "output_frame": 654484,
+          "gain_left": 112.0,
+          "gain_right": 111.0,
+          "origin_kind": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            16.0
+          ],
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_end.wav",
+          "voice": 17,
+          "actor": 72,
+          "owner": 1,
+          "channel": 2,
+          "volume": 1.0,
+          "output_frame": 796698,
+          "gain_left": 101.0,
+          "gain_right": 100.0,
+          "origin_kind": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            138.0
+          ],
+          "phase": "door-wait"
+        }
+      ],
+      "accepted_nonzero_pcm_queues": 285,
+      "positive_loops": [
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            16.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1037.2689208984375,
+            1572.405029296875,
+            38.517982482910156
+          ],
+          "gain_left": 201.0,
+          "gain_right": 53.0,
+          "frame": 249,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            16.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 250,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            18.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 251,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            21.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 252,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            23.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 253,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            26.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 254,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            28.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 255,
+          "phase": "door-walk"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            31.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 256,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            33.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 257,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            36.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 258,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            38.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 259,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            41.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 260,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            43.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 261,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            46.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 262,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            48.5
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 263,
+          "phase": "door-wait"
+        },
+        {
+          "name": "sound/doors/dr1_mid.wav",
+          "actor": 72,
+          "owner": 1,
+          "origin": [
+            -1112.0,
+            1664.0,
+            51.0
+          ],
+          "spatial_origin": [
+            -1103.0,
+            1591.0,
+            38.517982482910156
+          ],
+          "listener": [
+            -1041.3197021484375,
+            1577.4559326171875,
+            38.517982482910156
+          ],
+          "gain_left": 207.0,
+          "gain_right": 47.0,
+          "frame": 264,
+          "phase": "door-wait"
+        }
+      ]
+    }
+  ],
+  "clean_pacing": [
+    {
+      "receipt": "clean-presentation-5fyey83y",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "workload": "idle",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 219,
+      "interval_ms": {
+        "median": 9.0950445,
+        "p95": 10.988037,
+        "max": 19.472527
+      },
+      "process_cpu_ms": {
+        "median": 27.897084,
+        "p95": 30.018905,
+        "max": 30.951165
+      },
+      "present_ms": {
+        "median": 0.067112,
+        "p95": 0.089202,
+        "max": 0.132543
+      },
+      "input_window": null,
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "cpu",
+          "renderer": "SDL window surface",
+          "swap_interval": 0
+        }
+      ]
+    },
+    {
+      "receipt": "clean-presentation-5fyey83y",
+      "product": "q2-classic-baseq2",
+      "renderer": "gl",
+      "workload": "idle",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 219,
+      "interval_ms": {
+        "median": 8.976031500000001,
+        "p95": 10.460985,
+        "max": 15.742943
+      },
+      "process_cpu_ms": {
+        "median": 7.9003995,
+        "p95": 9.310645,
+        "max": 10.834695
+      },
+      "present_ms": {
+        "median": 1.7388184999999998,
+        "p95": 2.282782,
+        "max": 2.467665
+      },
+      "input_window": null,
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "gl",
+          "renderer": "NVIDIA GeForce RTX 5060 Ti/PCIe/SSE2",
+          "swap_interval": 1
+        }
+      ]
+    },
+    {
+      "receipt": "clean-presentation-5fyey83y",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "cpu",
+      "workload": "idle",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 219,
+      "interval_ms": {
+        "median": 46.6147005,
+        "p95": 56.752114,
+        "max": 69.816716
+      },
+      "process_cpu_ms": {
+        "median": 81.0070475,
+        "p95": 86.983323,
+        "max": 92.253545
+      },
+      "present_ms": {
+        "median": 0.118092,
+        "p95": 0.226015,
+        "max": 1.687138
+      },
+      "input_window": null,
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "cpu",
+          "renderer": "SDL window surface",
+          "swap_interval": 0
+        }
+      ]
+    },
+    {
+      "receipt": "clean-presentation-5fyey83y",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "workload": "idle",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 219,
+      "interval_ms": {
+        "median": 17.113224000000002,
+        "p95": 19.965098,
+        "max": 31.283801
+      },
+      "process_cpu_ms": {
+        "median": 15.9734845,
+        "p95": 18.38509,
+        "max": 23.883082
+      },
+      "present_ms": {
+        "median": 1.877017,
+        "p95": 2.184709,
+        "max": 2.66162
+      },
+      "input_window": null,
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "gl",
+          "renderer": "NVIDIA GeForce RTX 5060 Ti/PCIe/SSE2",
+          "swap_interval": 1
+        }
+      ]
+    },
+    {
+      "receipt": "clean-moving-presentation-j8bz_sww",
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "workload": "walk, release and mouse",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 299,
+      "interval_ms": {
+        "median": 7.9842735000000005,
+        "p95": 10.050305,
+        "max": 23.083987
+      },
+      "process_cpu_ms": {
+        "median": 27.074354,
+        "p95": 29.226655,
+        "max": 34.497895
+      },
+      "present_ms": {
+        "median": 0.046146,
+        "p95": 0.079282,
+        "max": 0.204245
+      },
+      "input_window": {
+        "warmup_excluded": 243,
+        "measured_frames": 200,
+        "begin_sequence": 244,
+        "end_sequence": 443,
+        "interval_ms": {
+          "median": 8.068401,
+          "p95": 10.128706,
+          "max": 21.289286
+        },
+        "process_cpu_ms": {
+          "median": 26.827799,
+          "p95": 28.832155,
+          "max": 30.369476
+        },
+        "present_ms": {
+          "median": 0.049066,
+          "p95": 0.068241,
+          "max": 0.092393
+        }
+      },
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "cpu",
+          "renderer": "SDL window surface",
+          "swap_interval": 0
+        }
+      ]
+    },
+    {
+      "receipt": "clean-moving-presentation-j8bz_sww",
+      "product": "q2-classic-baseq2",
+      "renderer": "gl",
+      "workload": "walk, release and mouse",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 299,
+      "interval_ms": {
+        "median": 9.9910635,
+        "p95": 11.760003,
+        "max": 53.499557
+      },
+      "process_cpu_ms": {
+        "median": 8.9005555,
+        "p95": 10.627135,
+        "max": 12.918667
+      },
+      "present_ms": {
+        "median": 1.7140035,
+        "p95": 1.846781,
+        "max": 2.179289
+      },
+      "input_window": {
+        "warmup_excluded": 242,
+        "measured_frames": 200,
+        "begin_sequence": 243,
+        "end_sequence": 442,
+        "interval_ms": {
+          "median": 9.790389000000001,
+          "p95": 11.742283,
+          "max": 304.97768
+        },
+        "process_cpu_ms": {
+          "median": 8.685889,
+          "p95": 10.532755,
+          "max": 12.918667
+        },
+        "present_ms": {
+          "median": 1.713173,
+          "p95": 1.874822,
+          "max": 2.340283
+        }
+      },
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "gl",
+          "renderer": "NVIDIA GeForce RTX 5060 Ti/PCIe/SSE2",
+          "swap_interval": 1
+        }
+      ]
+    },
+    {
+      "receipt": "clean-moving-presentation-j8bz_sww",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "cpu",
+      "workload": "walk, release and mouse",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 299,
+      "interval_ms": {
+        "median": 27.141792000000002,
+        "p95": 33.311294,
+        "max": 44.152307
+      },
+      "process_cpu_ms": {
+        "median": 47.6227305,
+        "p95": 52.935987,
+        "max": 62.817399
+      },
+      "present_ms": {
+        "median": 0.08499699999999999,
+        "p95": 0.128523,
+        "max": 0.365738
+      },
+      "input_window": {
+        "warmup_excluded": 234,
+        "measured_frames": 200,
+        "begin_sequence": 235,
+        "end_sequence": 434,
+        "interval_ms": {
+          "median": 26.975977999999998,
+          "p95": 33.700663,
+          "max": 44.152307
+        },
+        "process_cpu_ms": {
+          "median": 47.5918755,
+          "p95": 65.44541,
+          "max": 67.673395
+        },
+        "present_ms": {
+          "median": 0.087672,
+          "p95": 0.128523,
+          "max": 0.365738
+        }
+      },
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "cpu",
+          "renderer": "SDL window surface",
+          "swap_interval": 0
+        }
+      ]
+    },
+    {
+      "receipt": "clean-moving-presentation-j8bz_sww",
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "workload": "walk, release and mouse",
+      "app_exit": 0,
+      "measured_frames": 200,
+      "warmup_excluded": 299,
+      "interval_ms": {
+        "median": 14.5202845,
+        "p95": 16.382917,
+        "max": 27.187648
+      },
+      "process_cpu_ms": {
+        "median": 13.3629675,
+        "p95": 15.148688,
+        "max": 17.508619
+      },
+      "present_ms": {
+        "median": 1.671777,
+        "p95": 1.78652,
+        "max": 2.004225
+      },
+      "input_window": {
+        "warmup_excluded": 238,
+        "measured_frames": 200,
+        "begin_sequence": 239,
+        "end_sequence": 438,
+        "interval_ms": {
+          "median": 14.7504045,
+          "p95": 16.777795,
+          "max": 27.187648
+        },
+        "process_cpu_ms": {
+          "median": 13.5951815,
+          "p95": 15.412289,
+          "max": 17.508619
+        },
+        "present_ms": {
+          "median": 1.6787969999999999,
+          "p95": 1.801121,
+          "max": 2.23579
+        }
+      },
+      "renderer_metadata": [
+        {
+          "metadata": true,
+          "kind": "gl",
+          "renderer": "NVIDIA GeForce RTX 5060 Ti/PCIe/SSE2",
+          "swap_interval": 1
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Actual executable, installed retail base1, private X11 displays and genuine mapped-window input.",
+    "Read-only debugger observations prove Source/mixer behavior, not performance. Dummy SDL PCM proves decoding, mixing and device acceptance, not physical speakers.",
+    "Fire and movement use ordinary gameplay; pickup/door checks use public cheats/noclip only to reach authored entities.",
+    "Timing runs are serial, without debugger or concurrent games/builds, at320x200 with default audio. Wall intervals include the entire game loop and scheduling; CPU time includes raster workers. Tiny presentation logger adds overhead.",
+    "Classic installed config sets hand2; rerelease sets hand0. Edition timings are not a one-variable benchmark.",
+    "All200-frame windows and maxima retained, including a304.98ms classic GL wall-time outlier with no corresponding CPU/presentation spike. No cause attributed.",
+    "Private evidence archive holds raw clock samples, commands and screenshots; no asset bytes are included here. No campaign-wide or current user-machine readiness claim."
+  ]
+}
