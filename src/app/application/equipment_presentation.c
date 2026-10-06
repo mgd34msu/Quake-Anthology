@@ -12,6 +12,7 @@
 #include "equipment_gear_presentation.h"
 #include "guest_q3_components.h"
 #include "qa/application_equipment.h"
+#include "qa/native_host_q2_wire.h"
 #include "qa/qc_weapon_visual.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -270,12 +271,9 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
         if (binding.kind == QA_NATIVE_SLOT_FREE || binding.owner != source->owner ||
             binding.source_slot != slot || !qa_actor_id_equal(binding.actor, actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Gear visibility changed its primary Q2 binding");
-        qa_buffer player = {0};
-        bool ok = qa_native_host_q2_player_state(source->state.native.host, slot, &player, error);
-        if (ok && player.size != (classic ? 184u : 296u))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Gear visibility changed its primary Q2 player extent");
-        if (ok) *visible = (int16_t)qa_load_u16le(player.data + (classic ? 122u : 168u)) > 0;
-        qa_buffer_free(&player);
+        qa_q2_player player;
+        bool ok = qa_native_host_q2_player(source->state.native.host, slot, &player, error);
+        if (ok) *visible = player.stats[1] > 0;
         return ok;
     }
     qa_actor_id health_actor = actor;

@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat_state.h"
 #include "qa/game_q2.h"
+#include "qa/native_host_q2_wire.h"
 #include <math.h>
 
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
@@ -495,9 +496,9 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
             if (p->team != UINT32_MAX) {
                 if (!integer_read(p, client + p->team, 4, &team, error)) return false;
             } else {
-                qa_buffer player = {0};
-                if (!qa_native_host_q2_player_state(p->engine->provider->state.native.host, a->slot, &player, error)) return false;
-                team = player.data[294]; qa_buffer_free(&player);
+                qa_q2_player player;
+                if (!qa_native_host_q2_player(p->engine->provider->state.native.host, a->slot, &player, error)) return false;
+                team = player.team_id;
             }
             if (team > 0) {
                 char text[48]; snprintf(text, sizeof(text), "q2:%lld", (long long)team);

@@ -392,49 +392,6 @@ bool qa_native_host_q2_character_frame(qa_native_host *host, uint32_t slot,
     *out = (double)qa_load_i32le(frame); return true;
 }
 
-static void classic_player(const uint8_t *bytes, qa_q2_player *state)
-{
-    state->pmove.type = qa_load_i32le(bytes);
-    for (size_t i = 0; i < 3; ++i) {
-        state->pmove.origin[i] = (int16_t)qa_load_u16le(bytes + 4 + i * 2);
-        state->pmove.velocity[i] = (int16_t)qa_load_u16le(bytes + 10 + i * 2);
-        state->pmove.origin_f[i] = (float)state->pmove.origin[i] * .125f;
-        state->pmove.velocity_f[i] = (float)state->pmove.velocity[i] * .125f;
-        state->pmove.delta_angles[i] = (int16_t)qa_load_u16le(bytes + 20 + i * 2);
-    }
-    state->pmove.flags = bytes[16]; state->pmove.time = bytes[17];
-    state->pmove.gravity = (int16_t)qa_load_u16le(bytes + 18);
-    vector(bytes + 28, state->viewangles); vector(bytes + 40, state->viewoffset);
-    vector(bytes + 52, state->kick_angles); vector(bytes + 64, state->gunangles);
-    vector(bytes + 76, state->gunoffset);
-    state->gunindex = qa_load_u32le(bytes + 88); state->gunframe = qa_load_u32le(bytes + 92);
-    for (size_t i = 0; i < 4; ++i) state->blend[i] = qa_load_f32le(bytes + 96 + i * 4);
-    state->fov = qa_load_f32le(bytes + 112); state->rdflags = qa_load_u32le(bytes + 116);
-    for (size_t i = 0; i < 32; ++i) state->stats[i] = (int16_t)qa_load_u16le(bytes + 120 + i * 2);
-}
-
-static void rerelease_player(const uint8_t *bytes, qa_q2_player *state)
-{
-    state->pmove.type = qa_load_i32le(bytes);
-    vector(bytes + 4, state->pmove.origin_f); vector(bytes + 16, state->pmove.velocity_f);
-    state->pmove.flags = qa_load_u16le(bytes + 28); state->pmove.time = qa_load_u16le(bytes + 30);
-    state->pmove.gravity = (int16_t)qa_load_u16le(bytes + 32);
-    vector(bytes + 36, state->pmove.delta_angles_f); state->pmove.float_delta_angles = true;
-    state->pmove.viewheight = (int8_t)bytes[48];
-    vector(bytes + 52, state->viewangles); vector(bytes + 64, state->viewoffset);
-    vector(bytes + 76, state->kick_angles); vector(bytes + 88, state->gunangles);
-    vector(bytes + 100, state->gunoffset);
-    state->gunindex = qa_load_u32le(bytes + 112); state->gunskin = qa_load_u32le(bytes + 116);
-    state->gunframe = qa_load_u32le(bytes + 120); state->gunrate = qa_load_u32le(bytes + 124);
-    for (size_t i = 0; i < 4; ++i) {
-        state->blend[i] = qa_load_f32le(bytes + 128 + i * 4);
-        state->damage_blend[i] = qa_load_f32le(bytes + 144 + i * 4);
-    }
-    state->fov = qa_load_f32le(bytes + 160); state->rdflags = bytes[164];
-    for (size_t i = 0; i < 64; ++i) state->stats[i] = (int16_t)qa_load_u16le(bytes + 166 + i * 2);
-    state->team_id = bytes[294];
-}
-
 static bool player_finite(const qa_q2_player *state, bool classic)
 {
     const float *vectors[] = {state->pmove.origin_f, state->pmove.velocity_f,
@@ -459,12 +416,8 @@ bool qa_native_host_q2_wire_player(qa_native_host *host, uint32_t slot,
     if (before.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(before.actor, actor))
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 player state has no matching physical client actor");
-    qa_buffer bytes = {0};
-    if (!qa_native_host_q2_player_state(host, slot, &bytes, error)) return false;
-    qa_q2_player value = {.clientnum = (int32_t)(slot - 1)};
-    if (host->profile == QA_NATIVE_Q2_GAME_API3) classic_player(bytes.data, &value);
-    else rerelease_player(bytes.data, &value);
-    qa_buffer_free(&bytes);
+    qa_q2_player value;
+    if (!qa_native_host_q2_player(host, slot, &value, error)) return false;
     if (!player_finite(&value, host->profile == QA_NATIVE_Q2_GAME_API3))
         return native_host_fail(error, QA_ERROR_FORMAT, slot, "Q2 public player contains invalid Source wire fields");
     if (!table_current(host, &table, Q2_OBSERVE_IDLE, error) || !binding_current(host, slot, &after, error)) return false;

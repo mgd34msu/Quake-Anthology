@@ -7,6 +7,7 @@
 #include "qa/application_save_policy.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
+#include "qa/native_host_q2_wire.h"
 #include <stdlib.h>
 
 static bool stock_provider(const qa_catalog *catalog,const qa_launch_provider *selection,
@@ -111,16 +112,13 @@ static bool native_q2_player(application_provider *source,qa_actor_id actor,floa
     bool classic=engine->profile==QA_NATIVE_Q2_GAME_API3;
     if(!classic && engine->profile!=QA_NATIVE_Q2_GAME_API2023)
         return application_fail(error,QA_ERROR_ARGUMENT,"Save policy requires the actual original Q2 GAME profile");
-    qa_buffer player={0};
-    bool okay=qa_native_host_q2_player_state(source->state.native.host,slot,&player,error);
-    if(okay && player.size!=(classic?184u:296u))
-        okay=application_fail(error,QA_ERROR_FORMAT,"Save policy original Q2 player-state extent changed");
+    qa_q2_player player;
+    bool okay=qa_native_host_q2_player(source->state.native.host,slot,&player,error);
     if(okay) {
-        /* Public API3/API2023 player_state_t; STAT_HEALTH is index 1. */
-        *health=(float)(int16_t)qa_load_u16le(player.data+(classic?122u:168u));
-        *intermission=*intermission || (classic?qa_load_i32le(player.data)==4:player.data[0]==6);
+        *health=(float)player.stats[1];
+        *intermission=*intermission || player.pmove.type==(classic?4:6);
     }
-    qa_buffer_free(&player);return okay;
+    return okay;
 }
 static bool control_intermission(const qa_application *app,qa_actor_id actor)
 {

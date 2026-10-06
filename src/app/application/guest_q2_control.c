@@ -2,6 +2,7 @@
 #include "guest_q2_control.h"
 #include "guest_native_q2_input.h"
 #include "qa/native_observe.h"
+#include "qa/native_host_q2_wire.h"
 #include <limits.h>
 
 /* API2023 x64 public pmove_t and trace_t, from rerelease/game.h and
@@ -101,16 +102,14 @@ static bool active_outputs(const control_client *client, application_client_outp
     if (!qa_combat_read_traits(app->combat, client->actor, &combat, error) ||
         !client_live(client, error)) return false;
     if (combat.health <= 0) { *out = (application_client_outputs){0}; return true; }
-    qa_buffer player = {0};
-    bool ok = qa_native_host_q2_player_state(client->host, client->slot, &player, error) &&
+    qa_q2_player player;
+    bool ok = qa_native_host_q2_player(client->host, client->slot, &player, error) &&
         client_live(client, error);
-    if (ok && player.size != (client->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 184u : 296u))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Native client outputs lost the public player-state extent");
     if (ok) {
         int32_t intermission = client->engine->profile == QA_NATIVE_Q2_GAME_API3 ? 4 : 6;
-        *out = qa_load_i32le(player.data) == intermission ? (application_client_outputs){0} : values;
+        *out = player.pmove.type == intermission ? (application_client_outputs){0} : values;
     }
-    qa_buffer_free(&player); return ok;
+    return ok;
 }
 
 bool application_q2_control_outputs(struct application_native_q2 *engine, qa_actor_id actor,
@@ -134,14 +133,10 @@ bool application_q2_control_crouched(struct application_native_q2 *engine, qa_ac
     control_client client;
     if (!client_for(engine, actor, &client, error)) return false;
     ++engine->calls;
-    qa_buffer player = {0};
-    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
-    bool ok = qa_native_host_q2_player_state(client.host, client.slot, &player, error) &&
+    qa_q2_player player;
+    bool ok = qa_native_host_q2_player(client.host, client.slot, &player, error) &&
         client_live(&client, error);
-    if (ok && player.size != (classic ? 184u : 296u))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Native crouch lost its public player-state extent");
-    if (ok) *out = ((classic ? player.data[16] : qa_load_u16le(player.data + RR_PM_FLAGS)) & 1u) != 0;
-    qa_buffer_free(&player);
+    if (ok) *out = ((uint32_t)player.pmove.flags & 1u) != 0;
     --engine->calls;
     return ok;
 }

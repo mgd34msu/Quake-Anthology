@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_equipment.h"
+#include "qa/native_host_q2_wire.h"
 
 static bool admitted(application_provider *provider, qa_actor_id actor)
 {
@@ -27,11 +28,6 @@ static bool admitted(application_provider *provider, qa_actor_id actor)
         application_native_q2_idle(provider);
 }
 
-static qa_vec3 vector(const uint8_t *bytes)
-{
-    return qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
-}
-
 bool application_q2_guest_equipment_read(application_provider *provider, qa_actor_id actor,
     qa_application_native_q2_equipment_view *out, qa_error *error)
 {
@@ -56,27 +52,22 @@ bool application_q2_guest_equipment_read(application_provider *provider, qa_acto
         .profile = engine->profile, .source_slot = slot};
     if (!application_native_q2_whole_source(engine, actor) &&
         !application_native_q2_attack_weapon_read(engine, slot, actor, &view.item, error)) return false;
-    qa_buffer player = {0};
-    if (!qa_native_host_q2_player_state(provider->state.native.host, slot, &player, error)) return false;
+    qa_q2_player player;
+    if (!qa_native_host_q2_player(provider->state.native.host, slot, &player, error)) return false;
     bool rerelease = engine->profile == QA_NATIVE_Q2_GAME_API2023;
-    bool okay = player.size == (rerelease ? 296u : 184u);
-    if (okay) {
-        const uint8_t *bytes = player.data;
-        view.view_kick_angles = vector(bytes + (rerelease ? 76u : 52u));
-        view.gun_angles = vector(bytes + (rerelease ? 88u : 64u));
-        view.gun_offset = vector(bytes + (rerelease ? 100u : 76u));
-        view.gun_index = qa_load_i32le(bytes + (rerelease ? 112u : 88u));
-        view.frame = qa_load_i32le(bytes + (rerelease ? 120u : 92u));
-        if (rerelease) {
-            view.skin = qa_load_i32le(bytes + 116);
-            view.rate = qa_load_i32le(bytes + 124);
-            view.has_skin = view.has_rate = true;
-        }
-        okay = qa_vec_finite(view.view_kick_angles) && qa_vec_finite(view.gun_angles) &&
-            qa_vec_finite(view.gun_offset) && view.gun_index >= 0 &&
-            (uint32_t)view.gun_index < engine->resource_limit[QA_NATIVE_HOST_MODEL];
+    view.view_kick_angles = qa_v3(player.kick_angles[0], player.kick_angles[1], player.kick_angles[2]);
+    view.gun_angles = qa_v3(player.gunangles[0], player.gunangles[1], player.gunangles[2]);
+    view.gun_offset = qa_v3(player.gunoffset[0], player.gunoffset[1], player.gunoffset[2]);
+    view.gun_index = (int32_t)player.gunindex;
+    view.frame = (int32_t)player.gunframe;
+    if (rerelease) {
+        view.skin = (int32_t)player.gunskin;
+        view.rate = (int32_t)player.gunrate;
+        view.has_skin = view.has_rate = true;
     }
-    qa_buffer_free(&player);
+    bool okay = qa_vec_finite(view.view_kick_angles) && qa_vec_finite(view.gun_angles) &&
+        qa_vec_finite(view.gun_offset) && view.gun_index >= 0 &&
+        (uint32_t)view.gun_index < engine->resource_limit[QA_NATIVE_HOST_MODEL];
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 equipment public state is invalid");
     if (view.gun_index) {
         uint32_t index = engine->resource_base[QA_NATIVE_HOST_MODEL] + (uint32_t)view.gun_index;

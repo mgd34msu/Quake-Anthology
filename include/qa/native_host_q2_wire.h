@@ -62,6 +62,10 @@ bool qa_native_host_q2_entity_visible_completed(qa_native_host *, const qa_sourc
  * session turn. Read only its actual signed public animation frame. */
 bool qa_native_host_q2_character_frame(qa_native_host *, uint32_t source_slot,
     qa_actor_id, double *, qa_error *);
+/* Decode the current GAME public player prefix without allocation. Callers keep
+ * their own binding and callback/idle admission rules. */
+bool qa_native_host_q2_player(qa_native_host *, uint32_t source_slot,
+    qa_q2_player *, qa_error *);
 bool qa_native_host_q2_wire_player(qa_native_host *, uint32_t,
     qa_actor_id, qa_q2_player *, qa_error *);
 bool qa_native_host_q2_wire_ping(qa_native_host *, uint32_t,

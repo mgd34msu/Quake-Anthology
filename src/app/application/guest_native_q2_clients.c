@@ -7,6 +7,7 @@
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
 #include "guest_native_q2_attack.h"
+#include "qa/native_host_q2_wire.h"
 #include <math.h>
 
 static void store_float(uint8_t *data, float value)
@@ -100,6 +101,51 @@ bool application_native_q2_declared_raw_capable(const application_provider *prov
             application_native_q2_callbacks_document(engine->callbacks);
 }
 
+static qa_movement_state player_movement(const qa_q2_player *player,
+    qa_movement_kind kind, qa_vec3 origin)
+{
+    bool classic = kind == QA_MOVEMENT_Q2_CLASSIC;
+    qa_movement_state state = qa_movement_state_default(kind, origin);
+    if (classic) {
+        state.data.q2.type = player->pmove.type;
+        for (size_t i = 0; i < 3; ++i) {
+            state.data.q2.origin_eighths[i] = (int16_t)player->pmove.origin[i];
+            state.data.q2.velocity_eighths[i] = (int16_t)player->pmove.velocity[i];
+            state.data.q2.delta_angle_shorts[i] = player->pmove.delta_angles[i];
+        }
+        state.data.q2.flags = (uint32_t)player->pmove.flags;
+        state.data.q2.time_eight_ms = (uint8_t)player->pmove.time;
+        state.data.q2.gravity = (int16_t)player->pmove.gravity;
+    } else {
+        state.data.q2r.type = player->pmove.type;
+        state.data.q2r.origin = qa_v3(player->pmove.origin_f[0],player->pmove.origin_f[1],player->pmove.origin_f[2]);
+        state.data.q2r.velocity = qa_v3(player->pmove.velocity_f[0],player->pmove.velocity_f[1],player->pmove.velocity_f[2]);
+        state.data.q2r.flags = (uint16_t)player->pmove.flags;
+        state.data.q2r.time_ms = (uint16_t)player->pmove.time;
+        state.data.q2r.gravity = (int16_t)player->pmove.gravity;
+        state.data.q2r.delta_angles = qa_v3(player->pmove.delta_angles_f[0],player->pmove.delta_angles_f[1],player->pmove.delta_angles_f[2]);
+        state.data.q2r.view_height = (float)player->pmove.viewheight;
+    }
+    return state;
+}
+
+static bool player_motion_finite(uint32_t slot, const qa_movement_state *state,
+    qa_vec3 view, qa_vec3 offset, qa_error *error)
+{
+    qa_vec3 origin = qa_movement_origin(state), velocity = qa_movement_velocity(state);
+    if (qa_vec_finite(origin) && qa_vec_finite(velocity) && qa_vec_finite(view) && qa_vec_finite(offset))
+        return true;
+    char message[256];
+    snprintf(message, sizeof(message),
+        "Native Q2 nonfinite motion slot %u: o=%.9g,%.9g,%.9g v=%.9g,%.9g,%.9g "
+        "a=%.9g,%.9g,%.9g off=%.9g,%.9g,%.9g",
+        slot, (double)origin.x, (double)origin.y, (double)origin.z,
+        (double)velocity.x, (double)velocity.y, (double)velocity.z,
+        (double)view.x, (double)view.y, (double)view.z,
+        (double)offset.x, (double)offset.y, (double)offset.z);
+    return application_fail(error, QA_ERROR_FORMAT, message);
+}
+
 static bool physical_input_read(application_provider *provider, qa_actor_id actor,
     qa_q2_wire_movement *out, qa_error *error)
 {
@@ -117,65 +163,16 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     if(binding.kind==QA_NATIVE_SLOT_FREE||binding.slot!=slot||binding.source_slot!=slot||
         binding.owner!=provider->owner||!qa_actor_id_equal(binding.actor,actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical input binding differs from its full Source actor");
-    qa_q2_player player={0};
-    qa_buffer bytes={0};
-    if(!qa_native_host_q2_player_state(provider->state.native.host,slot,&bytes,error)) return false;
+    qa_q2_player player;
+    if (!qa_native_host_q2_player(provider->state.native.host, slot, &player, error)) return false;
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
-    if(bytes.size!=(classic?184u:296u)) {
-        qa_buffer_free(&bytes);
-        return application_fail(error,QA_ERROR_FORMAT,"Native input lost its actual public player-state extent");
-    }
-    const uint8_t *data=bytes.data;
-    player.pmove.type=qa_load_i32le(data);
-    if(classic) {
-        for(size_t i=0;i<3;++i) {
-            player.pmove.origin[i]=(int16_t)qa_load_u16le(data+4+i*2);
-            player.pmove.velocity[i]=(int16_t)qa_load_u16le(data+10+i*2);
-            player.pmove.delta_angles[i]=(int16_t)qa_load_u16le(data+20+i*2);
-        }
-        player.pmove.flags=data[16]; player.pmove.time=data[17]; player.pmove.gravity=(int16_t)qa_load_u16le(data+18);
-    } else {
-        for(size_t i=0;i<3;++i) {
-            player.pmove.origin_f[i]=qa_load_f32le(data+4+i*4);
-            player.pmove.velocity_f[i]=qa_load_f32le(data+16+i*4);
-            player.pmove.delta_angles_f[i]=qa_load_f32le(data+36+i*4);
-        }
-        player.pmove.flags=qa_load_u16le(data+28); player.pmove.time=qa_load_u16le(data+30);
-        player.pmove.gravity=(int16_t)qa_load_u16le(data+32); player.pmove.viewheight=(int8_t)data[48];
-    }
-    size_t angles=classic?28u:52u;
-    for(size_t i=0;i<3;++i) {
-        player.viewangles[i]=qa_load_f32le(data+angles+i*4);
-        player.viewoffset[i]=qa_load_f32le(data+angles+12+i*4);
-    }
-    qa_buffer_free(&bytes);
     qa_body_state body;
     if(!qa_world_body_read(engine->world,actor,&body,error)||!qa_native_slot(native,slot,&after,error)) return false;
     if(after.kind!=binding.kind||after.slot!=binding.slot||after.owner!=binding.owner||
         after.source_slot!=binding.source_slot||!qa_actor_id_equal(after.actor,binding.actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical player read changed its Source binding");
-    qa_movement_state state = qa_movement_state_default(classic ? QA_MOVEMENT_Q2_CLASSIC :
-        QA_MOVEMENT_Q2_RERELEASE, body.origin);
-    if (classic) {
-        state.data.q2.type = player.pmove.type;
-        for (size_t i = 0; i < 3; ++i) {
-            state.data.q2.origin_eighths[i] = (int16_t)player.pmove.origin[i];
-            state.data.q2.velocity_eighths[i] = (int16_t)player.pmove.velocity[i];
-            state.data.q2.delta_angle_shorts[i] = player.pmove.delta_angles[i];
-        }
-        state.data.q2.flags = (uint32_t)player.pmove.flags;
-        state.data.q2.time_eight_ms = (uint8_t)player.pmove.time;
-        state.data.q2.gravity = (int16_t)player.pmove.gravity;
-    } else {
-        state.data.q2r.type = player.pmove.type;
-        state.data.q2r.origin = qa_v3(player.pmove.origin_f[0],player.pmove.origin_f[1],player.pmove.origin_f[2]);
-        state.data.q2r.velocity = qa_v3(player.pmove.velocity_f[0],player.pmove.velocity_f[1],player.pmove.velocity_f[2]);
-        state.data.q2r.flags = (uint16_t)player.pmove.flags;
-        state.data.q2r.time_ms = (uint16_t)player.pmove.time;
-        state.data.q2r.gravity = (int16_t)player.pmove.gravity;
-        state.data.q2r.delta_angles = qa_v3(player.pmove.delta_angles_f[0],player.pmove.delta_angles_f[1],player.pmove.delta_angles_f[2]);
-        state.data.q2r.view_height = (float)player.pmove.viewheight;
-    }
+    qa_movement_state state = player_movement(&player,
+        classic ? QA_MOVEMENT_Q2_CLASSIC : QA_MOVEMENT_Q2_RERELEASE, body.origin);
     *out = (qa_q2_wire_movement){.state=state,
         .view_angles=qa_v3(player.viewangles[0],player.viewangles[1],player.viewangles[2]),
         .view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]),
@@ -185,9 +182,7 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     if (qa_actor_reference_present(body.ground)) out->ground = qa_actor_id_equal(ground_actor,engine->world_actor)
         ? (qa_movement_ground){.hit=QA_TRACE_HIT_WORLD}
         : (qa_movement_ground){.hit=QA_TRACE_HIT_ACTOR,.actor=ground_actor};
-    if(!qa_vec_finite(qa_movement_origin(&state))||!qa_vec_finite(qa_movement_velocity(&state))||
-        !qa_vec_finite(out->view_angles)||!qa_vec_finite(out->view_offset))
-        return application_fail(error,QA_ERROR_FORMAT,"Native Q2 physical input contains nonfinite SDK motion");
+    if (!player_motion_finite(slot, &state, out->view_angles, out->view_offset, error)) return false;
     if(engine->callbacks || application_native_q2_whole_source(engine, actor)) return true;
     if(!application_native_q2_attack_input_fields(engine,slot,actor,out,error)) return false;
     /* The profile publishes Source waterlevel; watertype is a genuine current
@@ -403,37 +398,14 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
         (qa_bytes){bytes, classic ? 16u : 28u}, error);
     engine->movement_stage = NULL; engine->current_command_sequence = 0;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
-        qa_buffer player = {0};
-        ok = qa_native_host_q2_player_state(provider->state.native.host, slot, &player, error);
+        qa_q2_player player;
+        ok = qa_native_host_q2_player(provider->state.native.host, slot, &player, error);
         if (ok) {
-            qa_movement_state state = qa_movement_state_default(command->kind, qa_v3(0, 0, 0));
-            const uint8_t *data = player.data;
-            if (classic) {
-                state.data.q2.type = qa_load_i32le(data);
-                for (size_t i = 0; i < 3; ++i) {
-                    state.data.q2.origin_eighths[i] = (int16_t)qa_load_u16le(data + 4 + i * 2);
-                    state.data.q2.velocity_eighths[i] = (int16_t)qa_load_u16le(data + 10 + i * 2);
-                    state.data.q2.delta_angle_shorts[i] = (int16_t)qa_load_u16le(data + 20 + i * 2);
-                }
-                state.data.q2.flags = data[16]; state.data.q2.time_eight_ms = data[17];
-                state.data.q2.gravity = (int16_t)qa_load_u16le(data + 18);
-            } else {
-                state.data.q2r.type = data[0];
-                state.data.q2r.origin = qa_v3(qa_load_f32le(data + 4), qa_load_f32le(data + 8), qa_load_f32le(data + 12));
-                state.data.q2r.velocity = qa_v3(qa_load_f32le(data + 16), qa_load_f32le(data + 20), qa_load_f32le(data + 24));
-                state.data.q2r.flags = qa_load_u16le(data + 28);
-                state.data.q2r.time_ms = qa_load_u16le(data + 30);
-                state.data.q2r.gravity = (int16_t)qa_load_u16le(data + 32);
-                state.data.q2r.delta_angles = qa_v3(qa_load_f32le(data + 36), qa_load_f32le(data + 40), qa_load_f32le(data + 44));
-                state.data.q2r.view_height = (int8_t)data[48];
-            }
-            size_t angles = classic ? 28 : 52;
-            qa_vec3 view = qa_v3(qa_load_f32le(data + angles), qa_load_f32le(data + angles + 4), qa_load_f32le(data + angles + 8));
-            qa_vec3 offset = qa_v3(qa_load_f32le(data + angles + 12), qa_load_f32le(data + angles + 16), qa_load_f32le(data + angles + 20));
+            qa_movement_state state = player_movement(&player, command->kind, qa_v3(0, 0, 0));
+            qa_vec3 view = qa_v3(player.viewangles[0], player.viewangles[1], player.viewangles[2]);
+            qa_vec3 offset = qa_v3(player.viewoffset[0], player.viewoffset[1], player.viewoffset[2]);
             qa_body_state body;
-            ok = qa_vec_finite(qa_movement_origin(&state)) && qa_vec_finite(qa_movement_velocity(&state)) &&
-                 qa_vec_finite(view) && qa_vec_finite(offset);
-            if (!ok) application_fail(error, QA_ERROR_FORMAT, "Native Q2 client returned invalid public movement state");
+            ok = player_motion_finite(slot, &state, view, offset, error);
             if (ok) ok = qa_world_body_read(engine->world, actor, &body, error);
             if (ok) {
                 control->state = state; control->bounds = body.bounds;
@@ -458,7 +430,6 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
                 }
             }
         }
-        qa_buffer_free(&player);
     }
     if (stage && ok && qa_actors_get(qa_session_actors(app->session), actor) && !stage->current(stage))
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 movement lost its actual retained NQ turn");
