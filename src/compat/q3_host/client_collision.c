@@ -111,6 +111,8 @@ q3_service_result q3_client_collision(q3_call *call, int32_t *result, qa_error *
 {
     if (call->host->options.role != QA_QVM_CGAME) return Q3_UNHANDLED;
     int32_t service = call->service;
+    if (service == 27)
+        return q3_collision_mark_fragments(call, result, error) ? Q3_COMPLETED : Q3_FAILED;
     if (service != 18 && service != 19 && service != 20 && service != 22 &&
         service != 23 && service != 24 && service != 25 && service != 26 &&
         service != 82 && service != 83 && service != 84) return Q3_UNHANDLED;

@@ -1,7 +1,69 @@
 #include "internal.h"
 #include "qa/q3_host_collision.h"
 #include "qa/physics.h"
+#include "qa/scene_marks.h"
 #include <math.h>
+
+bool q3_collision_mark_fragments(q3_call *call, int32_t *result, qa_error *error)
+{
+    _Static_assert(sizeof(qa_vec3) == 12, "Q3 mark points contain three binary32 values");
+    int32_t count = q3_integer(call, 0), point_capacity = q3_integer(call, 3);
+    int32_t fragment_capacity = q3_integer(call, 5);
+    qa_scene_world *world = call->host->options.scene_world;
+    if (!world)
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 mark projection world is unbound");
+    if (count <= 0 || point_capacity < 0 || fragment_capacity < 0 ||
+        (size_t)count > SIZE_MAX / sizeof(qa_vec3) ||
+        (size_t)point_capacity > SIZE_MAX / sizeof(qa_vec3) ||
+        (size_t)fragment_capacity > SIZE_MAX / sizeof(qa_scene_mark_fragment))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 mark projection capacities are invalid");
+    size_t input_bytes = (size_t)count * 12;
+    size_t point_bytes = (size_t)point_capacity * 12;
+    size_t fragment_bytes = (size_t)fragment_capacity * 8;
+    if (call->vm) {
+        qa_bytes admitted;
+        if (!q3_vm_span(call->vm, call->arguments[1], input_bytes, &admitted, error) ||
+            !q3_vm_span(call->vm, call->arguments[2], 12, &admitted, error) ||
+            (point_bytes && !q3_vm_span(call->vm, call->arguments[4], point_bytes, &admitted, error)) ||
+            (fragment_bytes && !q3_vm_span(call->vm, call->arguments[6], fragment_bytes, &admitted, error)))
+            return false;
+    }
+    qa_vec3 projection;
+    if (!q3_vector(call, call->arguments[2], &projection, error)) return false;
+    qa_vec3 *input = qa_arena_alloc(&call->host->scratch, input_bytes, _Alignof(qa_vec3), error);
+    if (!input || !q3_read(call, call->arguments[1], input, input_bytes, error)) return false;
+    for (size_t i = 0; i < (size_t)count; ++i) {
+        const uint8_t *bytes = (const uint8_t *)(input + i);
+        input[i] = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
+    }
+    qa_vec3 *points = point_bytes ? qa_arena_alloc(&call->host->scratch,
+        point_bytes, _Alignof(qa_vec3), error) : NULL;
+    qa_scene_mark_fragment *fragments = fragment_capacity ? qa_arena_alloc(&call->host->scratch,
+        (size_t)fragment_capacity * sizeof(*fragments), _Alignof(qa_scene_mark_fragment), error) : NULL;
+    if ((point_bytes && !points) || (fragment_capacity && !fragments)) return false;
+    qa_scene_mark_result marks;
+    if (!qa_scene_world_mark_fragments(world, input, (size_t)count, projection,
+        points, (size_t)point_capacity, fragments, (size_t)fragment_capacity, &marks, error)) return false;
+    size_t written_points = marks.point_count * 12, written_fragments = marks.fragment_count * 8;
+    size_t output_bytes = written_points > written_fragments ? written_points : written_fragments;
+    uint8_t *output = output_bytes ? qa_arena_alloc(&call->host->scratch, output_bytes, 1, error) : NULL;
+    if (output_bytes && !output) return false;
+    for (size_t i = 0; i < marks.point_count; ++i) {
+        qa_store_f32le(output + i * 12, points[i].x);
+        qa_store_f32le(output + i * 12 + 4, points[i].y);
+        qa_store_f32le(output + i * 12 + 8, points[i].z);
+    }
+    if (written_points && !q3_write(call, call->arguments[4], (qa_bytes){output, written_points}, error))
+        return false;
+    for (size_t i = 0; i < marks.fragment_count; ++i) {
+        qa_store_u32le(output + i * 8, (uint32_t)fragments[i].first_point);
+        qa_store_u32le(output + i * 8 + 4, (uint32_t)fragments[i].point_count);
+    }
+    if (written_fragments && !q3_write(call, call->arguments[6], (qa_bytes){output, written_fragments}, error))
+        return false;
+    *result = (int32_t)marks.fragment_count;
+    return true;
+}
 
 typedef struct q3_collision_binding {
     qa_qvm *vm;

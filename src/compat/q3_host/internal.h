@@ -226,6 +226,7 @@ q3_service_result q3_bot_weapons(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_bot_navigation(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_bot_movement(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_client_collision(q3_call *, int32_t *, qa_error *);
+bool q3_collision_mark_fragments(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_client_input(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_client_keys(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_game_records(q3_call *, int32_t *, qa_error *);
