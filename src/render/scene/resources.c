@@ -56,6 +56,22 @@ static bool admission_ready(const qa_scene_resources *owner, qa_error *error)
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene resources are held by a continuation capture");
     return false;
 }
+static void recipient_correspondence_changed(qa_scene_resources *owner)
+{
+    /* Exhausted generations leave correspondence reuse disabled. */
+    if (owner->recipient_generation) ++owner->recipient_generation;
+}
+static void recipient_correspondence_remember(qa_scene_resources *owner,
+    const qa_scene_image *source, const qa_q3_image_upload_options *profile,
+    const qa_scene_image *mapped, bool canonical)
+{
+    /* The bank's variant roots or this source retain the mapped version. */
+    owned_image *image = (owned_image *)source;
+    image->recipient_correspondence = mapped;
+    image->recipient_correspondence_profile = *profile;
+    image->recipient_correspondence_generation = owner->recipient_generation;
+    image->recipient_correspondence_canonical = canonical;
+}
 void scene_resource_alias_free(image_alias *alias)
 {
     if (!alias) return;
@@ -748,6 +764,7 @@ qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *er
     if (resources->names == NULL) { free(resources); goto failed; }
     resources->names->references = 1;
     resources->references = 1; resources->names->owner = resources;
+    resources->recipient_generation = 1;
     if (!qa_strings_create(&resources->names->strings, error)) {
         free(resources->names); free(resources); return NULL;
     }
@@ -1227,8 +1244,11 @@ bool qa_scene_resource_policy_image(qa_scene_resource_policy *ticket, const qa_s
         if (ok) ok = owned->generic_variant ?
             qa_scene_image_generic_variant(ticket->destination, parent, owned->generic_variant_mipmap, out, error) :
             qa_scene_image_source_q3_variant(ticket->destination, parent, &upload, out, error);
-        if (ok && owned->recipient_first_upload && ((owned_image *)*out)->source_variant_source)
+        if (ok && owned->recipient_first_upload && ((owned_image *)*out)->source_variant_source &&
+            !((owned_image *)*out)->recipient_first_upload) {
             ((owned_image *)*out)->recipient_first_upload = true;
+            recipient_correspondence_changed(ticket->destination);
+        }
         qa_scene_image_release(parent); found = true;
     }
     if (!found && owned->sampling_source) {
@@ -1357,6 +1377,8 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
 {
     if (!qa_scene_resource_policy_ready_is(ticket)) return;
     qa_scene_resources *owner = ticket->owner, *destination = ticket->destination;
+    recipient_correspondence_changed(owner);
+    recipient_correspondence_changed(destination);
     for (recipient_policy_binding *row = ticket->recipient_bindings; row; row = row->next) {
         row->binding->next = row->root->recipient_bindings;
         row->root->recipient_bindings = row->binding; row->binding = NULL;
@@ -1376,6 +1398,8 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
             qa_scene_resources_destroy(owner);
         }
         image->names = owner->names; ++owner->names->references;
+        image->recipient_correspondence = NULL;
+        image->recipient_correspondence_generation = 0;
         image->previous = NULL; image->next = owner->names->images;
         if (image->next) image->next->previous = image;
         owner->names->images = image; ++owner->names->image_count;
@@ -2456,6 +2480,7 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
     for (size_t i = 1; i < variant->image.animation_count; ++i)
         qa_image_free(&((owned_image *)variant->image.animation[i])->recipient_source);
     variant->variant_next = resources->variants; resources->variants = variant;
+    recipient_correspondence_changed(resources);
     qa_scene_image_retain(&variant->image);
     return true;
 }
@@ -2474,19 +2499,30 @@ bool qa_scene_image_source_q3_recipient_variant(qa_scene_resources *resources,
     if (source->source_q3) {
         qa_scene_image_retain(source); *out = (qa_scene_image *)source; return true;
     }
+    const owned_image *original = (const owned_image *)source;
+    if (resources->recipient_generation &&
+        original->recipient_correspondence_generation == resources->recipient_generation &&
+        (original->recipient_correspondence_canonical ||
+            qa_q3_image_upload_options_equal(&original->recipient_correspondence_profile, profile))) {
+        *out = (qa_scene_image *)original->recipient_correspondence;
+        qa_scene_image_retain(*out); return true;
+    }
     for (const owned_image *root = resources->variants; root; root = root->variant_next) {
         if (!root->recipient_first_upload) continue;
         const qa_scene_image *parent = root->source_variant_source;
         for (const recipient_image_binding *binding = root->recipient_bindings; binding; binding = binding->next) {
             if (binding->source == source) {
+                recipient_correspondence_remember(resources, source, profile, &root->image, true);
                 *out = (qa_scene_image *)&root->image; qa_scene_image_retain(*out); return true;
             }
             for (size_t frame = 1; frame < binding->source->animation_count; ++frame)
                 if (binding->source->animation[frame] == source && frame < root->image.animation_count) {
+                    recipient_correspondence_remember(resources, source, profile, root->image.animation[frame], true);
                     *out = (qa_scene_image *)root->image.animation[frame]; qa_scene_image_retain(*out); return true;
                 }
         }
         if (parent == source) {
+            recipient_correspondence_remember(resources, source, profile, &root->image, true);
             *out = (qa_scene_image *)&root->image; qa_scene_image_retain(*out); return true;
         }
         for (size_t frame = 1; frame < parent->animation_count; ++frame) {
@@ -2494,16 +2530,27 @@ bool qa_scene_image_source_q3_recipient_variant(qa_scene_resources *resources,
             if (frame >= root->image.animation_count || !root->image.animation[frame]) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, frame, "First recipient upload lost its animation frame"); return false;
             }
+            recipient_correspondence_remember(resources, source, profile, root->image.animation[frame], true);
             *out = (qa_scene_image *)root->image.animation[frame]; qa_scene_image_retain(*out); return true;
         }
     }
     if (!qa_scene_image_source_q3_variant(resources, source, profile, out, error)) return false;
+    bool promoted = false;
     for (owned_image *root = resources->variants; root; root = root->variant_next) {
         if (root->generic_variant) continue;
-        if (&root->image == *out) { root->recipient_first_upload = true; break; }
-        for (size_t frame = 1; frame < root->image.animation_count; ++frame)
-            if (root->image.animation[frame] == *out) { root->recipient_first_upload = true; break; }
+        bool root_image = &root->image == *out, reached = root_image;
+        if (!root_image)
+            for (size_t frame = 1; frame < root->image.animation_count; ++frame)
+                if (root->image.animation[frame] == *out) { reached = true; break; }
+        if (!reached) continue;
+        if (!root->recipient_first_upload) {
+            root->recipient_first_upload = true;
+            recipient_correspondence_changed(resources);
+            promoted = true;
+        }
+        if (root_image) break;
     }
+    if (!promoted) recipient_correspondence_remember(resources, source, profile, *out, false);
     return true;
 }
 

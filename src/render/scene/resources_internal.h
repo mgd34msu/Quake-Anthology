@@ -48,6 +48,10 @@ struct owned_image {
     owned_image *variant_next;
     owned_image *next, *previous;
     bool listed;
+    const qa_scene_image *recipient_correspondence;
+    qa_q3_image_upload_options recipient_correspondence_profile;
+    uint64_t recipient_correspondence_generation;
+    bool recipient_correspondence_canonical;
 };
 typedef struct image_cache {
     uint64_t source, logical_source;
@@ -104,6 +108,7 @@ struct qa_scene_resources {
     qa_scene_resource_policy *policy_pending;
     qa_scene_resources *policy_source;
     bool continuation_active, detached;
+    uint64_t recipient_generation;
 };
 static inline qa_q3_image_upload_options scene_resource_restore_upload(
     const qa_scene_resources *owner, const qa_q3_image_upload_options *saved)
