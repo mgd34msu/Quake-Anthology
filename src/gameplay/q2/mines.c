@@ -363,11 +363,15 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
                        qa_vec_sub(body.origin, start), trace.end, trace.contact_plane.normal, false,
                        e))
             return false;
+        bool rerelease=g->options.edition==QA_Q2_RERELEASE;
         qa_builtin_event beam = {.kind = QA_BUILTIN_BEAM,
-            .family = QA_GAME_Q2, .provider = g->options.owner, .actor = id,
-            .time_ns = g->now_ns, .origin = start, .end = trace.end,
+            .family = QA_GAME_Q2, .provider = g->options.owner,
+            .actor = rerelease ? id : target, .other = rerelease ? target : id,
+            .time_ns = g->now_ns, .origin = rerelease ? start : trace.end,
+            .end = rerelease ? trace.end : start,
+            .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS,start},
             .value = (float)((double)g->frame_ns / 1e9)};
-        if (!qa_builtin_resource(&g->services, "q2:bfg-lightning", &beam.resource, e) ||
+        if (!qa_builtin_resource(&g->services, "q2:lightning", &beam.resource, e) ||
             !qa_builtin_emit(&g->services, &beam, e))
             return false;
     }

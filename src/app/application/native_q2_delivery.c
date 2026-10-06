@@ -36,14 +36,16 @@ static bool source_current(qa_application *app, application_provider *source,
 }
 
 static bool capture(application_provider *source, qa_vec3 origin,
-    const qa_native_host_message *message, qa_application_q2_audience *out, qa_error *error)
+    qa_builtin_q2_multicast_kind kind, const qa_native_host_message *message, qa_application_q2_audience *out, qa_error *error)
 {
     qa_application *app=source?source->application:NULL;
     struct application_native_q2 *engine=source && source->kind==APPLICATION_PROVIDER_NATIVE ?
         source->state.native.q2_engine:NULL;
     bool original=message!=NULL;
     bool positioned=!original || message->positioned;
-    qa_application_q2_delivery_kind delivery=!original ? QA_APPLICATION_Q2_PVS :
+    qa_application_q2_delivery_kind delivery=!original ?
+        (kind==QA_BUILTIN_Q2_MULTICAST_ALL ? QA_APPLICATION_Q2_ALL :
+         kind==QA_BUILTIN_Q2_MULTICAST_PHS ? QA_APPLICATION_Q2_PHS : QA_APPLICATION_Q2_PVS) :
         message->target==QA_NATIVE_HOST_UNICAST ? QA_APPLICATION_Q2_UNICAST :
         message->destination==0 ? QA_APPLICATION_Q2_ALL :
         message->destination==1 ? QA_APPLICATION_Q2_PHS : QA_APPLICATION_Q2_PVS;
@@ -53,6 +55,7 @@ static bool capture(application_provider *source, qa_vec3 origin,
             engine->world!=app->world) :
             (source->kind!=APPLICATION_PROVIDER_Q2 || !source->state.q2 ||
              (qa_session_safe(app->session) && qa_combat_idle(app->combat)))) ||
+        (!original && (kind<QA_BUILTIN_Q2_MULTICAST_PVS || kind>QA_BUILTIN_Q2_MULTICAST_ALL)) ||
         (original && message->target==QA_NATIVE_HOST_MULTICAST &&
             (message->destination<0 || message->destination>2)) ||
         ((delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS) && !positioned))
@@ -226,8 +229,11 @@ static bool capture(application_provider *source, qa_vec3 origin,
 }
 
 bool application_native_q2_delivery_capture(application_provider *source,
-    qa_vec3 origin, qa_application_q2_audience *out, qa_error *error)
-{ return capture(source,origin,NULL,out,error); }
+    const qa_builtin_q2_multicast *multicast, qa_application_q2_audience *out, qa_error *error)
+{
+    if (!multicast) return application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery has no Source multicast");
+    return capture(source,multicast->origin,multicast->kind,NULL,out,error);
+}
 
 bool application_native_q2_message_capture(struct application_native_q2 *engine,
     const qa_native_host_message *message, qa_application_q2_protocol_delivery *out, qa_error *error)
@@ -250,7 +256,7 @@ bool application_native_q2_message_capture(struct application_native_q2 *engine,
             (message->target==QA_NATIVE_HOST_UNICAST ?
                 (message->client.registry && qa_actor_id_equal(engine->clients[slot].actor,message->client)) :
                 engine->clients[slot].connected));
-    if (connected && !capture(engine->provider,message->origin,message,&result.audience,error)) return false;
+    if (connected && !capture(engine->provider,message->origin,QA_BUILTIN_Q2_MULTICAST_NONE,message,&result.audience,error)) return false;
     *out=result;
     return true;
 }

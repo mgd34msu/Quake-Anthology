@@ -3860,6 +3860,7 @@ static bool shambler_lightning(q2m_context *context, qa_error *error) {
       .provider = context->game->options.owner, .actor = context->actor->id,
       .other = context->game->services.physics->world_actor,
       .time_ns = context->game->now_ns, .origin = start, .end = trace.end,
+      .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS,start},
   };
   if (!qa_builtin_resource(&context->game->services, "q2:lightning",
                             &event.resource, error) ||

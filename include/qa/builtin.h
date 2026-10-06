@@ -83,6 +83,18 @@ typedef struct qa_builtin_q1_powerup {
  * SOURCE_PROMPT addresses a full source actor, uses text for its title and
  * borrows ordered prompt_choices until the queue copies them. CLEAR_PROMPT
  * addresses that actor without title or choices. */
+typedef enum qa_builtin_q2_multicast_kind {
+    QA_BUILTIN_Q2_MULTICAST_NONE,
+    QA_BUILTIN_Q2_MULTICAST_PVS,
+    QA_BUILTIN_Q2_MULTICAST_PHS,
+    QA_BUILTIN_Q2_MULTICAST_ALL
+} qa_builtin_q2_multicast_kind;
+
+typedef struct qa_builtin_q2_multicast {
+    qa_builtin_q2_multicast_kind kind;
+    qa_vec3 origin;
+} qa_builtin_q2_multicast;
+
 typedef struct qa_builtin_event {
     qa_builtin_event_kind kind;
     qa_game_family family;
@@ -93,6 +105,8 @@ typedef struct qa_builtin_event {
     /* Q2 pickup's authored canonical item, distinct from icon and display name. */
     qa_item_id item;
     qa_vec3 origin, end, direction;
+    /* Transient Source multicast input; the application retains actual recipients. */
+    qa_builtin_q2_multicast q2_multicast;
     /* Monster muzzle pose at emission, before later Source frames can move it. */
     qa_vec3 muzzle_angles;
     float muzzle_scale;

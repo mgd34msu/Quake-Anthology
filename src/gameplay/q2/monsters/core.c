@@ -112,6 +112,9 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       .code = code,
       .frame = context->monster->frame,
   };
+  if (kind==QA_BUILTIN_BEAM && resource &&
+      (!strcmp(resource,"q2:parasite") || !strcmp(resource,"q2:medic-cable")))
+    event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,context->body.origin};
   if (kind == QA_BUILTIN_MUZZLE) {
     qa_body_state body;
     if (!qa_world_body_read(context->game->services.world, context->actor->id,

@@ -14,6 +14,22 @@ bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *p
                               .direction = kind == QA_BUILTIN_IMPACT ? end : qa_v3(0, 0, 0),
                               .code = code,
                               .flags = c->silenced ? 128u : 0u};
+    if (kind==QA_BUILTIN_BEAM && path) {
+        if (!strcmp(path,"q2:bubble-trail"))
+            event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,
+                qa_vec_scale(qa_vec_add(origin,end),.5f)};
+        else if (!strcmp(path,"q2:rail-water"))
+            event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,end};
+        else if (!strcmp(path,"q2:heatbeam") || !strcmp(path,"q2:monster-heatbeam") ||
+                 (!c->rerelease && !strcmp(path,"q2:rail"))) {
+            qa_body_state body;
+            if (!qa_world_body_read(c->game->services.world,c->actor->id,&body,e)) return false;
+            if (!q2_actor_live(c->game,c->actor->id)) return true;
+            event.q2_multicast=(qa_builtin_q2_multicast){
+                !strcmp(path,"q2:rail") ? QA_BUILTIN_Q2_MULTICAST_PHS : QA_BUILTIN_Q2_MULTICAST_ALL,
+                body.origin};
+        }
+    }
     if (path && !qa_builtin_resource(&c->game->services, path, &event.resource, e)) return false;
     return qa_builtin_emit(&c->game->services, &event, e);
 }

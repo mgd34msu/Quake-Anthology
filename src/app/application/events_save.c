@@ -510,9 +510,9 @@ static bool builtin_field(qa_source_save_io *io, event_store *store, application
     }
     if (!audience_field(io,store,&record->q2_audience)) return false;
     if (record->q2_audience.captured &&
-        (kind!=QA_BUILTIN_PARTICLES || family!=QA_GAME_Q2 || event->provider!=record->q2_audience.source ||
-         record->q2_audience.kind!=QA_APPLICATION_Q2_PVS || !record->q2_audience.positioned))
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 particle audience differs from its source event");
+        (family!=QA_GAME_Q2 || event->provider!=record->q2_audience.source ||
+         record->q2_audience.kind>QA_APPLICATION_Q2_ALL || !record->q2_audience.positioned))
+        return event_fail(io,QA_ERROR_FORMAT,"Q2 multicast audience differs from its source event");
     return true;
 }
 

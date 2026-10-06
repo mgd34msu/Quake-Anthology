@@ -80,6 +80,11 @@ static bool valid_event(qa_application *application,
         !isfinite(event->attenuation) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid event");
+    if ((unsigned)event->q2_multicast.kind>QA_BUILTIN_Q2_MULTICAST_ALL ||
+        !qa_vec_finite(event->q2_multicast.origin) ||
+        (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE &&
+         (event->family!=QA_GAME_Q2 || !event->provider)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has invalid Source multicast input");
     if (event->kind == QA_BUILTIN_LOG &&
         (event->family != QA_GAME_Q3 || !event->provider ||
          event->text == QA_STRING_NONE || event->argument_count ||
@@ -280,7 +285,8 @@ bool application_emit_q2_map(application_provider *provider,
             (provider->kind!=APPLICATION_PROVIDER_Q2 ||
              !qa_q2_force_wall_multicast_origin(provider->state.q2,event->actor,&multicast_origin)))
             return application_fail(error,QA_ERROR_ARGUMENT,"Forcewall delivery lost its genuine spawn midpoint");
-        if (!application_native_q2_delivery_capture(provider,multicast_origin,&audience,error)) return false;
+        if (!application_native_q2_delivery_capture(provider,
+                &(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,multicast_origin},&audience,error)) return false;
     }
     bool ready=reserve_q2_map_event(application,error) &&
         application_event_journal_reserve(application,error) &&
@@ -456,12 +462,7 @@ bool application_record_level(application_provider *provider,
 static bool emit_event(qa_application *application, const qa_builtin_event *event,
     const qa_application_q2_audience *audience, qa_error *error)
 {
-    if (application == NULL || application->destroy_requested ||
-        application->session == NULL)
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "gameplay event has no live application owner");
-    if (!valid_event(application, event, error) ||
-        !application_q3_weapons_services_q2_muzzle(application, event, error) ||
+    if (!application_q3_weapons_services_q2_muzzle(application, event, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error) ||
@@ -499,18 +500,20 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
 
 bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *error)
 {
-    return emit_event(opaque,event,&(qa_application_q2_audience){0},error);
-}
-
-bool application_emit_q2_particles(application_provider *provider,
-    const qa_builtin_event *event, qa_vec3 origin, qa_error *error)
-{
-    if (!provider || !event || event->kind!=QA_BUILTIN_PARTICLES ||
-        event->family!=QA_GAME_Q2 || event->provider!=provider->owner)
-        return application_fail(error,QA_ERROR_ARGUMENT,"Q2 particle delivery has no genuine source event");
+    qa_application *application=opaque;
     qa_application_q2_audience audience={0};
-    if (!application_native_q2_delivery_capture(provider,origin,&audience,error)) return false;
-    bool ok=emit_event(provider->application,event,&audience,error);
+    if (!application || application->destroy_requested || !application->session)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has no live application owner");
+    if (!valid_event(application,event,error)) return false;
+    if (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE) {
+        application_provider *source=NULL;
+        for (application_provider *provider=application->live_providers;provider;provider=provider->next_live)
+            if (provider->owner==event->provider && provider->constructed && provider->attached && !provider->close_pending) {
+                source=provider; break;
+            }
+        if (!application_native_q2_delivery_capture(source,&event->q2_multicast,&audience,error)) return false;
+    }
+    bool ok=emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
 }

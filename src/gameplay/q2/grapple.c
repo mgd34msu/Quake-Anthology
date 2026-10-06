@@ -414,7 +414,14 @@ static bool cable(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, 
                               .origin = start,
                               .end = end,
                               .direction = offset,
+                              .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS,end},
                               .flags = lm ? 1u : 0u};
+    if (lm) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world,owner,&body,e)) return false;
+        if (!q2_actor_live(g,owner)) return true;
+        event.q2_multicast.origin=body.origin;
+    }
     return qa_builtin_resource(&g->services, "q2:grapple-cable", &event.resource, e) &&
            qa_builtin_emit(&g->services, &event, e);
 }
