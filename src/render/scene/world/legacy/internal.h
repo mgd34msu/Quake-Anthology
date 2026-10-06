@@ -11,6 +11,21 @@ typedef struct qawl_texture {
     int32_t next;
 } qawl_texture;
 
+typedef struct qawl_grid_light {
+    const qa_bsp_lightgrid_sample *corners[8];
+    qa_vec3 fraction;
+} qawl_grid_light;
+
+typedef struct qawl_point_light {
+    qa_vec3 origin;
+    bool keyed, grid_absent;
+    uint8_t kind;
+    union {
+        struct { const qaw_surface *surface; size_t pixel; qa_vec3 hit; } floor;
+        qawl_grid_light grid;
+    } sample;
+} qawl_point_light;
+
 typedef struct qawl_world {
     qawl_texture *textures;
     size_t texture_count;
@@ -20,6 +35,9 @@ typedef struct qawl_world {
     qa_vec3 *q2_styles;
     size_t style_count;
     struct qawl_light_atlas *light_atlases, *last_light_atlas;
+    /* One exact geometric sample per leaf; styles remain live at every use. */
+    qawl_point_light *point_lights, *last_point_light;
+    size_t point_light_count;
 } qawl_world;
 
 typedef struct qawl_light_atlas {

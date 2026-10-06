@@ -587,32 +587,35 @@ static qa_vec3 snapshot_style(const qa_scene_world *world,const qa_scene_world_i
     return index < data->style_count ? data->q2_styles[index] : qa_v3(1, 1, 1);
 }
 
-static bool sample_surface(const qa_scene_world *world, const qaw_surface *surface,
-                           const qa_scene_world_input *input,qa_vec3 point, qa_vec3 *color)
+enum { QAWL_POINT_NONE, QAWL_POINT_FLOOR, QAWL_POINT_GRID };
+
+static bool same_point(qa_vec3 a, qa_vec3 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+static qawl_point_light *point_light_entry(const qa_scene_world *world, qa_vec3 point)
+{
+    qawl_world *data = world->legacy_data;
+    if (!data || !data->point_light_count) return NULL;
+    qawl_point_light *entry = data->last_point_light;
+    if (entry && same_point(entry->origin, point)) return entry;
+    int32_t leaf = qa_scene_world_leaf(world, point);
+    if (leaf < 0 || (size_t)leaf >= data->point_light_count) return NULL;
+    entry = &data->point_lights[leaf];
+    if (!entry->keyed || !same_point(entry->origin, point))
+        *entry = (qawl_point_light){.origin = point, .keyed = true};
+    data->last_point_light = entry;
+    return entry;
+}
+
+static bool sample_floor_pixel(const qa_scene_world *world, const qaw_surface *surface,
+                               const qa_scene_world_input *input, size_t pixel, qa_vec3 *color)
 {
     const qaw_legacy *light = surface->legacy;
-    if (light == NULL || surface->sky || light->warp) return false;
-    float uv[2] = {project(light->projection[0], point), project(light->projection[1], point)};
-    if (!light->decoupled) {
-        qa_bsp_face face;
-        qa_bsp_texinfo info;
-        if (!qa_bsp_read_face(&world->bsp, surface->source_index, &face, NULL)
-            || !qa_bsp_read_texinfo(&world->bsp, face.texinfo, &info, NULL)) return false;
-        for (size_t axis = 0; axis < 2; ++axis) {
-            float coordinate = project(info.projection[axis], point);
-            /* Truncate the original texture coordinate before texturemins,
-             * particularly when a negatively positioned face crosses zero. */
-            double minimum = round((double)info.projection[axis][3] / light->light_step[axis]
-                                   - light->projection[axis][3]);
-            uv[axis] = (float)(trunc(coordinate) / light->light_step[axis] - minimum);
-        }
-    }
-    if (!isfinite(uv[0]) || !isfinite(uv[1]) || uv[0] < 0 || uv[1] < 0
-        || (double)uv[0] > (double)light->width - 1 || (double)uv[1] > (double)light->height - 1) return false;
     *color = qa_v3(0, 0, 0);
     if (light->sample_offset == SIZE_MAX) return true;
     size_t pixels = (size_t)light->width * light->height;
-    size_t pixel = (size_t)uv[1] * light->width + (size_t)uv[0];
     double sum[3] = {0, 0, 0};
     for (size_t i = 0; i < light->style_count; ++i) {
         uint8_t sample[3];
@@ -634,6 +637,33 @@ static bool sample_surface(const qa_scene_world *world, const qaw_surface *surfa
     return true;
 }
 
+static bool sample_surface(const qa_scene_world *world, const qaw_surface *surface,
+                           const qa_scene_world_input *input,qa_vec3 point, qa_vec3 *color, size_t *sample_pixel)
+{
+    const qaw_legacy *light = surface->legacy;
+    if (light == NULL || surface->sky || light->warp) return false;
+    float uv[2] = {project(light->projection[0], point), project(light->projection[1], point)};
+    if (!light->decoupled) {
+        qa_bsp_face face;
+        qa_bsp_texinfo info;
+        if (!qa_bsp_read_face(&world->bsp, surface->source_index, &face, NULL)
+            || !qa_bsp_read_texinfo(&world->bsp, face.texinfo, &info, NULL)) return false;
+        for (size_t axis = 0; axis < 2; ++axis) {
+            float coordinate = project(info.projection[axis], point);
+            /* Truncate the original texture coordinate before texturemins,
+             * particularly when a negatively positioned face crosses zero. */
+            double minimum = round((double)info.projection[axis][3] / light->light_step[axis]
+                                   - light->projection[axis][3]);
+            uv[axis] = (float)(trunc(coordinate) / light->light_step[axis] - minimum);
+        }
+    }
+    if (!isfinite(uv[0]) || !isfinite(uv[1]) || uv[0] < 0 || uv[1] < 0
+        || (double)uv[0] > (double)light->width - 1 || (double)uv[1] > (double)light->height - 1) return false;
+    size_t pixel = (size_t)uv[1] * light->width + (size_t)uv[0];
+    if (sample_pixel) *sample_pixel = pixel;
+    return sample_floor_pixel(world, surface, input, pixel, color);
+}
+
 typedef struct light_trace_frame {
     uint32_t node;
     int32_t far_child;
@@ -645,6 +675,16 @@ static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *
 {
     if (found) *found = false;
     *color = qa_v3(0, 0, 0);
+    qawl_point_light *entry = point_light_entry(world, point);
+    if (entry && entry->kind == QAWL_POINT_FLOOR) {
+        if (!entry->sample.floor.surface) return true;
+        if (sample_floor_pixel(world, entry->sample.floor.surface, input, entry->sample.floor.pixel, color)) {
+            if (hit) *hit = entry->sample.floor.hit;
+            if (found) *found = true;
+            return true;
+        }
+        entry->kind = QAWL_POINT_NONE;
+    }
     if (world->model_count == 0 || world->node_count == 0) return true;
     light_trace_frame local[64], *stack = local;
     size_t capacity = sizeof(local) / sizeof(local[0]), depth = 0;
@@ -685,7 +725,15 @@ static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *
             break;
         }
         for (size_t i = 0; i < node->faces.count; ++i) {
-            if (sample_surface(world, &world->surfaces[node->faces.first + i],input, frame.middle, color)) {
+            const qaw_surface *surface = &world->surfaces[node->faces.first + i];
+            size_t pixel;
+            if (sample_surface(world, surface, input, frame.middle, color, &pixel)) {
+                if (entry) {
+                    entry->kind = QAWL_POINT_FLOOR;
+                    entry->sample.floor.surface = surface;
+                    entry->sample.floor.pixel = pixel;
+                    entry->sample.floor.hit = frame.middle;
+                }
                 if (hit) *hit = frame.middle;
                 if (found) *found = true;
                 done = true;
@@ -697,6 +745,10 @@ static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *
         end = frame.end;
     }
     if (stack != local) free(stack);
+    if (valid && !done && entry) {
+        entry->kind = QAWL_POINT_FLOOR;
+        entry->sample.floor.surface = NULL;
+    }
     return valid;
 }
 
@@ -709,19 +761,32 @@ static bool sample_grid(const qa_scene_world *world,const qa_scene_world_input *
 {
     const qa_bsp_lightgrid *grid = &world->lightgrid;
     if (grid->leaf_count == 0) return false;
-    qa_vec3 point = qa_vec_sub(position, grid->min);
-    point.x *= 1 / grid->spacing.x;
-    point.y *= 1 / grid->spacing.y;
-    point.z *= 1 / grid->spacing.z;
-    if (!qa_vec_finite(point)) return false;
-    uint32_t base[3] = {light_u32(point.x), light_u32(point.y), light_u32(point.z)};
+    qawl_point_light *entry = point_light_entry(world, position);
+    if (entry && entry->grid_absent) return false;
+    qawl_grid_light local, *location = &local;
+    if (entry && entry->kind == QAWL_POINT_GRID) location = &entry->sample.grid;
+    else {
+        qa_vec3 point = qa_vec_sub(position, grid->min);
+        point.x *= 1 / grid->spacing.x;
+        point.y *= 1 / grid->spacing.y;
+        point.z *= 1 / grid->spacing.z;
+        if (!qa_vec_finite(point)) {
+            if (entry) entry->grid_absent = true;
+            return false;
+        }
+        uint32_t base[3] = {light_u32(point.x), light_u32(point.y), light_u32(point.z)};
+        for (unsigned i = 0; i < 8; ++i) {
+            int64_t coordinates[3] = {(uint32_t)(base[0] + (i & 1u)),
+                (uint32_t)(base[1] + ((i >> 1) & 1u)), (uint32_t)(base[2] + ((i >> 2) & 1u))};
+            local.corners[i] = qa_bsp_lightgrid_lookup(grid, coordinates);
+        }
+        local.fraction = qa_v3(point.x - (float)base[0], point.y - (float)base[1], point.z - (float)base[2]);
+    }
     qa_vec3 corners[8], average = qa_v3(0, 0, 0);
     bool valid[8] = {false};
     unsigned count = 0;
     for (unsigned i = 0; i < 8; ++i) {
-        int64_t coordinates[3] = {(uint32_t)(base[0] + (i & 1u)),
-            (uint32_t)(base[1] + ((i >> 1) & 1u)), (uint32_t)(base[2] + ((i >> 2) & 1u))};
-        const qa_bsp_lightgrid_sample *samples = qa_bsp_lightgrid_lookup(grid, coordinates);
+        const qa_bsp_lightgrid_sample *samples = location->corners[i];
         corners[i] = qa_v3(0, 0, 0);
         if (samples != NULL) for (size_t style = 0; style < grid->style_count; ++style) {
             const qa_bsp_lightgrid_sample *sample = &samples[style];
@@ -733,10 +798,17 @@ static bool sample_grid(const qa_scene_world *world,const qa_scene_world_input *
         }
         if (valid[i]) { average = qa_vec_add(average, corners[i]); ++count; }
     }
-    if (count == 0) return false;
+    if (count == 0) {
+        if (entry) entry->grid_absent = true;
+        return false;
+    }
+    if (entry && location == &local) {
+        entry->sample.grid = local;
+        entry->kind = QAWL_POINT_GRID;
+    }
     average = qa_vec_scale(average, 1.0f / (float)count);
     for (size_t i = 0; i < 8; ++i) if (!valid[i]) corners[i] = average;
-    float fx = point.x - (float)base[0], fy = point.y - (float)base[1], fz = point.z - (float)base[2];
+    float fx = location->fraction.x, fy = location->fraction.y, fz = location->fraction.z;
     qa_vec3 bottom = grid_interpolate(grid_interpolate(corners[0], corners[1], fx), grid_interpolate(corners[2], corners[3], fx), fy);
     qa_vec3 top = grid_interpolate(grid_interpolate(corners[4], corners[5], fx), grid_interpolate(corners[6], corners[7], fx), fy);
     qa_vec3 result = qa_vec_scale(grid_interpolate(bottom, top, fz),

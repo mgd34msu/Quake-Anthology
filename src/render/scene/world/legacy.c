@@ -45,6 +45,16 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
     qawl_world *data = calloc(1, sizeof(*data));
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate legacy world"); return false; }
     world->legacy_data = data;
+    if (world->leaf_count > SIZE_MAX / sizeof(*data->point_lights)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Point lighting leaf table exceeds address space"); return false;
+    }
+    if (world->leaf_count) {
+        data->point_lights = calloc(world->leaf_count, sizeof(*data->point_lights));
+        if (!data->point_lights) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate point lighting leaf table"); return false;
+        }
+        data->point_light_count = world->leaf_count;
+    }
     bool q1 = world->bsp.family == QA_BSP_Q1;
     if (q1 && !qa_bsp_read_q1_metadata(&world->bsp, &data->metadata, error)) return false;
     if (!qawl_textures_build(world, error)) return false;
@@ -212,6 +222,7 @@ void qaw_destroy_legacy(qa_scene_world *world)
         qawl_light_atlases_destroy(data);
         qawl_textures_destroy(data);
         free(data->q1_styles); free(data->q2_styles);
+        free(data->point_lights);
         free(data);
     }
     world->legacy_data = NULL;
