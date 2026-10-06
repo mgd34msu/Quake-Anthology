@@ -409,6 +409,14 @@ bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *
     memcpy(out->lightstyles, g->wire->lightstyles, sizeof(out->lightstyles));
     return true;
 }
+void q1_wire_ammo_items(qa_q1_program program,qa_q1_weapon weapon,
+    uint32_t *items,uint32_t *items2) {
+    *items=*items2=0;
+    int ammo=q1_weapon_declared_ammo(weapon);
+    if (ammo<0) return;
+    if (ammo<=QA_Q1_CELLS) *items=(program==QA_Q1_ROGUE?128u:256u)<<(unsigned)ammo;
+    else *items2=ammo==QA_Q1_LAVA_NAILS?8u:ammo==QA_Q1_MULTI_ROCKETS?32u:16u;
+}
 bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor,
     qa_q1_wire_player *out, qa_error *error) {
     if (!out || !qa_q1_wire_receipt_current(receipt))
@@ -446,31 +454,22 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     if (powers[QA_Q1_INVULNERABILITY] > seconds) value.powers |= 1048576;
     if (powers[QA_Q1_INVISIBILITY] > seconds) value.powers |= 524288;
     if (powers[QA_Q1_SUIT] > seconds) value.powers |= 2097152;
-    int ammo = q1_weapon_declared_ammo(weapon);
-    if (ammo >= 0) {
-        if (!g->wire->id1) {
-            if (ammo <= QA_Q1_CELLS)
-                value.ammo_items = (g->options.program == QA_Q1_ROGUE ? 128u : 256u) << (unsigned)ammo;
-            else
-                value.extra_items = (ammo == QA_Q1_LAVA_NAILS ? 8u :
-                    ammo == QA_Q1_MULTI_ROCKETS ? 32u : 16u) << 23;
-        }
-    }
+    uint32_t extra_ammo;
+    q1_wire_ammo_items(g->options.program,weapon,&value.ammo_items,&extra_ammo);
+    value.extra_items=extra_ammo<<23;
     if (g->options.program == QA_Q1_HIPNOTIC) {
         if (powers[QA_Q1_WETSUIT] > seconds) value.extra_items |= 2u << 23;
         if (powers[QA_Q1_EMPATHY] > seconds) value.extra_items |= 4u << 23;
     } else if (g->options.program == QA_Q1_ROGUE && powers[QA_Q1_SHIELD] > seconds)
         value.extra_items |= 64u << 23;
-    if (!g->wire->id1) {
-        static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
-        for (unsigned i = 0; i < 2; ++i) {
-            qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
-                (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
-            double count;
-            if (!key) continue;
-            if (!qa_inventory_count_read(g->services.inventory, actor, key, &count, error)) return false;
-            if (count > 0) value.powers |= 131072u << i;
-        }
+    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    for (unsigned i = 0; i < 2; ++i) {
+        qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
+            (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
+        double count;
+        if (!key) continue;
+        if (!qa_inventory_count_read(g->services.inventory, actor, key, &count, error)) return false;
+        if (count > 0) value.powers |= 131072u << i;
     }
     if (!qa_q1_wire_receipt_current(receipt) ||
         !qa_q1_native_client_slot(g, actor, &slot, error)) return false;

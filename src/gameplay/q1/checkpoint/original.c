@@ -699,14 +699,6 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !number(record, "idealpitch", movement->data.nq.ideal_pitch, false, error) ||
             !vector(record,"movedir",movement->data.nq.water_jump_direction,error)) return false;
         uint32_t items = wire.weapons | wire.powers | wire.ammo_items;
-        static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
-        for (unsigned i = 0; i < 2; ++i) {
-            qa_string_id key = qa_strings_find(qa_session_strings(game->services.session),
-                (qa_bytes){(const uint8_t *)keys[i],strlen(keys[i])});
-            double count = 0;
-            if (key && !qa_inventory_count_read(game->services.inventory,player->id,key,&count,error)) return false;
-            if (count != 0) items |= 131072u << i;
-        }
         if (combat.armor.regular.points > 0 && game->options.program != QA_Q1_ROGUE)
             items |= combat.armor.regular.protection.q1_absorption >= .8f ? 32768u :
                 combat.armor.regular.protection.q1_absorption >= .6f ? 16384u : 8192u;
@@ -1052,14 +1044,19 @@ static bool restore_inventory(qa_q1_game *game, q1_player *player,
         }
         for (unsigned j = 0; j < QA_Q1_AMMO_COUNT; ++j)
             if (entry->item == game->ammo[j]) { entry->count = saved_number(record, ammo_field(game,j)); matched = true; }
-        const char *name = qa_strings_cstr(qa_session_strings(game->services.session), entry->item);
-        if (name && !strcmp(name, "q1:key/silver")) { entry->count = (bits & 131072u) != 0; matched = true; }
-        if (name && !strcmp(name, "q1:key/gold")) { entry->count = (bits & 262144u) != 0; matched = true; }
         if (matched) okay = qa_inventory_configure(game->services.inventory, player->id, entry, NULL, NULL, error);
     }
     free(entries);
-    float selected = saved_number(record, "weapon");
     if (!okay) return false;
+    static const char *const keys[]={"q1:key/silver","q1:key/gold"};
+    for (unsigned i=0;i<2;++i) {
+        qa_item_id key;
+        if (!qa_builtin_resource(&game->services,keys[i],&key,error) ||
+            !qa_inventory_configure(game->services.inventory,player->id,
+                &(qa_inventory_entry){.item=key,.count=(bits&(131072u<<i))!=0,
+                    .capacity=1,.policy=QA_COUNT_SOURCE_FLOAT},NULL,NULL,error)) return false;
+    }
+    float selected = saved_number(record, "weapon");
     if (!isfinite(selected) || selected <= 0 || selected >= 4294967296.0 ||
         !qa_q1_weapon_source(game->options.program, (uint32_t)selected, &player->weapon))
         return fail(error, "Original selected weapon lacks its genuine compiled Source identity");
@@ -1407,10 +1404,16 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         if (selected<=0 || !qa_q1_weapon_source(program,(uint32_t)selected,&player.weapon)) {
             unsupported(error,"Source weapon has no compiled identity");goto done;
         }
-        /* The inverse restores weapons and keys directly, and powers from their
-         * expiry fields. Other item bits and view-model identities still need
-         * a paired inverse before this row may enter native execution. */
-        uint32_t represented=131072u|262144u;
+        uint32_t ammo_items,ammo_items2;
+        q1_wire_ammo_items(program,player.weapon,&ammo_items,&ammo_items2);
+        uint32_t ammo_mask=program==QA_Q1_ROGUE?128u|256u|512u|1024u:256u|512u|1024u|2048u;
+        uint32_t source_items=(uint32_t)saved_number(record,"items");
+        if ((source_items&ammo_mask)!=ammo_items) {
+            unsupported(error,"Source ammunition icon differs from its selected native weapon");goto done;
+        }
+        /* Weapons, keys and the selected ammunition icon have paired owners.
+         * Other item bits still require their complete native state inverse. */
+        uint32_t represented=131072u|262144u|ammo_items;
         for (unsigned shift=0;shift<32;++shift) {
             qa_q1_weapon weapon;
             if (qa_q1_weapon_source(program,UINT32_C(1)<<shift,&weapon)) represented|=UINT32_C(1)<<shift;
@@ -1425,6 +1428,9 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 unsupported(error,"Source ammunition has no native inventory state");goto done;
             }
             admitted_key(admission,name);
+        }
+        if (ammo_items2) {
+            unsupported(error,"Source powered ammunition needs its extra item inverse");goto done;
         }
         if (!admit_number(admission,"items2",0,error) || !admit_number(admission,"deadflag",0,error) ||
             !admit_number(admission,"colormap",1,error) || !admit_string(admission,"netname",error) ||
