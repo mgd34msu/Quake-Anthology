@@ -212,11 +212,8 @@ static bool service_invoke(void *context, qa_native_guest *guest,
         bool valid = false;
         if (okay) {
             for (size_t i = 0; i < owner->cfg_count; ++i) if (owner->cfg_targets[i] == target) valid = true;
-            for (size_t i = 0; i < guest_runtime_imports_count(owner->imports); ++i) {
-                guest_runtime_import_view view;
-                if (!guest_runtime_imports_at(owner->imports, i, &view, error)) { okay = false; break; }
-                if (view.kind != GUEST_RUNTIME_IMPORT_DATA && view.bound && view.address == target) valid = true;
-            }
+            for (size_t i = 0; i < guest->callback_count; ++i)
+                if (guest->callbacks[i].address == target) valid = true;
             if (okay && !valid) okay = guest_fail(error, QA_ERROR_UNSUPPORTED, target, "invalid Windows control-flow-guard target");
             if (okay) okay = executable(owner, target, error);
         }
