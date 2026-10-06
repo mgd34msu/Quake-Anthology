@@ -99,6 +99,7 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
         if (addon(g) && (entity->spawnflags & 2u)) {
             entity->spawnflags &= ~2u;
+            entity->model = QA_STRING_NONE;
             state->dormant = true;
             state->use_enabled = true;
             return true;

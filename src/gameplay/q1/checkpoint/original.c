@@ -409,7 +409,7 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
 static bool map_functions(const q1_actor *entity, qa_q1_save_record *record, qa_error *error) {
     const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL;
     switch (map->kind) {
-    case Q1_MAP_MULTI: touch = "multi_touch"; use = "multi_use"; break;
+    case Q1_MAP_MULTI: touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use"; break;
     case Q1_MAP_COUNTER: use = "counter_use"; break;
     case Q1_MAP_RELAY: use = "SUB_UseTargets"; break;
     case Q1_MAP_TELEPORT: touch = "teleport_touch"; use = "teleport_use"; break;
@@ -649,6 +649,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_actor source_entity;
     if (entity) {
         source_entity = *entity;
+        if (entity->map && entity->map->kind == Q1_MAP_MULTI && entity->map->dormant)
+            source_entity.model = entity->map->original_model;
         if (entity->kind == Q1_PROJECTILE || entity->think == Q1_THINK_WIZARD ||
             entity->think == Q1_THINK_DEATH_BUBBLES || entity->think == Q1_THINK_SCOURGE_TRIGGER ||
             ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && !entity->map)) source_entity.classname = 0;
@@ -1199,13 +1201,18 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     size_t count,qa_error *error) {
     q1_map_state *map = entity->map;
     map->touch_enabled = saved(record,"touch") != NULL; map->use_enabled = saved(record,"use") != NULL;
-    map->original_model = entity->model; map->dormant = saved(record,"use") && !strcmp(saved(record,"use"),"plat_use");
+    map->original_model = entity->model;
+    const char *use = saved(record,"use");
+    map->dormant = use && ((map->kind == Q1_MAP_PLAT && !strcmp(use,"plat_use")) ||
+        (map->kind == Q1_MAP_MULTI && !strcmp(use,"trigger_multiple")));
     const char *model = qa_strings_cstr(strings, entity->model);
     if (model && *model == '*') {
         char *end; unsigned long index = strtoul(model + 1, &end, 10);
         if (*end || index > UINT32_MAX) return fail(error, "Original brush has invalid physical inline model");
         map->has_inline_model = true; map->inline_model = (uint32_t)index;
     }
+    if (map->kind == Q1_MAP_MULTI && map->dormant && saved_number(record,"modelindex") == 0)
+        entity->model = QA_STRING_NONE;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!saved_vector(saved(record,"pos1"), &move->pos1, error) ||
@@ -1742,7 +1749,17 @@ static bool original_model_fits(const qa_q1_wire_receipt *receipt,
     const char *value=saved(record,"model");char *model=NULL;
     if (!qa_q1_save_string_decode(value?value:"",&model,error)) return false;
     const char *expected=qa_strings_cstr(strings,receipt->models[index]);
-    bool equal=!strcmp(model,expected?expected:"");free(model);
+    bool equal=!strcmp(model,expected?expected:"");
+    const char *use=saved(record,"use"),*classname=saved(record,"classname");
+    if (!equal && index==0 && model[0]=='*' && classname &&
+        q1_map_classify(classname)==Q1_MAP_MULTI && use && !strcmp(use,"trigger_multiple") &&
+        saved_number(record,"solid")==0 && saved_number(record,"movetype")==0) {
+        for (size_t i=1;i<receipt->model_count;++i) {
+            expected=qa_strings_cstr(strings,receipt->models[i]);
+            if (expected && !strcmp(model,expected)) { equal=true;break; }
+        }
+    }
+    free(model);
     return equal || unsupported(error,"Original model name differs from its constructed Source ordinal");
 }
 static bool original_precache_fits(qa_q1_game *game,const qa_q1_save_data *save,

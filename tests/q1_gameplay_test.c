@@ -1,6 +1,7 @@
 #include "gameplay_fixture.h"
 #include "qa/game_q1.h"
 #include "qa/game_q1_wire.h"
+#include "qa/game_q1_maps.h"
 #include "qa/game_q1_bots.h"
 #include "qa/movement.h"
 
@@ -12,6 +13,9 @@ typedef struct q1_fixture {
     qa_inventory *inventory;
     qa_physics physics;
     qa_q1_game *game;
+    qa_targets *targets;
+    qa_q1_level *level;
+    uint32_t server_flags;
     qa_actor_owner owner;
     uint64_t sequence;
     unsigned pain_sounds;
@@ -51,6 +55,19 @@ static bool physics_write(void *context, qa_actor_id actor,
     const qa_physics_properties *properties, qa_error *error)
 {
     return qa_q1_game_physics_write(((q1_fixture *)context)->game, actor, properties, error);
+}
+
+static bool actor_traits(void *context, qa_actor_id actor, qa_builtin_actor_traits *traits)
+{
+    return qa_q1_game_actor_traits(((q1_fixture *)context)->game, actor, traits);
+}
+
+static bool unexpected_motion(void *context, qa_actor_id actor,
+    const qa_builtin_motion_change *change, qa_error *error)
+{
+    (void)context; (void)actor; (void)change;
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unexpected movement in dormant trigger fixture");
+    return false;
 }
 
 static bool client_eye(void *context, qa_actor_id actor, qa_vec3 *eye, qa_error *error)
@@ -94,13 +111,14 @@ static bool released(void *context, qa_session *session, qa_actor_record actor, 
 {
     (void)session;
     q1_fixture *fixture = context;
+    if (fixture->level) qa_q1_level_actor_released(fixture->level, actor.id);
     qa_inventory_actor_released(fixture->inventory, actor);
     qa_combat_actor_released(fixture->combat, actor);
     return qa_world_actor_released(fixture->world, actor, error);
 }
 
 static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
-    bool native_world)
+    bool native_world, qa_q1_program program)
 {
     qa_error error = {0};
     *fixture = (q1_fixture){0};
@@ -122,9 +140,10 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
         &error));
     qa_builtin_services services = {.session = fixture->session, .world = fixture->world,
         .combat = fixture->combat, .inventory = fixture->inventory,
-        .physics = &fixture->physics, .emit = emitted, .context = fixture};
+        .physics = &fixture->physics, .emit = emitted, .context = fixture,
+        .actor_traits = actor_traits, .motion_changed = unexpected_motion};
     qa_q1_options options = {.provider = fixture->owner, .combat_provider = fixture->owner,
-        .inventory_provider = fixture->owner, .program = QA_Q1_ID1, .edition = edition,
+        .inventory_provider = fixture->owner, .program = program, .edition = edition,
         .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1};
     qa_q1_host host = {.context = fixture, .check_client = check_client};
     GAME_CHECK(qa_q1_game_create(&services, &options, &host, &fixture->game, &error));
@@ -145,11 +164,122 @@ static void fixture_destroy(q1_fixture *fixture)
     GAME_CHECK(qa_combat_unregister_policy(fixture->combat, fixture->owner, &error));
     GAME_CHECK(qa_session_remove(fixture->session, fixture->owner, &error));
     qa_q1_game_destroy(fixture->game);
+    qa_targets_destroy(fixture->targets);
+    qa_q1_level_destroy(fixture->level);
     GAME_CHECK(qa_inventory_destroy(fixture->inventory, &error));
     GAME_CHECK(qa_combat_destroy(fixture->combat, &error));
     GAME_CHECK(qa_world_destroy(fixture->world, &error));
     GAME_CHECK(qa_session_destroy(fixture->session, &error));
     qa_collision_destroy(fixture->map.geometry);
+}
+
+static bool unexpected_static(void *context, const qa_q1_static_model *model, qa_error *error)
+{
+    (void)context; (void)model; (void)error;
+    return false;
+}
+static bool unexpected_ambient(void *context, qa_vec3 origin, qa_string_id sound,
+    float volume, float attenuation, qa_error *error)
+{
+    (void)context; (void)origin; (void)sound; (void)volume; (void)attenuation; (void)error;
+    return false;
+}
+static bool unexpected_lightstyle(void *context, int32_t style, qa_string_id pattern,
+    qa_error *error)
+{
+    (void)context; (void)style; (void)pattern; (void)error;
+    return false;
+}
+static bool unexpected_skill(void *context, int32_t skill, qa_error *error)
+{
+    (void)context; (void)skill; (void)error;
+    return false;
+}
+static bool unexpected_secret(void *context, qa_actor_id source, qa_actor_id player,
+    uint32_t total, uint32_t found, qa_error *error)
+{
+    (void)context; (void)source; (void)player; (void)total; (void)found; (void)error;
+    return false;
+}
+static bool unexpected_begin(void *context, qa_string_id map, qa_actor_id cause,
+    double seconds, qa_error *error)
+{
+    (void)context; (void)map; (void)cause; (void)seconds; (void)error;
+    return false;
+}
+static bool unexpected_travel(void *context, qa_string_id map, qa_actor_id cause, qa_error *error)
+{
+    (void)context; (void)map; (void)cause; (void)error;
+    return false;
+}
+static bool unexpected_defer(void *context, double seconds, qa_error *error)
+{
+    (void)context; (void)seconds; (void)error;
+    return false;
+}
+static bool unexpected_achievement(void *context, qa_actor_id player, const char *id,
+    qa_error *error)
+{
+    (void)context; (void)player; (void)id; (void)error;
+    return false;
+}
+
+static void fixture_bind_maps(q1_fixture *fixture)
+{
+    qa_error error = {0};
+    fixture->targets = qa_targets_create(&(qa_target_options){.session = fixture->session}, &error);
+    GAME_CHECK(fixture->targets != NULL);
+    qa_string_id map;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session), "test", &map, &error));
+    fixture->level = qa_q1_level_create(&(qa_q1_level_options){
+        .services = {.session = fixture->session}, .current_map = map,
+        .server_flags = &fixture->server_flags, .rerelease = true,
+        .begin = unexpected_begin, .travel = unexpected_travel,
+        .defer_begin = unexpected_defer, .achievement = unexpected_achievement}, &error);
+    GAME_CHECK(fixture->level != NULL);
+    GAME_CHECK(qa_q1_game_maps_bind(fixture->game, &(qa_q1_map_options){
+        .targets = fixture->targets, .level = fixture->level,
+        .server_flags = &fixture->server_flags, .current_map = map,
+        .static_model = unexpected_static, .ambient = unexpected_ambient,
+        .lightstyle = unexpected_lightstyle, .set_skill = unexpected_skill,
+        .secret_found = unexpected_secret}, &error));
+}
+
+static void dormant_trigger_activation(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG1);
+    fixture_bind_maps(&fixture);
+    qa_actor_id trigger;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trigger_once", .targetname = "gold", .spawnflags = 2,
+        .angles = {0, 90, 0}, .map_fields = &(qa_q1_map_fields){.model = "*0"}},
+        &trigger, &error));
+    qa_q1_presentation visible;
+    qa_physics_properties physics;
+    qa_body_state body;
+    qa_actor_collision collision;
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
+    GAME_CHECK(visible.model == QA_STRING_NONE);
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
+    GAME_CHECK(physics.solid == QA_PHYSICS_NOT_SOLID);
+    GAME_CHECK(!qa_world_get_collision(fixture.world, trigger, &collision, &error));
+    GAME_CHECK(error.code == QA_OK);
+    GAME_CHECK(qa_world_body_read(fixture.world, trigger, &body, &error));
+    GAME_CHECK(body.angles.y == 90);
+    GAME_CHECK(body.bounds.mins.x == -1024 && body.bounds.maxs.x == 1024);
+    GAME_CHECK(qa_q1_game_use(fixture.game, trigger, (qa_actor_id){0}, &error));
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
+    GAME_CHECK(visible.model == QA_STRING_NONE);
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
+    GAME_CHECK(physics.solid == QA_PHYSICS_TRIGGER && physics.motion == QA_PHYSICS_STATIONARY);
+    GAME_CHECK(qa_world_get_collision(fixture.world, trigger, &collision, &error));
+    GAME_CHECK(collision.role == QA_COLLISION_TRIGGER);
+    GAME_CHECK(qa_world_body_read(fixture.world, trigger, &body, &error));
+    GAME_CHECK(body.angles.y == 0);
+    GAME_CHECK(body.bounds.mins.x == -1024 && body.bounds.maxs.x == 1024);
+    fixture_destroy(&fixture);
 }
 
 static qa_actor_id spawn(q1_fixture *fixture, const char *classname)
@@ -189,7 +319,7 @@ static void armor_and_protection(void)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, 1, true);
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1, true, QA_Q1_ID1);
     qa_actor_id knight = spawn(&fixture, "monster_knight");
     qa_armor armor = {.regular = {.kind = QA_ARMOR_Q1, .points = 10,
         .protection.q1_absorption = 0.3f}};
@@ -216,7 +346,7 @@ static void pain_cooldown(uint8_t skill)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, skill, true);
+    fixture_create(&fixture, QA_Q1_CLASSIC, skill, true, QA_Q1_ID1);
     qa_actor_id knight = spawn(&fixture, "monster_knight");
     qa_damage_outcome outcome = hit(&fixture, knight, 10);
     qa_damage_outcome_free(&outcome);
@@ -237,7 +367,7 @@ static void edition_damage(qa_q1_edition edition)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, edition, 1, true);
+    fixture_create(&fixture, edition, 1, true, QA_Q1_ID1);
     qa_actor_id oldone = spawn(&fixture, "monster_oldone");
     qa_combat_state state;
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
@@ -290,7 +420,7 @@ static void donor_check_client(void)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, 1, false);
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1, false, QA_Q1_ID1);
     qa_actor_id observer = spawn(&fixture, "monster_knight");
     qa_builtin_services services = {.session = fixture.session, .world = fixture.world,
         .combat = fixture.combat, .inventory = fixture.inventory,
@@ -408,6 +538,7 @@ static void movement_output_owner(void)
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    dormant_trigger_activation();
     movement_output_owner();
     donor_check_client();
     armor_and_protection();
