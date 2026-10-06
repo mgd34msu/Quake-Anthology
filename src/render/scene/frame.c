@@ -139,14 +139,18 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
 }
 
 bool qa_scene_frame_model(qa_scene_frame *frame, qa_scene_model *model,
-    const qa_model_pose *pose, qa_error *error)
+    const qa_model_pose *pose, size_t count, const qa_scene_skin_pose **out, qa_error *error)
 {
-    if (!frame || !model) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene model pin requires its frame and owner");
+    if (!frame || !model || !pose || !out || !count || count != model->source->bone_count ||
+        count > (size_t)PTRDIFF_MAX / sizeof(*pose)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene model pose requires its frame, owner and exact joints");
         return false;
     }
     for (size_t i = 0; i < frame->model_count; ++i)
-        if (frame->models[i].model == model && frame->models[i].pose == pose) return true;
+        if (frame->models[i].model == model && frame->models[i].pose == pose) {
+            *out = frame->models[i].prepared;
+            return true;
+        }
     if (frame->model_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene model reference count overflow");
         return false;
@@ -157,7 +161,16 @@ bool qa_scene_frame_model(qa_scene_frame *frame, qa_scene_model *model,
     frame->models = data;
     qa_scene_model_pin pin = {0};
     if (!scene_model_frame_retain(&pin, model, pose, error)) return false;
+    qa_scene_skin_pose *prepared = qa_arena_alloc(&frame->storage, sizeof(*prepared),
+        _Alignof(qa_scene_skin_pose), error);
+    size_t bytes = count * sizeof(*pose);
+    qa_model_pose *joints = qa_arena_alloc(&frame->storage, bytes, _Alignof(qa_model_pose), error);
+    if (!prepared || !joints) { scene_model_frame_release(&pin); return false; }
+    memcpy(joints, pose, bytes);
+    *prepared = (qa_scene_skin_pose){.joints = joints, .count = count, .ordinal = frame->command_count};
+    pin.prepared = prepared;
     frame->models[frame->model_count++] = pin;
+    *out = prepared;
     return true;
 }
 

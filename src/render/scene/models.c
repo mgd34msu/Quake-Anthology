@@ -1112,20 +1112,11 @@ static bool md5_deferred_mesh(qa_scene_model *model, const qa_scene_model_input 
 }
 
 static bool md5_deferred_skin(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
-    unsigned sample_index, size_t ordinal, const qa_scene_skin_pose **pose, qa_scene_frame *frame,
+    unsigned sample_index, qa_scene_frame *frame,
     const qa_scene_skinning **out, qa_error *error)
 {
-    if (!qa_scene_frame_model(frame, model, input->pose, error)) return false;
-    if (!*pose) {
-        size_t bytes = input->pose_count * sizeof(*input->pose);
-        qa_scene_skin_pose *prepared = qa_arena_alloc(&frame->storage, sizeof(*prepared),
-            _Alignof(qa_scene_skin_pose), error);
-        qa_model_pose *joints = qa_arena_alloc(&frame->storage, bytes, _Alignof(qa_model_pose), error);
-        if (!prepared || !joints) return false;
-        memcpy(joints, input->pose, bytes);
-        *prepared = (qa_scene_skin_pose){.joints = joints, .count = input->pose_count, .ordinal = ordinal};
-        *pose = prepared;
-    }
+    const qa_scene_skin_pose *pose;
+    if (!qa_scene_frame_model(frame, model, input->pose, input->pose_count, &pose, error)) return false;
     scene_model_sample *sample = &model->meshes[index].samples[sample_index];
     md5_sample_prepare(sample, input, true);
     qa_scene_skinning *skin = qa_arena_alloc(&frame->storage, sizeof(*skin), _Alignof(qa_scene_skinning), error);
@@ -1134,7 +1125,7 @@ static bool md5_deferred_skin(qa_scene_model *model, const qa_scene_model_input 
     qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ? input->alias_light : scene_model_alias_light(input);
     scene_model_shading shading = {0};
     if (!shell) shading = scene_model_shade_prepare(input);
-    *skin = (qa_scene_skinning){.pose = *pose, .sample = &sample->skin,
+    *skin = (qa_scene_skinning){.pose = pose, .sample = &sample->skin,
         .shade_direction = shading.direction, .light = light, .tint = input->color,
         .shell = shell ? 4 : 0, .shade = !shell};
     *out = skin;
@@ -1601,8 +1592,6 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
             first = model->source->lods[lod].first_mesh; count = model->source->lods[lod].mesh_count;
         }
         bool defer = md5_deferred_allowed(model, &input, original, depth);
-        size_t ordinal = frame->command_count;
-        const qa_scene_skin_pose *skin_pose = NULL;
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
             bool mesh_visible = true;
@@ -1630,7 +1619,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (image && image->material && !scene_model_has_shell(&input)) {
                     if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
                     if (!mesh_visible) continue;
-                } else if (!md5_deferred_skin(model, &input, i, sample_index, ordinal, &skin_pose,
+                } else if (!md5_deferred_skin(model, &input, i, sample_index,
                     frame, &skinning, error)) return false;
             }
             if (model->source->format != QA_MODEL_MD5 && cull && mesh.vertex_count) {

@@ -515,8 +515,8 @@ typedef struct qa_scene_brush_surface {
     qa_scene_rect lightmap_rect;
     uint64_t light_revision;
 } qa_scene_brush_surface;
-/* Final model-space joints are immutable frame storage shared by one instance's
- * meshes/passes. Ordinal is the command count at that instance's admission. */
+/* Final model-space joints are immutable frame storage shared by every draw of
+ * one retained model pose slot. Ordinal is its first admission's command count. */
 typedef struct qa_scene_skin_pose {
     const qa_model_pose *joints;
     size_t count, ordinal;
@@ -660,6 +660,7 @@ typedef struct qa_scene_group {
 typedef struct qa_scene_model_pin {
     qa_scene_model *model;
     const qa_model_pose *pose;
+    const qa_scene_skin_pose *prepared;
 } qa_scene_model_pin;
 /* Owns its arrays; do not shallow-copy a frame. Reset only once every consuming
  * backend has completed it. Commands are contiguous; transient geometry lives
@@ -705,7 +706,10 @@ bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
 /* Pin borrowed retained geometry, including intermediate shadow-caster data,
  * until reset. No command is emitted. NULL geometry needs no reference. */
 bool qa_scene_frame_geometry(qa_scene_frame *, const qa_scene_geometry *, qa_error *);
-bool qa_scene_frame_model(qa_scene_frame *, qa_scene_model *, const qa_model_pose *, qa_error *);
+/* Retain and prepare one exact model pose slot until reset. Repeated admissions
+ * in this frame return the same immutable joints and palette ordinal. */
+bool qa_scene_frame_model(qa_scene_frame *, qa_scene_model *, const qa_model_pose *, size_t,
+                           const qa_scene_skin_pose **, qa_error *);
 bool qa_scene_frame_image(qa_scene_frame *, const qa_scene_image *, qa_error *);
 bool qa_scene_frame_image_region(qa_scene_frame *, const qa_scene_image *, qa_scene_rect,
                                  qa_error *);
