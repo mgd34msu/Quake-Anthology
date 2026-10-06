@@ -453,34 +453,21 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !name || !qa_vec_finite(start) || !qa_vec_finite(end) ||
         !isfinite(time) || !isfinite(duration) || !q2fx_source_current(o,e)) return false;
-    double die=time+(duration>0?duration*1000:100);
-    if (!isfinite(die)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam lifetime exceeds its source clock");
-    double interval;
-    if (!q2fx_frame_milliseconds(o,&interval,e)) return false;
-    frontend_remote_q2_effects_controls controls;
-    if (!q2fx_controls(o,&controls,e)) return false;
-    ++o->busy; bool ok=true;
-    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) rail(o,start,end,time,false,&controls);
-    else if (!strcmp(name,"bubble-trail")) frontend_fx_q2_bubbles(&o->particles,&o->random,start,end,time*.001);
-    else if (!strcmp(name,"bfg-laser") || !strcmp(name,"bfg-zap")) {
-        size_t capacity=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?Q2FX_LASER_CAPACITY:Q2FX_POOL;
-        for (size_t i=0;i<capacity;++i) if (!o->lasers[i].active ||
-            (o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?o->lasers[i].die<=time:o->lasers[i].die<time)) {
-            o->lasers[i]=(q2fx_laser){.active=true,.start=start,.end=end,.born=time,.die=die,.color=0xd0+(random_word(o)&3),.width=4}; break;
-        }
-        if (!strcmp(name,"bfg-zap")) bfg_explosion(o,end,time,interval);
-    } else {
-        frontend_q2_beam_recipe recipe;
-        if (!frontend_q2_beam_named_recipe(name,(qa_vec3){0},duration,&recipe))
-            ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
-        else if (recipe.player && !actor_id.registry)
-            ok=q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
-        else if (!q2fx_model_admit(o,recipe.model,e)) ok=false;
-        else (void)frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
-            o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,&recipe,actor_id,(qa_actor_id){0},start,end,time);
-    }
-    o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
+    qa_q2_temp_entity temporary;
+    if (frontend_q2_named_temporary(name,start,end,&temporary))
+        return frontend_remote_q2_effects_temporary(o,&temporary,NULL,time,time,e);
+    frontend_q2_beam_recipe recipe;
+    if (!frontend_q2_beam_named_recipe(name,(qa_vec3){0},duration,&recipe))
+        return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
+    if (recipe.player && !actor_id.registry)
+        return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
+    if (!q2fx_model_admit(o,recipe.model,e)) return false;
+    ++o->busy;
+    (void)frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
+        o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,&recipe,actor_id,(qa_actor_id){0},start,end,time);
+    o->dirty=true; --o->busy; return q2fx_source_current(o,e);
 }
+
 static bool soldier_flash(uint32_t flash, unsigned kind)
 {
     static const uint32_t values[3][8] = {{39,40,83,86,89,92,95,98},{41,42,84,87,90,93,96,99},{43,44,85,88,91,94,97,100}};

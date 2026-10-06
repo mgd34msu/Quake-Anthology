@@ -5,6 +5,21 @@
 #include <string.h>
 static bool beam_fail(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message);return false; }
+bool frontend_q2_named_temporary(const char *name,qa_vec3 start,qa_vec3 end,qa_q2_temp_entity *out)
+{
+    if (!name) return false;
+    if (!strncmp(name,"q2:",3)) name+=3;
+    uint8_t type;
+    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) type=QA_Q2_TE_RAILTRAIL;
+    else if (!strcmp(name,"bubble-trail")) type=QA_Q2_TE_BUBBLETRAIL;
+    else if (!strcmp(name,"bfg-laser")) type=QA_Q2_TE_BFG_LASER;
+    else if (!strcmp(name,"bfg-zap")) type=QA_Q2_TE_BFG_ZAP;
+    else return false;
+    *out=(qa_q2_temp_entity){.type=type,.field_count=2,.fields={
+        {.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.value.vector={start.x,start.y,start.z}},
+        {.name=QA_Q2_TEMP_POSITION2,.kind=QA_Q2_TEMP_VECTOR,.value.vector={end.x,end.y,end.z}}}};
+    return true;
+}
 bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,frontend_q2_beam_recipe *out)
 {
     frontend_q2_beam_recipe recipe={.model=Q2FX_PARASITE};

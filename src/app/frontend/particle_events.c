@@ -1278,40 +1278,11 @@ static bool q2_trail_particles(frontend_particle_owner *owner, const qa_builtin_
     qa_vec3 move = event->origin;
     qa_vec3 direction = qa_vec_normalize(delta);
     if (type == QA_Q2_TE_RAILTRAIL) {
-        qa_vec3 seed = qa_v3(direction.z, -direction.x, direction.y);
-        qa_vec3 right = qa_vec_normalize(qa_vec_sub(seed,
-            qa_vec_scale(direction, qa_vec_dot(seed, direction))));
-        qa_vec3 up = qa_vec_cross(right, direction);
-        for (double distance = 0; distance < length; ++distance) {
-            if (owner->q2_particles->count == FRONTEND_PARTICLE_CAPACITY) return true;
-            float angle = (float)(distance * .1);
-            qa_vec3 outward = qa_vec_add(qa_vec_scale(right, (float)cos(angle)),
-                qa_vec_scale(up, (float)sin(angle)));
-            frontend_fx_q2_particle particle = {
-                .spawn_milliseconds = (double)(now / UINT64_C(1000000)),
-                .origin = qa_vec_add(move, qa_vec_scale(outward, 3)),
-                .velocity = qa_vec_scale(outward, 6), .alpha = 1};
-            particle.alpha_velocity = -1 / (1 + particle_unit(owner) * .2f);
-            particle.color = 0x74 + (particle_random(owner) & 7);
-            owner->q2[owner->q2_particles->count++] = particle;
-            move = qa_vec_add(move, direction);
-        }
-        move = event->origin;
-        qa_vec3 step = qa_vec_scale(direction, .75f);
-        for (double distance = 0; distance < length && owner->q2_particles->count < FRONTEND_PARTICLE_CAPACITY;
-             distance += .75, move = qa_vec_add(move, step)) {
-            frontend_fx_q2_particle particle = {
-                .spawn_milliseconds = (double)(now / UINT64_C(1000000)), .alpha = 1};
-            particle.alpha_velocity = -1 / (.6f + particle_unit(owner) * .2f);
-            particle.color = particle_random(owner) & 15;
-            particle.origin.x = move.x + particle_signed(owner) * 3;
-            particle.velocity.x = particle_signed(owner) * 3;
-            particle.origin.y = move.y + particle_signed(owner) * 3;
-            particle.velocity.y = particle_signed(owner) * 3;
-            particle.origin.z = move.z + particle_signed(owner) * 3;
-            particle.velocity.z = particle_signed(owner) * 3;
-            owner->q2[owner->q2_particles->count++] = particle;
-        }
+        frontend_fx_q2_rail(owner->q2_particles,&owner->random,event->origin,event->direction,(double)now*1e-9);
+        return true;
+    }
+    if (type == QA_Q2_TE_BUBBLETRAIL) {
+        frontend_fx_q2_bubbles(owner->q2_particles,&owner->random,event->origin,event->direction,(double)now*1e-9);
         return true;
     }
     qa_vec3 step = qa_vec_scale(direction, spacing);
@@ -1987,13 +1958,18 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             if (!q1_particle_event(frontend, &event, error)) return false;
         } else if (event.family==QA_GAME_Q2 && event.kind==QA_BUILTIN_BEAM) {
             const char *resource=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),event.resource);
-            frontend_q2_beam_recipe recipe;
-            if (frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
+            frontend_q2_beam_recipe recipe;qa_q2_temp_entity temporary;
+            bool named=frontend_q2_named_temporary(resource,event.origin,event.end,&temporary);
+            if (named || frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
                 qa_application_q2_audience audience;
                 if (!qa_application_event_q2_audience_at(frontend->application,i,&audience) ||
                     !audience.captured || audience.source!=event.provider)
                     return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 beam lost its captured Source audience");
-                if (!q2_builtin_beam(frontend,&event,&audience,&recipe,q2_sample,physical,error)) return false;
+                if (named) {
+                    qa_application_protocol_event message={.provider=event.provider,
+                        .dialect=audience.source_frame.kind,.time_ns=event.time_ns};
+                    if (!frontend_particle_q2_temporary(frontend,&message,&audience,&temporary,error)) return false;
+                } else if (!q2_builtin_beam(frontend,&event,&audience,&recipe,q2_sample,physical,error)) return false;
             }
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
             frontend_particle_owner *owner;
