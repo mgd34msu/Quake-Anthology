@@ -9,7 +9,7 @@ static bool valid(const qa_q2_unicast_claim *r)
 { return r && r->client.owner && r->client.generation && r->connection_epoch && r->source && r->map_revision && r->key; }
 static bool domain(const qa_q2_unicast_claim *a, const qa_q2_unicast_claim *b)
 {
-    return a->source == b->source && a->map_revision == b->map_revision && qa_sha256_equal(&a->map, &b->map) &&
+    return a->source == b->source && a->map_revision == b->map_revision &&
         a->source_frame == b->source_frame && a->source_time_ns == b->source_time_ns;
 }
 static bool same(const qa_q2_unicast_claim *a, const qa_q2_unicast_claim *b)
@@ -86,7 +86,6 @@ static bool row_codec(qa_source_save_io *io, const qa_q2_unicast_refs *refs, qa_
         !refs->source_encode(refs->context, row->source, &source, io->error))) return false;
     if (!qa_source_save_u64(io, &client) || !qa_source_save_u64(io, &source) || !client || !source ||
         !qa_source_save_u64(io, &row->connection_epoch) ||
-        !qa_source_save_bytes(io, row->map.bytes, sizeof(row->map.bytes)) ||
         !qa_source_save_u64(io, &row->map_revision) ||
         !qa_source_save_u64(io, &row->source_frame) || !qa_source_save_u64(io, &row->source_time_ns) ||
         !qa_source_save_u32(io, &row->key)) return false;
@@ -128,7 +127,7 @@ bool qa_q2_unicast_restore(qa_bytes bytes, const qa_q2_unicast_refs *refs,
         qa_source_save_u32(&io, &magic) &&
         magic == UINT32_C(0x5532514e) &&
         qa_source_save_count(&io, &count, SIZE_MAX / sizeof(qa_q2_unicast_claim)) &&
-        count <= (io.input.size - io.offset) / 84;
+        count <= (io.input.size - io.offset) / 52;
     qa_q2_unicast_cache *cache = NULL;
     if (ok) ok = qa_q2_unicast_cache_create(&cache, e);
     for (size_t i = 0; ok && i < count; ++i) {

@@ -7,7 +7,6 @@ typedef struct qa_q2_unicast_claim {
     qa_net_client_id client;
     uint64_t connection_epoch;
     qa_actor_owner source;
-    qa_sha256_digest map;
     uint64_t map_revision;
     uint64_t source_frame, source_time_ns;
     uint32_t key;

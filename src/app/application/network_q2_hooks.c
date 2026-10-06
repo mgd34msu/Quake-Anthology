@@ -472,7 +472,6 @@ bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner sourc
     qa_q2_unicast_claim claim = {.client = recipient.client, .connection_epoch = recipient.connection_epoch,
         .source = source, .map_revision = app->map_revision,
         .source_frame = clock.frame.number, .source_time_ns = clock.frame.time_ns, .key = key};
-    claim.map = *qa_resource_digest(app->map_resource);
     if (!engine->network_unicast(engine->network_recipient_context, &claim, remember, duplicate, error)) return false;
     qa_application_network_q2_recipient_view after;
     bool current;
