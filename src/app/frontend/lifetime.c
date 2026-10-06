@@ -863,6 +863,56 @@ bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)
     }
     return true;
 }
+static bool run_elapsed(uint64_t ticks, uint64_t frequency, uint64_t *out, qa_error *error)
+{
+    uint64_t seconds = ticks / frequency;
+    if (seconds > UINT64_MAX / UINT64_C(1000000000))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "monotonic duration overflow");
+    *out = seconds * UINT64_C(1000000000) +
+        (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
+    return true;
+}
+
+static bool run_source_deadline(qa_frontend *frontend, uint64_t elapsed, uint64_t *out, qa_error *error)
+{
+    *out = 0;
+    const qa_display_info *display = &frontend->observed_display;
+    if (!frontend->options.dedicated && frontend->display && !display->minimized &&
+        display->drawable_width && display->drawable_height) return true;
+    if (frontend_constructor_pending(frontend) || frontend_save_commands_restoring(frontend) ||
+        qa_application_startup_pending(frontend->application)) return true;
+    qa_session *session = qa_application_session(frontend->application);
+    const qa_launch_snapshot *launch = qa_application_launch(frontend->application);
+    for (size_t i = 0; i < qa_launch_snapshot_instance_count(launch); ++i) {
+        const qa_launch_instance *instance = qa_launch_snapshot_instance(launch, i);
+        qa_actor_owner provider;
+        qa_clock_state clock; qa_clock_config recipe; uint64_t order;
+        if (!qa_application_provider_owner(frontend->application, instance->selection.instance, &provider) ||
+            !qa_session_clock(session, provider, &clock) || clock.paused ||
+            !qa_session_component_recipe(session, provider, &recipe, &order)) continue;
+        bool accepted; uint64_t duration;
+        if (!qa_session_pending_frame(session, provider, elapsed, &accepted, &duration, NULL, error)) return false;
+        if (accepted) { *out = 0; return true; }
+        uint64_t step = recipe.interval_ns ? recipe.interval_ns : recipe.minimum_frame_ns;
+        if (step > UINT64_MAX - elapsed) { *out = 0; return true; }
+        uint64_t low = elapsed, high = elapsed + step;
+        if (*out && *out < high) high = *out;
+        if (!qa_session_pending_frame(session, provider, high, &accepted, &duration, NULL, error)) return false;
+        if (!accepted) {
+            if (*out && high == *out) continue;
+            *out = 0; return true;
+        }
+        while (high - low > 1) {
+            uint64_t middle = low + (high - low) / 2;
+            if (!qa_session_pending_frame(session, provider, middle, &accepted, &duration, NULL, error)) return false;
+            if (accepted) high = middle;
+            else low = middle;
+        }
+        *out = high;
+    }
+    return true;
+}
+
 bool qa_frontend_run(qa_frontend **slot, qa_error *error)
 {
     if (!slot || !*slot) return frontend_fail(error, QA_ERROR_ARGUMENT, "missing frontend driver slot");
@@ -876,17 +926,25 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         qa_frontend *frontend=*slot;
         uint64_t now = SDL_GetPerformanceCounter(), ticks = now - last;
         last = now;
-        uint64_t seconds = ticks / frequency;
-        if (seconds > UINT64_MAX / UINT64_C(1000000000)) { ok = frontend_fail(error, QA_ERROR_ARGUMENT, "monotonic duration overflow"); break; }
-        uint64_t elapsed = seconds * UINT64_C(1000000000) +
-            (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
+        uint64_t elapsed;
+        if (!run_elapsed(ticks, frequency, &elapsed, error)) { ok = false; break; }
         if (!frontend_save_commands_restoring(frontend))
             ok = qa_frontend_step(frontend, elapsed, error);
         if (ok) ok=frontend_save_commands_drain(slot,error);
         frontend=*slot;
         if (!frontend_save_commands_restoring(frontend) && frontend->options.frame_limit &&
             frontend->frame_number >= frontend->options.frame_limit) break;
-        SDL_Delay(1);
+        if (!ok || qa_application_should_stop(frontend->application)) break;
+        uint64_t deadline = 0;
+        if (ok) ok = run_elapsed(SDL_GetPerformanceCounter() - last, frequency, &elapsed, error) &&
+            run_source_deadline(frontend, elapsed, &deadline, error);
+        while (ok && !interrupted && deadline) {
+            if (!run_elapsed(SDL_GetPerformanceCounter() - last, frequency, &elapsed, error)) { ok = false; break; }
+            if (elapsed >= deadline) break;
+            uint64_t milliseconds = (deadline - elapsed) / UINT64_C(1000000);
+            if (milliseconds > 1) SDL_Delay((uint32_t)(milliseconds - 1 > UINT32_MAX ?
+                UINT32_MAX : milliseconds - 1));
+        }
     }
     if (previous_int != SIG_ERR) signal(SIGINT, previous_int);
     if (previous_term != SIG_ERR) signal(SIGTERM, previous_term);
