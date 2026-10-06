@@ -110,3 +110,31 @@ live acceptance checks. The nonfatal demo-recording startup warning remains
 open. Native admission of placed items and additional mover types remains
 incomplete on other maps; these checks do not establish all-save or campaign
 completion.
+
+## Installed `235e359a`: owner path after inventory and brush changes
+
+The paired inventory and brush-save changes in `f80b9454` and `235e359a` passed
+complete GCC and Clang builds and every registered check. The executable and
+sibling runtime installed in `qfiles/qa-c` match the GCC build byte for byte.
+
+Three further checks on that installed copy passed real default Space and raw
+mouse button 3 press/release, rise and landing, and preserved raw mouse button 2
+forward movement. Each walked through the Normal slipgate beyond fog expiry,
+wrote original v5 saves, moved away with the default S key, loaded, and resaved.
+
+| Entry | Renderer | Y after moving away | Y restored by load |
+| --- | --- | ---: | ---: |
+| CLI | CPU | 1858.122192 | 2015.968750 |
+| CLI | GL | 1861.507080 | 2015.968750 |
+| Actual menu/preset | GL | 1859.665161 | 2015.968750 |
+
+Position, view angles, health, weapon, ammunition and item flags matched the
+pre-load player record exactly after resaving. Photographs show the retained
+stock ammo icon and 25 shells. These live checks observe the default native
+launch and stock HUD; they do not instrument the private provider pointer.
+Manual and level-entry saves were original text, between 32,208 and 32,975 bytes.
+
+Each public quit exited zero. All game processes and the private display were
+removed, and owner settings and the installed artifact remained unchanged.
+Receipt: `owner-jump-slipgate-save-235e359a-proof.json`. The nonfatal demo warning
+still appears after load. No performance, audio or full-campaign claim is made.
