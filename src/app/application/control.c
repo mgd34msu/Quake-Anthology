@@ -337,11 +337,10 @@ static qa_movement_ground body_ground(application_control_record *record,
     const qa_actor_registry *actors = qa_session_actors(record->application->session);
     qa_actor_id target = qa_actor_reference_resolve(actors, body->ground);
     qa_physics *physics = record->application->physics;
-    const qa_actor_record *self = qa_actors_get(actors, record->actor);
-    bool source_world = (record->state.kind == QA_MOVEMENT_NETQUAKE ||
-        record->state.kind == QA_MOVEMENT_QUAKEWORLD) && self &&
+    const application_provider *source = application_world_provider(record->application, QA_ROLE_ENTITIES, "");
+    bool source_world = source && (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_QC) &&
         body->ground.kind == QA_ACTOR_REFERENCE_SOURCE &&
-        body->ground.value.source.owner == self->owner && !body->ground.value.source.slot;
+        body->ground.value.source.owner == source->owner && !body->ground.value.source.slot;
     bool world = source_world || (physics && physics->world_actor.registry &&
         qa_actor_id_equal(target, physics->world_actor));
     return (qa_movement_ground){.hit = world ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
@@ -492,7 +491,7 @@ static bool publish_result_body(application_move_call *move,
                       ? state->data.qw.angles
                       : (qa_vec3){0, view_angles.y, body.angles.z};
     if (move->execution && move->execution->kind == APPLICATION_PROVIDER_QC &&
-        !application_qc_control_body(move->execution, actor, state, &body, error)) return false;
+        !application_qc_control_body(move->execution, actor, state, ground, &body, error)) return false;
     move->committed = true;
     if (!qa_world_body_write(application->world, actor, &body, error)) return false;
     if ((link && !qa_world_link(application->world, actor, NULL, error)) ||
@@ -2783,7 +2782,8 @@ static bool control_move(qa_application *application,
                     result_ground(application, actor, &record->result.ground);
             desired.angles = result_angles(&record->result, before.angles);
             if (move.execution && move.execution->kind == APPLICATION_PROVIDER_QC &&
-                !application_qc_control_body(move.execution, actor, &record->result.state, &desired, error)) ok = false;
+                !application_qc_control_body(move.execution, actor, &record->result.state,
+                    record->result.ground, &desired, error)) ok = false;
             bool changed = !same_vector(before.origin, desired.origin) ||
                            !same_vector(before.velocity, desired.velocity) ||
                            !same_vector(before.angles, desired.angles) ||

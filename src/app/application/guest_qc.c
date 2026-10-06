@@ -637,17 +637,43 @@ bool application_qc_control_state(application_provider *provider, qa_actor_id ac
     }
     return control_current(engine, reference, actor, error);
 }
+static bool control_ground(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                             qa_movement_ground ground, bool only_grounded, qa_error *error)
+{
+    const qa_qc_game_fields *fields = qa_qc_program_resolved_fields(engine->provider->state.qc.program);
+    const qa_qc_definition *flags_field = fields->flags, *ground_field = fields->groundentity;
+    float flags; int32_t bits;
+    if (!flags_field || flags_field->type != QA_QC_FLOAT ||
+        !ground_field || ground_field->type != QA_QC_ENTITY)
+        return application_fail(error, QA_ERROR_FORMAT, "QC control ground fields differ");
+    if (!qa_qc_entity_float(engine->provider->state.qc.instance, reference, flags_field->offset, &flags, error) ||
+        !control_integer(flags, &bits, error) || !control_current(engine, reference, actor, error)) return false;
+    uint32_t next = ((uint32_t)bits & ~512u) | (ground.hit != QA_TRACE_HIT_NONE ? 512u : 0u);
+    if (next != (uint32_t)bits &&
+        (!qa_qc_set_entity_float(engine->provider->state.qc.instance, reference, flags_field->offset,
+            control_flags(next), error) || !control_current(engine, reference, actor, error))) return false;
+    if (only_grounded && ground.hit == QA_TRACE_HIT_NONE) return true;
+    int32_t other = 0;
+    if (ground.hit == QA_TRACE_HIT_ACTOR && !application_qc_reference(engine, ground.actor, &other, error)) return false;
+    return control_current(engine, reference, actor, error) &&
+        qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, ground_field->offset, other, error) &&
+        control_current(engine, reference, actor, error);
+}
 bool application_qc_control_body(application_provider *provider, qa_actor_id actor,
-                                   const qa_movement_state *state, qa_body_state *body, qa_error *error)
+                                   const qa_movement_state *state, qa_movement_ground ground,
+                                   qa_body_state *body, qa_error *error)
 {
     struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
     if (!engine || !state || !body)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC control body projection is absent");
-    if (provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_MOVEMENT_QUAKEWORLD)
-        return true;
+    if (provider->state.qc.qualified) return true;
     int32_t reference; bool spectator; qa_vec3 minimum;
     if (!control_client(engine, actor, &reference, &spectator, error) ||
-        !control_vector(engine, reference, actor, "mins", &minimum, error) ||
+        !control_ground(engine, reference, actor, ground, true, error)) return false;
+    if (ground.hit == QA_TRACE_HIT_WORLD)
+        body->ground = qa_actor_reference_source(provider->owner, 0);
+    if (engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_MOVEMENT_QUAKEWORLD) return true;
+    if (!control_vector(engine, reference, actor, "mins", &minimum, error) ||
         !control_vector(engine, reference, actor, "angles", &body->angles, error) ||
         !control_word((double)state->data.qw.origin.x - minimum.x - 16, &body->origin.x, error) ||
         !control_word((double)state->data.qw.origin.y - minimum.y - 16, &body->origin.y, error) ||
@@ -694,21 +720,6 @@ static bool control_frame_time(struct application_qc_state *engine, float elapse
     return field && field->type == QA_QC_FLOAT ?
         qa_qc_stage_globals(engine->provider->state.qc.instance, field->offset, &word, 1, error) :
         application_fail(error, QA_ERROR_FORMAT, "QC control frametime is missing");
-}
-static bool control_ground(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
-                             qa_movement_ground ground, bool only_grounded, qa_error *error)
-{
-    float flags; int32_t bits;
-    if (!control_scalar(engine, reference, actor, "flags", &flags, error) || !control_integer(flags, &bits, error)) return false;
-    uint32_t next = ((uint32_t)bits & ~512u) | (ground.hit != QA_TRACE_HIT_NONE ? 512u : 0u);
-    if (!control_store_scalar(engine, reference, actor, "flags", control_flags(next), error)) return false;
-    if (only_grounded && ground.hit == QA_TRACE_HIT_NONE) return true;
-    int32_t other = 0;
-    if (ground.hit == QA_TRACE_HIT_ACTOR && !application_qc_reference(engine, ground.actor, &other, error)) return false;
-    const qa_qc_definition *field = application_qc_field(engine, "groundentity", QA_QC_ENTITY, error);
-    return field && control_current(engine, reference, actor, error) &&
-        qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, field->offset, other, error) &&
-        control_current(engine, reference, actor, error);
 }
 static bool control_store_state(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
                                   const qa_movement_call *call, qa_error *error)

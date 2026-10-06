@@ -163,7 +163,7 @@ bool application_qc_control_state(application_provider *, qa_actor_id, qa_moveme
                                     qa_bounds *, qa_movement_environment *, qa_vec3 *, qa_error *);
 bool application_qc_control_phase(application_provider *, qa_actor_id, application_control_source_path,
                                     qa_movement_phase, const application_control_context *, qa_movement_call *, qa_error *);
-bool application_qc_control_body(application_provider *, qa_actor_id, const qa_movement_state *, qa_body_state *, qa_error *);
+bool application_qc_control_body(application_provider *, qa_actor_id, const qa_movement_state *, qa_movement_ground, qa_body_state *, qa_error *);
 bool application_qc_control_profile(application_provider *, qa_actor_id, qa_movement_profile *, qa_error *);
 bool application_qc_control_before_actor(application_provider *, qa_actor_id, const qa_source_frame *, qa_error *);
 
