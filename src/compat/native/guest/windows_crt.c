@@ -112,8 +112,8 @@ bool windows_crt_descriptors(guest_windows *owner, bool bind, qa_error *error)
             owner->target.pointer_bytes == 4 ? QA_NATIVE_U32 : QA_NATIVE_U64 : entry->parameters[j];
         qa_native_value_type return_type = entry->result == QA_NATIVE_BYTES ? owner->target.pointer_bytes == 4 ? QA_NATIVE_U32 : QA_NATIVE_U64 : entry->result;
         char library[96];
-        if (!strcmp(entry->family, "msvcp")) memcpy(library, "msvcp140.dll", 13);
-        else if (!strcmp(entry->family, "vcruntime")) memcpy(library, "vcruntime140.dll", 16);
+        if (!strcmp(entry->family, "msvcp")) memcpy(library, "msvcp140.dll", sizeof("msvcp140.dll"));
+        else if (!strcmp(entry->family, "vcruntime")) memcpy(library, "vcruntime140.dll", sizeof("vcruntime140.dll"));
         else snprintf(library, sizeof(library), "api-ms-win-crt-%s-l1-1-0.dll", entry->family);
         uint64_t id = UINT64_C(0x57494e0200000000) + i * 3 + 1;
         if (!windows_service_add(owner, id, 2, entry->operation, library, entry->name, types,
