@@ -572,10 +572,29 @@ bool q2fx_frame_milliseconds(frontend_remote_q2_effects *o, double *out, qa_erro
         return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect start has no actual positive CLIENT frame interval");
     return true;
 }
-static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_id,
-    qa_vec3 origin, const qa_vec3 *angles, float scale, uint32_t flash, double time, double server, qa_error *e)
+typedef struct muzzle_audio {
+    frontend_remote_q2_effects *owner;
+    qa_actor_id actor;
+    qa_vec3 origin;
+    double milliseconds;
+} muzzle_audio;
+static bool muzzle_sound(void *context, const char *path, int32_t channel,
+    float volume, float attenuation, double delay, qa_error *e)
 {
-    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    muzzle_audio *audio=context;
+    return sound(audio->owner,path,audio->origin,audio->actor,audio->milliseconds,
+        channel,volume,attenuation,delay,e);
+}
+typedef struct monster_muzzle_definition {
+    uint32_t profile;
+    qa_vec3 color;
+    const char *path;
+    float attenuation;
+    bool particles, smoke, tank_sound, heat;
+} monster_muzzle_definition;
+static bool monster_muzzle_read(uint32_t flash, bool rerelease,
+    monster_muzzle_definition *out, qa_error *e)
+{
     const qa_vec3 *offsets=rerelease?q2m_rerelease_muzzle_offsets:q2m_classic_muzzle_offsets;
     size_t size=rerelease?sizeof(q2m_rerelease_muzzle_offsets)/sizeof(*offsets):sizeof(q2m_classic_muzzle_offsets)/sizeof(*offsets);
     if (!flash || flash>=size-1) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
@@ -588,13 +607,10 @@ static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_i
         else if (flash>=265 && flash<=276) profile=60;
         else if (flash==74 || flash==134) profile=58;
     }
-    frontend_remote_q2_effects_controls controls;
-    if (!q2fx_controls(o,&controls,e)) return false;
-    double interval;
-    if (!q2fx_frame_milliseconds(o,&interval,e)) return false;
-    qa_vec3 color=qa_v3(1,1,0); float radius=200+(float)(random_word(o)&31);
-    double duration=rerelease?controls.muzzlelight_milliseconds:0;
-    const char *path=NULL; bool particles=false, smoke=false, tank_sound=false; float attenuation=1; char random_path[64];
+    qa_vec3 color=qa_v3(1,1,0);
+    const char *path=NULL;
+    bool particles=false, smoke=false, tank_sound=false, heat=false;
+    float attenuation=1;
     if ((profile>=26 && profile<=38) || profile==63 || (profile>=64 && profile<=69) || profile==141) {
         particles=smoke=true; path="infantry/infatck1.wav";
     } else if (soldier_flash(profile,2)) { particles=smoke=true; path="soldier/solatck3.wav"; }
@@ -621,18 +637,55 @@ static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_i
     else if (profile==101 || profile==132) color=qa_v3(.5f,1,.5f);
     else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path="tank/tnkatck3.wav"; }
     else if (profile==148) { color=qa_v3(-1,-1,-1); path="weapons/disint2.wav"; }
-    else if (profile==151 || (profile>=195 && profile<=210)) { radius=300+(float)(random_word(o)&100); duration=200; }
+    else if (profile==151 || (profile>=195 && profile<=210)) { heat=true; }
     else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path="weapons/rippfire.wav"; }
     else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path="weapons/hyprbf1a.wav"; }
     else if (rerelease && flash==227) path="weapons/hyprbf1a.wav";
     else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path="guncmdr/gcdratck2.wav"; }
     else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path="guncmdr/gcdratck3.wav"; }
     else return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle lacks its source effect definition");
+    *out=(monster_muzzle_definition){profile,color,path,attenuation,particles,smoke,tank_sound,heat};
+    return true;
+}
+static bool monster_muzzle_sound(const monster_muzzle_definition *definition,
+    qa_builtin_random *random, frontend_q2_muzzle_sound_fn emit, void *context, qa_error *e)
+{
+    const char *path=definition->path;
+    char random_path[64];
+    if (definition->tank_sound) {
+        snprintf(random_path,sizeof(random_path),"tank/tnkatk2%c.wav",(int)('a'+qa_builtin_random_integer(random)%5));
+        path=random_path;
+    }
+    return !path || emit(context,path,1,1,definition->attenuation,0,e);
+}
+bool frontend_q2_monster_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
+    bool rerelease, frontend_q2_muzzle_sound_fn emit, void *context, qa_error *e)
+{
+    monster_muzzle_definition definition;
+    return monster_muzzle_read(flash,rerelease,&definition,e) &&
+        monster_muzzle_sound(&definition,random,emit,context,e);
+}
+static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_id,
+    qa_vec3 origin, const qa_vec3 *angles, float scale, uint32_t flash, double time, double server, qa_error *e)
+{
+    bool rerelease=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
+    monster_muzzle_definition definition;
+    if (!monster_muzzle_read(flash,rerelease,&definition,e)) return false;
+    uint32_t profile=definition.profile;
+    frontend_remote_q2_effects_controls controls;
+    if (!q2fx_controls(o,&controls,e)) return false;
+    double interval;
+    if (!q2fx_frame_milliseconds(o,&interval,e)) return false;
+    qa_vec3 color=qa_v3(1,1,0); float radius=200+(float)(random_word(o)&31);
+    double duration=rerelease?controls.muzzlelight_milliseconds:0;
+    color=definition.color;
+    bool particles=definition.particles, smoke=definition.smoke, tank_sound=definition.tank_sound;
+    if (definition.heat) { radius=300+(float)(random_word(o)&100); duration=200; }
     light(o,actor_id,origin,time,radius,duration,color,0,rerelease?0:32);
     if (particles) frontend_fx_q2_impact_particles(&o->particles,&o->random,origin,qa_v3(0,0,0),0,40,time*.001,FRONTEND_FX_Q2_NORMAL);
     if (smoke) smoke_flash(o,origin,server,interval);
-    if (tank_sound) { snprintf(random_path,sizeof(random_path),"tank/tnkatk2%c.wav",(int)('a'+random_word(o)%5)); path=random_path; }
-    if (path && !sound(o,path,origin,actor_id,time,1,1,attenuation,0,e)) return false;
+    muzzle_audio audio={o,actor_id,origin,time};
+    if (!monster_muzzle_sound(&definition,&o->random,muzzle_sound,&audio,e)) return false;
     if (rerelease && controls.muzzleflashes && angles) {
         q2fx_model model=Q2FX_MUZZLE_BLAST; int32_t skin=0; float muzzle_scale=8;
         if (particles) { model=Q2FX_MUZZLE_MACHINE;
@@ -746,19 +799,6 @@ bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
         rerelease && rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
     return !(rerelease && rerelease_effects && flash==6) ||
         emit(context,"weapons/railgr1b.wav",7,volume,1,.4,e);
-}
-typedef struct muzzle_audio {
-    frontend_remote_q2_effects *owner;
-    qa_actor_id actor;
-    qa_vec3 origin;
-    double milliseconds;
-} muzzle_audio;
-static bool muzzle_sound(void *context, const char *path, int32_t channel,
-    float volume, float attenuation, double delay, qa_error *e)
-{
-    muzzle_audio *audio=context;
-    return sound(audio->owner,path,audio->origin,audio->actor,audio->milliseconds,
-        channel,volume,attenuation,delay,e);
 }
 static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
     uint32_t flash, bool silenced, double time, double server, qa_error *e)

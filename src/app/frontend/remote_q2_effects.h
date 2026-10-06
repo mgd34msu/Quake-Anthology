@@ -16,6 +16,8 @@ typedef bool (*frontend_q2_muzzle_sound_fn)(void *, const char *, int32_t channe
 bool frontend_q2_player_muzzle_sounds(qa_builtin_random *, uint32_t flash,
     bool silenced, bool rerelease, bool rerelease_effects,
     frontend_q2_muzzle_sound_fn, void *, qa_error *);
+bool frontend_q2_monster_muzzle_sounds(qa_builtin_random *, uint32_t flash,
+    bool rerelease, frontend_q2_muzzle_sound_fn, void *, qa_error *);
 typedef struct frontend_remote_q2_effects_controls {
     int32_t muzzlelight_milliseconds, gun;
     float gun_fov;

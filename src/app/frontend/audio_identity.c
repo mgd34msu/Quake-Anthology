@@ -77,13 +77,29 @@ uint64_t frontend_audio_native_q3_actor(frontend_native_q3 *row,
      * through S_UpdateEntityPosition, without reading a replacement body. */
     return retained_actor(row->frontend, actor, error);
 }
+static bool retained_q2_source(qa_frontend *frontend, qa_actor_owner owner, qa_error *error)
+{
+    qa_clock_state clock;
+    if (!qa_session_clock(qa_application_session(frontend->application),
+        owner, &clock) || (clock.frame.kind != QA_CLOCK_Q2_CLASSIC &&
+        clock.frame.kind != QA_CLOCK_Q2_RERELEASE)) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Retained Q2 sound lost its actual queue or Source clock");
+        return false;
+    }
+    qa_command_context source = {.owner = owner, .origin = QA_COMMAND_SERVER,
+        .dialect = clock.frame.kind == QA_CLOCK_Q2_CLASSIC ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE};
+    qa_command_context captured;
+    if (!qa_application_capture_command_context(frontend->application, &source, &captured, error))
+        return false;
+    return true;
+}
 uint64_t frontend_audio_retained_q2_actor(qa_frontend *frontend,
     const qa_builtin_event *event, qa_error *error)
 {
     if (!frontend || !frontend->application || !frontend->stepping || !frontend->audio ||
         frontend->capture || frontend->resource_inventory || frontend->source_restoring ||
-        !event || event->kind != QA_BUILTIN_SOUND || event->family != QA_GAME_Q2 ||
-        (event->flags & 1u) || !event->actor.registry || !event->provider) {
+        !event || (event->kind != QA_BUILTIN_SOUND && event->kind != QA_BUILTIN_MUZZLE) ||
+        event->family != QA_GAME_Q2 || (event->kind == QA_BUILTIN_SOUND && (event->flags & 1u)) || !event->actor.registry || !event->provider) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Retained Q2 sound requires its actual event delivery boundary");
         return QA_AUDIO_NO_ACTOR;
     }
@@ -97,22 +113,46 @@ uint64_t frontend_audio_retained_q2_actor(qa_frontend *frontend,
         if (queued.kind == event->kind && queued.family == event->family &&
             queued.provider == event->provider && qa_actor_id_equal(queued.actor, event->actor) &&
             queued.time_ns == event->time_ns && queued.resource == event->resource &&
+            queued.code == event->code && queued.has_muzzle_pose == event->has_muzzle_pose &&
             queued.channel == event->channel && queued.flags == event->flags &&
             queued.volume == event->volume && queued.attenuation == event->attenuation &&
             queued.origin.x == event->origin.x && queued.origin.y == event->origin.y &&
             queued.origin.z == event->origin.z) { retained = true; break; }
     }
-    qa_clock_state clock;
-    if (!retained || !qa_session_clock(qa_application_session(frontend->application),
-        event->provider, &clock) || (clock.frame.kind != QA_CLOCK_Q2_CLASSIC &&
-        clock.frame.kind != QA_CLOCK_Q2_RERELEASE)) {
-        frontend_fail(error, QA_ERROR_ARGUMENT, "Retained Q2 sound lost its actual queue or Source clock");
+    if (!retained || !retained_q2_source(frontend,event->provider,error)) {
+        if (!retained) frontend_fail(error,QA_ERROR_ARGUMENT,"Retained Q2 sound lost its actual event queue");
         return QA_AUDIO_NO_ACTOR;
     }
-    qa_command_context source = {.owner = event->provider, .origin = QA_COMMAND_SERVER,
-        .dialect = clock.frame.kind == QA_CLOCK_Q2_CLASSIC ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE};
-    qa_command_context captured;
-    if (!qa_application_capture_command_context(frontend->application, &source, &captured, error))
-        return QA_AUDIO_NO_ACTOR;
     return retained_actor(frontend, event->actor, error);
+}
+uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
+    const qa_application_protocol_event *message, qa_actor_id actor, qa_error *error)
+{
+    if (!frontend || !frontend->application || !frontend->stepping || !frontend->audio ||
+        frontend->capture || frontend->resource_inventory || frontend->source_restoring ||
+        !message || !actor.registry || !message->provider) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound requires its actual delivery boundary");
+        return QA_AUDIO_NO_ACTOR;
+    }
+    bool retained=false, referenced=false;
+    for (size_t i=0;i<qa_application_protocol_event_count(frontend->application);++i) {
+        qa_application_protocol_event queued;
+        if (!qa_application_protocol_event_at(frontend->application,i,&queued)) {
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol queue changed during sound delivery");
+            return QA_AUDIO_NO_ACTOR;
+        }
+        if (queued.provider==message->provider && queued.time_ns==message->time_ns &&
+            queued.payload.data==message->payload.data && queued.payload.size==message->payload.size &&
+            queued.references==message->references && queued.reference_count==message->reference_count) {
+            retained=true; break;
+        }
+    }
+    for (size_t i=0;retained && i<message->reference_count;++i)
+        if (qa_actor_id_equal(message->references[i].actor,actor)) { referenced=true; break; }
+    if (!retained || !referenced || !retained_q2_source(frontend,message->provider,error)) {
+        if (!retained || !referenced)
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its captured actor reference");
+        return QA_AUDIO_NO_ACTOR;
+    }
+    return retained_actor(frontend,actor,error);
 }

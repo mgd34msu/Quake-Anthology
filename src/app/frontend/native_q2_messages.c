@@ -9,13 +9,49 @@ typedef struct message_delivery {
     qa_application_q2_recipient *selected;
 } message_delivery;
 
+static bool muzzle(message_delivery *context, const qa_q2_server_record *record,
+    const qa_application_q2_audience *audience, qa_error *error)
+{
+    const qa_application_protocol_event *message=&context->message;
+    uintptr_t raw=(uintptr_t)record->raw.data, payload=(uintptr_t)message->payload.data;
+    if (raw<payload || raw-payload>message->payload.size || record->raw.size<3 ||
+        record->raw.size>message->payload.size-(size_t)(raw-payload))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 muzzle record leaves its retained Source packet");
+    size_t offset=(size_t)(raw-payload)+1;
+    uint32_t number=qa_load_u16le(message->payload.data+offset);
+    if (record->event.data.muzzle.monster && record->opcode==2 &&
+        context->delivery.profile!=QA_NATIVE_Q2_GAME_API3) number&=0x1fffu;
+    qa_actor_id actor={0};
+    for (size_t i=0;i<message->reference_count;++i) {
+        const qa_application_protocol_reference *reference=message->references+i;
+        if (reference->offset==offset && !reference->packed_sound &&
+            number==record->event.data.muzzle.entity) {
+            actor=reference->actor; break;
+        }
+    }
+    if (!actor.registry)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 muzzle lost its captured full Source actor reference");
+    qa_vec3 origin=message->origin;
+    if (!message->multicast) {
+        qa_body_state body;
+        if (!qa_world_body_read(qa_application_world(context->frontend->application),actor,&body,error)) return false;
+        origin=body.origin;
+    }
+    qa_builtin_event event={.kind=QA_BUILTIN_MUZZLE,.family=QA_GAME_Q2,.provider=message->provider,
+        .actor=actor,.time_ns=message->time_ns,.origin=origin,.code=(int32_t)record->event.data.muzzle.flash,
+        .flags=record->event.data.muzzle.silenced?128u:0u};
+    return frontend_native_q2_muzzle_sound(context->frontend,message,audience,&event,
+        record->event.data.muzzle.monster,context->delivery.profile==QA_NATIVE_Q2_GAME_API3?
+            QA_Q2_CLASSIC:QA_Q2_RERELEASE,error);
+}
+
 static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *error)
 {
     message_delivery *context=opaque;
     /* Configstrings, sound, print, inventory and layout already have actual
      * native import owners. Their wire records do not publish those effects
-     * a second time through this temporary-entity consumer. */
-    if (record->event.kind!=QA_Q2_SVC_TEMP_ENTITY) return true;
+     * a second time through this effect consumer. */
+    if (record->event.kind!=QA_Q2_SVC_TEMP_ENTITY && record->event.kind!=QA_Q2_SVC_MUZZLEFLASH) return true;
     qa_application_q2_audience audience=context->delivery.audience;
     if (record->seat) {
         if (!context->selected && audience.count) {
@@ -34,6 +70,7 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
         audience.recipients=context->selected; audience.count=count;
         if (!count) return true;
     }
+    if (record->event.kind==QA_Q2_SVC_MUZZLEFLASH) return muzzle(context,record,&audience,error);
     return frontend_particle_q2_temporary(context->frontend,&context->message,
         &audience,&record->event.data.temporary,error);
 }
