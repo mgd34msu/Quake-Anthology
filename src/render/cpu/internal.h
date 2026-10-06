@@ -40,6 +40,7 @@ typedef struct cpu_target {
 } cpu_target;
 typedef struct cpu_vertex {
   double clip[4], color[4], uv[2][2], world[3], normal[3];
+  uint8_t clip_mask;
 } cpu_vertex;
 #define CPU_SOURCE_IMAGES_QA 2048u
 typedef struct cpu_source_image {

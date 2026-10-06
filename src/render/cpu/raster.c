@@ -431,6 +431,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
   }
   return true;
 }
+static double distance(const cpu_vertex *, unsigned, const qa_scene_view *);
 static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                       qa_render_primitive_mode mode, qa_error *error) {
   size_t count = draw->mesh.vertex_count;
@@ -501,6 +502,13 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     out->uv[0][1] = uv[0].y;
     out->uv[1][0] = uv[1].x;
     out->uv[1][1] = uv[1].y;
+    out->clip_mask = 0;
+    if (draw->mesh.primitive == QA_SCENE_TRIANGLES) {
+      if (!(out->clip[3] > 0)) out->clip_mask = UINT8_C(0x80);
+      for (unsigned plane = 0; plane < (renderer->view.clip_enabled ? 7u : 6u); ++plane)
+        if (!(distance(out, plane, &renderer->view) >= 0))
+          out->clip_mask |= (uint8_t)(1u << plane);
+    }
   }
   return true;
 }
@@ -536,6 +544,7 @@ static cpu_vertex intersection(const cpu_vertex *a, const cpu_vertex *b,
     }
   if (plane < 6)
     out.clip[plane / 2] = (plane & 1) ? out.clip[3] : -out.clip[3];
+  out.clip_mask = 0;
   return out;
 }
 static size_t clip_polygon(const cpu_vertex input[3], const qa_scene_view *view,
@@ -605,7 +614,7 @@ static screen_vertex project(const cpu_vertex *vertex,
     const screen_vertex *previous =
         &output->pool->triangles[location / 3].vertices[location % 3];
     return (screen_vertex){previous->x, previous->y, previous->z,
-        scale / w, scale, vertex, index};
+        previous->scale == scale ? previous->q : scale / w, scale, vertex, index};
   }
   return (screen_vertex){
       snap(view.x + (vertex->clip[0] / w + 1) * view.width * 0.5, subpixel),
@@ -845,6 +854,7 @@ static cpu_vertex interpolate_line(const cpu_vertex *a, const cpu_vertex *b,
   for (size_t unit = 0; unit < 2; ++unit)
     for (size_t c = 0; c < 2; ++c)
       out.uv[unit][c] = a->uv[unit][c] + (b->uv[unit][c] - a->uv[unit][c]) * t;
+  out.clip_mask = 0;
   return out;
 }
 static bool exits_diamond(double ax, double ay, double bx, double by, double x,
@@ -1010,9 +1020,20 @@ static void line(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 }
 static void draw_triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                           const cpu_sampler samplers[2], cpu_fragment_kernel kernel,
-                          const cpu_vertex original[3], const uint32_t indices[3],
+                          const cpu_vertex *a, const cpu_vertex *b,
+                          const cpu_vertex *c, const uint32_t indices[3],
                           cpu_scissor bounds,
                           cpu_triangle_output *output) {
+  if (a->clip_mask & b->clip_mask & c->clip_mask) return;
+  if (!(a->clip_mask | b->clip_mask | c->clip_mask) && !draw->state.wireframe) {
+    double scale = fmin(a->clip[3], fmin(b->clip[3], c->clip[3]));
+    triangle(renderer, draw, samplers, kernel,
+             project(a, renderer, scale, output, indices[0]),
+             project(b, renderer, scale, output, indices[1]),
+             project(c, renderer, scale, output, indices[2]), NULL, bounds, output);
+    return;
+  }
+  cpu_vertex original[3] = {*a, *b, *c};
   cpu_vertex polygon[32];
   bool clipped;
   size_t count = clip_polygon(original, &renderer->view, polygon, &clipped);
@@ -1092,10 +1113,10 @@ static void draw_source_strips(qa_cpu_renderer *renderer, const qa_scene_draw *d
     for (size_t ordinal = 2; ordinal < strip.triangles + 2; ++ordinal) {
       uint32_t c_index = qa_render_strip_vertex(&strip, ordinal);
       cpu_vertex c = source_vertex(renderer, c_index, discrete);
-      cpu_vertex vertices[3] = {ordinal & 1 ? b : a, ordinal & 1 ? a : b, c};
       uint32_t indices[3] = {ordinal & 1 ? b_index : a_index,
                             ordinal & 1 ? a_index : b_index, c_index};
-      draw_triangle(renderer, draw, samplers, kernel, vertices, indices, bounds, output);
+      draw_triangle(renderer, draw, samplers, kernel, ordinal & 1 ? &b : &a,
+                    ordinal & 1 ? &a : &b, &c, indices, bounds, output);
       if (output && output->failed) return;
       a = b; b = c;
       a_index = b_index; b_index = c_index;
@@ -1136,10 +1157,10 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
            renderer->vertices[draw->mesh.indices[i + 1]], true);
   } else {
     for (size_t i = 0; i < draw->mesh.index_count; i += 3) {
-      cpu_vertex vertices[3] = {renderer->vertices[draw->mesh.indices[i]],
-                              renderer->vertices[draw->mesh.indices[i + 1]],
-                              renderer->vertices[draw->mesh.indices[i + 2]]};
-      draw_triangle(renderer, draw, job->samplers, job->kernel, vertices,
+      draw_triangle(renderer, draw, job->samplers, job->kernel,
+                    &renderer->vertices[draw->mesh.indices[i]],
+                    &renderer->vertices[draw->mesh.indices[i + 1]],
+                    &renderer->vertices[draw->mesh.indices[i + 2]],
                     &draw->mesh.indices[i], job->bounds, output);
       if (output && output->failed) return;
     }
