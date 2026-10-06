@@ -85,7 +85,7 @@ static bool row_current(const frontend_qc_messages *owner, const qc_recipient *r
     if (!current(owner) || owner->frontend->map_revision != row->native_map_revision ||
         !qa_application_player_actor(owner->application,row->native_seat,&actor) || !qa_actor_id_equal(actor,row->native_actor) ||
         !frontend_config_store_primary_legacy_read(owner->frontend->config_store,row->native_seat,&source,&present,NULL) || !present ||
-        source.product->family != QA_GAME_Q1 || source.product->program_kind != QA_PROGRAM_BUILTIN) return false;
+        source.product->family != QA_GAME_Q1 || source.descriptor->selection.runtime != QA_PROGRAM_BUILTIN) return false;
     if (qa_q1_is_qw(row->native_protocol)) {
         qa_application_network_qw_source physical;
         return source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD &&
@@ -107,7 +107,7 @@ static bool native_rows(frontend_qc_messages *owner, qa_error *error)
         if (!frontend_seat_launch_id_read(owner->frontend,seat,&logical) ||
             !qa_application_player_actor(owner->application,logical,&actor)) continue;
         if (!frontend_config_store_primary_legacy_read(owner->frontend->config_store,logical,&source,&present,error)) return false;
-        if (!present || source.product->family != QA_GAME_Q1 || source.product->program_kind != QA_PROGRAM_BUILTIN ||
+        if (!present || source.product->family != QA_GAME_Q1 || source.descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
             (source.descriptor->selection.clock.kind != QA_CLOCK_NETQUAKE &&
              source.descriptor->selection.clock.kind != QA_CLOCK_QUAKEWORLD)) continue;
         bool qw=source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
