@@ -355,8 +355,8 @@ static void state_body(application_control_record *record,
     qa_physics_properties props;
     qa_physics *physics = record->application->physics;
     bool grounded = qa_actor_reference_present(body->ground);
-    if (record->state.kind == QA_MOVEMENT_NETQUAKE && physics &&
-        physics->services.read(physics->services.context, record->actor, &props))
+    if ((record->state.kind == QA_MOVEMENT_NETQUAKE || record->state.kind == QA_MOVEMENT_QUAKEWORLD) &&
+        physics && physics->services.read(physics->services.context, record->actor, &props))
         grounded = (props.flags & QA_PHYSICS_ONGROUND) != 0;
     qa_movement_ground contact = body_ground(record, body, grounded);
     switch (record->state.kind) {

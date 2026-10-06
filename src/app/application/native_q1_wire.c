@@ -558,7 +558,8 @@ static application_control_record *control(qa_application *app, qa_actor_id acto
     if (actor.slot >= app->control_capacity) return NULL;
     application_control_record *row = &app->controls[actor.slot];
     return row->active && !row->retired && !row->moving &&
-        qa_actor_id_equal(row->actor, actor) && row->state.kind == QA_MOVEMENT_NETQUAKE ? row : NULL;
+        qa_actor_id_equal(row->actor, actor) &&
+        (row->state.kind == QA_MOVEMENT_NETQUAKE || row->state.kind == QA_MOVEMENT_QUAKEWORLD) ? row : NULL;
 }
 bool application_native_q1_wire_host(qa_application *app, qa_application_network_q1_host *out,
     qa_error *error) {
