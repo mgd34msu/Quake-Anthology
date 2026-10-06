@@ -167,7 +167,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         qa_trace_result hit;
         if(collision.inline_model) {
             moving.target=(qa_collision_target){true,collision.model,state.origin,state.angles};
-            ok=qa_collision_trace(world->geometry,&moving,&hit,error);
+            ok=qa_collision_trace(qa_world_model_geometry(world,&collision),&moving,&hit,error);
         } else ok=qa_collision_trace_body(&moving,collision.family,collision.shape,state.bounds,state.origin,contents,&hit,error);
         if(!ok) break;
         if(hit.hit!=QA_TRACE_HIT_NONE) { hit.hit=QA_TRACE_HIT_ACTOR; hit.actor=id; }
@@ -214,7 +214,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
             qa_point_query local=*query;
             local.target=(qa_collision_target){true,actor.collision.model,actor.body.state.origin,actor.body.state.angles};
             qa_point_contents sample;
-            if(!qa_collision_point_contents(world->geometry,&local,&sample,error)) { ok=false; break; }
+            if(!qa_collision_point_contents(qa_world_model_geometry(world,&actor.collision),&local,&sample,error)) { ok=false; break; }
             added=sample.family==QA_COLLISION_Q2?(query->policy.q2_merged_contents?sample.merged:sample.stored):sample.contents;
         } else {
             qa_vec3 point=qa_vec_sub(query->point,actor.body.state.origin);

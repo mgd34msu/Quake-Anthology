@@ -34,7 +34,7 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
         return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC collision flags");
     uint32_t bits = (uint32_t)(int32_t)flags;
     qa_actor_collision value = {.family = QA_COLLISION_Q1, .shape = QA_SHAPE_BOX,
-        .contents = solid == 0 || solid == 1 ? 0 : 1,
+        .contents = solid == 0 || solid == 1 ? 0 : -2,
         .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
         .monster = (bits & 32u) != 0, .q1_corpse = solid == 5 && engine->profile == QA_QC_RERELEASE};
     if (solid == 4) {
@@ -54,9 +54,13 @@ static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *erro
          * brush index. SV_LinkEdict uses the current box; hull queries require
          * the actual precached brush and remain strict. */
         bool pending = model == 0 && qa_world_collision_link_observation(engine->world, expected);
-        if ((!resource || !resource->has_inline_model) && !pending)
+        if ((!resource || (!resource->has_inline_model && !resource->geometry)) && !pending)
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no retained inline model");
-        if (!pending) { value.inline_model = true; value.model = resource->inline_model; }
+        if (!pending) {
+            value.inline_model = true;
+            value.model = resource->inline_model;
+            value.model_geometry = resource->geometry;
+        }
     }
     uint32_t owner_slot = 0;
     if (owner) {

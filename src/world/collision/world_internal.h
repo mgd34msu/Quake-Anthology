@@ -55,6 +55,9 @@ struct qa_world {
     qa_actor_id collision_link_actor;
     qa_world_geometry_admission *geometry_admission;
 };
+static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
+    const qa_actor_collision *collision)
+{ return collision->model_geometry ? collision->model_geometry : world->geometry; }
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
 qa_world_body *qa_world_raw_body(const qa_world *, uint32_t);
 bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);

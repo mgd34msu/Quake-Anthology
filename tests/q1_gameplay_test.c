@@ -583,12 +583,81 @@ static void movement_output_owner(void)
     qa_collision_destroy(map.geometry);
 }
 
+static bool external_brush_collision(void *context, qa_actor_collision *out, qa_error *error)
+{
+    (void)error;
+    *out = (qa_actor_collision){.family = QA_COLLISION_Q1, .inline_model = true,
+        .model_geometry = *(qa_collision_geometry **)context, .contents = -2};
+    return true;
+}
+
+static void retained_external_brush(void)
+{
+    qa_error error = {0};
+    gameplay_map map, external;
+    gameplay_map_create(&map);
+    gameplay_map_create(&external);
+    qa_collision_destroy(external.geometry);
+    uint32_t plane = qa_load_u32le(external.bytes + 4 + QA_BSP_PLANES * 8);
+    uint32_t model = qa_load_u32le(external.bytes + 4 + QA_BSP_MODELS * 8);
+    gameplay_float(external.bytes + plane + 12, 64);
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        gameplay_float(external.bytes + model + axis * 4, axis == 2 ? -64 : -16);
+        gameplay_float(external.bytes + model + 12 + axis * 4, axis == 2 ? 64 : 16);
+    }
+    qa_bsp_view bsp;
+    GAME_CHECK(qa_bsp_open((qa_bytes){external.bytes, sizeof(external.bytes)}, &bsp, &error));
+    GAME_CHECK(qa_collision_create(&bsp, &external.geometry, &error));
+    qa_actor_registry *actors;
+    qa_world *world;
+    qa_actor_id actor;
+    GAME_CHECK(qa_actors_create(8, NULL, NULL, &actors, &error));
+    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, &world, &error));
+    GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
+    qa_body_state body = {.origin = {0, 0, 128}, .bounds = {{-16, -16, -64}, {16, 16, 64}}};
+    GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
+    qa_collision_binding binding = {.context = &external.geometry, .read = external_brush_collision};
+    GAME_CHECK(qa_world_collision_bind(world, actor, &binding, &error));
+    GAME_CHECK(qa_world_link(world, actor, NULL, &error));
+    qa_world_checkpoint checkpoint = {0};
+    GAME_CHECK(qa_world_checkpoint_capture(world, &checkpoint, &error));
+    GAME_CHECK(checkpoint.body_count == 1 && checkpoint.spatial_count == 1);
+    GAME_CHECK(checkpoint.bodies[0].collision.model_geometry == NULL &&
+        checkpoint.bodies[0].stored_collision.model_geometry == NULL &&
+        checkpoint.bodies[0].retained_collision.model_geometry == NULL);
+    qa_collision_geometry *replacement;
+    GAME_CHECK(qa_collision_create(&bsp, &replacement, &error));
+    qa_collision_destroy(external.geometry);
+    external.geometry = replacement;
+    GAME_CHECK(qa_world_checkpoint_restore(world, &checkpoint, NULL, NULL, &error));
+    for (qa_collision_family family = QA_COLLISION_Q1; family <= QA_COLLISION_Q3; ++family) {
+        qa_trace_query query = {.start = {0, 0, 200}, .end = {0, 0, 160},
+            .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(family)};
+        qa_trace_result hit;
+        GAME_CHECK(qa_world_trace(world, &query, &hit, &error));
+        GAME_CHECK(hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(hit.actor, actor));
+        GAME_CHECK(hit.end.z > 191.9f && hit.end.z < 192.1f);
+        if (family != QA_COLLISION_Q1) {
+            qa_point_query point = {.point = {0, 0, 180}, .policy = query.policy};
+            qa_point_contents contents;
+            GAME_CHECK(qa_world_point_contents(world, &point, &contents, &error));
+            GAME_CHECK((contents.contents & 1) != 0);
+        }
+    }
+    qa_world_checkpoint_free(&checkpoint);
+    GAME_CHECK(qa_world_destroy(world, &error));
+    GAME_CHECK(qa_actors_destroy(actors, &error));
+    qa_collision_destroy(external.geometry);
+    qa_collision_destroy(map.geometry);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
     dormant_trigger_activation();
     nonsolid_inline_appearance();
     relay_template_unpublished();
+    retained_external_brush();
     movement_output_owner();
     donor_check_client();
     armor_and_protection();

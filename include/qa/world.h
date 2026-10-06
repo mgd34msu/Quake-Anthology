@@ -23,6 +23,9 @@ typedef struct qa_actor_collision {
     qa_shape_kind shape; /* BOX or CAPSULE for temporary bodies; ignored for inline models. */
     bool inline_model;
     uint32_t model;
+    /* Borrowed from the model owner; NULL selects the shared map geometry.
+     * This derived handle is rebound from installed content on restore. */
+    qa_collision_geometry *model_geometry;
     int32_t contents;
     qa_actor_reference owner;
     qa_collision_role role;

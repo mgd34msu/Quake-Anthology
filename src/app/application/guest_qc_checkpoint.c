@@ -176,7 +176,7 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
     }
     return ok && !reader->failed &&
         opening_restore(reader,engine,entry,error) &&
-        application_qc_resource_resolve_inline(entry,error) &&
+        application_qc_resource_resolve_model(entry,error) &&
         resource_ready(engine,entry,ordinal,error);
 }
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors, qa_actor_id actor)
@@ -384,8 +384,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
 static void dispose_candidate(struct application_qc_state *candidate)
 {
     for (size_t i = 0; i < candidate->resource_count; ++i) {
-        qa_vfs_acquisition_dispose(&candidate->resources[i].acquisition);
-        free(candidate->resources[i].name); qa_resource_release(candidate->resources[i].source);
+        application_qc_resource_dispose(&candidate->resources[i]);
     }
     for (size_t i = 0; i < candidate->message_count; ++i) {
         free(candidate->messages[i].data); free(candidate->messages[i].references);
@@ -597,8 +596,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     qa_buffer_free(&settings);
     if (ok) {
         for (size_t i = 0; i < engine->resource_count; ++i) {
-            qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
-            free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
+            application_qc_resource_dispose(&engine->resources[i]);
         }
         for (size_t i = 0; i < engine->message_count; ++i) { free(engine->messages[i].data); free(engine->messages[i].references); }
         for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = candidate.lightstyles[i]; candidate.lightstyles[i] = NULL; }

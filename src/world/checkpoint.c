@@ -101,6 +101,8 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
                      &record->anchor, &record->has_anchor, error);
         record->state.ground = record->stored_state.ground = record->link.state.ground = (qa_actor_reference){0};
         record->collision.owner = record->stored_collision.owner = record->retained_collision.owner = (qa_actor_reference){0};
+        record->collision.model_geometry = record->stored_collision.model_geometry =
+            record->retained_collision.model_geometry = NULL;
         record->attachment.anchor = (qa_actor_id){0};
         if (qa_actors_revision(world->actors) != revision || world->body_serial != serial ||
             qa_world_find_body(world, body->actor) != body || body->storage_serial != record->storage_serial ||
@@ -166,6 +168,7 @@ static bool collision_equal(qa_actor_collision a,qa_actor_collision b)
 
 typedef struct checkpoint_slot {
     const qa_world_body_checkpoint *record;
+    qa_collision_geometry *model_geometry;
     bool seen;
 } checkpoint_slot;
 
@@ -192,7 +195,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             (record->attached && (!record->has_anchor || !record->attachment_order))) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Invalid saved world actor/storage/attachment identity"); break;
         }
-        slots[actor->id.slot] = (checkpoint_slot){record, true};
+        slots[actor->id.slot] = (checkpoint_slot){.record = record, .seen = true};
         qa_world_body *body = qa_world_find_body(world, actor->id);
         if (!body && record->external_body) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved external body binding was not rebuilt"); break;
@@ -202,6 +205,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         qa_body_link_state link = record->link;
         qa_actor_collision collision = record->collision;
         qa_actor_collision stored_collision = record->stored_collision;
+        collision.model_geometry = stored_collision.model_geometry = NULL;
         qa_body_attachment attachment = record->attachment;
         ok = restore_reference(world, record->has_ground, record->ground, record->ground_kind,
                            record->ground_owner, &state.ground, error) &&
@@ -321,6 +325,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
                     checkpoint_fail(error,QA_ERROR_FORMAT,"Restored source collision fields differ from checkpoint");
                 ok=false;
             }
+            if (ok) slots[actor->id.slot].model_geometry = effective.model_geometry;
         }
     }
     for (size_t i = 0; ok && i < value->spatial_count; ++i) {
@@ -338,6 +343,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial membership has no linked body"); break;
         }
         qa_actor_collision retained = record->retained_collision;
+        retained.model_geometry = retained.inline_model ? slots[actor->id.slot].model_geometry : NULL;
         if (!restore_reference(world, record->has_retained_collision_owner, record->retained_collision_owner,
                               record->retained_collision_owner_kind, record->retained_collision_owner_owner,
                               &retained.owner, error)) { ok = false; break; }

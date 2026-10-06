@@ -82,10 +82,32 @@ static char *copy_text(const char *text, qa_error *error)
     else application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC resource name");
     return copy;
 }
-bool application_qc_resource_resolve_inline(application_qc_resource *entry, qa_error *error)
+void application_qc_resource_dispose(application_qc_resource *entry)
+{
+    qa_collision_destroy(entry->geometry);
+    qa_vfs_acquisition_dispose(&entry->acquisition);
+    qa_resource_release(entry->source);
+    free(entry->name);
+    *entry = (application_qc_resource){0};
+}
+bool application_qc_resource_resolve_model(application_qc_resource *entry, qa_error *error)
 {
     entry->has_inline_model = false; entry->inline_model = 0;
-    if (entry->kind != QA_QC_RESOURCE_MODEL || entry->source) return true;
+    if (entry->kind != QA_QC_RESOURCE_MODEL) return true;
+    if (entry->source) {
+        qa_bytes bytes = qa_resource_bytes(entry->source);
+        if (bytes.size < 4 || (qa_load_u32le(bytes.data) != 29 &&
+            qa_load_u32le(bytes.data) != UINT32_C(0x32505342) &&
+            qa_load_u32le(bytes.data) != UINT32_C(0x42535032) &&
+            qa_load_u32le(bytes.data) != UINT32_C(0x50534249))) return true;
+        if (!entry->geometry) {
+            qa_bsp_view map;
+            if (!qa_bsp_open(bytes, &map, error) ||
+                !qa_collision_create(&map, &entry->geometry, error) ||
+                !qa_collision_bind_resource(entry->geometry, entry->source, error)) return false;
+        }
+        return qa_collision_model_bounds(entry->geometry, 0, &entry->value.bounds, error);
+    }
     if (!entry->world_model) {
         double model;
         if (!entry->name || *entry->name != '*' ||
@@ -121,7 +143,7 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     if (entry.name == NULL) return false;
     bool ok = true;
     if (kind == QA_QC_RESOURCE_MODEL && *name == '*') {
-        ok = application_qc_resource_resolve_inline(&entry, error) &&
+        ok = application_qc_resource_resolve_model(&entry, error) &&
             qa_collision_model_bounds(qa_world_geometry(engine->world), entry.inline_model, &entry.value.bounds, error);
     } else {
         char *sound_path=NULL;
@@ -135,17 +157,10 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
             &entry.source,&entry.acquisition,error);
         free(sound_path);
         if (ok && kind == QA_QC_RESOURCE_MODEL) {
-            qa_bytes bytes = qa_resource_bytes(entry.source);
-            if (bytes.size >= 4 && (qa_load_u32le(bytes.data) == 29 ||
-                qa_load_u32le(bytes.data) == UINT32_C(0x32505342) ||
-                qa_load_u32le(bytes.data) == UINT32_C(0x42535032) ||
-                qa_load_u32le(bytes.data) == UINT32_C(0x50534249))) {
-                qa_bsp_view map; qa_bsp_model model;
-                ok = qa_bsp_open(bytes, &map, error) && qa_bsp_read_model(&map, 0, &model, error);
-                if (ok) entry.value.bounds = (qa_bounds){model.bounds.min, model.bounds.max};
-            } else {
+            ok = application_qc_resource_resolve_model(&entry, error);
+            if (ok && !entry.geometry) {
                 qa_model model = {0};
-                ok = qa_model_load(bytes, &model, error);
+                ok = qa_model_load(qa_resource_bytes(entry.source), &model, error);
                 if (ok) entry.value.bounds = model.format==QA_MODEL_MDL?
                     (qa_bounds){qa_v3(-16,-16,-16),qa_v3(16,16,16)}:(qa_bounds){
                     qa_v3(model.bounds.min[0], model.bounds.min[1], model.bounds.min[2]),
@@ -165,7 +180,7 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
         }
     }
     if (!ok) {
-        qa_vfs_acquisition_dispose(&entry.acquisition); qa_resource_release(entry.source); free(entry.name); return false;
+        application_qc_resource_dispose(&entry); return false;
     }
     engine->resources[engine->resource_count++] = entry;
     *out = entry.value;
@@ -1333,8 +1348,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         engine->loading = true; engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
         qa_cvars_set_server_active(engine->cvars, false);
         for (size_t i = 0; i < engine->resource_count; ++i) {
-            qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
-            free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
+            application_qc_resource_dispose(&engine->resources[i]);
         }
         engine->resource_count = 0;
         for (size_t i = 0; i < engine->message_count; ++i) {
@@ -1452,8 +1466,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     for (size_t i = 0; i < engine->resource_count; ++i) {
-        qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
-        free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
+        application_qc_resource_dispose(&engine->resources[i]);
     }
     for (size_t i = 0; i < engine->message_count; ++i) {
         free(engine->messages[i].data); free(engine->messages[i].references);
