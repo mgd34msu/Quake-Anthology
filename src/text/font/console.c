@@ -375,6 +375,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         !options->target.height || !isfinite(options->height) || options->height < 0 ||
         !isfinite(options->scale) || !(options->scale > 0) || !isfinite(options->cell_width) ||
         options->cell_width < 0 || !isfinite(options->now_milliseconds) ||
+        !isfinite(options->notify_milliseconds) || !isfinite(options->field_scale) || options->field_scale < 0 ||
         (options->field &&
          (!options->field->text || options->field->cursor > options->field->length ||
           options->field->scroll > options->field->length)))
@@ -411,8 +412,19 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         return true;
 
     size_t maximum_rows = total_rows - field_lines - help_count;
-    size_t first = 0;
-    size_t row_count = options->buffer ? qa_console_buffer_visible(options->buffer, maximum_rows, &first) : 0;
+    size_t first = 0, row_count = 0;
+    if (options->buffer) {
+        if (options->notify_rows) {
+            size_t count = qa_console_buffer_count(options->buffer);
+            qa_console_row current;
+            if (count && qa_console_buffer_row(options->buffer, count - 1, &current) && !current.count)
+                --count;
+            row_count = count < options->notify_rows ? count : options->notify_rows;
+            first = count - row_count;
+        } else {
+            row_count = qa_console_buffer_visible(options->buffer, maximum_rows, &first);
+        }
+    }
     draw_context context = {
         .frame = frame,
         .target = options->target,
@@ -426,7 +438,8 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
     float margin = options->scale * 8.0f;
     float available = fmaxf(1.0f, (float)options->target.width - margin * 2.0f);
     size_t maximum_cells = cells_that_fit(available, cell_width);
-    float y = (float)((double)options->target.y + bottom -
+    float y = options->notify_rows ? (float)options->target.y :
+        (float)((double)options->target.y + bottom -
                       (double)line_height * ((double)row_count + (double)field_lines + (double)help_count));
     static const qa_scene_vec4 colors[8] = {
         {0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 1, 0, 1},
@@ -438,6 +451,8 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         if (!qa_console_buffer_row(options->buffer, first + index, &row) ||
             (row.count && !row.cells))
             return console_fail(error, QA_ERROR_ARGUMENT, "Console buffer returned an invalid row");
+        if (options->notify_rows && (row.time_ms == 0 || !qa_console_row_notifies(&row,
+            options->now_milliseconds, options->notify_milliseconds))) continue;
         size_t cell_count = row.count < maximum_cells ? row.count : maximum_cells;
         for (size_t column = 0; column < cell_count; ++column) {
             const qa_console_cell *cell = &row.cells[column];
@@ -449,6 +464,12 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         y += line_height;
     }
     if (options->field) {
+        if (options->field_scale > 0) {
+            float ratio = options->field_scale / options->scale;
+            context.line_height *= ratio;
+            context.cell_width *= ratio;
+            available = fmaxf(1.0f, (float)options->target.width - options->field_scale * 16.0f);
+        }
         if (!draw_field(&context, options->field, options->prompt ? options->prompt : "]", options->now_milliseconds, x0, y, available))
             return false;
         y += line_height;

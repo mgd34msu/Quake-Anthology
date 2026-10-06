@@ -488,19 +488,28 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale,
             preferences.high_contrast, !(live || native_rendered || remote_rendered || source.source_world), error)) return false;
         qa_input_focus field_focus = qa_input_seat_focus(seat->input);
-        if (field_focus == QA_INPUT_CONSOLE || field_focus == QA_INPUT_CHAT) {
+        bool notify = !ui.fullscreen && (live || native_rendered || remote_rendered || source.source_world) &&
+            (field_focus == QA_INPUT_GAME || field_focus == QA_INPUT_CHAT);
+        if (field_focus == QA_INPUT_CONSOLE || field_focus == QA_INPUT_CHAT || notify) {
             bool message = field_focus == QA_INPUT_CHAT;
+            bool field_active = field_focus == QA_INPUT_CONSOLE || message;
             qa_font_selection console_fonts;
             if (!frontend_console_font_selection(frontend, i, &console_fonts, error)) return false;
             qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, message));
-            float scale = preferences.text_scale *
+            float field_scale = preferences.text_scale *
                 (message && qa_seat_console_context_read(seat->console).dialect == QA_CONSOLE_Q3 ? 2.0f : 1.0f);
+            const qa_cvar_view *notify_time = qa_cvars_find(qa_application_cvars(frontend->application), "con_notifytime");
             qa_console_draw_options console = {.target = rect, .font = &console_fonts,
-                .buffer = message ? NULL : qa_seat_console_buffer(seat->console), .field = &field,
+                .buffer = message && !notify ? NULL : qa_seat_console_buffer(seat->console),
+                .field = field_active ? &field : NULL,
                 .prompt = message ? (seat->chat_team ? "say_team: " : "say: ") : NULL,
                 .background = message ? NULL : frontend->console_background,
                 .now_milliseconds = (double)frontend->time_ns / 1000000,
-                .height = message ? scale * 10.0f : (float)rect.height * .6f, .scale = scale};
+                .notify_rows = notify ? 4 : 0,
+                .notify_milliseconds = (notify_time ? notify_time->number : 3.0) * 1000.0,
+                .height = notify ? (float)rect.height : message ? field_scale * 10.0f : (float)rect.height * .6f,
+                .scale = preferences.text_scale, .field_scale = field_scale};
+            if (notify) console.background = NULL;
             if (!qa_console_draw(&frontend->frame, &console, error)) return false;
         }
         if (!frontend_q3_generic_overlay_end(frontend,error)) return false;

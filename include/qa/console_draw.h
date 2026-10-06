@@ -36,8 +36,13 @@ typedef struct qa_console_draw_options {
     const qa_console_discovery_entry *selected;
     const qa_scene_image *background;
     double now_milliseconds;
+    /* Nonzero draws only recent notification rows, without backscroll. */
+    size_t notify_rows;
+    double notify_milliseconds;
     /* Height is the animated visible extent in target pixels. */
     float height, scale;
+    /* Zero keeps the editable field at the history text scale. */
+    float field_scale;
     /* Zero derives the fixed grid width from the selected font. */
     float cell_width;
 } qa_console_draw_options;

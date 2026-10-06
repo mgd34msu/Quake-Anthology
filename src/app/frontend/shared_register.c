@@ -24,6 +24,7 @@ static const shared_declaration declarations[]={
     {"chase_up","16","NetQuake chase height",0,FINITE},
     {"chase_right","0","NetQuake chase lateral offset",0,FINITE},
     {"con_scale","0","Console text size",QA_CVAR_ARCHIVE,ANY},
+    {"con_notifytime","3","Console notification lifetime in seconds",0,FINITE},
     {"r_gamma","1","Display brightness, 0.5 through 3",QA_CVAR_ARCHIVE,GAMMA},
     {"r_shadows","0","Shared model shadows; zero disables",QA_CVAR_ARCHIVE,FINITE},
     {"cl_shadowlights","1","Quake II rerelease shadow lights",0,ANY},
