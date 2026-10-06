@@ -60,13 +60,15 @@ qa_vec3 scene_model_alias_light(const qa_scene_model_input *input) {
     return light;
 }
 
-float scene_model_shade(const qa_scene_model_input *input, const float normal[3], uint8_t index) {
+scene_model_shading scene_model_shade_prepare(const qa_scene_model_input *input) {
     double yaw = atan2(input->transform.axes[0][1], input->transform.axes[0][0]);
-    if (index != 255) {
-        int row = (int)(yaw * (16.0 / 6.28318530717958647693));
-        return alias_shadedots[((unsigned)row & 15u) * 256u + index];
-    }
+    int row = (int)(yaw * (16.0 / 6.28318530717958647693));
     qa_vec3 direction = qa_vec_normalize(qa_v3((float)cos(-yaw), (float)sin(-yaw), 1));
-    float dot = qa_vec_dot(model_vec(normal), direction);
+    return (scene_model_shading){((unsigned)row & 15u) * 256u, direction};
+}
+
+float scene_model_shade(const scene_model_shading *shading, const float normal[3], uint8_t index) {
+    if (index != 255) return alias_shadedots[shading->row + index];
+    float dot = qa_vec_dot(model_vec(normal), shading->direction);
     return 1 + (dot < 0 ? dot * 0.3f : dot);
 }

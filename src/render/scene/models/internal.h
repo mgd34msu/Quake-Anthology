@@ -88,7 +88,12 @@ uint8_t scene_model_normal_index(const float normal[3]);
 qa_vec3 scene_model_shell_color(uint32_t flags);
 bool scene_model_has_shell(const qa_scene_model_input *);
 qa_vec3 scene_model_alias_light(const qa_scene_model_input *);
-float scene_model_shade(const qa_scene_model_input *, const float normal[3], uint8_t index);
+typedef struct scene_model_shading {
+    unsigned row;
+    qa_vec3 direction;
+} scene_model_shading;
+scene_model_shading scene_model_shade_prepare(const qa_scene_model_input *);
+float scene_model_shade(const scene_model_shading *, const float normal[3], uint8_t index);
 bool scene_model_sprite_submit(qa_scene_model *, const qa_scene_model_input *, uint32_t,
                                 qa_scene_frame *, qa_error *);
 typedef struct scene_model_source_pose {

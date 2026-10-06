@@ -959,6 +959,10 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
     qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ?
         input->alias_light : scene_model_alias_light(&lighting);
     bool shell = scene_model_has_shell(input);
+    scene_model_shading shading = {0};
+    if (!input->shadow_only && input->alias_lighting != QA_ALIAS_Q3_DIFFUSE &&
+        lighting.family != QA_SCENE_Q3 && !shell)
+        shading = scene_model_shade_prepare(&lighting);
     out->bounds = model_bounds_empty();
     for (size_t i = 0; i < out->vertex_count; ++i) {
         uint32_t source_index = retained->sources[i];
@@ -985,10 +989,10 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
             vertices[i].color.z *= color.z;
         } else if (!input->shadow_only && lighting.family != QA_SCENE_Q3) {
             uint8_t normal = retained->normal_indices ? retained->normal_indices[(size_t)input->frame * source->vertex_count + source_index] : 255;
-            float shade = shell ? 1 : scene_model_shade(&lighting, point->normal, normal);
+            float shade = shell ? 1 : scene_model_shade(&shading, point->normal, normal);
             if (!shell && lighting.family == QA_SCENE_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
                 size_t old_index = (size_t)input->old_frame * source->vertex_count + source_index;
-                shade = shade * (1 - input->back_lerp) + scene_model_shade(&lighting,
+                shade = shade * (1 - input->back_lerp) + scene_model_shade(&shading,
                     source->vertices[old_index].normal, retained->normal_indices[old_index]) * input->back_lerp;
             }
             vertices[i].color.x *= light.x * shade;
