@@ -169,6 +169,9 @@ static const original_field map_fields[] = {
     FIELD(q1_map_state, style, "style", I32),
     FIELD(q1_map_state, color_map, "colormap", I32)
 };
+static const original_field world_fields[] = {
+    FIELD(qa_q1_options, world_type, "worldtype", I32)
+};
 static const original_field game_globals[] = {
     FIELD(qa_q1_game, force_retouch, "force_retouch", U32),
     FIELD(qa_q1_game, total_monsters, "total_monsters", U32),
@@ -770,7 +773,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     }
     if (entity->map) {
         if (entity->map->kind == Q1_MAP_BARREL && !callback(record,"th_die","barrel_explode",error)) return false;
-        if (entity->map->kind == Q1_MAP_WORLD && !number(record,"worldtype",game->options.world_type,false,error)) return false;
+        if (entity->map->kind == Q1_MAP_WORLD && !FIELDS(receipt,record,&game->options,world_fields,error)) return false;
         if (entity->map->action == Q1_MAP_DELAYED_USE &&
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
@@ -1429,8 +1432,9 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 unsupported(error,"Source body continuation differs from its persistent native queue");goto done;
             }
         } else if (entity.map) {
+            qa_q1_options options={0};
             if (slot || !admit_text(admission,"classname","worldspawn",error) ||
-                !ADMIT_FIELDS(admission,&map,map_fields,error) || !admit_number(admission,"worldtype",0,error) ||
+                !ADMIT_FIELDS(admission,&map,map_fields,error) || !ADMIT_FIELDS(admission,&options,world_fields,error) ||
                 !map_functions(&entity,&callbacks,error)) goto done;
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
@@ -1605,6 +1609,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     }
     if (entity->map) {
         q1_map_state *map = entity->map;
+        if (map->kind==Q1_MAP_WORLD &&
+            !RESTORE_FIELDS(game,record,&game->options,world_fields,slots,count,error)) return false;
         if (!RESTORE_FIELDS(game, record, map, map_fields, slots, count, error)) return false;
         map->touch_enabled = saved(record,"touch") != NULL; map->use_enabled = saved(record,"use") != NULL;
         map->original_model = entity->model; map->dormant = saved(record,"use") && !strcmp(saved(record,"use"),"plat_use");

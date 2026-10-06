@@ -1275,6 +1275,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         return false;
     switch (kind) {
     case Q1_MAP_WORLD: {
+        entity->physics.motion = QA_PHYSICS_PUSH;
+        entity->physics.solid = QA_PHYSICS_BRUSH;
         g->maps->world_actor = entity->id;
         if (!q1_body_queue_initialize(g, error)) return false;
         static const char *const styles[] = {"m",

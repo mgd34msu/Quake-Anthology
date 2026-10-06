@@ -950,7 +950,8 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->physics.solid == QA_PHYSICS_BRUSH)
         (void)q1_map_collision(entity, &collision);
     if (!qa_world_set_collision(g->services.world, entity->id,
-                                entity->physics.solid == QA_PHYSICS_NOT_SOLID ? NULL : &collision,
+                                entity->physics.solid == QA_PHYSICS_NOT_SOLID ||
+                                (entity->map && entity->map->kind == Q1_MAP_WORLD) ? NULL : &collision,
                                 error))
         return false;
     return qa_world_link(g->services.world, entity->id, NULL, error);
