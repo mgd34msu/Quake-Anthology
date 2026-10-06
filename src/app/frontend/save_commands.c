@@ -6,6 +6,7 @@
 #include "config_store.h"
 #include "network_session.h"
 #include "remote_q1_client.h"
+#include "qc_messages.h"
 #include "campaign_cinematic.h"
 #include "qa/frontend_save.h"
 #include "qa/application_save_policy.h"
@@ -646,7 +647,8 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
         if (!frontend_cinematic_capture_ready(f))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Cannot save during standalone cinematic playback");
         qa_q1_save_client client;
-        written=frontend_q1_save_client_read(f,0,&client,error) &&
+        written=(!f->qc_messages || frontend_qc_messages_drain(f->qc_messages,error)) &&
+            frontend_q1_save_client_read(f,0,&client,error) &&
             qa_application_q1_save_capture(f->application,&client,source,error) &&
             qa_q1_save_write(root,name,*source,nonce,error);
     } else if (product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_CLASSIC) {
