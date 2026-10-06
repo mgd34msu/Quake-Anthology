@@ -125,6 +125,7 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     g->check_client_slot = 0;
     g->check_client_time = 0;
     g->check_client_cluster = 0;
+    g->check_client_eye = qa_v3(0, 0, 0);
     if (g->options.quakeworld) {
         if (g->wire) wire->qw_fraglog = g->wire->qw_fraglog;
         else wire->qw_fraglog.sequence = 1;

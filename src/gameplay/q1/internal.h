@@ -473,6 +473,7 @@ struct qa_q1_game {
     uint32_t check_client_slot;
     double check_client_time;
     int32_t check_client_cluster;
+    qa_vec3 check_client_eye;
     qa_vec3 forward, right, up;
     q1_ref qw_multi_entity;
     float qw_multi_damage, qw_blood_count, qw_puff_count;

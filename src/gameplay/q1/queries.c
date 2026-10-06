@@ -64,9 +64,12 @@ static bool check_client_eye(void *opaque, uint32_t slot, qa_vec3 *out, qa_error
     qa_builtin_check_client_row row;
     if (!context->source->player(context->source->context, slot - 1, false,
                                  &actor, &row, error)) return false;
-    if (!row.present) return qa_q1_check_client_eye_read(context->game, slot - 1, out, error);
+    if (!row.present) {
+        *out = context->game->check_client_eye;
+        return true;
+    }
     if (!context->source->eye(context->source->context, actor, out, error)) return false;
-    context->game->wire->board[slot - 1].eye = *out;
+    context->game->check_client_eye = *out;
     return true;
 }
 static bool check_client_observer_eye(void *opaque, qa_vec3 *out, qa_error *error) {
@@ -82,8 +85,6 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
     *out = (qa_actor_id){0};
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
-    bool okay = g->wire && g->wire->board;
-    if (!okay) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 check-client requires its physical Source clients");
     q1_check_client_context actual = {g, observer, source};
     qa_builtin_check_client_query query = {.session = g->services.session,
         .provider = g->options.provider, .world = g->services.world,
@@ -92,7 +93,7 @@ bool qa_q1_game_check_client(qa_q1_game *g, qa_actor_id observer,
         .context = &actual, .client = check_client_row, .client_eye = check_client_eye,
         .observer_eye = check_client_observer_eye};
     uint32_t slot;
-    if (okay) okay = qa_builtin_check_client(&query, &slot, error);
+    bool okay = qa_builtin_check_client(&query, &slot, error);
     if (okay && slot) {
         qa_builtin_check_client_row row;
         okay = source->player(source->context, slot - 1, false, out, &row, error);

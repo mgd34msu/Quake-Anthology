@@ -99,7 +99,8 @@ static bool released(void *context, qa_session *session, qa_actor_record actor, 
     return qa_world_actor_released(fixture->world, actor, error);
 }
 
-static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill)
+static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
+    bool native_world)
 {
     qa_error error = {0};
     *fixture = (q1_fixture){0};
@@ -133,7 +134,8 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
     qa_combat_policy policy;
     GAME_CHECK(qa_q1_game_combat_policy(fixture->game, &policy, &error));
     GAME_CHECK(qa_combat_register_policy(fixture->combat, &policy, &error));
-    GAME_CHECK(qa_q1_wire_begin_world(fixture->game, "maps/test.bsp", 0, 1, &error));
+    if (native_world)
+        GAME_CHECK(qa_q1_wire_begin_world(fixture->game, "maps/test.bsp", 0, 1, &error));
 }
 
 static void fixture_destroy(q1_fixture *fixture)
@@ -187,7 +189,7 @@ static void armor_and_protection(void)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, 1);
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1, true);
     qa_actor_id knight = spawn(&fixture, "monster_knight");
     qa_armor armor = {.regular = {.kind = QA_ARMOR_Q1, .points = 10,
         .protection.q1_absorption = 0.3f}};
@@ -214,7 +216,7 @@ static void pain_cooldown(uint8_t skill)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, skill);
+    fixture_create(&fixture, QA_Q1_CLASSIC, skill, true);
     qa_actor_id knight = spawn(&fixture, "monster_knight");
     qa_damage_outcome outcome = hit(&fixture, knight, 10);
     qa_damage_outcome_free(&outcome);
@@ -235,7 +237,7 @@ static void edition_damage(qa_q1_edition edition)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, edition, 1);
+    fixture_create(&fixture, edition, 1, true);
     qa_actor_id oldone = spawn(&fixture, "monster_oldone");
     qa_combat_state state;
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
@@ -288,7 +290,7 @@ static void donor_check_client(void)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create(&fixture, QA_Q1_CLASSIC, 1);
+    fixture_create(&fixture, QA_Q1_CLASSIC, 1, false);
     qa_actor_id observer = spawn(&fixture, "monster_knight");
     qa_builtin_services services = {.session = fixture.session, .world = fixture.world,
         .combat = fixture.combat, .inventory = fixture.inventory,
@@ -312,6 +314,7 @@ static void donor_check_client(void)
     GAME_CHECK(qa_q1_game_check_client(fixture.game, observer, &source, &target, &error));
     GAME_CHECK(!target.registry);
     GAME_CHECK(qa_session_release(fixture.session, mixed.player, &error));
+    advance(&fixture, 1);
     GAME_CHECK(qa_q1_game_check_client(fixture.game, observer, &source, &target, &error));
     GAME_CHECK(!target.registry);
     fixture_destroy(&fixture);
