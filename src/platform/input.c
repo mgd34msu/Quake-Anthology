@@ -190,6 +190,8 @@ static bool discover(qa_input_platform *p, int index, qa_error *error) {
                 if (error) *error = opening;
                 return false;
             }
+            count = last = remaining;
+            i = -1;
             continue;
         }
         if (!SDL_GameControllerGetAttached(handle)) {
