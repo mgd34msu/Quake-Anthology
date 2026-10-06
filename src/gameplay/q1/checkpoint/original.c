@@ -427,7 +427,9 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
     if (!okay) { qa_q1_save_record_destroy(&ordered); return false; }
     *record = ordered; return true;
 }
-static bool map_functions(const q1_actor *entity, bool damageable, qa_q1_save_record *record, qa_error *error) {
+static bool map_functions(const qa_strings *strings, const q1_actor *entity, bool damageable,
+    qa_q1_save_record *record, qa_error *error) {
+    bool targeted = qa_strings_text(strings, entity->targetname).size != 0;
     const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL;
     switch (map->kind) {
     case Q1_MAP_MULTI: touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use"; break;
@@ -455,12 +457,12 @@ static bool map_functions(const q1_actor *entity, bool damageable, qa_q1_save_re
         break;
     case Q1_MAP_SECRET_DOOR:
         touch = "secret_touch"; use = "fd_secret_use"; blocked = "secret_blocked";
-        if (!entity->targetname || (entity->spawnflags & 16)) {
+        if (!targeted || (entity->spawnflags & 16)) {
             pain = damageable ? "fd_secret_use" : "SUB_Null"; die = "fd_secret_use";
         }
         break;
     case Q1_MAP_PLAT:
-        use = !entity->targetname ? "plat_trigger_use" :
+        use = !targeted ? "plat_trigger_use" :
             map->pending.mover.activated ? "SUB_Null" : "plat_use";
         blocked = "plat_crush"; break;
     case Q1_MAP_TRAIN: case Q1_MAP_TRAIN2: use = "train_use"; blocked = "train_blocked"; break;
@@ -810,7 +812,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->map->action == Q1_MAP_DELAYED_USE &&
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
-            !mover_sounds(entity,record,error) || !map_functions(entity, combat.can_take_damage, record, error)) return false;
+            !mover_sounds(entity,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
@@ -1655,7 +1657,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (classname && !strcmp(classname,source.name) &&
                 (source.map==Q1_MAP_DOOR || source.map==Q1_MAP_BUTTON || source.map==Q1_MAP_SECRET_DOOR))
                 defaults=source.map;
-            if (!map_functions(&entity,damage!=0,&callbacks,error)) goto done;
+            if (!map_functions(admission->strings,&entity,damage!=0,&callbacks,error)) goto done;
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
             if (source.projectile->kind==Q1_HIP_LASER && !ADMIT_FIELDS(admission,&entity.state.projectile,hip_laser_fields,error)) goto done;
