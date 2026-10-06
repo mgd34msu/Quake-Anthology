@@ -93,6 +93,9 @@ static const original_field physics_fields[] = {
     FIELD(qa_physics_properties, goal, "goalentity", REF),
     FIELD(qa_physics_properties, q1_pusher.local_seconds, "ltime", DOUBLE)
 };
+static const original_field movement_fields[] = {
+    FIELD(qa_nq_movement_state, fix_angle, "fixangle", BOOL)
+};
 static const original_field player_fields[] = {
     FIELD(q1_player, weapon_frame, "weaponframe", I32),
     FIELD(q1_player, current_ammo, "currentammo", FLOAT),
@@ -815,7 +818,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         q1_character source_character = player->character_state;
         source_character.model = visible.model; source_character.frame = visible.frame;
         source_character.pain_until = fmax(source_character.pain_until,player->drown_at);
-        if (!FIELDS(receipt, record, &source_player, player_fields, error) ||
+        if (!FIELDS(receipt, record, &movement->data.nq, movement_fields, error) ||
+            !FIELDS(receipt, record, &source_player, player_fields, error) ||
             !FIELDS(receipt, record, &source_character, character_fields, error) ||
             !qa_q1_wire_player_read(receipt, player->id, &wire, error)) return false;
         if (!text(record, "classname", "player", QA_Q1_SAVE_STRING, error) ||
@@ -1639,11 +1643,12 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     admitted_key(admission,"takedamage");
     qa_q1_save_record callbacks={0};q1_map_kind defaults=Q1_MAP_FIELDS;bool okay=false;
     if (slot==1) {
-        q1_player player={0};
+        q1_player player={0};qa_nq_movement_state movement={0};
         if (!(saved_number(record,"health")>0)) {
             unsupported(error,"Source dead player has no living native inverse");goto done;
         }
         if (!admit_text(admission,"classname","player",error) ||
+            !ADMIT_FIELDS(admission,&movement,movement_fields,error) ||
             !ADMIT_FIELDS(admission,&player,player_fields,error) ||
             !ADMIT_FIELDS(admission,&player.character_state,character_fields,error) ||
             !admit_word(admission,"items",error) || !admit_word(admission,"items2",error) ||
@@ -1908,7 +1913,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             qa_actor_id_equal(ground, slots[0]);
         movement->data.nq.ground = (qa_movement_ground){.actor = ground,
             .hit = flags & 512 ? world_ground ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR : QA_TRACE_HIT_NONE};
-        if (!saved_vector(saved(record,"movedir"),&movement->data.nq.water_jump_direction,error)) return false;
+        if (!RESTORE_FIELDS(game,record,&movement->data.nq,movement_fields,slots,count,error) ||
+            !saved_vector(saved(record,"movedir"),&movement->data.nq.water_jump_direction,error)) return false;
         return game->services.physics && game->services.physics->services.write &&
             game->services.physics->services.write(game->services.physics->services.context, id, &physics, error) &&
             restore_player_name(game,player,record,error);
