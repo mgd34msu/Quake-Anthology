@@ -41,8 +41,8 @@ bool frontend_shared_gamma_prepare(qa_frontend *f,float gamma,frontend_shared_ga
     if (!frontend_shared_gamma_read(f,&original,error)) return false;
     qa_display_info info={0};
     if (!qa_display_info_get(f->display,&info,error)) return false;
-    if (info.drawable_width!=f->width ||
-        info.drawable_height!=f->height || info.backend!=(f->gl?QA_DISPLAY_OPENGL:QA_DISPLAY_CPU))
+    if ((f->gl && (info.drawable_width!=f->width || info.drawable_height!=f->height)) ||
+        info.backend!=(f->gl?QA_DISPLAY_OPENGL:QA_DISPLAY_CPU))
         return fail(error,"Brightness preparation requires unchanged actual drawable dimensions");
     frontend_shared_gamma *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining prepared renderer brightness");
@@ -64,8 +64,8 @@ bool frontend_shared_gamma_ready(frontend_shared_gamma *owner,qa_error *error)
     float original=0; qa_display_info info={0};
     if (!frontend_shared_gamma_read(owner->frontend,&original,error) ||
         !qa_display_info_get(owner->display,&info,error)) return false;
-    if (original!=owner->original_gamma || info.drawable_width!=owner->width ||
-        info.drawable_height!=owner->height)
+    if (original!=owner->original_gamma || (owner->gl &&
+        (info.drawable_width!=owner->width || info.drawable_height!=owner->height)))
         return fail(error,"Brightness publication lost its retained value or native drawable");
     if (!(owner->gl?qa_gl_surface_ready(owner->gl_ticket,error):qa_cpu_surface_ready(owner->cpu_ticket,error)))
         return false;

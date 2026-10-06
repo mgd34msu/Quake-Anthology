@@ -165,9 +165,9 @@ bool frontend_display_ready(qa_frontend *frontend, bool *ready, qa_error *error)
     *ready = false;
     qa_display_info display;
     if (!qa_display_info_get(frontend->display, &display, error)) return false;
+    frontend->observed_display=display;
     if (display.minimized || !display.drawable_width || !display.drawable_height) return true;
-    if (frontend->width != display.drawable_width || frontend->height != display.drawable_height) {
-        if (frontend->cpu && !qa_cpu_resize(frontend->cpu, display.drawable_width, display.drawable_height, error)) return false;
+    if (frontend->gl && (frontend->width != display.drawable_width || frontend->height != display.drawable_height)) {
         frontend->width = display.drawable_width; frontend->height = display.drawable_height;
     }
     *ready = true;

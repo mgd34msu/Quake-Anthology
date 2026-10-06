@@ -36,6 +36,7 @@ typedef struct qa_input_platform qa_input_platform;
 typedef struct qa_input_platform_options {
     qa_cvars *cvars;
     void *user;
+    bool (*render_size)(void *, uint32_t *width, uint32_t *height);
     /* Notifications inspect current state. Queue routing or lifetime changes
      * until the platform call returns. */
     void (*print)(void *, const char *);

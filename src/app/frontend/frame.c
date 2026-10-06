@@ -440,6 +440,9 @@ static bool input_events(qa_frontend *frontend, qa_error *error)
     while (!qa_application_should_stop(frontend->application) && SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); return true; }
         if (frontend->options.dedicated) continue;
+        if (event.type==SDL_WINDOWEVENT && event.window.event==SDL_WINDOWEVENT_SIZE_CHANGED &&
+            event.window.windowID==frontend->observed_display.window_id &&
+            !qa_display_info_get(frontend->display,&frontend->observed_display,error)) return false;
         bool handled;
         if (!qa_input_platform_event(frontend->input, &event, now, &handled, error)) return false;
         if (qa_application_should_stop(frontend->application)) return true;

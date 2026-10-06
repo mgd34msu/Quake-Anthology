@@ -53,8 +53,8 @@ static bool display_options(frontend_restart *owner,qa_display_backend backend,q
     if (!qa_display_info_get(f->display,&info,error)) return false;
     *options=f->options.display; options->backend=backend;
     float width=number(owner,"r_customwidth",0),height=number(owner,"r_customheight",0);
-    if (width==0) width=(float)info.logical_width;
-    if (height==0) height=(float)info.logical_height;
+    if (width==0) width=(float)(f->cpu?f->width:info.logical_width);
+    if (height==0) height=(float)(f->cpu?f->height:info.logical_height);
     float fullscreen=number(owner,"r_fullscreen",info.fullscreen!=QA_DISPLAY_WINDOWED);
     float swap=number(owner,"r_swapInterval",1); *gamma=number(owner,"r_gamma",f->options.gamma);
     if (!isfinite(width) || !isfinite(height) || floorf(width)!=width || floorf(height)!=height ||
@@ -144,7 +144,7 @@ static bool video_continue(frontend_restart *owner,qa_error *error)
     if (ok) ok=a->candidate && qa_display_info_get(a->candidate,&a->info,error);
     if (ok && a->backend==QA_DISPLAY_CPU) {
         qa_cpu_options renderer; qa_cpu_options_default(&renderer);
-        renderer.width=a->info.drawable_width; renderer.height=a->info.drawable_height; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
+        renderer.width=options.width; renderer.height=options.height; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
         renderer.present=qa_display_present_cpu; renderer.present_context=a->candidate;
         a->cpu=qa_cpu_create(&renderer,error); ok=a->cpu && qa_cpu_set_gamma(a->cpu,a->gamma,error);
     } else if (ok) {
@@ -162,7 +162,10 @@ static bool video_continue(frontend_restart *owner,qa_error *error)
     if (ok) ok=qa_display_set_visible(a->candidate,!f->options.display.hidden,error);
     if (ok && a->gl) ok=qa_display_make_current(a->candidate,error);
     if (ok) {
-        f->display=a->candidate; f->gl=a->gl; f->cpu=a->cpu; f->width=a->info.drawable_width; f->height=a->info.drawable_height;
+        f->display=a->candidate; f->gl=a->gl; f->cpu=a->cpu;
+        f->width=a->cpu?options.width:a->info.drawable_width;
+        f->height=a->cpu?options.height:a->info.drawable_height;
+        f->observed_display=a->info;
         f->options.display.backend=a->backend; f->options.gamma=a->gamma;
         f->options.display.width=options.width; f->options.display.height=options.height;
         f->options.display.fullscreen=options.fullscreen;

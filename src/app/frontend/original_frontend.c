@@ -35,7 +35,9 @@ bool frontend_graphics_create(qa_frontend *f,qa_frontend *active,
     }
     qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
-    f->width=info.drawable_width; f->height=info.drawable_height;
+    f->observed_display=info;
+    f->width=f->options.display.backend==QA_DISPLAY_CPU?f->options.display.width:info.drawable_width;
+    f->height=f->options.display.backend==QA_DISPLAY_CPU?f->options.display.height:info.drawable_height;
     if (f->options.display.backend==QA_DISPLAY_CPU) {
         qa_cpu_options renderer; qa_cpu_options_default(&renderer);
         renderer.width=f->width; renderer.height=f->height; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
@@ -71,7 +73,8 @@ static bool original_create(qa_frontend_original_restore *operation,qa_error *er
     if (!options.dedicated) {
         qa_display_info display;
         if (!qa_display_info_get(active->display,&display,error)) return false;
-        options.display.width=display.logical_width; options.display.height=display.logical_height;
+        options.display.width=active->cpu?active->width:display.logical_width;
+        options.display.height=active->cpu?active->height:display.logical_height;
         operation->visible=display.visible;
         options.display.hidden=true;
         if ((active->cpu && !qa_cpu_gamma_read(active->cpu,&options.gamma,error)) ||

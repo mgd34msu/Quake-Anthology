@@ -333,7 +333,7 @@ bool frontend_shared_values_window_observed(frontend_shared_values *owner,const 
     struct { const char *name; uint32_t value; } values[4]={
         {"r_customwidth",info->logical_width},{"r_customheight",info->logical_height},
         {"r_fullscreen",info->fullscreen==QA_DISPLAY_WINDOWED?0:1},{"r_swapInterval",swap?1:0}};
-    for (size_t i=info->fullscreen==QA_DISPLAY_WINDOWED?0:2;i<4;++i) {
+    for (size_t i=opengl && info->fullscreen==QA_DISPLAY_WINDOWED?0:2;i<4;++i) {
         if (i==3 && !opengl) continue;
         char text[32];
         if (!qa_format_number(values[i].value,text,error) ||

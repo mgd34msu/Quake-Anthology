@@ -13,6 +13,7 @@ struct frontend_shared_video {
     qa_gl_surface_ticket *gl_surface;
     qa_cpu_surface_ticket *cpu_surface;
     qa_display_info observed;
+    uint32_t width,height;
     bool prepared,published,rolling_back,rolled_back;
 };
 static bool fail(qa_error *error,const char *text)
@@ -32,8 +33,10 @@ bool frontend_shared_video_settings(qa_frontend *f,const qa_cvars_edit *edit,
     }
     qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
-    double width=rows[0]->number!=0.0f?(double)rows[0]->number:(double)info.logical_width;
-    double height=rows[1]->number!=0.0f?(double)rows[1]->number:(double)info.logical_height;
+    uint32_t current_width=f->cpu?f->width:info.logical_width;
+    uint32_t current_height=f->cpu?f->height:info.logical_height;
+    double width=rows[0]->number!=0.0f?(double)rows[0]->number:(double)current_width;
+    double height=rows[1]->number!=0.0f?(double)rows[1]->number:(double)current_height;
     double fullscreen=rows[2]->number,swap=rows[3]->number;
     if (!isfinite(width) || !isfinite(height) || floor(width)!=width || floor(height)!=height ||
         width<64 || width>16384 || height<64 || height>16384 ||
@@ -43,11 +46,11 @@ bool frontend_shared_video_settings(qa_frontend *f,const qa_cvars_edit *edit,
     if (f->gl && !qa_display_swap_interval(f->display,&actual_swap,error)) return false;
     /* The source only resizes a currently windowed endpoint. Fullscreen
      * dimensions come from the actual current native window. */
-    *out=(qa_display_settings){.width=info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)width:info.logical_width,
-        .height=info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)height:info.logical_height,
+    *out=(qa_display_settings){.width=f->cpu || info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)width:info.logical_width,
+        .height=f->cpu || info.fullscreen==QA_DISPLAY_WINDOWED?(uint32_t)height:info.logical_height,
         .fullscreen=fullscreen==1?QA_DISPLAY_DESKTOP:QA_DISPLAY_WINDOWED,
         .swap_interval=f->gl?(int)swap:0};
-    *changed=out->width!=info.logical_width || out->height!=info.logical_height ||
+    *changed=out->width!=current_width || out->height!=current_height ||
         out->fullscreen!=info.fullscreen || (f->gl && out->swap_interval!=actual_swap);
     return true;
 }
@@ -75,6 +78,7 @@ bool frontend_shared_video_prepare(qa_frontend *f,const qa_display_settings *set
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining prepared shared video");
     owner->frontend=f; owner->application=f->application; owner->original=f->display;
     owner->gl=f->gl; owner->cpu=f->cpu; owner->platform=f->input; owner->input=input;
+    owner->width=settings->width; owner->height=settings->height;
     *out=owner;
     /* The genuine GL native presentation must be captured before a candidate
      * window changes the current endpoint on its retained context. */
@@ -85,8 +89,8 @@ bool frontend_shared_video_prepare(qa_frontend *f,const qa_display_settings *set
         !qa_display_info_get(owner->candidate,&owner->observed,error)) return false;
     if (owner->gl) {
         if (!qa_gl_surface_prepare(owner->gl_surface,owner->candidate,gamma,error)) return false;
-    } else if (!qa_cpu_surface_prepare(owner->cpu,owner->observed.drawable_width,
-        owner->observed.drawable_height,gamma,qa_display_present_cpu,owner->candidate,
+    } else if (!qa_cpu_surface_prepare(owner->cpu,owner->width,
+        owner->height,gamma,qa_display_present_cpu,owner->candidate,
         &owner->cpu_surface,error)) return false;
     if (!frontend_input_settings_window_stage(input,owner->surface,error)) return false;
     owner->prepared=true;
@@ -129,8 +133,11 @@ void frontend_shared_video_publish(frontend_shared_video *owner)
     if (owner->gl) qa_gl_surface_publish(owner->gl_surface);
     else qa_cpu_surface_publish(owner->cpu_surface);
     qa_display_surface_publish(&owner->surface,&owner->frontend->display,&owner->retired);
-    owner->frontend->width=owner->observed.drawable_width;
-    owner->frontend->height=owner->observed.drawable_height;
+    owner->frontend->width=owner->cpu?owner->width:owner->observed.drawable_width;
+    owner->frontend->height=owner->cpu?owner->height:owner->observed.drawable_height;
+    owner->frontend->options.display.width=owner->width;
+    owner->frontend->options.display.height=owner->height;
+    owner->frontend->observed_display=owner->observed;
     owner->published=true;
 }
 bool frontend_shared_video_finish(frontend_shared_video **in,qa_error *error)

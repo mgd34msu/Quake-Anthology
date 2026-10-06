@@ -401,6 +401,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
     if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->restore_abort || active->native_initializing || active->settings_ticket ||
         !out || *out || p->devices || p->joystick || p->midi_fd >= 0 ||
         !input_platform_haptic_bindings_ready(p) || !input_platform_haptic_bindings_ready(active) ||
+        p->options.render_size != active->options.render_size ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
         p->options.assignment_changed != active->options.assignment_changed)
         return fail(error, QA_ERROR_ARGUMENT, "fresh platform requires genuine detached and active owners");
@@ -472,6 +473,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
 {
     if (!p || p->native_owned || p->settings_ticket || !active || !active->native_owned || active->restore_abort || active->settings_ticket || !refs || !refs->seat_decode || !out || *out ||
         !input_platform_haptic_bindings_ready(p) || p->devices || p->joystick || p->midi_fd >= 0 ||
+        p->options.render_size != active->options.render_size ||
         p->options.print != active->options.print || p->options.device_changed != active->options.device_changed ||
         p->options.assignment_changed != active->options.assignment_changed)
         return fail(error, QA_ERROR_ARGUMENT, "platform restore requires genuine detached and active owners");

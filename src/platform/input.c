@@ -863,7 +863,11 @@ static qa_input_pair position(qa_input_platform *p, int x, int y) {
     int w = 0, h = 0, dw = 0, dh = 0;
     if (window) {
         SDL_GetWindowSize(window, &w, &h);
-        if (SDL_GetWindowFlags(window) & SDL_WINDOW_OPENGL)
+        uint32_t render_width=0,render_height=0;
+        if (p->options.render_size &&
+            p->options.render_size(p->options.user,&render_width,&render_height)) {
+            dw=(int)render_width; dh=(int)render_height;
+        } else if (SDL_GetWindowFlags(window) & SDL_WINDOW_OPENGL)
             SDL_GL_GetDrawableSize(window, &dw, &dh);
         else {
             SDL_Renderer *renderer = SDL_GetRenderer(window);
@@ -2226,6 +2230,7 @@ bool qa_input_platform_settings_ready_is(const qa_input_platform_settings_ticket
         p->midi_devices != t->ready_midi_devices || p->midi_count != t->ready_midi_count ||
         p->midi_generation != t->ready_midi_generation ||
         p->options.cvars != t->ready_options.cvars || p->options.user != t->ready_options.user ||
+        p->options.render_size != t->ready_options.render_size ||
         p->options.print != t->ready_options.print ||
         p->options.device_changed != t->ready_options.device_changed ||
         p->options.assignment_changed != t->ready_options.assignment_changed) return false;

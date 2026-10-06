@@ -428,7 +428,8 @@ static SDL_Surface *cpu_frame_create(uint32_t width, uint32_t height,
     return frame;
 }
 
-static bool cpu_surface_create(qa_display *display, qa_error *error)
+static bool cpu_surface_create(qa_display *display, uint32_t width,
+                               uint32_t height, qa_error *error)
 {
     const char *driver = SDL_GetCurrentVideoDriver();
     /* X11 can update its native framebuffer directly. Other drivers retain
@@ -438,11 +439,10 @@ static bool cpu_surface_create(qa_display *display, qa_error *error)
         SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "0");
     SDL_Surface *surface = cpu_window_surface(display, error);
     if (!surface) return false;
-    display->native.cpu.frame = cpu_frame_create((uint32_t)surface->w,
-        (uint32_t)surface->h, error);
+    display->native.cpu.frame = cpu_frame_create(width, height, error);
     if (!display->native.cpu.frame) return false;
-    display->native.cpu.width = (uint32_t)surface->w;
-    display->native.cpu.height = (uint32_t)surface->h;
+    display->native.cpu.width = width;
+    display->native.cpu.height = height;
     return true;
 }
 
@@ -536,7 +536,7 @@ qa_display *qa_display_create(const qa_display_options *input, qa_error *error)
     }
     if (!enter_initial_fullscreen(display, options, error)) goto done;
     if (options->backend == QA_DISPLAY_CPU &&
-        !cpu_surface_create(display, error)) goto done;
+        !cpu_surface_create(display, options->width, options->height, error)) goto done;
     if (SDL_GetWindowID(display->window) == 0) {
         display_error(error, QA_ERROR_IO, "SDL_GetWindowID");
         goto done;
@@ -827,12 +827,12 @@ static bool cpu_frame_blit(qa_display *display, bool present, qa_error *error)
     SDL_Surface *surface = cpu_window_surface(display, error);
     SDL_Surface *frame = display->native.cpu.frame;
     if (!surface) return false;
-    if (!frame || surface->w != frame->w || surface->h != frame->h) {
+    if (!frame) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                     "CPU frame dimensions differ from the SDL drawable");
+                     "CPU presentation has no retained frame");
         return false;
     }
-    if (SDL_BlitSurface(frame, NULL, surface, NULL) < 0 ||
+    if (SDL_BlitScaled(frame, NULL, surface, NULL) < 0 ||
         (present && SDL_UpdateWindowSurface(display->window) < 0))
         return display_error(error, QA_ERROR_IO, "SDL CPU surface presentation");
     return true;
@@ -860,13 +860,6 @@ bool qa_display_present_rgba(qa_display *display, qa_bytes rgba,
                      "SDL CPU presentation pixels are truncated");
         return false;
     }
-    SDL_Surface *surface = cpu_window_surface(display, error);
-    if (!surface) return false;
-    if ((uint32_t)surface->w != width || (uint32_t)surface->h != height) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                     "CPU frame dimensions differ from the SDL drawable");
-        return false;
-    }
     display_changed(display);
     if (!resize_cpu_frame(display, width, height, error) ||
         !cpu_frame_write(display, rgba.data, error) ||
@@ -890,15 +883,13 @@ bool qa_display_capture_cpu(qa_display *display, qa_buffer *out,
                      "SDL CPU capture requires a presented frame");
         return false;
     }
-    SDL_Surface *surface = cpu_window_surface(display, error);
-    if (!surface) return false;
-    int w = surface->w, h = surface->h;
-    if (w <= 0 || h <= 0 || (uint32_t)w != display->native.cpu.width ||
-        (uint32_t)h != display->native.cpu.height ||
+    SDL_Surface *frame = display->native.cpu.frame;
+    int w = (int)display->native.cpu.width, h = (int)display->native.cpu.height;
+    if (!frame || w <= 0 || h <= 0 ||
         (size_t)w > SIZE_MAX / (size_t)h ||
         (size_t)w * (size_t)h > SIZE_MAX / 4) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                     "SDL CPU capture drawable changed before presentation");
+                     "SDL CPU capture has invalid retained dimensions");
         return false;
     }
     size_t bytes = (size_t)w * (size_t)h * 4;
@@ -908,8 +899,7 @@ bool qa_display_capture_cpu(qa_display *display, qa_buffer *out,
         return false;
     }
     display_changed(display);
-    SDL_Surface *frame = display->native.cpu.frame;
-    if (!frame || SDL_ConvertPixels(w, h, SDL_PIXELFORMAT_RGBA32,
+    if (SDL_ConvertPixels(w, h, SDL_PIXELFORMAT_RGBA32,
         frame->pixels, frame->pitch, SDL_PIXELFORMAT_RGBA32, pixels, w * 4) < 0) {
         free(pixels);
         return display_error(error, QA_ERROR_IO, "Capturing retained SDL CPU frame");
@@ -1289,7 +1279,11 @@ static void display_detached_bind(qa_display *active,qa_display *candidate,qa_di
     if (active->backend==QA_DISPLAY_OPENGL) candidate->native.gl=active->native.gl;
     guard->active=active; guard->candidate=candidate; guard->window=active->window;
     candidate->restore_guard=guard;
-    if (active->backend==QA_DISPLAY_CPU) guard->frame=active->native.cpu.frame;
+    if (active->backend==QA_DISPLAY_CPU) {
+        guard->frame=active->native.cpu.frame;
+        candidate->native.cpu.width=active->native.cpu.width;
+        candidate->native.cpu.height=active->native.cpu.height;
+    }
     else guard->context=active->native.gl.context;
 }
 bool qa_display_create_detached(qa_display *active,qa_display **out,
@@ -1352,7 +1346,8 @@ bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
     guard->attempted=true;
     if (!display_observe(guard->candidate,&guard->staged,error) ||
         (guard->candidate->backend==QA_DISPLAY_CPU &&
-            !resize_cpu_frame(guard->candidate,guard->staged.info.drawable_width,guard->staged.info.drawable_height,error))) return false;
+            !resize_cpu_frame(guard->candidate,guard->candidate->native.cpu.width,
+                guard->candidate->native.cpu.height,error))) return false;
     guard->prepared=true; return true;
 }
 
@@ -1447,9 +1442,7 @@ static bool display_endpoint_owned(const qa_display *display)
             display->native.cpu.frame->format->format==SDL_PIXELFORMAT_RGBA32 &&
             display->native.cpu.frame->w==(int)display->native.cpu.width &&
             display->native.cpu.frame->h==(int)display->native.cpu.height &&
-            display->native.cpu.width && display->native.cpu.height &&
-            (!restored || (display->native.cpu.width==guard->staged.info.drawable_width &&
-                display->native.cpu.height==guard->staged.info.drawable_height));
+            display->native.cpu.width && display->native.cpu.height;
     if (display->backend != QA_DISPLAY_OPENGL || !display->native.gl.context) return false;
     if (!display->native_borrowed || restored)
         return display->native.gl.context == display->lease->context &&
@@ -1488,8 +1481,8 @@ bool qa_display_surface_ready_is(const qa_display_surface_ticket *ticket,
         qa_display_endpoint_is(active, &active->ready_endpoint) &&
         qa_display_endpoint_is(candidate, &candidate->ready_endpoint) &&
         (candidate->backend != QA_DISPLAY_CPU ||
-            (candidate->native.cpu.width == ticket->staged.drawable_width &&
-             candidate->native.cpu.height == ticket->staged.drawable_height));
+            (candidate->native.cpu.width == ticket->settings.width &&
+             candidate->native.cpu.height == ticket->settings.height));
 }
 
 static bool surface_info_equal(const qa_display_info *a, const qa_display_info *b)
@@ -1606,11 +1599,6 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
     if (!surface_owner(ticket, error) || !qa_display_info_get(active, &ticket->original, error)) {
         active->surface_ticket = NULL; free(ticket); return false;
     }
-    if (active->backend == QA_DISPLAY_CPU &&
-        !resize_cpu_frame(active, ticket->original.drawable_width,
-            ticket->original.drawable_height, error)) {
-        active->surface_ticket = NULL; free(ticket); return false;
-    }
     SDL_GetWindowPosition(active->window, &ticket->x, &ticket->y);
     if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0) {
         active->surface_ticket = NULL; free(ticket); return display_error(error, QA_ERROR_IO, "Reading prior native window display mode");
@@ -1650,7 +1638,7 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
         if (!qa_display_make_current(candidate, error) || !surface_gl_visual_equal(ticket, error) ||
             !surface_restore_context(ticket, error)) return false;
     } else {
-        if (!cpu_surface_create(candidate, error)) return false;
+        if (!cpu_surface_create(candidate, settings->width, settings->height, error)) return false;
     }
     qa_display_info current;
     if (!qa_display_info_get(active, &current, error) ||
@@ -1686,15 +1674,15 @@ bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error
         if (!surface_gl_visual_equal(ticket, error)) return false;
     }
     if (!qa_display_info_get(candidate,&ticket->staged,error)) return false;
-    /* Window size and focus are compositor decisions. Render and input use
-     * the observed drawable; the canonical settings adopt this observation. */
+    /* Window size and focus are compositor decisions. CPU mode dimensions
+     * remain requested; its framebuffer is scaled into the native surface. */
     if (ticket->staged.fullscreen != ticket->settings.fullscreen ||
         ticket->staged.visible != ticket->original.visible)
         return display_save_error(error, QA_ERROR_IO,
             "SDL candidate native settings differ from the requested settings");
     if (candidate->backend == QA_DISPLAY_CPU &&
-        !resize_cpu_frame(candidate, ticket->staged.drawable_width,
-                            ticket->staged.drawable_height, error)) return false;
+        !resize_cpu_frame(candidate, ticket->settings.width,
+                            ticket->settings.height, error)) return false;
     ticket->staged_valid = true;
     return qa_display_surface_ready(ticket, error);
 }
@@ -1719,8 +1707,8 @@ bool qa_display_surface_ready(const qa_display_surface_ticket *ticket, qa_error 
             SDL_GL_GetSwapInterval() != ticket->settings.swap_interval)
             return display_save_error(error, QA_ERROR_ARGUMENT,
                 "Candidate surface is not bound to the prepared active GL context");
-    } else if (candidate->native.cpu.width != current.drawable_width ||
-               candidate->native.cpu.height != current.drawable_height ||
+    } else if (candidate->native.cpu.width != ticket->settings.width ||
+               candidate->native.cpu.height != ticket->settings.height ||
                !candidate->native.cpu.frame)
         return display_save_error(error, QA_ERROR_ARGUMENT, "Candidate CPU frame is not prepared");
     qa_display_endpoint active, next;

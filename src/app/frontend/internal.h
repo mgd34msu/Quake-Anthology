@@ -294,6 +294,7 @@ struct qa_frontend {
     char *map_name;
     unsigned sdl_subsystems;
     uint32_t width, height;
+    qa_display_info observed_display;
     bool stepping, preparing;
     void *native_output_context;
     void (*native_print)(void *, const qa_native_host_print *);
