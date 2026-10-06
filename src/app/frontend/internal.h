@@ -368,7 +368,7 @@ void frontend_wheel_command(void *, qa_input_seat *, bool, bool);
 uint64_t frontend_audio_actor(qa_frontend *, qa_actor_id, qa_error *);
 bool frontend_audio_actor_position(qa_frontend *, qa_actor_id, uint64_t,
     const qa_body_state *, qa_vec3 *, qa_error *);
-uint64_t frontend_audio_retained_q2_actor(qa_frontend *, const qa_builtin_event *, qa_error *);
+uint64_t frontend_audio_retained_event_actor(qa_frontend *, const qa_builtin_event *, qa_error *);
 uint64_t frontend_audio_q2_protocol_actor(qa_frontend *, const qa_application_protocol_event *,
     qa_actor_id, qa_error *);
 uint64_t frontend_audio_native_q3_actor(frontend_native_q3 *, uint32_t source_number, qa_error *);

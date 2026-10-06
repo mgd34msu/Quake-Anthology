@@ -106,6 +106,31 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
     return qa_world_body_write(game->options.services.world, actor, &body, error) &&
            qa_world_link(game->options.services.world, actor, NULL, error);
 }
+static bool sound_origin(qa_qc_game *game, int32_t entity, qa_vec3 *out, qa_error *error) {
+    const qa_qc_game_fields *fields = game->fields;
+    if (!fields->origin || fields->origin->type != QA_QC_VECTOR)
+        return qc_game_fail(error, QA_ERROR_FORMAT, "QC sound has no source origin");
+    if (!qa_qc_entity_vector(game->vm, entity, fields->origin->offset, out, error)) return false;
+    bool midpoint = game->options.vm.profile != QA_QC_QUAKEWORLD;
+    if (!midpoint) {
+        float solid;
+        if (!fields->solid || fields->solid->type != QA_QC_FLOAT)
+            return qc_game_fail(error, QA_ERROR_FORMAT, "QC sound has no source solidity");
+        if (!qa_qc_entity_float(game->vm, entity, fields->solid->offset, &solid, error)) return false;
+        if (!isfinite(solid)) return qc_game_fail(error, QA_ERROR_FORMAT, "QC sound has nonfinite solidity");
+        midpoint = solid == 4;
+    }
+    if (midpoint) {
+        qa_vec3 minimum, maximum;
+        if (!fields->mins || fields->mins->type != QA_QC_VECTOR ||
+            !fields->maxs || fields->maxs->type != QA_QC_VECTOR)
+            return qc_game_fail(error, QA_ERROR_FORMAT, "QC sound has no source bounds");
+        if (!qa_qc_entity_vector(game->vm, entity, fields->mins->offset, &minimum, error) ||
+            !qa_qc_entity_vector(game->vm, entity, fields->maxs->offset, &maximum, error)) return false;
+        *out = qa_vec_add(*out, qa_vec_scale(qa_vec_add(minimum, maximum), .5f));
+    }
+    return true;
+}
 static bool emit_sound(qa_qc_game *game, bool ambient, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
                               .provider = game->options.vm.host.owner};
@@ -118,12 +143,13 @@ static bool emit_sound(qa_qc_game *game, bool ambient, qa_error *error) {
     uint32_t sound_arg = ambient ? 1u : 2u;
     if (!qa_qc_arg_string(game->vm, sound_arg, &name, error) ||
         !qa_qc_arg_float(game->vm, sound_arg + 1, &event.volume, error) ||
-        !qa_qc_arg_float(game->vm, sound_arg + 2, &event.attenuation, error)) return false;
+        !qa_qc_arg_float(game->vm, sound_arg + 2, &event.attenuation, error) ||
+        (!ambient && !sound_origin(game, entity, &event.origin, error))) return false;
     if (!isfinite(channel) || channel < 0 || channel > 7 || !isfinite(event.volume) ||
         event.volume < 0 || event.volume > 1 || !isfinite(event.attenuation) ||
         event.attenuation < 0 || event.attenuation > 4 || !qa_vec_finite(event.origin))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC sound parameters outside source bounds");
-    event.channel = (int32_t)channel; event.flags = ambient ? 1u : 0u;
+    event.channel = (int32_t)channel; event.flags = ambient ? 1u : QA_BUILTIN_SOUND_POSITIONED;
     qa_qc_game_resource cached;
     if (!qa_builtin_resource(&game->options.services, name, &event.resource, error) ||
         !game->options.resource(game->options.context, QA_QC_RESOURCE_SOUND, name, false, &cached, error)) return false;
