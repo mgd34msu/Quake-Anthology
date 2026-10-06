@@ -1,0 +1,824 @@
+{
+  "date": "2026-10-05",
+  "item": "MIKE-11",
+  "artifact": "qfiles/qa-c",
+  "latest_tested_commit": "09bf85f7",
+  "fixes": [
+    "6b4d8123",
+    "2c139d2c"
+  ],
+  "method": "Actual shipped qa-c, real /dev/uinput controller devices and XTest input, isolated private Xvfb display 176, read-only GDB observations. No inferior calls or memory writes. World camera VIEWs require real DRAW commands; HUD views are not counted as player world viewports.",
+  "root_cause": "SDL discovery used an enumerated device index as persistent identity and made a removed-device open error fatal. Removal also shifted survivors before the next loop index. The canonical admission path now uses the actual opened handle instance, follows it for virtual classification, tolerates only an exact removed instance, and rescans surviving indices. Real open errors remain fatal.",
+  "live_checks": [
+    {
+      "product": "q1-classic-id1",
+      "renderer": "gl",
+      "artifact_stat": {
+        "inode": 164837394,
+        "bytes": 137689552,
+        "mtime_ns": 1791250809753045687
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            77.78038883209229,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            40.57632148575084,
+            0.0,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            72.39299201965332,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            41.78793188500226,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            70.11134910583496
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            41.19281526243289
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q1-classic-id1-gl-z7_ibrog"
+    },
+    {
+      "product": "q1-rerelease-id1",
+      "renderer": "cpu",
+      "artifact_stat": {
+        "inode": 164837394,
+        "bytes": 137689552,
+        "mtime_ns": 1791250809753045687
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            66.14114952087402,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            42.3746875774351,
+            0.0,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            71.36758804321289,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            42.93025846822144,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            69.95219993591309
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            40.10091365328863
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q1-rerelease-id1-cpu-wlqvzsfx"
+    },
+    {
+      "product": "q2-classic-baseq2",
+      "renderer": "cpu",
+      "artifact_stat": {
+        "inode": 164837394,
+        "bytes": 137689552,
+        "mtime_ns": 1791250809753045687
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            69.36833953857422,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            81.7614742342329,
+            0.0,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            68.36270904541016,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            83.34228998034149,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            68.83625030517578
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            35.22250700901343
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q2-classic-baseq2-cpu-da_h5ro0"
+    },
+    {
+      "product": "q2-rerelease-baseq2",
+      "renderer": "gl",
+      "artifact_stat": {
+        "inode": 164871814,
+        "bytes": 137693416,
+        "mtime_ns": 1791253531486265216
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            65.14398193359375,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            80.72977027852005,
+            0.0,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            70.46723175048828,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            85.4760186999535,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            69.19754028320312
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            35.950305551757
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q2-rerelease-baseq2-gl-fj7d41sy"
+    },
+    {
+      "product": "q3-baseq3",
+      "renderer": "cpu",
+      "artifact_stat": {
+        "inode": 164871814,
+        "bytes": 137693416,
+        "mtime_ns": 1791253531486265216
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            68.49604797363281,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            52.377797015783585,
+            0.0,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            74.36201477050781,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            63.50548353226146,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            69.52449798583984
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            45.86261816248702
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q3-baseq3-cpu-qb0_3dhj",
+      "public_three_four_three": {
+        "fourth_world_displacements": [
+          0.0,
+          0.0,
+          0.0,
+          133.3215676460198
+        ],
+        "fourth_keyboard_seat": 3,
+        "joined_actor_controller_ids": [
+          [
+            [
+              1,
+              67,
+              0
+            ],
+            0
+          ],
+          [
+            [
+              1,
+              69,
+              0
+            ],
+            1
+          ],
+          [
+            [
+              1,
+              71,
+              0
+            ],
+            2
+          ],
+          [
+            [
+              1,
+              68,
+              2
+            ],
+            -1
+          ]
+        ],
+        "retained_actor_controller_ids": [
+          [
+            [
+              1,
+              67,
+              0
+            ],
+            0
+          ],
+          [
+            [
+              1,
+              69,
+              0
+            ],
+            1
+          ],
+          [
+            [
+              1,
+              71,
+              0
+            ],
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "product": "q3-baseq3",
+      "renderer": "gl",
+      "artifact_stat": {
+        "inode": 164823338,
+        "bytes": 137713880,
+        "mtime_ns": 1791250004627357219
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 0,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            67.3285140991211,
+            0.0,
+            0.0
+          ],
+          "world_camera_displacements": [
+            21.376834505802247,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "device": 1,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            69.18685913085938,
+            0.0
+          ],
+          "world_camera_displacements": [
+            0.0,
+            64.95443578530899,
+            0.0
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 2,
+          "yaw_changes_degrees": [
+            0.0,
+            0.0,
+            68.81349182128906
+          ],
+          "world_camera_displacements": [
+            0.0,
+            0.0,
+            9.206944313496653
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-12-split-x2a70qj5",
+      "public_three_four_three": {
+        "fourth_world_displacements": [
+          0.0,
+          0.0,
+          0.0,
+          9.90578355296473
+        ],
+        "fourth_keyboard_seat": 3,
+        "joined_actor_controller_ids": [
+          [
+            [
+              1,
+              67,
+              0
+            ],
+            0
+          ],
+          [
+            [
+              1,
+              69,
+              0
+            ],
+            1
+          ],
+          [
+            [
+              1,
+              71,
+              0
+            ],
+            2
+          ],
+          [
+            [
+              1,
+              68,
+              1
+            ],
+            -1
+          ]
+        ],
+        "retained_actor_controller_ids": [
+          [
+            [
+              1,
+              67,
+              0
+            ],
+            0
+          ],
+          [
+            [
+              1,
+              69,
+              0
+            ],
+            1
+          ],
+          [
+            [
+              1,
+              71,
+              0
+            ],
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "product": "q3-baseq3",
+      "renderer": "gl",
+      "artifact_stat": {
+        "inode": 164871814,
+        "bytes": 137693416,
+        "mtime_ns": 1791253531486265216
+      },
+      "actual_normal_exit": true,
+      "independent_devices": [
+        {
+          "device": 1,
+          "target_seat": 0,
+          "yaw_changes_degrees": [
+            68.91077423095703,
+            0.0
+          ],
+          "world_camera_displacements": [
+            44.52814996822039,
+            0.0
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "device": 2,
+          "target_seat": 1,
+          "yaw_changes_degrees": [
+            0.0,
+            68.99910736083984
+          ],
+          "world_camera_displacements": [
+            0.0,
+            61.374585720115675
+          ],
+          "released_actor_velocities": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0
+            ]
+          ]
+        }
+      ],
+      "source_receipt": "shipped-MIKE-11-q3-baseq3-gl-er4cvlep"
+    }
+  ],
+  "source_refs": [
+    "src/platform/input.c:166 discover",
+    "src/platform/input.c:49 route_for",
+    "src/platform/input.c:938 controller event routing",
+    "src/platform/input.c:1094 assigned keyboard seat",
+    "src/app/frontend/frame.c:255 physical-seat controls",
+    "src/app/frontend/presentation.c:53 frontend_viewport",
+    "src/app/frontend/presentation.c:291 physical-seat camera loop",
+    "src/app/frontend/presentation.c:329 seat world view",
+    "src/render/gl/renderer.c:474 viewport/scissor",
+    "src/render/gl/renderer.c:1109 VIEW dispatch",
+    "src/render/cpu/renderer.c:418 bounded clear_view",
+    "src/render/cpu/renderer.c:743 VIEW dispatch"
+  ],
+  "qsrc_refs": [
+    "quakespasm/Quake/in_sdl.c:331 opened-handle instance",
+    "quakespasm/Quake/in_sdl.c:1122 hotplug admission/removal",
+    "quake/WinQuake/gl_rmain.c:901 viewport",
+    "quake-2/ref_gl/gl_rmain.c:714 viewport",
+    "quake-iii-arena/code/renderer/tr_backend.c:418 viewport/scissor"
+  ],
+  "limits": [
+    "Local physical-seat gameplay and public add/remove controls are qualified. No network split-seat claim or whole-project completion claim.",
+    "No FPS, frame-time or latency inference from GDB-instrumented checks.",
+    "The native shared runtime checks cross all five families; public 3-to-4-to-3 lifecycle is exercised with Q3 on both CPU and GL."
+  ]
+}
