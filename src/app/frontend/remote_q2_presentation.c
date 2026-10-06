@@ -614,6 +614,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     const qa_cvar_view *entities_setting = qa_cvars_find(row->options.domain.cvars, "cl_entities");
     bool entities_enabled = !entities_setting || entities_setting->number != 0;
     if (light_setting && light_setting->number == 0) world.light_count = 0;
+    if (ok) ok = qa_scene_world_boxed_sky_begin(row->world, &world, &f->frame, &world.boxed_sky, error);
+    if (ok) ok = qa_scene_world_q2_alpha_begin(&world, &f->frame, &world.q2_alpha, error);
     if (ok) ok = qa_scene_world_submit(row->world, &world, &f->frame, error);
     for (size_t i = 0; ok && entities_enabled && i < row->frame.entity_count; ++i) {
         const qa_q2_entity *current = &row->frame.entities[i];
@@ -734,6 +736,12 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok) ok = frontend_remote_q2_effects_draw(row->effects, &effects_sample,
         !particles_setting || particles_setting->number != 0, entities_enabled,
         &f->frame, error);
+    if (ok && world.boxed_sky) ok = qa_scene_world_boxed_sky_finish(world.boxed_sky, &f->frame, error);
+    if (ok && world.q2_alpha) {
+        qa_scene_world_input alpha = world;
+        alpha.legacy_phase = QA_LEGACY_WORLD_ALPHA;
+        ok = qa_scene_world_submit(row->world, &alpha, &f->frame, error);
+    }
     free(effects_poses);
     world.fog.sky_drawn = !world.no_world && qa_scene_world_sky_drawn(row->world);
     if (ok) ok = qa_scene_frame_finish(&f->frame, &view, &world.fog, error);

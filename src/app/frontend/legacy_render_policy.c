@@ -217,12 +217,17 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
     if (policy->family == QA_SCENE_Q1) opaque.legacy_phase = QA_LEGACY_WORLD_OPAQUE;
     if (policy->family == QA_SCENE_Q1 && input->q1_sky_environment &&
         !qa_scene_world_q1_sky_begin(actual_world, &opaque, frame, &opaque.q1_sky, error)) return false;
+    if (!qa_scene_world_boxed_sky_begin(actual_world, &opaque, frame, &opaque.boxed_sky, error)) return false;
+    if (!qa_scene_world_q2_alpha_begin(&opaque, frame, &opaque.q2_alpha, error)) return false;
     qa_scene_world_input visuals = *input;
     visuals.q1_sky = opaque.q1_sky;
+    visuals.boxed_sky = opaque.boxed_sky;
+    visuals.q2_alpha = opaque.q2_alpha;
     if (!scene_current(services, error) || !qa_scene_world_submit(actual_world, &opaque, frame, error) ||
         !scene_current(services, error) || !services->visuals(services->context, &visuals, frame, error) ||
         !scene_current(services, error) ||
-        (opaque.q1_sky && !qa_scene_world_q1_sky_finish(opaque.q1_sky, frame, error))) return false;
+        (opaque.q1_sky && !qa_scene_world_q1_sky_finish(opaque.q1_sky, frame, error)) ||
+        (opaque.boxed_sky && !qa_scene_world_boxed_sky_finish(opaque.boxed_sky, frame, error))) return false;
     if (policy->flashblend && !qa_scene_legacy_dlights(frame, &input->view, policy->family,
         policy->quakeworld, input->lights, input->light_count, blend, error)) return false;
     if (services->dlights && (!scene_current(services, error) ||
@@ -233,6 +238,13 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
         qa_scene_world_input water = *input;
         water.legacy_phase = QA_LEGACY_WORLD_WATER;
         if (!qa_scene_world_submit(actual_world, &water, frame, error) ||
+            !scene_current(services, error)) return false;
+    }
+    if (opaque.q2_alpha) {
+        qa_scene_world_input alpha = *input;
+        alpha.legacy_phase = QA_LEGACY_WORLD_ALPHA;
+        alpha.q2_alpha = opaque.q2_alpha;
+        if (!qa_scene_world_submit(actual_world, &alpha, frame, error) ||
             !scene_current(services, error)) return false;
     }
     qa_scene_fog fog = input->fog;

@@ -799,6 +799,7 @@ target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistenc
 
 add_library(qa_scene STATIC
     src/render/scene/world/q1_sky.c
+    src/render/scene/world/boxed_sky.c
     src/render/scene/frame.c
     src/render/scene/math.c
     src/render/scene/resources.c

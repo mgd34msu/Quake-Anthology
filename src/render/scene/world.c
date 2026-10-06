@@ -1,5 +1,6 @@
 #include "world/internal.h"
 #include "world/legacy/internal.h"
+#include "world/boxed_sky.h"
 #include "world/q3/internal.h"
 #include "resources_internal.h"
 #include "qa/scene_effects.h"
@@ -1023,7 +1024,7 @@ static bool valid_input(const qa_scene_world *world, const qa_scene_world_input 
     if (world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "world continuation callback is active");
     if (!qa_vec_finite(input->view.origin) || !isfinite(input->seconds)
-        || input->legacy_phase < QA_LEGACY_WORLD_ALL || input->legacy_phase > QA_LEGACY_WORLD_WATER
+        || input->legacy_phase < QA_LEGACY_WORLD_ALL || input->legacy_phase > QA_LEGACY_WORLD_ALPHA
         || (input->use_pvs_origin && !qa_vec_finite(input->pvs_origin))
         || (input->light_count != 0 && input->lights == NULL)
         || (input->shadow_light_count != 0 && input->shadow_lights == NULL)
@@ -1339,6 +1340,86 @@ bool qa_scene_world_q1_mirror(qa_scene_world *world, const qa_scene_world_input 
     return true;
 }
 
+typedef struct q2_alpha_batch {
+    qa_scene_world *world;
+    qa_material_context context;
+    qa_scene_world_input input;
+    qa_scene_world_entity entity_material;
+} q2_alpha_batch;
+
+typedef struct q2_alpha_surface {
+    struct q2_alpha_surface *next;
+    q2_alpha_batch *batch;
+    qaw_surface *surface;
+    uint32_t light_mask;
+    bool source_dlighted;
+} q2_alpha_surface;
+
+struct qa_scene_q2_alpha {
+    qa_scene_frame *frame;
+    uint64_t sequence;
+    qa_scene_view view;
+    q2_alpha_surface *head;
+    bool finished;
+};
+
+bool qa_scene_world_q2_alpha_begin(const qa_scene_world_input *input,
+    qa_scene_frame *frame, qa_scene_q2_alpha **out, qa_error *error)
+{
+    if (!input || !frame || !out || *out)
+        return world_error(error, QA_ERROR_ARGUMENT, "Q2 alpha chain requires its actual view and frame");
+    if (input->source_order || input->source_scratch || frame->source_pending) return true;
+    qa_scene_q2_alpha *alpha = qa_arena_alloc(&frame->storage, sizeof(*alpha),
+        _Alignof(qa_scene_q2_alpha), error);
+    if (!alpha) return false;
+    *alpha = (qa_scene_q2_alpha){.frame = frame, .sequence = frame->sequence, .view = input->view};
+    *out = alpha;
+    return true;
+}
+
+static bool q2_alpha_current(const qa_scene_q2_alpha *alpha,
+    const qa_scene_world_input *input, const qa_scene_frame *frame)
+{
+    return alpha && alpha->frame == frame && alpha->sequence == frame->sequence &&
+        !alpha->finished && alpha->view.seat == input->view.seat &&
+        !memcmp(&alpha->view.viewport, &input->view.viewport, sizeof(alpha->view.viewport)) &&
+        !memcmp(&alpha->view.origin, &input->view.origin, sizeof(alpha->view.origin)) &&
+        !memcmp(alpha->view.axis, input->view.axis, sizeof(alpha->view.axis)) &&
+        !memcmp(&alpha->view.projection, &input->view.projection, sizeof(alpha->view.projection));
+}
+
+static bool q2_alpha_surface_deferred(const qa_scene_world *world,
+    const qaw_surface *surface, const qa_scene_world_input *input)
+{
+    return input->q2_alpha && world->bsp.family == QA_BSP_Q2 &&
+        surface->legacy && !surface->sky && surface->legacy->alpha < 1;
+}
+
+static bool q2_alpha_prepend(qa_scene_world *world, qaw_surface *surface,
+    const qa_material_context *context, const qa_scene_world_input *input,
+    qa_scene_frame *frame, q2_alpha_batch **batch, qa_error *error)
+{
+    qa_scene_q2_alpha *alpha = input->q2_alpha;
+    if (!q2_alpha_current(alpha, input, frame))
+        return world_error(error, QA_ERROR_ARGUMENT, "Q2 alpha surface belongs to another view");
+    if (!*batch) {
+        *batch = qa_arena_alloc(&frame->storage, sizeof(**batch), _Alignof(q2_alpha_batch), error);
+        if (!*batch) return false;
+        **batch = (q2_alpha_batch){.world = world, .context = *context, .input = *input};
+        if (input->entity_material) {
+            (*batch)->entity_material = *input->entity_material;
+            (*batch)->input.entity_material = &(*batch)->entity_material;
+        }
+    }
+    q2_alpha_surface *record = qa_arena_alloc(&frame->storage, sizeof(*record),
+        _Alignof(q2_alpha_surface), error);
+    if (!record) return false;
+    *record = (q2_alpha_surface){alpha->head, *batch, surface,
+        context->light_mask, context->source_dlighted};
+    alpha->head = record;
+    return true;
+}
+
 static int compare_surface_priority(const void *a, const void *b)
 {
     const surface_order *first = a, *second = b;
@@ -1370,18 +1451,47 @@ static bool submit_surface(qa_scene_world *world, qaw_surface *surface, qa_mater
         context->source_primitives ? context->source_dlighted : context->light_mask != 0, error);
 }
 
+static bool q2_alpha_finish(const qa_scene_world_input *input,
+    qa_scene_frame *frame, qa_error *error)
+{
+    qa_scene_q2_alpha *alpha = input->q2_alpha;
+    if (!q2_alpha_current(alpha, input, frame))
+        return world_error(error, QA_ERROR_ARGUMENT, "Q2 alpha finish lost its actual view");
+    for (q2_alpha_surface *record = alpha->head; record; record = record->next) {
+        q2_alpha_batch *batch = record->batch;
+        qa_material_context context = batch->context;
+        context.light_mask = record->light_mask;
+        context.source_dlighted = record->source_dlighted;
+        size_t first_group = frame->group_count;
+        if (!submit_surface(batch->world, record->surface, &context,
+            &batch->input, frame, error)) return false;
+        for (size_t i = first_group; i < frame->group_count; ++i) {
+            frame->groups[i].kind = QA_SCENE_GROUP_SEQUENCE;
+            frame->groups[i].material = NULL;
+            frame->groups[i].priority = 9;
+        }
+    }
+    alpha->head = NULL;
+    alpha->finished = true;
+    return true;
+}
+
 static bool world_submit(qa_scene_world *world, const qa_scene_world_input *input,
                            qa_scene_frame *frame, qa_error *error)
 {
     if (frame == NULL) return world_error(error, QA_ERROR_ARGUMENT, "world submission requires frame");
     if (!valid_input(world, input, error)) return false;
-    if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
-    if (input->legacy_phase != QA_LEGACY_WORLD_WATER) world->sky_drawn = false;
+    bool deferred = input->legacy_phase == QA_LEGACY_WORLD_WATER ||
+        input->legacy_phase == QA_LEGACY_WORLD_ALPHA;
+    if (!deferred) world->sky_drawn = false;
     qa_scene_view scene_view = input->view;
-    if (input->legacy_phase == QA_LEGACY_WORLD_WATER)
+    if (deferred)
         scene_view.clear_color = scene_view.clear_depth = scene_view.clear_stencil = false;
     qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = scene_view};
     if (!qa_scene_frame_emit(frame, &view, error)) return false;
+    if (input->legacy_phase == QA_LEGACY_WORLD_ALPHA)
+        return q2_alpha_finish(input, frame, error);
+    if (world->bsp.family != QA_BSP_Q3 && !qawl_light_styles(world, input, error)) return false;
     world->admission_frame = NULL;
     if (!begin_admission(world, frame, error)) return false;
     if (input->no_world || (input->source_order && input->skip_world)) return true;
@@ -1390,7 +1500,9 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
         return world_error(error, QA_ERROR_ARGUMENT, "Source world draw lost its captured view receipt");
     if (!prepared && !world_visible(world, input, NULL, error)) return false;
     size_t visible_count = prepared ? prepared->count : world->visible_count;
-    if (visible_count == 0) return true;
+    if (visible_count == 0)
+        return !input->boxed_sky || qaw_boxed_sky_world_end(input->boxed_sky,
+            world, frame, frame->command_count, error);
     surface_order *order = qa_arena_alloc(&frame->storage, visible_count * sizeof(*order),
         _Alignof(surface_order), error);
     if (order == NULL) return false;
@@ -1412,13 +1524,15 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
             surface->legacy && surface->legacy->texture == input->q1_mirror->texture) continue;
         const qa_material *material = effective_material(surface->material);
         raw_surfaces |= world->bsp.family != QA_BSP_Q3 && surface->base_material == NULL;
-        order[count++] = (surface_order){index, i, material != NULL ? material->sort : surface->sort};
+        order[count++] = (surface_order){index, i, q2_alpha_surface_deferred(world, surface, input)
+            ? 9 : material != NULL ? material->sort : surface->sort};
     }
     if (raw_surfaces) qsort(order, count, sizeof(*order), compare_surface_priority);
     qa_scene_plane planes[6];
     size_t plane_count = input->no_cull ? 0 : qa_scene_frustum(&input->view, planes);
     if (world->bsp.family == QA_BSP_Q3 && plane_count > 4) plane_count = 4;
     qa_material_context context = world_context(world, input);
+    q2_alpha_batch *alpha_batch = NULL;
     if (!fragment_context(world, input, frame, &context, error)) return false;
     bool prepared_cull = prepared && world->bsp.family == QA_BSP_Q3 &&
         prepared->no_cull == input->no_cull && prepared->no_curves == input->no_curves &&
@@ -1437,6 +1551,7 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
         count = admitted_count;
         if (!qawl_light_flush(world, frame, error)) return false;
     }
+    size_t opaque_end = frame->command_count;
     for (size_t i = 0; i < count; ++i) {
         qaw_surface *surface = &world->surfaces[order[i].surface];
         bool admitted = true;
@@ -1456,9 +1571,13 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
                 context.source_light_surface = surface->source_index;
             }
         } else context.light_mask = mask;
-        if (!submit_surface(world, surface, &context, input, frame, error)) return false;
+        if (q2_alpha_surface_deferred(world, surface, input)) {
+            if (!q2_alpha_prepend(world, surface, &context, input, frame, &alpha_batch, error)) return false;
+        } else if (!submit_surface(world, surface, &context, input, frame, error)) return false;
+        if (order[i].sort < 9) opaque_end = frame->command_count;
     }
-    return true;
+    return !input->boxed_sky || qaw_boxed_sky_world_end(input->boxed_sky,
+        world, frame, opaque_end, error);
 }
 
 static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
@@ -1485,6 +1604,7 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
     if (world->bsp.family == QA_BSP_Q3
         && !local_bounds_visible(bsp_bounds(model->source.bounds), transform, planes, plane_count)) return true;
     qa_material_context context = world_context(world, input);
+    q2_alpha_batch *alpha_batch = NULL;
     if (!fragment_context(world, input, frame, &context, error)) return false;
     context.entity = entity;
     context.source_entity_cell = input->source_entity_cells;
@@ -1577,7 +1697,10 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
                 context.source_light_surface = surface->source_index;
             }
         } else context.light_mask = mask;
-        if (!submit_surface(world, surface, &context, &local_input, frame, error)) return false;
+        if (q2_alpha_surface_deferred(world, surface, &local_input)) {
+            if (!q2_alpha_prepend(world, surface, &context, &local_input,
+                frame, &alpha_batch, error)) return false;
+        } else if (!submit_surface(world, surface, &context, &local_input, frame, error)) return false;
     }
     return true;
 }

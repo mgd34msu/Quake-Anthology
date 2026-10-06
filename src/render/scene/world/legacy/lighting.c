@@ -167,14 +167,19 @@ bool qawl_light_setup(qa_scene_world *world, qaw_surface *surface, const qa_bsp_
         float step = metadata->shifts.data != NULL ? ldexpf(1, metadata->shifts.data[index]) : 16;
         if (!classic_projection(light, info, points, count, step, index, error)) return false;
     }
-    if (surface->sky || light->warp || offset < 0 || world->lighting.sample_count == 0) return true;
-    if ((uint64_t)offset > SIZE_MAX || light->width > SIZE_MAX / light->height)
+    if (surface->sky || light->warp || (!q1 && light->alpha < 1) ||
+        world->lighting.sample_count == 0 || (!q1 && offset < 0)) return true;
+    if ((offset >= 0 && (uint64_t)offset > SIZE_MAX) || light->width > SIZE_MAX / light->height)
         return light_error(error, QA_ERROR_FORMAT, index, "lightmap sample range overflows");
     size_t pixels = (size_t)light->width * light->height;
-    size_t start = (size_t)offset;
+    size_t start = offset < 0 ? SIZE_MAX : (size_t)offset;
     size_t available = world->bsp.family == QA_BSP_Q2 ? world->lighting.samples.size : world->lighting.sample_count;
     size_t channels = world->bsp.family == QA_BSP_Q2 ? 3 : 1;
-    if (start > available || light->style_count > ((available - start) / channels) / pixels)
+    if (offset < 0) {
+        free(light->styles);
+        light->styles = NULL;
+        light->style_count = 0;
+    } else if (start > available || light->style_count > ((available - start) / channels) / pixels)
         return light_error(error, QA_ERROR_FORMAT, index, "lightmap samples exceed lighting lump");
     if (pixels > SIZE_MAX / (3 * sizeof(float)) || pixels > SIZE_MAX / (3 * sizeof(uint32_t))
         || pixels > SIZE_MAX / 4 || light->style_count > (SIZE_MAX / sizeof(float) - 1) / 3)

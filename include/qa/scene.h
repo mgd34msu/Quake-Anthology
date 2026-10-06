@@ -697,13 +697,16 @@ typedef struct qa_scene_world_entity {
 } qa_scene_world_entity;
 typedef struct qa_scene_q1_mirror qa_scene_q1_mirror;
 typedef struct qa_scene_q1_sky qa_scene_q1_sky;
+typedef struct qa_scene_boxed_sky qa_scene_boxed_sky;
+typedef struct qa_scene_q2_alpha qa_scene_q2_alpha;
 typedef struct qa_scene_q1_sky_environment {
     bool boxed, fast;
     float quality, alpha, fog, far_clip;
     const qa_scene_image *images[6];
 } qa_scene_q1_sky_environment;
 typedef enum qa_scene_legacy_world_phase {
-    QA_LEGACY_WORLD_ALL, QA_LEGACY_WORLD_OPAQUE, QA_LEGACY_WORLD_WATER
+    QA_LEGACY_WORLD_ALL, QA_LEGACY_WORLD_OPAQUE, QA_LEGACY_WORLD_WATER,
+    QA_LEGACY_WORLD_ALPHA
 } qa_scene_legacy_world_phase;
 typedef struct qa_scene_legacy_policy {
     qa_scene_family source_family;
@@ -780,12 +783,19 @@ typedef struct qa_scene_world_input {
     const qa_scene_q1_mirror *q1_mirror;
     const qa_scene_q1_sky_environment *q1_sky_environment;
     qa_scene_q1_sky *q1_sky;
+    qa_scene_boxed_sky *boxed_sky;
+    qa_scene_q2_alpha *q2_alpha;
 } qa_scene_world_input;
 /* One actual world/brush traversal retains the visible sky footprint. Finish
  * places the flat and slow sky commands before that same view's solid draws. */
 bool qa_scene_world_q1_sky_begin(qa_scene_world *, const qa_scene_world_input *,
     qa_scene_frame *, qa_scene_q1_sky **, qa_error *);
 bool qa_scene_world_q1_sky_finish(qa_scene_q1_sky *, qa_scene_frame *, qa_error *);
+bool qa_scene_world_boxed_sky_begin(qa_scene_world *, const qa_scene_world_input *,
+    qa_scene_frame *, qa_scene_boxed_sky **, qa_error *);
+bool qa_scene_world_boxed_sky_finish(qa_scene_boxed_sky *, qa_scene_frame *, qa_error *);
+bool qa_scene_world_q2_alpha_begin(const qa_scene_world_input *, qa_scene_frame *,
+    qa_scene_q2_alpha **, qa_error *);
 /* World retains its immutable BSP bytes and the actual resource/material owners. */
 bool qa_scene_world_create(const qa_bsp_view *, qa_scene_resources *, qa_material_library *,
                            const qa_scene_world_options *, qa_scene_world **, qa_error *);

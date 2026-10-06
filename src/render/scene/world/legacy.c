@@ -2,6 +2,7 @@
 #include "qa/scene_effects.h"
 #include "qa/text.h"
 #include "q1_sky.h"
+#include "boxed_sky.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -327,6 +328,9 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
     if (world->bsp.family == QA_BSP_Q1 && input->q1_sky)
         return qaw_q1_sky_collect(input->q1_sky, &surface->mesh, context, frame, error);
     if (world->bsp.family == QA_BSP_Q2 || input->override_sky || world->options.q2_sky) {
+        if (input->boxed_sky && !context->source_primitives &&
+            !context->source_scratch && !frame->source_pending)
+            return qaw_boxed_sky_collect(input->boxed_sky, &surface->mesh, context, frame, error);
         qa_scene_mesh mesh;
         qa_scene_vertex *vertices;
         if (!transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
@@ -433,7 +437,8 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             selected.fragment_lighting = false;
             selected.fragment_light_count = 0;
         }
-        selected.lightmap = input->legacy_policy.present && input->legacy_policy.fullbright ? NULL : surface->lightmap;
+        selected.lightmap = (world->bsp.family == QA_BSP_Q2 && legacy->alpha < 1) ||
+            (input->legacy_policy.present && input->legacy_policy.fullbright) ? NULL : surface->lightmap;
         const qa_material *effective = surface->material->remapped ?
             surface->material->remapped : surface->material;
         if ((effective->surface_flags & 128u) != 0) return true;
@@ -446,7 +451,8 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
     const qa_scene_image *base_image = qa_scene_image_at_time(texture->image, input->seconds);
     if (!recipient_image(context, &base_image, world->options.images.mipmap, error)) return false;
     float alpha = legacy->alpha * context->entity_color.w;
-    bool lightmapped = surface->lightmap && !(input->legacy_policy.present && input->legacy_policy.fullbright);
+    bool lightmapped = surface->lightmap && (q1 || legacy->alpha >= 1) &&
+        !(input->legacy_policy.present && input->legacy_policy.fullbright);
     bool diagnostic = lightmapped && input->legacy_policy.present && input->legacy_policy.lightmap;
     bool blended = alpha < 1, paired = lightmapped && !diagnostic &&
         !(input->legacy_policy.present && (input->legacy_policy.saturate ||
