@@ -451,7 +451,10 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     bool targeted = qa_strings_text(strings, entity->targetname).size != 0;
     const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL;
     switch (map->kind) {
-    case Q1_MAP_MULTI: touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use"; break;
+    case Q1_MAP_MULTI:
+        touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use";
+        if (!map->dormant && entity->max_health > 0) die = "multi_killed";
+        break;
     case Q1_MAP_COUNTER: use = "counter_use"; break;
     case Q1_MAP_RELAY: use = "SUB_UseTargets"; break;
     case Q1_MAP_TELEPORT: touch = "teleport_touch"; use = "teleport_use"; break;
