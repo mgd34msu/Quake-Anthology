@@ -450,7 +450,7 @@ static const char *text(qa_application *app, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(app->session), id) : "";
 }
 static bool source_current(application_native_q1_wire_source *source, qa_clock_kind dialect,
-    qa_error *error) {
+    bool packet, qa_error *error) {
     application_provider *p = source ? source->provider : NULL;
     qa_application *app = p ? p->application : NULL;
     if (!app || app->destroy_requested || app->state != QA_APPLICATION_RUNNING ||
@@ -461,10 +461,11 @@ static bool source_current(application_native_q1_wire_source *source, qa_clock_k
         !qa_q1_wire_receipt_current(&source->receipt) || source->receipt.operation.game != p->state.q1)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Original native Q1 wire requires its installed primary source owner");
-    if (source->receipt.owner != p->owner || !source->receipt.client_slots || source->receipt.client_slots > 255 ||
+    if (source->receipt.owner != p->owner || !source->receipt.client_slots ||
         source->receipt.entity_slots <= source->receipt.client_slots ||
-        source->receipt.entity_slots > UINT16_MAX + 1u ||
-        source->receipt.model_count > 256 || source->receipt.sound_count > 256)
+        (packet && (source->receipt.client_slots > 255 ||
+            source->receipt.entity_slots > UINT16_MAX + 1u ||
+            source->receipt.model_count > 256 || source->receipt.sound_count > 256)))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Native Q1 source exceeds the original protocol extent");
     if (!p->native_q1_wire || !p->native_q1_wire->readers ||
@@ -476,7 +477,7 @@ static bool source_current(application_native_q1_wire_source *source, qa_clock_k
     return true;
 }
 static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kind dialect,
-    application_native_q1_wire_source *out, qa_error *error) {
+    bool packet, application_native_q1_wire_source *out, qa_error *error) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     if (!out || !p || !p->native_q1_wire || (owner && p->owner != owner) ||
         !application_native_q1_console_idle(p))
@@ -485,7 +486,7 @@ static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kin
     if (p->native_q1_wire->readers == SIZE_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "Q1 source reader extent exhausted");
     if (!application_native_q1_wire_retain(p, out, error)) return false;
-    if (!source_current(out, dialect, error)) {
+    if (!source_current(out, dialect, packet, error)) {
         application_native_q1_wire_end(out);
         return false;
     }
@@ -493,11 +494,11 @@ static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kin
 }
 bool application_native_q1_wire_begin(qa_application *app, qa_actor_owner owner,
     application_native_q1_wire_source *out, qa_error *error) {
-    return source_begin(app, owner, QA_CLOCK_NETQUAKE, out, error);
+    return source_begin(app, owner, QA_CLOCK_NETQUAKE, true, out, error);
 }
 bool application_native_q1_wire_qw_begin(qa_application *app,
     application_native_q1_wire_source *out, qa_error *error) {
-    if (!source_begin(app, 0, QA_CLOCK_QUAKEWORLD, out, error)) return false;
+    if (!source_begin(app, 0, QA_CLOCK_QUAKEWORLD, true, out, error)) return false;
     qa_clock_state clock;
     qa_q1_options options;
     double seconds;
@@ -516,6 +517,14 @@ bool application_native_q1_wire_qw_begin(qa_application *app,
             application_fail(error, QA_ERROR_UNSUPPORTED, "Native QuakeWorld wire requires its completed source and 32 physical client rows");
     }
     return okay;
+}
+static bool observation_begin(qa_application *app, qa_actor_owner owner,
+    application_native_q1_wire_source *out, qa_error *error) {
+    application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (!p || !p->launch || (p->launch->selection.clock.kind != QA_CLOCK_NETQUAKE &&
+        p->launch->selection.clock.kind != QA_CLOCK_QUAKEWORLD))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation lost its actual Source clock");
+    return source_begin(app, owner, p->launch->selection.clock.kind, false, out, error);
 }
 void application_native_q1_wire_end(application_native_q1_wire_source *source) {
     if (!source) return;
@@ -577,13 +586,13 @@ bool application_native_q1_wire_extents(qa_application *app, qa_actor_owner owne
     uint32_t *clients, uint32_t *entities, qa_error *error) {
     if (!clients || !entities) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 extent observation");
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, owner, &source, error)) return false;
+    if (!observation_begin(app, owner, &source, error)) return false;
     *clients = source.receipt.client_slots; *entities = source.receipt.entity_slots;
     application_native_q1_wire_end(&source); return true;
 }
 qa_cvars *application_native_q1_wire_cvars(qa_application *app, qa_actor_owner owner, qa_error *error) {
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, owner, &source, error)) return NULL;
+    if (!observation_begin(app, owner, &source, error)) return NULL;
     qa_cvars *cvars = application_native_q1_console_registry(source.provider);
     application_native_q1_wire_end(&source);
     if (!cvars) application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source cvars are absent");
@@ -653,11 +662,12 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_world *out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 world observation");
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, owner, &source, error)) return false;
+    if (!observation_begin(app, owner, &source, error)) return false;
     qa_q1_wire_world world;
     bool okay = qa_q1_wire_world_read(&source.receipt, &world);
     if (okay) {
-        qa_application_network_q1_world value = {.protocol = protocol(),
+        qa_application_network_q1_world value = {.protocol = {
+                .kind = source.provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15},
             .max_clients = source.receipt.client_slots, .standard_quake = source.receipt.standard_quake,
             .deathmatch = source.receipt.deathmatch != 0, .seconds = (float)source.receipt.seconds,
             .map = text(app, world.map), .level = text(app, world.level),
@@ -686,8 +696,9 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
     qa_q1_clientdata *out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 clientdata observation");
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
+    if (!observation_begin(app, 0, &source, error)) return false;
     application_control_record *row = NULL;
+    qa_body_state body;
     qa_q1_wire_player player; qa_combat_state combat; qa_q1_wire_world world;
     qa_application_equipment_view equipment;
     uint32_t slot, model;
@@ -695,24 +706,33 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         qa_q1_wire_player_read(&source.receipt, actor, &player, error) &&
         qa_application_equipment_read(app, actor, &equipment, error) &&
         qa_combat_read(app->combat, actor, &combat, error) &&
+        qa_world_body_read(app->world, actor, &body, error) &&
         qa_q1_wire_world_read(&source.receipt, &world) &&
         qa_q1_wire_index(&source.receipt, true, player.weapon_model, &model) &&
         qa_application_equipment_current(app, &equipment) &&
         application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
-        client(&source, actor, &slot, error) && (row = control(app, actor)) != NULL;
+        client(&source, actor, &slot, error) && actor.slot < app->control_capacity &&
+        (row = &app->controls[actor.slot])->active && !row->retired && !row->moving &&
+        qa_actor_id_equal(row->actor, actor);
     if (okay) {
-        const qa_nq_movement_state *movement = &row->state.data.nq;
-        qa_q1_clientdata value = {.viewheight = row->view_height, .idealpitch = movement->ideal_pitch,
+        qa_q1_clientdata value = {.viewheight = row->view_height,
+            .idealpitch = row->state.kind == QA_MOVEMENT_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
             .items = player.weapons | player.powers | player.ammo_items | player.extra_items |
                 ((source.receipt.program == QA_Q1_HIPNOTIC || source.receipt.program == QA_Q1_ROGUE)
                     ? 0 : world.server_flags << 28),
-            .onground = (movement->flags & 512) != 0, .inwater = movement->water_level >= 2,
-            .weapon_frame = source_byte(player.weapon_frame), .weapon_model = model,
-            .armor = source_byte(combat.armor.regular.kind == QA_ARMOR_NONE ? 0 : combat.armor.regular.points),
-            .health = source_short(combat.health), .ammo = source_byte(equipment.ammo ? equipment.ammo_count : 0),
-            .shells = source_byte(player.shells), .nails = source_byte(player.nails),
-            .rockets = source_byte(player.rockets), .cells = source_byte(player.cells),
-            .weapon = source.receipt.standard_quake ? source_byte(player.weapon) : player.weapon};
+            .onground = row->ground.hit != QA_TRACE_HIT_NONE, .inwater = row->water_level >= 2,
+            .weapon_frame = (uint32_t)player.weapon_frame, .weapon_model = model,
+            .armor = (uint32_t)qa_source_float_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE
+                ? 0 : (float)combat.armor.regular.points),
+            .health = qa_source_float_to_i32(combat.health),
+            .ammo = (uint32_t)qa_source_float_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0),
+            .shells = (uint32_t)qa_source_float_to_i32((float)player.shells),
+            .nails = (uint32_t)qa_source_float_to_i32((float)player.nails),
+            .rockets = (uint32_t)qa_source_float_to_i32((float)player.rockets),
+            .cells = (uint32_t)qa_source_float_to_i32((float)player.cells), .weapon = player.weapon};
+        vector(value.punch, row->state.kind == QA_MOVEMENT_NETQUAKE
+            ? row->state.data.nq.punch_angles : equipment.kick_angles);
+        vector(value.velocity, body.velocity);
         if (combat.armor.regular.kind != QA_ARMOR_NONE) {
             unsigned armor = combat.armor.regular.kind == QA_ARMOR_Q1 &&
                 combat.armor.regular.protection.q1_absorption >= .8f ? 2u :
@@ -720,7 +740,6 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
                 combat.armor.regular.protection.q1_absorption >= .6f ? 1u : 0u;
             value.items |= (source.receipt.program == QA_Q1_ROGUE ? 1u << 23 : 8192u) << armor;
         }
-        vector(value.punch, movement->punch_angles); vector(value.velocity, movement->velocity);
         *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lacks its selected source movement or arsenal");
@@ -737,7 +756,7 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
     qa_application_network_q1_status_player players[255], size_t *out_count, qa_error *error) {
     if (!players || !out_count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 client inventory");
     application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_begin(app, owner, &source, error)) return false;
+    if (!observation_begin(app, owner, &source, error)) return false;
     size_t count = 0; bool okay = true;
     for (uint32_t slot = 0; slot < source.receipt.client_slots; ++slot) {
         qa_actor_id actor; qa_q1_source_client_view view;
@@ -1438,7 +1457,7 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 source chat outputs");
     bool qw = source && source->provider && source->provider->launch &&
         source->provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
-    if (!source_current(source, qw ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE, error)) return false;
+    if (!source_current(source, qw ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE, true, error)) return false;
     if (qw && (target || source->receipt.client_slots != 32 || (!sender.registry && team_only)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld chat changes its actual Source audience");
     if (!sender.registry && target)
