@@ -290,15 +290,13 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
         codepoints = NULL;
     }
     if (success) {
-        font->line_height = (float)face->size->metrics.height / 64.0f;
-        font->ascent = (float)face->size->metrics.ascender / 64.0f;
-        font->descent = -(float)face->size->metrics.descender / 64.0f;
-        if (!(font->line_height > 0))
-            font->line_height = (float)options->pixel_size;
+        font->ascent = face->units_per_EM
+            ? (float)face->ascender * (float)options->pixel_size / face->units_per_EM
+            : (float)face->size->metrics.ascender / 64.0f;
         if (!(font->ascent > 0))
-            font->ascent = font->line_height;
-        if (font->descent < 0)
-            font->descent = 0;
+            font->ascent = (float)options->pixel_size;
+        font->line_height = font->ascent;
+        font->descent = 0;
     }
 
     atlas_page page = {0};
@@ -314,10 +312,14 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
         FT_UInt glyph_index = FT_Get_Char_Index(face, codepoint);
         if (!glyph_index)
             continue;
-        if (FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT | FT_LOAD_COLOR)) {
+        if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_HINTING | FT_LOAD_COLOR)) {
             success = qa_font_fail(error, QA_ERROR_FORMAT, codepoint, "FreeType cannot load glyph");
             break;
         }
+        float descent = (float)(face->glyph->metrics.height -
+                                 face->glyph->metrics.horiBearingY) / 64.0f;
+        if (descent > font->descent)
+            font->descent = descent;
         if (face->glyph->format != FT_GLYPH_FORMAT_BITMAP &&
             FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL)) {
             success =
@@ -339,7 +341,7 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
             .codepoint = codepoint,
             .width = (float)slot->bitmap.width,
             .height = (float)slot->bitmap.rows,
-            .advance = (float)slot->advance.x / 64.0f,
+            .advance = roundf((float)slot->advance.x / 64.0f),
             .bearing_x = (float)slot->bitmap_left,
             .bearing_y = (float)slot->bitmap_top,
             .visible = codepoint != 32u && slot->bitmap.width && slot->bitmap.rows,
@@ -347,6 +349,8 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
         };
         success = place_glyph(font, &page, glyph, &slot->bitmap, error);
     }
+    if (success)
+        font->line_height = fmaxf(1, roundf(font->ascent + font->descent));
     if (success)
         success = flush_page(font, &page, error);
     free(page.glyphs);
