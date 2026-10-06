@@ -304,14 +304,11 @@ fail:
 bool qa_q3_destroy_ready(const qa_q3_game *game) {
     if (!game)
         return true;
-    if (game->observation_depth || !q3_source_origins_idle(game) ||
+    if (game->observation_depth || game->player_binding_count || !q3_source_origins_idle(game) ||
         !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
         !qa_combat_idle(game->options.services.combat))
         return false;
-    for (uint32_t i = 0; i < game->capacity; ++i)
-        if (game->player_binding_tokens[i])
-            return false;
     return true;
 }
 bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {

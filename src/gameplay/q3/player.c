@@ -109,6 +109,7 @@ bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selec
         return q3_fail(error, "Q3 player binding identity exhausted");
     ++game->player_binding_serial;
     game->player_binding_tokens[actor.slot] = game->player_binding_serial;
+    ++game->player_binding_count;
     *binding = (qa_q3_player_binding){.actor = actor,
                                       .token = game->player_binding_serial,
                                       .prior_selections = entry->kind
@@ -174,6 +175,7 @@ bool qa_q3_bind_player_commit(qa_q3_game *game, qa_q3_player_binding *binding,
     }
     entry->state.player.selections |= binding->selections;
     game->player_binding_tokens[binding->actor.slot] = 0;
+    --game->player_binding_count;
     *binding = (qa_q3_player_binding){0};
     return true;
 }
@@ -184,8 +186,10 @@ bool qa_q3_bind_player_rollback(qa_q3_game *game, qa_q3_player_binding *binding,
     uint64_t active = game->player_binding_tokens[binding->actor.slot];
     if (active && active != binding->token)
         return q3_fail(error, "Q3 player binding reservation was replaced");
-    if (active == binding->token)
+    if (active == binding->token) {
         game->player_binding_tokens[binding->actor.slot] = 0;
+        --game->player_binding_count;
+    }
     *binding = (qa_q3_player_binding){0};
     return true;
 }

@@ -106,6 +106,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
            game->capacity * sizeof(*game->kamikaze_cooldowns));
     memset(game->player_binding_tokens, 0,
            game->capacity * sizeof(*game->player_binding_tokens));
+    game->player_binding_count = 0;
     q3_source_state_reset(game);
     game->previous_ms = options->start_time_ms;
     game->now_ms = options->start_time_ms;

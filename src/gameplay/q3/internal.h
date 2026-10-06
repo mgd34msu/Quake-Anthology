@@ -108,6 +108,7 @@ struct qa_q3_game {
     q3_kamikaze_cooldown *kamikaze_cooldowns;
     uint64_t *player_binding_tokens;
     uint64_t player_binding_serial;
+    uint32_t player_binding_count;
     qa_pickup_lease *item_observations;
     q3_inventory_owner *inventory_owners;
     size_t observation_depth;
