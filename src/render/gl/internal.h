@@ -43,7 +43,6 @@ typedef struct gl_api {
     void (APIENTRY *PolygonOffset)(GLfloat, GLfloat);
     void (APIENTRY *LineWidth)(GLfloat);
     void (APIENTRY *BlendFunc)(GLenum, GLenum);
-    void (APIENTRY *AlphaFunc)(GLenum, GLclampf);
     void (APIENTRY *CullFace)(GLenum);
     void (APIENTRY *FrontFace)(GLenum);
     void (APIENTRY *DrawBuffer)(GLenum);

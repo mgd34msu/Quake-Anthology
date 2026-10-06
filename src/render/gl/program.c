@@ -186,6 +186,7 @@ static const char *const stage_fragment[] = {
     "  if(alphaMode==1&&color.a<=0.0) discard;\n"
     "  if(alphaMode==2&&color.a>=0.5) discard;\n"
     "  if(alphaMode==3&&color.a<0.5) discard;\n"
+    "  if(alphaMode==4&&color.a<=0.666) discard;\n"
     "  if(u_preblend_gamma!=0) color.rgb=vec3(preblendCorrect(color.r),preblendCorrect(color.g),preblendCorrect(color.b));\n"
     "  gl_FragColor=color;\n"
     "}\n"};

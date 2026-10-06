@@ -423,7 +423,7 @@ typedef enum qa_scene_blend {
 } qa_scene_blend;
 typedef enum qa_scene_depth { QA_DEPTH_ALWAYS, QA_DEPTH_LEQUAL, QA_DEPTH_EQUAL, QA_DEPTH_LESS,
     QA_DEPTH_GEQUAL, QA_DEPTH_DISABLED } qa_scene_depth;
-typedef enum qa_scene_alpha { QA_ALPHA_NONE, QA_ALPHA_GT0, QA_ALPHA_LT128, QA_ALPHA_GE128 } qa_scene_alpha;
+typedef enum qa_scene_alpha { QA_ALPHA_NONE, QA_ALPHA_GT0, QA_ALPHA_LT128, QA_ALPHA_GE128, QA_ALPHA_GT666 } qa_scene_alpha;
 typedef enum qa_scene_cull { QA_CULL_NONE, QA_CULL_FRONT, QA_CULL_BACK } qa_scene_cull;
 typedef enum qa_scene_stencil_op { QA_STENCIL_KEEP, QA_STENCIL_ZERO, QA_STENCIL_REPLACE, QA_STENCIL_INCREMENT, QA_STENCIL_DECREMENT, QA_STENCIL_INVERT } qa_scene_stencil_op;
 typedef enum qa_scene_stencil_test { QA_STENCIL_ALWAYS, QA_STENCIL_EQUAL, QA_STENCIL_NOTEQUAL } qa_scene_stencil_test;

@@ -68,7 +68,8 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
         const char *name = texture->name;
         legacy->warp = q1 ? name[0] == '*' && strcmp(name, "*missing") != 0 : (info.flags & 8) != 0;
         legacy->flowing = !q1 && (info.flags & 64) != 0;
-        legacy->fence = q1 && name[0] == '{';
+        legacy->fence = q1 ? name[0] == '{' :
+            ((uint32_t)info.flags & 0x02000000u) != 0 && ((uint32_t)info.flags & (16u | 32u)) == 0;
         legacy->alpha = q1 ? legacy->warp ? world->options.q1_water_alpha : 1 :
             (info.flags & 16) ? 0.33f : (info.flags & 32) ? 0.66f : 1;
         surface->sky = q1 ? !strncmp(name, "sky", 3) : (info.flags & 4) != 0;
@@ -477,7 +478,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
                   context->entity_color.z * intensity, alpha}};
     draw.textures[0] = base_image;
     draw.state.depth_write = !blended;
-    draw.state.alpha_test = legacy->fence ? QA_ALPHA_GT0 : QA_ALPHA_NONE;
+    draw.state.alpha_test = legacy->fence ? QA_ALPHA_GT666 : QA_ALPHA_NONE;
     draw.state.blend_source = blended ? QA_BLEND_SRC_ALPHA : QA_BLEND_ONE;
     draw.state.blend_destination = blended ? QA_BLEND_ONE_MINUS_SRC_ALPHA : QA_BLEND_ZERO;
     if (diagnostic) {
@@ -549,7 +550,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         bright_draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
         bright_draw.state.depth_test = blended ? QA_DEPTH_LEQUAL : QA_DEPTH_EQUAL;
         bright_draw.state.depth_write = false;
-        bright_draw.state.alpha_test = QA_ALPHA_GT0;
+        bright_draw.state.alpha_test = legacy->fence ? QA_ALPHA_GT666 : QA_ALPHA_GT0;
         if (!qa_scene_frame_draw(frame, &bright_draw, error)) return false;
     }
     return true;

@@ -535,12 +535,6 @@ static void stage_state_bits(qa_gl_renderer *renderer,const qa_scene_state *stat
     if (state->blend_source==QA_BLEND_ONE && state->blend_destination==QA_BLEND_ZERO) gl->Disable(GL_BLEND);
     else { gl->Enable(GL_BLEND); gl->BlendFunc(blend_factor(state->blend_source),blend_factor(state->blend_destination)); }
     gl->PolygonMode(GL_FRONT_AND_BACK,state->wireframe?GL_LINE:GL_FILL);
-    if (state->alpha_test==QA_ALPHA_NONE) gl->Disable(GL_ALPHA_TEST);
-    else {
-        gl->Enable(GL_ALPHA_TEST);
-        gl->AlphaFunc(state->alpha_test==QA_ALPHA_GT0?GL_GREATER:state->alpha_test==QA_ALPHA_LT128?GL_LESS:GL_GEQUAL,
-            state->alpha_test==QA_ALPHA_GT0?0:.5f);
-    }
 }
 
 static void draw_state(qa_gl_renderer *renderer, const qa_scene_state *state,
@@ -645,7 +639,7 @@ static bool draw_valid(const qa_gl_renderer *renderer,
         (unsigned)state->blend_destination > QA_BLEND_SRC_ALPHA_SATURATE ||
         state->blend_destination == QA_BLEND_SRC_ALPHA_SATURATE ||
         (unsigned)state->depth_test > QA_DEPTH_DISABLED ||
-        (unsigned)state->alpha_test > QA_ALPHA_GE128 ||
+        (unsigned)state->alpha_test > QA_ALPHA_GT666 ||
         (unsigned)state->cull > QA_CULL_BACK ||
         (unsigned)state->stencil_test > QA_STENCIL_NOTEQUAL ||
         (unsigned)state->stencil_fail > QA_STENCIL_INVERT ||

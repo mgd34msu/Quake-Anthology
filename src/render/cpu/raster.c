@@ -263,7 +263,7 @@ static bool draw_valid(const qa_scene_draw *draw, qa_error *error) {
       (unsigned)s->blend_source > QA_BLEND_SRC_ALPHA_SATURATE ||
       (unsigned)s->blend_destination > QA_BLEND_SRC_ALPHA_SATURATE ||
       (unsigned)s->depth_test > QA_DEPTH_DISABLED ||
-      (unsigned)s->alpha_test > QA_ALPHA_GE128 ||
+      (unsigned)s->alpha_test > QA_ALPHA_GT666 ||
       (unsigned)s->cull > QA_CULL_BACK ||
       (unsigned)s->stencil_test > QA_STENCIL_NOTEQUAL ||
       (unsigned)s->stencil_fail > QA_STENCIL_INVERT ||

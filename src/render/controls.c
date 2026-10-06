@@ -1074,7 +1074,7 @@ bool material_source_stage_state(qa_material_source_scratch *source,const qa_sce
 {
     if (!source_attribute_issue(source,error) || !state || (unsigned)state->blend_source>QA_BLEND_SRC_ALPHA_SATURATE ||
         (unsigned)state->blend_destination>QA_BLEND_SRC_ALPHA_SATURATE || state->blend_destination==QA_BLEND_SRC_ALPHA_SATURATE ||
-        (unsigned)state->depth_test>QA_DEPTH_DISABLED || (unsigned)state->alpha_test>QA_ALPHA_GE128)
+        (unsigned)state->depth_test>QA_DEPTH_DISABLED || (unsigned)state->alpha_test>QA_ALPHA_GT666)
         return fail(error,"Source GL_State has invalid reached state bits");
     return source->owner->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_stage_state(source->owner,state,error):
         qa_gl_source_stage_state(source->owner,state,error);

@@ -320,7 +320,8 @@ static inline bool fragment_color(const qa_cpu_renderer *renderer, const qa_scen
   }
   if (!vertex_opaque && ((state->alpha_test == QA_ALPHA_GT0 && !(color[3] > 0)) ||
       (state->alpha_test == QA_ALPHA_LT128 && !(color[3] < 0.5)) ||
-      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5))))
+      (state->alpha_test == QA_ALPHA_GE128 && !(color[3] >= 0.5)) ||
+      (state->alpha_test == QA_ALPHA_GT666 && !(color[3] > (double)0.666f))))
     return false;
   return true;
 }

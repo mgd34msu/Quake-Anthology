@@ -1549,6 +1549,41 @@ static bool suffix_equal(const char *name, const char *suffix)
     return true;
 }
 
+static void alpha_edge_fill(qa_image *image, qa_scene_family family, const uint8_t *fallback)
+{
+    uint8_t *pixels = image->rgba.data;
+    size_t width = image->width, height = image->height, count = width * height;
+    for (size_t i = 0; i < count; ++i) if (pixels[i * 4 + 3] == 0) {
+        uint8_t *destination = pixels + i * 4;
+        if (family == QA_SCENE_Q2) {
+            size_t adjacent[4] = {i > width ? i - width : SIZE_MAX,
+                i < count - width ? i + width : SIZE_MAX, i > 0 ? i - 1 : SIZE_MAX,
+                i + 1 < count ? i + 1 : SIZE_MAX};
+            const uint8_t *color = fallback;
+            for (size_t n = 0; n < 4; ++n)
+                if (adjacent[n] != SIZE_MAX && pixels[adjacent[n] * 4 + 3] != 0) {
+                    color = pixels + adjacent[n] * 4;
+                    break;
+                }
+            if (color) memcpy(destination, color, 3);
+        } else {
+            size_t x = i % width, y = i / width;
+            size_t columns[3] = {x ? x - 1 : width - 1, x, x + 1 < width ? x + 1 : 0};
+            size_t rows[3] = {y ? y - 1 : height - 1, y, y + 1 < height ? y + 1 : 0};
+            unsigned sum[3] = {0}, neighbors = 0;
+            for (size_t row = 0; row < 3; ++row) for (size_t column = 0; column < 3; ++column) {
+                if (row == 1 && column == 1) continue;
+                const uint8_t *color = pixels + (rows[row] * width + columns[column]) * 4;
+                if (color[3] == 0) continue;
+                for (size_t channel = 0; channel < 3; ++channel) sum[channel] += color[channel];
+                ++neighbors;
+            }
+            if (neighbors) for (size_t channel = 0; channel < 3; ++channel)
+                destination[channel] = (uint8_t)(sum[channel] / neighbors);
+        }
+    }
+}
+
 static bool image_from_rgba_complete(qa_scene_resources *resources, const char *name, const qa_image *source,
     const qa_scene_image_options *options, bool after_border, qa_scene_vec4 upload_border,
     bool dlight, qa_scene_image **out, qa_error *error)
@@ -1566,7 +1601,9 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual Source upload levels"); return false;
         }
         for (size_t i = 0; i < uploaded.count; ++i) {
-            const qa_image *image = uploaded.levels + i;
+            qa_image *image = uploaded.levels + i;
+            if (options->family == QA_SCENE_Q1 && options->transparent)
+                alpha_edge_fill(image, QA_SCENE_Q1, NULL);
             levels[i] = (qa_scene_image_level){image->width, image->height, image->rgba.data, image->rgba.size};
         }
         qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
@@ -1613,7 +1650,9 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
     }
     levels[0] = (qa_scene_image_level){base->width,base->height,base->rgba.data,base->rgba.size};
     for (size_t i = 0; i < chain.count; ++i) {
-        const qa_image *image = &chain.levels[i];
+        qa_image *image = &chain.levels[i];
+        if (options->family == QA_SCENE_Q1 && options->transparent)
+            alpha_edge_fill(image, QA_SCENE_Q1, NULL);
         levels[i+1] = (qa_scene_image_level){image->width,image->height,image->rgba.data,image->rgba.size};
     }
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, levels, count, options->wrap,
@@ -1820,20 +1859,8 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
         if (index < resources->fullbright_first || (int)index == conversion.transparent_index)
             memset(expanded.rgba.data+i*4, 0, 4);
     }
-    /* Preserve source Q2 RGB beside transparent texels for filtered edges. */
-    if (options->family == QA_SCENE_Q2) {
-        size_t count = image->indices.size;
-        for (size_t i = 0; i < count; ++i) if (image->indices.data[i] == 255) {
-            size_t adjacent[4] = {i > image->width ? i-image->width : SIZE_MAX,
-                i < count-image->width ? i+image->width : SIZE_MAX, i > 0 ? i-1 : SIZE_MAX,
-                i+1 < count ? i+1 : SIZE_MAX};
-            uint8_t color = 0;
-            for (size_t n = 0; n < 4; ++n) if (adjacent[n] != SIZE_MAX && image->indices.data[adjacent[n]] != 255) {
-                color = image->indices.data[adjacent[n]]; break;
-            }
-            memcpy(expanded.rgba.data + i*4, palette.data + (size_t)color*3, 3);
-        }
-    }
+    if (conversion.transparent_index >= 0)
+        alpha_edge_fill(&expanded, options->family, palette.data);
     qa_buffer_free(&image->rgba);
     image->rgba = expanded.rgba;
     expanded.rgba = (qa_buffer){0};
@@ -1931,6 +1958,8 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
     if (ok && decoded.indices.size != 0 && (pcx || decoded.rgba.size == 0 || options->translation.size != 0 || options->fullbright_only))
         ok = indexed_rgba(resources, &decoded, options, pcx, context, error);
     if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_SCENE_Q2 && !options->source_q3) upload.mipmap = false;
+    if (ok && options->family == QA_SCENE_Q1 && options->transparent)
+        alpha_edge_fill(&decoded, QA_SCENE_Q1, NULL);
     if (ok) ok = image_from_rgba(resources, image_name, &decoded, &upload, out, error);
     qa_image_free(&decoded);
     return ok;
@@ -2011,6 +2040,8 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
     bool ok = count && count <= 4;
     for (size_t i = 0; ok && i < count; ++i) {
         ok = qa_image_expand_indexed(indices + i, options->palette_rgb, colors, expanded + i, error);
+        if (ok && colors->transparent_index >= 0)
+            alpha_edge_fill(expanded + i, options->family, options->palette_rgb.data);
         if (ok) levels[i] = (qa_scene_image_level){expanded[i].width, expanded[i].height,
             expanded[i].rgba.data, expanded[i].rgba.size};
     }
@@ -2021,8 +2052,12 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
         if (ok && !generated) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating model skin mip descriptors"); ok = false; }
         if (ok) {
             generated[0] = levels[0];
-            for (size_t i = 0; i < chain.count; ++i) generated[i + 1] = (qa_scene_image_level){
-                chain.levels[i].width, chain.levels[i].height, chain.levels[i].rgba.data, chain.levels[i].rgba.size};
+            for (size_t i = 0; i < chain.count; ++i) {
+                if (options->family == QA_SCENE_Q1 && colors->transparent_index >= 0)
+                    alpha_edge_fill(chain.levels + i, QA_SCENE_Q1, NULL);
+                generated[i + 1] = (qa_scene_image_level){
+                    chain.levels[i].width, chain.levels[i].height, chain.levels[i].rgba.data, chain.levels[i].rgba.size};
+            }
         }
     }
     if (ok) ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, generated ? generated : levels,

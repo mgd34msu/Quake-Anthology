@@ -323,8 +323,8 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
         draw.state.blend_source = QA_BLEND_SRC_ALPHA;
         draw.state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
     }
-    if (model->source->format == QA_MODEL_SPR) draw.state.alpha_test = QA_ALPHA_GT0;
-    if (model->source->format == QA_MODEL_SP2 && !transparent) draw.state.alpha_test = QA_ALPHA_GE128;
+    if (model->source->format == QA_MODEL_SPR) draw.state.alpha_test = QA_ALPHA_GT666;
+    if (model->source->format == QA_MODEL_SP2 && !transparent) draw.state.alpha_test = QA_ALPHA_GT666;
     draw.fog = input->fog;
     draw.entity = input->entity;
     draw.sort_key = ((uint64_t)(transparent ? 9u : 3u) << 48) | ((uint64_t)input->entity << 16);
