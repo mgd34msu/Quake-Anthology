@@ -1,4 +1,5 @@
 #include "qa/session.h"
+#include "qa/source_frame_time.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -974,7 +975,9 @@ static bool pending_clock(const component_state *entry, uint64_t host_ns, uint64
     }
     uint64_t frame = 0;
     if (entry->component.clock_admit) {
-        if (!entry->component.clock_admit(entry->component.clock_context, host_ns, entry->clock.debt_ns,
+        uint64_t source_host_ns = entry->component.clock.interval_ns ?
+            qa_source_frame_time_host_delta(host_boundary, host_ns) : host_ns;
+        if (!entry->component.clock_admit(entry->component.clock_context, source_host_ns, entry->clock.debt_ns,
             &projected->clock.debt_ns, &frame, error)) return false;
         if (entry->component.clock.interval_ns) projected->clock.host_origin_ns = host_boundary;
     } else {

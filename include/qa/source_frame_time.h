@@ -8,6 +8,14 @@ typedef struct qa_source_frame_time_controls {
     double server_minimum_seconds, server_maximum_seconds;
 } qa_source_frame_time_controls;
 
+/* Original integer wall timer delta. The caller's absolute clock retains
+ * sub-millisecond time across host renders and restored continuations. */
+static inline uint64_t qa_source_frame_time_host_delta(uint64_t boundary_ns, uint64_t elapsed_ns)
+{
+    return (boundary_ns / UINT64_C(1000000) -
+        (boundary_ns - elapsed_ns) / UINT64_C(1000000)) * UINT64_C(1000000);
+}
+
 /* The selected source registry owns these values. These functions introduce
  * no numeric cache or host-clock accumulator. */
 bool qa_source_frame_time_register(qa_cvars *, uint64_t owner, qa_error *);

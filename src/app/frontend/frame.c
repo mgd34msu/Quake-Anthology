@@ -161,8 +161,13 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
             return true;
         }
     }
-    double milliseconds=(double)supplied/1000000.0;
-    if (cvars && !qa_source_frame_time_sample(cvars,milliseconds,frontend->options.dedicated,!remote,
+    uint64_t sampled = supplied;
+    qa_console_dialect source_dialect = cvars ? qa_cvars_dialect(cvars) : QA_CONSOLE_Q1;
+    if (cvars && (source_dialect == QA_CONSOLE_Q2 || source_dialect == QA_CONSOLE_Q2_RERELEASE ||
+        source_dialect == QA_CONSOLE_Q3))
+        sampled = qa_source_frame_time_host_delta(frontend->wall_time_ns, supplied);
+    double milliseconds=(double)sampled/1000000.0;
+    if (cvars && sampled && !qa_source_frame_time_sample(cvars,milliseconds,frontend->options.dedicated,!remote,
         &milliseconds,error)) return false;
     double duration=milliseconds*1000000.0;
     if (!isfinite(duration) || duration<0 || duration>=18446744073709551616.0) {
