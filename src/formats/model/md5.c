@@ -1,6 +1,9 @@
 #include "internal.h"
 #include <ctype.h>
 #include <errno.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 static void quaternion(float q[4]) {
     float d = 1 - q[0] * q[0] - q[1] * q[1] - q[2] * q[2];
@@ -13,13 +16,28 @@ static void rotate(const float q[4], const float p[3], float out[3]) {
     out[1] = scalar * p[1] + 2 * (q[1] * dot + q[3] * (q[2] * p[0] - q[0] * p[2]));
     out[2] = scalar * p[2] + 2 * (q[2] * dot + q[3] * (q[0] * p[1] - q[1] * p[0]));
 }
+typedef struct md5_axis {
+    float column[3][4];
+} md5_axis;
+static md5_axis prepare_axis(const float q[4]) {
+    return (md5_axis){.column = {
+        {2 * (q[3] * q[3] + q[0] * q[0]) - 1,
+         q[0] * q[1] + q[3] * q[2], q[0] * q[2] - q[3] * q[1], 0},
+        {q[0] * q[1] - q[3] * q[2],
+         2 * (q[3] * q[3] + q[1] * q[1]) - 1, q[1] * q[2] + q[3] * q[0], 0},
+        {q[0] * q[2] + q[3] * q[1], q[1] * q[2] - q[3] * q[0],
+         2 * (q[3] * q[3] + q[2] * q[2]) - 1, 0}}};
+}
+static void rotate_prepared(const md5_axis *axis, const float p[3], float out[3]) {
+    float doubled[3] = {p[0] * 2, p[1] * 2, p[2] * 2};
+    for (unsigned k = 0; k < 3; ++k)
+        out[k] = (k == 0 ? p[0] : doubled[0]) * axis->column[0][k] +
+                 (k == 1 ? p[1] : doubled[1]) * axis->column[1][k] +
+                 (k == 2 ? p[2] : doubled[2]) * axis->column[2][k];
+}
 static void rotate_axis(const float q[4], const float p[3], float out[3]) {
-    out[0] = p[0] * (2 * (q[3] * q[3] + q[0] * q[0]) - 1) + p[1] * 2 * (q[0] * q[1] - q[3] * q[2]) +
-             p[2] * 2 * (q[0] * q[2] + q[3] * q[1]);
-    out[1] = p[0] * 2 * (q[0] * q[1] + q[3] * q[2]) + p[1] * (2 * (q[3] * q[3] + q[1] * q[1]) - 1) +
-             p[2] * 2 * (q[1] * q[2] - q[3] * q[0]);
-    out[2] = p[0] * 2 * (q[0] * q[2] - q[3] * q[1]) + p[1] * 2 * (q[1] * q[2] + q[3] * q[0]) +
-             p[2] * (2 * (q[3] * q[3] + q[2] * q[2]) - 1);
+    md5_axis axis = prepare_axis(q);
+    rotate_prepared(&axis, p, out);
 }
 static bool text_name(model_reader *r, char name[65], qa_bytes *full) {
     qa_bytes t = model_token_next(r);
@@ -62,6 +80,75 @@ static void skin_vertex(const qa_model_mesh *s, uint32_t vertex, const qa_model_
             out->position[k] += w->bias * (p->position[k] + p->scale * position[k]);
             out->normal[k] += w->bias * normal[k];
         }
+    }
+}
+typedef struct md5_skin_joint {
+#if defined(__SSE2__)
+    __m128 column[3], position, scale;
+#else
+    md5_axis axis;
+#endif
+} md5_skin_joint;
+#if defined(__SSE2__)
+static __m128 skin_rotate(const md5_skin_joint *joint, const float p[3]) {
+    /* The Source doubles the input before each off-diagonal product. */
+    float x = p[0] * 2, y = p[1] * 2, z = p[2] * 2;
+    __m128 first = _mm_mul_ps(_mm_set_ps(0, x, x, p[0]), joint->column[0]);
+    __m128 second = _mm_mul_ps(_mm_set_ps(0, y, p[1], y), joint->column[1]);
+    __m128 third = _mm_mul_ps(_mm_set_ps(0, p[2], z, z), joint->column[2]);
+    return _mm_add_ps(_mm_add_ps(first, second), third);
+}
+#endif
+static void skin_prepared(const qa_model_mesh *mesh, const qa_model_pose *pose,
+                           qa_model_vertex *out) {
+    md5_skin_joint joints[256];
+    bool ready[256] = {false};
+    for (uint32_t v = 0; v < mesh->vertex_count; ++v) {
+        memset(&out[v], 0, sizeof(out[v]));
+#if defined(__SSE2__)
+        __m128 position = _mm_setzero_ps(), normal = _mm_setzero_ps();
+#endif
+        qa_model_weight_range range = mesh->vertex_weights[v];
+        for (uint32_t i = 0; i < range.count; ++i) {
+            const qa_model_weight *weight = &mesh->weights[range.first + i];
+            const qa_model_pose *p = &pose[weight->bone];
+            if (!ready[weight->bone]) {
+                md5_axis axis = prepare_axis(p->orientation);
+#if defined(__SSE2__)
+                for (unsigned k = 0; k < 3; ++k)
+                    joints[weight->bone].column[k] = _mm_loadu_ps(axis.column[k]);
+                joints[weight->bone].position = _mm_set_ps(0, p->position[2], p->position[1], p->position[0]);
+                joints[weight->bone].scale = _mm_set1_ps(p->scale);
+#else
+                joints[weight->bone].axis = axis;
+#endif
+                ready[weight->bone] = true;
+            }
+            const md5_skin_joint *joint = &joints[weight->bone];
+#if defined(__SSE2__)
+            __m128 transformed = skin_rotate(joint, weight->offset);
+            transformed = _mm_add_ps(joint->position, _mm_mul_ps(joint->scale, transformed));
+            __m128 bias = _mm_set1_ps(weight->bias);
+            position = _mm_add_ps(position, _mm_mul_ps(bias, transformed));
+            normal = _mm_add_ps(normal, _mm_mul_ps(bias,
+                skin_rotate(joint, mesh->vertices[v].normal)));
+#else
+            float position[3], normal[3];
+            rotate_prepared(&joint->axis, weight->offset, position);
+            rotate_prepared(&joint->axis, mesh->vertices[v].normal, normal);
+            for (unsigned k = 0; k < 3; ++k) {
+                out[v].position[k] += weight->bias * (p->position[k] + p->scale * position[k]);
+                out[v].normal[k] += weight->bias * normal[k];
+            }
+#endif
+        }
+#if defined(__SSE2__)
+        float values[4];
+        _mm_storeu_ps(values, position);
+        memcpy(out[v].position, values, sizeof(out[v].position));
+        _mm_storeu_ps(values, normal);
+        memcpy(out[v].normal, values, sizeof(out[v].normal));
+#endif
     }
 }
 typedef struct position_key {
@@ -299,8 +386,16 @@ bool qa_model_skin_md5(const qa_model *m, uint32_t index, const qa_model_pose *p
         if (!isfinite(pose[i].scale))
             goto invalid;
     }
-    for (uint32_t i = 0; i < m->meshes[index].vertex_count; ++i)
-        skin_vertex(&m->meshes[index], i, pose, &out[i], false);
+    const qa_model_mesh *mesh = &m->meshes[index];
+    if (!mesh->vertex_count) return true;
+    /* Loaded MD5 models admit at most 256 joints. Keep the original path for
+     * larger externally supplied models and in-place bind vertex output. */
+    if (m->bone_count <= 256 && out != mesh->vertices) {
+        skin_prepared(mesh, pose, out);
+    } else {
+        for (uint32_t i = 0; i < mesh->vertex_count; ++i)
+            skin_vertex(mesh, i, pose, &out[i], false);
+    }
     return true;
 invalid:
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "non-finite MD5 pose");
