@@ -188,3 +188,15 @@ void frontend_fx_q1_splash(frontend_fx_particles *state, qa_builtin_random *rand
             append(state, value);
         }
 }
+
+void frontend_fx_q1_advance(frontend_fx_particles *state, double seconds, double elapsed, float gravity)
+{
+    size_t retained = 0;
+    for (size_t i = 0; i < state->count; ++i) {
+        qa_scene_q1_particle_state particle = state->values.q1[i];
+        if (particle.die < seconds) continue;
+        qa_scene_q1_particle_advance(&particle, elapsed, gravity);
+        state->values.q1[retained++] = particle;
+    }
+    state->count = retained;
+}

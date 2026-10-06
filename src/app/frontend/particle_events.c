@@ -2114,22 +2114,18 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
             if (impact->kind && source_frame >= (double)(impact_frames(impact)-1))
                 *impact = (frontend_q2_impact){0};
         }
-        size_t retained = 0;
-        for (size_t i = 0; i < (owner->q1 ? owner->q1->count : owner->q2_particles->count); ++i) {
-            if (owner->q1) {
-                qa_scene_q1_particle_state particle = owner->q1->values.q1[i];
-                if (particle.die < seconds) continue;
-                qa_scene_q1_particle_advance(&particle, elapsed, owner->gravity);
-                owner->q1->values.q1[retained++] = particle;
-            } else {
+        if (owner->q1) {
+            frontend_fx_q1_advance(owner->q1, seconds, elapsed, owner->gravity);
+        } else {
+            size_t retained = 0;
+            for (size_t i = 0; i < owner->q2_particles->count; ++i) {
                 qa_vec3 origin; float alpha;
                 if (owner->q2[i].alpha_velocity!=-10000 &&
                     !frontend_fx_q2_sample(&owner->q2[i], sample.milliseconds, &origin, &alpha)) continue;
                 owner->q2[retained++] = owner->q2[i];
             }
+            owner->q2_particles->count = retained;
         }
-        if (owner->q1) owner->q1->count = retained;
-        else owner->q2_particles->count = retained;
     }
     return true;
 }

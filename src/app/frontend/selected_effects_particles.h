@@ -35,6 +35,7 @@ typedef enum frontend_fx_q2_trail {
 
 /* The true application effect owner supplies its single RNG stream. Each
  * content group retains its own append array and source tracer/angular state. */
+void frontend_fx_q1_advance(frontend_fx_particles *, double seconds, double elapsed, float gravity);
 void frontend_fx_q1_impact(frontend_fx_particles *, qa_builtin_random *, qa_vec3, qa_vec3,
     uint32_t color, int32_t count, double seconds);
 void frontend_fx_q1_particle_event(frontend_fx_particles *, qa_builtin_random *, qa_vec3,

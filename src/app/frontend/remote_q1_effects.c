@@ -482,14 +482,8 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     }
     if(!qa_scene_particles(&row->frontend->frame,&batch,error)) return false;
     double elapsed=fmax(0,fx->sampled_seconds-fx->previous_sample);
-    size_t retained=0;
-    for(size_t i=0;i<fx->particles.count;++i) {
-        qa_scene_q1_particle_state p=fx->particles.values.q1[i];
-        if(p.die<world->seconds) continue;
-        qa_scene_q1_particle_advance(&p,elapsed,800);
-        fx->particles.values.q1[retained++]=p;
-    }
-    fx->particles.count=retained; fx->previous_sample=fx->sampled_seconds;
+    frontend_fx_q1_advance(&fx->particles,world->seconds,elapsed,800);
+    fx->previous_sample=fx->sampled_seconds;
     return remote_q1_live(row,error);
 }
 

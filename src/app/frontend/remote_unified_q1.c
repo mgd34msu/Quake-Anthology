@@ -735,10 +735,9 @@ void frontend_unified_q1_frame_commit(frontend_unified_q1 *o)
 {
     if(!o || !o->prepared || o->busy) return;
     for(q1_group *g=o->groups;g;g=g->next) {
-        double elapsed=g->has_sample?fmax(0,o->prepared_seconds-g->sampled):0;size_t kept=0;
-        for(size_t i=0;i<g->particles.count;++i) {qa_scene_q1_particle_state p=g->particles.values.q1[i];if(p.die<o->prepared_seconds)continue;
-            qa_scene_q1_particle_advance(&p,elapsed,800);g->particles.values.q1[kept++]=p;}
-        g->particles.count=kept;g->sampled=o->prepared_seconds;g->has_sample=true;
+        double elapsed=g->has_sample?fmax(0,o->prepared_seconds-g->sampled):0;
+        frontend_fx_q1_advance(&g->particles,o->prepared_seconds,elapsed,800);
+        g->sampled=o->prepared_seconds;g->has_sample=true;
     }
     o->frame=o->prepared_frame;o->seconds=o->prepared_seconds;o->has_frame=true;o->prepared=false;o->preparing_document=NULL;
 }
