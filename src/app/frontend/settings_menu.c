@@ -432,8 +432,8 @@ static bool display(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     if(display_cache->display && display_cache->backend!=info.backend) seat->menu_renderer=info.backend;
     if(!seat->menu_display_initialized || (display_cache->display && display_cache->display!=f->display)) {
         seat->menu_renderer=info.backend;
-        snprintf(seat->menu_width,sizeof(seat->menu_width),"%u",info.logical_width);
-        snprintf(seat->menu_height,sizeof(seat->menu_height),"%u",info.logical_height);
+        snprintf(seat->menu_width,sizeof(seat->menu_width),"%u",f->cpu?f->width:info.logical_width);
+        snprintf(seat->menu_height,sizeof(seat->menu_height),"%u",f->cpu?f->height:info.logical_height);
         seat->menu_display_initialized=true;
     }
     display_cache->display=f->display; display_cache->backend=info.backend;

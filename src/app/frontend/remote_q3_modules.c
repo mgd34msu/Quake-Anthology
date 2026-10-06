@@ -658,8 +658,10 @@ static bool configuration(void *context, uint8_t out[11332], qa_error *error)
     qa_store_u32le(out + 11272, caps ? caps->color_bits : 32);
     qa_store_u32le(out + 11276, caps ? caps->depth_bits : 64);
     qa_store_u32le(out + 11280, caps ? caps->stencil_bits : 8);
-    qa_store_u32le(out + 11304, display.drawable_width); qa_store_u32le(out + 11308, display.drawable_height);
-    float aspect = display.drawable_height ? (float)display.drawable_width / (float)display.drawable_height : 1;
+    uint32_t width=f->cpu?f->width:display.drawable_width;
+    uint32_t height=f->cpu?f->height:display.drawable_height;
+    qa_store_u32le(out + 11304, width); qa_store_u32le(out + 11308, height);
+    float aspect = height ? (float)width / (float)height : 1;
     uint32_t bits; memcpy(&bits, &aspect, sizeof(bits)); qa_store_u32le(out + 11312, bits);
     qa_store_u32le(out + 11316, display.refresh_rate > 0 ? (uint32_t)display.refresh_rate : 0);
     qa_store_u32le(out + 11320, display.fullscreen != QA_DISPLAY_WINDOWED); qa_store_u32le(out + 11324, caps && caps->stereo);

@@ -1051,9 +1051,11 @@ bool frontend_q3_configuration(qa_frontend *frontend,uint8_t out[11332],qa_error
     qa_store_u32le(out + 11280, caps ? caps->stencil_bits : cpu.stencil_bits);
     qa_store_u32le(out + 11288,(uint32_t)hardware);
     qa_store_u32le(out + 11292, color.hardware_gamma);
-    qa_store_u32le(out + 11304, display.drawable_width);
-    qa_store_u32le(out + 11308, display.drawable_height);
-    float_word(out + 11312, display.drawable_height ? (float)display.drawable_width / (float)display.drawable_height : 1);
+    uint32_t width=frontend->cpu?frontend->width:display.drawable_width;
+    uint32_t height=frontend->cpu?frontend->height:display.drawable_height;
+    qa_store_u32le(out + 11304, width);
+    qa_store_u32le(out + 11308, height);
+    float_word(out + 11312, height ? (float)width / (float)height : 1);
     qa_store_u32le(out + 11316, display.refresh_rate > 0 ? (uint32_t)display.refresh_rate : 0);
     qa_store_u32le(out + 11320, display.fullscreen != QA_DISPLAY_WINDOWED);
     qa_store_u32le(out + 11324, caps && caps->stereo);
