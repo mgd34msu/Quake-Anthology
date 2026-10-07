@@ -7,7 +7,7 @@ typedef struct frontend_scene_heap { uint32_t kind; uint64_t ordinal,view; } fro
 /* Borrow actual paired banks already owned by frontend producers. Retained
  * renderer private heaps are deliberately excluded from this lookup. */
 bool frontend_scene_heap_find(const qa_frontend *,const qa_vfs *,qa_scene_resources *,
-    qa_material_library *,frontend_scene_heap *,bool *,qa_error *);
+    qa_material_library *,bool *,qa_error *);
 bool frontend_scene_heap_read(const qa_frontend *,frontend_scene_heap,const qa_vfs **,
     qa_scene_resources **,qa_material_library **);
 

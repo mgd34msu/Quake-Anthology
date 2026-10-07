@@ -93,9 +93,9 @@ bool frontend_scene_heap_read(const qa_frontend *f, root_heap heap, const qa_vfs
         qa_material_library_resource_owner(*materials)==*images;
 }
 bool frontend_scene_heap_find(const qa_frontend *f,const qa_vfs *files,
-    qa_scene_resources *images,qa_material_library *materials,root_heap *out,bool *found,qa_error *error)
+    qa_scene_resources *images,qa_material_library *materials,bool *found,qa_error *error)
 {
-    if(!f || !out || !found) return false;
+    if(!f || !found) return false;
     *found=false;
     size_t retained_count=0;
     if(!frontend_renderer_materials_count(f,&retained_count,error)) return false;
@@ -109,10 +109,7 @@ bool frontend_scene_heap_find(const qa_frontend *f,const qa_vfs *files,
             qa_scene_resources *actual_images=NULL; qa_material_library *actual_materials=NULL;
             if (!frontend_scene_heap_read(f,heap,&actual_files,&actual_images,&actual_materials)) continue;
             if (actual_files==files && actual_images==images && actual_materials==materials) {
-                qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-                heap.view=graph?qa_application_content_view_id(graph,files):0;
-                if (graph && !heap.view) return frontend_fail(error,QA_ERROR_FORMAT,"Scene paired bank view is outside its actual content graph");
-                *out=heap; *found=true; return true;
+                *found=true; return true;
             }
         }
     }
@@ -122,13 +119,10 @@ bool frontend_scene_heap_find(const qa_frontend *f,const qa_vfs *files,
         frontend_unified_media *media=NULL;
         if(!frontend_unified_media_inventory_at(f,i,&media,error)) return false;
         for(size_t j=0;media && j<frontend_unified_media_bank_count(media);++j) {
-            frontend_unified_bank_view bank; uint64_t key;
-            if(!frontend_unified_media_bank_read(media,j,&bank) || !frontend_unified_media_bank_key(i,j,&key)) return false;
+            frontend_unified_bank_view bank;
+            if(!frontend_unified_media_bank_read(media,j,&bank)) return false;
             if(bank.files==files && bank.images==images && bank.materials==materials) {
-                qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-                uint64_t view=graph?qa_application_content_view_id(graph,files):0;
-                if(graph && !view) return false;
-                *out=(root_heap){10,key,view}; *found=true; return true;
+                *found=true; return true;
             }
         }
     }
@@ -136,20 +130,14 @@ bool frontend_scene_heap_find(const qa_frontend *f,const qa_vfs *files,
         frontend_component_scene_view row;
         if(!frontend_component_scene_metadata_read(f,i,&row,error)) return false;
         if(row.files==files && row.images==images && row.materials==materials) {
-            qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-            uint64_t view=graph?qa_application_content_view_id(graph,files):0;
-            if(graph && !view) return false;
-            *out=(root_heap){11,i,view}; *found=true; return true;
+            *found=true; return true;
         }
     }
     for(size_t i=0;i<frontend_equipment_media_count(f);++i) {
         frontend_equipment_media_view row;
         if(!frontend_equipment_media_at(f,i,&row)) return false;
         if(row.source_slot && row.owner.mounts==files && row.owner.images==images && row.owner.materials==materials) {
-            qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-            uint64_t view=graph?qa_application_content_view_id(graph,files):0;
-            if(graph && !view) return false;
-            *out=(root_heap){12,i,view}; *found=true; return true;
+            *found=true; return true;
         }
     }
     return true;

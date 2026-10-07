@@ -93,8 +93,8 @@ bool frontend_renderer_worlds_read_at(const qa_frontend *f,size_t ordinal,fronte
         qa_material_library_resource_owner(out->materials)!=out->images ||
         qa_resource_pool_find(qa_vfs_resources(out->files),qa_resource_id(out->resource))!=out->resource)
         return frontend_fail(error,QA_ERROR_FORMAT,"Retained Source world lost its immutable map and paired heaps");
-    frontend_scene_heap heap={0}; bool found=false;
-    if(!frontend_scene_heap_find(f,out->files,out->images,out->materials,&heap,&found,error)) return false;
+    bool found=false;
+    if(!frontend_scene_heap_find(f,out->files,out->images,out->materials,&found,error)) return false;
     out->private_heaps=!found; return true;
 }
 static bool row_idle(const renderer_world_row *row)
