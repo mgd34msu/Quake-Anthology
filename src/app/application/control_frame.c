@@ -2128,7 +2128,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 Source completion lost its selected turn");
                 else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
                     cutscene ? NULL : &record->result, &current.source_command, !cutscene && source_movement, error);
-                if (ok && !cutscene) ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+                if (ok && !cutscene) ok = qa_q2_player_after_movement(source->state.q2, group->actor, false, error);
             }
         }
     } else if (group->domain == CONTROL_COMMAND_Q2_SOURCE) {
@@ -2183,7 +2183,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                     cutscene ? NULL : &record->result, &current.source_command,
                     !cutscene && source_movement, error);
                 if (ok && !cutscene)
-                    ok = qa_q2_player_after_movement(source->state.q2, group->actor, error);
+                    ok = qa_q2_player_after_movement(source->state.q2, group->actor, false, error);
             }
         }
     } else if (group->domain == CONTROL_COMMAND_Q3_SOURCE) {

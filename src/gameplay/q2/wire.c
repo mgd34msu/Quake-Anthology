@@ -570,9 +570,7 @@ bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
     bool jumped = rerelease ? result->jump_sound && !(result->state.data.q2r.flags & 128u) :
         was_grounded && result->ground.hit == QA_TRACE_HIT_NONE && command->up_move >= 10 &&
         result->water_level == 0;
-    if (jumped && !q2_player_sound(g, id, "*jump1.wav", 2, error)) return false;
-    return !jumped || rerelease || !q2_actor_live(g, id) ||
-        q2_player_noise(g, id, origin, false, error);
+    return !jumped || q2_player_jump(g, id, origin, error);
 }
 
 bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,

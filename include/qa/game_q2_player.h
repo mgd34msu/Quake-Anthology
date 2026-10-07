@@ -302,7 +302,7 @@ bool qa_q2_player_map_spawn_pose(qa_q2_game *, qa_actor_id, const qa_bounds *,
 bool qa_q2_player_map_spawn_complete(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_respawn(qa_q2_game *, qa_actor_id, qa_error *);
-bool qa_q2_player_after_movement(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_player_after_movement(qa_q2_game *, qa_actor_id, bool jumped, qa_error *);
 bool qa_q2_player_end_frame(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_disconnect(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_cheats_allowed(const qa_q2_game *);

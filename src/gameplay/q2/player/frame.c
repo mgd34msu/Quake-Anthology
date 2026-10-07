@@ -142,15 +142,31 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->latched_buttons = 0;
     return true;
 }
+bool q2_player_jump(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
+    if (!q2_player_sound(g, id, "*jump1.wav", 2, e)) return false;
+    return g->options.edition == QA_Q2_RERELEASE || !q2_actor_live(g, id) ||
+        q2_player_noise(g, id, origin, false, e);
+}
+typedef struct q2_player_move_completion {
+    qa_q2_game *game;
+    bool jumped;
+} q2_player_move_completion;
 static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
-    qa_q2_game *g = context;
+    q2_player_move_completion *completion = context;
+    qa_q2_game *g = completion->game;
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
     if (a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
+    if (completion->jumped) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, e) ||
+            !q2_player_jump(g, id, body.origin, e)) return false;
+    }
+    if (!q2_actor_live(g, id)) return true;
     if (qa_q2_player_controlled(g, id))
-        return !q2_actor_live(g, id) || qa_q2_clear_input(g, id, e);
+        return qa_q2_clear_input(g, id, e);
     qa_q2_player_movement m;
     if (!q2_player_observe(g, a, &m, e))
         return false;
@@ -194,8 +210,9 @@ static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
         return q2_player_falling(g, a, &m, e);
     return true;
 }
-bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
-    return qa_q2_run_actor(g, id, after_movement, g, e);
+bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, bool jumped, qa_error *e) {
+    q2_player_move_completion completion = {g, jumped};
+    return qa_q2_run_actor(g, id, after_movement, &completion, e);
 }
 static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
     qa_q2_game *g = context;

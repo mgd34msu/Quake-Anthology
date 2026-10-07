@@ -2297,8 +2297,11 @@ static bool finish_native_players(application_move_call *move,
         qa_q2_player_info info;
         if (qa_q2_player_read(character->state.q2, actor, &info)) {
             move->committed = true;
-            if (!qa_q2_player_after_movement(character->state.q2, actor,
-                                             error))
+            bool jumped = move->control->result.jump_sound &&
+                (move->control->result.state.kind == QA_MOVEMENT_Q2_CLASSIC ||
+                 (move->control->result.state.kind == QA_MOVEMENT_Q2_RERELEASE &&
+                  !(move->control->result.state.data.q2r.flags & 128u)));
+            if (!qa_q2_player_after_movement(character->state.q2, actor, jumped, error))
                 return false;
         }
     }
@@ -2808,6 +2811,11 @@ static bool control_move(qa_application *application,
             : physics && !foreign_nq ? qa_movement_physics_netquake(&input, &services, &record->result, error)
             : qa_movement_move(&input, &services, &record->result, error);
     }
+    if (ok && !preparing && !external_handled && live(application, actor) &&
+        record->result.state.kind == QA_MOVEMENT_Q2_CLASSIC)
+        record->result.jump_sound = record->ground.hit != QA_TRACE_HIT_NONE &&
+            record->result.ground.hit == QA_TRACE_HIT_NONE && input.command.up_move >= 10 &&
+            record->result.water_level == 0;
     if (ok && preparing && live(application, actor))
         ok = publish_result_body(&move, &record->result.state, record->result.bounds,
             record->result.ground, record->result.view_angles, false, false, error);
