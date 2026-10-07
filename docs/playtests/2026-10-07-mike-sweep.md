@@ -344,3 +344,34 @@ originals, and recorded owned-process cleanup. Root reviewed the actual
 window PNGs. These attached-debugger checks prove behavior, not speed or
 an isolated shotgun waveform. Earlier Q2 rerelease glass evidence remains
 historical; this Q1 mip fix does not claim a new Q2 glass retest.
+
+## Installed Q1 skill-message and status-border proof
+
+The 9ccde2b3 candidate was built at 14:09:15 CDT and installed at 14:19:25
+with the copied-owner GL qualification through the required installer.
+Receipt: `installed-m0-save-hud-20261007.json`. Exact candidate and then
+shipped checks cover classic and rerelease, CPU and NVIDIA GL at 640x400.
+Shipped bundles are `/tmp/qa-private-av-_w49xpdm` (classic CPU),
+`/tmp/qa-private-av-jtvfnm48` (rerelease CPU),
+`/tmp/qa-private-av-x9nit_3p` (classic GL), and
+`/tmp/qa-private-av-l0sv1y7_` (rerelease GL).
+
+Each uses genuine W input through the retail start-map Normal hall.
+`THE586-normal-hall-first.png` and `THE586-normal-hall-repeat.png` show
+one replacing skill message, horizontally centered at 35% height. The
+actual shared HUD draw is at (320,140), with no centerprint copy in console
+notify. `THE587-exposed-status-band.png` shows the WAD backtile on both
+sides of the bar; returned scene data records two repeat-UV panel draws
+covering the exposed edges. Root opened all four shipped window captures.
+All complete later world frames, public quit0, unchanged owner originals
+and package pins, and cleanup of recorded owned processes. These functional
+debugger checks make no performance or audio-fidelity claim.
+
+THE-587 is In Review. THE-586 stays In Progress for the added ordinary
+Q3 diagnostic-line join report. Its shared bot diagnostic correction is
+committed as cb59918d but not yet qualified or installed at this checkpoint.
+THE-588 separate-slot naming is installed; vanilla original load and resave
+pass, but the combined QASV restore fails with a captured player-archive
+canonical-table/settings-root rejection in `/tmp/qa-private-av-68cn9khr`.
+That bundle preserves both coexisting save files and the failed restore.
+No combined-save load pass is claimed.
