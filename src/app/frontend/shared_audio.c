@@ -16,25 +16,6 @@ struct frontend_shared_audio {
     bool prepared;
 };
 static const char *const names[5]={"s_outputRate","s_outputBits","s_outputChannels","volume","bgmvolume"};
-static bool same_name(const qa_cvars_edit *edit,const char *a,const char *b)
-{
-    if (qa_cvars_dialect(qa_cvars_edit_registry(edit))!=QA_CONSOLE_Q3) return !strcmp(a,b);
-    while (*a && *b) {
-        unsigned char left=(unsigned char)*a++,right=(unsigned char)*b++;
-        if (left>='A' && left<='Z') left+='a'-'A';
-        if (right>='A' && right<='Z') right+='a'-'A';
-        if (left!=right) return false;
-    }
-    return !*a && !*b;
-}
-static const qa_cvar_view *canonical(const qa_cvars_edit *edit,const char *name)
-{
-    for (size_t i=0;i<qa_cvars_edit_count(edit);++i) {
-        const qa_cvar_view *row=qa_cvars_edit_at(edit,i);
-        if (row && same_name(edit,row->name,name)) return row;
-    }
-    return NULL;
-}
 static void release(frontend_shared_audio *owner)
 {
     for (size_t i=0;i<5;++i) free(owner->values[i]);
@@ -43,7 +24,7 @@ static void release(frontend_shared_audio *owner)
 static bool values_current(const frontend_shared_audio *owner)
 {
     for (size_t i=0;i<5;++i) {
-        const qa_cvar_view *row=canonical(owner->edit,names[i]);
+        const qa_cvar_view *row=qa_cvars_edit_canonical_record(owner->edit,names[i]);
         if (!row || !row->value || !owner->values[i] || strcmp(row->value,owner->values[i])) return false;
     }
     return true;
@@ -101,7 +82,7 @@ bool frontend_shared_audio_prepare(qa_frontend *f,const qa_cvars_edit *edit,
     owner->device=f->device; owner->edit=edit; owner->output=output;
     owner->effects=effects; owner->music=music;
     for (size_t i=0;i<5;++i) {
-        const qa_cvar_view *row=canonical(edit,names[i]);
+        const qa_cvar_view *row=qa_cvars_edit_canonical_record(edit,names[i]);
         if (!row || !row->value) { release(owner); return fail(error,"Prepared audio lacks its canonical scalar row"); }
         size_t size=strlen(row->value)+1;
         owner->values[i]=malloc(size);

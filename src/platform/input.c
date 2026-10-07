@@ -482,16 +482,18 @@ static bool constructor_settings_is(const qa_input_platform_options *options,
     const char *const names[]={"in_mouse","in_nograb","in_joystick","in_joystickProfile",
         "in_midi","in_joystickSeat","in_midiseat","in_mididevice","in_midichannel",
         "joy_threshold","in_joyBallScale"};
-    const qa_cvar_view *row[11];
+    const qa_cvar_view *canonical[11], *row[11];
     for (unsigned i=0;i<11;++i) {
-        row[i]=qa_cvars_edit_canonical_record(edit,names[i]);
-        if (!row[i] || row[i]->console_created || !row[i]->value) {
+        canonical[i]=qa_cvars_edit_canonical_record(edit,names[i]);
+        row[i]=qa_cvars_edit_find(edit,names[i]);
+        if (!canonical[i] || canonical[i]->console_created || !canonical[i]->value ||
+            !row[i] || !row[i]->value) {
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Prepared input constructor lacks its actual declared setting");
             return false;
         }
     }
     if ((strcmp(row[3]->value,"linux") && strcmp(row[3]->value,"windows")) ||
-        row[2]->latched_value || row[3]->latched_value ||
+        canonical[2]->latched_value || canonical[3]->latched_value ||
         !isfinite(row[9]->number) || !isfinite(row[10]->number) ||
         desired->mouse_available!=(row[0]->integer!=0) || desired->no_grab!=(row[1]->integer!=0) ||
         desired->joystick_enabled!=(row[2]->integer!=0) ||
