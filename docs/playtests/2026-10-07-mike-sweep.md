@@ -535,3 +535,63 @@ captured privately, but no isolated sound-fidelity claim is made. Attached
 functional observers provide no performance measurements. Original Q2
 modules, mixed-mode HUDs and full campaign behavior remain outside this
 four-case proof.
+
+
+## THE-180 / MIKE-11: installed split-screen matrix after recovery
+
+All ten native edition/backend cases pass on source 338020d1, built
+16:57 CDT and installed 17:00 CDT through the qualified installer.
+The candidate first reached retail Q2 rerelease gameplay with a fresh
+copy of the owner's 34 settings files, rendered its source HUD, moved
+from real keyboard input, produced captured private SDL audio, and
+quit publicly with exit zero. The original profile stayed unchanged.
+The installer receipt is `installed-m0-rr-coop-hud-20261007.json` under
+the recovery cache.
+
+Three source fixes address the failed earlier matrix. 2fcd18a4 converts
+canonical cvar flags for the active dialect and writes the real Q2
+client reservation before allocation. 5e9c208d retains bounded storage
+for all four local Q2 client samples, including a fourth seat joining a
+retained world. fc9d3163 supplies the rerelease coop status bar's missing
+`loc_rstring` argument count. That malformed string consumed `endif` as
+text and canceled presentation even when the lives condition was false.
+The correction matches rerelease `g_statusbar.h:49-55`; the shared HUD
+interpreter is unchanged. Builds and all six configured checks pass.
+
+| Native content | Renderer | Evidence bundle |
+| --- | --- | --- |
+| q2-rerelease-baseq2 | CPU | `/tmp/qa-private-av-5hz_k7ob` |
+| q2-rerelease-baseq2 | GL | `/tmp/qa-private-av-jyd17e9l` |
+| q2-classic-baseq2 | CPU | `/tmp/qa-private-av-_j7s4env` |
+| q2-classic-baseq2 | GL | `/tmp/qa-private-av-3wzgqavc` |
+| q3-baseq3 | CPU | `/tmp/qa-private-av-2qr0hr0b` |
+| q3-baseq3 | GL | `/tmp/qa-private-av-owf1q6zy` |
+| q1-classic-id1 | CPU | `/tmp/qa-private-av-_6wlhgkg` |
+| q1-classic-id1 | GL | `/tmp/qa-private-av-yp681gr3` |
+| q1-rerelease-id1 | CPU | `/tmp/qa-private-av-cp3x7p13` |
+| q1-rerelease-id1 | GL | `/tmp/qa-private-av-u6zomylq` |
+
+Each case records three actual SDL virtual-controller instances routed
+to distinct full player actors and DRAW-bearing world cameras. Separate
+look, movement and neutral release affect the selected seat. Public
+Controls adds a fourth player; real W moves that player's body and
+camera independently. Removing that seat preserves the survivors.
+Disconnecting the first controller while held releases its input, and
+remaining controllers operate their surviving routes. All recorded
+players are alive at the qualified control cuts; Q2 mode, allocated
+client rows and actual actor/slot bindings agree.
+
+Root inspected each four-viewport PNG. Every case quits publicly with
+exit zero, preserves the installed package and owner settings, and
+cleans up recorded owned processes. The exact index is
+`/tmp/qa-the180-split-recovery-v3-20261007/installed338-matrix.json`; each
+bundle contains event/console logs, sampled state, qualification results
+and PNGs for the input and seat-lifecycle steps. Earlier failed results
+remain preserved and are superseded only within this native matrix.
+
+These are private SDL virtual-device and X keyboard checks, not physical
+controller hardware proof. The startup observer detaches before the
+input route; the GL matrix uses private software GL with no GPU binds.
+No performance or audio-fidelity claim follows from these runs, which
+use `--no-audio`. Original modules and combined configurations are
+outside this ten-case proof.
