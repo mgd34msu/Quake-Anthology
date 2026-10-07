@@ -2,7 +2,6 @@
 #define QA_APPLICATION_NATIVE_Q3_CLIENT_PRIVATE_H
 #include "qa/application_native_q3_client.h"
 #include "qa/source_save.h"
-#include "qa/console_cvar_observer.h"
 
 typedef struct native_client_definition {
     const char *symbol, *name, *value;
@@ -23,9 +22,6 @@ struct qa_native_q3_client_service {
     size_t count;
     uint64_t force_model_count, overlay_count;
     int32_t local_server;
-    qa_cvar_observer_token time_owner_tokens[6], time_mirror_tokens[6];
-    bool time_names[6], time_bound;
-    size_t time_busy;
     size_t action_busy;
     char *system_info;
     bool registered, updating, overlay_initial;
@@ -66,7 +62,6 @@ bool native_client_allocate_bound(qa_application *, const qa_native_q3_client_ba
     qa_native_q3_client_service **, qa_error *);
 bool native_client_fail(qa_error *, qa_status, const char *);
 bool native_client_cvar_fields(qa_source_save_io *, qa_native_q3_client_cvar *);
-bool native_client_time_bind(qa_native_q3_client_service *, bool restoring, qa_error *);
-void native_client_time_close(qa_native_q3_client_service *);
+bool native_client_time_register(qa_native_q3_client_service *, qa_error *);
 bool native_client_time_fields(qa_source_save_io *, qa_native_q3_client_service *);
 #endif

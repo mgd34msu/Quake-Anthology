@@ -26,8 +26,7 @@ static bool configuration_fields(qa_source_save_io *io,qa_native_q3_client_servi
         !qa_source_save_u64(io,&service->overlay_count) ||
         !qa_source_save_bool(io,&service->overlay_initial) ||
         !qa_source_save_i32(io,&service->local_server) || !native_client_time_fields(io,service) ||
-        (service->services.client.initialized && !service->registered) ||
-        (service->time_bound && !service->services.client.initialized)) return false;
+        (service->services.client.initialized && !service->registered)) return false;
     for (size_t i=0;i<count;++i) {
         if (!native_client_cvar_fields(io,&service->cache[i])) return false;
         if (native_client_definitions[i].missionpack && service->product!=QA_Q3_TEAM_ARENA) {
@@ -63,10 +62,6 @@ bool qa_native_q3_client_restore(qa_application *app,const qa_native_q3_client_b
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && configuration_fields(&io,service) &&
         qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if (ok && service->time_bound) {
-        service->time_bound=false;
-        ok=native_client_time_bind(service,true,error);
-    }
     if (ok && service->registered) for (size_t i=0;ok && i<service->count;++i) {
         const native_client_definition *definition=&native_client_definitions[i];
         if (definition->missionpack && service->product!=QA_Q3_TEAM_ARENA) continue;
@@ -76,7 +71,7 @@ bool qa_native_q3_client_restore(qa_application *app,const qa_native_q3_client_b
         ok=qa_cvars_find(service->services.client.cvars,definition->name)!=NULL;
     }
     if (!ok) {
-        native_client_time_close(service); free(service->system_info);
+        free(service->system_info);
         qa_launch_instance_lease_release(service->source_lease); free(service);
         if (!error || error->code==QA_OK) native_client_fail(error,QA_ERROR_FORMAT,"Invalid native CGAME constructor continuation");
         return false;

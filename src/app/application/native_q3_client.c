@@ -1,4 +1,5 @@
 #include "native_q3_client.h"
+#include "qa/console_cvar_observer.h"
 #include "internal.h"
 #include "native_q3_console.h"
 #include "native_q3_wire_state.h"
@@ -201,14 +202,14 @@ bool qa_native_q3_client_service_destroy(qa_native_q3_client_service *service,qa
 {
     if (!service) return true;
     if (!qa_native_q3_client_service_retire_ready(service,error)) return false;
-    native_client_time_close(service); free(service->system_info);
+    free(service->system_info);
     service->character.release(service->character.lifetime);
     service->services.release(service->services.context);
     qa_launch_instance_lease_release(service->source_lease); free(service); return true;
 }
 bool qa_native_q3_client_service_idle(const qa_native_q3_client_service *service)
 {
-    return !service || (!service->updating && !service->time_busy && !service->action_busy &&
+    return !service || (!service->updating && !service->action_busy &&
         qa_native_q3_wire_reader_idle(service->services.wire_reader) &&
         service->services.idle(service->services.context) &&
         qa_cvars_observer_idle(service->services.client.cvars) &&
@@ -228,7 +229,7 @@ bool qa_native_q3_client_initialized(qa_native_q3_client_service *service,qa_err
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME Init completion requires its actual registered constructor");
     service->services.client.initialized=true;
     service->updating=true;
-    bool ok=native_client_time_bind(service,false,error);
+    bool ok=native_client_time_register(service,error);
     service->updating=false; return ok;
 }
 bool qa_native_q3_client_video_reset(qa_native_q3_client_service *service,qa_error *error)
@@ -236,7 +237,6 @@ bool qa_native_q3_client_video_reset(qa_native_q3_client_service *service,qa_err
     if (!service || !qa_native_q3_client_service_idle(service) ||
         !qa_native_q3_client_service_current(service))
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CG video reset requires its returned actual service");
-    native_client_time_close(service);
     memset(service->cache,0,sizeof(service->cache));
     service->force_model_count=service->overlay_count=0;
     service->local_server=0; service->registered=false; service->overlay_initial=true;
