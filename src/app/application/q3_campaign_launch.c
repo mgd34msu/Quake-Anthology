@@ -109,18 +109,16 @@ bool application_q3_campaign_launch_guest_handoff(application_provider *provider
 }
 
 bool application_q3_campaign_launch_retired(qa_application *app,
-    application_publication *publication, qa_error *error)
+    application_publication *publication, qa_cvars *cvars, qa_error *error)
 {
     struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
     if (!state) return true;
-    if (!publication || !publication->sources_retired ||
-        (state->original && !state->shutdown_returned) ||
-        publication->map_provider != state->candidate || !state->candidate_cvars ||
-        !qa_cvars_same_store(state->candidate_cvars, app->cvars))
+    if (!publication->sources_retired ||
+        (state->original && !state->shutdown_returned))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign values require the actual completed Source Shutdown");
     for (size_t i = 0; i < state->count; ++i)
-        if (!qa_cvars_set(state->candidate_cvars, state->settings[i].name,
+        if (!qa_cvars_set(cvars, state->settings[i].name,
                 state->settings[i].value, true, error)) return false;
     return true;
 }

@@ -1437,7 +1437,7 @@ static bool publication_stage_values(qa_application *application,
         !application_provider_seed_cvars(source, actual.cvars,
             qa_launch_snapshot_choices(publication->candidate), error) ||
         !qa_cvars_apply_latched(application->cvars, NULL, error) ||
-        !application_q3_campaign_launch_retired(application, publication, error)) return false;
+        !application_q3_campaign_launch_retired(application, publication, actual.cvars, error)) return false;
     if (publication->source_capacity_prepared &&
         !qa_cvars_set_number(application->cvars, "sv_maxclients",
             (float)publication->source_max_clients, error)) return false;
