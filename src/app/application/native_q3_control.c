@@ -308,11 +308,11 @@ static bool movement_command(native_q3_think_call *call, bool spectator, qa_erro
     call->movement.forwardmove = call->movement.rightmove = call->movement.upmove = 0;
     if (elapsed >= 2000 && elapsed <= 2500) {
         qa_console *console;
-        qa_command_context context = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
-            .origin = QA_COMMAND_SERVER};
-        if (!application_native_q3_console_at(provider, &console, NULL, NULL))
+        qa_command_context context;
+        if (!application_native_q3_console_at(provider, &console, NULL, &context))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q3 intermission has no source console");
-        if (!application_unified_q3_console(provider, false, "centerview\n", error) ||
+        if (!qa_application_capture_command_context(provider->application,&context,&context,error) ||
+            !application_unified_q3_console(provider, false, "centerview\n", error) ||
             !qa_console_append(console, &context, "centerview\n", error)) return false;
     }
     qa_q3_wire_policy policy = {.pm_type = 6};

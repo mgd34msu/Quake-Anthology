@@ -38,8 +38,11 @@ bool application_native_q3_console_print(void *opaque, const char *text,
     qa_q3_game *game = source->state.q3;
     struct application_native_q3_console *console = source->native_q3_console;
     qa_actor_owner owner = source->owner;
-    qa_command_context context = {.owner = source->owner, .dialect = QA_CONSOLE_Q3,
-                                  .origin = QA_COMMAND_SERVER};
+    qa_console *physical_console=NULL;
+    qa_command_context context;
+    if (!application_native_q3_console_at(source,&physical_console,NULL,&context) ||
+        physical_console!=application->console)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"Q3 print source has no live GAME console");
     if (!qa_application_capture_command_context(application, &context, &context, error))
         return false;
     size_t length = strlen(text);

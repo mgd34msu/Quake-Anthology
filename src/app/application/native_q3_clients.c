@@ -1413,12 +1413,13 @@ bool application_native_q3_client_text(application_provider *provider, qa_actor_
 {
     uint32_t slot;
     qa_console *console;
+    qa_command_context context;
     if (!text || !source(provider, actor, &slot, error) ||
-        !application_native_q3_console_at(provider, &console, NULL, NULL) ||
+        !application_native_q3_console_at(provider, &console, NULL, &context) ||
         !application_native_q3_console_borrow(provider, error)) return false;
-    qa_command_context context = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
-        .origin = QA_COMMAND_REMOTE, .actor = actor, .seat = UINT32_MAX};
-    bool ok = qa_console_execute_now(console, &context, text, error);
+    context.origin=QA_COMMAND_REMOTE; context.actor=actor; context.seat=UINT32_MAX;
+    bool ok = qa_application_capture_command_context(provider->application,&context,&context,error) &&
+        qa_console_execute_now(console, &context, text, error);
     application_native_q3_console_release(provider);
     return ok;
 }
