@@ -2657,7 +2657,6 @@ static bool control_move(qa_application *application,
     application->operation = guest_previous_operation;
     if (!guest_ok || guest_handled) {
         if (guest_ok && applied) *applied = *command;
-        if (!guest_ok) application_fault(application, error);
         return guest_ok;
     }
     qa_movement_profile profile = selected_profile(application, movement);
@@ -2939,20 +2938,21 @@ static bool control_move(qa_application *application,
         }
     }
     qa_error cleanup = {0};
+    bool cleanup_ok = true;
     bool retain = ok && preparing && live(application, actor);
     if (physics && prepared) {
         prepared->move.qc_slice = move.qc_slice; prepared->move.qc_command = move.qc_command;
         bool aborted = application_control_turn_abort(prepared, &cleanup); prepared = NULL;
         move.qc_slice = (application_source_input_scope){0}; move.qc_command = (application_source_input_scope){0};
-        if (!aborted) { if (ok && error) *error = cleanup; ok = false; }
+        if (!aborted) { if (error) *error = cleanup; ok = false; cleanup_ok = false; }
     }
     if (!retain && !application_control_source_abort(&move.qc_slice, &cleanup)) {
-        if (ok && error) *error = cleanup;
-        ok = false;
+        if (error) *error = cleanup;
+        ok = false; cleanup_ok = false;
     }
     if (!retain && !application_control_source_abort(&move.qc_command, &cleanup)) {
-        if (ok && error) *error = cleanup;
-        ok = false;
+        if (error) *error = cleanup;
+        ok = false; cleanup_ok = false;
     }
     if (ok && physics && live(application, actor)) {
         ok = step_nq_equipment(&move, error);
@@ -2966,8 +2966,6 @@ static bool control_move(qa_application *application,
         *record = (application_control_record){0};
     } else if (record->active && qa_actor_id_equal(record->actor, actor))
         record->moving = false;
-    if (!ok && move.committed)
-        application_fault(application, error);
     end_q1_operations(&move);
     if (retain) {
         prepared->move = move; prepared->input = input;
@@ -3008,12 +3006,15 @@ static bool control_move(qa_application *application,
         if (ok) *turn = prepared;
         else {
             qa_error aborted = {0};
-            (void)application_control_turn_abort(prepared, &aborted);
-            application_fault(application, error);
+            if (!application_control_turn_abort(prepared, &aborted)) {
+                if (error) *error = aborted;
+                cleanup_ok = false;
+            }
         }
     } else free(prepared);
     application->operation = previous_operation;
     application_control_frames_state(application, actor, NULL);
+    if (!cleanup_ok) application_fault(application, error);
     if (ok && applied) *applied = effective_command;
     return ok;
 }
@@ -3145,11 +3146,42 @@ const qa_movement_result *application_control_q3_result(application_provider *pr
     return &record->result;
 }
 
-bool application_control_stage_move(qa_application *application, qa_actor_id actor,
+application_control_outcome application_control_finish(qa_application *app, qa_actor_id actor,
+    application_control_outcome outcome, const char *site, qa_error *error)
+{
+    if (outcome == APPLICATION_CONTROL_COMPLETED) return outcome;
+    if (!app || app->state != QA_APPLICATION_RUNNING || app->destroy_requested ||
+        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
+        qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        !qa_combat_idle(app->combat) || !qa_modes_idle(app->modes) ||
+        !application_guest_input_actor_idle(app, actor))
+        return APPLICATION_CONTROL_FAILED;
+    if (actor.slot < app->control_capacity) {
+        const application_control_record *record = &app->controls[actor.slot];
+        if (qa_actor_id_equal(record->actor, actor) && record->moving)
+            return APPLICATION_CONTROL_FAILED;
+    }
+    for (const application_control_mod_input *scope = application_control_mod_head(app);
+         scope; scope = scope->next)
+        if (qa_actor_id_equal(scope->actor, actor)) return APPLICATION_CONTROL_FAILED;
+    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+        if (provider->kind == APPLICATION_PROVIDER_QC && !application_qc_input_idle(provider))
+            return APPLICATION_CONTROL_FAILED;
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+            !application_native_q2_idle(provider)) return APPLICATION_CONTROL_FAILED;
+    }
+    if (outcome != APPLICATION_CONTROL_SKIPPED) qa_application_feature_report(app, site, error);
+    if (error) *error = (qa_error){0};
+    return APPLICATION_CONTROL_SKIPPED;
+}
+
+application_control_outcome application_control_stage_move(qa_application *application, qa_actor_id actor,
                                      const qa_movement_command *command,
                                      struct application_control_turn **turn, qa_error *error)
 {
-    return control_move(application, actor, command, NULL, turn, error);
+    bool completed = control_move(application, actor, command, NULL, turn, error);
+    return application_control_finish(application, actor, completed
+        ? APPLICATION_CONTROL_COMPLETED : APPLICATION_CONTROL_FAILED, "control/move", error);
 }
 
 bool application_control_turn_abort(struct application_control_turn *turn, qa_error *error)
@@ -3387,7 +3419,6 @@ guest_weapons_finished:
     if (record->retired && qa_actor_id_equal(record->actor, actor)) {
         qa_movement_result_free(&record->result); *record = (application_control_record){0};
     } else if (record->active && qa_actor_id_equal(record->actor, actor)) record->moving = false;
-    if (!ok) application_fault(application, error);
     end_q1_operations(&move);
     return ok;
 }

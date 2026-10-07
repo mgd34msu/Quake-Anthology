@@ -4,8 +4,13 @@
 #include "internal.h"
 #include "qa/source_save.h"
 #include "qa/game_q3_wire.h"
-#include "native_q3_control.h"
 #include "client_outputs.h"
+
+typedef enum application_control_outcome {
+    APPLICATION_CONTROL_FAILED,
+    APPLICATION_CONTROL_COMPLETED,
+    APPLICATION_CONTROL_SKIPPED
+} application_control_outcome;
 
 typedef enum application_control_source_path {
     APPLICATION_CONTROL_NQ_TURN,
@@ -115,7 +120,7 @@ bool application_control_frames_apply_nested(qa_application *, qa_actor_id,
 bool application_control_last_qw_command(const qa_application *, qa_actor_id,
     qa_movement_command *, uint64_t *, bool *, qa_error *);
 bool application_control_q3_flags(application_provider *, qa_actor_id, uint32_t, uint32_t, qa_error *);
-bool application_control_frames_q3_move(qa_application *, const qa_source_command *,
+application_control_outcome application_control_frames_q3_move(qa_application *, const qa_source_command *,
     const qa_movement_command *, bool use_holdable, qa_error *);
 bool application_guest_input_interval(const qa_application *, qa_actor_id, uint64_t *);
 void application_control_frames_state(qa_application *, qa_actor_id, qa_movement_state *);
@@ -146,8 +151,10 @@ bool application_control_frames_fields(qa_source_save_io *, qa_application *,
                                         const application_control_record *,
                                         struct application_control_frames **, qa_error *);
 
-bool application_control_stage_move(qa_application *, qa_actor_id, const qa_movement_command *,
+application_control_outcome application_control_stage_move(qa_application *, qa_actor_id, const qa_movement_command *,
                                      struct application_control_turn **, qa_error *);
+application_control_outcome application_control_finish(qa_application *, qa_actor_id,
+    application_control_outcome, const char *site, qa_error *);
 bool application_control_turn_abort(struct application_control_turn *, qa_error *);
 bool application_control_turn_resume(struct application_control_turn *, qa_error *);
 bool application_control_group_post(qa_application *, qa_actor_id, qa_error *);

@@ -862,9 +862,9 @@ bool qa_session_invoke(qa_session *session, qa_actor_id actor, qa_invocation_kin
     session->invocation = &invocation;
     bool ok = callback(context, session, error);
     session->invocation = invocation.parent;
-    if (!ok) fault(session, error);
+    if (!ok && invocation.parent == NULL) fault(session, error);
     if (session->faulted) { if (error != NULL) *error = session->error; return false; }
-    return true;
+    return ok;
 }
 
 typedef struct physics_invocation {

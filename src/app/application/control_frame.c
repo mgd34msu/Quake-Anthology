@@ -1,4 +1,5 @@
 #include "control_frame.h"
+#include "native_q3_control.h"
 #include "guest_input_private.h"
 #include "guest_q3_components.h"
 #include "guest_q3_save.h"
@@ -1479,7 +1480,7 @@ const application_control_context *application_control_frame_current(const qa_ap
     return frames->current;
 }
 
-bool application_control_frames_q3_move(qa_application *app, const qa_source_command *admission,
+application_control_outcome application_control_frames_q3_move(qa_application *app, const qa_source_command *admission,
     const qa_movement_command *command, bool use_holdable, qa_error *error)
 {
     if (!app || !app->control_frames || !admission || !command || admission->kind != QA_CLOCK_Q3)
@@ -1508,14 +1509,17 @@ bool application_control_frames_q3_move(qa_application *app, const qa_source_com
             command = &unified_selected;
         }
     }
-    if (ok) ok = application_control_move_applied(app, admission->actor, command, NULL, error);
+    application_control_outcome outcome = ok
+        ? application_control_stage_move(app, admission->actor, command, NULL, error)
+        : application_control_finish(app, admission->actor, false, "control/q3-command", error);
     owner->current = previous;
+    ok = outcome != APPLICATION_CONTROL_FAILED;
     if (ok && qa_actor_id_equal(input->actor, admission->actor) &&
         (!owner->q3_group || input->sequence == owner->q3_group->commands[0].sequence)) {
         owner->inputs[admission->actor.slot].value.arsenal = 0;
         owner->inputs[admission->actor.slot].value.weapon = 0;
     }
-    return ok;
+    return outcome;
 }
 
 void application_control_frames_state(qa_application *app, qa_actor_id actor, qa_movement_state *state)
@@ -1587,6 +1591,7 @@ typedef struct control_apply {
     struct application_control_turn **turn;
     qa_actor_owner arsenal;
     qa_item_id weapon;
+    application_control_outcome outcome;
 } control_apply;
 
 static bool drain(qa_application *, const qa_source_frame *, size_t, bool, bool, qa_error *);
@@ -1599,10 +1604,12 @@ static bool invoke_apply(void *opaque, qa_session *session, qa_error *error)
     if (session != call->application->session)
         return application_fail(error, QA_ERROR_ARGUMENT, "Applied command invocation lost its session");
     if (!qa_actors_get(qa_session_actors(session), call->actor)) return true;
-    return application_control_stage_move(call->application, call->actor, call->command, call->turn, error);
+    call->outcome = application_control_stage_move(call->application, call->actor,
+        call->command, call->turn, error);
+    return call->outcome != APPLICATION_CONTROL_FAILED;
 }
 
-static bool apply(qa_application *app, qa_actor_id actor, const qa_movement_command *command,
+static application_control_outcome apply(qa_application *app, qa_actor_id actor, const qa_movement_command *command,
                     const qa_source_frame *frame, application_control_source_path path,
                     application_control_stage stage, bool retained, bool defer_postthink,
                     struct application_control_turn **turn, qa_actor_owner arsenal, qa_item_id weapon, qa_error *error)
@@ -1641,14 +1648,14 @@ static bool apply(qa_application *app, qa_actor_id actor, const qa_movement_comm
         }
         command = &selected;
     }
-    control_apply call = {app, actor, command, turn, arsenal, weapon};
+    control_apply call = {app, actor, command, turn, arsenal, weapon, APPLICATION_CONTROL_COMPLETED};
     const qa_invocation *invocation = qa_session_current(app->session);
     bool existing_turn = stage == APPLICATION_CONTROL_PHYSICS && invocation &&
         invocation->kind == QA_INVOKE_PHYSICS && qa_actor_id_equal(invocation->actor, actor);
     bool ok = existing_turn ? invoke_apply(&call, app->session, error) :
         qa_session_invoke(app->session, actor, QA_INVOKE_PHYSICS, invoke_apply, &call, error);
     owner->current = previous;
-    return ok;
+    return ok ? call.outcome : APPLICATION_CONTROL_FAILED;
 }
 
 bool application_control_frames_prepare(void *opaque, qa_session *session, const qa_source_frame *frames,
@@ -1683,8 +1690,14 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
         command.impulse = input->impulse;
         if (input->domain != CONTROL_COMMAND_NQ_SOURCE)
             command.milliseconds = (uint32_t)(frame->elapsed_ns / UINT64_C(1000000));
-        if (!apply(app, record->actor, &command, frame, APPLICATION_CONTROL_NQ_TURN,
-            APPLICATION_CONTROL_PREPARE, true, false, &input->turn, input->arsenal, input->weapon, error)) return false;
+        application_control_outcome outcome = apply(app, record->actor, &command, frame,
+            APPLICATION_CONTROL_NQ_TURN, APPLICATION_CONTROL_PREPARE, true, false,
+            &input->turn, input->arsenal, input->weapon, error);
+        if (outcome == APPLICATION_CONTROL_FAILED) return false;
+        if (outcome == APPLICATION_CONTROL_SKIPPED) {
+            input->source_turn_actor = record->actor; input->source_turn_provider = frame->provider;
+            input->source_turn_frame_number = frame->number;
+        }
         input->arsenal = 0; input->weapon = 0;
     }
     return drain(app, frames, count, false, true, error);
@@ -1695,6 +1708,7 @@ typedef struct command_group_call {
     control_group *group;
     size_t index;
     bool post;
+    application_control_outcome outcome;
 } command_group_call;
 
 static float qw_axis(float value)
@@ -1879,15 +1893,16 @@ static bool unified_q2_source(const control_unified *receipt, qa_movement_kind s
     *out = command; return true;
 }
 
-static bool qw_foreign_slice(command_group_call *call, application_control_context *current,
-    qa_movement_command raw, uint32_t maximum, qa_error *error)
+static application_control_outcome qw_foreign_slice(command_group_call *call,
+    application_control_context *current, qa_movement_command raw, uint32_t maximum, qa_error *error)
 {
     if (raw.milliseconds > maximum) {
         raw.milliseconds /= 2;
-        if (!qw_foreign_slice(call, current, raw, maximum, error)) return false;
+        application_control_outcome outcome = qw_foreign_slice(call, current, raw, maximum, error);
+        if (outcome != APPLICATION_CONTROL_COMPLETED) return outcome;
         raw.impulse = 0;
-        return !qa_actors_get(qa_session_actors(call->app->session), call->group->actor) ||
-            qw_foreign_slice(call, current, raw, maximum, error);
+        return !qa_actors_get(qa_session_actors(call->app->session), call->group->actor)
+            ? APPLICATION_CONTROL_COMPLETED : qw_foreign_slice(call, current, raw, maximum, error);
     }
     qa_application *app = call->app; qa_actor_id actor = call->group->actor;
     application_source_input_scope scope = {0};
@@ -1895,24 +1910,32 @@ static bool qw_foreign_slice(command_group_call *call, application_control_conte
     current->source_command = raw;
     bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
         &raw, NULL, &scope, true, true, current->source_elapsed_ns, error);
+    application_control_outcome outcome = APPLICATION_CONTROL_COMPLETED;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
         current->source_command = raw;
         qa_movement_command selected;
-        ok = q1_selected_command(app, actor, &raw, current->command.time_ns, &selected, error) &&
-            application_control_stage_move(app, actor, &selected, NULL, error);
+        ok = q1_selected_command(app, actor, &raw, current->command.time_ns, &selected, error);
+        if (ok) {
+            outcome = application_control_stage_move(app, actor, &selected, NULL, error);
+            ok = outcome != APPLICATION_CONTROL_FAILED;
+        }
     }
-    if (ok && qa_actors_get(qa_session_actors(app->session), actor))
+    if (ok && outcome == APPLICATION_CONTROL_COMPLETED &&
+        qa_actors_get(qa_session_actors(app->session), actor))
         ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
             &raw, NULL, &scope, false, true, current->source_elapsed_ns, error);
     qa_error cleanup = {0};
     if (!application_control_source_abort(&scope, &cleanup)) {
-        if (ok && error) *error = cleanup;
-        ok = false;
+        if (error) *error = cleanup;
+        application_fault(app, &cleanup);
+        return APPLICATION_CONTROL_FAILED;
     }
-    return ok;
+    return application_control_finish(app, actor, ok ? outcome : APPLICATION_CONTROL_FAILED,
+        "control/qw-slice", error);
 }
 
-static bool qw_foreign_command(command_group_call *call, application_control_context *current, qa_error *error)
+static application_control_outcome qw_foreign_command(command_group_call *call,
+    application_control_context *current, qa_error *error)
 {
     qa_application *app = call->app; qa_actor_id actor = call->group->actor;
     qa_movement_command raw = call->group->commands[call->index];
@@ -1932,23 +1955,30 @@ static bool qw_foreign_command(command_group_call *call, application_control_con
     current->source_elapsed_ns = (uint64_t)elapsed * UINT64_C(1000000);
     bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
         &raw, NULL, &scope, true, false, current->source_elapsed_ns, error);
-    if (ok && qa_actors_get(qa_session_actors(app->session), actor))
-        ok = qw_foreign_slice(call, current, raw, maximum, error);
-    if (ok && qa_actors_get(qa_session_actors(app->session), actor))
+    application_control_outcome outcome = APPLICATION_CONTROL_COMPLETED;
+    if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
+        outcome = qw_foreign_slice(call, current, raw, maximum, error);
+        ok = outcome != APPLICATION_CONTROL_FAILED;
+    }
+    if (ok && outcome == APPLICATION_CONTROL_COMPLETED &&
+        qa_actors_get(qa_session_actors(app->session), actor))
         ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
             &raw, NULL, &scope, false, false, (uint64_t)elapsed * UINT64_C(1000000), error);
     qa_error cleanup = {0};
     if (!application_control_source_abort(&scope, &cleanup)) {
-        if (ok && error) *error = cleanup;
-        ok = false;
+        if (error) *error = cleanup;
+        application_fault(app, &cleanup);
+        return APPLICATION_CONTROL_FAILED;
     }
-    return ok;
+    return application_control_finish(app, actor, ok ? outcome : APPLICATION_CONTROL_FAILED,
+        "control/qw-command", error);
 }
 
 typedef struct native_q2_command_call {
     qa_application *app;
     application_provider *source, *movement, *arsenal;
     application_control_context *current;
+    application_control_outcome outcome;
 } native_q2_command_call;
 
 static bool native_q2_command_current(void *context, qa_actor_id actor)
@@ -1982,9 +2012,10 @@ static bool native_q2_command_move(void *context, const qa_movement_input *input
             &input->command, &call->current->command, &selected, error)) return false;
     uint64_t previous_elapsed = call->current->source_elapsed_ns;
     call->current->source_elapsed_ns = input->elapsed_ns;
-    bool moved = application_control_stage_move(call->app, input->actor, &selected, NULL, error);
+    application_control_outcome moved = application_control_stage_move(call->app, input->actor, &selected, NULL, error);
     call->current->source_elapsed_ns = previous_elapsed;
-    if (!moved) return false;
+    call->outcome = moved;
+    if (moved != APPLICATION_CONTROL_COMPLETED) return false;
     if (!qa_actors_get(qa_session_actors(call->app->session), input->actor)) {
         qa_movement_result_free(out);
         *out = (qa_movement_result){.status = QA_MOVEMENT_ACTOR_REMOVED,
@@ -2023,6 +2054,18 @@ static bool native_q2_command_arsenal(void *context, qa_actor_id actor,
     return application_control_native_q2_weapon_step(call->source, actor, raw, time_ns, error);
 }
 
+static bool end_skipped_command(qa_application *app, qa_actor_id actor,
+    const application_control_context *current, qa_error *error)
+{
+    if (!current->source_q2cmd || !qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    application_provider *source = source_provider(app, actor);
+    if (!source || source->kind != APPLICATION_PROVIDER_Q2) return true;
+    qa_q2_wire_movement physical;
+    if (!qa_q2_wire_movement_read(source->state.q2, actor, &physical, error)) return false;
+    return !physical.command_pending || qa_q2_wire_movement_complete(source->state.q2, actor,
+        NULL, &current->source_command, false, error);
+}
+
 static bool apply_command_group(void *opaque, qa_session *session, const qa_source_command *command, qa_error *error)
 {
     command_group_call *call = opaque;
@@ -2041,6 +2084,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         current.source_elapsed_ns = (uint64_t)current.source_command.milliseconds * UINT64_C(1000000);
     }
     bool ok = true;
+    application_control_outcome outcome = APPLICATION_CONTROL_COMPLETED;
     if (group->domain == CONTROL_COMMAND_UNIFIED) {
         qa_movement_command selected;
         owner->current = &current;
@@ -2070,9 +2114,12 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                 }
             }
             bool cutscene = app->controls[group->actor.slot].cutscene;
-            if (ok && run_pmove && (!physical_q2 || !cutscene))
-                ok = application_control_stage_move(app, group->actor, &selected, NULL, error);
-            if (ok && physical_q2 && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
+            if (ok && run_pmove && (!physical_q2 || !cutscene)) {
+                outcome = application_control_stage_move(app, group->actor, &selected, NULL, error);
+                ok = outcome != APPLICATION_CONTROL_FAILED;
+            }
+            if (ok && outcome == APPLICATION_CONTROL_COMPLETED && physical_q2 && run_pmove &&
+                qa_actors_get(qa_session_actors(session), group->actor)) {
                 application_control_record *record = &app->controls[group->actor.slot];
                 if (source_provider(app, group->actor) != source || !record->active || record->moving ||
                     record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
@@ -2095,11 +2142,17 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         if (native_q2_raw_source_client(source, group->actor)) {
             native_q2_command_call native = {.app = app, .source = source, .current = &current,
                 .movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, ""),
-                .arsenal = application_provider_for(app, group->actor, QA_ROLE_ARSENAL, "")};
+                .arsenal = application_provider_for(app, group->actor, QA_ROLE_ARSENAL, ""),
+                .outcome = APPLICATION_CONTROL_COMPLETED};
             application_native_q2_input_stage stage = {.context = &native, .actor = group->actor,
                 .time_ns = command->time_ns, .current = native_q2_command_current, .move = native_q2_command_move,
                 .arsenal = native_q2_command_arsenal};
             ok = application_native_q2_input_think(source, group->actor, &current.source_command, &stage, error);
+            if (native.outcome == APPLICATION_CONTROL_SKIPPED) {
+                outcome = application_control_finish(app, group->actor, native.outcome,
+                    "control/native-q2-command", error);
+                ok = outcome != APPLICATION_CONTROL_FAILED;
+            }
         } else {
             qa_movement_command selected;
             qa_q2_wire_movement physical;
@@ -2112,10 +2165,14 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
             if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
                 if (source_movement) app->controls[group->actor.slot].state = physical.state;
                 ok = q2_selected_command(app, group->actor, source, &physical,
-                    &current.source_command, command, &selected, error) &&
-                    application_control_stage_move(app, group->actor, &selected, NULL, error);
+                    &current.source_command, command, &selected, error);
+                if (ok) {
+                    outcome = application_control_stage_move(app, group->actor, &selected, NULL, error);
+                    ok = outcome != APPLICATION_CONTROL_FAILED;
+                }
             }
-            if (ok && run_pmove && qa_actors_get(qa_session_actors(session), group->actor)) {
+            if (ok && outcome == APPLICATION_CONTROL_COMPLETED && run_pmove &&
+                qa_actors_get(qa_session_actors(session), group->actor)) {
                 application_control_record *record = &app->controls[group->actor.slot];
                 if (source_provider(app, group->actor) != source || !record->active || record->moving ||
                     record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
@@ -2153,17 +2210,33 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
             qa_session_active_frame(session, group->provider, &frame)) {
             input->frame_owned = true; input->owned_frame_number = frame.number;
         }
-        ok = group->domain == CONTROL_COMMAND_QW_SOURCE && app->controls[group->actor.slot].state.kind != QA_MOVEMENT_QUAKEWORLD
-            ? qw_foreign_command(call, &current, error)
-            : application_control_stage_move(app, group->actor, &group->commands[call->index], NULL, error);
+        if (group->domain == CONTROL_COMMAND_QW_SOURCE &&
+            app->controls[group->actor.slot].state.kind != QA_MOVEMENT_QUAKEWORLD) {
+            outcome = qw_foreign_command(call, &current, error);
+            ok = outcome != APPLICATION_CONTROL_FAILED;
+        } else {
+            outcome = application_control_stage_move(app, group->actor,
+                &group->commands[call->index], NULL, error);
+            ok = outcome != APPLICATION_CONTROL_FAILED;
+        }
     }
+    if (!ok || outcome == APPLICATION_CONTROL_SKIPPED) {
+        qa_error cleanup = {0};
+        if (!end_skipped_command(app, group->actor, &current, &cleanup)) {
+            if (error) *error = cleanup;
+            application_fault(app, &cleanup);
+            outcome = APPLICATION_CONTROL_FAILED;
+        } else if (!ok)
+            outcome = application_control_finish(app, group->actor, false, "control/source-command", error);
+    }
+    call->outcome = outcome;
     owner->current = previous;
-    return ok;
+    return outcome != APPLICATION_CONTROL_FAILED;
 }
 
 static bool execute_original_q3_group(qa_application *app, control_group *group, qa_error *error)
 {
-    command_group_call call = {app, group, 0, false};
+    command_group_call call = {app, group, 0, false, APPLICATION_CONTROL_COMPLETED};
     application_operation previous = app->operation;
     app->operation = APPLICATION_ADVANCING;
     bool ok = qa_session_command_call(app->session, group->provider, group->actor, 0,
@@ -2209,15 +2282,18 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
         application_provider *provider = live ? source_provider(app, group->actor) : NULL;
         if (live && (!provider || group->provider != provider->owner || (frame && group->provider != frame->provider)))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Pending input execution owner changed");
+        bool skipped = false;
         uint64_t host_elapsed = frame ? frame->elapsed_ns : 0;
         (void)qa_session_advance_interval(app->session, &host_elapsed);
-        for (size_t i = 0; ok && live && i < group->count; ++i) {
+        for (size_t i = 0; ok && live && !skipped && i < group->count; ++i) {
             if (group->domain == CONTROL_COMMAND_UNIFIED && provider->kind == APPLICATION_PROVIDER_Q3) {
                 qa_q3_usercmd raw;
                 ok = unified_q3_source(app, group->actor, provider, &group->unified, &raw, error);
                 if (ok) {
                     owner->q3_group = group;
-                    ok = application_control_q3_client_think(provider, group->actor, &raw, error);
+                    application_control_outcome outcome = application_control_q3_client_think(provider, group->actor, &raw, error);
+                    ok = outcome != APPLICATION_CONTROL_FAILED;
+                    skipped = outcome == APPLICATION_CONTROL_SKIPPED;
                     owner->q3_group = NULL;
                 }
                 live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
@@ -2230,7 +2306,9 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
             if (group->domain == CONTROL_COMMAND_Q3_SOURCE && provider->kind == APPLICATION_PROVIDER_Q3) {
                 qa_q3_usercmd raw = q3_source_command(&group->commands[i], true);
                 owner->q3_group = group;
-                ok = application_control_q3_client_think(provider, group->actor, &raw, error);
+                application_control_outcome outcome = application_control_q3_client_think(provider, group->actor, &raw, error);
+                ok = outcome != APPLICATION_CONTROL_FAILED;
+                skipped = outcome == APPLICATION_CONTROL_SKIPPED;
                 owner->q3_group = NULL;
                 live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
                 if (ok && live) {
@@ -2245,9 +2323,10 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
             uint64_t elapsed = timing.kind == QA_MOVEMENT_NETQUAKE
                 ? source_interval(group->commands[i].kind, host_elapsed)
                 : (uint64_t)timing.milliseconds * UINT64_C(1000000);
-            command_group_call call = {app, group, i, false};
+            command_group_call call = {app, group, i, false, APPLICATION_CONTROL_COMPLETED};
             ok = qa_session_command_call(app->session, group->provider, group->actor, elapsed,
                 apply_command_group, &call, error);
+            skipped = call.outcome == APPLICATION_CONTROL_SKIPPED;
             live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
             if (ok && live && (group->domain == CONTROL_COMMAND_Q3_SOURCE || group->domain == CONTROL_COMMAND_Q2_SOURCE ||
                 group->domain == CONTROL_COMMAND_UNIFIED)) {
@@ -2255,9 +2334,9 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
                 record->command_sequence = group->commands[i].sequence; record->command_seen = true;
             }
         }
-        if (ok && live && quakeworld) {
+        if (ok && live && !skipped && quakeworld) {
             uint64_t elapsed = (uint64_t)group->commands[group->count - 1].milliseconds * UINT64_C(1000000);
-            command_group_call call = {app, group, group->count - 1, true};
+            command_group_call call = {app, group, group->count - 1, true, APPLICATION_CONTROL_COMPLETED};
             ok = qa_session_command_call(app->session, group->provider, group->actor, elapsed,
                 apply_command_group, &call, error);
         }
@@ -2362,8 +2441,14 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         ready = application_qc_control_before_actor(provider, actor, frame, error);
     if (!ready) {
         struct application_control_turn *turn = input->turn; input->turn = NULL;
-        (void)application_control_turn_abort(turn, NULL);
-        return false;
+        qa_error cleanup = {0};
+        if (!application_control_turn_abort(turn, &cleanup)) {
+            if (error) *error = cleanup;
+            application_fault(app, &cleanup);
+            return false;
+        }
+        return application_control_finish(app, actor, APPLICATION_CONTROL_FAILED,
+            "control/source-resume", error) != APPLICATION_CONTROL_FAILED;
     }
     if (!qa_actors_get(qa_session_actors(session), actor)) {
         struct application_control_turn *turn = input->turn; input->turn = NULL;
@@ -2379,15 +2464,16 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
     }
     qa_movement_command command = input->seen ? input->latest : (qa_movement_command){.kind = QA_MOVEMENT_NETQUAKE};
     command.impulse = input->impulse;
-    bool ok = apply(app, actor, &command, frame, APPLICATION_CONTROL_NQ_TURN,
+    application_control_outcome outcome = apply(app, actor, &command, frame, APPLICATION_CONTROL_NQ_TURN,
         APPLICATION_CONTROL_PHYSICS, true, false, &input->turn, 0, 0, error);
-    if (ok) {
+    if (outcome != APPLICATION_CONTROL_FAILED) {
         input->impulse = 0;
         if (input->domain == CONTROL_COMMAND_UNIFIED) {
             input->unified.movement.data.nq.impulse = 0;
             input->unified.impulse = 0;
         }
-        if (input->domain == CONTROL_COMMAND_NQ_SOURCE && input->seen &&
+        if (outcome == APPLICATION_CONTROL_COMPLETED &&
+            input->domain == CONTROL_COMMAND_NQ_SOURCE && input->seen &&
             qa_actors_get(qa_session_actors(session), actor)) {
             app->controls[actor.slot].command_sequence = input->sequence;
             app->controls[actor.slot].command_seen = true;
@@ -2397,7 +2483,7 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         input->source_turn_frame_number = frame->number;
     }
     if (!qa_actors_get(qa_session_actors(session), actor)) *input = (control_input){0};
-    return ok;
+    return outcome != APPLICATION_CONTROL_FAILED;
 }
 
 bool application_control_frames_end(void *opaque, qa_session *session, const qa_source_frame *frames,

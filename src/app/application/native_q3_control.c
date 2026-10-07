@@ -17,6 +17,7 @@ typedef struct native_q3_think_call {
     qa_q3_usercmd accepted, movement;
     int32_t milliseconds;
     uint32_t movement_milliseconds;
+    application_control_outcome outcome;
 } native_q3_think_call;
 
 static bool live(const qa_application *app, qa_actor_id actor)
@@ -319,7 +320,7 @@ static bool movement_command(native_q3_think_call *call, bool spectator, qa_erro
         QA_Q3_WIRE_PM_TYPE, &policy, error);
 }
 
-static bool client_think(void *opaque, qa_session *session,
+static bool client_think_body(void *opaque, qa_session *session,
     const qa_source_command *admission, qa_error *error)
 {
     native_q3_think_call *call = opaque;
@@ -357,9 +358,12 @@ static bool client_think(void *opaque, qa_session *session,
     if (!movement_command(call, spectator, error)) return false;
     {
         qa_movement_command selected;
-        if (!selected_command(call, &selected, error) ||
-            !application_control_frames_q3_move(app, admission, &selected,
-                (call->movement.buttons & 4) != 0, error)) return false;
+        if (!selected_command(call, &selected, error)) return false;
+        application_control_outcome outcome = application_control_frames_q3_move(app, admission, &selected,
+            (call->movement.buttons & 4) != 0, error);
+        call->outcome = outcome;
+        if (outcome != APPLICATION_CONTROL_COMPLETED)
+            return outcome == APPLICATION_CONTROL_SKIPPED;
         if (!live(app, call->actor)) return true;
         const qa_movement_result *result = application_control_q3_result(provider, call->actor, error);
         if (!result) return false;
@@ -415,7 +419,11 @@ static bool client_think(void *opaque, qa_session *session,
             if (origin_scope && live(app, call->actor)) {
                 qa_error cleanup = {0};
                 bool restored = qa_q3_client_current_origin_finish(provider->state.q3, call->actor, &cleanup);
-                if (!restored) { if (ok && error) *error = cleanup; ok = false; }
+                if (!restored) {
+                    if (error) *error = cleanup;
+                    application_fault(app, &cleanup);
+                    ok = false;
+                }
             }
             if (ok && live(app, call->actor)) {
                 qa_vec3 origin;
@@ -434,7 +442,17 @@ static bool client_think(void *opaque, qa_session *session,
     return qa_q3_client_think_finish(provider->state.q3, call->actor, call->milliseconds, error);
 }
 
-bool application_control_q3_client_think(application_provider *provider, qa_actor_id actor,
+static bool client_think(void *opaque, qa_session *session,
+    const qa_source_command *admission, qa_error *error)
+{
+    native_q3_think_call *call = opaque;
+    if (!client_think_body(opaque, session, admission, error))
+        call->outcome = application_control_finish(call->provider->application, call->actor,
+            false, "control/q3-source", error);
+    return call->outcome != APPLICATION_CONTROL_FAILED;
+}
+
+application_control_outcome application_control_q3_client_think(application_provider *provider, qa_actor_id actor,
     const qa_q3_usercmd *received, qa_error *error)
 {
     qa_application *app = provider ? provider->application : NULL;
@@ -455,7 +473,7 @@ bool application_control_q3_client_think(application_provider *provider, qa_acto
     if (!application_native_q3_console_borrow(provider, error)) return false;
     application_operation previous = app->operation;
     if (previous == APPLICATION_IDLE) app->operation = APPLICATION_ADVANCING;
-    native_q3_think_call call = {.provider = provider, .actor = actor};
+    native_q3_think_call call = {.provider = provider, .actor = actor, .outcome = APPLICATION_CONTROL_COMPLETED};
     bool run = false;
     bool ok = application_native_q3_client_think_policy(provider, actor, received,
         &call.accepted, &call.milliseconds, &run, error);
@@ -478,5 +496,5 @@ bool application_control_q3_client_think(application_provider *provider, qa_acto
     }
     app->operation = previous;
     application_native_q3_console_release(provider);
-    return ok;
+    return ok ? call.outcome : APPLICATION_CONTROL_FAILED;
 }

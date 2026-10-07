@@ -619,7 +619,7 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
             deadline, false, error) ||
         !qa_q3_source_clock(provider->state.q3, &accepted.serverTime, error) ||
         !qa_q3_client_command(provider->state.q3, actor, &accepted, error)) return false;
-    return application_control_q3_client_think(provider, actor, &received, error) &&
+    return application_control_q3_client_think(provider, actor, &received, error) != APPLICATION_CONTROL_FAILED &&
            source(provider, actor, &slot, error);
 }
 
@@ -1598,7 +1598,7 @@ bool application_native_q3_source_client_run(void *opaque, qa_actor_id actor,
         if (ok) {
             command.serverTime = time;
             ok = qa_q3_client_command(provider->state.q3, actor, &command, error) &&
-                application_control_q3_client_think(provider, actor, &command, error) &&
+                application_control_q3_client_think(provider, actor, &command, error) != APPLICATION_CONTROL_FAILED &&
                 source(provider, actor, &slot, error);
         }
     }
