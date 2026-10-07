@@ -44,7 +44,9 @@ static bool bots_admit(application_provider *provider, qa_error *error)
             !qa_actor_id_equal(actor, client->actor) ||
             !qa_actors_get(qa_session_actors(provider->application->session), actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Pending guest bot actor generation retired");
-        client->begun = true;
+        /* Source-internal ClientConnect and ClientBegin have completed before
+         * this boundary; they do not call the application client wrappers. */
+        client->allocated = client->connected = client->bot = client->begun = true;
         if (!application_guest_actor_admit(provider, actor, error)) return false;
         if (!client->roster_attached) {
             qa_combat_state state;
@@ -63,9 +65,6 @@ static bool bots_admit(application_provider *provider, qa_error *error)
         }
         if (client->pending_retirement ||
             !qa_actors_get(qa_session_actors(provider->application->session), actor)) continue;
-        /* Source-internal ClientConnect and ClientBegin have completed before
-         * this boundary; they do not call the application client wrappers. */
-        client->allocated = client->connected = client->bot = true;
         client->pending_bot = false;
     }
     return true;
