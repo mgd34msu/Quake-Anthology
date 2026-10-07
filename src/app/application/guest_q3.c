@@ -439,6 +439,10 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     if (text.size) memcpy(copy, text.data, text.size);
     copy[text.size] = 0;
     if (engine->map_ready) {
+        if (engine->game) {
+            q3g_role *replacement;
+            if (!q3g_role_restart(engine->game, &replacement, error)) { free(copy); return false; }
+        }
         for (q3g_role *role = engine->roles; role;) {
             q3g_role *next = role->next;
             if (role->kind == QA_QVM_CGAME) {
@@ -446,10 +450,6 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
                 if (!q3g_role_restart(role, &replacement, error)) { free(copy); return false; }
             }
             role = next;
-        }
-        if (engine->game) {
-            q3g_role *replacement;
-            if (!q3g_role_restart(engine->game, &replacement, error)) { free(copy); return false; }
         }
     }
     free(engine->entity_text); engine->entity_text = copy;
