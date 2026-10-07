@@ -172,7 +172,7 @@ static bool equipment_write(void *opaque, const qa_inventory_entry *entry, qa_er
 }
 static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry || entry->kind != Q3_ACTOR_PLAYER || game->source_restored)
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "Q3 inventory admission needs an actual player owner");
     qa_inventory *inventory = game->options.services.inventory;
     if (!qa_inventory_has(inventory, actor) &&
@@ -257,7 +257,7 @@ static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error
     return true;
 }
 bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+    if (!game || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 inventory admission boundary");
     ++game->observation_depth;
     bool result = inventory_admit(game, actor, error);
