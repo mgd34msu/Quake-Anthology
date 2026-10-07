@@ -209,6 +209,8 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     qa_q1_clientdata client;
     if (!qa_application_control_read(f->application, actor, &control))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual selected player motion");
+    if (control.state.kind != QA_MOVEMENT_NETQUAKE &&
+        control.state.kind != QA_MOVEMENT_QUAKEWORLD) return true;
     if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error) ||
         !qa_application_equipment_read(f->application, actor, &equipment, error) ||
         !qa_application_network_q1_clientdata(f->application, actor, &client, error)) return false;
