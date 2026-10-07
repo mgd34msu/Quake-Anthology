@@ -54,7 +54,7 @@ Historical checks and failed helpers are labeled separately.
 | THE-395 / MIKE-31 | Spin/Q1 pickup hide | Q1 natural accepted weapon/ammo touches show same-frame model 0/hidden/no DRAW; Q2 completed spin matrices match clocks. Armor/quad and full visual matrix remain partial. |
 | THE-410 / MIKE-32 | Console/FOV | Q1 and all-four Q2 routes; Native CPU/GL and Original Q3 GL alias/slash/plain world-FOV checks. Original Q3 CPU remains blocked before that stage. |
 | THE-416 / MIKE-33 | Q3 sky | Native CPU/GL three positions each on red q3dm1 and q3dm7; Original CPU/GL three red-sky positions. Other Original map unqualified. |
-| THE-423 / MIKE-35 | Death/respawn crash | Installed18b native GL and Original CPU pass genuine repeated rocket/plasma deaths, Mouse1 respawns and quit0. Original GL exposed a prediction-admission fatal; ee1cb36a fixes it and qualifies on candidate GL. Installed-artifact rechecks remain active. |
+| THE-423 / MIKE-35 | Death/respawn crash | Installed ee1cb36a native CPU/GL and Original CPU pass repeated rocket/plasma deaths, physical Mouse1 respawns, actual travel and quit0. Byte-equal Original GL candidate also passes. In Review; sporadic old X quit and Original autosave tracked separately. |
 | THE-431 / MIKE-36 | Exact combined startup | Required Q1 map/Q3 move+Ranger+weapons/Q2RR monsters launches, traverses Normal gate, applies forced camera and quits0 on CPU/GL. |
 | THE-438 / MIKE-37 | Q1 status bar | Four basic stock HUD captures; keys/powerups/armor/split remain partial and THE-587 backtile fails. |
 
@@ -687,3 +687,23 @@ Installed native CPU/GL and Original CPU rechecks are active; THE-423
 remains In Progress. The checks use functional debugger observations
 and private captured audio, with no performance or audio-fidelity
 claim. Original autosave remains separately open as THE-585.
+
+
+### Installed ee1cb36a combat rechecks
+
+All three post-installation cases pass and public quit exits zero:
+
+| Mode/backend | Bundle under /tmp | Qualifying rocket/plasma cycles |
+|---|---|---|
+| Native GPU0 GL | qa-private-av-ui23ctbt | 2 / 2 |
+| Native CPU | qa-private-av-wmzqrdqg | 4 / 2 |
+| Original CPU | qa-private-av-x2qgcm5b | 2 / 6 |
+
+Each performs actual q3dm1 -> q3dm7 -> q3dm1 travel, adds Sarge, Visor
+and Bitterman, uses physical Mouse1 respawns after actual bot obituary
+events, and advances the current world before quitting. Native entry
+uses the Home menu; Original entry is direct. Root inspected native GL
+respawn06/end, native CPU respawn09 and Original CPU respawn11 PNGs.
+The original settings and all three installed pins remain unchanged,
+and all recorded owned processes are absent. THE-423 is now In Review.
+THE-844 and THE-585 retain their distinct unresolved scope.
