@@ -33,16 +33,27 @@ static bool raw_scalar(application_provider *p,uint32_t slot,qa_actor_id actor,
     if(!isfinite(value)) return application_fail(error,QA_ERROR_FORMAT,"QC presentation scalar is nonfinite");
     *out=(double)value; return true;
 }
+static bool scalar_declared(const application_provider *p,const qa_qc_definition *field)
+{
+    const struct application_qc_profile *profile=p->state.qc.qualified;
+    bool declared=!profile || field==profile->weapon_field;
+    for(size_t i=0;profile && i<profile->field_count;++i) declared|=profile->fields[i].definition==field;
+    return declared;
+}
 static bool scalar(application_provider *p,uint32_t slot,qa_actor_id actor,const char *name,
     const qa_qc_definition *explicit_field,double *out,qa_error *error)
 {
     const qa_qc_definition *field=explicit_field?explicit_field:qa_qc_program_find_field(p->state.qc.program,name);
-    const struct application_qc_profile *profile=p->state.qc.qualified;
-    bool declared=!profile || field==profile->weapon_field;
-    for(size_t i=0;profile && i<profile->field_count;++i) declared|=profile->fields[i].definition==field;
-    if(!field || field->type!=QA_QC_FLOAT || !declared)
+    if(!field || field->type!=QA_QC_FLOAT || !scalar_declared(p,field))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC animation continuation has no actual declared scalar field");
     return raw_scalar(p,slot,actor,field,out,error);
+}
+static bool ui_optional_scalar(application_provider *p,uint32_t slot,qa_actor_id actor,
+    const char *name,double *out,bool *present,qa_error *error)
+{
+    const qa_qc_definition *field=qa_qc_program_find_field(p->state.qc.program,name);
+    *present=field && scalar_declared(p,field);
+    return !*present || scalar(p,slot,actor,name,field,out,error);
 }
 bool qa_application_qc_animation_read(qa_application *app,qa_actor_id actor,qa_launch_role role,
     qa_application_qc_animation *out,qa_error *error)
@@ -367,21 +378,23 @@ static bool hipnotic_ui(const qa_qc_program *program)
         actual.statement_count==36334u && actual.global_count==5980u &&
         actual.field_count==270u && actual.function_count==2785u;
 }
-static bool selected_ui_basis(qa_application *app,application_provider *p,qa_actor_id actor,uint32_t slot)
+static bool selected_ui_basis(qa_application *app,application_provider *p,qa_actor_id actor,uint32_t slot,qa_launch_role role)
 {
     uint32_t actual;
     return app && (app->operation==APPLICATION_IDLE || app->operation==APPLICATION_ADVANCING) &&
         source_returned(p) && p->application==app &&
-        application_provider_for(app,actor,QA_ROLE_ARSENAL,"")==p &&
+        application_provider_for(app,actor,role,"")==p &&
         qa_actors_get(qa_session_actors(app->session),actor) &&
         qa_qc_actor_observation_slot(p->state.qc.instance,actor,&actual,NULL) && actual==slot;
 }
 static bool player_ui_read(qa_application *app,application_provider *p,
-    const qa_application_qc_message_source *source,qa_actor_id actor,uint32_t slot,bool selected,
+    const qa_application_qc_message_source *source,qa_actor_id actor,uint32_t slot,qa_launch_role role,
     qa_application_qc_player_ui *out,qa_error *error)
 {
     const struct application_qc_profile *profile=p->state.qc.qualified;
-    if(profile) {
+    bool selected=role==QA_ROLE_CHARACTER || role==QA_ROLE_ARSENAL;
+    bool arsenal=role!=QA_ROLE_CHARACTER;
+    if(profile && arsenal) {
         if(!profile->weapon_field || !profile->weapon_count)
             return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared QC UI has no actual source weapon roster");
         for(size_t i=0;i<profile->weapon_count;++i)
@@ -390,12 +403,26 @@ static bool player_ui_read(qa_application *app,application_provider *p,
     }
     qa_application_qc_player_ui value={.source=*source,.recipient=actor,.source_slot=slot,
         .now_seconds=(double)p->state.qc.engine->source_time_ns/1e9,
-        .binding_count=profile?profile->weapon_count:hipnotic_ui(p->state.qc.program)?11:8,.selected_arsenal=selected};
+        .binding_count=arsenal?(profile?profile->weapon_count:hipnotic_ui(p->state.qc.program)?11:8):0,.selected_role=role};
     double items;
     if(!scalar(p,slot,actor,"items",NULL,&items,error) ||
-        !scalar(p,slot,actor,"weapon",profile?profile->weapon_field:NULL,&value.weapon,error) ||
-        !scalar(p,slot,actor,"currentammo",NULL,&value.current_ammo,error) ||
         !source_word(items,&value.items,error)) return false;
+    if(arsenal && (!scalar(p,slot,actor,"weapon",profile?profile->weapon_field:NULL,&value.weapon,error) ||
+        !scalar(p,slot,actor,"currentammo",NULL,&value.current_ammo,error))) return false;
+    bool present;
+    if(!ui_optional_scalar(p,slot,actor,"items2",&items,&present,error) ||
+        (present && !source_word(items,&value.items2,error))) return false;
+    if(arsenal) {
+        static const char *const names[]={"ammo_shells","ammo_nails","ammo_rockets","ammo_cells"};
+        double *const counts[]={&value.shells,&value.nails,&value.rockets,&value.cells};
+        for(size_t i=0;i<4;++i) {
+            if(!ui_optional_scalar(p,slot,actor,names[i],counts[i],&present,error)) return false;
+        }
+    }
+    value.power_items=value.items & (4194304u | 1048576u | 524288u | 2097152u);
+    const char *campaign=p->product->campaign;
+    value.power_items2=value.items2 & (campaign && !strcmp(campaign,"hipnotic")?6u:
+        campaign && !strcmp(campaign,"rogue")?192u:0u);
     static const struct { const char *field,*item,*label; } timers[]={
         {"super_damage_finished","q1:item_artifact_super_damage","Quad Damage"},
         {"invincible_finished","q1:item_artifact_invulnerability","Invulnerability"},
@@ -411,7 +438,7 @@ static bool player_ui_read(qa_application *app,application_provider *p,
         if(!scalar(p,slot,actor,timers[i].field,field,&expires,error)) return false;
         value.timers[value.timer_count++]=(qa_application_qc_power_timer){timers[i].item,timers[i].label,expires};
     }
-    if(!(selected?selected_ui_basis(app,p,actor,slot):qa_application_qc_message_source_current(app,source)))
+    if(!(selected?selected_ui_basis(app,p,actor,slot,role):qa_application_qc_message_source_current(app,source)))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC UI source changed during observation");
     *out=value; return true;
 }
@@ -421,16 +448,16 @@ bool qa_application_qc_message_player_ui_read(qa_application *app,
 {
     uint32_t slot;
     return out && qa_application_qc_message_client(app,source,actor,&slot,error) &&
-        player_ui_read(app,owner(app,source->provider),source,actor,slot,false,out,error);
+        player_ui_read(app,owner(app,source->provider),source,actor,slot,QA_ROLE_COUNT,out,error);
 }
 bool qa_application_qc_selected_player_ui_read(qa_application *app,qa_actor_id actor,qa_launch_role role,
     qa_application_qc_player_ui *out,qa_error *error)
 {
-    if(!app || !out || role!=QA_ROLE_ARSENAL)
-        return application_fail(error,QA_ERROR_ARGUMENT,"QC selected UI requires its actual arsenal role");
+    if(!app || !out || (role!=QA_ROLE_CHARACTER && role!=QA_ROLE_ARSENAL))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC selected UI requires its actual character or arsenal role");
     application_provider *p=application_provider_for(app,actor,role,""); uint32_t slot;
     if(!source_returned(p) || !p->product->campaign ||
-        !qa_qc_actor_observation_slot(p->state.qc.instance,actor,&slot,error) || !selected_ui_basis(app,p,actor,slot))
+        !qa_qc_actor_observation_slot(p->state.qc.instance,actor,&slot,error) || !selected_ui_basis(app,p,actor,slot,role))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC selected UI lost its returned selected actor binding");
     const struct application_qc_state *engine=p->state.qc.engine;
     if(!qa_q1_profile_valid(engine->protocol,error)) return false;
@@ -438,22 +465,24 @@ bool qa_application_qc_selected_player_ui_read(qa_application *app,qa_actor_id a
         .instance=p->state.qc.instance,.protocol=engine->protocol,.client_slots=engine->max_clients,
         .map_revision=app->map_revision,.options={.standard_quake=strcmp(p->product->campaign,"hipnotic") &&
             strcmp(p->product->campaign,"rogue"),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
-    return player_ui_read(app,p,&source,actor,slot,true,out,error);
+    return player_ui_read(app,p,&source,actor,slot,role,out,error);
 }
 bool qa_application_qc_message_player_ui_current(qa_application *app,const qa_application_qc_player_ui *view)
 {
     qa_application_qc_player_ui actual;
-    if(!view || !(view->selected_arsenal?
-        qa_application_qc_selected_player_ui_read(app,view->recipient,QA_ROLE_ARSENAL,&actual,NULL):
+    if(!view || !((view->selected_role==QA_ROLE_CHARACTER || view->selected_role==QA_ROLE_ARSENAL)?
+        qa_application_qc_selected_player_ui_read(app,view->recipient,view->selected_role,&actual,NULL):
         qa_application_qc_message_player_ui_read(app,&view->source,view->recipient,&actual,NULL)) ||
         actual.source.provider!=view->source.provider || actual.source.descriptor!=view->source.descriptor ||
         actual.source.program!=view->source.program || actual.source.instance!=view->source.instance ||
-        actual.source.map_revision!=view->source.map_revision || actual.selected_arsenal!=view->selected_arsenal ||
+        actual.source.map_revision!=view->source.map_revision || actual.selected_role!=view->selected_role ||
         actual.source.protocol.kind!=view->source.protocol.kind || actual.source.protocol.flags!=view->source.protocol.flags ||
         actual.source.protocol.revision!=view->source.protocol.revision || actual.source.client_slots!=view->source.client_slots ||
         actual.source.options.standard_quake!=view->source.options.standard_quake ||
         actual.source.options.private_rerelease!=view->source.options.private_rerelease ||
-        actual.source_slot!=view->source_slot || actual.items!=view->items || actual.weapon!=view->weapon ||
+        actual.source_slot!=view->source_slot || actual.items!=view->items || actual.items2!=view->items2 ||
+        actual.power_items!=view->power_items || actual.power_items2!=view->power_items2 || actual.weapon!=view->weapon ||
+        actual.shells!=view->shells || actual.nails!=view->nails || actual.rockets!=view->rockets || actual.cells!=view->cells ||
         actual.current_ammo!=view->current_ammo || actual.now_seconds!=view->now_seconds ||
         actual.binding_count!=view->binding_count || actual.timer_count!=view->timer_count) return false;
     for(size_t i=0;i<actual.timer_count;++i)

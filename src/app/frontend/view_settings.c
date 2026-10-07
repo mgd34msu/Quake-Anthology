@@ -374,6 +374,7 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
         if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error)) return false;
         if (!qa_application_control_camera(f->application, actor, &camera))
             return fail(error, "Q1 damage lost its actual selected player camera");
+        if (!camera.has_character || camera.character_family != QA_GAME_Q1) return true;
         bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
         frontend_q1_motion_settings settings;
         if (!frontend_view_settings_q1_motion_sample(source.registry, qw, &settings, error)) return false;

@@ -3721,6 +3721,21 @@ bool qa_application_control_camera(const qa_application *application,
         .view_height = view.view_height,
         .cutscene = view.cutscene,
     };
+    application_provider *character = application_provider_for((qa_application *)application,
+        actor, QA_ROLE_CHARACTER, "");
+    if (character && character->constructed && character->attached &&
+        !character->close_pending && character->product) {
+        out->has_character = true;
+        out->character_family = character->product->family;
+        if (character->kind == APPLICATION_PROVIDER_Q1) out->q1_character = character->state.q1;
+        out->q1_character_qc = character->kind == APPLICATION_PROVIDER_QC && character->product->family == QA_GAME_Q1;
+    }
+    application_provider *arsenal = application_provider_for((qa_application *)application,
+        actor, QA_ROLE_ARSENAL, "");
+    if (arsenal && arsenal->constructed && arsenal->attached && !arsenal->close_pending) {
+        if (arsenal->kind == APPLICATION_PROVIDER_Q1) out->q1_arsenal = arsenal->state.q1;
+        out->q1_arsenal_qc = arsenal->kind == APPLICATION_PROVIDER_QC && arsenal->product && arsenal->product->family == QA_GAME_Q1;
+    }
     application_client_outputs outputs;
     if (!application_control_outputs(application, actor, &outputs, NULL)) return false;
     if (outputs.has_view_offset) {

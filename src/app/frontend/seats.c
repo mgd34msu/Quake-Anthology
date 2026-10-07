@@ -25,6 +25,7 @@
 #include "config_store.h"
 #include "qa/application_network.h"
 #include "qa/game_q1_ui.h"
+#include "qa/text.h"
 #include "material_movies.h"
 #include "qc_messages.h"
 #include <stdio.h>
@@ -232,13 +233,48 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     }
     if (seat->q1_view_ready && qa_actor_id_equal(frame->actor,seat->q1_view_actor)) {
         frontend_config_legacy_view legacy; bool present;
-        qa_q1_clientdata client; qa_actor_owner provider;
+        qa_q1_clientdata client = {0}; qa_actor_owner provider;
+        qa_application_camera_view camera;
+        qa_application_equipment_view equipment;
+        qa_combat_state combat;
+        qa_q1_wire_player arsenal = {0}, character = {0};
+        if (!qa_application_control_camera(seat->frontend->application, frame->actor, &camera) ||
+            !qa_application_equipment_read(seat->frontend->application, frame->actor, &equipment, error) ||
+            !qa_combat_read(qa_application_combat(seat->frontend->application), frame->actor, &combat, error)) return false;
+        if (camera.q1_arsenal && !qa_q1_player_ui_read(camera.q1_arsenal, frame->actor, &arsenal, error)) return false;
+        if (camera.q1_arsenal_qc) {
+            qa_application_qc_player_ui ui;
+            if (!qa_application_qc_selected_player_ui_read(seat->frontend->application, frame->actor, QA_ROLE_ARSENAL, &ui, error)) return false;
+            arsenal.items=ui.items; arsenal.items2=ui.items2;
+            arsenal.power_items=ui.power_items; arsenal.power_items2=ui.power_items2;
+            arsenal.weapon=(uint32_t)qa_source_float_to_i32((float)ui.weapon);
+            arsenal.shells=ui.shells; arsenal.nails=ui.nails; arsenal.rockets=ui.rockets; arsenal.cells=ui.cells;
+        }
+        if (camera.q1_character && camera.q1_character == camera.q1_arsenal) character = arsenal;
+        else if (camera.q1_character && !qa_q1_player_ui_read(camera.q1_character, frame->actor, &character, error)) return false;
+        if (camera.q1_character_qc) {
+            qa_application_qc_player_ui ui;
+            if (!qa_application_qc_selected_player_ui_read(seat->frontend->application, frame->actor, QA_ROLE_CHARACTER, &ui, error)) return false;
+            character.items=ui.items; character.items2=ui.items2;
+            character.power_items=ui.power_items; character.power_items2=ui.power_items2;
+        }
+        client.health = qa_source_float_to_i32(combat.health);
+        client.armor = (uint32_t)qa_source_float_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE ?
+            0 : (float)combat.armor.regular.points);
+        client.ammo = (uint32_t)qa_source_float_to_i32(equipment.ammo ? (float)equipment.ammo_count : 0);
+        client.weapon = arsenal.weapon;
+        client.shells = (uint32_t)qa_source_float_to_i32((float)arsenal.shells);
+        client.nails = (uint32_t)qa_source_float_to_i32((float)arsenal.nails);
+        client.rockets = (uint32_t)qa_source_float_to_i32((float)arsenal.rockets);
+        client.cells = (uint32_t)qa_source_float_to_i32((float)arsenal.cells);
+        client.items = (arsenal.items & ~arsenal.power_items) | character.power_items |
+            (character.items & (131072u | 262144u)) |
+            (((arsenal.items2 & ~arsenal.power_items2) | character.power_items2) << 23);
         if (!frontend_config_store_primary_legacy_read(seat->frontend->config_store,launch_seat,&legacy,&present,error)) return false;
         if (!present || legacy.product->family!=QA_GAME_Q1 ||
             !qa_application_provider_owner(seat->frontend->application,legacy.descriptor->selection.instance,&provider))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 face lost its actual primary CLIENT source");
-        if (!qa_application_network_q1_clientdata(seat->frontend->application,frame->actor,&client,error) ||
-            !frontend_equipment_media_q1_face_read(seat->frontend,provider,
+        if (!frontend_equipment_media_q1_face_read(seat->frontend,provider,
                 frontend_view_q1_face(client.health,client.items,seat->q1_view_motion.seconds,&seat->q1_view_motion),
                 &out->health_icon,error)) return false;
         if (!strcmp(legacy.product->campaign,"rogue")) {

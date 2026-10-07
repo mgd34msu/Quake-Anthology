@@ -19,6 +19,7 @@
 #include "remote_unified.h"
 #include "remote_q1_camera.h"
 #include "qa/network_q1.h"
+#include "qa/game_q1_ui.h"
 #include "qa/application_selected_q3_character.h"
 #include "qa/text.h"
 #include "q3_render_policy.h"
@@ -208,16 +209,27 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual authored seat");
     if (!frontend_config_store_primary_legacy_read(f->config_store, logical, &source, &present, error)) return false;
     if (!present || source.product->family != QA_GAME_Q1) return true;
+    bool q1_character = camera->has_character && camera->character_family == QA_GAME_Q1;
     qa_application_control_view control; qa_body_state body;
     qa_application_equipment_view equipment;
-    qa_q1_clientdata client;
+    qa_combat_state combat;
+    uint32_t items = 0;
     if (!qa_application_control_read(f->application, actor, &control))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual selected player motion");
-    if (control.state.kind != QA_MOVEMENT_NETQUAKE &&
+    if (!q1_character && control.state.kind != QA_MOVEMENT_NETQUAKE &&
         control.state.kind != QA_MOVEMENT_QUAKEWORLD) return true;
     if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error) ||
         !qa_application_equipment_read(f->application, actor, &equipment, error) ||
-        !qa_application_network_q1_clientdata(f->application, actor, &client, error)) return false;
+        !qa_combat_read(qa_application_combat(f->application), actor, &combat, error)) return false;
+    if (camera->q1_character) {
+        qa_q1_wire_player character;
+        if (!qa_q1_player_ui_read(camera->q1_character, actor, &character, error)) return false;
+        items = character.items;
+    } else if (camera->q1_character_qc) {
+        qa_application_qc_player_ui character;
+        if (!qa_application_qc_selected_player_ui_read(f->application, actor, QA_ROLE_CHARACTER, &character, error)) return false;
+        items = character.items;
+    }
     bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
     double seconds;
     if (qw) {
@@ -240,7 +252,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         if (!qa_application_network_q1_consume_feedback(f->application, actor, &feedback, error)) return false;
         if (feedback.set_angle && !camera->cutscene)
             angles = qa_v3(feedback.angles[0], feedback.angles[1], feedback.angles[2]);
-        if (feedback.damage) {
+        if (feedback.damage && q1_character) {
             qa_vec3 from;
             if (!frontend_view_q1_damage_origin(feedback.origin,&from,error)) return false;
             frontend_view_q1_damage(&settings, body.origin, body.angles,
@@ -253,7 +265,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         .frame_seconds = (double)seat->client_frame_ns / 1000000000.0,
         .view_height = camera->view_height, .view_size = (float)view->size, .quakeworld = qw,
         .grounded = control.ground.hit != QA_TRACE_HIT_NONE,
-        .dead = client.health <= 0, .intermission = camera->cutscene};
+        .dead = combat.health <= 0, .intermission = camera->cutscene};
     frontend_view_q1_motion(&settings, &input, &seat->q1_view_motion, &seat->q1_view_pose);
     if (!frontend_config_store_primary_legacy_current(f->config_store, &source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
@@ -269,7 +281,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     frontend_camera_axes(angles, scene->axis);
     int32_t contents;
     if (!qa_scene_world_q1_contents(f->scene_world,scene->origin,&contents,error)) return false;
-    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,client.items);
+    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,items);
     return true;
 }
 static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor,
@@ -338,6 +350,8 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (published || frontend_network_remote(frontend)) ui.fullscreen = false;
         bool game_focus = qa_input_seat_focus(seat->input) == QA_INPUT_GAME;
         bool live = published && qa_application_player_actor(frontend->application, launch_seat, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
+        if (live && (!camera.has_character || camera.character_family != QA_GAME_Q2))
+            seat->q2_view_ready = false;
         bool qc_status=false;
         if (live && frontend->qc_messages) {
             qa_application_qc_client_presentation qc;

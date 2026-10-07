@@ -1060,6 +1060,11 @@ static bool viewer_matches(frontend_unified_q2 *o,qa_actor_id source,bool *match
     if (!source_actor(o,source,&a,e) || !frontend_remote_unified_player(o->replica,&viewer,&number_id))return false;
     *matches=!a.registry || qa_actor_id_equal(a,viewer);return true;
 }
+static bool selected_view_provider(frontend_unified_q2 *o,const char *provider)
+{
+    const qa_recipe_provider *character=frontend_remote_unified_provider(o->replica,QA_ROLE_CHARACTER,"");
+    return character && provider && !strcmp(character->selection.instance,provider);
+}
 static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     const qa_unified_q2_player_event *event=&row->payload.value.q2_player;
@@ -1068,6 +1073,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         if (!matches)return true;
     if (!source_actor(o,event->actor,&a,e) || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
     if (event->kind==QA_Q2_PLAYER_VIEW){const qa_unified_q2_player_view *view=&event->view;
+        if (!selected_view_provider(o,row->provider)) return true;
         if (!(view->layouts&2))inventory_clear(o);
         else for (size_t i=0;i<o->item_count;++i)o->items[i].selected=view->selected_item && !strcmp(o->items[i].item,view->selected_item);
         if (!(view->layouts&1)){o->help_visible=false;o->score_visible=false;}
@@ -1625,8 +1631,8 @@ bool frontend_unified_q2_player_blend(frontend_unified_q2 *o,qa_actor_id full_vi
     if (frame!=&o->frontend->frame || !frontend_remote_unified_player(o->replica,&viewer_actor,&source_number) ||
         !qa_actor_id_equal(full_viewer,viewer_actor) || (blend_present && !blend) || (damage_present && !damage))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Player blend lost its actual received viewer or draw frame");
-    bool fallback=qa_actor_id_equal(o->view_actor,full_viewer) && o->view_provider &&
-        (!o->view_owner || !o->view_owner->retired);
+    bool fallback=qa_actor_id_equal(o->view_actor,full_viewer) &&
+        selected_view_provider(o,o->view_provider) && (!o->view_owner || !o->view_owner->retired);
     if (!blend_present && fallback && o->view_blend_present) { blend=&o->view_blend; blend_present=true; }
     if (!damage_present && fallback && o->view_damage_present) { damage=&o->view_damage_blend; damage_present=true; }
     if (!blend_present && !damage_present) return true;

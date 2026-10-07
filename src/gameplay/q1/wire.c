@@ -3,6 +3,7 @@
 #include "qa/game_q1_maps.h"
 #include "maps/internal.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q1_ui.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -447,57 +448,13 @@ bool qa_q1_wire_player_read(const qa_q1_wire_receipt *receipt, qa_actor_id actor
     qa_q1_wire_player *out, qa_error *error) {
     if (!out || !qa_q1_wire_receipt_current(receipt))
         return fail(error, "Q1 source player observation lost its held owner");
-    const qa_q1_game *g = receipt->operation.game;
+    const qa_q1_game *game = receipt->operation.game;
     uint32_t slot;
-    if (!qa_q1_native_client_slot(g, actor, &slot, error)) return false;
-    const q1_player *player = g->players[actor.slot];
-    qa_q1_weapon weapon = player->weapon;
-    int32_t frame = player->weapon_frame;
-    double powers[QA_Q1_POWER_COUNT], seconds = g->time;
-    bool superhealth=player->source_superhealth;
-    memcpy(powers, player->power_expires, sizeof(powers));
-    uint32_t bits[QA_Q1_WEAPON_COUNT] = {0};
-    for (unsigned shift = 0; shift < 32; ++shift) {
-        qa_q1_weapon declared;
-        uint32_t bit = UINT32_C(1) << shift;
-        if (qa_q1_weapon_source(g->options.program, bit, &declared))
-            bits[declared] = bit;
-    }
-    if ((unsigned)weapon >= QA_Q1_WEAPON_COUNT || !bits[weapon])
-        return fail(error, "Q1 source weapon leaves its actual program table");
-    qa_q1_wire_player value = {.weapon_model = q1_weapon_model(g, player),
-        .weapon_frame = frame, .weapon = bits[weapon], .ammo = player->current_ammo};
-    if (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_SHELLS], &value.shells, error) ||
-        !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_NAILS], &value.nails, error) ||
-        !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_ROCKETS], &value.rockets, error) ||
-        !qa_inventory_count_read(g->services.inventory, actor, g->ammo[QA_Q1_CELLS], &value.cells, error)) return false;
-    for (size_t i = 0; i < sizeof(bits)/sizeof(*bits); ++i) {
-        if (!bits[i]) continue;
-        double count;
-        if (!qa_inventory_count_read(g->services.inventory, actor, g->weapons[i], &count, error)) return false;
-        if (count > 0) value.items |= bits[i];
-    }
-    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
-    for (unsigned i = 0; i < 2; ++i) {
-        qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
-            (qa_bytes){(const uint8_t *)keys[i], strlen(keys[i])});
-        double count;
-        if (!key) continue;
-        if (!qa_inventory_count_read(g->services.inventory, actor, key, &count, error)) return false;
-        if (count > 0) value.items |= 131072u << i;
-    }
-    qa_combat_state combat;
-    if (!qa_combat_read(g->services.combat,actor,&combat,error)) return false;
-    q1_wire_player_items(g->options.program,weapon,powers,seconds,&combat.armor,
-        value.items,superhealth,&value.items,&value.items2);
-    if (!qa_q1_wire_receipt_current(receipt) ||
-        !qa_q1_native_client_slot(g, actor, &slot, error)) return false;
-    player = g->players[actor.slot];
-    if (player->weapon != weapon || player->weapon_frame != frame ||
-        player->current_ammo != value.ammo || player->source_superhealth!=superhealth || g->time != seconds ||
-        q1_weapon_model(g, player) != value.weapon_model ||
-        memcmp(player->power_expires, powers, sizeof(powers)))
-        return fail(error, "Q1 source player changed during canonical inventory observation");
+    qa_q1_wire_player value;
+    if (!qa_q1_native_client_slot(game, actor, &slot, error) ||
+        !qa_q1_player_ui_read(game, actor, &value, error) ||
+        !qa_q1_wire_receipt_current(receipt) ||
+        !qa_q1_native_client_slot(game, actor, &slot, error)) return false;
     *out = value;
     return true;
 }

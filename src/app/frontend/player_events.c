@@ -127,7 +127,11 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             if (seat->q2_actor.registry && !qa_actor_id_equal(actor, seat->q2_actor)) frontend_player_retire(seat);
             seat->q2_actor = actor;
             switch (event->kind) {
-            case QA_Q2_PLAYER_VIEW:
+            case QA_Q2_PLAYER_VIEW: {
+                const qa_launch_instance *character = qa_application_selected_instance(frontend->application,
+                    qa_application_launch(frontend->application), actor, QA_ROLE_CHARACTER, "");
+                const char *provider = qa_application_provider_instance(frontend->application, observed.provider);
+                if (!character || !provider || strcmp(character->selection.instance, provider)) break;
                 seat->q2_view = event->view; seat->q2_view_ready = true;
                 seat->q2_vitals[0] = (qa_hud_value){.label = "Health", .value = event->view.health, .warning = event->view.health <= 25};
                 seat->q2_vitals[1] = (qa_hud_value){.label = "Armor", .value = event->view.armor, .warning = (event->view.flashes & 2) != 0};
@@ -141,6 +145,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 }
                 if (!timer(seat, frontend->time_ns, error)) return false;
                 break;
+            }
             case QA_Q2_PLAYER_SCOREBOARD: if (!scores(seat, event, error)) return false; break;
             case QA_Q2_PLAYER_INVENTORY: seat->q2_inventory = event->visible; break;
             case QA_Q2_PLAYER_HELP: seat->q2_help = event->visible; break;

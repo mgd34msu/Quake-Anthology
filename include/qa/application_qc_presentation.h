@@ -111,17 +111,17 @@ typedef struct qa_application_qc_power_timer {
 typedef struct qa_application_qc_player_ui {
     qa_application_qc_message_source source;
     qa_actor_id recipient;
-    uint32_t source_slot, items;
-    double weapon, current_ammo, now_seconds;
+    uint32_t source_slot, items, items2, power_items, power_items2;
+    double weapon, current_ammo, shells, nails, rockets, cells, now_seconds;
     size_t binding_count, timer_count;
     qa_application_qc_power_timer timers[4];
-    bool selected_arsenal;
+    qa_launch_role selected_role;
 } qa_application_qc_player_ui;
 /* Pure reads of the returned, already allocated Source client. UI bindings
  * come from its retained declaration or the original program's SDK table. */
 bool qa_application_qc_message_player_ui_read(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,qa_application_qc_player_ui *,qa_error *);
-/* A separate selected ARSENAL observation may run during another Source's
+/* A selected CHARACTER or ARSENAL observation may run during another Source's
  * genuine application advance. Its own QC instance/projection must be returned. */
 bool qa_application_qc_selected_player_ui_read(qa_application *,qa_actor_id,qa_launch_role,
     qa_application_qc_player_ui *,qa_error *);

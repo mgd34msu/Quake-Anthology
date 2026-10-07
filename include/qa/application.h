@@ -232,6 +232,9 @@ typedef struct qa_application_camera_view {
     qa_vec3 origin, angles, view_offset;
     float view_height;
     bool cutscene, has_client_view_offset;
+    bool has_character, q1_character_qc, q1_arsenal_qc;
+    qa_game_family character_family;
+    const qa_q1_game *q1_character, *q1_arsenal;
 } qa_application_camera_view;
 
 typedef enum qa_application_state {
