@@ -1056,6 +1056,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
         ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client requires its actual prepared GAME input");
     if(ok)ok=qa_application_q3_client_configuration_read(f->application,row->view.source_owner,
         QA_QVM_CGAME,seat,&actual,e);
+    if(ok)ok=qa_application_capture_command_context(f->application,&actual.command,&actual.command,e);
     if(ok && (!actual.descriptor || actual.descriptor->storage!=row->view.source_launch->storage ||
         actual.scope.provider!=row->view.source_owner || actual.scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME ||
         actual.scope.seat!=seat || actual.console!=game.console || !actual.cvars ||
