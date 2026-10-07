@@ -70,9 +70,9 @@ bool qac_console_context_view_current(const qa_console *console,const qa_command
     if (!context->cvar_view && (console->options.context.cvar_view || console->sources))
         return qac_fail(error,QA_ERROR_ARGUMENT,"command lacks its actual cvar view");
     const qa_console_options *options=options_for(console,context);
-    if (!options || ((options!=&console->options || options->context.cvar_view) &&
-        context->owner!=options->context.owner) || (options!=&console->options &&
-        ((options->context.origin!=QA_COMMAND_SERVER && context->seat!=options->context.seat) ||
+    if (!options || (options!=&console->options &&
+        (context->owner!=options->context.owner ||
+         (options->context.origin!=QA_COMMAND_SERVER && context->seat!=options->context.seat) ||
          context->dialect!=options->context.dialect)))
         return qac_fail(error,QA_ERROR_ARGUMENT,"command lost its actual Source cvar view");
     if (publication && options->context_active != NULL &&
