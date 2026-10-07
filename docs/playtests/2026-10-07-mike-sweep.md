@@ -32,7 +32,7 @@ Historical checks and failed helpers are labeled separately.
 | THE-167 / MIKE-08 | Shareware option | CPU/GL catalog-backed menus contain no shareware row. |
 | THE-171 / MIKE-09 | Custom monsters | 396 available creatures in 16 rosters plus2 defaults; exact Q2RR whole-roster mixed launch passes CPU/GL. Per-class combat excluded. |
 | THE-172 / MIKE-10 | Custom Start | Three mixed world/arsenal combinations start/play/quit0 on CPU/GL; two additional arsenals accept fire and consume ammo. |
-| THE-180 / MIKE-11 | Split-screen | Four Q1 classic/RR CPU/GL virtual-controller and join/remove/disconnect passes; Q2 classic CPU/GL startup failures; four Q2RR/Q3 cases observer-unqualified. |
+| THE-180 / MIKE-11 | Split-screen | Recovery matrix passes all ten native edition/backend cases on installed338, including four independent viewports, join/remove and held-device disconnect. Original modules and combined mode excluded. |
 | THE-185 / MIKE-12 | Ported menus | Ten CPU/GL pages visually compared; artwork/layout match. Sound choice formatting differs; older Custom references do not qualify parity. |
 | THE-190 / MIKE-13 | Q2 smoothness/aim/sounds | All-four event/output checks; projectile muzzle equations match qsrc. RR actual eye trace and quiet cadence remain open. |
 | THE-201 / MIKE-15 | Q2 dark video | Retail intro frames 30/55/80 exact source RGBA; actual GL scale within 0.500001 RGB byte, CPU two-stage scale within 1 byte at gamma 1. Owner/default gamma remains open. |
@@ -54,7 +54,7 @@ Historical checks and failed helpers are labeled separately.
 | THE-395 / MIKE-31 | Spin/Q1 pickup hide | Q1 natural accepted weapon/ammo touches show same-frame model 0/hidden/no DRAW; Q2 completed spin matrices match clocks. Armor/quad and full visual matrix remain partial. |
 | THE-410 / MIKE-32 | Console/FOV | Q1 and all-four Q2 routes; Native CPU/GL and Original Q3 GL alias/slash/plain world-FOV checks. Original Q3 CPU remains blocked before that stage. |
 | THE-416 / MIKE-33 | Q3 sky | Native CPU/GL three positions each on red q3dm1 and q3dm7; Original CPU/GL three red-sky positions. Other Original map unqualified. |
-| THE-423 / MIKE-35 | Death/respawn crash | Recovery: native CPU and Original CPU pass genuine repeated rocket/plasma deaths and Mouse1 respawns; native GL meets combat checks but exits1 on public quit. Current installed GL rechecks remain open. |
+| THE-423 / MIKE-35 | Death/respawn crash | Installed18b native GL and Original CPU pass genuine repeated rocket/plasma deaths, Mouse1 respawns and quit0. Original GL exposed a prediction-admission fatal; ee1cb36a fixes it and qualifies on candidate GL. Installed-artifact rechecks remain active. |
 | THE-431 / MIKE-36 | Exact combined startup | Required Q1 map/Q3 move+Ranger+weapons/Q2RR monsters launches, traverses Normal gate, applies forced camera and quits0 on CPU/GL. |
 | THE-438 / MIKE-37 | Q1 status bar | Four basic stock HUD captures; keys/powerups/armor/split remain partial and THE-587 backtile fails. |
 
@@ -640,3 +640,50 @@ actual GAME consumer values. Original entry is direct, excluding menu
 proof. Its autosave still reports the existing THE-585 console-ownership
 defect; save behavior is excluded. No timing, full campaign, module
 composition or audio-fidelity claim follows from this bounded proof.
+
+
+## THE-423 / MIKE-35: shared entity prediction and qualified installation
+
+The installed18b follow-up bundles pass Original CPU
+(`/tmp/qa-private-av-1yg4nh12`, rocket2/plasma2) and native GPU0 GL
+(`/tmp/qa-private-av-pm_cifpk`, rocket3/plasma2): actual map travel,
+physical Mouse1 respawns, continued world frames and public quit0.
+Root inspected their final respawn and end PNGs. A short native GL
+gameplay/quit check also passes in `/tmp/qa-private-av-92gwi70b`.
+The prior failed X quit remains evidence for THE-844; these passes do
+not establish its cause or justify suppressing its exit.
+
+Original GPU0 GL on that build instead exits during combat with
+`source movement prediction client is not admitted` in
+`/tmp/qa-private-av-hn6r3til`. Stock AAS prediction accepts an entity
+number as a collision exclusion, including human enemies and negative
+numbers for geometry-only queries (be_aas_move.c:272,653,790,914,994;
+ai_dmq3.c:3416). Requiring a registered bot rejects this valid query.
+The exact failed target was not captured.
+
+Commit ee1cb36a uses the retained world navigation graph and existing
+movement kernel, with optional entity exclusion. It retains native
+actor-bound continuation and supplies detached input for entity
+prediction; it does not introduce a second predictor or fabricated
+client. All six configured CTests pass and all 3,061 SDK inputs match
+the committed source.
+
+The exact candidate GL bundle `/tmp/qa-private-av-43itr_xp` passes
+q3dm1 -> q3dm7 -> q3dm1, Sarge/Visor/Bitterman, rocket3/plasma2
+qualifying deaths and physical respawns, continued world frames and
+quit0. Root inspected respawn07 and the end PNG. Candidate CPU
+`/tmp/qa-private-av-_56hicrt` also reaches quit0 without that fatal,
+but rocket1/plasma3 leaves its requested combat coverage partial.
+Neither result changes the required two-per-family proof bound.
+
+The candidate was built at 17:38:22 CDT and installed at 17:49:15 CDT
+through `tools/install_qualified_build.py`, using the passing GL
+receipt and a fresh private copy of all 34 owner settings files. All
+three installed files byte-equal the qualified package; original
+settings and candidate pins stayed unchanged, with no owned process
+left behind. Installation receipt:
+`installed-m0-source-prediction-20261007.json` under the recovery cache.
+Installed native CPU/GL and Original CPU rechecks are active; THE-423
+remains In Progress. The checks use functional debugger observations
+and private captured audio, with no performance or audio-fidelity
+claim. Original autosave remains separately open as THE-585.
