@@ -3069,7 +3069,8 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
             manager->image_fov_touched|=manager->images_fov_touched;
             manager->sticky_seed_pending=false;
         }
-        if (!manager->shared && !manager->images_program && !manager->root_console) {
+        if (!manager->shared && !manager->publication && !manager->images_program &&
+            !manager->images_cvars && !manager->images_bound) {
             qa_cvar_archive_free(&manager->shared_archive);
             manager->root_console=NULL; manager->root_cvars=NULL; manager->root_command=(qa_command_context){0};
             manager->shared_seeded=manager->shared_archived=manager->images_audio_seeded=manager->images_fov_touched=false;
