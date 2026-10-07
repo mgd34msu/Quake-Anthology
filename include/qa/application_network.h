@@ -77,6 +77,7 @@ typedef struct qa_application_network_q1_world {
     float seconds;
     const char *map, *level, *lightstyles[64];
     int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
+    uint8_t cd_track;
 } qa_application_network_q1_world;
 bool qa_application_network_q1_world_read(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_world *, qa_error *);

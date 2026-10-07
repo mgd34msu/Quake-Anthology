@@ -206,7 +206,7 @@ bool qa_application_network_qw_world_read(qa_application *app,
     const qa_product *product = engine->provider->product;
     qa_application_map_view map;
     const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
-    int32_t name, reference;
+    int32_t name, reference; float cd_track;
     if (!product || !product->directory || !*product->directory ||
         !qa_application_map_read(app, &map) || !map.resource ||
         !mapname || mapname->type != QA_QC_STRING)
@@ -214,7 +214,9 @@ bool qa_application_network_qw_world_read(qa_application *app,
     if (!qa_qc_global_int(engine->provider->state.qc.instance, mapname->offset, &name, error) ||
         !qa_qc_string(engine->provider->state.qc.instance, name, &value.map, error) ||
         !qa_qc_slot_reference(engine->provider->state.qc.instance, 0, &reference, error) ||
-        !qw_string(engine, reference, "message", &value.level, error)) return false;
+        !qw_string(engine, reference, "message", &value.level, error) ||
+        !qw_scalar(engine, reference, "sounds", &cd_track, error)) return false;
+    value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(cd_track);
     const char *separator = strrchr(product->directory, '/');
     value.game_directory = separator ? separator + 1 : product->directory;
     value.map_bytes = qa_resource_bytes(map.resource);

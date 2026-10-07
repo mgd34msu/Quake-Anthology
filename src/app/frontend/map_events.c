@@ -11,6 +11,7 @@
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
+#include "music_sources.h"
 #include "qa/text.h"
 #include "remote_q2_effects.h"
 #include "native_q2_messages.h"
@@ -497,6 +498,11 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         if (handled) continue;
         if (event.family == QA_GAME_Q1 && event.kind == QA_BUILTIN_EFFECT) {
             const char *resource = qa_strings_cstr(strings, event.resource);
+            if (resource && !strcmp(resource, "music")) {
+                if (!frontend_music_sources_world_cd(frontend->music_sources,
+                    (uint8_t)(uint32_t)event.code, error)) return false;
+                continue;
+            }
             if (resource && !strcmp(resource, "q1:fog")) {
                 if (!qa_vec_finite(event.origin) || !isfinite(event.value) || !isfinite(event.end.x) || event.end.x < 0)
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid authored Q1 fog");

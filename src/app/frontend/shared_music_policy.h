@@ -59,6 +59,7 @@ bool frontend_music_policy_command(frontend_music_policy *, const qa_command_inv
 bool frontend_music_policy_manual_start(const frontend_music_policy *, const qa_command_invocation *, bool *);
 bool frontend_music_policy_explicit(frontend_music_policy *, const char *intro, const char *loop, bool looping, qa_error *);
 bool frontend_music_policy_source_play(frontend_music_policy *, const char *, qa_error *);
+bool frontend_music_policy_world_cd(frontend_music_policy *, unsigned track, qa_error *);
 /* Prepare before shared audio gains; all file admission, bag/RNG selection and
  * PCM allocation occurs offside. Ready binds the exact retained gains parent.
  * No parser, RNG, source/native query or decoder runs in ready_is/publish. */

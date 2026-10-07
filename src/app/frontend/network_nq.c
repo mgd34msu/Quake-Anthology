@@ -155,6 +155,8 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
             .max_clients = (uint8_t)world.max_clients, .game_type = world.deathmatch ? 1 : 0, .level = world.level,
             .models = models, .sounds = sounds, .model_count = model_count, .sound_count = sound_count}};
         if (!batch_message(&batch, &message, options, error)) return false;
+        message = (qa_nq_message){.op = QA_NQ_CDTRACK, .data.cd = {world.cd_track, world.cd_track}};
+        if (!batch_message(&batch, &message, options, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_SETVIEW, .data.value = slot};
         if (!batch_message(&batch, &message, options, error)) return false;
     } else if (stage == 2) {

@@ -758,6 +758,11 @@ static bool q1_server_command(void *opaque, qa_string_id command,
 static bool q1_level_begin(void *opaque, qa_string_id map, qa_actor_id cause,
                            double exit_after, qa_error *error)
 {
+    application_provider *provider = opaque;
+    qa_string_id music;
+    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session), "music", &music, error) ||
+        !emit_map_event(opaque, (qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
+            .family = QA_GAME_Q1, .resource = music, .code = 3, .count = 3}, error)) return false;
     return emit_map_event(opaque,
                           (qa_builtin_event){.kind = QA_BUILTIN_TARGET,
                                              .family = QA_GAME_Q1,

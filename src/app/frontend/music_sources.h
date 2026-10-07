@@ -43,6 +43,7 @@ typedef struct frontend_music_origin {
  * It never derives a source product from prepared scene geometry. */
 bool frontend_music_sources_create(qa_frontend *, frontend_music_sources **, qa_error *);
 bool frontend_music_sources_world(frontend_music_sources *, qa_error *);
+bool frontend_music_sources_world_cd(frontend_music_sources *, unsigned track, qa_error *);
 bool frontend_music_sources_world_retire(frontend_music_sources *, qa_error *);
 /* Begin retires the prior soundtrack before actual cue admission. The policy
  * shares the source-owned player instead of manufacturing another soundtrack.

@@ -30,6 +30,7 @@ typedef struct qa_q1_wire_feedback {
 typedef struct qa_q1_wire_world {
     qa_string_id map, level, lightstyles[64];
     uint32_t total_secrets, found_secrets, total_monsters, killed_monsters, server_flags;
+    uint8_t cd_track;
 } qa_q1_wire_world;
 typedef struct qa_q1_wire_player {
     qa_string_id weapon_model;

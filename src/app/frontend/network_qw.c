@@ -106,7 +106,8 @@ static bool server_data(void *context, qa_qw_serverdata *out, qa_error *error)
     if (!source_world(peer->host, &world, error)) return false;
     *out = (qa_qw_serverdata){.protocol = world.protocol, .server_count = peer->host->server_count,
         .game_directory = world.game_directory, .level = world.level,
-        .player_slot = (uint8_t)(peer - peer->host->peers), .spectator = peer->spectator, .movement = world.movement};
+        .player_slot = (uint8_t)(peer - peer->host->peers), .cd_track = world.cd_track,
+        .spectator = peer->spectator, .movement = world.movement};
     return true;
 }
 static bool signon_names(void *context, bool models, const char *const **out, size_t *count, qa_error *error)

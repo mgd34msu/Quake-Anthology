@@ -280,7 +280,8 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         if (okay) okay = admitted_document(owner, &actual, &commit->reply, error);
         application_unified_events initial = {0};
         application_unified_source current_source;
-        if (okay) okay = application_unified_source_read(owner->application, &current_source, error) &&
+        if (okay) okay = application_q1_music_cue(owner->application, false, error) &&
+            application_unified_source_read(owner->application, &current_source, error) &&
             application_unified_events_initial_read(owner->application, &current_source, client, &actual,
                 epoch, &initial, error);
         size_t resources = application_unified_event_resource_count(owner->application);

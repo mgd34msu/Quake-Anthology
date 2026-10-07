@@ -291,7 +291,9 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     if (!q1_standard_quake(app, engine, &value.standard_quake, error) ||
         !qa_qc_global_int(engine->provider->state.qc.instance, mapname->offset, &id, error) ||
         !qa_qc_string(engine->provider->state.qc.instance, id, &value.map, error) ||
-        !q1_wire_string(engine, 0, "message", &value.level, error)) return false;
+        !q1_wire_string(engine, 0, "message", &value.level, error) ||
+        !application_qc_float(engine, 0, "sounds", &number, error)) return false;
+    value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(number);
     value.seconds = (float)((double)engine->source_time_ns / 1e9);
     if (!*value.map) return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source world identity");
     if (!*value.level) value.level = value.map;

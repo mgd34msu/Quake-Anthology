@@ -671,7 +671,7 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
                 .kind = source.provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15},
             .max_clients = source.receipt.client_slots, .standard_quake = source.receipt.standard_quake,
             .deathmatch = source.receipt.deathmatch != 0, .seconds = (float)source.receipt.seconds,
-            .map = text(app, world.map), .level = text(app, world.level),
+            .map = text(app, world.map), .level = text(app, world.level), .cd_track = world.cd_track,
             .total_secrets = (int32_t)world.total_secrets, .found_secrets = (int32_t)world.found_secrets,
             .total_monsters = (int32_t)world.total_monsters, .killed_monsters = (int32_t)world.killed_monsters};
         for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = text(app, world.lightstyles[i]);

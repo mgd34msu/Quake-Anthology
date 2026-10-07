@@ -406,7 +406,8 @@ bool qa_q1_wire_world_read(const qa_q1_wire_receipt *receipt, qa_q1_wire_world *
     *out = (qa_q1_wire_world){.map = g->maps->options.current_map, .level = world->message,
         .total_secrets = g->maps->total_secrets, .found_secrets = g->maps->found_secrets,
         .total_monsters = g->total_monsters, .killed_monsters = g->killed_monsters,
-        .server_flags = *g->maps->options.server_flags};
+        .server_flags = *g->maps->options.server_flags,
+        .cd_track = (uint8_t)(uint32_t)(world->map ? world->map->sounds : 0)};
     memcpy(out->lightstyles, g->wire->lightstyles, sizeof(out->lightstyles));
     return true;
 }

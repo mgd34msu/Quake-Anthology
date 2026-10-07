@@ -72,7 +72,7 @@ bool application_native_q1_qw_world(qa_application *app, qa_application_network_
         qa_application_map_read(app,&map) && map.resource &&
         application_native_q1_source_visible_gamedir(source.provider,&value.game_directory,error);
     if (okay) {
-        value.map=text(app,world.map); value.level=text(app,world.level);
+        value.map=text(app,world.map); value.level=text(app,world.level); value.cd_track=world.cd_track;
         value.map_bytes=qa_resource_bytes(map.resource);
         value.protocol=(qa_net_protocol_id){.kind=QA_NET_QW28}; value.max_clients=source.receipt.client_slots;
         static const char *const names[]={"sv_gravity","sv_stopspeed","sv_maxspeed","sv_spectatormaxspeed",

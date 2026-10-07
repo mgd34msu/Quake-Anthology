@@ -618,6 +618,7 @@ bool application_q3_guest_native_options(qa_application *, application_provider 
 bool application_console_create(qa_application *, qa_error *);
 void application_console_print(void *,const qa_command_context *,const char *);
 bool application_emit(void *, const qa_builtin_event *, qa_error *);
+bool application_q1_music_cue(qa_application *, bool fresh, qa_error *);
 bool application_record_motion_change(qa_application *, qa_actor_id,
                                       const qa_builtin_motion_change *,
                                       qa_error *);

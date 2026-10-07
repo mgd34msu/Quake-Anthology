@@ -42,6 +42,7 @@ typedef struct qa_application_network_qw_world {
     const char *game_directory, *map, *level, *lightstyles[64];
     qa_qw_movevars movement;
     qa_bytes map_bytes;
+    uint8_t cd_track;
 } qa_application_network_qw_world;
 /* Read the actual primary source without selecting a player. Text and map
  * bytes borrow their real owners until application mutation. The map bytes

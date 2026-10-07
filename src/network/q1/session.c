@@ -89,7 +89,9 @@ static bool fresh(qa_qw_signon *s, qa_q1_emit_fn emit, void *user, qa_error *e)
         s->host.disconnect(s->host.user,"Client does not support donor QuakeWorld protocol 29"); return true;
     }
     uint8_t bytes[1450]; qa_net_writer w; qa_net_writer_init(&w,bytes,sizeof(bytes),e);
-    if (!serverdata_write(&w,&data) || !emit_writer(&w,emit,user,e)) return false;
+    qa_qw_service music={.kind=QA_QW_CD_TRACK,.data.byte=data.cd_track};
+    if (!serverdata_write(&w,&data) || !qa_qw_service_write(&w,data.protocol,&music,NULL) ||
+        !emit_writer(&w,emit,user,e)) return false;
     s->spawned=false; return true;
 }
 bool qa_qw_download_path_valid(const char *s)

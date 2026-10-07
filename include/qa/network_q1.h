@@ -63,7 +63,7 @@ typedef struct qa_qw_serverdata {
     qa_net_protocol_id protocol;
     int32_t server_count;
     const char *game_directory, *level;
-    uint8_t player_slot;
+    uint8_t player_slot, cd_track;
     bool spectator;
     qa_qw_movevars movement;
 } qa_qw_serverdata;

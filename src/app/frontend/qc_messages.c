@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qc_messages.h"
 #include "q1_sky.h"
+#include "music_sources.h"
 #include "config_store.h"
 #include "view_settings.h"
 #include "save_private.h"
@@ -238,6 +239,8 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     /* Native control/stats remain with their Source owners; this decoder
      * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
+    if(message->op==QA_NQ_CDTRACK)
+        return frontend_music_sources_world_cd(owner->frontend->music_sources,message->data.cd.track,error);
     if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry) {
         qa_actor_id beam_actor={0};
         if(message->data.temporary.kind==QA_Q1_TEMP_BEAM) {

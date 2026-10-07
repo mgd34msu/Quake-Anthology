@@ -154,6 +154,7 @@ bool application_map_level_entry(qa_application *application, bool fresh, qa_err
     if (!campaign_level_entry(application,error)) return false;
     if (state->save_request_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "level save request identity exhausted");
+    if (!application_q1_music_cue(application, fresh, error)) return false;
     state->entry_generation = application->map_revision;
     ++state->save_request_revision;
     state->save_requested = true;

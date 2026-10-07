@@ -13,6 +13,7 @@
 #include "guest_native_q2_private.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
+#include "guest_qc_internal.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -518,6 +519,40 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
     bool ok=emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
+}
+
+bool application_q1_music_cue(qa_application *application, bool fresh, qa_error *error)
+{
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!source || !source->product || source->product->family != QA_GAME_Q1) return true;
+    if (!fresh) for (size_t i = 0; i < application->unified_persistent_count; ++i) {
+        const application_unified_event_record *row = &application->unified_persistent[i].event;
+        const qa_unified_presentation_payload *payload = row->presentation;
+        if (row->provider != source->owner || !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
+        const qa_unified_builtin_event *event = &payload->value.builtin;
+        if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_EFFECT &&
+            event->resource && !strcmp(event->resource, "music")) return true;
+    }
+    uint8_t cd_track;
+    if (source->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_wire_receipt receipt = {0}; qa_q1_wire_world world;
+        if (!qa_q1_wire_read_begin(source->state.q1, &receipt, error)) return false;
+        bool read = qa_q1_wire_world_read(&receipt, &world);
+        qa_q1_wire_read_end(&receipt);
+        if (!read) return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 level cue has no authored world sounds");
+        cd_track = world.cd_track;
+    } else if (source->kind == APPLICATION_PROVIDER_QC) {
+        float sounds;
+        if (!application_qc_float(source->state.qc.engine, 0, "sounds", &sounds, error)) return false;
+        cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(sounds);
+    } else return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 level cue has no native or QC Source");
+    qa_clock_state clock; qa_string_id music;
+    if (!qa_session_clock(application->session, source->owner, &clock))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 level cue has no completed Source clock");
+    return qa_strings_intern_cstr(qa_session_strings(application->session), "music", &music, error) &&
+        application_emit(application, &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
+            .family = QA_GAME_Q1, .provider = source->owner, .time_ns = clock.frame.time_ns,
+            .resource = music, .code = cd_track, .count = cd_track}, error);
 }
 
 static bool event_text(qa_application *application, const char *source,

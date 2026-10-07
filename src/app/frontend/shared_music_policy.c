@@ -770,6 +770,22 @@ static bool manual_track(frontend_music_policy *owner, const qa_command_invocati
     if (ok) { state_free(&owner->state); owner->state = next; next = (music_state){0}; }
     state_free(&next); return ok;
 }
+bool frontend_music_policy_world_cd(frontend_music_policy *owner, unsigned track, qa_error *e) {
+    if (!owner || !frontend_music_policy_idle(owner) || owner->menu || owner->external_player || track > 255)
+        return fail(e, "WORLD CD track requires its returned local soundtrack policy");
+    unsigned mapped = qa_audio_music_mapped_track(owner->music, track);
+    if (!mapped) return true;
+    qa_audio_music_state player;
+    if (!qa_audio_music_state_read(owner->music, &player)) return fail(e, "WORLD CD track lost its player");
+    char cue[16]; snprintf(cue, sizeof(cue), "%u", track);
+    if ((owner->state.initialized && player.playing && player.cd_track == mapped) ||
+        (!owner->state.initialized && !strcmp(owner->authored_cue, cue))) return true;
+    char *authored = copy(cue, e);
+    if (!authored) return false;
+    free(owner->authored_cue); owner->authored_cue = authored;
+    owner->state.initialized = false;
+    return true;
+}
 bool frontend_music_policy_source_play(frontend_music_policy *owner,const char *cue,qa_error *e) {
     if (!frontend_music_policy_idle(owner) || !owner->external_player || !cue || !nonempty(cue) ||
         owner->frontend->capture || owner->frontend->source_restoring)

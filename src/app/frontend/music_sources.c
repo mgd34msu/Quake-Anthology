@@ -447,6 +447,12 @@ bool frontend_music_sources_world(frontend_music_sources *owner, qa_error *e) {
     if (ok) ok = attach(owner, FRONTEND_MUSIC_WORLD, source, &content, 1, cue, e) && frontend_music_world_current(owner);
     free(cue); qa_vfs_destroy(alternate); return ok;
 }
+bool frontend_music_sources_world_cd(frontend_music_sources *owner, unsigned track, qa_error *e) {
+    if (!owner || !frontend_music_sources_idle(owner))
+        return fail(e, "WORLD CD track requires its returned soundtrack owner");
+    if (!owner->engine || !owner->policies[FRONTEND_MUSIC_WORLD] || owner->has_origin) return true;
+    return frontend_music_policy_world_cd(owner->policies[FRONTEND_MUSIC_WORLD], track, e);
+}
 frontend_music_policy *frontend_music_sources_policy(const frontend_music_sources *owner, frontend_music_slot slot) {
     return frontend_music_sources_current(owner) && (unsigned)slot < 2 && owner->policies[slot] &&
         frontend_music_policy_binding_is(owner->policies[slot], owner->frontend, owner->engine,
