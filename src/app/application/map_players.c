@@ -658,6 +658,17 @@ static bool q3_replacement_client(qa_application *application,
     return true;
 }
 
+static bool extra_travel_player(qa_application *application,
+    const qa_launch_choices *choices, const application_player_record *record)
+{
+    if (record->bot && !record->remote)
+        for (size_t i = 0; i < choices->seat_count; ++i)
+            if (choices->seats[i].id == record->seat) return false;
+    return !record->retiring &&
+        (record->remote || (record->bot && record->dynamic)) &&
+        qa_actors_get(qa_session_actors(application->session), record->actor);
+}
+
 bool application_players_prepare(qa_application *application,
                                   application_publication *publication,
                                   bool carry_players, bool new_unit,
@@ -696,20 +707,19 @@ bool application_players_prepare(qa_application *application,
         application_players_dispose(travel);
         return application_fail(error, QA_ERROR_MEMORY, "cannot reserve travel player owner");
     }
-    size_t local_count = choices->seat_count, remote_count = 0;
+    size_t local_count = choices->seat_count, additional_count = 0;
     if (application->players != NULL)
         for (size_t i = 0; i < application->players->count; ++i) {
             const application_player_record *record = &application->players->records[i];
-            if (record->remote && !record->retiring &&
-                qa_actors_get(qa_session_actors(application->session), record->actor)) ++remote_count;
+            if (extra_travel_player(application, choices, record)) ++additional_count;
         }
-    if (remote_count > SIZE_MAX - local_count || local_count + remote_count > UINT32_MAX - 1 ||
-        local_count + remote_count > SIZE_MAX / sizeof(*travel->carry) ||
-        local_count + remote_count > SIZE_MAX / sizeof(*travel->seats)) {
+    if (additional_count > SIZE_MAX - local_count || local_count + additional_count > UINT32_MAX - 1 ||
+        local_count + additional_count > SIZE_MAX / sizeof(*travel->carry) ||
+        local_count + additional_count > SIZE_MAX / sizeof(*travel->seats)) {
         application_players_dispose(travel);
         return application_fail(error, QA_ERROR_MEMORY, "travel player roster is exhausted");
     }
-    travel->count = local_count + remote_count;
+    travel->count = local_count + additional_count;
     travel->carry = travel->count ? calloc(travel->count, sizeof(*travel->carry)) : NULL;
     travel->seats = travel->count ? calloc(travel->count, sizeof(*travel->seats)) : NULL;
     travel->roster->count = travel->count;
@@ -727,8 +737,7 @@ bool application_players_prepare(qa_application *application,
     if (application->players != NULL)
         for (size_t i = 0; i < application->players->count; ++i) {
             const application_player_record *old = &application->players->records[i];
-            if (!old->remote || old->retiring ||
-                !qa_actors_get(qa_session_actors(application->session), old->actor)) continue;
+            if (!extra_travel_player(application, choices, old)) continue;
             for (size_t j = 0; j < local_count; ++j)
                 if (travel->seats[j].id == old->seat) {
                     application_players_dispose(travel);
@@ -737,7 +746,8 @@ bool application_players_prepare(qa_application *application,
             application_player_record *record = &travel->roster->records[cursor];
             *record = (application_player_record){.seat = old->seat, .client_slot = old->client_slot,
                 .remote_client = old->remote_client, .remote_seat = old->remote_seat,
-                .remote = true, .dynamic = true, .spectator = old->spectator, .bot = old->bot,
+                .remote = old->remote, .dynamic = old->dynamic,
+                .spectator = old->spectator, .bot = old->bot,
                 .source_begin_pending = old->source_begin_pending ||
                     (!old->bot && (publication->map_provider->kind == APPLICATION_PROVIDER_QC ||
                      (publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3 &&
@@ -3187,6 +3197,8 @@ bool application_players_publish(qa_application *application,
             application->bots && application_bot_source(application->bots) == source &&
             source->kind <= APPLICATION_PROVIDER_Q3)
             continue;
+        if (record->bot && travel->carry[i].q3_client)
+            record->source_begin_pending = false;
         if (!publish_player(application, choices, &travel->seats[i],
                             &application->players->records[i], &travel->carry[i], i,
                             travel->carry_players, travel->new_unit,
