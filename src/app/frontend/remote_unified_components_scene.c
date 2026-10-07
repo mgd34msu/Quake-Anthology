@@ -156,10 +156,11 @@ static qa_command_result console_command(void *context,const qa_command_invocati
     remote_component *r=context;
     if(!published(r)||!r->frame) return QA_COMMAND_UNHANDLED;
     if(!r->initialized) return QA_COMMAND_UNHANDLED;
-    qa_command_tokens tokens={.count=command->argc,.values=(char **)command->argv,.args_text=(char *)command->args_text};
-    bool handled=false;
-    if(!application_q3_scene_console(r->scene,&tokens,&handled,e)) return QA_COMMAND_FAILED;
-    if(handled) return QA_COMMAND_HANDLED;
+    if(!qa_console_invocation_delivered(command,r->owner,r->services)) {
+        bool handled=false;
+        if(!application_q3_scene_console(r->scene,command,&handled,e)) return QA_COMMAND_FAILED;
+        if(handled) return QA_COMMAND_HANDLED;
+    }
     if (r->state.owner_generation!=r->state.generation) {
         q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component command changed its actual publication generation");
         return QA_COMMAND_FAILED;
