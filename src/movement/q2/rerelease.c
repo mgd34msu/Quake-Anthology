@@ -597,8 +597,6 @@ static void rr_dimensions(rr_move *p)
         p->bounds.maxs.z = rr_height(p, 32.0f);
         p->state->view_height = rr_height(p, 22.0f);
     }
-    const qa_movement_environment *env = &p->move->input->environment;
-    if (env->has_body_bounds && !env->fixed_pose) p->bounds = env->body_bounds;
     if (rr_expands(p->accepted_bounds, p->bounds)) {
         qa_trace_result trace = rr_trace(p, *p->origin, *p->origin, p->bounds, 0);
         if (trace.all_solid) {
@@ -634,8 +632,6 @@ static bool rr_duck(rr_move *p)
         if (crouch != ((p->state->flags & RR_DUCKED) != 0)) {
             qa_bounds bounds = p->bounds;
             bounds.maxs.z = crouch ? rr_height(p, 4.0f) : p->character.maxs.z;
-            const qa_movement_environment *env = &p->move->input->environment;
-            if (env->has_body_bounds && !env->fixed_pose) bounds = env->body_bounds;
             qa_trace_result trace = rr_trace(p, *p->origin, *p->origin, bounds, 0);
             if (!trace.all_solid) {
                 if (crouch) p->state->flags |= RR_DUCKED;

@@ -415,6 +415,7 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 Pmove cannot replace another selected movement owner");
     qa_body_state body;
     if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
+    input->current_bounds = body.bounds; input->has_current_bounds = true;
     /* Whole GAME already chose its public pm_type. Private health is only
      * needed when another gameplay provider supplies movement overrides. */
     if (!application_native_q2_whole_source(engine, actor)) {
@@ -433,11 +434,14 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     input->profile.data.q2.air_accelerate = (float)air->number;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, NULL);
     if (character != engine->provider) {
-        input->environment.has_body_bounds = true; input->environment.body_bounds = body.bounds;
         qa_application_control_view control;
         if (qa_application_control_read(app, actor, &control)) {
-            input->standing.bounds = app->controls[actor.slot].standing_bounds;
-            input->standing.view_height = control.view_height;
+            qa_movement_input postures = application_control_character_postures(character, actor);
+            input->standing = postures.standing;
+            input->crouched = postures.crouched;
+            input->dead = postures.dead;
+            input->invulnerability_bounds = postures.invulnerability_bounds;
+            input->shape.bounds = input->standing.bounds;
             input->environment.flight = control.flight;
             input->environment.gravity_multiplier = control.gravity_multiplier;
         }

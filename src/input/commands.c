@@ -250,9 +250,11 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
             command.acknowledged_server_seconds = f->acknowledged_server_seconds;
     }
     if (q3 || f->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        command.angle_words[0] = qa_angle_to_word(pitch);
-        command.angle_words[1] = qa_angle_to_word(yaw);
-        command.angle_words[2] = qa_angle_to_word(roll);
+        const float angles[] = {pitch, yaw, roll};
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            uint16_t word = qa_angle_to_word(angles[axis]);
+            command.angle_words[axis] = !q3 && word > INT16_MAX ? (int32_t)word - 65536 : word;
+        }
     }
     bool integral = f->kind != QA_MOVEMENT_Q2_RERELEASE;
     command.forward_move = integral ? truncf(forward) : forward;

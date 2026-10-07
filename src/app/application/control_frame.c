@@ -1246,6 +1246,26 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         provider->component.clock.kind == QA_CLOCK_QUAKEWORLD && provider->component.command_actor &&
         provider->component.command_actor(provider->component.state, app->session, actor))
         return qa_application_control_qw_commands(app, actor, commands, count, error);
+    bool q2_source = (record->state.kind == QA_MOVEMENT_Q2_CLASSIC &&
+        provider->component.clock.kind == QA_CLOCK_Q2_CLASSIC) ||
+        (record->state.kind == QA_MOVEMENT_Q2_RERELEASE &&
+         provider->component.clock.kind == QA_CLOCK_Q2_RERELEASE);
+    if (q2_source && provider == application_world_provider(app, QA_ROLE_ENTITIES, "") &&
+        (provider->kind == APPLICATION_PROVIDER_Q2 || native_q2_raw_source_client(provider, actor))) {
+        for (size_t i = 0; i < count; ++i) {
+            qa_movement_command raw = commands[i];
+            raw.weapon = 0; raw.server_time_ms = 0; raw.acknowledged_server_seconds = 0;
+            if (raw.kind == QA_MOVEMENT_Q2_CLASSIC) {
+                raw.server_frame = 0;
+                for (unsigned axis = 0; axis < 3; ++axis) {
+                    uint16_t word = (uint16_t)raw.angle_words[axis];
+                    raw.angle_words[axis] = word <= INT16_MAX ? word : (int32_t)word - 65536;
+                }
+            }
+            if (!qa_application_control_q2_command(app, actor, raw.sequence, &raw, error)) return false;
+        }
+        return true;
+    }
     if (frames->draining || (frames->current && qa_actor_id_equal(frames->current->actor, actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Input intake cannot replace an applied command");
     bool seen; uint64_t sequence;
@@ -2068,6 +2088,8 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         application_provider *source = source_provider(app, group->actor);
         current.source_q2cmd = true; current.source_command = group->commands[call->index];
         current.source_elapsed_ns = (uint64_t)current.source_command.milliseconds * UINT64_C(1000000);
+        current.arsenal = call->index == 0 ? group->arsenal : 0;
+        current.weapon = call->index == 0 ? group->weapon : 0;
         current.retained = true;
         owner->current = &current;
         if (native_q2_raw_source_client(source, group->actor)) {

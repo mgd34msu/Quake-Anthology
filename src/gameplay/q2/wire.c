@@ -535,6 +535,7 @@ bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Pmove completion lost its actual Source command/result");
         return false;
     }
+    bool was_grounded = value.ground.hit != QA_TRACE_HIT_NONE;
     value.command_pending = false; value.pending_sequence = 0;
     if (!result) {
         value.source_sequence = command->sequence; value.command_seen = true;
@@ -565,7 +566,13 @@ bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
     value.source_sequence = command->sequence; value.command_seen = true;
     if (!qa_q2_wire_movement_publish(g, id, &value, error)) return false;
     g->actors[id.slot]->client->info.view_height = value.view_height;
-    return true;
+    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    bool jumped = rerelease ? result->jump_sound && !(result->state.data.q2r.flags & 128u) :
+        was_grounded && result->ground.hit == QA_TRACE_HIT_NONE && command->up_move >= 10 &&
+        result->water_level == 0;
+    if (jumped && !q2_player_sound(g, id, "*jump1.wav", 2, error)) return false;
+    return !jumped || rerelease || !q2_actor_live(g, id) ||
+        q2_player_noise(g, id, origin, false, error);
 }
 
 bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,

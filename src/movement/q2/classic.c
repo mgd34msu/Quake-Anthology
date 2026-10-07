@@ -429,19 +429,17 @@ static bool q2_check_duck(q2_classic_move *pm)
         pm->state->flags |= Q2_DUCKED;
     } else if (pm->state->flags & Q2_DUCKED) {
         pm->bounds.maxs.z = q2_height(pm, 32);
-        qa_bounds requested = input->environment.has_body_bounds ? input->environment.body_bounds : pm->bounds;
         qa_trace_result trace;
-        if (!q2_trace_bounds(pm, pm->origin, pm->origin, requested, &trace)) return false;
+        if (!q2_trace_bounds(pm, pm->origin, pm->origin, pm->bounds, &trace)) return false;
         if (!trace.all_solid) pm->state->flags &= ~(uint32_t)Q2_DUCKED;
     }
     bool ducked = (pm->state->flags & Q2_DUCKED) != 0;
     pm->bounds.maxs.z = q2_height(pm, ducked ? 4.0f : 32.0f);
     pm->view_height = q2_height(pm, ducked ? -2.0f : 22.0f);
-    qa_bounds requested = input->environment.has_body_bounds ? input->environment.body_bounds : pm->bounds;
     qa_bounds previous = input->has_current_bounds ? input->current_bounds : pm->character;
-    if (q2_expands(previous, requested)) {
+    if (q2_expands(previous, pm->bounds)) {
         qa_trace_result trace;
-        if (!q2_trace_bounds(pm, pm->origin, pm->origin, requested, &trace)) return false;
+        if (!q2_trace_bounds(pm, pm->origin, pm->origin, pm->bounds, &trace)) return false;
         if (trace.all_solid) {
             pm->bounds = previous;
             pm->state->flags = (pm->state->flags & ~(uint32_t)Q2_DUCKED) | previous_duck;
@@ -449,7 +447,6 @@ static bool q2_check_duck(q2_classic_move *pm)
             return true;
         }
     }
-    pm->bounds = requested;
     return true;
 }
 

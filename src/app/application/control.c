@@ -570,6 +570,13 @@ static bool q3_present(application_provider *provider, qa_actor_id actor)
            qa_q3_player_read(provider->state.q3, actor, &ignored);
 }
 
+qa_movement_input application_control_character_postures(const application_provider *character,
+    qa_actor_id actor)
+{
+    return qa_movement_input_default(character && character->component.clock.kind == QA_CLOCK_Q3
+        ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor);
+}
+
 static void character_fixed_pose(qa_movement_input *input)
 {
     if (!input->environment.fixed_pose || !input->environment.fixed_crouched) return;
@@ -2002,9 +2009,7 @@ static bool prepare_input(application_move_call *move,
         !move->character->attached || move->character->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Movement posture lost its selected character owner");
-    qa_movement_input postures = qa_movement_input_default(
-        move->character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE,
-        record->actor);
+    qa_movement_input postures = application_control_character_postures(move->character, record->actor);
     input->standing = postures.standing;
     input->crouched = postures.crouched;
     input->dead = postures.dead;
@@ -2013,7 +2018,8 @@ static bool prepare_input(application_move_call *move,
     application_control_frames_state(application, record->actor, &input->state);
     input->command = *command;
     input->profile = record->profile;
-    input->shape.bounds = record->state.kind == QA_MOVEMENT_Q3
+    input->shape.bounds = record->state.kind == QA_MOVEMENT_Q3 ||
+        record->state.kind == QA_MOVEMENT_Q2_CLASSIC || record->state.kind == QA_MOVEMENT_Q2_RERELEASE
         ? input->standing.bounds : body.bounds;
     input->current_bounds = body.bounds;
     input->has_current_bounds = true;
@@ -2360,7 +2366,8 @@ static bool external_stage_locomotion(const application_control_external_stage *
     }
     move->input = previous;
     previous->state = move->control->state;
-    previous->shape.bounds = previous->state.kind == QA_MOVEMENT_Q3
+    previous->shape.bounds = previous->state.kind == QA_MOVEMENT_Q3 ||
+        previous->state.kind == QA_MOVEMENT_Q2_CLASSIC || previous->state.kind == QA_MOVEMENT_Q2_RERELEASE
         ? previous->standing.bounds : move->control->bounds;
     previous->current_bounds = move->control->bounds;
     previous->has_current_bounds = true;
@@ -3604,14 +3611,14 @@ bool qa_application_control_prediction_read(qa_application *application,
     if (outputs.has_view_offset) result.client_view_offset = outputs.view_offset;
     /* The selected character owns standing dimensions and view height. The
      * actual current body bounds remain a separate snapshot field. */
-    qa_movement_input postures = qa_movement_input_default(
-        result.q3_character ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor);
+    qa_movement_input postures = application_control_character_postures(character, actor);
     result.input.standing = postures.standing;
     result.input.crouched = postures.crouched;
     result.input.dead = postures.dead;
     result.input.invulnerability_bounds = postures.invulnerability_bounds;
     character_fixed_pose(&result.input);
-    if (record->state.kind == QA_MOVEMENT_Q3)
+    if (record->state.kind == QA_MOVEMENT_Q3 || record->state.kind == QA_MOVEMENT_Q2_CLASSIC ||
+        record->state.kind == QA_MOVEMENT_Q2_RERELEASE)
         result.input.shape.bounds = result.input.standing.bounds;
     if (record->state.kind == QA_MOVEMENT_NETQUAKE)
         result.input.profile.data.nq.parameters.gravity = application->physics->gravity;
