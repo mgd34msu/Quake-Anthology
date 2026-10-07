@@ -487,9 +487,29 @@ bool application_startup_console_cvar_edit(qa_application *app, qa_console *cons
 bool application_startup_cvar_edit(application_provider *provider, qa_console *console,
     const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
 {
-    if (!provider || !provider->application || !command || command->owner != provider->owner)
+    if (!provider || !provider->application || !console || !registry || !out ||
+        !command || command->owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Prepared source cvar access lost its actual provider");
-    return application_startup_console_cvar_edit(provider->application, console, command, registry, out, error);
+    *out=NULL;
+    qa_application *app=provider->application;
+    qa_cvars_edit *values=qa_cvars_prepared_edit(registry);
+    if (values && app->startup_preinit_provider==provider && app->operation==APPLICATION_CONFIGURING &&
+        !provider->constructed && !provider->attached && !provider->close_pending) {
+        qa_application_startup_source source,qualified;
+        if (console!=app->console || command->cvar_view!=qa_cvars_view_identity(registry) ||
+            !qa_cvars_same_store(registry,app->cvars) || qa_cvars_edit_registry(values)!=app->cvars ||
+            !qa_application_command_context_active(app,command))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Source constructor lost its actual prepared values");
+        if (!physical_source(provider,console,registry,NULL,&source,error) ||
+            !qualify_source(provider,source_snapshot(provider),&source,&qualified,error)) return false;
+        if (command->session!=source.command.session || command->dialect!=source.command.dialect ||
+            command->origin!=source.command.origin ||
+            (source.command.origin==QA_COMMAND_SEAT && command->seat!=source.command.seat))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Source constructor selected another command projection");
+        *out=values;
+        return true;
+    }
+    return application_startup_console_cvar_edit(app, console, command, registry, out, error);
 }
 
 bool application_startup_visible_cvars(application_provider *provider, qa_console *console,

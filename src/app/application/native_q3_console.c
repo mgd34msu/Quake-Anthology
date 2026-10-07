@@ -53,7 +53,6 @@ struct application_native_q3_console {
     application_provider *provider;
     qa_console *console;
     qa_cvars *cvars;
-    qa_cvars_edit *registration_values;
     size_t calls;
     bool settings_bound;
     application_native_q3_source_command_scope *source_command;
@@ -133,23 +132,6 @@ static bool cvar_edit(void *context, const qa_command_context *command,
     qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
 {
     struct application_native_q3_console *owner = context;
-    if (owner->registration_values) {
-        application_provider *provider=owner->provider;
-        qa_application *application=provider->application;
-        if (!out || !command || provider->native_q3_console!=owner ||
-            application->startup_preinit_provider!=provider || provider->constructed ||
-            provider->attached || provider->close_pending || registry!=owner->cvars ||
-            command->owner!=provider->owner || command->dialect!=QA_CONSOLE_Q3 ||
-            command->origin!=QA_COMMAND_SERVER ||
-            command->cvar_view!=qa_cvars_view_identity(owner->cvars) ||
-            qa_cvars_prepared_edit(owner->cvars)!=owner->registration_values ||
-            qa_cvars_edit_registry(owner->registration_values)!=application->cvars ||
-            !qa_application_command_context_active(application,command))
-            return application_fail(error,QA_ERROR_ARGUMENT,
-                "Native Q3 command registration lost its entered Source values");
-        *out=owner->registration_values;
-        return true;
-    }
     return application_startup_cvar_edit(owner->provider, owner->console, command, registry, out, error);
 }
 
@@ -552,17 +534,10 @@ bool application_native_q3_console_create(application_provider *provider,
     qa_application *application=provider->application;
     application_provider *previous=application->startup_preinit_provider;
     if (application->operation==APPLICATION_PERSISTING) application->startup_preinit_provider=provider;
-    qa_cvars_edit *values=NULL;
-    bool entered=application_startup_values_enter(application,&values,error);
-    owner->registration_values=entered?values:NULL;
-    bool registered=entered && qa_console_register_context(owner->console, &options.context,"kick","Kick a Q3 player by name, slot, all or allbots",
+    bool registered=qa_console_register_context(owner->console, &options.context,"kick","Kick a Q3 player by name, slot, all or allbots",
         provider->owner,provider->owner,true,operator_kick,owner,error);
-    owner->registration_values=NULL;
-    qa_error returned={0};
-    bool left=!entered || application_startup_values_leave(values,&returned);
     application->startup_preinit_provider=previous;
-    if (!left && registered && error) *error=returned;
-    if (!registered || !left) {
+    if (!registered) {
         application_native_q3_console_destroy(provider,NULL);
         return false;
     }
