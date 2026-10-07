@@ -340,16 +340,15 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_au
                 return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear event resources belong to a retired source");
             *out = entry; return true;
         }
-    qa_command_context context = {.owner = provider, .origin = QA_COMMAND_SERVER,
-        .dialect = family == QA_AUDIO_Q3 ? QA_CONSOLE_Q3 : family == QA_AUDIO_Q2 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q1};
-    qa_command_context captured;
+    qa_application_startup_source game;
     qa_application_equipment_content source;
     bool gear = !qa_application_provider_instance(frontend->application, provider) &&
         qa_application_equipment_content_read(frontend->application, provider, &source, NULL);
     if (gear && family != QA_AUDIO_Q3)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear events require their actual Q3 sound family");
-    if (!gear && !qa_application_capture_command_context(frontend->application, &context, &captured, error)) return false;
-    const qa_vfs *files = gear ? source.files : qa_application_context_files(frontend->application, &captured, NULL);
+    qa_game_family source_family=family==QA_AUDIO_Q3 ? QA_GAME_Q3 : family==QA_AUDIO_Q2 ? QA_GAME_Q2 : QA_GAME_Q1;
+    if (!gear && !frontend_source_server_read(frontend,provider,source_family,&game,error)) return false;
+    const qa_vfs *files = gear ? source.files : qa_application_context_files(frontend->application, &game.command, NULL);
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "presentation event owner has no active content view");
     frontend_event_resources *entry = calloc(1, sizeof(*entry));
     if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "allocating presentation event resources");

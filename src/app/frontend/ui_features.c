@@ -1,6 +1,7 @@
 #include "ui_features_private.h"
 #include "accessibility.h"
 #include "source_restore.h"
+#include "source_client_registry.h"
 #include "campaign_menu.h"
 #include "q1_text.h"
 #include "cinematic_captions.h"
@@ -171,9 +172,9 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
             !(arguments[i]=qa_strings_cstr(strings,event->arguments[i].value.text)))
             ok=frontend_fail(error,QA_ERROR_FORMAT,"Localized source argument has no genuine string value");
     }
-    qa_command_context context={.owner=event->provider,.origin=QA_COMMAND_SERVER,.dialect=QA_CONSOLE_Q1},captured;
-    if (ok) ok=qa_application_capture_command_context(f->application,&context,&captured,error);
-    qa_vfs *view=ok?qa_application_context_files(f->application,&captured,NULL):NULL;
+    qa_application_startup_source game;
+    if (ok) ok=frontend_source_server_read(f,event->provider,QA_GAME_Q1,&game,error);
+    qa_vfs *view=ok?qa_application_context_files(f->application,&game.command,NULL):NULL;
     if (ok && !view) ok=frontend_fail(error,QA_ERROR_NOT_FOUND,"Localized source message lost its actual content view");
     const qa_launch_snapshot *publication=qa_application_launch(f->application);
     const char *instance=ok?qa_application_provider_instance(f->application,event->provider):NULL;
@@ -222,9 +223,9 @@ bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builti
     uint64_t source_time=0; bool found=false;
     if (!qa_application_q1_ctf_recipient_read(f->application,event->provider,event->actor,&source_time,&found,error)) return false;
     if (!found) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source prompt lost its actual provider recipient");
-    qa_command_context context={.owner=event->provider,.origin=QA_COMMAND_SERVER,.dialect=QA_CONSOLE_Q1},captured;
-    if (!qa_application_capture_command_context(f->application,&context,&captured,error)) return false;
-    qa_vfs *view=qa_application_context_files(f->application,&captured,NULL);
+    qa_application_startup_source game;
+    if (!frontend_source_server_read(f,event->provider,QA_GAME_Q1,&game,error)) return false;
+    qa_vfs *view=qa_application_context_files(f->application,&game.command,NULL);
     const qa_launch_snapshot *publication=qa_application_launch(f->application);
     const char *instance=qa_application_provider_instance(f->application,event->provider);
     const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;

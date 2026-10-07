@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "round.h"
 #include "native_q3_client_internal.h"
+#include "source_client_registry.h"
 static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool retired,
     qa_error *error);
 void frontend_audio_retire_round_aliases(qa_frontend *frontend)
@@ -102,11 +103,10 @@ static bool retained_event_source(qa_frontend *frontend, qa_actor_owner owner, q
         family == QA_GAME_Q3 && dialect == QA_CONSOLE_Q3;
     if (!matches)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Retained sound changed its Source family");
-    qa_command_context source = {.owner = owner, .origin = QA_COMMAND_SERVER, .dialect = dialect};
-    qa_command_context captured;
-    if (!qa_application_capture_command_context(frontend->application, &source, &captured, error))
-        return false;
-    return true;
+    qa_application_startup_source source;
+    return frontend_source_server_read(frontend,owner,family,&source,error) &&
+        (source.command.dialect==dialect ||
+         frontend_fail(error,QA_ERROR_ARGUMENT,"Retained sound changed its actual Source clock dialect"));
 }
 uint64_t frontend_audio_retained_event_actor(qa_frontend *frontend,
     const qa_builtin_event *event, qa_error *error)

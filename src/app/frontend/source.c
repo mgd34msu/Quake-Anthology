@@ -187,6 +187,39 @@ static void companion_clear(source_companion *capture)
     }
     if (capture) { capture->last=NULL; capture->view.packet_count=0; capture->completed=false; }
 }
+bool frontend_source_server_read(qa_frontend *f,qa_actor_owner owner,qa_game_family family,
+    qa_application_startup_source *out,qa_error *error)
+{
+    if (!f || !f->application || !owner || !out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event requires its actual server owner");
+    qa_application_startup_source selected={0};
+    bool found=false;
+    for (size_t i=0;;++i) {
+        qa_application_startup_source source; bool present;
+        if (!qa_application_console_source_at(f->application,i,&source,&present,error)) return false;
+        if (!present) break;
+        if (source.scope.provider!=owner || source.command.owner!=owner ||
+            source.command.origin!=QA_COMMAND_SERVER || !source.descriptor || !source.cvars ||
+            qa_cvars_side(source.cvars)!=QA_CVAR_SIDE_SERVER ||
+            qa_cvars_role(source.cvars)!=QA_CVAR_ROLE_GAME) continue;
+        qa_console_dialect dialect=source.command.dialect;
+        bool matches=family==QA_GAME_Q1 ? dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW :
+            family==QA_GAME_Q2 ? dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE :
+            family==QA_GAME_Q3 && dialect==QA_CONSOLE_Q3;
+        if (!matches || !source.console || source.command.cvar_view!=qa_cvars_view_identity(source.cvars) ||
+            dialect!=qa_cvars_dialect(source.cvars))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event changed its actual GAME view or family");
+        if (found)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event has multiple actual server GAME views");
+        selected=source; found=true;
+    }
+    if (!found)
+        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Source event has no actual server GAME view");
+    if (!qa_application_capture_command_context(f->application,&selected.command,&selected.command,error)) return false;
+    *out=selected;
+    return true;
+}
+
 bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
     frontend_source_client_registry *out,bool *present,qa_error *error)
 {

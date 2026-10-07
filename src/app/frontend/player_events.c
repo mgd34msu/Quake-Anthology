@@ -1,5 +1,6 @@
 #include "source_prompt.h"
 #include "internal.h"
+#include "source_client_registry.h"
 #include "qa/application_q1_composition.h"
 
 static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_error *error)
@@ -155,10 +156,12 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 break;
             case QA_Q2_PLAYER_STUFFTEXT: {
                 if (!event->text) break;
-                qa_command_context command = {.owner = observed.provider, .seat = launch_seat, .actor = actor,
-                    .dialect = QA_CONSOLE_Q2, .origin = QA_COMMAND_SERVER, .script = "q2:stufftext"};
+                qa_application_startup_source source;
+                if (!frontend_source_server_read(frontend,observed.provider,QA_GAME_Q2,&source,error)) return false;
+                qa_command_context command=source.command;
+                command.seat=launch_seat; command.actor=actor; command.script="q2:stufftext";
                 if (!qa_application_capture_command_context(frontend->application, &command, &command, error) ||
-                    !qa_console_append(qa_application_console(frontend->application), &command, event->text, error)) return false;
+                    !qa_console_append(source.console, &command, event->text, error)) return false;
                 break;
             }
             default: break;
