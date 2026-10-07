@@ -50,7 +50,8 @@ bool frontend_equipment_media_native_icon_read(qa_frontend *,const qa_applicatio
 qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *);
 bool frontend_q1_hud_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,qa_hud_q1_variant,qa_error *);
 bool frontend_q1_hud_read(qa_material_library *,const qa_q1_clientdata *,const qa_product *,
-    const qa_cvars *,bool quakeworld,double seconds,const qa_scene_image *,qa_hud_q1_status *,qa_error *);
+    const qa_cvars *,frontend_view_settings *,bool quakeworld,double seconds,
+    const qa_scene_image *,qa_hud_q1_status *,qa_error *);
 bool frontend_q1_face_read(const qa_material_library *,const char *lump,
     const qa_scene_image **,qa_error *);
 bool frontend_equipment_media_q1_hud_prepare(qa_frontend *,qa_actor_owner,qa_hud_q1_variant,qa_error *);

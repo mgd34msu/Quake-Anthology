@@ -1,4 +1,5 @@
 #include "equipment_media_private.h"
+#include "view_settings.h"
 #include "equipment_held_stock.h"
 #include "equipment_icon.h"
 #include "../application/equipment_runtime.h"
@@ -557,22 +558,24 @@ static const qa_scene_image *q1_hud_picture_read(void *context, const char *lump
     return frontend_q1_face_read(context, lump, &image, error) ? image : NULL;
 }
 bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata *client,
-    const qa_product *product, const qa_cvars *registry, bool quakeworld, double seconds,
-    const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
+    const qa_product *product, const qa_cvars *registry, frontend_view_settings *settings,
+    bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
-    const qa_cvar_view *view = qa_cvars_find(registry, "viewsize"),
-        *bar = quakeworld ? qa_cvars_find(registry, "cl_sbar") : NULL,
-        *deathmatch = qa_cvars_find(registry, "deathmatch"), *swap = qa_cvars_find(registry, "cl_hudswap");
+    const qa_cvar_view *deathmatch = qa_cvars_find(registry, "deathmatch"),
+        *swap = qa_cvars_find(registry, "cl_hudswap");
     if (!materials || !client || !product || product->family != QA_GAME_Q1 || !out || !face ||
-        !view || !isfinite(view->number) || (quakeworld && (!bar || !isfinite(bar->number))) || !isfinite(seconds))
+        !isfinite(seconds))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
+    frontend_q1_view_settings view;
+    if (!frontend_view_settings_q1_sample(settings, quakeworld ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+        &view, error)) return false;
     *out = (qa_hud_q1_status){.picture_context = materials, .picture = q1_hud_picture_read, .face = face,
         .health = client->health, .armor = client->armor, .items = client->items,
         .active_weapon = client->weapon, .ammo_count = client->ammo,
         .ammunition = {client->shells, client->nails, client->rockets, client->cells},
-        .seconds = seconds, .view_size = fmax(30, fmin(120, view->number)), .variant = frontend_q1_hud_variant(product),
+        .seconds = seconds, .view_size = view.size, .variant = frontend_q1_hud_variant(product),
         .present = true, .deathmatch = deathmatch && deathmatch->number != 0, .quakeworld = quakeworld,
-        .overlay_status = quakeworld && bar->number == 0, .hud_swap = swap && swap->number != 0};
+        .overlay_status = view.overlay_status, .hud_swap = swap && swap->number != 0};
     return true;
 }
 bool frontend_q1_face_read(const qa_material_library *materials, const char *lump,
@@ -599,7 +602,8 @@ bool frontend_equipment_media_q1_hud_read(qa_frontend *f, qa_actor_owner provide
 {
     frontend_visual_owner_view media;
     return frontend_visual_media_read(f, provider, QA_GAME_Q1, &media, error) &&
-        frontend_q1_hud_read(media.materials, client, product, registry, quakeworld, seconds, face, out, error);
+        frontend_q1_hud_read(media.materials, client, product, registry, f->view_settings,
+            quakeworld, seconds, face, out, error);
 }
 bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provider,
     const char *lump, const qa_scene_image **out, qa_error *error)
