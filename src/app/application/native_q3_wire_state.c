@@ -489,10 +489,11 @@ static bool client_view(application_provider *provider, uint32_t slot,
     if (!out || !present || slot >= wire->max_clients || (stable && wire->round_pending))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client read has no stable source slot");
     *out = (application_native_q3_wire_client_view){0};
-    *present = wire->clients[slot].admitted;
+    *present = wire->clients[slot].admitted &&
+        (!stable || !wire->clients[slot].drop_pending);
     if (!*present) return true;
     native_q3_wire_client *client = &wire->clients[slot];
-    if (client->drop_pending || !source_binding(wire, slot, client->actor, error))
+    if (!source_binding(wire, slot, client->actor, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client read lost its physical source binding");
     *out = (application_native_q3_wire_client_view){.actor = client->actor,
         .userinfo = client->userinfo, .seat = client->seat, .entered_ns = client->entered_ns,

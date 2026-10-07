@@ -94,7 +94,7 @@ static bool provider_state_empty(const qa_q3_game *game) {
 }
 
 static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options) {
-    game->memory.allocated_bytes = 0;
+    memset(&game->memory, 0, sizeof(game->memory));
     q3_shader_remaps_clear(game);
     game->rng = options->random_seed;
     game->death_animation = 0;
