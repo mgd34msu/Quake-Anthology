@@ -26,9 +26,9 @@ separately and are not counted as new installed-build evidence.
 | Issue | Defect | Current sweep evidence |
 |---|---|---|
 | THE-139 / MIKE-01 | Q1 movement and jump | Classic CPU grounded Space/W/release checks pass; exact qsrc dynamics, cadence and other paths pending. |
-| THE-140 / MIKE-02 | Q2 spawn facing | Pending. |
-| THE-146 / MIKE-03 | Q2 barrel crash | Rerelease CPU barrel removal plus 554 continued frames pass; classic/GL pending. |
-| THE-151 / MIKE-04 | Q2 rerelease video/crash | Rerelease CPU plays and quits 0; GL pending. |
+| THE-140 / MIKE-02 | Q2 spawn facing | Classic/RR CPU source and completed world camera match authored yaw 135; GL review pending. |
+| THE-146 / MIKE-03 | Q2 barrel crash | Classic/RR CPU damage/removal and continued play pass; GL and late cleared-world images pending. |
+| THE-151 / MIKE-04 | Q2 rerelease video/crash | RR CPU plays/combat/quits 0; GL fire/effects quit 0, matched world/HUD review pending. |
 | THE-153 / MIKE-05 | Q3 mouse snaps back | Original CPU: eight stationary/moving checks pass; other paths pending. |
 | THE-159 / MIKE-06 | Q3 wrong sounds | Original CPU: authored weapon-pickup PCM and output delivery pass; other events pending. |
 | THE-163 / MIKE-07 | Q3 weapon pickup/keys | Original CPU: natural shotgun grant/hide pass; keys/firing and other paths pending. |
@@ -37,23 +37,23 @@ separately and are not counted as new installed-build evidence.
 | THE-172 / MIKE-10 | Custom Start crash | Exact reported mix starts/plays/quits on CPU/GL; additional combinations are being checked. |
 | THE-180 / MIKE-11 | Split-screen views/control | Pending. |
 | THE-185 / MIKE-12 | Ported menus | Ten CPU pages visually compared: authored design matches; Sound choice formatting differs. GL/Custom pending. |
-| THE-190 / MIKE-13 | Q2 smoothness/aim/sounds | Pending current qsrc comparison and captured output. |
+| THE-190 / MIKE-13 | Q2 smoothness/aim/sounds | Classic/RR actual weapon/pickup/door voices and output retained; aim comparison and quiet cadence pending. |
 | THE-201 / MIKE-15 | Q2 dark video | Pending. |
 | THE-208 / MIKE-16 | Q3 menu startup | FAIL: native CPU and NVIDIA GL Start exit 1 before gameplay; reopened In Progress. |
 | THE-213 / MIKE-17 | Transparency | Pending Q1/Q2 CPU/GL. |
 | THE-217 / MIKE-18 | Visible Q1 trigger brushes | Pending. |
 | THE-225 / MIKE-19 | Q3 black text/HUD | Pending. |
 | THE-233 / MIKE-20 | Missing particles | Pending. |
-| THE-251 / MIKE-21 | Q1 slipgate crash | Pending. |
-| THE-261 / MIKE-22 | Vanilla Q1 autosave format | Classic CPU level-entry autosave and public save/load/resave use original v5; other paths pending. |
+| THE-251 / MIKE-21 | Q1 slipgate crash | Classic CPU/GL Normal slipgate, fog expiry and episode entry survive; game quit 0. |
+| THE-261 / MIKE-22 | Vanilla Q1 autosave format | Classic CPU/GL autosave and public save/load/resave use v5; RR uses its native text v6. |
 | THE-280 / MIKE-23 | Teleporter facing | Pending. |
 | THE-295 / MIKE-24 | Q1 jump sound | Pending. |
 | THE-305 / MIKE-25 | Q1 rocket explosion sound | Pending. |
 | THE-316 / MIKE-26 | Q1 menu effects | Pending. |
-| THE-333 / MIKE-27 | Rerelease SP/layout/load filtering | Pending. |
-| THE-345 / MIKE-28 | Difficulty gate persistence | Pending. |
+| THE-333 / MIKE-27 | Rerelease SP/layout/load filtering | RR GL all-four-skill physical gates, retail exclusions and native save/load pass; CPU fourth gate pending. |
+| THE-345 / MIKE-28 | Difficulty gate persistence | Classic GL Easy/Normal/Hard and RR GL all four pass with exact retail counts/save-load; classic Nightmare pending. |
 | THE-358 / MIKE-29 | Correct Q1 music | Pending exact opened tracks, transitions and looping. |
-| THE-380 / MIKE-30 | Q2 jump/crouch/floor/sound | Rerelease CPU jump/repress and duck/stand checks pass; blocked low-ceiling stand, classic/GL and cadence pending. |
+| THE-380 / MIKE-30 | Q2 jump/crouch/floor/sound | Classic/RR CPU jump/repress, duck/stand and jump output pass; low ceiling, complete GL and cadence pending. |
 | THE-395 / MIKE-31 | Item rotation and Q1 disappearance | Pending all four editions. |
 | THE-410 / MIKE-32 | Console cvars/FOV | Pending. |
 | THE-416 / MIKE-33 | Broken Q3 sky | Pending. |
@@ -164,7 +164,7 @@ absent. GL uses private Mesa llvmpipe; these audio-disabled functional
 sessions make no sound or performance claim. The unrelated duplicate hall
 message remains visible and is queued as THE-586.
 
-The same batches' THE-167/The-171 UI bundles retain the complete actual
+The same batches' THE-167/THE-171 UI bundles retain the complete actual
 catalog-backed product/creature tables and visible choices. There is no
 shareware row; 396 available creatures across 16 supported rosters plus two
 default rows make 398 choices. Actual Q2 rerelease whole-roster selection
@@ -180,3 +180,34 @@ lost physical source binding. This new M0 defect is THE-589, queued after
 the sweep with THE-208/586/587. Prior passing stages are separate evidence;
 no bot-death/respawn or normal-quit pass is claimed for this run. A prior
 different-map PNG is labeled as context, not the closed failure window.
+
+The later classic Q2 CPU packet (`qa-private-av-t5qjee21`) records
+actual blaster damage, barrel death/removal, 1,461 continued frontend frames
+and public quit 0. Its late cleared-barrel PNG was captured while cinematic
+presentation owned the screen, so that visual claim is withdrawn. Numeric
+removal and earlier world before/fire/after PNGs remain valid. Both Q2
+editions start with body/source yaw 135 and a matching completed world
+camera, as authored by the selected spawn. Classic C and rerelease
+copied-profile CTRL produce duck/stand dimensions 32/4/32; two Space
+jumps, positive jump voices and actual private output are retained. A
+blocked low-ceiling stand and quiet frame/prediction cadence remain open.
+
+The rerelease Q1 GL extended packet physically traverses Easy, Normal,
+Hard and Nightmare. Its e1m1 skill exclusions are 46/33/18/18, with
+10/23/42/42 monsters; save/load/resave preserves the native rules and
+state. Rerelease text saves use v6, while classic remains v5. The
+coordinator inspected the Nightmare gate, episode and restored PNGs.
+Classic GL still lacks a successful physical Nightmare route; earlier
+controller misses are preserved without being called game failures.
+
+At 10:30 CDT the supervisor closed THE-251, THE-261, THE-167, THE-171
+and THE-431 after reviewing their evidence; Linear now reports Done for
+those five. This agent made no Done transitions. The other sweep entries
+remain bounded or pending.
+
+THE-588 is also queued after the sweep. The combined game's QASV autosave
+uses the vanilla Q1 classic filename, `autosave-q1-classic-id1.sav`, so
+the two session types overwrite the same slot. Its format is appropriate
+for combined state; its slot must be distinct from vanilla product slots.
+The supervisor's issue records the 236,264-byte shared save and matching
+in-game checkpoint PNG. No hashing is needed to separate those names.
