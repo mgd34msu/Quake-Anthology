@@ -1505,18 +1505,21 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         qac_text text = {0};
         if (!command_text(first, &text, error)) { free((char *)context.script); free(text.data); success = false; break; }
         size_t offset = qa_command_separator(text.data, text.size, context.dialect);
+        size_t consumed = offset < text.size ? offset + 1 : offset;
         const qa_console_options *options=options_for(console,&context);
         if (!options) { success=qac_fail(error,QA_ERROR_ARGUMENT,"queued command cvar view has retired");
+            consume(console, consumed);
             free((char *)context.script); free(text.data); break; }
         size_t maximum = options->maximum_command == 0 ? 1024 : options->maximum_command;
         if (offset >= maximum) {
             if (context.dialect != QA_CONSOLE_Q3) {
                 success = qac_fail(error, QA_ERROR_FORMAT, "command line exceeds source buffer");
+                consume(console, consumed);
                 free((char *)context.script); free(text.data); break;
             }
             offset = maximum - 1;
+            consumed = offset + 1;
         }
-        size_t consumed = offset < text.size ? offset + 1 : offset;
         text.data[offset] = '\0';
         consume(console, consumed);
         success = dispatch(console, &context, text.data, error);
