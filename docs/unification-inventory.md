@@ -6,7 +6,7 @@ The locations below were checked during the MIKE-23–36 work. “Merged” desc
 
 | Capability | Existing copies or divergent paths | Single implementation | State |
 |---|---|---|---|
-| Pickup model rotation | `src/app/frontend/visuals.c:1047`, `remote_q1_presentation.c:69`, `remote_q2_presentation.c:671`, `remote_unified_render.c:326` | `src/app/frontend/legacy_render_policy.c:22`, `frontend_legacy_entity_angles`; adapters provide original model flags, effects and client time | Merged in 9f119249; four-edition shipped proof pending, MIKE-31 |
+| Pickup model rotation | `src/app/frontend/visuals.c:1047`, `remote_q1_presentation.c:69`, `remote_q2_presentation.c:671`, `remote_unified_render.c:326` | `src/app/frontend/legacy_render_policy.c:22`, `frontend_legacy_entity_angles`; adapters provide original model flags, effects and client time | Merged in 9f119249; native proof recorded below; Q1 rerelease CPU weapon rotation and Mike's retest pending, THE-395 / MIKE-31 |
 | Forced view and command feedback | `src/app/application/control.c:2867`, `control.c:2896`, `control.c:3287`; native Q1 one-shot feedback at `native_q1_wire.c:773` | `control.c:744`, `command_angle_feedback`, with the existing motion-change revision and forced-view publisher | Shared publisher merged in 46b3aedb; mixed-world feedback admission remains open, MIKE-23/36 |
 | Character standing/crouched posture | `src/app/application/control.c:2008`, `control.c:3607`, `guest_native_q2_services.c:436`; computed boxes overridden twice in each Q2 mover at `src/movement/q2/classic.c:432,440` and `rerelease.c:601,637` | Shared selected-character posture contract in application control; pmove computes its box from the stable template, current bounds remain separate | Shared posture merged in bee02e48; shipped keyboard/audio checks pending, MIKE-30 |
 | Typed console command/cvar routing | `src/console/seat.c:238`, `src/app/application/guest_services.c:56`, `src/app/frontend/config_store.c:1456`; ENGINE and per-seat Source registries differ | One application console and canonical cvar table; module registration contributes names to that table, aliases resolve to the same entry, and explicit Source capabilities retain lifecycle identity | Typed input merged in e96ab55b; independent registries and handoff removal remain open, MIKE-32 |
@@ -20,7 +20,24 @@ The locations below were checked during the MIKE-23–36 work. “Merged” desc
 
 Q2 entity visibility already converges on `src/app/application/visual_visibility.c:71`, `application_q2_visibility_test`. Q3 visibility already converges on `src/network/q3/visibility.c:131`. Those adapters do not need a second replacement algorithm.
 
-Pickup disappearance still needs a live accepted-touch trace. Native Q1 pickup completion and QuakeC both clear the model; no speculative hide cache is being added. The trace must distinguish accepted grants from cooperative weapon rules or full-ammo refusals.
+## Native pickup and rotation qualification
+
+THE-395 / MIKE-31 has shipped native Q1 accepted weapon and ammo traces in classic and rerelease, on CPU and GL. The super shotgun becomes owned and shells increase from 25 to 30. Ammo grants add 20 shells. On the accepted frame, the model clears, solidity becomes `QA_PHYSICS_NOT_SOLID`, frontend appearance becomes invisible with no model, and the item has zero scene draws. These are stock single-player accepted grants. Full-ammo refusal and cooperative weapon retention were not exercised. `QA_PICKUP_SELECT_ORIGINAL` selects the native pickup continuation here, not an Original QuakeC guest. The passing traces justify no new pickup gameplay change.
+
+The existing production fix is `9f119249`. Its shared `frontend_legacy_entity_angles` policy uses the original Q1 MDL rotate flag and Q2 entity rotate effect with their actual Source clocks. Native and received presentation call the same policy. The saved native rotation evidence has the following bounds.
+
+| Q1 edition and renderer | Weapon | Armor | Quad |
+|---|---|---|---|
+| Classic CPU | Submitted axes at four Source clocks | Submitted axes for one actor at two Source clocks | Submitted axes for one actor at three Source clocks |
+| Classic GL | Axes and completed Draw matrices at three Source clocks | Axes and completed Draw matrices at three Source clocks | Axes and completed Draw matrices at three Source clocks |
+| Rerelease CPU | No saved weapon rotation trace | Axes and completed Draw matrices at three Source clocks | Submitted axes for one actor at three Source clocks |
+| Rerelease GL | Axes and completed Draw matrices at three Source clocks | Axes and completed Draw matrices at three Source clocks | Axes and completed Draw matrices at three Source clocks |
+
+Rerelease armor preserves original MDL flag 8 while drawing the selected MD5 replacement. An ordinary PVS-admitted `dm1` view supplies the three-clock proof. Earlier excluded views did not establish a model-cache defect. Classic CPU armor has two distinct samples, which already show rotation. A third sample is not an implementation requirement. The compact matrix's earlier rerelease CPU weapon claim pointed to four armor samples, not a weapon. An actual rerelease CPU weapon trace remains pending.
+
+Native Q2 classic and rerelease weapon, armor, and Quad rotation has submitted-model proof on CPU and GL. Eight saved `q2dm1` and `q2dm3` map cases record authored `EF_ROTATE`, actual model axes, and three completed client clocks per item representative. Classic uses integer `milliseconds / 10`; rerelease uses `milliseconds * .1f`. The Q2 receipts do not record completed Draw matrices.
+
+Evidence is retained as `the395-native-evidence-matrix.json`, `shipped-967-q1-ammo-proof.json`, `shipped-967-q1-cpu-proof.json`, `shipped-0e7-hud-pickup-proof.json`, `shipped-967-q1-armor-quad-bounds.json`, `shipped-00b-classic-gl-rotation-proof.json`, `shipped-bb7-rr-rotation-proof.json`, and `qualification-967a7349.json`. The latest rerelease armor CPU and GL, weapon GL, and Quad GL cases used installed `bb7f2ec1`; every qualifying run exited through public quit with code 0 and preserved owner settings and the executable. Runs used `--no-audio`. These native receipts do not qualify Original QuakeC or DLL guests, mods, received network presentation, pixel fidelity, audio output, or performance. Mike's retest remains pending.
 
 ## Console and cvar ownership
 
