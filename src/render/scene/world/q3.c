@@ -269,7 +269,8 @@ static bool load_surface(qa_scene_world *world, q3_data *data, const qa_bsp_mate
     }
     surface->sky = surface->material->sky;
     surface->sort = surface->material->sort;
-    if (source.fog >= 0) {
+    if (source.fog >= 0 &&
+        !(surface->flare && source.fog == 0 && data->fog_count == 0)) {
         surface->fog_index = (uint32_t)source.fog + 1;
         if ((size_t)source.fog < data->fog_count && data->fogs[source.fog].active)
             surface->fog = data->fogs[source.fog].fog;
