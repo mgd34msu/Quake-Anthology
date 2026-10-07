@@ -460,3 +460,33 @@ cleanup of owned processes. No stock movement, presentation flags or
 Source state were injected. Attached functional observers make no timing
 or isolated sound-fidelity claim. These proofs cover the key-selection
 gap after the existing packed-sort/fog fixes; THE-562 is ready for review.
+
+## Classic Q1 surfaces on the installed build
+
+THE-213 now has classic id1 e1m1 CPU and NVIDIA GPU0 GL captures on the
+15:01 installation: `/tmp/qa-private-av-51mbqa2o` and
+`/tmp/qa-private-av-xazvynpi`. Root opened spawn, entrance corridor,
+water, submerged teleporter and exit slipgate images. Both renderers show
+textured surfaces and complete world views at these locations; no uniform
+solid-color replacement or black world appears in the inspected images.
+Every PNG was captured from the stopped private window after a fresh,
+phase-matching completed presentation. The actual scene/frame sequences
+match, source clocks advance, and the ordinary entrance uses real W input.
+The later inspection vantages use explicitly recorded public noclip and
+keyboard movement; they are not an owner gameplay-route reproduction.
+
+The authored BSP census finds no `{` fence texture or palette-255 texel
+at any mip in classic start/e1m1 (81 textures combined). These maps cannot
+prove a classic fence fix that their content does not contain. The exact
+owner solid-color spot remains unidentified, so this evidence bounds the
+classic observation rather than claiming the original symptom reproduced.
+The previously reviewed MG3 distant-fence and Q2 rerelease TRANS33 evidence
+remain separate. Both new classic runs copied the owner34 settings, kept
+their originals and installed package pins unchanged, captured private SDL
+output, quit normally with exit zero and left no owned process running.
+Attached functional observers make no timing or sound-fidelity claim.
+
+The first capture helper stalled inside its broad synchronous census
+before the PNG call; its uninstrumented log cannot narrow that helper
+stage further. The replacement uses scalar scene metadata and performs
+no debugger pixel scan. That failed helper run is not an engine defect.
