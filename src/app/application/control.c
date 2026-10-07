@@ -9,6 +9,7 @@
 #include "guest_q2_control.h"
 #include "guest_qc_profile.h"
 #include "native_q3_settings.h"
+#include "native_q3_clients.h"
 #include "native_q3_wire_state.h"
 #include "native_q1_composition_rogue.h"
 #include "native_q1_composition_birth.h"
@@ -2114,6 +2115,19 @@ static bool prepare_input(application_move_call *move,
             input->environment.speed_multiplier = 1;
         if (!live(application, record->actor))
             return true;
+    }
+    if (input->state.kind == QA_MOVEMENT_Q3 &&
+        move->movement->kind == APPLICATION_PROVIDER_Q3) {
+        if (!move->context.source_usercmd) {
+            int32_t type, gravity, speed;
+            bool spectator;
+            if (!application_native_q3_client_movement_parameters(move->movement,
+                record->actor, &type, &gravity, &speed, &spectator, error)) return false;
+            input->state.data.q3.movement_type = type;
+            input->state.data.q3.gravity = gravity;
+            input->state.data.q3.speed = speed;
+        }
+        input->environment.speed_multiplier = 1;
     }
     character_fixed_pose(input);
     if (move->context.source_usercmd && input->state.kind == QA_MOVEMENT_Q3) {

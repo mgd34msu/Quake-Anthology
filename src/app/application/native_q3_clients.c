@@ -1481,8 +1481,14 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
     qa_q3_player_state player;
     qa_combat_state combat;
     qa_application *app = provider ? provider->application : NULL;
-    if (!pm_type || !gravity || !speed || !spectator ||
-        !source(provider, actor, &slot, error) || actor.slot >= app->control_capacity ||
+    bool selected = app && application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") == provider;
+    if (!pm_type || !gravity || !speed || !spectator || !app || app->destroy_requested ||
+        provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !qa_actors_get(qa_session_actors(app->session), actor) ||
+        (!selected && !source(provider, actor, &slot, error)) ||
+        !qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
+        actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
         !qa_actor_id_equal(app->controls[actor.slot].actor, actor) ||
         !session(provider, actor, &sess, error) ||
