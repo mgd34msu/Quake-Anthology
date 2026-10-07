@@ -939,7 +939,19 @@ static bool run_source_deadline(qa_frontend *frontend, uint64_t elapsed, uint64_
     *out = 0;
     const qa_display_info *display = &frontend->observed_display;
     if (!frontend->options.dedicated && frontend->display && !display->minimized &&
-        display->drawable_width && display->drawable_height) return true;
+        display->drawable_width && display->drawable_height) {
+        const qa_cvars *cvars = qa_application_cvars(frontend->application);
+        const qa_cvar_view *value = qa_cvars_find(cvars, "timedemo");
+        if (value && value->integer) return true;
+        value = qa_cvars_find(cvars, "com_maxfps");
+        int32_t maximum = value ? value->integer : 0;
+        value = qa_cvars_find(cvars, "r_maxfps");
+        if (value && value->integer > 0 && (maximum <= 0 || value->integer < maximum))
+            maximum = value->integer;
+        if (maximum > 0)
+            *out = (UINT64_C(1000000000) + (uint64_t)maximum - 1) / (uint64_t)maximum;
+        return true;
+    }
     if (frontend_constructor_pending(frontend) || frontend_save_commands_restoring(frontend) ||
         qa_application_startup_pending(frontend->application)) return true;
     qa_session *session = qa_application_session(frontend->application);
