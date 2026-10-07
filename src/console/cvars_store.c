@@ -824,14 +824,13 @@ qa_cvars *qa_cvars_create_view(qa_cvars *shared, const qa_cvar_options *options,
     }
     registry->view_identity = ++next_view_identity; registry->references = 1;
     registry->options = *options; registry->store = shared->store; registry->values.cheats = true;
-    qa_cvars_edit *borrowed=qac_cvars_current_edit(shared);
     qa_cvars_edit *edit=shared->store->edit;
     if (edit && edit->ready) { qac_fail(error,QA_ERROR_ARGUMENT,"new Source views require the unsealed canonical edit"); goto failed; }
     if (!admit_player(shared,&registry->store->values,options->seat,registry->store->active_dialect,error) ||
         (edit && !admit_player(shared,&edit->values,options->seat,edit->active_dialect,error)) ||
         !qac_cvars_view_add(registry, &registry->store->values, &registry->values, error)) goto failed;
     if (edit && !qac_cvars_edit_add_view(edit, registry, error)) goto failed;
-    registry->candidate_edit = borrowed;
+    registry->candidate_edit = edit;
     registry->store->last_view->next_view = registry; registry->store->last_view = registry;
     ++registry->store->references;
     return registry;
