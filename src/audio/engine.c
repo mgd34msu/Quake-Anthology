@@ -31,8 +31,7 @@ bool qa_audio_q3_operation_valid(const qa_audio_q3_operation *operation)
     }
     if (sound->audience == QA_AUDIO_WORLD || sound->asset || sound->sample || sound->name)
         return false;
-    return operation->kind != QA_AUDIO_Q3_POSITION ||
-        (sound->actor != QA_AUDIO_NO_ACTOR && qa_vec_finite(sound->origin));
+    return operation->kind != QA_AUDIO_Q3_POSITION || qa_vec_finite(sound->origin);
 }
 static void q3_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all_owners)
 {
@@ -798,6 +797,12 @@ bool qa_audio_engine_q3_submit(qa_audio_engine *engine, const qa_audio_q3_operat
     if (!qa_audio_q3_operation_valid(operation))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid retained Q3 audio operation");
     if (!enter(engine, false, error)) return false;
+    /* CG_CheckEvents also positions temporary effect entities. Their explicit-origin
+     * sounds need no persistent actor whose mixer position could be updated. */
+    if (operation->kind == QA_AUDIO_Q3_POSITION &&
+        operation->sound.actor == QA_AUDIO_NO_ACTOR) {
+        leave(engine); return true;
+    }
     if (engine->q3_first && engine->q3_count == engine->q3_capacity - engine->q3_first) {
         memmove(engine->q3_operations, engine->q3_operations + engine->q3_first,
             engine->q3_count * sizeof(*engine->q3_operations));
