@@ -859,6 +859,30 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     qa_q3_player_state *player = &entry->state.player;
     if (player->cutscene.active)
         return true;
+    uint32_t slot;
+    if (!command->prediction && qa_q3_native_client_slot(game, actor, &slot, NULL) &&
+        game->clients[slot].connected != QA_Q3_CLIENT_CONNECTED) {
+        if (!qa_q3_wire_player_publish(game, actor, true, false, game->now_ms, error))
+            return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
+        player = &entry->state.player;
+    }
+    qa_q3_controls captured = *command;
+    if (source) {
+        captured.gauntlet_contact_known = true;
+        captured.gauntlet_contact = false;
+        if (captured.attack && !captured.prediction && source->health > 0 &&
+            player->weapon == QA_Q3_W_GAUNTLET &&
+            !q3_gauntlet(game, actor, &captured.gauntlet_contact, error))
+            return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
+        player = &entry->state.player;
+        command = &captured;
+    }
     bool attack = command->attack, use = command->use_holdable;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
@@ -1072,17 +1096,9 @@ bool qa_q3_arsenal_source_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_
     if (player->requested_weapon != player->weapon)
         controls.requested_weapon = player->requested_weapon;
     int32_t milliseconds = (int32_t)(elapsed_ms + player->fractional_weapon_ms);
-    controls.gauntlet_contact_known = true;
-    controls.gauntlet_contact = false;
-    bool okay = true;
     bool advanced = false;
-    if (controls.attack && captured.health > 0 && player->weapon == QA_Q3_W_GAUNTLET)
-        okay = q3_gauntlet(game, actor, &controls.gauntlet_contact, error);
-    entry = q3_actor_get(game, actor);
-    if (okay && entry && entry->kind == Q3_ACTOR_PLAYER &&
-        (entry->state.player.selections & QA_Q3_ARSENAL))
-        okay = arsenal_step(game, actor, &controls, elapsed_ms, &captured,
-            milliseconds, &advanced, error);
+    bool okay = arsenal_step(game, actor, &controls, elapsed_ms, &captured,
+        milliseconds, &advanced, error);
     entry = okay ? q3_actor_get(game, actor) : NULL;
     if (entry && entry->kind == Q3_ACTOR_PLAYER &&
         (entry->state.player.selections & QA_Q3_ARSENAL)) {
