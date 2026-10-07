@@ -599,6 +599,20 @@ static bool gear_held_output(frontend_equipment_source *owner, const qa_applicat
             owner, current_preparation, out, submitted, error);
 }
 
+bool frontend_equipment_source_selected_read(frontend_equipment_source *owner,
+    qa_actor_id actor, qa_application_equipment_view *out, qa_error *error)
+{
+    if (!owner || !out || !owner->drawing || !current_owner(owner) ||
+        !qa_actors_get(qa_session_actors(owner->client.session), actor))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Held equipment requires its live actor and Source draw");
+    uint32_t seat;
+    if (!qa_application_player_seat(owner->options.frontend->application, actor, &seat)) {
+        *out = (qa_application_equipment_view){0};
+        return true;
+    }
+    return qa_application_equipment_read(owner->options.frontend->application, actor, out, error);
+}
+
 bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
     qa_actor_id actor, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent,
     void **token, bool *selected, qa_error *error)
@@ -607,7 +621,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held equipment requires its actual active draw lease");
     *selected = false;
     qa_application_equipment_view source;
-    if (!qa_application_equipment_read(owner->options.frontend->application, actor, &source, error)) return false;
+    if (!frontend_equipment_source_selected_read(owner, actor, &source, error)) return false;
     if (source.selected && source.original_qvm) {
         bool original;
         if (!original_q3_match(owner, &source, &original, error)) return false;
@@ -748,7 +762,7 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
     if (!owner || !authored || !submitted || !parent_assets || !parent || !owner->drawing || !current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held equipment requires its actual active receiver");
     qa_application_equipment_view source;
-    if (!qa_application_equipment_read(owner->options.frontend->application, actor, &source, error)) return false;
+    if (!frontend_equipment_source_selected_read(owner, actor, &source, error)) return false;
     if (source.selected && source.original_qvm && companion_held(owner, actor)) {
         *submitted = true;
         return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,

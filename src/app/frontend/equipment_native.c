@@ -97,7 +97,7 @@ static bool held_actor(equipment_native *owner, const q3n_frame *frame, qa_actor
         actual.state.powerups != powerups)
         return frontend_fail(error, QA_ERROR_FORMAT, "Native held parent has no physical full actor binding");
     qa_application_equipment_view source;
-    if (!qa_application_equipment_read(frame->application, actual.binding.actor, &source, error)) return false;
+    if (!frontend_equipment_source_selected_read(owner->source, actual.binding.actor, &source, error)) return false;
     if (!source.selected) return true;
     if (source.family == QA_GAME_Q3) {
         bool authored = false;

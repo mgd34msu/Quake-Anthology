@@ -58,6 +58,8 @@ bool frontend_equipment_source_native_held(frontend_equipment_source *,
 bool frontend_equipment_source_native_held_from(frontend_equipment_source *,
     qa_actor_id, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *,
     int32_t powerups, bool personal_model, bool *authored, bool *submitted, qa_error *);
+bool frontend_equipment_source_selected_read(frontend_equipment_source *,
+    qa_actor_id, qa_application_equipment_view *, qa_error *);
 bool frontend_equipment_source_held_begin_from(frontend_equipment_source *,
     qa_actor_id, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *,
     void **token, bool *selected, qa_error *);
