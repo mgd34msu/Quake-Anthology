@@ -13,6 +13,35 @@ The 03:51:48 CDT installation passed private copied-owner-profile startup before
 
 Evidence identifiers: `qa-the153-mouse-20261006/qualification.json`, `qa-the420-contained-20261007/ab78171b-consolidated-proof.json`, and `qa-private-av-mnoe1g9d/user/evidence/m0-reviewed-evidence.json`. Earlier missing-window-manager and camera-target observer failures are retained as helper failures, not gameplay defects. Original world-camera proof filters out later no-world HUD icon scenes. Input-state and combined-mode checks use bounded read-only debugger observations; none establish frame time. All displays and audio servers were private. Except for the separately recorded pickup output capture, audio was disabled. Owner retests remain pending.
 
+## Current combined-mode teleporter retest
+
+Installed `3765bb6b` passed a new THE-431 / MIKE-36 check on private GPU0
+GL, NVIDIA RTX 5060 Ti. The actual Custom menu selected classic Q1
+`maps/start.bsp`, Q3 movement, Ranger, Q3 weapons, Q2 rerelease monsters
+and single player. All 34 owner settings files were copied unchanged.
+
+Real W, release and relative mouse input approached and crossed the authored
+Normal gate without noclip or injected state. Entry yaw 88.9398193 became
+destination yaw 90. The forced-angle revision advanced from 2 to 4. Later
+completed observations retained that yaw in the physical body, input, Q3
+movement state and result. The actual emitted common world VIEW camera read
+90.0000025 degrees. The player settled at `[544,1642.6616,24.03125]` with zero
+velocity. Menu, gameplay and destination screenshots were inspected.
+
+The observer detached its startup debugger before gameplay. All 466 accepted
+state cuts had `TracerPid=0`. Public quit and the contained client returned
+zero; all 11 recorded processes were absent. There were no game audio
+streams, and installed files, helpers and original owner settings stayed
+unchanged. Evidence is `qa-private-av-j02x3ty1/user/evidence/m0-reviewed-evidence.json`.
+
+This run proves the native start and Normal-gate route only. Jump, firing,
+monster combat, Original modules, audio and performance were not exercised.
+The earliest crossed cut retained an older result view angle while the body,
+authoritative state, retained view and rendered camera already faced 90;
+later completed results also faced 90. The immediate startup image was black
+during presentation handoff; later gameplay images were valid. The repeated
+Normal notification remains THE-285. Mike's retest is still pending.
+
 THE-420 remains In Progress. A subsequent native GL check held Space for two seconds, released and pressed it again for 1.5 seconds, then held C for 1.5 seconds. X autorepeat was enabled at its unchanged default delay of 660 ms and rate of 25 Hz. Actual SDL key events retained their repeat flags. The four configured `com_maxfps` values and `r_swapInterval 0` were read back from the installed engine.
 
 | Configured `com_maxfps` | Repeated Space key-downs, first/second hold | Repeated C key-downs | Jump events / real presses | Observed presentation cadence per second |
