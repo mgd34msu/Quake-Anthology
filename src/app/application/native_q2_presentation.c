@@ -1,8 +1,110 @@
 #include "guest_native_q2_private.h"
+#include "native_q2_console.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
 #include <math.h>
+
+bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
+    qa_application_native_q2_hud *out, bool *found, qa_error *error)
+{
+    if (!app || !out || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 HUD requires its actor and output");
+    *found = false;
+    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    application_provider *hud = application_provider_for(app, actor, QA_ROLE_HUD, "");
+    if (!hud || !hud->constructed || hud->close_pending || !hud->product ||
+        hud->product->family != QA_GAME_Q2) return true;
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    qa_application_native_q2_hud value = {.provider = hud->owner, .layout = ""};
+    if (hud->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_combat_rules rules;
+        if (!hud->state.q2 || !qa_q2_combat_rules_read(hud->state.q2, &rules)) return true;
+        value.edition = rules.edition;
+    } else if (hud->kind == APPLICATION_PROVIDER_NATIVE) {
+        struct application_native_q2 *engine = hud->state.native.q2_engine;
+        if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
+            engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
+        value.edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+    } else return true;
+    value.frame_ns = hud->component.clock.interval_ns;
+    qa_clock_state clock;
+    if (!qa_session_clock(app->session, hud->owner, &clock)) return true;
+    value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
+    value.cvars = application_native_q2_console_registry(hud);
+    application_provider *original = hud->kind == APPLICATION_PROVIDER_NATIVE ? hud :
+        character && character->product && character->product->family == QA_GAME_Q2 &&
+        character->kind == APPLICATION_PROVIDER_NATIVE ? character : NULL;
+    if (original) {
+        struct application_native_q2 *engine = original->state.native.q2_engine;
+        if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
+            engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
+        uint32_t slot = 0;
+        for (uint32_t i = 1; i < sizeof(engine->clients) / sizeof(engine->clients[0]); ++i)
+            if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) {
+                slot = i; break;
+            }
+        if (!slot) return true;
+        qa_q2_player player;
+        if (!qa_native_host_q2_player(original->state.native.host, slot, &player, error)) return false;
+        memcpy(value.stats, player.stats, sizeof(value.stats));
+        for (unsigned i = 0; i < sizeof(value.inventory) / sizeof(value.inventory[0]); ++i)
+            value.inventory[i] = engine->clients[slot].inventory[i];
+        value.original = true; value.configstrings = (const char *const *)engine->configstrings;
+        value.configstring_count = engine->configstring_count;
+        value.layout = engine->clients[slot].layout;
+        value.player_number = (int32_t)slot - 1;
+        value.edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value.cvars = engine->cvars;
+        if (!qa_session_clock(app->session, original->owner, &clock)) return true;
+        value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
+        value.frame_ns = original->component.clock.interval_ns;
+        value.statusbar = value.configstring_count > 5 && value.configstrings[5] ? value.configstrings[5] : "";
+    } else if (hud->kind == APPLICATION_PROVIDER_Q2) {
+        value.game = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->state.q2 : hud->state.q2;
+        value.statusbar = qa_q2_wire_statusbar(hud->state.q2);
+        qa_q2_player_info player;
+        bool native_character = character && character->kind == APPLICATION_PROVIDER_Q2;
+        if (native_character) {
+            if (!qa_q2_player_read(character->state.q2, actor, &player) || !player.connected) return true;
+            qa_q2_wire_view retained;
+            if (!qa_q2_wire_view_read(value.game, actor, &retained, error)) return false;
+            value.view = retained.view;
+            value.player_number = (int32_t)player.slot;
+            if (!retained.present) {
+                qa_combat_state combat;
+                if (!qa_combat_read(app->combat, actor, &combat, error)) return false;
+                value.view.health = combat.health; value.view.armor = combat.armor.regular.points;
+                value.view.selected_item = player.selected_item;
+                value.view.score = player.score; value.view.spectator = player.spectator;
+            }
+        } else {
+            qa_combat_state combat;
+            if (!qa_combat_read(app->combat, actor, &combat, error)) return false;
+            value.view.health = combat.health; value.view.armor = combat.armor.regular.points;
+            for (size_t i = 0; i < qa_q2_item_count(value.game); ++i) {
+                const qa_q2_item_definition *item = qa_q2_item_at(value.game, i);
+                if (combat.armor.regular.points > 0 && item->item == combat.armor.regular.item && item->icon)
+                    value.view.armor_icon = qa_strings_find(qa_session_strings(app->session),
+                        (qa_bytes){(const uint8_t *)item->icon, strlen(item->icon)});
+            }
+        }
+        for (size_t i = 0; (value.view.layouts & 2) && i < qa_q2_item_count(value.game) &&
+            i + 1 < sizeof(value.inventory) / sizeof(value.inventory[0]); ++i) {
+            const qa_q2_item_definition *item = qa_q2_item_at(value.game, i);
+            double count = 0;
+            qa_error missing = {0};
+            if (!qa_inventory_count_read(app->inventory, actor, item->item, &count, &missing) &&
+                missing.code != QA_ERROR_NOT_FOUND) {
+                if (error) *error = missing;
+                return false;
+            }
+            value.inventory[i + 1] = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
+        }
+    } else return true;
+    *out = value; *found = true;
+    return true;
+}
 
 bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_owner owner,
     qa_q2_edition *out, uint64_t *interval_ns, bool *found, qa_error *error)

@@ -429,15 +429,23 @@ bool q2_player_nuke_blind(qa_q2_game *g, qa_actor_id id, uint64_t until, bool in
 }
 bool q2_client_item_received(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
                              qa_error *e) {
-    (void)e;
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || !a->client)
         return true;
     q2_client_state *s = a->client;
     s->bonus_alpha = .25f;
-    if (d->kind == QA_Q2_ITEM_POWER || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
-        d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY || d->kind == QA_Q2_ITEM_NUKE)
+    if (q2_item_usable(d)) {
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            int owned;
+            if (!q2_count(g, id, d->item, &owned, e))
+                return false;
+            a = q2_actor_get(g, id, false, NULL);
+            if (!a || !a->client || !owned)
+                return true;
+            s = a->client;
+        }
         s->info.selected_item = d->item;
+    }
     return true;
 }
 

@@ -874,7 +874,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     qa_inventory *inventory = qa_application_inventory(hud->options.application);
     qa_item_definition *definitions = NULL;
     size_t definition_count = 0;
-    if (frame->actor.registry && (frame->show_inventory ||
+    if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals) ||
         (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
         if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
         if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
@@ -946,7 +946,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
         } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
                    !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
     }
-    if (frame->show_inventory && frame->actor.registry) {
+    if (frame->show_inventory && !data.source_vitals && frame->actor.registry) {
         size_t count = 0;
         if (!qa_inventory_entries(inventory, frame->actor, NULL, 0, &count, error)) return false;
         if (count > SIZE_MAX / sizeof(qa_inventory_entry)) return ui_fail(error, "HUD inventory overflow");

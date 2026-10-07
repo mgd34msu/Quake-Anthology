@@ -85,4 +85,23 @@ bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_own
 bool qa_application_native_q2_source_clock_read(qa_application *, qa_actor_owner,
     qa_q2_edition *edition, uint64_t *interval_ns, bool *found, qa_error *);
 
+typedef struct qa_application_native_q2_hud {
+    qa_actor_owner provider;
+    qa_q2_edition edition;
+    const qa_cvars *cvars;
+    const qa_q2_game *game;
+    qa_q2_player_view view;
+    const char *statusbar, *layout;
+    const char *const *configstrings;
+    uint32_t configstring_count;
+    int16_t stats[64];
+    int32_t inventory[256];
+    uint64_t time_ns, frame_ns;
+    int32_t server_frame, player_number;
+    bool original;
+} qa_application_native_q2_hud;
+/* The actor's chosen HUD and CHARACTER supply data independently of map/mover. */
+bool qa_application_native_q2_hud_read(qa_application *, qa_actor_id,
+    qa_application_native_q2_hud *, bool *found, qa_error *);
+
 #endif

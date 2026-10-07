@@ -6,6 +6,7 @@
 #include "qa/console_io.h"
 #include "qa/console_seat.h"
 #include "qa/hud.h"
+#include "qa/application_native_q2_presentation.h"
 #include "qa/hud_wheel.h"
 #include "qa/input_platform.h"
 #include "qa/material.h"
@@ -177,12 +178,14 @@ typedef struct frontend_seat {
     int32_t q3_damage_event, q3_damage_time;
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
-    qa_hud_value q2_vitals[3];
+    qa_application_native_q2_hud q2_hud;
+    qa_actor_owner q2_hud_font_provider;
+    qa_font_library *q2_hud_fonts;
+    const qa_font *q2_hud_classic;
+    bool q2_hud_active;
     qa_hud_value q1_monsters;
     char q1_monster_label[80];
-    qa_hud_timer q2_timer;
-    qa_item_id q2_timer_item;
-    char *q2_timer_label, *q2_help_text[2];
+    char *q2_help_text[2];
     const char *q2_help_lines[2];
     qa_hud_score *q2_scores;
     char *q2_score_names;

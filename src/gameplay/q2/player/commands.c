@@ -32,7 +32,7 @@ static int argument_integer(const char *text) {
     long value = strtol(text, &end, 10);
     return end == text ? 0 : value > INT_MAX ? INT_MAX : value < INT_MIN ? INT_MIN : (int)value;
 }
-static bool usable(const qa_q2_item_definition *d) {
+bool q2_item_usable(const qa_q2_item_definition *d) {
     return d->weapon || d->kind == QA_Q2_ITEM_POWER || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
            d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY ||
            d->kind == QA_Q2_ITEM_NUKE || d->kind == QA_Q2_ITEM_COMPASS ||
@@ -104,7 +104,7 @@ static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, q
         size_t index =
             direction > 0 ? (start + step) % count : (start + count - (step % count)) % count;
         const qa_q2_item_definition *d = qa_q2_item_at(g, index);
-        if (!usable(d) || (filter == 1 && d->kind != QA_Q2_ITEM_WEAPON) ||
+        if (!q2_item_usable(d) || (filter == 1 && d->kind != QA_Q2_ITEM_WEAPON) ||
             (filter == 2 && d->kind != QA_Q2_ITEM_POWER))
             continue;
         int owned;
@@ -128,7 +128,7 @@ static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, q
 static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d, qa_error *e) {
     if (!d)
         return q2_player_print(g, a->id, 2, "unknown item\n", e);
-    if (!usable(d))
+    if (!q2_item_usable(d))
         return q2_player_print(g, a->id, 2, "Item is not usable.\n", e);
     int owned;
     if (!q2_count(g, a->id, d->item, &owned, e))

@@ -261,8 +261,26 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
         install(r, xatrix, N(xatrix));
     if (g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE)
         install(r, rogue, N(rogue));
-    if (g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.edition == QA_Q2_RERELEASE) {
         install(r, rerelease, N(rerelease));
+        static const char *const key_order[] = {
+            "key_data_cd", "key_power_cube", "key_explosive_charges", "key_yellow_key",
+            "key_power_core", "key_pyramid", "key_data_spinner", "key_pass", "key_blue_key",
+            "key_red_key", "key_green_key", "key_commander_head", "key_airstrike_target",
+            "key_nuke_container", "key_nuke"};
+        size_t key = 0;
+        for (size_t i = 0; i < r->count; ++i) {
+            if (r->definitions[i].kind != QA_Q2_ITEM_KEY) continue;
+            for (size_t j = i; j < r->count; ++j) {
+                if (strcmp(r->definitions[j].classname, key_order[key])) continue;
+                qa_q2_item_definition swap = r->definitions[i];
+                r->definitions[i] = r->definitions[j];
+                r->definitions[j] = swap;
+                break;
+            }
+            ++key;
+        }
+    }
     static const char *const icons[QA_Q2_WEAPON_COUNT] = {
         NULL,         "w_blaster",    "w_shotgun",   "w_sshotgun",      "w_machinegun",
         "w_chaingun", "a_grenades",   "w_glauncher", "w_rlauncher",     "w_hyperblaster",
@@ -330,10 +348,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             d->kind == QA_Q2_ITEM_SHARD || d->kind == QA_Q2_ITEM_MAX_HEALTH ||
             d->kind == QA_Q2_ITEM_PACK || d->kind == QA_Q2_ITEM_FOOD)
             continue;
-        bool use = d->weapon != QA_Q2_WEAPON_NONE || d->kind == QA_Q2_ITEM_POWER || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
-                   d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY ||
-                   d->kind == QA_Q2_ITEM_NUKE || d->kind == QA_Q2_ITEM_COMPASS ||
-                   d->kind == QA_Q2_ITEM_FLASHLIGHT;
+        bool use = q2_item_usable(d);
         r->actions[r->action_count++] = (qa_item_definition){
             .item = d->item,
             .ammo = d->ammo,

@@ -63,6 +63,8 @@ bool frontend_q1_team_face_read(qa_scene_resources *,const qa_material_library *
     int32_t score,qa_hud_team_face *,qa_error *);
 bool frontend_equipment_media_q1_team_face_read(qa_frontend *,qa_actor_owner,uint8_t colors,
     int32_t score,qa_hud_team_face *,qa_error *);
+const qa_scene_image *frontend_equipment_media_q2_picture(const frontend_visual_owner_view *,
+    const char *name, bool rerelease, qa_error *);
 bool frontend_equipment_media_source_icon_read(const qa_frontend *,const qa_application_equipment_view *,
     const qa_material **,qa_error *);
 bool frontend_equipment_media_read(const frontend_equipment_media *, frontend_equipment_media_view *);

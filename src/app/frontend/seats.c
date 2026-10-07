@@ -25,6 +25,8 @@
 #include "config_store.h"
 #include "qa/application_network.h"
 #include "qa/game_q1_ui.h"
+#include "qa/hud_q2.h"
+#include "qa/game_q2_items.h"
 #include "qa/text.h"
 #include "material_movies.h"
 #include "qc_messages.h"
@@ -148,6 +150,99 @@ static bool hud_presentation(void *context, qa_ui_presentation *out, qa_error *e
     out->text_scale = preferences.text_scale; out->color_mode = preferences.color_mode;
     return true;
 }
+typedef struct local_q2_hud {
+    frontend_seat *seat;
+    const qa_application_native_q2_hud *source;
+    frontend_visual_owner_view media;
+    qa_q2_config_layout config;
+    const char *images[64];
+    uint32_t image_count;
+    char binding[96];
+} local_q2_hud;
+static bool local_q2_image(void *context, const char *name, uint32_t *out, qa_error *error)
+{
+    local_q2_hud *hud = context;
+    for (uint32_t i = 1; i <= hud->image_count; ++i)
+        if (!strcmp(hud->images[i], name)) { *out = i; return true; }
+    if (hud->image_count + 1 >= sizeof(hud->images) / sizeof(hud->images[0]))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Q2 HUD image stat roster is full");
+    *out = ++hud->image_count; hud->images[*out] = name;
+    return true;
+}
+static const char *local_q2_config(void *context, int32_t index)
+{
+    local_q2_hud *hud = context;
+    const qa_application_native_q2_hud *source = hud->source;
+    if (source->original)
+        return index >= 0 && (uint32_t)index < source->configstring_count ? source->configstrings[index] : NULL;
+    if (index == 5) return source->statusbar;
+    if (index == (int32_t)hud->config.max_clients) return "1";
+    if (index >= (int32_t)hud->config.images &&
+        (uint32_t)index - hud->config.images <= hud->image_count)
+        return hud->images[(uint32_t)index - hud->config.images];
+    if (index > (int32_t)hud->config.items) {
+        size_t ordinal = (uint32_t)index - hud->config.items - 1;
+        if (ordinal < qa_q2_item_count(source->game)) return qa_q2_item_at(source->game, ordinal)->name;
+    }
+    return NULL;
+}
+static const qa_scene_image *local_q2_picture(void *context, const char *name, qa_error *error)
+{
+    local_q2_hud *hud = context;
+    return frontend_equipment_media_q2_picture(&hud->media, name,
+        hud->source->edition == QA_Q2_RERELEASE, error);
+}
+static const char *local_q2_binding(void *context, const char *command)
+{
+    local_q2_hud *hud = context;
+    for (size_t i = 0; i < qa_input_seat_binding_count(hud->seat->input); ++i) {
+        const qa_input_binding *binding = qa_input_seat_binding_at(hud->seat->input, i);
+        const char *text = binding->kind == QA_BIND_COMMAND ? binding->command : qa_input_action_command(binding->action);
+        if (text && !SDL_strcasecmp(text, command) &&
+            qa_input_physical_name(binding->input, hud->binding, sizeof(hud->binding))) return hud->binding;
+    }
+    return "";
+}
+static bool hud_source_draw(void *context, const qa_hud_frame *frame,
+    qa_scene_frame *scene, qa_error *error)
+{
+    frontend_seat *seat = context;
+    if (!seat->q2_hud_active) return true;
+    qa_application_native_q2_hud *source = &seat->q2_hud;
+    local_q2_hud hud = {.seat = seat, .source = source};
+    if (!frontend_visual_media_acquire(seat->frontend, source->provider, QA_GAME_Q2, &hud.media, error)) return false;
+    if (seat->q2_hud_font_provider != source->provider) {
+        qa_font_library_destroy(seat->q2_hud_fonts); seat->q2_hud_fonts = NULL;
+        seat->q2_hud_classic = NULL; seat->q2_hud_font_provider = source->provider;
+    }
+    if (!seat->q2_hud_classic) {
+        const qa_scene_image *conchars = local_q2_picture(&hud, "conchars", error);
+        if (!conchars) return false;
+        if (!seat->q2_hud_fonts)
+            seat->q2_hud_fonts = qa_font_library_create(hud.media.mounts, hud.media.images, error);
+        if (!seat->q2_hud_fonts || !qa_font_classic_create(seat->q2_hud_fonts,
+            "local-q2:conchars", conchars, QA_FONT_BAKED_COLOR, &seat->q2_hud_classic, error)) return false;
+    }
+    qa_net_protocol_id protocol = {.kind = source->edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+    qa_q2_codec codec;
+    if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &hud.config, error)) return false;
+    if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
+        &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
+            .image = local_q2_image}, source->stats, error)) return false;
+    qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
+        .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
+        .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
+        .binding = local_q2_binding};
+    options.fonts.classic = seat->q2_hud_classic;
+    const qa_cvar_view *use_font = qa_cvars_find(source->cvars, "scr_usekfont");
+    options.use_font = source->edition == QA_Q2_RERELEASE && use_font && use_font->integer != 0;
+    qa_hud_q2_frame received = {.protocol = protocol, .stats = source->stats,
+        .stat_count = QA_Q2_MAX_STATS, .inventory = source->inventory,
+        .inventory_count = sizeof(source->inventory) / sizeof(source->inventory[0]), .layout = source->layout,
+        .player_number = source->player_number, .server_frame = source->server_frame,
+        .time_ns = source->time_ns, .frame_ns = source->frame_ns};
+    return qa_hud_q2_draw(&options, &received, false, scene, error);
+}
 static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
     bool native_status, bool aggregate, bool *source_slot, qa_error *error)
 {
@@ -183,6 +278,7 @@ static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_h
 static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
 {
     frontend_seat *seat = context;
+    seat->q2_hud_active = false;
     for (size_t i=0;i<frontend_remote_q1_count(seat->frontend);++i) {
         frontend_remote_q1 *row=frontend_remote_q1_at(seat->frontend,i);
         frontend_remote_q1_view received;
@@ -205,6 +301,18 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
         (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
     if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
+    if (frame->actor.registry && !source.source_hud && !frame->source_status_native && !frame->weapon_only) {
+        if (!qa_application_native_q2_hud_read(seat->frontend->application, frame->actor,
+            &seat->q2_hud, &seat->q2_hud_active, error)) return false;
+        if (seat->q2_hud_active) {
+            out->source_vitals = true;
+            if (!seat->q2_hud.original && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
+                out->scores = seat->q2_scores; out->score_count = seat->q2_score_count;
+                if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
+            }
+            return true;
+        }
+    }
     if (published && !source.source_hud && frame->show_scores && seat->frontend->qc_messages) {
         qa_unified_q1_world_state world;bool received=false;
         if(!frontend_qc_messages_q1_world_read(seat->frontend->qc_messages,seat->id,&world,&received,error)) return false;
@@ -213,13 +321,6 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
             seat->q1_monsters = (qa_hud_value){.label = seat->q1_monster_label, .value = world.killed_monsters, .maximum = world.total_monsters};
             out->bars = &seat->q1_monsters; out->bar_count = 1;
         }
-    }
-    if (!source.source_hud && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
-        out->source_vitals = true;
-        out->vitals = seat->q2_vitals; out->vital_count = seat->q2_view.ammo_icon ? 3 : 2;
-        out->timers = &seat->q2_timer; out->timer_count = seat->q2_timer.until_ns > frame->time_ns;
-        out->scores = seat->q2_scores; out->score_count = seat->q2_score_count;
-        if (seat->q2_help) { out->help_title = "Objectives"; out->help_lines = seat->q2_help_lines; out->help_count = 2; }
     }
     if (!frame->actor.registry) return true;
     if (seat->frontend->qc_messages && !frame->source_status_native) {
@@ -662,7 +763,8 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
         if (!library || !frontend_startup_menus_create(seat, error) ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
-                .context = seat, .read = hud_data, .presentation = hud_presentation, .video_frame = hud_video_frame,
+                .context = seat, .read = hud_data, .source_draw = hud_source_draw,
+                .presentation = hud_presentation, .video_frame = hud_video_frame,
                 .video_context = seat}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
         if (frontend->tools && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;

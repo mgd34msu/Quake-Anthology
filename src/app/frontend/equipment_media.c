@@ -503,6 +503,32 @@ qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *product)
     return product && !strcmp(product->campaign, "rogue") ? QA_HUD_Q1_ROGUE :
         product && !strcmp(product->campaign, "hipnotic") ? QA_HUD_Q1_HIPNOTIC : QA_HUD_Q1_BASE;
 }
+const qa_scene_image *frontend_equipment_media_q2_picture(const frontend_visual_owner_view *media,
+    const char *name, bool rerelease, qa_error *error)
+{
+    const char *slash = strrchr(name, '/'), *extension = strrchr(name, '.');
+    bool prefixed = name[0] == '/' || name[0] == '\\';
+    bool direct = prefixed || (rerelease && slash && extension && extension > slash && extension[1]);
+    size_t size = strlen(name) + 11;
+    char local[256], *path = size <= sizeof(local) ? local : malloc(size);
+    if (!path) { frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q2 HUD picture path"); return NULL; }
+    if (direct) strcpy(path, name + prefixed);
+    else snprintf(path, size, "pics/%s.pcx", name);
+    const qa_material *material = qa_material_find(media->materials, path);
+    if (!material) {
+        qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+            .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE,
+            .transparent = true, .transparent_index = 255};
+        qa_scene_image *image = NULL;
+        bool ok = qa_scene_image_load(media->images, path, &options, &image, error);
+        if (ok) ok = qa_material_register_generated_picture(media->materials, path, image, &material, error);
+        qa_scene_image_release(image);
+        if (!ok) material = NULL;
+    }
+    if (path != local) free(path);
+    return material && material->stage_count && material->stages[0].image_count ?
+        material->stages[0].images[0] : NULL;
+}
 static bool q1_hud_lump_prepare(qa_vfs *files, qa_scene_resources *images,
     qa_material_library *materials, const char *lump, qa_error *error)
 {

@@ -31,40 +31,6 @@ static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_erro
     seat->q2_scores = rows; seat->q2_score_names = names; seat->q2_score_count = event->count;
     return true;
 }
-static bool timer(frontend_seat *seat, uint64_t time_ns, qa_error *error)
-{
-    if (!seat->q2_view.timer_item || seat->q2_view.timer_seconds <= 0) {
-        seat->q2_timer.until_ns = 0; return true;
-    }
-    uint64_t duration = (uint64_t)seat->q2_view.timer_seconds * UINT64_C(1000000000);
-    if (duration > UINT64_MAX - time_ns) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 timer deadline overflow");
-    if (seat->q2_timer_item == seat->q2_view.timer_item) {
-        seat->q2_timer.until_ns = time_ns + duration; return true;
-    }
-    free(seat->q2_timer_label); seat->q2_timer_label = NULL;
-    seat->q2_timer = (qa_hud_timer){0};
-    qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
-    size_t count = 0;
-    if (!qa_inventory_item_definitions(inventory, seat->q2_actor, NULL, 0, &count, error)) return false;
-    if (count > SIZE_MAX / sizeof(qa_item_definition)) return frontend_fail(error, QA_ERROR_MEMORY, "Q2 timer definitions overflow");
-    qa_item_definition *items = count ? malloc(count * sizeof(*items)) : NULL;
-    if (count && !items) return frontend_fail(error, QA_ERROR_MEMORY, "reading Q2 timer definition");
-    bool ok = qa_inventory_item_definitions(inventory, seat->q2_actor, items, count, &count, error);
-    for (size_t i = 0; ok && i < count; ++i) {
-        if (items[i].item != seat->q2_view.timer_item || !items[i].label) continue;
-        size_t size = strlen(items[i].label) + 1;
-        seat->q2_timer_label = malloc(size);
-        if (!seat->q2_timer_label) ok = frontend_fail(error, QA_ERROR_MEMORY, "retaining Q2 timer label");
-        else memcpy(seat->q2_timer_label, items[i].label, size);
-        break;
-    }
-    free(items);
-    if (ok) {
-        seat->q2_timer_item = seat->q2_view.timer_item;
-        seat->q2_timer = (qa_hud_timer){.label = seat->q2_timer_label, .until_ns = time_ns + duration};
-    }
-    return ok;
-}
 static bool help_line(frontend_seat *seat, unsigned slot, const char *text, qa_error *error)
 {
     char *copy = NULL;
@@ -79,11 +45,14 @@ static bool help_line(frontend_seat *seat, unsigned slot, const char *text, qa_e
 }
 void frontend_player_retire(frontend_seat *seat)
 {
-    free(seat->q2_scores); free(seat->q2_score_names); free(seat->q2_timer_label);
-    seat->q2_scores = NULL; seat->q2_score_names = NULL; seat->q2_timer_label = NULL; seat->q2_score_count = 0;
+    qa_font_library_destroy(seat->q2_hud_fonts);
+    seat->q2_hud_fonts = NULL; seat->q2_hud_classic = NULL;
+    seat->q2_hud_font_provider = 0; seat->q2_hud_active = false;
+    seat->q2_hud = (qa_application_native_q2_hud){0};
+    free(seat->q2_scores); free(seat->q2_score_names);
+    seat->q2_scores = NULL; seat->q2_score_names = NULL; seat->q2_score_count = 0;
     for (unsigned i = 0; i < 2; ++i) { free(seat->q2_help_text[i]); seat->q2_help_text[i] = NULL; seat->q2_help_lines[i] = ""; }
-    seat->q2_timer_item = 0;
-    seat->q2_actor = (qa_actor_id){0}; seat->q2_view = (qa_q2_player_view){0}; seat->q2_timer = (qa_hud_timer){0};
+    seat->q2_actor = (qa_actor_id){0}; seat->q2_view = (qa_q2_player_view){0};
     seat->q2_view_ready = seat->q2_inventory = seat->q2_help = false;
 }
 bool frontend_player_events(qa_frontend *frontend, qa_error *error)
@@ -133,9 +102,6 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 const char *provider = qa_application_provider_instance(frontend->application, observed.provider);
                 if (!character || !provider || strcmp(character->selection.instance, provider)) break;
                 seat->q2_view = event->view; seat->q2_view_ready = true;
-                seat->q2_vitals[0] = (qa_hud_value){.label = "Health", .value = event->view.health, .warning = event->view.health <= 25};
-                seat->q2_vitals[1] = (qa_hud_value){.label = "Armor", .value = event->view.armor, .warning = (event->view.flashes & 2) != 0};
-                seat->q2_vitals[2] = (qa_hud_value){.label = "Ammo", .value = event->view.ammo};
                 if (event->view.hit_marker_damage > 0) {
                     const uint64_t duration = UINT64_C(150000000);
                     if (observed.time_ns > UINT64_MAX - duration)
@@ -143,7 +109,6 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                     qa_hud_hit_marker(seat->hud, (float)event->view.hit_marker_damage,
                         observed.time_ns + duration);
                 }
-                if (!timer(seat, frontend->time_ns, error)) return false;
                 break;
             }
             case QA_Q2_PLAYER_SCOREBOARD: if (!scores(seat, event, error)) return false; break;
