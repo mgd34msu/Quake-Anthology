@@ -153,7 +153,7 @@ struct frontend_particle_state {
     bool client_clock, client_pending;
     frontend_q2_entity_sample *source_entities;
     size_t source_entity_count, source_entity_capacity;
-    frontend_q2_client_sample *source_clients;
+    frontend_q2_client_sample source_clients[QA_INPUT_LOCAL_SEATS];
     size_t source_client_count;
     bool source_ready;
     qa_q2_edition source_edition;
@@ -283,8 +283,7 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
     if (!state->source_ready || source.clock.frame.number!=state->server_frame) {
         uint32_t extent;
         if (!qa_application_native_q2_presentation_extent(frontend->application,&source,&extent,error)) return false;
-        if ((uint64_t)extent*sizeof(*state->source_entities)>SIZE_MAX ||
-            (uint64_t)frontend->options.seats*sizeof(*state->source_clients)>SIZE_MAX)
+        if ((uint64_t)extent*sizeof(*state->source_entities)>SIZE_MAX)
             return frontend_fail(error,QA_ERROR_MEMORY,"Q2 Source sample exceeds native storage");
         if (extent>state->source_entity_capacity) {
             frontend_q2_entity_sample *entities=realloc(state->source_entities,(size_t)extent*sizeof(*entities));
@@ -292,10 +291,6 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
             memset(entities+state->source_entity_capacity,0,
                 ((size_t)extent-state->source_entity_capacity)*sizeof(*entities));
             state->source_entities=entities; state->source_entity_capacity=extent;
-        }
-        if (!state->source_clients) {
-            state->source_clients=calloc(frontend->options.seats,sizeof(*state->source_clients));
-            if (!state->source_clients) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed Q2 player samples");
         }
         for (uint32_t slot=0;slot<extent;++slot) {
             qa_application_native_q2_entity_sample entity={0};
@@ -659,7 +654,6 @@ void frontend_particle_retire(qa_frontend *frontend)
         particle_owner_free(owner);
     }
     free(frontend->particles->source_entities);
-    free(frontend->particles->source_clients);
     free(frontend->particles->q1_trails);
     free(frontend->particles->visual_samples);
     free(frontend->particles); frontend->particles = NULL;
