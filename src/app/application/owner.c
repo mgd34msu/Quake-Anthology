@@ -513,10 +513,19 @@ bool qa_application_provider_gravity(const qa_application *application,
     if (application == NULL || owner == 0 || out == NULL ||
         application->destroy_requested)
         return false;
+    const qa_launch_snapshot *snapshot = application->routing_snapshot ?
+        application->routing_snapshot : qa_application_launch(application);
+    const qa_launch_binding *world = qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
         if (!provider->attached || !provider->constructed || provider->owner != owner)
             continue;
+        if (world && provider->launch && !strcmp(provider->launch->selection.instance, world->instance)) {
+            if (!application->physics || !isfinite(application->physics->gravity)) return false;
+            *out = application->physics->gravity;
+            return true;
+        }
         if (provider->kind == APPLICATION_PROVIDER_Q1)
             return qa_q1_game_gravity(provider->state.q1, out);
         if (provider->kind == APPLICATION_PROVIDER_QC) {

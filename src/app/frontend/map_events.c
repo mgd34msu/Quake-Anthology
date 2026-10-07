@@ -854,7 +854,7 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
 {
     qa_actor_id current;
     if (!frontend || !event || (event->family != QA_GAME_Q1 && event->family != QA_GAME_Q2) || event->kind != QA_BUILTIN_SOUND ||
-        event->actor.registry || !recipient.registry || seat >= frontend->options.seats ||
+        !recipient.registry || seat >= frontend->options.seats ||
         !frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound requires its actual delivered physical client");
     if (!frontend->audio) return true;
@@ -864,20 +864,37 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     frontend_event_state *state; frontend_event_resources *resources;
     if (!state_read(frontend, &state, error) ||
         !resources_read(frontend, event->provider, family, &resources, error)) return false;
+    uint64_t actor = QA_AUDIO_NO_ACTOR;
+    if (event->actor.registry) {
+        qa_error identity = {0};
+        actor = frontend_audio_retained_event_actor(frontend, event, &identity);
+        if (actor == QA_AUDIO_NO_ACTOR) { if (error) *error = identity; return false; }
+    }
     qa_audio_asset *asset = NULL;
     if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
     if (!asset) return true;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
-        .family = family, .actor = QA_AUDIO_NO_ACTOR, .owner = event->provider, .audience = seat,
-        .origin_kind = QA_AUDIO_FIXED, .origin_actor = QA_AUDIO_NO_ACTOR, .origin = event->origin,
+        .family = family, .actor = actor, .owner = event->provider, .audience = seat,
+        .origin_kind = QA_AUDIO_FIXED, .origin_actor = actor, .origin = event->origin,
         .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation};
     int32_t milliseconds = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX);
-    bool ok = frontend_seat_actor_read(frontend, seat, &current) && qa_actor_id_equal(current, recipient);
-    if (!ok) frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound recipient retired during resource admission");
-    else if (state->audio_deferred || state->audio_head)
-        ok = audio_projection_append(state, (qa_actor_id){0}, recipient, &sound,
+    bool ok = true;
+    if (event->actor.registry && qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor)) {
+        qa_body_state position; qa_error observed = {0};
+        if (qa_world_body_read(qa_application_world(frontend->application), event->actor, &position, &observed)) {
+            ok = frontend_audio_actor_position(frontend, event->actor, actor, &position, &sound.origin, error);
+            if (ok) sound.origin_kind = QA_AUDIO_ACTOR;
+        } else if (observed.code != QA_ERROR_NOT_FOUND) {
+            if (error) *error = observed;
+            ok = false;
+        }
+    }
+    if (ok && (!frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient)))
+        ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound recipient retired during resource admission");
+    if (ok && (state->audio_deferred || state->audio_head))
+        ok = audio_projection_append(state, event->actor, recipient, &sound,
             FRONTEND_AUDIO_PLAY, milliseconds, error);
-    else ok = qa_audio_engine_play(frontend->audio, &sound, milliseconds, error);
+    else if (ok) ok = qa_audio_engine_play(frontend->audio, &sound, milliseconds, error);
     qa_audio_asset_release(asset); return ok;
 }
 typedef struct builtin_muzzle_audio {

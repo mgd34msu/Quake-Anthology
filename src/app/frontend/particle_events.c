@@ -476,19 +476,40 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
 
 static bool impact_model(qa_frontend *, frontend_particle_owner *, uint8_t,
     bool acquire, qa_scene_model **, qa_error *);
+static bool particle_world_owner(qa_frontend *frontend, qa_actor_owner *out)
+{
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(frontend->application));
+    const qa_launch_binding *binding = choices ? qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "") : NULL;
+    return binding && binding->instance &&
+        qa_application_provider_owner(frontend->application, binding->instance, out);
+}
 static bool delivery_world_current(qa_frontend *frontend, qa_actor_owner world_source,
     uint64_t map_identity)
 {
     qa_application_map_view map;
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(frontend->application));
-    const qa_launch_binding *binding = choices ? qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "") : NULL;
     qa_actor_owner physical = 0;
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(frontend->application));
-    return binding && binding->instance && world_source && map_identity && geometry &&
+    return world_source && map_identity && geometry &&
         qa_application_map_read(frontend->application, &map) &&
-        qa_application_provider_owner(frontend->application, binding->instance, &physical) &&
+        particle_world_owner(frontend, &physical) &&
         physical == world_source && qa_collision_map_identity(geometry) == map_identity;
+}
+static bool q2_delivery_admit(qa_frontend *frontend, qa_actor_owner provider,
+    const qa_application_q2_audience *audience)
+{
+    const char *reason = NULL;
+    if (!audience->captured) reason = "Q2 effect has no captured source delivery";
+    else if (audience->source != provider) reason = "Q2 effect delivery belongs to another producer";
+    else if (!delivery_world_current(frontend, audience->world_source, audience->map_identity))
+        reason = "Q2 effect delivery belongs to a retired world";
+    if (reason) {
+        qa_error skipped = {0};
+        qa_error_set(&skipped, QA_ERROR_UNSUPPORTED, 0, "%s", reason);
+        qa_application_feature_report(frontend->application, "Q2 particle delivery", &skipped);
+        return false;
+    }
+    return audience->count != 0;
 }
 static bool particle_client_current(qa_frontend *frontend, const frontend_particle_owner *owner)
 {
@@ -504,7 +525,7 @@ typedef struct frontend_q2_sample {
     double milliseconds;
     uint64_t time_ns;
     float back_lerp;
-    bool negative, physical;
+    bool physical;
 } frontend_q2_sample;
 static bool q2_owner_sample(qa_frontend *frontend, const frontend_particle_owner *owner,
     frontend_q2_sample *out, qa_error *error)
@@ -515,29 +536,19 @@ static bool q2_owner_sample(qa_frontend *frontend, const frontend_particle_owner
     float back_lerp;
     bool physical;
     if (!client_sample(frontend, &sample, &server, &back_lerp, &physical, error)) return false;
-    if (physical) {
-        if (frontend->particles->clock_source != owner->world_source)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sample differs from its delivered world");
+    if (physical && frontend->particles->clock_source == owner->provider) {
         *out = (frontend_q2_sample){.milliseconds = (double)(sample / UINT64_C(1000000)),
             .time_ns = sample, .back_lerp = back_lerp, .physical = true};
         return true;
     }
     qa_application_selected_effects source;
-    if (!qa_application_effects_producer_read(frontend->application, owner->world_source,
+    if (!qa_application_effects_producer_read(frontend->application, owner->provider,
             &source, error)) return false;
-    if (source.provider != owner->world_source || source.primary != owner->world_source ||
+    if (source.provider != owner->provider || source.family != QA_GAME_Q2 ||
         !qa_application_selected_effects_current(frontend->application, &source))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 sampling lost its actual ENTITIES clock receipt");
-    frontend_q2_sample view = {0};
-    if (source.primary_kind == QA_APPLICATION_EFFECTS_Q3) {
-        view.milliseconds = source.sample_time_ms;
-        view.negative = view.milliseconds < 0;
-        if (!view.negative) view.time_ns = (uint64_t)view.milliseconds * UINT64_C(1000000);
-    } else {
-        view.time_ns = source.source_time_ns;
-        view.milliseconds = (double)view.time_ns / 1000000.0;
-    }
-    *out = view;
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 sampling lost its actual emitting clock receipt");
+    *out = (frontend_q2_sample){.time_ns = source.source_time_ns,
+        .milliseconds = (double)source.source_time_ns / 1000000.0};
     return true;
 }
 static void particle_owner_free(frontend_particle_owner *owner)
@@ -555,10 +566,36 @@ static void particle_clients_retire(qa_frontend *frontend)
         } else link = &owner->next;
     }
 }
+static bool particle_images(qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, qa_scene_resources **out, qa_error *error)
+{
+    const char *path = family == QA_GAME_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx";
+    qa_vfs *files = qa_application_provider_files(frontend->application, provider);
+    bool found = false;
+    uint64_t bytes;
+    if (files && !qa_vfs_probe(files, path, &found, &bytes, error)) return false;
+    if (found) return frontend_event_images(frontend, provider, family, out, error);
+    const qa_launch_snapshot *snapshot = qa_application_launch(frontend->application);
+    qa_catalog *catalog = qa_application_catalog(frontend->application);
+    for (size_t i = 0; i < qa_launch_snapshot_instance_count(snapshot); ++i) {
+        const qa_launch_instance *instance = qa_launch_snapshot_instance(snapshot, i);
+        const qa_product *product = qa_catalog_product(catalog, instance->selection.product);
+        qa_actor_owner owner;
+        if (!product || product->family != family ||
+            !qa_application_provider_owner(frontend->application, instance->selection.instance, &owner) ||
+            owner == provider) continue;
+        files = qa_application_provider_files(frontend->application, owner);
+        if (!files) continue;
+        if (!qa_vfs_probe(files, path, &found, &bytes, error)) return false;
+        if (found) return frontend_event_images(frontend, owner, family, out, error);
+    }
+    return frontend_fail(error, QA_ERROR_NOT_FOUND, "Particle family has no mounted palette source");
+}
 static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
     qa_actor_owner world_source, uint64_t map_identity, qa_actor_id recipient,
     frontend_particle_owner **out, qa_error *error)
 {
+    *out = NULL;
     if (family == QA_GAME_Q2 && (!recipient.registry ||
             !delivery_world_current(frontend, world_source, map_identity)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle owner lost its actual delivered world");
@@ -567,18 +604,24 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         if (owner->provider == provider && owner->family == family &&
             owner->world_source == world_source && owner->map_identity == map_identity &&
             qa_actor_id_equal(owner->recipient, recipient)) { *out = owner; return true; }
+    qa_q2_edition edition = QA_Q2_CLASSIC;
+    uint64_t interval = 0;
+    if (family==QA_GAME_Q2) {
+        bool found;
+        if (!qa_application_native_q2_source_clock_read(frontend->application,provider,
+                &edition,&interval,&found,error)) return false;
+        if (!found) {
+            qa_error skipped = {0};
+            qa_error_set(&skipped, QA_ERROR_UNSUPPORTED, 0, "Q2 effect producer has no admitted Source profile and interval");
+            qa_application_feature_report(frontend->application, "Q2 particle producer", &skipped);
+            return true;
+        }
+    }
     frontend_particle_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating provider particle pool");
     owner->provider = provider; owner->family = family;
     owner->world_source = world_source; owner->map_identity = map_identity; owner->recipient = recipient;
-    if (family==QA_GAME_Q2) {
-        bool found;
-        if (!qa_application_native_q2_source_clock_read(frontend->application,provider,
-                &owner->q2_edition,&owner->q2_interval_ns,&found,error) || !found) {
-            free(owner);
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 particles require their actual Source profile and interval");
-        }
-    }
+    owner->q2_edition = edition; owner->q2_interval_ns = interval;
     qa_builtin_random_seed(&owner->random, 1);
     if (family == QA_GAME_Q1) {
         owner->q1 = calloc(1, sizeof(*owner->q1));
@@ -599,7 +642,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
             owner->q2 = owner->q2_particles->values.q2;
         }
     }
-    bool ok = (owner->q1 || owner->q2) && frontend_event_images(frontend, provider, family, &owner->images, error) &&
+    bool ok = (owner->q1 || owner->q2) && particle_images(frontend, provider, family, &owner->images, error) &&
         qa_scene_particle_image(owner->images, family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2, &owner->particle_image, error);
     if (!ok) {
         if (!owner->q1 && !owner->q2) frontend_fail(error, QA_ERROR_MEMORY, "allocating bounded source particle pool");
@@ -788,9 +831,9 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     frontend_particle_owner *owner;
     if (!particle_owner(frontend,view->provider,QA_GAME_Q2,primary,
         qa_collision_map_identity(geometry),recipient,&owner,error)) return false;
+    if (!owner) return true;
     frontend_q2_sample sample;
     if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
-    if (sample.negative) return true;
     q2_entity_clock(frontend,owner,sample.milliseconds);
     if (!q2_emitting_clock(frontend,owner,error)) return false;
     frontend_particle_state *state=frontend->particles;
@@ -842,22 +885,24 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
         frontend_particle_owner *owner;
         if (!geometry || !particle_owner(frontend,state->clock_source,QA_GAME_Q2,state->clock_source,
             qa_collision_map_identity(geometry),recipient,&owner,error)) return false;
-        frontend_q2_sample sample;
-        if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
-        q2_entity_clock(frontend,owner,sample.milliseconds);
-        bool events=!owner->entity_events_ready || owner->entity_server_frame!=state->server_frame;
-        for (size_t i=0;i<state->source_entity_count;++i) {
-            const frontend_q2_entity_sample *held=state->source_entities+i;
-            if (!held->current.actor.registry) continue;
-            qa_application_native_q2_entity_sample entity;uint32_t old_frame;
-            frontend_q2_lerp_entity(&held->previous,&held->current,1-sample.back_lerp,&entity,&old_frame);
-            frontend_q2_entity_pose pose={.actor=entity.actor,.number=entity.source_slot,.event=entity.event,
-                .model_index=entity.models[0],.effects=entity.effects,.frame=(int32_t)entity.frame,
-                .origin=entity.origin,.angles=entity.angles,.model_present=entity.models[0]!=0};
-            if (!q2_entity_admit(frontend,owner,&pose,world,controls,events,error)) return false;
+        if (owner) {
+            frontend_q2_sample sample;
+            if (!q2_owner_sample(frontend,owner,&sample,error)) return false;
+            q2_entity_clock(frontend,owner,sample.milliseconds);
+            bool events=!owner->entity_events_ready || owner->entity_server_frame!=state->server_frame;
+            for (size_t i=0;i<state->source_entity_count;++i) {
+                const frontend_q2_entity_sample *held=state->source_entities+i;
+                if (!held->current.actor.registry) continue;
+                qa_application_native_q2_entity_sample entity;uint32_t old_frame;
+                frontend_q2_lerp_entity(&held->previous,&held->current,1-sample.back_lerp,&entity,&old_frame);
+                frontend_q2_entity_pose pose={.actor=entity.actor,.number=entity.source_slot,.event=entity.event,
+                    .model_index=entity.models[0],.effects=entity.effects,.frame=(int32_t)entity.frame,
+                    .origin=entity.origin,.angles=entity.angles,.model_present=entity.models[0]!=0};
+                if (!q2_entity_admit(frontend,owner,&pose,world,controls,events,error)) return false;
+            }
+            owner->entity_events_ready=true;owner->entity_server_frame=state->server_frame;
+            owner->entity_event_sample=frontend->frame_number;owner->entity_events=events;
         }
-        owner->entity_events_ready=true;owner->entity_server_frame=state->server_frame;
-        owner->entity_event_sample=frontend->frame_number;owner->entity_events=events;
     }
     const qa_actor_record *record;uint32_t cursor=0;
     qa_actor_registry *actors=qa_world_actors(qa_application_world(frontend->application));
@@ -1367,53 +1412,20 @@ static void q2_sustain_particles(frontend_particle_owner *owner,
 }
 
 static void q2_power_splash(frontend_particle_owner *owner,
-    const qa_application_native_q2_entity_sample *entity,uint64_t now)
+    const qa_body_state *entity,uint64_t now)
 {
     qa_vec3 origin=qa_vec_add(entity->origin,
-        qa_vec_scale(qa_vec_add(entity->solid_bounds.mins,entity->solid_bounds.maxs),.5f));
+        qa_vec_scale(qa_vec_add(entity->bounds.mins,entity->bounds.maxs),.5f));
+    float radius=qa_vec_length(qa_vec_sub(entity->bounds.maxs,entity->bounds.mins))*.5f;
     for (unsigned i=0;i<256 && owner->q2_particles->count<FRONTEND_PARTICLE_CAPACITY;++i) {
         frontend_fx_q2_particle particle={.spawn_milliseconds=(double)(now/UINT64_C(1000000)),.alpha=1};
         particle.color=208+(particle_random(owner)&3);
         qa_vec3 direction=q2_random_direction(owner);
-        particle.origin=qa_vec_add(origin,qa_vec_scale(direction,entity->solid_radius));
+        particle.origin=qa_vec_add(origin,qa_vec_scale(direction,radius));
         particle.velocity=qa_vec_scale(direction,40);
         particle.alpha_velocity=-1/(.5f+particle_unit(owner)*.3f);
         owner->q2[owner->q2_particles->count++]=particle;
     }
-}
-
-static bool q2_entity_sample(qa_frontend *frontend,const frontend_particle_owner *owner,
-    uint32_t physical,uint32_t slot,qa_actor_id actor,
-    const qa_application_native_q2_entity_sample **out,bool *found,qa_error *error)
-{
-    *found=false;
-    frontend_particle_state *state=frontend->particles;
-    uint64_t sample,server; float back_lerp; bool physical_clock;
-    if (!client_sample(frontend,&sample,&server,&back_lerp,&physical_clock,error)) return false;
-    if (!physical_clock || state->clock_source!=owner->provider)
-        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q2 entity effect requires its completed local Source dictionary");
-    bool recipient=false;
-    for (size_t i=0;i<state->source_client_count;++i) {
-        const frontend_q2_client_sample *client=state->source_clients+i;
-        if (client->physical_seat!=physical || !qa_actor_id_equal(client->client.actor,owner->recipient)) continue;
-        uint32_t authored;
-        qa_application_native_q2_presentation source;
-        qa_application_native_q2_client actual;
-        bool present;
-        if (!frontend_seat_launch_id_read(frontend,physical,&authored) || authored!=client->client.seat ||
-            !qa_application_native_q2_presentation_selected(frontend->application,&source,&present,error) || !present ||
-            !qa_application_native_q2_presentation_local(frontend->application,&source,authored,&actual,&present,error) ||
-            !present || actual.client_slot!=client->client.client_slot || !qa_actor_id_equal(actual.actor,client->client.actor))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 entity effect lost its captured physical client");
-        recipient=true; break;
-    }
-    if (!recipient) return true;
-    for (size_t i=0;i<state->source_entity_count;++i) {
-        const qa_application_native_q2_entity_sample *entity=&state->source_entities[i].current;
-        if (entity->source_slot!=slot || !qa_actor_id_equal(entity->actor,actor)) continue;
-        *out=entity; *found=true; break;
-    }
-    return true;
 }
 
 static void q2_berserk_particles(frontend_particle_owner *owner,
@@ -1672,8 +1684,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     /* Other decoded TE recipes remain available in the retained raw message;
      * they need their actual beam/explosion owners before they can submit. */
     if (code<0 && !steam && !widow && !nuke && !wall && !smoke && !heat && !trail && !burst && !laser && !poly && !blaster && !hyper && !tracker && !flashlight && !berserk && !power && !beam_effect) return true;
-    if (!audience->captured || audience->source!=message->provider)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Q2 effect has no actual delivery receipt");
+    if (!q2_delivery_admit(frontend, message->provider, audience)) return true;
     const qa_q2_temp_field *position=temporary_field(temporary,QA_Q2_TEMP_POSITION1,QA_Q2_TEMP_VECTOR);
     const qa_q2_temp_field *direction=temporary_field(temporary,
         wall || trail || laser || beam_effect || temporary->type==QA_Q2_TE_BLUEHYPERBLASTER ?
@@ -1774,6 +1785,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
         frontend_particle_owner *owner;
         if (!particle_owner(frontend,message->provider,QA_GAME_Q2,audience->world_source,
                 audience->map_identity,recipient,&owner,error)) return false;
+        if (!owner) continue;
         uint64_t birth=physical && owner->provider==frontend->particles->clock_source ?
             sample:audience->source_time_ns;
         if (beam_effect) {
@@ -1808,11 +1820,17 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
             owner->steam[owner->steam_count++]=(frontend_steam){.event=event,
                 .end_ns=birth+span,.next_ns=birth,.kind=(uint8_t)(widow?1:2)};
         } else if (power) {
-            const qa_application_native_q2_entity_sample *entity;
-            bool present;
-            if (!q2_entity_sample(frontend,owner,seat,(uint32_t)flashlight_entity->value.integer,
-                    flashlight_actor,&entity,&present,error)) return false;
-            if (present) q2_power_splash(owner,entity,birth);
+            qa_world *physical_world=qa_application_world(frontend->application);
+            if (!qa_actors_get(qa_world_actors(physical_world),flashlight_actor)) continue;
+            if (!qa_world_body_storage_serial(physical_world,flashlight_actor)) {
+                qa_error skipped = {0};
+                qa_error_set(&skipped, QA_ERROR_UNSUPPORTED, 0, "Q2 power splash actor has no shared collision body");
+                qa_application_feature_report(frontend->application, "Q2 power splash", &skipped);
+                continue;
+            }
+            qa_body_state entity;
+            if (!qa_world_body_read(physical_world,flashlight_actor,&entity,error)) return false;
+            q2_power_splash(owner,&entity,birth);
         } else if (flashlight) {
             q2_dlight_set(owner,effect.origin,birth,2,(uint32_t)flashlight_entity->value.integer,flashlight_actor);
         } else if (tracker) {
@@ -1930,6 +1948,7 @@ static bool q2_builtin_beam(qa_frontend *frontend,const qa_builtin_event *event,
     const qa_application_q2_audience *audience,const frontend_q2_beam_recipe *recipe,
     uint64_t sample,bool physical,qa_error *error)
 {
+    if (!q2_delivery_admit(frontend,event->provider,audience)) return true;
     for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
         qa_actor_id recipient;if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
         bool received=false;
@@ -1939,6 +1958,7 @@ static bool q2_builtin_beam(qa_frontend *frontend,const qa_builtin_event *event,
         frontend_particle_owner *owner;
         if (!particle_owner(frontend,event->provider,QA_GAME_Q2,audience->world_source,
             audience->map_identity,recipient,&owner,error)) return false;
+        if (!owner) continue;
         double beam_time;
         if (!q2_beam_clock(frontend,owner,sample,physical,&beam_time,error) ||
             !q2_temporary_beam_admit(frontend,owner,seat,recipe,event->actor,event->other,
@@ -1972,10 +1992,8 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             frontend_q2_beam_recipe recipe;qa_q2_temp_entity temporary;
             bool named=frontend_q2_named_temporary(resource,event.origin,event.end,&temporary);
             if (named || frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
-                qa_application_q2_audience audience;
-                if (!qa_application_event_q2_audience_at(frontend->application,i,&audience) ||
-                    !audience.captured || audience.source!=event.provider)
-                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 beam lost its captured Source audience");
+                qa_application_q2_audience audience={0};
+                (void)qa_application_event_q2_audience_at(frontend->application,i,&audience);
                 if (named) {
                     qa_application_protocol_event message={.provider=event.provider,
                         .dialect=audience.source_frame.kind,.time_ns=event.time_ns};
@@ -1984,10 +2002,9 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             }
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
             frontend_particle_owner *owner;
-            qa_application_q2_audience audience;
-            if (!qa_application_event_q2_audience_at(frontend->application, i, &audience) ||
-                !audience.captured || audience.source != event.provider)
-                return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particles have no captured source delivery");
+            qa_application_q2_audience audience={0};
+            (void)qa_application_event_q2_audience_at(frontend->application, i, &audience);
+            if (!q2_delivery_admit(frontend,event.provider,&audience)) continue;
             for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
                 qa_actor_id recipient;
                 if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
@@ -1996,8 +2013,9 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
                     received = received || qa_actor_id_equal(recipient, audience.recipients[j].actor);
                 if (!received) continue;
                 if (!particle_owner(frontend, event.provider, QA_GAME_Q2, audience.world_source,
-                        audience.map_identity, recipient, &owner, error) ||
-                    !q2_damage_particles(frontend, owner, &event, seat, audience.source_time_ns, NULL, error)) return false;
+                        audience.map_identity, recipient, &owner, error)) return false;
+                if (owner && !q2_damage_particles(frontend, owner, &event, seat,
+                    audience.source_time_ns, NULL, error)) return false;
             }
         }
     }
@@ -2005,10 +2023,9 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
         qa_application_q2_map_event source;
         if (!qa_application_q2_map_event_at(frontend->application, i, &source)) return frontend_fail(error, QA_ERROR_ARGUMENT, "steam event queue changed");
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;
-        qa_application_q2_audience audience;
-        if (!qa_application_q2_map_event_audience_at(frontend->application, i, &audience) ||
-            !audience.captured || audience.source != source.provider)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 map particles have no captured source delivery");
+        qa_application_q2_audience audience={0};
+        (void)qa_application_q2_map_event_audience_at(frontend->application, i, &audience);
+        if (!q2_delivery_admit(frontend,source.provider,&audience)) continue;
         for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
             qa_actor_id recipient;
             if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
@@ -2019,6 +2036,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             frontend_particle_owner *owner;
             if (!particle_owner(frontend, source.provider, QA_GAME_Q2, audience.world_source,
                     audience.map_identity, recipient, &owner, error)) return false;
+            if (!owner) continue;
             uint64_t birth = physical && owner->provider == frontend->particles->clock_source ?
                 q2_sample : audience.source_time_ns;
             if (source.event.kind == QA_Q2_MAP_FORCE_WALL) {
@@ -2044,8 +2062,8 @@ static void q2_sustains_sample(frontend_particle_owner *owner,const frontend_q2_
     size_t retained=0;
     for (size_t i=0;i<owner->steam_count;++i) {
         frontend_steam steam=owner->steam[i];
-        if (steam.expired || (!sample->negative && steam.end_ns<sample->time_ns)) continue;
-        if (!sample->negative && steam.next_ns<=sample->time_ns) {
+        if (steam.expired || steam.end_ns<sample->time_ns) continue;
+        if (steam.next_ns<=sample->time_ns) {
             if (steam.kind) q2_sustain_particles(owner,&steam,sample->time_ns);
             else {
                 bool emitted=steam_particles(owner,&steam.event,sample->time_ns,false);
@@ -2345,10 +2363,19 @@ bool frontend_particle_advance(qa_frontend *frontend, qa_error *error)
     particle_clients_retire(frontend);
     if (!frontend->particles) return true;
     frontend_particle_state *state = frontend->particles;
-    for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next)
-        if (owner->q1 && (!qa_application_provider_gravity(frontend->application, owner->provider, &owner->gravity) ||
-                !isfinite(owner->gravity)))
-            return frontend_fail(error, QA_ERROR_NOT_FOUND, "particle provider has no authoritative gravity");
+    float gravity = 0;
+    bool gravity_read = false;
+    for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) {
+        if (!owner->q1) continue;
+        if (!gravity_read) {
+            qa_actor_owner world;
+            if (!particle_world_owner(frontend, &world) ||
+                !qa_application_provider_gravity(frontend->application, world, &gravity) || !isfinite(gravity))
+                return frontend_fail(error, QA_ERROR_NOT_FOUND, "Particle world has no authoritative gravity");
+            gravity_read = true;
+        }
+        owner->gravity = gravity;
+    }
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     double seconds = (double)now / 1e9;
     double elapsed = now >= state->previous_sample_ns ? (double)(now - state->previous_sample_ns) / 1e9 : 0;
