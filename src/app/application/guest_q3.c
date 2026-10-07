@@ -427,8 +427,8 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     if (!engine->game)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 map entity publication requires a game role");
     const char *path=qa_strings_cstr(qa_session_strings(provider->application->session),map_name);
-    qa_cvars *map_cvars=NULL;
-    if (!path || !qa_q3_host_console(engine->game->host,&map_cvars,NULL) || !map_cvars)
+    qa_cvars *map_cvars=application_guest_q3_console_registry(provider);
+    if (!path || !map_cvars)
         return application_fail(error,QA_ERROR_FORMAT,"Original GAME map lacks its actual source registry/path");
     if (!qa_cvars_set(map_cvars,"mapname",path,true,error) ||
         !qa_cvars_set(map_cvars,"sv_mapname",path,true,error)) return false;

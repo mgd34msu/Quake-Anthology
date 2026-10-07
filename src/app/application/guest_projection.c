@@ -393,7 +393,7 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
 static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out, qa_error *error)
 {
     application_guest_projection *p = role->projection;
-    if (p && p->located_inventory && !p->state) {
+    if (p && p->located_inventory && !p->state && !role->artifact->combat_profile) {
         uint32_t slot;
         qa_q3_player player;
         if (!qa_q3_host_actor_slot(role->host, actor, &slot, error) ||
