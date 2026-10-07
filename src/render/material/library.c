@@ -703,7 +703,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
     qa_scene_image_options options = record->options;
     if (kind == QA_MATERIAL_PICTURE) options.wrap = QA_SCENE_CLAMP;
     if (generated != NULL && !internal) {
-        if (!qa_material_sample_image(library, generated->image, false, QA_SCENE_CLAMP, &image, error)) return false;
+        if (!qa_material_sample_image(library, generated->image, false, generated->image->wrap, &image, error)) return false;
         kind = QA_MATERIAL_PICTURE;
     } else if (internal) {
         image = (qa_scene_image *)(library->source_profile ? qa_scene_source_q3_missing(library->resources) :

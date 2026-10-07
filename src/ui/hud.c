@@ -774,6 +774,28 @@ static bool q1_scorebar(qa_hud *hud, const qa_hud_q1_status *status, const qa_hu
     snprintf(text, sizeof(text), "Time :%3ld:%02ld", (long)(seconds / 60), (long)(seconds % 60));
     return q1_string(hud, frame, place, text, 184, 4, scene, error);
 }
+static bool q1_backtile(const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, qa_scene_frame *scene, qa_error *error)
+{
+    if (!place.reserved || (float)frame->safe_area.width <= 320 * place.scale) return true;
+    const qa_scene_image *image = status->picture(status->picture_context, "backtile", error);
+    if (!image) return false;
+    float tile_width = (float)image->logical_width, tile_height = (float)image->logical_height;
+    float left = (float)frame->safe_area.x, top = (float)frame->safe_area.y;
+    float right = left + (float)frame->safe_area.width, bottom = top + (float)frame->safe_area.height;
+    const float edges[] = {left, place.x, place.x + 320 * place.scale, right};
+    for (unsigned side = 0; side < 2; ++side) {
+        float x = edges[side * 2], end = edges[side * 2 + 1];
+        float y = bottom - (float)place.reserved;
+        if (end <= x) continue;
+        if (!qa_scene_frame_picture_f(scene, image, frame->safe_area,
+            (qa_scene_rect_f){x, y, end - x, (float)place.reserved},
+            (qa_scene_vec4){(x - left) / tile_width, (y - top) / tile_height,
+                (end - left) / tile_width, (bottom - top) / tile_height},
+            (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+    }
+    return true;
+}
 static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
     qa_scene_frame *scene, qa_error *error)
 {
@@ -783,6 +805,7 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
     qa_hud_q1_placement place = qa_hud_q1_place(frame->safe_area, frame->scale, status->view_size,
         status->overlay_status, status->intermission, status->deathmatch || status->quakeworld);
     if (!place.lines) return true;
+    if (!q1_backtile(status, frame, place, scene, error)) return false;
     if (place.lines > 24 && !q1_inventory(hud, status, frame, place, scene, error)) return false;
     if (frame->show_scores || status->health <= 0)
         return q1_scorebar(hud, status, frame, place, scene, error);

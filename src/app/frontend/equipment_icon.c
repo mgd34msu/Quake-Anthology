@@ -47,7 +47,8 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
     if(okay) {
         name=qa_vfs_normalize_path(path,error);okay=name!=NULL;
     }
-    qa_scene_image_options options={.family=family,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR,
+    qa_scene_image_options options={.family=family,
+        .wrap=wad&&lump&&!strcmp(lump,"backtile")?QA_SCENE_REPEAT:QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR,
         .usage=QA_IMAGE_USAGE_PICTURE,.transparent=true,.transparent_index=255};
     const qa_material *material=NULL;qa_scene_image *image=NULL;qa_resource *resource=NULL;
     if(okay&&shader)okay=qa_material_register_kind(library,name,&options,QA_MATERIAL_PICTURE,&material,error);
@@ -79,7 +80,7 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
                     memcpy(key,name,a);key[a]='#';memcpy(key+a+1,lump,b+1);free(name);name=key;}}
         }
         qa_scene_image_level pixels={rgba.width,rgba.height,rgba.rgba.data,rgba.rgba.size};
-        if(okay)okay=qa_scene_image_create(images,name,QA_SCENE_RGBA8,&pixels,1,QA_SCENE_CLAMP,QA_SCENE_LINEAR,
+        if(okay)okay=qa_scene_image_create(images,name,QA_SCENE_RGBA8,&pixels,1,options.wrap,QA_SCENE_LINEAR,
             (qa_scene_vec4){0},&image,error);
         if(okay) {
             image_asset_recipe recipe={.kind=1,.level_count=1,.source=resource,

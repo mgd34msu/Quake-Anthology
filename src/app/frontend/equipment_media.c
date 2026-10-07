@@ -521,7 +521,7 @@ bool frontend_q1_hud_prepare(qa_vfs *files, qa_scene_resources *images,
 {
     static const char *const common[] = {"face1", "face_p1", "face2", "face_p2", "face3", "face_p3",
         "face4", "face_p4", "face5", "face_p5", "face_invis", "face_invul2", "face_inv2", "face_quad",
-        "sbar", "ibar", "scorebar", "disc", "num_minus", "anum_minus", "num_colon", "num_slash",
+        "sbar", "ibar", "scorebar", "backtile", "disc", "num_minus", "anum_minus", "num_colon", "num_slash",
         "sb_shells", "sb_nails", "sb_rocket", "sb_cells", "sb_armor1", "sb_armor2", "sb_armor3",
         "sb_key1", "sb_key2", "sb_invis", "sb_invuln", "sb_suit", "sb_quad",
         "sb_sigil1", "sb_sigil2", "sb_sigil3", "sb_sigil4"};
