@@ -776,10 +776,10 @@ bool frontend_config_store_legacy_globals(const frontend_config_store *manager)
 bool frontend_config_store_seed_player_archive(frontend_config_store *manager,qa_cvars *registry,
     uint32_t seat,qa_cvar_archive *archive,qa_error *error)
 {
-    if (!manager || !registry || !archive || !manager->storage ||
-        !qa_cvars_same_store(qa_application_cvars(manager->frontend->application),registry))
+    if (!manager || !registry || !archive)
         return fail(error,QA_ERROR_ARGUMENT,"Player archive lost its actual canonical table and settings root");
-    return frontend_shared_storage_seed_player(manager->storage,registry,seat,manager->storage_seeded,archive,error);
+    return shared_storage_prepare(manager,error) &&
+        frontend_shared_storage_seed_player(manager->storage,registry,seat,manager->storage_seeded,archive,error);
 }
 bool frontend_config_store_apply_archive(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_cvars *registry,
