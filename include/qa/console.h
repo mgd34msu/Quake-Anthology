@@ -34,6 +34,8 @@ typedef struct qa_command_context {
     /* Application owners stamp deferred work with the exact world/provider
      * publication and optional canonical actor. Generic consoles leave zero. */
     uint64_t registry, generation;
+    /* Same-process identity of this Source's view of the common cvar table. */
+    uint64_t cvar_view;
     qa_actor_id actor;
 } qa_command_context;
 
@@ -101,6 +103,9 @@ typedef struct qa_cvar_view {
     int32_t integer;
     bool modified;
     bool console_created;
+    bool explicit_value;
+    bool declared;
+    bool player_scoped;
     size_t handle;
     const qa_console_documentation *documentation;
     qa_cvar_save_policy save_policy;
@@ -113,8 +118,18 @@ typedef enum qa_cvar_effect_kind {
     QA_CVAR_EFFECT_GAME_DIRECTORY
 } qa_cvar_effect_kind;
 
+typedef enum qa_cvar_side {
+    QA_CVAR_SIDE_UNSPECIFIED, QA_CVAR_SIDE_CLIENT, QA_CVAR_SIDE_SERVER
+} qa_cvar_side;
+typedef enum qa_cvar_role {
+    QA_CVAR_ROLE_ENGINE, QA_CVAR_ROLE_GAME, QA_CVAR_ROLE_CGAME, QA_CVAR_ROLE_UI
+} qa_cvar_role;
+
 typedef struct qa_cvar_options {
     qa_console_dialect dialect;
+    qa_cvar_side side;
+    qa_cvar_role role;
+    uint32_t seat;
     void *user;
     void (*print)(void *user, const char *text);
     bool (*command_exists)(void *user, const char *name);
@@ -132,12 +147,32 @@ typedef struct qa_cvar_binding {
 } qa_cvar_binding;
 
 qa_cvars *qa_cvars_create(const qa_cvar_options *options, qa_error *error);
+/* A view retains the shared canonical owner and only its own Source
+ * declarations, handles, callbacks and bindings. Creating or releasing it
+ * does not choose the active default dialect or duplicate scalar values. */
+qa_cvars *qa_cvars_create_view(qa_cvars *shared, const qa_cvar_options *, qa_error *);
+bool qa_cvars_same_store(const qa_cvars *, const qa_cvars *);
+uint64_t qa_cvars_view_identity(const qa_cvars *);
+bool qa_cvars_retain(qa_cvars *, qa_error *);
+void qa_cvars_detach_callbacks(qa_cvars *);
+/* Select once at the active session publication boundary. Explicit values
+ * remain shared; unset values use this game's canonical stock defaults. */
+bool qa_cvars_select_dialect(qa_cvars *, qa_console_dialect, qa_error *);
+bool qa_cvars_is_set(const qa_cvars *, const char *name);
+/* Caller-owned borrowed projection, with the same native parser as find. */
+bool qa_cvars_effective_view(const qa_cvars *, const char *name,
+    qa_cvar_view *out, qa_error *);
 void qa_cvars_destroy(qa_cvars *registry);
 qa_console_dialect qa_cvars_dialect(const qa_cvars *registry);
+qa_cvar_side qa_cvars_side(const qa_cvars *registry);
+qa_cvar_role qa_cvars_role(const qa_cvars *registry);
+/* Actual canonical player scalar scopes, independent of the live view roster. */
+size_t qa_cvars_player_count(const qa_cvars *);
+bool qa_cvars_player_at(const qa_cvars *, size_t index, uint32_t *seat);
 /* Validates a retained physical name under its registry's dialect. Q3
  * mutation APIs remap forbidden names to BADNAME before admission. */
 bool qa_cvars_name_valid(qa_console_dialect dialect, const char *name);
-/* Views and strings remain valid until that registry is next mutated.
+/* Views and strings remain valid until their shared canonical owner is next mutated.
  * Output/effect callbacks may inspect state but must not mutate or destroy the
  * registry during notification. Host work can be queued through the console. */
 const qa_cvar_view *qa_cvars_find(const qa_cvars *registry, const char *name);

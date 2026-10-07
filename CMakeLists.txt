@@ -145,6 +145,9 @@ add_library(qa_console STATIC
     src/console/text.c
     src/console/frame_time.c
     src/console/cvars.c
+    src/console/cvars_store.c
+    src/console/cvars_conversion.c
+    src/console/cvar_catalog_generated.c
     src/console/commands.c
     src/console/field.c
     src/console/source_field.c

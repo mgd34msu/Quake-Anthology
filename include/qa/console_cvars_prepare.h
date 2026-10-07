@@ -45,6 +45,14 @@ bool qa_cvars_apply(qa_cvars *, const qa_cvars_edit_command *, qa_error *);
  * Views borrow the ticket until its next edit or terminal operation. */
 bool qa_cvars_edit_prepare(qa_cvars *, qa_cvars_edit **, qa_error *);
 qa_cvars *qa_cvars_edit_registry(const qa_cvars_edit *);
+/* Pure borrow of this canonical owner's existing ticket; terminal ownership
+ * remains with the caller that prepared it. */
+qa_cvars_edit *qa_cvars_prepared_edit(const qa_cvars *shared);
+/* Enter an actual Source view into this owner's one prepared ticket. Direct
+ * reads and mutations, and views created from it, use the prepared values.
+ * Leaving does not publish, finish or abort a borrowed ticket. */
+bool qa_cvars_edit_enter(qa_cvars_edit *, qa_cvars *, qa_error *);
+bool qa_cvars_edit_leave(qa_cvars_edit *, qa_cvars *, qa_error *);
 const qa_cvar_view *qa_cvars_edit_find(const qa_cvars_edit *, const char *);
 const qa_cvar_view *qa_cvars_edit_at(const qa_cvars_edit *, size_t);
 size_t qa_cvars_edit_count(const qa_cvars_edit *);

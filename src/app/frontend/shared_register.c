@@ -417,19 +417,6 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
         if (row->validation!=ANY && !qa_cvars_bind(cvars,row->name,&(qa_cvar_binding){
             .owner=QA_FRONTEND_COMMAND_OWNER,.user=(void *)row,.validate=validate},error)) return false;
     }
-    static const struct { const char *name,*target; qa_cvar_alias_conversion conversion; const char *summary,*usage; } aliases[]={
-        {"gamma","r_gamma",QA_CVAR_ALIAS_RECIPROCAL_GAMMA,"Quake brightness convention: gamma = 1 / r_gamma","gamma <1/3..2>"},
-        {"vid_gamma","r_gamma",QA_CVAR_ALIAS_RECIPROCAL_GAMMA,"Quake II brightness convention: gamma = 1 / r_gamma","vid_gamma <1/3..2>"},
-        {"s_volume","volume",QA_CVAR_ALIAS_IDENTITY,"Alias of the shared effects gain","s_volume <0..1>"},
-        {"s_musicvolume","bgmvolume",QA_CVAR_ALIAS_IDENTITY,"Alias of the shared music gain","s_musicvolume <0..1>"},
-        {"ogg_volume","bgmvolume",QA_CVAR_ALIAS_IDENTITY,"Quake II shared music gain","ogg_volume <0..1>"},
-        {"s_khz","s_outputRate",QA_CVAR_ALIAS_KILOHERTZ,"Source sample-rate convention; apply with snd_restart","s_khz <11|22|44|48>"},
-        {"ogg_shuffle","music_shuffle",QA_CVAR_ALIAS_IDENTITY,"Shuffle mounted Quake II gameplay music","ogg_shuffle <0|1>"},
-        {"ogg_menu_track","music_menu_track",QA_CVAR_ALIAS_IDENTITY,"Mounted Quake II menu music selection","ogg_menu_track <auto|0|1..255|path>"}
-    };
-    for (size_t i=0;i<sizeof(aliases)/sizeof(*aliases);++i)
-        if (!qa_cvars_alias_register(cvars,aliases[i].name,aliases[i].target,aliases[i].conversion,
-            aliases[i].summary,&(qa_console_documentation){.usage=aliases[i].usage},error)) return false;
     return frontend_view_settings_q1_motion_register(cvars,QA_FRONTEND_COMMAND_OWNER,false,error) &&
         qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
         qa_input_device_settings_register(cvars,error) &&
