@@ -17,8 +17,6 @@
 #include "qa/q3_key.h"
 #include "qa/audio_save.h"
 #include "source_restore.h"
-#include "view_bindings.h"
-#include "view_settings.h"
 #include "capture.h"
 #include "round.h"
 #include "campaign.h"
@@ -142,15 +140,13 @@ struct frontend_source_lease {
     frontend_equipment_source *equipment;
     source_body_draw *body_draw;
     qa_application_q3_client_context time_context;
-    const char *time_names[6];
-    qa_cvar_observer_token time_owner_tokens[6], time_mirror_tokens[6];
-    size_t time_count, time_busy;
+    size_t time_busy;
     char *system_info;
     char *disconnect_reason;
     const qa_q3_host *status_host;
     bool status_visible;
     bool disconnect_pending;
-    bool time_bound, released;
+    bool released;
 };
 struct source_render_scope {
     frontend_source_lease *lease;
@@ -187,39 +183,6 @@ static void companion_clear(source_companion *capture)
     }
     if (capture) { capture->last=NULL; capture->view.packet_count=0; capture->completed=false; }
 }
-bool frontend_source_server_read(qa_frontend *f,qa_actor_owner owner,qa_game_family family,
-    qa_application_startup_source *out,qa_error *error)
-{
-    if (!f || !f->application || !owner || !out)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event requires its actual server owner");
-    qa_application_startup_source selected={0};
-    bool found=false;
-    for (size_t i=0;;++i) {
-        qa_application_startup_source source; bool present;
-        if (!qa_application_console_source_at(f->application,i,&source,&present,error)) return false;
-        if (!present) break;
-        if (source.scope.provider!=owner || source.command.owner!=owner ||
-            source.command.origin!=QA_COMMAND_SERVER || !source.descriptor || !source.cvars ||
-            qa_cvars_side(source.cvars)!=QA_CVAR_SIDE_SERVER ||
-            qa_cvars_role(source.cvars)!=QA_CVAR_ROLE_GAME) continue;
-        qa_console_dialect dialect=source.command.dialect;
-        bool matches=family==QA_GAME_Q1 ? dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW :
-            family==QA_GAME_Q2 ? dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE :
-            family==QA_GAME_Q3 && dialect==QA_CONSOLE_Q3;
-        if (!matches || !source.console || source.command.cvar_view!=qa_cvars_view_identity(source.cvars) ||
-            dialect!=qa_cvars_dialect(source.cvars))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event changed its actual GAME view or family");
-        if (found)
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source event has multiple actual server GAME views");
-        selected=source; found=true;
-    }
-    if (!found)
-        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Source event has no actual server GAME view");
-    if (!qa_application_capture_command_context(f->application,&selected.command,&selected.command,error)) return false;
-    *out=selected;
-    return true;
-}
-
 bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
     frontend_source_client_registry *out,bool *present,qa_error *error)
 {
@@ -318,16 +281,6 @@ static bool time_enter(frontend_source_lease *lease,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frame time role no longer owns its actual client lifetime");
     ++lease->time_busy; ++lease->source->role_operations; return true;
 }
-static void time_close(frontend_source_lease *lease)
-{
-    qa_cvars *owner=lease->time_context.client_time_cvars,*mirror=lease->time_context.cvars;
-    for (size_t i=0;i<lease->time_count;++i) {
-        if (lease->time_owner_tokens[i]) qa_cvars_unobserve(owner,lease->time_owner_tokens[i]);
-        if (lease->time_mirror_tokens[i]) qa_cvars_unobserve(mirror,lease->time_mirror_tokens[i]);
-        lease->time_owner_tokens[i]=lease->time_mirror_tokens[i]=0;
-    }
-    lease->time_bound=false;
-}
 static void time_leave(frontend_source_lease *lease)
 {
     frontend_source *source=lease->source;
@@ -341,53 +294,6 @@ static bool time_write(frontend_source_lease *lease,qa_cvars *registry,const cha
     bool ok=qa_cvars_set(registry,name,value,true,error);
     return ok && (time_current(lease) || frontend_fail(error,QA_ERROR_ARGUMENT,"Frame time client retired during cvar publication"));
 }
-static bool time_refresh(frontend_source_lease *lease,bool subscriptions,qa_error *error)
-{
-    qa_cvars *owner=lease->time_context.client_time_cvars,*mirror=lease->time_context.cvars;
-    if (!owner || owner==mirror) return true;
-    bool ok=true; size_t suppressed=0;
-    if (subscriptions) for (;ok && suppressed<lease->time_count;++suppressed)
-        ok=qa_cvars_observer_suppress(mirror,lease->time_mirror_tokens[suppressed],true,error);
-    for (size_t i=0;ok && i<lease->time_count;++i) {
-        const qa_cvar_view *value=qa_cvars_find(owner,lease->time_names[i]);
-        if (!value) { ok=frontend_fail(error,QA_ERROR_FORMAT,"Frame time subscribed source cvar was retired"); break; }
-        /* The mirror publication can reenter the source owner. Copy the value
-         * before publishing, so its retained registry text never goes stale. */
-        size_t length=strlen(value->value); char *copy=length<SIZE_MAX?malloc(length+1):NULL;
-        if (!copy) { ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining frame time publication value"); break; }
-        memcpy(copy,value->value,length+1); ok=time_write(lease,mirror,lease->time_names[i],copy,error); free(copy);
-    }
-    if (time_current(lease)) for (size_t i=0;i<suppressed;++i) {
-        qa_error cleanup={0};
-        if (!qa_cvars_observer_suppress(mirror,lease->time_mirror_tokens[i],false,&cleanup)) {
-            if (ok && error) *error=cleanup;
-            ok=false;
-        }
-    }
-    return ok;
-}
-static bool time_owner_published(void *context,qa_cvars *registry,const char *name,qa_error *error)
-{
-    frontend_source_lease *lease=context; (void)name;
-    if (!time_enter(lease,error)) return false;
-    bool ok=registry==lease->time_context.client_time_cvars && time_refresh(lease,true,error);
-    time_leave(lease); return ok;
-}
-static bool time_mirror_published(void *context,qa_cvars *registry,const char *name,qa_error *error)
-{
-    frontend_source_lease *lease=context;
-    if (!time_enter(lease,error)) return false;
-    const qa_cvar_view *value=registry==lease->time_context.cvars?qa_cvars_find(registry,name):NULL;
-    char *copy=NULL; bool ok=value!=NULL;
-    if (ok) {
-        size_t length=strlen(value->value); copy=length<SIZE_MAX?malloc(length+1):NULL;
-        ok=copy!=NULL;
-        if (ok) memcpy(copy,value->value,length+1);
-        else frontend_fail(error,QA_ERROR_MEMORY,"Retaining client frame time publication");
-    }
-    if (ok) ok=time_write(lease,lease->time_context.client_time_cvars,name,copy,error);
-    free(copy); time_leave(lease); return ok;
-}
 static size_t time_names(qa_console_dialect dialect,const char **names,bool collision)
 {
     size_t count=0; names[count++]="timescale";
@@ -396,32 +302,21 @@ static size_t time_names(qa_console_dialect dialect,const char **names,bool coll
     if (collision) { names[count++]="cm_noAreas"; names[count++]="cm_noCurves"; names[count++]="cm_playerCurveClip"; }
     return count;
 }
-static bool time_subscribe(frontend_source_lease *lease,bool restoring,qa_error *error)
+static bool time_register(qa_cvars *source,qa_cvars *client,uint64_t owner,qa_error *error)
 {
-    qa_cvars *owner=lease->time_context.client_time_cvars,*mirror=lease->time_context.cvars;
-    if (!owner || owner==mirror) return true;
-    if (qa_cvars_dialect(owner)!=qa_cvars_dialect(mirror))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Frame time mirror registries must retain the same actual dialect");
-    if (!restoring) {
-        const char *names[6]; size_t count=time_names(qa_cvars_dialect(owner),names,true);
-        lease->time_count=0;
-        for (size_t i=0;i<count;++i) {
-            const qa_cvar_view *value=qa_cvars_find(owner,names[i]);
-            if (!value) continue;
-            lease->time_names[lease->time_count++]=names[i];
-            if (!qa_cvars_register(mirror,names[i],value->reset_value,value->flags,lease->service_owner,
-                "Shared source frame control",error) || !time_current(lease)) return false;
-        }
-        if (!time_refresh(lease,false,error)) return false;
+    if (!source) return true;
+    const char *names[6]; size_t count=time_names(qa_cvars_dialect(source),names,true);
+    for (size_t i=0;i<count;++i) {
+        const qa_cvar_view *value=qa_cvars_find(source,names[i]);
+        if (!value) continue;
+        size_t length=strlen(value->reset_value); char *reset=length<SIZE_MAX?malloc(length+1):NULL;
+        if (!reset) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining source timing declaration");
+        memcpy(reset,value->reset_value,length+1); uint32_t flags=value->flags;
+        bool ok=qa_cvars_register(client,names[i],reset,flags,owner,"Shared source frame control",error);
+        free(reset);
+        if (!ok) return false;
     }
-    for (size_t i=0;i<lease->time_count;++i) {
-        if (!qa_cvars_find(owner,lease->time_names[i]) || !qa_cvars_find(mirror,lease->time_names[i]) ||
-            !qa_cvars_observe(mirror,lease->time_names[i],lease->service_owner,time_mirror_published,lease,
-                lease->time_mirror_tokens+i,error) ||
-            !qa_cvars_observe(owner,lease->time_names[i],lease->service_owner,time_owner_published,lease,
-                lease->time_owner_tokens+i,error)) { time_close(lease); return false; }
-    }
-    lease->time_bound=true; return true;
+    return true;
 }
 static bool equal_ascii(const char *text,size_t length,const char *name)
 {
@@ -471,71 +366,8 @@ bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_c
     }
     if (ok) {
         free(lease->system_info); lease->system_info=retained; retained=NULL;
-        if (view->client_time_cvars && view->client_time_cvars!=view->cvars) {
-            if (lease->time_bound) ok=time_refresh(lease,true,error);
-            else {
-                lease->time_count=0;
-                for (size_t i=0;i<name_count;++i) if (qa_cvars_find(view->client_time_cvars,names[i]))
-                    lease->time_names[lease->time_count++]=names[i];
-                ok=time_refresh(lease,false,error);
-                lease->time_count=0;
-            }
-        }
     }
     free(retained); time_leave(lease); return ok;
-}
-bool frontend_source_field_of_view(qa_frontend *f,double value,qa_error *error)
-{
-    if (!f || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV needs its actual application");
-    char text[64]; snprintf(text,sizeof(text),"%.17g",value);
-    for (frontend_source *source=f->sources;source;source=source->next) {
-        const qa_launch_instance *held=qa_launch_instance_lease_view(source->music_metadata);
-        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
-            if (lease->released || lease->role!=QA_QVM_CGAME || !lease->time_bound) continue;
-            if (source->application!=f->application || source->frontend!=f || !held ||
-                lease->source!=source || !lease->registry ||
-                !frontend_client_registry_matches(lease->registry,held,source->launch_seat) ||
-                lease->cvars!=frontend_client_registry_cvars(lease->registry) ||
-                lease->time_busy==SIZE_MAX || source->role_operations==SIZE_MAX)
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV left its retained CGAME namespace");
-            if (!qa_cvars_find(lease->cvars,"cg_fov")) continue;
-            ++lease->time_busy; ++source->role_operations;
-            bool ok=qa_cvars_set(lease->cvars,"cg_fov",text,true,error);
-            bool retained=!lease->released && lease->source==source && source->application==f->application &&
-                lease->cvars==frontend_client_registry_cvars(lease->registry) &&
-                frontend_client_registry_matches(lease->registry,held,source->launch_seat);
-            time_leave(lease);
-            if (!ok || !retained) return ok?frontend_fail(error,QA_ERROR_ARGUMENT,"Client FOV retired during publication"):false;
-        }
-    }
-    return true;
-}
-bool frontend_source_times_sync(qa_frontend *f,bool restoring,qa_error *error)
-{
-    if (!f || !f->application || (restoring && !f->source_restoring))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frame time binding requires its real frontend application");
-    for (frontend_source *source=f->sources;source;source=source->next) {
-        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
-            if (lease->role!=QA_QVM_CGAME || lease->time_bound) continue;
-            qa_application_q3_client_context view;
-            if (!time_context_read(f,source->owner,source->launch_seat,&view,error)) return false;
-            if (!view.initialized) continue;
-            if (view.frontend_lifetime!=lease) return frontend_fail(error,QA_ERROR_FORMAT,"Frame time context has another physical frontend role");
-            lease->time_context=view;
-            if (!time_enter(lease,error)) return false;
-            bool ok=time_subscribe(lease,restoring,error);
-            double preference; bool explicit_override;
-            if (ok && !restoring && f->view_settings &&
-                frontend_view_settings_read(f->view_settings,&preference,&explicit_override) && explicit_override &&
-                qa_cvars_find(lease->cvars,"cg_fov")) {
-                char text[64]; snprintf(text,sizeof(text),"%.17g",preference);
-                ok=time_write(lease,lease->cvars,"cg_fov",text,error);
-            }
-            time_leave(lease);
-            if (!ok) return false;
-        }
-    }
-    return true;
 }
 bool frontend_source_effect(void *context,qa_application *application,qa_actor_owner receiver,uint32_t seat,
     qa_application_q3_client_effect effect,const char *text,qa_error *error)
@@ -1267,7 +1099,7 @@ static void release_source(void *context)
     frontend_source_lease **held=&source->lease_list;
     while (*held && *held!=lease) held=&(*held)->next;
     if (*held) *held=lease->next;
-    time_close(lease); lease->released=true;
+    lease->released=true;
     lease->next=source->retired_leases; source->retired_leases=lease;
     if (!--source->leases) {
         source->application = NULL;
@@ -1675,8 +1507,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         frontend_config_host_cvar_entered};
     if (role==QA_QVM_CGAME)
         host->cvar_status=(qa_q3_host_cvar_status_services){lease,status_visible};
-    if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate)
+    if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate) {
         host->client_time_from_game=true;
+        if (!time_register(preparation.source_cvars,host->cvars,host->service_owner,error)) return false;
+    }
     host->seat = frontend->seats[ordinal].input;
     host->console_field = qa_seat_console_field(frontend->seats[ordinal].console, false);
     host->scene_resources = source->images; host->scene_frame = &frontend->frame;

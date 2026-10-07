@@ -12,6 +12,4 @@ typedef struct frontend_source_client_registry {
 bool frontend_source_client_registry_read(const qa_frontend *,uint32_t,
     frontend_source_client_registry *,bool *present,qa_error *);
 bool frontend_source_client_registry_current(const qa_frontend *,const frontend_source_client_registry *);
-bool frontend_source_server_read(qa_frontend *,qa_actor_owner,qa_game_family,
-    qa_application_startup_source *,qa_error *);
 #endif

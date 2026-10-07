@@ -132,7 +132,7 @@ static bool replay(void *context,qa_application *candidate,const qa_save_image *
     if (operation->services && operation->services->replay &&
         !operation->services->replay(operation->services->context,candidate,image,error)) return false;
     return (!operation->replay || operation->replay(operation->replay_context,f,error)) &&
-        frontend_source_times_sync(f,false,error) && frontend_scene_sync(f,error) &&
+        frontend_scene_sync(f,error) &&
         frontend_input_profile_bind(f,error);
 }
 static bool ranking_capture(void *context,qa_application_ranking_effect_fn installed,

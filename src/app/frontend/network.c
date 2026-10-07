@@ -23,7 +23,6 @@
 #include "network_local_groups.h"
 #include "network_kex.h"
 #include "network_declarations.h"
-#include "network_view.h"
 #include "remote_config.h"
 #include "remote_input.h"
 #include "remote_prediction.h"
@@ -2662,26 +2661,6 @@ bool frontend_network_client_configuration_read(const qa_frontend *f, uint32_t s
     }
     if (!frontend_network_client_configuration(f, seat, out, error)) return false;
     *present = true; return true;
-}
-bool frontend_network_client_field_of_view(qa_frontend *f,double value,qa_error *error)
-{
-    if(!f || !isfinite(value) || value<60 || value>160 || f->capture || f->resource_inventory)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT view publication requires a returned physical preference");
-    qa_frontend_network *n=f->network;
-    if(!n || !n->q3_client_requested) return true;
-    frontend_remote_config_view configuration; bool present=false;
-    if(!frontend_network_client_configuration_read(f,n->q3_client_launch_seat,&configuration,&present,error)) return false;
-    if(!present || !qa_cvars_find(configuration.cvars,"cg_fov")) return true;
-    qa_application_q3_client_context receiver;
-    if(!qa_network_callbacks_idle(n->runtime) ||
-        !qa_application_q3_remote_context_read(f->application,n->q3_cgame_owner,n->q3_client_launch_seat,&receiver,error) ||
-        receiver.cvars!=configuration.cvars || receiver.console!=configuration.console ||
-        !qa_application_q3_remote_context_current(f->application,&receiver))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT view recipient lost its actual receiver namespace");
-    char text[64]; int size=snprintf(text,sizeof(text),"%.17g",value);
-    if(size<0 || (size_t)size>=sizeof(text) || !qa_cvars_set(configuration.cvars,"cg_fov",text,false,error)) return false;
-    return frontend_remote_config_current(configuration.owner,&configuration) &&
-        qa_application_q3_remote_context_current(f->application,&receiver);
 }
 bool frontend_network_client_attempt_read(const qa_frontend *f,
     frontend_network_client_attempt *out, bool *present, qa_error *error)

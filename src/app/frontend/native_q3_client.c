@@ -82,20 +82,6 @@ bool frontend_native_q3_current(const frontend_native_q3 *row)
         frontend_client_registry_matches(row->view.registry,row->view.source_launch,row->view.launch_seat) &&
         row->view.cvars==frontend_client_registry_cvars(row->view.registry);
 }
-bool frontend_native_q3_field_of_view(qa_frontend *f,double value,qa_error *error)
-{
-    if (!f || !f->application) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV needs its actual application");
-    char text[64]; snprintf(text,sizeof(text),"%.17g",value);
-    for (frontend_native_q3 *row=f->native_q3;row;row=row->next) {
-        if (!row->constructed || !row->view.cvars || !qa_cvars_find(row->view.cvars,"cg_fov")) continue;
-        if (!frontend_native_q3_current(row) || row->callbacks==SIZE_MAX) return frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV lost its actual CLIENT");
-        ++row->callbacks;
-        bool ok=qa_cvars_set(row->view.cvars,"cg_fov",text,true,error);
-        bool retained=frontend_native_q3_current(row); --row->callbacks;
-        if (!ok || !retained) return ok?frontend_fail(error,QA_ERROR_ARGUMENT,"Native FOV retired during publication"):false;
-    }
-    return true;
-}
 bool frontend_native_q3_cut(frontend_native_q3 *row,const q3n_frame *f,qa_error *e)
 {
     return f && frontend_native_q3_current(row) && f->application==row->frontend->application &&

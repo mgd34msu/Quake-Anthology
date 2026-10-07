@@ -464,7 +464,6 @@ bool frontend_source_cgame_recipient(const qa_frontend *,uint32_t,qa_actor_owner
 bool frontend_source_group_q3_ready(const qa_frontend *, size_t,
     const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_source_system_info(qa_frontend *, const qa_application_q3_client_context *, const char *, qa_error *);
-bool frontend_source_times_sync(qa_frontend *, bool restoring, qa_error *);
 bool frontend_source_effect(void *, qa_application *, qa_actor_owner, uint32_t,
     qa_application_q3_client_effect, const char *, qa_error *);
 bool frontend_source_drain(qa_frontend *, qa_error *);

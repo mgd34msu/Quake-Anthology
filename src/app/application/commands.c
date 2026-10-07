@@ -102,7 +102,6 @@ bool qa_application_command_context_active(const qa_application *application,
     application_provider *physical = context->owner ? command_owner(application, context->owner) : NULL;
     if (!physical && context->owner)
         physical = application_startup_flow_provider(application, context->owner);
-    if (!qa_console_context_bound(application->console, context)) return false;
     if (physical && physical->client_only_owned) {
         /* A standalone decoded CLIENT has its own observer namespace. Its
          * pending seat origin must never acquire the old local GAME actor. */

@@ -1,16 +1,12 @@
 #include "internal.h"
 #include "view_bindings.h"
 #include "view_settings.h"
-#include "network_view.h"
 #include "qa/application_view_preferences.h"
 
 static bool apply(qa_frontend *f,double value,qa_application_view_preference_mode mode,qa_error *error)
 {
     return f && f->application &&
-        qa_application_player_field_of_view_apply(f->application,value,mode,error) &&
-        frontend_source_field_of_view(f,value,error) &&
-        frontend_native_q3_field_of_view(f,value,error) &&
-        frontend_network_client_field_of_view(f,value,error);
+        qa_application_player_field_of_view_apply(f->application,value,mode,error);
 }
 static bool changed(void *context,double value,qa_error *error)
 { return apply(context,value,QA_APPLICATION_VIEW_CHANGE,error); }

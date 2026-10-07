@@ -269,23 +269,7 @@ bool application_startup_seed_console(application_provider *provider,const qa_ap
         if (!startup_variable_pending(row)) continue;
         bool shared=(client || provider->product->family==QA_GAME_Q3) && ascii_equal(row->name,"sv_cheats");
         if (!shared) {
-            const qa_command_context *recipient=command;
-            qa_command_context game_command;
-            if (!client) {
-                const qa_cvar_view *declared=NULL;
-                if (!qa_console_cvar_read(console,command,row->name,&declared,error)) return false;
-                /* External GAME declarations arrive at module Init. An
-                 * undeclared startup row belongs to that physical GAME;
-                 * declared client/input rows keep the phase's seat route. */
-                if (!declared || !declared->declared) {
-                    if (source->command.origin!=QA_COMMAND_SERVER || source->command.owner!=provider->owner ||
-                        !qa_application_capture_command_context(app,&source->command,&game_command,error) ||
-                        qa_console_cvar_owner(console,&game_command,row->name)!=source->cvars)
-                        return application_fail(error,QA_ERROR_ARGUMENT,"Undeclared startup variable lost its actual GAME recipient");
-                    recipient=&game_command;
-                }
-            }
-            if (!qa_console_cvar_startup_set(console,recipient,row->name,row->value,error)) return false;
+            if (!qa_console_cvar_startup_set(console,command,row->name,row->value,error)) return false;
         }
         if (primary && (!shared || row->shared_seeded)) {
             if (app->q3_product_preparing) row->pending=true; else row->consumed=true;

@@ -1,6 +1,5 @@
 #include "source_prompt.h"
 #include "internal.h"
-#include "source_client_registry.h"
 #include "qa/application_q1_composition.h"
 
 static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_error *error)
@@ -156,8 +155,11 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 break;
             case QA_Q2_PLAYER_STUFFTEXT: {
                 if (!event->text) break;
+                const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
+                const char *instance=qa_application_provider_instance(frontend->application,observed.provider);
+                const qa_launch_instance *descriptor=instance?qa_launch_snapshot_find(publication,instance):NULL;
                 qa_application_startup_source source;
-                if (!frontend_source_server_read(frontend,observed.provider,QA_GAME_Q2,&source,error)) return false;
+                if (!qa_application_startup_source_read(frontend->application,publication,descriptor,&source,error)) return false;
                 qa_command_context command=source.command;
                 command.seat=launch_seat; command.actor=actor; command.script="q2:stufftext";
                 if (!qa_application_capture_command_context(frontend->application, &command, &command, error) ||

@@ -953,35 +953,13 @@ static bool provider_console_prepare(qa_application *application,
         qa_catalog_product(catalog, product->id) != product)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation needs its actual detached provider and world");
     *console = NULL; *cvars = NULL;
-    if (provider->native_q1_console || provider->native_q2_console ||
-        provider->native_q3_console) {
-        qa_application_startup_source source;
-        qa_command_context captured;
-        bool found = false;
-        if (provider->product_catalog != catalog || provider->product != product ||
-            provider->close_pending ||
-            !application_provider_startup_source_at(provider, 0, &source, &found, error))
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                "Prepared native Source lost its actual product attachment");
-        if (!found || source.descriptor != provider->launch ||
-            source.scope.provider != provider->owner ||
-            source.declaration_owner != provider->owner ||
-            source.command.owner != provider->owner ||
-            source.console != application->console || !source.cvars ||
-            !qa_cvars_same_store(source.cvars, application->cvars) ||
-            qa_cvars_side(source.cvars) != QA_CVAR_SIDE_SERVER ||
-            qa_cvars_role(source.cvars) != QA_CVAR_ROLE_GAME ||
-            source.command.origin != QA_COMMAND_SERVER ||
-            source.command.dialect != qa_cvars_dialect(source.cvars) ||
-            source.command.cvar_view != qa_cvars_view_identity(source.cvars) ||
-            !qa_application_capture_command_context(application, &source.command, &captured, error))
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                "Prepared native Source lost its actual bound GAME view");
-        if (provider->kind == APPLICATION_PROVIDER_Q3 &&
-            !application_native_q3_remote_roles_prepare(provider, choices, error)) return false;
-        *console = source.console; *cvars = source.cvars; *command = source.command;
-        return true;
-    }
+    if (provider->native_q1_console)
+        return application_native_q1_console_at(provider, console, cvars, command);
+    if (provider->native_q2_console)
+        return application_native_q2_console_at(provider, console, cvars, command);
+    if (provider->native_q3_console)
+        return application_native_q3_remote_roles_prepare(provider, choices, error) &&
+            application_native_q3_console_at(provider, console, cvars, command);
     qa_catalog_retain(catalog);
     qa_catalog_release(provider->product_catalog);
     provider->product_catalog = catalog;
