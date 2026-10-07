@@ -270,14 +270,6 @@ bool q3n_player_state_transition(q3n_player_state *o,const q3n_frame *f,const q3
         memset(h,0,sizeof(*h)); memset(&o->feedback,0,sizeof(o->feedback));
         o->event_sequence=0; memset(o->predictable_events,0,sizeof(o->predictable_events));
     }
-    if(h->valid && h->source_frame==f->source.source_frame.number && h->source_time==f->time && !o->map_restart) {
-        if(!o->options.weapon_warning)return true;
-        /* The admitted arsenal has its own completed clock. A repeated world
-         * cut retains primary transitions while its selected warning advances. */
-        o->busy=true; bool selected;
-        bool ok=selected_ammo(o,f,&selected,e);
-        o->busy=false; return ok;
-    }
     o->busy=true; o->feedback.this_frame_teleport=false;
     bool initial=!h->valid;
     if(initial)remember(h,f,p,actual.binding.actor);
