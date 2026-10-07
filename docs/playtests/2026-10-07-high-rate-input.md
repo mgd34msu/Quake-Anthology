@@ -103,3 +103,47 @@ and `qa-private-av-b__ov1c3`; each contains `result.json`
 and cleanup records. The first two also have exact `physical-reversal-cuts.json`.
 The prior independent replay is
 `the420-detached-input-20261006/offline/physical-report.json`.
+
+## Original client with fixed 2 ms and 4 ms frames
+
+The supervisor-authorized fallback used the same installed `1c0ab5dc` on the
+private GPU display. A private preload supplied fixed elapsed time only at the
+four inspected `qa_frontend_run` performance-counter call sites. It activated
+after gameplay admission and debugger detach. SDL frequency, other counter
+callers, real monotonic time, OS autorepeat and delivered key events were
+unchanged. No button, usercmd, movement rule or production clock was patched.
+
+Actual returned counter deltas were exactly 2 ms or 4 ms. The normal simulation
+debt consumed that elapsed time with its unchanged 50 ms Q3 Source recipe.
+This tests the requested command cadence in game time; it does not increase
+actual GPU throughput. Both caps and swap interval were zero.
+
+| Original client frame time | Achieved client frames/s in game time | Completed command advances / commandTime interval | Actual completed swaps/s during first Space, second Space, C | Space initial/repeat/up | C initial/repeat/up | Jump events / presses |
+| --- | ---: | --- | --- | --- | --- | --- |
+| 2 ms | 500 | 2,171 / 4,342 ms, 500/s | 222.51 / 232.46 / 243.54 | 2 / 55 / 2 | 1 / 22 / 1 | 2 / 2 |
+| 4 ms | 250 | 1,949 / 7,796 ms, 250/s | 223.43 / 237.16 / 239.42 | 2 / 55 / 2 | 1 / 21 / 1 | 2 / 2 |
+
+Each accepted sequence advance had the corresponding commandTime progression;
+no stale or unexpected advance was captured. Interior 50 ms Source groups
+typically held 25 observed command receipts at 2 ms, and 12 or 13 at 4 ms.
+One sampled sequence gap in each case and partial boundary groups remain
+explicit. These are committed-command observations, not exact `ClientThink`
+invocation totals. The synthetic frame clock means Source game time can advance
+at a different rate from real time; the 50 ms recipe does not establish 20
+server frames per real second in this diagnostic.
+
+The held-jump and duck flags persisted through their real key holds; release
+cleared them and repress generated one jump. The 2 ms case captured four
+physical downward-to-upward reversals without new jump events, including after
+release. The 4 ms case captured none. This still does not close THE-420's
+physical symptom. Neither case entered a presentation pacing wait or requested
+`SDL_Delay`, so the measured 4.1–4.5 ms real frame work is not evidence of a
+hidden 240 FPS cap. Its CPU/VM/GPU breakdown was not measured here.
+
+Both cases quit normally. All 24 recorded owned process IDs were absent and
+the private display sockets removed; installed files and original owner
+settings were unchanged. Evidence identifiers are `qa-private-av-ridxp5uh`
+and `qa-private-av-2ikd5c9c`, each with `frame-clock-proof.json` and exact
+physical-state cuts. Original detached world-camera fidelity remains outside
+this observation scope. The subsequent `3765bb6b` installation changes only
+the CPU fog shader; this record identifies the precise earlier test artifact.
