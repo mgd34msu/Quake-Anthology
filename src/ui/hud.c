@@ -3,7 +3,7 @@
 #include "qa/application_q1_composition.h"
 #include <stdio.h>
 
-typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; } hud_message;
+typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; uint32_t lines; } hud_message;
 struct qa_hud {
     qa_hud_options options;
     hud_message *notices, *centers;
@@ -87,13 +87,15 @@ bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_
     if (instant) qa_hud_clear_center(hud, NULL);
     else if (hud->center_count && starts < hud->centers[hud->center_count - 1].until)
         starts = hud->centers[hud->center_count - 1].until;
+    uint32_t lines = 1;
+    for (const char *p = text; *p && lines <= 4; ++p) if (*p == '\n') ++lines;
     if (!instant) {
         qa_bytes bytes = {(const uint8_t *)text, strlen(text)};
         size_t cursor = 0; uint32_t scalar;
         while (qa_utf8_next(bytes, &cursor, &scalar)) duration = after(duration, character_ns);
     }
     hud->centers[hud->center_count++] = (hud_message){.text = copy, .starts = starts,
-        .until = after(starts, duration), .instant = instant, .character_ns = character_ns};
+        .until = after(starts, duration), .instant = instant, .character_ns = character_ns, .lines = lines};
     return true;
 }
 bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, uint64_t until,
@@ -968,7 +970,9 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             if (!shown) return false;
             memcpy(shown, value, offset); shown[offset] = 0; value = shown;
         }
-        if (!ui_draw_source_text(ui, scene, target, 320, 180, value, (qa_scene_vec4){1, 1, 1, 1}, 1.2f,
+        float center_x = ((float)target.x + (float)target.width * .5f - ui->bias_x) / ui->scale;
+        float center_y = ((float)target.y + (center->lines <= 4 ? (float)target.height * .35f : 48) - ui->bias_y) / ui->scale;
+        if (!ui_draw_source_text(ui, scene, target, center_x, center_y, value, (qa_scene_vec4){1, 1, 1, 1}, 1,
             QA_FONT_ALIGN_CENTER, error)) return false;
     }
     if (hud->pickup && hud->pickup_until > frame->time_ns &&

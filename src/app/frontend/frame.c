@@ -464,6 +464,13 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         if (event.kind == QA_BUILTIN_LOG) continue;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
+            bool center = event.kind == QA_BUILTIN_CENTERPRINT;
+            uint64_t center_duration = UINT64_C(4000000000);
+            if (center) {
+                const qa_cvar_view *duration = qa_cvars_find(qa_application_cvars(frontend->application), "scr_centertime");
+                if (duration && isfinite(duration->number))
+                    center_duration = (uint64_t)(fmax(0, fmin(86400, duration->number)) * 1e9);
+            }
             bool printed=false;
             for (unsigned seat = 0; seat < frontend->options.seats && !frontend->options.dedicated; ++seat) {
                 qa_actor_id actor; uint32_t launch_seat;
@@ -471,10 +478,10 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
                     !qa_application_player_actor(frontend->application, launch_seat, &actor) || !qa_actor_id_equal(actor, event.actor))) continue;
                 char localized[1024]; const char *recipient_text;
                 if (!frontend_ui_source_message(frontend,seat,&event,localized,&recipient_text,error)) return false;
-                bool ok = event.kind == QA_BUILTIN_CENTERPRINT ? qa_hud_center_print(frontend->seats[seat].hud,
-                    recipient_text, event.time_ns, UINT64_C(4000000000), true, 0, error) : qa_hud_notify(frontend->seats[seat].hud,
+                bool ok = center ? qa_hud_center_print(frontend->seats[seat].hud,
+                    recipient_text, frontend->time_ns, center_duration, true, 0, error) : qa_hud_notify(frontend->seats[seat].hud,
                     recipient_text, false, event.time_ns, UINT64_C(4000000000), error);
-                if (!ok || !qa_seat_console_print(frontend->seats[seat].console, recipient_text, error)) return false;
+                if (!ok || (!center && !qa_seat_console_print(frontend->seats[seat].console, recipient_text, error))) return false;
                 if (!printed) { fputs(recipient_text,stdout); printed=true; }
             }
             if (!printed && frontend->options.dedicated) {
