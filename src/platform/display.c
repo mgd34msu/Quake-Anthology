@@ -777,6 +777,7 @@ bool qa_display_set_swap_interval(qa_display *display, int interval,
                          "SDL swap interval must be -1, 0, or 1");
         return false;
     }
+    if (SDL_GL_GetSwapInterval() == interval) return true;
     if (SDL_GL_SetSwapInterval(interval) < 0)
         return display_error(error, QA_ERROR_UNSUPPORTED,
                              "SDL_GL_SetSwapInterval");
