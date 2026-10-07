@@ -286,7 +286,8 @@ static bool scalar_current(const frontend_shared_resource_policy *ticket, bool s
             (i < BASE_POLICY_VALUES ? qa_cvars_find(ticket->registry, policy_names[i]) :
                 frontend_render_control_record(ticket->registry, policy_names[i])) :
             (i < BASE_POLICY_VALUES ? qa_cvars_edit_find(ticket->edit, policy_names[i]) :
-                qa_cvars_edit_canonical_record(ticket->edit, policy_names[i]));
+                qa_cvars_edit_canonical_record(ticket->edit, policy_names[i]) ?
+                    qa_cvars_edit_find(ticket->edit, policy_names[i]) : NULL);
         uint32_t number = 0;
         if (!row || !ticket->scalars[i].value) return false;
         memcpy(&number, &row->number, sizeof(number));
@@ -456,7 +457,8 @@ static bool policy_begin(qa_frontend *f, const qa_launch_snapshot *candidate,
     if (ok && ticket->source_profile) {
         ticket->scalar_count = sizeof(policy_names) / sizeof(policy_names[0]);
         for (size_t i = BASE_POLICY_VALUES; ok && i < ticket->scalar_count; ++i) {
-            const qa_cvar_view *row = qa_cvars_edit_canonical_record(edit, policy_names[i]);
+            const qa_cvar_view *row = qa_cvars_edit_canonical_record(edit, policy_names[i]) ?
+                qa_cvars_edit_find(edit, policy_names[i]) : NULL;
             if (!row || !row->value) { ok = policy_fail(error, "Source profile lost its actual candidate row"); break; }
             size_t size = strlen(row->value) + 1;
             ticket->scalars[i].value = malloc(size);

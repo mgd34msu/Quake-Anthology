@@ -47,13 +47,15 @@ bool frontend_shared_render_controls_prepare(qa_frontend *f, const qa_cvars_edit
         qa_cvars_edit_registry(edit) != qa_application_cvars(f->application) ||
         !qa_cvars_edit_returned_is(edit, qa_application_cvars(f->application)))
         return fail(error, "Renderer settings require the actual returned canonical ENGINE owner");
-    const qa_cvar_view *rows[3];
+    const qa_cvar_view *rows[3], *projected[3];
     for (size_t i = 0; i < 3; ++i) {
         rows[i] = qa_cvars_edit_canonical_record(edit, names[i]);
-        if (!rows[i] || !rows[i]->value) return fail(error, "Renderer primitive selection lacks its canonical rows");
+        projected[i] = qa_cvars_edit_find(edit, names[i]);
+        if (!rows[i] || !rows[i]->value || !projected[i] || !projected[i]->value)
+            return fail(error, "Renderer primitive selection lacks its canonical rows");
     }
-    qa_render_controls_values values = {.primitives = rows[0]->integer,
-        .compiled_vertex_arrays = rows[1]->integer != 0 && rows[2]->number != 0};
+    qa_render_controls_values values = {.primitives = projected[0]->integer,
+        .compiled_vertex_arrays = projected[1]->integer != 0 && projected[2]->number != 0};
     if (!f->cpu && !f->gl) return true;
     frontend_shared_render_controls *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining shared renderer settings");

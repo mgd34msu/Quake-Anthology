@@ -53,7 +53,11 @@ static bool record(qa_frontend *f, const qa_cvars_edit *edit, const char *name,
     if (!registry || (edit && (qa_cvars_edit_registry(edit) != registry ||
         !qa_cvars_edit_returned_is(edit, registry))))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color requires its actual canonical ENGINE rows");
-    *out = edit ? qa_cvars_edit_canonical_record(edit, name) : frontend_render_control_record(registry, name);
+    const qa_cvar_view *canonical = edit ? qa_cvars_edit_canonical_record(edit, name) :
+        frontend_render_control_record(registry, name);
+    if (!canonical || !canonical->value)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lacks a physical canonical setting");
+    *out = edit ? qa_cvars_edit_find(edit, canonical->name) : canonical;
     return (*out && (*out)->value) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lacks a physical canonical setting");
 }

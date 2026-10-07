@@ -568,14 +568,6 @@ static void close_streams(qa_audio_stream *intro, qa_audio_stream *loop) {
 static void selection_free(frontend_shared_music *selection) {
     state_free(&selection->next); free(selection->shuffle_text); free(selection->menu_text); free(selection);
 }
-static const qa_cvar_view *canonical(const qa_cvars_edit *edit, const char *name) {
-    const qa_cvar_view *found = qa_cvars_edit_find(edit, name);
-    for (size_t i = 0; i < qa_cvars_edit_count(edit); ++i) {
-        const qa_cvar_view *row = qa_cvars_edit_at(edit, i);
-        if (row == found) return row;
-    }
-    return NULL;
-}
 static bool selection_current(const frontend_shared_music *selection) {
     frontend_music_policy *owner = selection ? selection->policy : NULL;
     if (!owner || !parent_current(owner) || owner->selection != selection || owner->busy ||
@@ -605,7 +597,8 @@ static bool selection_current(const frontend_shared_music *selection) {
         command.registry != held->registry || command.generation != held->generation ||
         command.actor.registry != held->actor.registry || command.actor.generation != held->actor.generation ||
         command.actor.slot != held->actor.slot) return false;
-    const qa_cvar_view *shuffle = canonical(selection->edit, "music_shuffle"), *menu = canonical(selection->edit, "music_menu_track");
+    const qa_cvar_view *shuffle = qa_cvars_edit_canonical_record(selection->edit, "music_shuffle"),
+        *menu = qa_cvars_edit_canonical_record(selection->edit, "music_menu_track");
     return shuffle && shuffle->value && menu && menu->value &&
         !strcmp(shuffle->value, selection->shuffle_text) && !strcmp(menu->value, selection->menu_text);
 }
@@ -627,7 +620,8 @@ static bool prepare_shared(qa_frontend *f, const qa_launch_snapshot *candidate,
     } else if (!qa_application_startup_root_read(f->application,candidate,&console,&cvars,&command,e) ||
         console!=qa_application_console(f->application)) return fail(e,"Music preparation lost its actual physical ENGINE startup tuple");
     if (!console || cvars!=qa_cvars_edit_registry(edit)) return fail(e,"Music preparation lost its actual canonical ENGINE registry");
-    const qa_cvar_view *shuffle = canonical(edit, "music_shuffle"), *menu = canonical(edit, "music_menu_track");
+    const qa_cvar_view *shuffle = qa_cvars_edit_canonical_record(edit, "music_shuffle"),
+        *menu = qa_cvars_edit_canonical_record(edit, "music_menu_track");
     if (!shuffle || !shuffle->value || !menu || !menu->value ||
         (strcmp(shuffle->value, "0") && strcmp(shuffle->value, "1"))) return fail(e, "Music preparation lacks its canonical authored setting rows");
     frontend_shared_music *selection = calloc(1, sizeof(*selection));

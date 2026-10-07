@@ -207,7 +207,7 @@ static bool validate(void *user,const char *value,qa_error *error)
     return valid || frontend_fail(error,QA_ERROR_ARGUMENT,row->description);
 }
 static const qa_cvar_view *initialization_row(qa_cvars *registry,qa_cvars_edit *edit,const char *name)
-{ return edit?qa_cvars_edit_canonical_record(edit,name):qa_cvars_find(registry,name); }
+{ return edit?qa_cvars_edit_find(edit,name):qa_cvars_find(registry,name); }
 static bool initialization_set(qa_cvars *registry,qa_cvars_edit *edit,
     const char *name,const char *value,qa_error *error)
 {
@@ -219,7 +219,8 @@ static bool initialization_latches(qa_cvars *registry,qa_cvars_edit *edit,
     const char *const *names,size_t count,const char *message,qa_error *error)
 {
     for (size_t i=0;i<count;++i) {
-        const qa_cvar_view *row=initialization_row(registry,edit,names[i]);
+        const qa_cvar_view *row=edit?qa_cvars_edit_canonical_record(edit,names[i]):
+            initialization_row(registry,edit,names[i]);
         if (!row || row->console_created) return frontend_fail(error,QA_ERROR_ARGUMENT,message);
         if (!(edit?qa_cvars_edit_apply(edit,&(qa_cvars_edit_command){
                 .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name=names[i]},error):

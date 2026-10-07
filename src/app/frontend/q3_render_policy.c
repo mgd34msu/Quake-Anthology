@@ -129,8 +129,13 @@ static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const
         return false;
     }
     for (size_t i = 0; i < count; ++i) {
-        out[i] = edit ? qa_cvars_edit_canonical_record(edit, names[i]) :
+        const qa_cvar_view *canonical = edit ? qa_cvars_edit_canonical_record(edit, names[i]) :
             frontend_render_control_record(qa_application_cvars(f->application), names[i]);
+        if (!canonical || !canonical->value) {
+            frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
+            return false;
+        }
+        out[i] = edit ? qa_cvars_edit_find(edit, canonical->name) : canonical;
         if (!out[i] || !out[i]->value) {
             frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
             return false;
