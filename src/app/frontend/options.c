@@ -145,6 +145,11 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         else if (!strcmp(arg, "--map")) options->map = value;
         else if (!strcmp(arg, "--movement")) options->movement = value;
         else if (!strcmp(arg, "--character")) { options->character = value; options->character_model = NULL; }
+        else if (!strcmp(arg, "--weapons") || !strcmp(arg, "--monsters")) {
+            if (!*value) { frontend_fail(error, QA_ERROR_ARGUMENT, "role selection needs PRODUCT or PRODUCT/COMPONENT"); goto fail; }
+            if (!strcmp(arg, "--weapons")) options->weapons = value;
+            else options->monsters = value;
+        }
         else if (!strcmp(arg, "--model") || !strcmp(arg, "--character-model")) {
             if (!*value) { frontend_fail(error, QA_ERROR_ARGUMENT, "character model needs a name"); goto fail; }
             for (const unsigned char *p=(const unsigned char *)value;*p;++p)
@@ -191,7 +196,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
     if (options->original && options->game_type) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "select --original or --game-type"); goto fail;
     }
-    if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
+    if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->weapons || options->monsters || options->mod_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }

@@ -404,21 +404,12 @@ static const char *rule_unavailable(qa_ui_library *library, const char *rule)
 static bool install_source(qa_ui_library *library, const qa_product *p,
     const char *instance, qa_error *e)
 {
-    qa_launch_draft *defaults = NULL;
-    if (!p || p->availability != QA_CONTENT_INSTALLED) return fail(e, "Source content unavailable");
-    if (!qa_launch_draft_create(qa_launch_draft_catalog(qa_ui_library_draft(library)), p->id, "", &defaults, e)) return false;
-    const qa_launch_choices *c = qa_launch_draft_choices(defaults);
-    bool ok = c->provider_count != 0;
-    if (ok) {
-        qa_launch_provider selection = c->providers[0]; selection.instance = instance;
-        ok = qa_launch_set_provider(qa_ui_library_draft(library), &selection, e);
-    } else fail(e, "Source preset has no provider");
-    qa_launch_draft_destroy(defaults); return ok;
+    return p ? frontend_launch_overlay(qa_ui_library_draft(library), p->key, 0, instance,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, e) : fail(e, "Source content unavailable");
 }
 
-static const qa_product *monster_product(qa_ui_library *library, const qa_monster_catalog_source *source)
+static const qa_product *monster_product(const qa_catalog *catalog, const qa_monster_catalog_source *source)
 {
-    const qa_catalog *catalog = qa_ui_library_catalog(library);
     for (size_t i = 0; source && i < qa_catalog_count(catalog); ++i) {
         const qa_product *p = qa_catalog_at(catalog, i);
         if (p->family == source->family && p->edition == source->edition && !strcmp(p->campaign, source->campaign)) return p;
@@ -426,14 +417,21 @@ static const qa_product *monster_product(qa_ui_library *library, const qa_monste
     return NULL;
 }
 
+static const qa_monster_catalog_source *monster_source_product(const qa_catalog *catalog, const qa_product *product)
+{
+    size_t count; const qa_monster_catalog_source *sources = qa_monster_catalog_sources(&count);
+    for (; product; product = qa_catalog_product(catalog, product->base))
+        for (size_t i = 0; i < count; ++i)
+            if (sources[i].family == product->family && sources[i].edition == product->edition &&
+                !strcmp(sources[i].campaign, product->campaign)) return sources + i;
+    return NULL;
+}
+
 static const qa_monster_catalog_source *monster_source_for(qa_ui_library *library, const char *instance)
 {
     const qa_launch_provider *p = provider(qa_ui_library_choices(library), instance);
-    const qa_product *product = p ? qa_catalog_product(qa_ui_library_catalog(library), p->product) : NULL;
-    size_t count; const qa_monster_catalog_source *sources = qa_monster_catalog_sources(&count);
-    for (size_t i = 0; product && i < count; ++i)
-        if (sources[i].family == product->family && sources[i].edition == product->edition && !strcmp(sources[i].campaign, product->campaign)) return sources + i;
-    return NULL;
+    const qa_catalog *catalog = qa_ui_library_catalog(library);
+    return monster_source_product(catalog, p ? qa_catalog_product(catalog, p->product) : NULL);
 }
 
 static bool creature_available(qa_vfs *vfs, const qa_monster_catalog_creature *creature, bool *found, qa_error *e)
@@ -492,7 +490,7 @@ static bool monster_choices(frontend_startup_selection *s, qa_ui_library *librar
     size_t count; const qa_monster_catalog_source *sources = qa_monster_catalog_sources(&count);
     for (size_t i = 0; i < count; ++i) {
         const qa_monster_catalog_source *source = sources + i;
-        const qa_product *p = monster_product(library, source);
+        const qa_product *p = monster_product(qa_ui_library_catalog(library), source);
         const char *reason = unavailable(p), *adapter = monster_adapter_unavailable(library);
         if (!reason) reason = adapter;
         const char *edition = source->edition == QA_EDITION_CLASSIC ? "classic" : "rerelease";
@@ -813,9 +811,8 @@ static bool refresh_native_equipment(qa_ui_library *library, qa_error *e)
     qa_launch_draft_destroy(defaults); return ok;
 }
 
-static const qa_launch_monster *monster_override(qa_ui_library *library, const char *classname)
+static const qa_launch_monster *monster_override(const qa_launch_choices *c, const char *classname)
 {
-    const qa_launch_choices *c = qa_ui_library_choices(library);
     for (size_t i = 0; i < c->monster_count; ++i)
         if (!strcmp(c->monsters[i].authored_classname, classname ? classname : "")) return c->monsters + i;
     return NULL;
@@ -827,23 +824,31 @@ static bool native_monster(qa_ui_library *library, const char *classname, qa_err
         .authored_classname = classname ? classname : "", .instance = "", .classname = "", .map_defined = true}, e);
 }
 
-static bool select_monster_source(qa_ui_library *library, const char *id, qa_error *e)
+bool frontend_startup_monsters_select(qa_launch_draft *draft, const char *id, qa_error *e)
 {
+    qa_catalog *catalog = qa_launch_draft_catalog(draft);
     const qa_monster_catalog_source *source = qa_monster_catalog_source_find(id);
     bool native = !strcmp(id, "native");
-    if (!native && !source) return fail(e, "Unknown monster source");
-    if (source && !install_source(library, monster_product(library, source), "startup:monster-source", e)) return false;
+    const qa_catalog_mod *component = source ? NULL : qa_catalog_mod_find(catalog, id);
+    const qa_product *product = source ? monster_product(catalog, source) :
+        component ? qa_catalog_product(catalog, component->product) : frontend_product_selection(catalog, id);
+    if (!native && !source) source = monster_source_product(catalog, product);
+    if (!native && (!source || !product)) return fail(e, "Selected source has no authored monster roster");
+    if (source && !frontend_launch_overlay(draft, component ? component->key : product->key, 0,
+        "startup:monster-source", (qa_launch_scope){.kind = QA_SCOPE_WORLD}, e)) return false;
+    const qa_product *geometry = qa_catalog_product(catalog, qa_launch_draft_choices(draft)->world.geometry);
+    if (!geometry) return fail(e, "Monster selection needs its map geometry");
     size_t count;
-    const qa_monster_catalog_slot *slots = qa_monster_catalog_slots(map_family(library), &count);
+    const qa_monster_catalog_slot *slots = qa_monster_catalog_slots(geometry->family, &count);
     for (size_t i = 0; i < count; ++i) {
-        const qa_launch_monster *current = monster_override(library, slots[i].classname);
+        const qa_launch_monster *current = monster_override(qa_launch_draft_choices(draft), slots[i].classname);
         if (current && strcmp(current->instance, "startup:monster-source")) continue;
-        const qa_monster_catalog_creature *creature = source ? qa_monster_catalog_default(map_family(library), source, slots[i].classname) : NULL;
+        const qa_monster_catalog_creature *creature = source ? qa_monster_catalog_default(geometry->family, source, slots[i].classname) : NULL;
         qa_launch_monster selected = {.authored_classname = slots[i].classname, .instance = "startup:monster-source",
             .classname = creature ? creature->classname : "", .map_defined = creature == NULL};
-        if (!qa_launch_set_monster(qa_ui_library_draft(library), &selected, e)) return false;
+        if (!qa_launch_set_monster(draft, &selected, e)) return false;
     }
-    return !native || qa_launch_remove_provider(qa_ui_library_draft(library), "startup:monster-source", e);
+    return !native || qa_launch_remove_provider(draft, "startup:monster-source", e);
 }
 
 static bool select_monster(qa_ui_library *library, const char *classname, const char *id, qa_error *e)
@@ -863,7 +868,7 @@ static bool select_monster(qa_ui_library *library, const char *classname, const 
     }
     if (!source || !qa_monster_catalog_creature_find(source, target)) return fail(e, "Unknown monster roster choice");
     char instance[256]; snprintf(instance, sizeof(instance), "startup:monster:%s", source->provider);
-    return install_source(library, monster_product(library, source), instance, e) &&
+    return install_source(library, monster_product(qa_ui_library_catalog(library), source), instance, e) &&
         qa_launch_set_monster(qa_ui_library_draft(library), &(qa_launch_monster){
             .authored_classname = classname ? classname : "", .instance = instance, .classname = target}, e);
 }
@@ -953,9 +958,9 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
                 ok = name && native_monster(library, name, e); free(name);
             }
         }
-        if (ok) ok = select_monster_source(library, id, e);
+        if (ok) ok = frontend_startup_monsters_select(qa_ui_library_draft(library), id, e);
         break;
-    case QA_UI_LIBRARY_MONSTER_SOURCE: ok = select_monster_source(library, id, e); break;
+    case QA_UI_LIBRARY_MONSTER_SOURCE: ok = frontend_startup_monsters_select(qa_ui_library_draft(library), id, e); break;
     case QA_UI_LIBRARY_MONSTER_CLASS: ok = select_monster(library, class_copy, id, e); break;
     default: ok = fail(e, "Startup selection field has no adapter"); break;
     }
@@ -970,7 +975,7 @@ static bool roster_append(frontend_startup_selection *s, const char *classname,
     char name[128], label[180];
     if (classname) { monster_name(classname, name, sizeof(name)); snprintf(label, sizeof(label), "%s (%u)", name, authored_count); }
     else snprintf(label, sizeof(label), "Unmatched classes");
-    const qa_launch_monster *selection = monster_override(library, classname);
+    const qa_launch_monster *selection = monster_override(qa_ui_library_choices(library), classname);
     char effective[512]; snprintf(effective, sizeof(effective), "Keep native");
     if (selection && !selection->map_defined) {
         const qa_monster_catalog_source *source = monster_source_for(library, selection->instance);
@@ -1008,7 +1013,7 @@ bool frontend_startup_selection_roster(void *context, qa_ui_library *library,
     clear_rows(s); *out = NULL; *count = 0;
     if (map_family(library) == QA_GAME_Q3) return fail(e, "This map has no supported authored monster roster");
     const qa_monster_catalog_source *source = monster_source_for(library, "startup:monster-source");
-    const qa_product *p = source ? monster_product(library, source) : NULL;
+    const qa_product *p = source ? monster_product(qa_ui_library_catalog(library), source) : NULL;
     *source_label = p ? p->title : "Authored campaign monsters";
     qa_vfs *vfs = NULL; qa_resource *resource = NULL; qa_entities entities = {0}; qa_bsp_view bsp;
     const qa_launch_choices *c = qa_ui_library_choices(library);

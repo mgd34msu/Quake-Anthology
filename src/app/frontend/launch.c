@@ -3,6 +3,7 @@
 #include "music_sources.h"
 #include "view_bindings.h"
 #include "startup_menus.h"
+#include "startup_selection.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_client.h"
@@ -159,12 +160,27 @@ bool frontend_launch_overlay(qa_launch_draft *draft, const char *name, uint64_t 
     qa_launch_scope scope, qa_error *error)
 {
     qa_catalog *catalog = qa_launch_draft_catalog(draft);
-    const qa_product *product = frontend_product_selection(catalog, name);
-    if (!product) return frontend_fail(error, QA_ERROR_ARGUMENT, "selected source product is not installed");
+    const qa_catalog_mod *component = qa_catalog_mod_find(catalog, name);
+    const qa_product *product = component ? qa_catalog_product(catalog, component->product) :
+        frontend_product_selection(catalog, name);
+    if (!product || product->availability != QA_CONTENT_INSTALLED || (component && component->unavailable))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "selected source product or component is not installed");
     qa_launch_draft *source = NULL;
     if (!qa_launch_draft_create(catalog, product->id, "", &source, error)) return false;
     const qa_launch_choices *choices = qa_launch_draft_choices(source);
-    bool ok = true;
+    bool ok = choices->provider_count != 0;
+    if (!ok) frontend_fail(error, QA_ERROR_ARGUMENT, "source preset lacks a provider");
+    if (ok && component) {
+        qa_launch_provider selected = choices->providers[0];
+        selected.runtime = component->runtime; selected.implementation = product->key;
+        selected.artifact = component->program_path; selected.component = component->key;
+        ok = qa_launch_set_provider(source, &selected, error);
+        choices = qa_launch_draft_choices(source);
+    }
+    if (ok && !roles) {
+        qa_launch_provider selected = choices->providers[0]; selected.instance = instance;
+        ok = qa_launch_set_provider(draft, &selected, error);
+    }
     for (size_t i = 0; i < choices->binding_count && ok; ++i) {
         const qa_launch_binding *binding = &choices->bindings[i];
         if (binding->scope.kind!=QA_SCOPE_DEFAULT_PLAYER || !(roles & QA_ROLE_BIT(binding->role))) continue;
@@ -354,6 +370,10 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     if (ok && frontend->options.character) ok = frontend_launch_overlay(draft, frontend->options.character,
         QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_BODY) | QA_ROLE_BIT(QA_ROLE_SKIN) | QA_ROLE_BIT(QA_ROLE_VOICE), "frontend:character",
         (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
+    if (ok && frontend->options.weapons) ok = frontend_launch_overlay(draft, frontend->options.weapons,
+        QA_ROLE_BIT(QA_ROLE_ARSENAL), "startup:weapons", (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER}, error);
+    if (ok && frontend->options.monsters)
+        ok = frontend_startup_monsters_select(draft, frontend->options.monsters, error);
     for (size_t i = 0; i < frontend->options.mod_count && ok; ++i) {
         char instance[64];
         snprintf(instance, sizeof(instance), "frontend:addon:%zu", i);

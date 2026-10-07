@@ -89,6 +89,8 @@ static void usage(FILE *stream)
           "  --map NAME               Select map or authored start\n"
           "  --movement q1|qw|q2|q3|PRODUCT\n"
           "  --character q1|q2|q3|PRODUCT\n"
+          "  --weapons PRODUCT[/COMPONENT] Select player weapons independently\n"
+          "  --monsters PRODUCT[/COMPONENT] Select authored monster replacements\n"
           "  --mod PRODUCT/COMPONENT   Enable independent addition, repeat to combine\n"
           "  --dedicated              Run server and stdin console without a window\n"
           "  --host ADDRESS --port N  Select server endpoint\n"
