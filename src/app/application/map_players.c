@@ -5029,6 +5029,7 @@ bool application_players_q2_commands_resume(qa_application *application, qa_cons
             qa_actors_get(qa_session_actors(application->session),record->actor)) { begun=true; break; }
     }
     if (!begun) return true;
+    bool resume_engine=!console || console==application->console;
     for (size_t i=0;;++i) {
         qa_application_startup_source source;
         bool present;
@@ -5036,9 +5037,12 @@ bool application_players_q2_commands_resume(qa_application *application, qa_cons
         if (!present) break;
         if ((source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
              source.scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2) &&
-            (!console || console==source.console) && !qa_console_resume(source.console,error)) return false;
+            (!console || console==source.console)) {
+            if (!qa_console_resume(source.console,error)) return false;
+            resume_engine=true;
+        }
     }
-    return true;
+    return !resume_engine || qa_console_resume(application->console,error);
 }
 
 bool qa_application_remote_player_begin(qa_application *application, qa_net_client_id client,

@@ -1313,8 +1313,8 @@ bool qa_console_drain_yielded(const qa_console *console)
 bool qa_console_defer(qa_console *console, qa_error *error)
 {
     if (!qac_console_release_access(console,error)) return false;
-    if (console == NULL || !qac_q2(context_for(console, NULL)->dialect))
-        return qac_fail(error, QA_ERROR_ARGUMENT, "deferred command buffers require Q2");
+    if (console == NULL)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "deferred command buffer requires a console");
     qac_console_program_touch(console, false);
     free_chunks(console->deferred);
     console->deferred = console->head;
@@ -1328,8 +1328,8 @@ bool qa_console_defer(qa_console *console, qa_error *error)
 bool qa_console_resume(qa_console *console, qa_error *error)
 {
     if (!qac_console_release_access(console,error)) return false;
-    if (console == NULL || !qac_q2(context_for(console, NULL)->dialect))
-        return qac_fail(error, QA_ERROR_ARGUMENT, "deferred command buffers require Q2");
+    if (console == NULL)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "deferred command buffer requires a console");
     size_t limit = buffer_limit(console, context_for(console, NULL)->dialect);
     if (console->queued_bytes > limit || console->deferred_bytes > limit - console->queued_bytes)
         return qac_fail(error, QA_ERROR_FORMAT, "resuming deferred commands overflows buffer");
