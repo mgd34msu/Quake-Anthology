@@ -368,7 +368,8 @@ uint32_t qac_cvars_catalog_flags(const qa_cvars *registry, const cvar_values *va
     for (size_t i = 0; i < dialect->flags_count; ++i) {
         const qa_cvar_catalog_flags *clause = &qa_cvar_catalog_flag_clauses[dialect->flags_first + i];
         const char *name = qa_cvar_catalog_string(clause->member);
-        if (!clause->issues && (!*name || qac_equal(member, name) || qac_equal(member,qa_cvar_catalog_string(row->name)))) flags |= clause->flags;
+        if (!clause->issues && (!*name || qac_equal(member, name) || qac_equal(member,qa_cvar_catalog_string(row->name))))
+            flags |= qac_cvars_flags(clause->flags, QA_CONSOLE_Q3, active);
     }
     if (row->policies & QA_CATALOG_POLICY_LATCH_ALL)
         flags |= qac_q2(active) ? (uint32_t)QA_Q2_CVAR_LATCH : (uint32_t)QA_CVAR_LATCH;

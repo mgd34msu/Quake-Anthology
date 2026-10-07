@@ -460,6 +460,7 @@ bool application_native_q2_console_finalize(application_provider *provider, qa_q
         if (capacity < (float)choices->seat_count) capacity = (float)choices->seat_count;
         if (!isfinite(capacity) || capacity < 1 || capacity > 64)
             okay = application_fail(error, QA_ERROR_FORMAT, "Q2 source capacity must be between 1 and 64");
+        if (okay) okay = qa_cvars_set_number(cvars, "maxclients", truncf(capacity), error);
         if (okay) okay = application_publication_source_capacity(provider, (uint32_t)truncf(capacity), error);
         const qa_cvar_view *difficulty = qa_cvars_find(cvars, "skill");
         rules->skill = difficulty->integer < 0 ? 0 : difficulty->integer > 3 ? 3 : difficulty->integer;
