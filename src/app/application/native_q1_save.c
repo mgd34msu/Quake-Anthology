@@ -2,7 +2,7 @@
 #include "map_players_private.h"
 #include "qa/game_q1_checkpoint.h"
 #include "native_q1_wire.h"
-#include "native_q1_console.h"
+#include "qa/game_q1_bots.h"
 
 bool application_q1_native_save_admit(const qa_application *app, const qa_product *product,
     const qa_q1_save_data *save, bool *supported, qa_error *error) {
@@ -56,11 +56,10 @@ bool application_q1_native_save_capture(qa_application *app, application_provide
     qa_q1_save_data *save, qa_error *error) {
     const application_player_record *player = local_player(app, provider, error);
     if (!player || !save) return false;
-    qa_cvars *cvars = application_native_q1_console_registry(provider);
-    const qa_cvar_view *skill = cvars ? qa_cvars_find(cvars, "skill") : NULL;
-    if (!skill || !isfinite(skill->number))
-        return application_fail(error, QA_ERROR_FORMAT, "Original native save lost its live skill setting");
-    save->skill = (int32_t)fmaxf(0, fminf(3, floorf((float)skill->number)));
+    qa_q1_options source;
+    double source_seconds;
+    if (!qa_q1_source_respawn_options_read(provider->state.q1, &source, &source_seconds, error)) return false;
+    save->skill = source.skill;
     qa_combat_state combat;
     if (!qa_combat_read(app->combat, player->actor, &combat, error)) return false;
     if (!(combat.health > 0))

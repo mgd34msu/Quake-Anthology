@@ -68,6 +68,9 @@ bool qa_q1_source_client_spawned(qa_q1_game *,qa_actor_id,qa_error *);
 bool qa_q1_source_client_record_death(qa_q1_game *,qa_actor_id,bool *first,qa_error *);
 bool qa_q1_source_client_consume_impulse(qa_q1_game *,qa_actor_id,qa_error *);
 bool qa_q1_source_respawn_options_read(const qa_q1_game *,qa_q1_options *,double *source_seconds,qa_error *);
+/* Sample fresh-map rules before campaign services and authored spawning.
+ * Prepared continuations retain their imported Source options. */
+bool qa_q1_source_map_rules_refresh(qa_q1_game *,qa_error *);
 /* Pure imported constructor policy, available only before source restore
  * finish. It admits no gameplay, source clock or callbacks. */
 bool qa_q1_source_respawn_options_prepared(const qa_q1_game *,qa_q1_options *,qa_error *);

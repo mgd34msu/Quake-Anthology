@@ -323,6 +323,31 @@ bool qa_q1_source_respawn_options_read(const qa_q1_game *game,qa_q1_options *out
     }
     *out=game->options;*source_seconds=game->time;return true;
 }
+bool qa_q1_source_map_rules_refresh(qa_q1_game *game,qa_error *error) {
+    if(!game || game->destroy_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 fresh map has no live Source rules");return false;
+    }
+    if(game->continuation_pending) return true;
+    if(game->observation_depth || !qa_session_safe(game->services.session) ||
+       qa_actors_count(qa_session_actors(game->services.session)) || !game->services.cvar) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 fresh rules require a retired world and Source cvars");return false;
+    }
+    static const char *const names[]={"skill","deathmatch","coop"};
+    float values[3];
+    for(size_t i=0;i<3;++i) {
+        qa_string_id name;
+        if(!qa_strings_intern_cstr(qa_session_strings(game->services.session),names[i],&name,error) ||
+           !game->services.cvar(q1_cvar_context(game),name,values+i,error)) return false;
+        if(!isfinite(values[i])) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"Q1 fresh map lost a finite Source rule");return false;
+        }
+    }
+    game->options.skill=(uint8_t)(fmaxf(0,fminf(3,values[0]))+0.5);
+    game->options.deathmatch=(double)values[1]>=INT32_MAX ? INT32_MAX :
+        (double)values[1]<=INT32_MIN ? INT32_MIN : (int32_t)values[1];
+    game->options.coop=values[2]!=0;
+    return true;
+}
 bool qa_q1_source_respawn_options_prepared(const qa_q1_game *game,qa_q1_options *out,
     qa_error *error) {
     if(!game || !out || game->destroy_pending || !game->continuation_pending) {

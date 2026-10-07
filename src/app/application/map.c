@@ -1094,6 +1094,7 @@ static bool q1_begin_map(application_provider *provider,
                          const qa_product *product,
                          qa_string_id current_map, qa_error *error)
 {
+    if (!qa_q1_source_map_rules_refresh(provider->state.q1, error)) return false;
     qa_q1_campaign_source *source;
     qa_q1_level *level;
     qa_q1_map_options options;
