@@ -268,3 +268,62 @@ Both public quits return0, artifact and original profile remain
 unchanged, and the actual game processes are absent. CPU targets remain
 open. Raw receipts: `/tmp/qa-private-av-bqc3ugvn/timing-result.json` and
 `/tmp/qa-private-av-ifew4_8a/timing-result.json`.
+
+## Rejected four-pixel sampling packet
+
+A proposed SSE2 packet in `brush_spans.c` processed four interior,
+depth-passing bilinear or trilinear samples together. It preserved the
+eight-pixel perspective steps and the scalar border, tail and depth-reject
+paths. A bounded 2,048-case comparison matched raw RGBA, native float depth,
+stencil, floating-point exceptions and write counts for SSE2 and portable
+builds. That protected output, but did not establish a speedup.
+
+Quiet sequential retail base1 pairs used the same copied owner settings,
+affinity 0-7,12-19, native 40 Hz scheduling, zero caps and swap interval,
+FOV 120 and `r_smp` zero. Each sampled 600 presentation intervals after
+600 or more warm intervals, without a debugger, profiler, compiler,
+another game or audio. Public quit returned zero in every case; original
+settings and artifact pins stayed unchanged, and owned processes were gone.
+
+| Drawable | Baseline median ms | Packet median ms | Baseline p99 ms | Packet p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 6.888961 | 6.936296 | 63.440397 | 67.923743 |
+| 320×200 | 4.486770 | 4.578407 | 7.159342 | 8.836406 |
+
+Separate warmed renderer means increased from 5.756012 to 6.008994 ms
+and from 3.675107 to 3.742872 ms. The candidate was reverted in both the
+repository and runtime build checkout. No production change was committed.
+These single pairs include private presentation and observer overhead;
+live model work varied. They reject this candidate for the measured case,
+without assigning its cost to an unmeasured instruction or cache effect.
+
+Evidence: `qa-the196-cached-span-four-20261007/root-build-result.json` and
+`qa-the196-vector-return-plan-3d7oipq_/paired-result.json`.
+
+## Common texture-mode policy, THE-196 / THE-843
+
+Commit `31b55a7a` makes ordinary mipmapped wall and skin images use the
+existing common texture-mode setting in CPU and GL. The copied owner
+profile requests `GL_LINEAR_MIPMAP_NEAREST`; ordinary images previously
+retained hardcoded trilinear filtering. Explicit UI, sky, streamed and
+non-mipmapped images retain their declared policy, and the existing
+Source-Q3 dynamic policy retains its precedence.
+
+This is a setting-correctness change. Respecting the requested filter can
+change pixels; it is not an equal-output arithmetic optimization or a
+change to the default. The same quiet paired method gave:
+
+| Drawable | Baseline median ms | Candidate median ms | Baseline p99 ms | Candidate p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 6.251893 | 6.042487 | 23.028877 | 16.278325 |
+| 320×200 | 4.538981 | 4.505836 | 7.198402 | 8.597802 |
+
+Separate warmed renderer means were 5.398882 → 5.015525 ms and
+3.673583 → 3.490497 ms. World-span counts match at 640×400; live model
+work varies, and span counts vary at 320×200. Each run sampled 600
+intervals, preserved the owner profile and build pins, quit with zero,
+and cleaned up its owned processes. Both CPU targets remain open.
+
+Evidence: `qa-the196-vector-return-plan-k1c6k8xn/paired-result.json`.
+These performance runs do not by themselves prove live GL resident
+texture changes or qualify installation of the candidate.
