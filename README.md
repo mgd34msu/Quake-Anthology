@@ -168,5 +168,3 @@ Protocol names include `nq15`, `fitz666`, `rmq999`, `qw28`, `qw29`, `q2-34`, `r1
 - **Display problems:** try `--renderer cpu` and a smaller window size.
 - **Menu font missing:** pass `--font-directory /path/to/fonts --font Font.ttf`. The default font is `DejaVuSans.ttf` in `/usr/share/fonts/truetype/dejavu`.
 - **Server connection problems:** check the address, port, protocol and required game or mod data.
-
-When [reporting a problem](https://github.com/mgd34msu/Quake-Anthology/issues), include your operating system, game/product ID, launch command and error output.
