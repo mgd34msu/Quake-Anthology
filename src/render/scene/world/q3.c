@@ -443,7 +443,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
                               i & 4 ? world->bounds.maxs.z : world->bounds.mins.z);
         far_clip = fmaxf(far_clip, qa_vec_length(qa_vec_sub(point, context->view.origin)));
     }
-    if (context->source_scratch) far_clip = input->source_far_clip;
+    if (context->source_primitives || context->source_scratch) far_clip = input->source_far_clip;
     qa_scene_sky_geometry geometry;
     if (!qa_scene_q3_sky_geometry(frame, context->view.origin, far_clip,
         qa_material_library_cloud_height(materials), bounds, &geometry, error)) return false;
