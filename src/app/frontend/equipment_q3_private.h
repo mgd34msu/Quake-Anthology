@@ -8,6 +8,10 @@ struct frontend_equipment_q3_presenter {
     equipment_q3_content *owner;
     qa_actor_id actor;
     q3n_selected_weapon_state state;
+    qa_q3_presentation *recipient;
+    uint32_t physical_seat;
+    int32_t source_time_ms;
+    qa_cvars *cvars;
     size_t users;
 };
 struct equipment_q3_content {

@@ -16,6 +16,7 @@
 #include "renderer_materials.h"
 #include "config_store.h"
 #include "qa/application_equipment.h"
+#include "equipment_q3.h"
 #include "qa/application_network.h"
 #include "qa/application_selected_effects.h"
 #include "qa/application_visual_visibility.h"
@@ -1131,6 +1132,9 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     if (!actor.registry || world->view.clip_enabled) return true;
     qa_application_equipment_view weapon;
     if (!qa_application_equipment_read(frontend->application, actor, &weapon, error)) return false;
+    if (weapon.selected && weapon.family == QA_GAME_Q3 && weapon.has_q3_source &&
+        !weapon.source_slot && !weapon.original_qvm && !weapon.equipment_slot)
+        return frontend_equipment_q3_local_view(frontend, seat, &weapon, world, frame, error);
     if (weapon.selected || weapon.provider != weapon.primary ||
         (weapon.family != QA_GAME_Q1 && weapon.family != QA_GAME_Q2) ||
         !weapon.visible || !weapon.view_model || !weapon.view_model[0]) return true;

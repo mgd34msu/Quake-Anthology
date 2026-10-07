@@ -22,6 +22,8 @@ typedef struct frontend_equipment_q3_owner_view {
 bool frontend_equipment_q3_prepare(qa_frontend *, const qa_application_equipment_view *,
     bool view_required, const q3n_selected_animation *character,
     void *context, bool (*current)(void *), frontend_equipment_q3_presenter **, qa_error *);
+bool frontend_equipment_q3_local_view(qa_frontend *, uint32_t physical_seat,
+    const qa_application_equipment_view *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool frontend_equipment_q3_retain(frontend_equipment_q3_presenter *, qa_error *);
 void frontend_equipment_q3_release(frontend_equipment_q3_presenter *);
 bool frontend_equipment_q3_view(frontend_equipment_q3_presenter *,
