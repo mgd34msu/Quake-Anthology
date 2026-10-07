@@ -434,3 +434,29 @@ has closed THE-587 after its four-case proof.
 The same Q3 route proves stock 1023-byte command truncation and dispatch
 of both valid suffix commands exactly once. THE-145's non-Q3 rejection
 cases still need their live checks before its final review transition.
+
+## Original Q3 weapon keys and continued world after firing
+
+THE-592's requested GL movement recheck passes on the 15:01 installation
+in `/tmp/qa-private-av-ucg44oys`. Its client route and qualification finished
+before the app-server interruption. Three separate Mouse1 shots each use
+one shell and retain current source/world frames, then real S input moves
+141.453491 units with a matching completed world. Root opened
+`THE592-after-real-s.png`. The shared audio consumer records 4,792 calls
+with no rejected return or observer error. No rare actorless position call
+occurs in this GL run; the earlier CPU packet proof remains separate.
+
+THE-562's outstanding weapon-key recheck is covered by that GL run and a
+new current-installed CPU run, `/tmp/qa-private-av-8v71pe4s`. In both,
+real key 1 selects gauntlet and real key 3 selects the authored picked-up
+shotgun. Raw usercmd, original GAME player state and CGAME selected weapon
+all agree on 1 and then 3. The exact successful world captures match source
+time 4400 and 5500 ms. The corresponding PNGs display the retail weapon
+selection and world; root opened CPU shotgun and GL gauntlet captures.
+CPU also proves three shots and a later 198.319824-unit S walk. Both
+routes use the copied owner profile, private display and captured SDL
+output, public quit zero, unchanged artifact/profile/helper pins and
+cleanup of owned processes. No stock movement, presentation flags or
+Source state were injected. Attached functional observers make no timing
+or isolated sound-fidelity claim. These proofs cover the key-selection
+gap after the existing packed-sort/fog fixes; THE-562 is ready for review.
