@@ -1,5 +1,7 @@
 #include "character_selection.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/game_q2_preferences.h"
+#include "qa/text.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -204,10 +206,19 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
         bool ok=qa_application_player_userinfo_register(protocol_cvars,seat->id,model,error);
         if (ok && !configured && !qa_cvars_is_set(protocol_cvars,"name"))
             ok=qa_cvars_set(protocol_cvars,"name",name,true,error);
-        if (ok && fov) ok=qa_cvars_set(protocol_cvars,"fov",fov,true,error);
         if (ok) ok=qa_cvars_set(protocol_cvars,"spectator",seat->spectator?"1":"0",true,error);
         qa_buffer info={0};
         if (ok) ok=qa_cvars_info(protocol_cvars,QA_CVAR_USERINFO,capacity,&info,error);
+        if (ok && fov) {
+            double preference;
+            qa_buffer projected={0};
+            ok=qa_parse_number((qa_bytes){(const uint8_t *)fov,strlen(fov)},&preference,error) &&
+                qa_q2_userinfo_field_of_view((const char *)info.data,preference,&projected,error);
+            if (ok && projected.size>=capacity)
+                ok=application_fail(error,QA_ERROR_ARGUMENT,"Initial userinfo exceeds its actual Source extent");
+            if (ok) { qa_buffer_free(&info); info=projected; projected=(qa_buffer){0}; }
+            qa_buffer_free(&projected);
+        }
         if (ok) memcpy(out,info.data,info.size+1);
         free(fov); qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
     } else return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo has no declared protocol constructor");
