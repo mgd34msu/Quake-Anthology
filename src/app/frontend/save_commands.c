@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "capture.h"
 #include "save_commands.h"
 #include "save_private.h"
 #include "tools_restore.h"
@@ -22,6 +23,9 @@ typedef struct save_command_request {
     char *name, *script;
     qa_command_context context;
 } save_command_request;
+typedef enum save_failed_operation {
+    SAVE_FAILURE_NONE, SAVE_FAILURE_MANUAL, SAVE_FAILURE_CAMPAIGN
+} save_failed_operation;
 struct frontend_save_commands {
     qa_fs_root *root;
     qa_fs_root *level_root;
@@ -32,6 +36,8 @@ struct frontend_save_commands {
     qa_frontend_original_restore *original;
     qa_save_image *campaign;
     qa_frontend *retained[3];
+    qa_error failure;
+    save_failed_operation failed_operation;
     bool pending, draining;
     bool recovery_checked,recovery_available,recovery_pending,recovery_resume;
     bool recovery_abandoned;
@@ -142,12 +148,13 @@ uint64_t frontend_save_commands_registry(const qa_frontend *f)
 qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 { return f && f->save_commands ? f->save_commands->root : NULL; }
 bool frontend_save_commands_pending(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->campaign || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
+{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_restoring(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign); }
+{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
+        && f->save_commands->failed_operation==SAVE_FAILURE_NONE
         && !f->save_commands->original
         && (!f->save_commands->draining || !f->save_commands->pending);
 }
@@ -662,16 +669,55 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
     return (*image || qa_frontend_persistence_capture(f,f->options.persistence_services,purpose,image,error)) &&
         qa_save_write(root,name,*image,nonce,error);
 }
+static bool save_driver_returned(const qa_frontend *f)
+{
+    qa_session *session=f && f->application?qa_application_session(f->application):NULL;
+    qa_application_state state=f && f->application?qa_application_get_state(f->application):QA_APPLICATION_FAULTED;
+    return f && (state==QA_APPLICATION_READY || state==QA_APPLICATION_RUNNING) &&
+        !qa_application_startup_pending(f->application) && !f->stepping && !f->preparing &&
+        !f->source_restoring &&
+        qa_session_safe(session) && !qa_session_faulted(session);
+}
+static bool save_failure_returned(const qa_frontend *f)
+{
+    return save_driver_returned(f) && !f->save_image_pending && !f->native_resource_inventory_pending &&
+        frontend_owners_idle(f) && frontend_seat_callbacks_idle(f);
+}
+static bool campaign_fresh(qa_frontend *f, qa_error *error)
+{
+    if (!save_failure_returned(f) || qa_application_get_state(f->application)!=QA_APPLICATION_RUNNING)
+        return false;
+    qa_error failure=error?*error:(qa_error){0}, fallback={0};
+    if (!qa_application_campaign_stage(f->application,NULL,NULL,&fallback)) {
+        if (error) *error=fallback;
+        return false;
+    }
+    qa_application_feature_report(f->application,"Hub restore skipped; loading fresh map",&failure);
+    if (error) *error=(qa_error){0};
+    return true;
+}
+static bool failed_operation_finish(qa_frontend *f, qa_error *error)
+{
+    frontend_save_commands *owner=f->save_commands;
+    save_failed_operation failed=owner->failed_operation;
+    qa_error failure=owner->failure;
+    owner->failed_operation=SAVE_FAILURE_NONE; owner->failure=(qa_error){0};
+    bool ok=failed==SAVE_FAILURE_CAMPAIGN?campaign_fresh(f,&failure):save_failure_returned(f);
+    if (!ok && error) *error=failure;
+    return ok;
+}
 bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *handled,
     qa_error *error)
 {
     if (!f || !f->save_commands || !handled)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign travel needs its actual save command owner");
     frontend_save_commands *owner=f->save_commands;
-    *handled=owner->pending || owner->campaign || owner->original || cleanup_pending(owner);
+    *handled=owner->pending || owner->campaign || owner->original ||
+        owner->failed_operation!=SAVE_FAILURE_NONE || cleanup_pending(owner);
     if (*handled) return true;
     bool needed=false;
-    if (!qa_application_campaign_depart(f->application,revision,&needed,error)) return false;
+    if (!qa_application_campaign_depart(f->application,revision,&needed,error))
+        return campaign_fresh(f,error);
     if (!needed) return true;
     /* Real disconnect events are projected before retaining the departed cut. */
     if (!frontend_events(f,error)) return false;
@@ -689,12 +735,12 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     if (!frontend_save_image_release(f,&departure,error)) ok=false;
     qa_q2_save_destroy(original);
     owner->draining=false;
-    if (!ok) return false;
+    if (!ok) return campaign_fresh(f,error);
     qa_bytes cached=qa_application_campaign_restore(f->application);
     if (!cached.size) return true;
     ok=qa_save_image_decode(cached,&owner->campaign,error);
     if (ok) *handled=true;
-    return ok;
+    return ok || campaign_fresh(f,error);
 }
 
 static bool campaign_restore(qa_frontend **slot, qa_error *error)
@@ -711,7 +757,13 @@ static bool campaign_restore(qa_frontend **slot, qa_error *error)
     current->retained[0]=displaced; current->retained[2]=retained;
     qa_error cleanup={0};
     (void)cleanup_retained(current,&cleanup);
-    return ok;
+    if (ok) return true;
+    if (*slot!=active || displaced || !save_driver_returned(active) ||
+        qa_application_get_state(active->application)!=QA_APPLICATION_RUNNING) return false;
+    owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
+    owner->failure=error?*error:(qa_error){0};
+    if (cleanup_pending(owner)) return true;
+    return failed_operation_finish(active,error);
 }
 
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
@@ -723,7 +775,13 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (!owner) return frontend_fail(error, QA_ERROR_ARGUMENT, "Frontend save command owner is absent");
     if (owner->draining) return frontend_fail(error, QA_ERROR_ARGUMENT, "Save command reentry");
     qa_error cleanup = {0};
-    if (!cleanup_retained(owner, &cleanup)) return true;
+    if (!cleanup_retained(owner, &cleanup)) {
+        qa_application_feature_report(f->application,"Save candidate cleanup",&cleanup);
+        if (save_driver_returned(f)) return true;
+        if (error) *error=cleanup;
+        return false;
+    }
+    if (owner->failed_operation!=SAVE_FAILURE_NONE) return failed_operation_finish(f,error);
     qa_error inspection={0};
     if (!recovery_inspect(f,&inspection)) return true;
     if (owner->recovery_pending) return recovery_drain(slot,error);
@@ -762,7 +820,10 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
             }
         }
     }
-    if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) ok=false;
+    if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) {
+        if (local.code==QA_OK) local=cleanup;
+        ok=false;
+    }
     qa_q1_save_destroy(source);qa_q2_save_destroy(q2);
     if (ok && !complete) {
         owner->pending = true; owner->draining = false;
@@ -771,7 +832,10 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (owner->original) {
         qa_frontend_original_restore *original = owner->original;
         owner->original = NULL;
-        (void)qa_frontend_original_restore_dispose(original, &retained_source, &cleanup);
+        if (!qa_frontend_original_restore_dispose(original, &retained_source, &cleanup)) {
+            if (local.code==QA_OK) local=cleanup;
+            ok=false;
+        }
     }
     owner->request = (save_command_request){0}; owner->pending = false;
     owner->draining = false;
@@ -787,7 +851,18 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     request_free(&request);
     current->draining = false;
     (void)cleanup_retained(current, &cleanup);
-    return true;
+    if (ok) return true;
+    qa_application_feature_report((*slot)->application,"Manual save/load",&local);
+    if (*slot==f && !displaced && save_driver_returned(f) &&
+        !f->save_image_pending && !f->native_resource_inventory_pending) {
+        if (cleanup_pending(current)) {
+            current->failed_operation=SAVE_FAILURE_MANUAL; current->failure=local;
+            return true;
+        }
+        if (save_failure_returned(f)) return true;
+    }
+    if (error) *error=local;
+    return false;
 }
 
 bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)

@@ -545,8 +545,10 @@ bool qa_application_campaign_depart(qa_application *application, uint64_t revisi
     if (!needed || !travel_current(application,revision,&state,error)) return false;
     *needed=false;
     if (application->campaign_travel) {
-        *needed=application->campaign_travel->request.revision==revision;
-        return *needed || application_fail(error,QA_ERROR_ARGUMENT,"Campaign departure changed before publication");
+        if (application->campaign_travel->request.revision!=revision)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Campaign departure changed before publication");
+        *needed=application->campaign_travel->visit==NULL;
+        return true;
     }
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(application));
     const qa_travel_target *target=state->route.targets+state->cursor;
@@ -575,11 +577,39 @@ bool qa_application_campaign_stage(qa_application *application, const qa_save_im
 {
     application_campaign_travel *travel=application?application->campaign_travel:NULL;
     const qa_save_metadata *metadata=qa_save_image_metadata(image);
-    if (!travel || travel->visit || !map_safe(application) ||
-        ((image!=NULL)==(original!=NULL)) ||
+    bool fresh=!image && !original;
+    if (!map_safe(application) || (!fresh && (!travel || travel->visit)) ||
+        (image && original) ||
         (image && (!metadata || metadata->purpose!=QA_SAVE_TRANSITION ||
             metadata->world_generation!=application->map_revision)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Campaign stage requires its actual departed state image");
+    if (fresh) {
+        struct application_map_state *state=application->map_state;
+        if (!state || !state->pending || state->busy ||
+            state->route.targets[state->cursor].kind!=QA_TRAVEL_MAP ||
+            (travel && (travel->request.revision!=state->revision || !travel->players ||
+                !travel->players->roster || travel->players->roster->map_provider!=
+                    application_world_provider(application,QA_ROLE_ENTITIES,""))))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Fresh campaign travel requires its untransferred departure carry");
+        if (!travel) return true;
+        /* Replacing a cached visit preserves its captured departure and player
+         * carry. Reentry that moved the carry cannot use this fallback. */
+        qa_campaign_unit_checkpoint checkpoint={0};
+        bool ok=!travel->visit || qa_campaign_visit_capture(travel->visit,&checkpoint,error);
+        qa_campaign_world *departure=NULL;
+        for (size_t i=0;ok && i<checkpoint.count;++i)
+            if (qa_campaign_location_equal(qa_campaign_world_location(checkpoint.worlds[i]),travel->source))
+                departure=checkpoint.worlds[i];
+        qa_campaign_visit *visit=NULL;
+        if (ok) ok=qa_campaign_unit_stage(application->campaign_unit,travel->destination,false,false,
+            departure,&visit,error);
+        if (ok) {
+            qa_campaign_visit_destroy(travel->visit);
+            travel->visit=visit;
+        }
+        qa_campaign_unit_checkpoint_free(&checkpoint);
+        return ok;
+    }
     qa_bytes bytes={0}; qa_campaign_world *departure=NULL;
     bool retain, reload;
     bool ok=campaign_q2_policy(application,&retain,&reload,error);

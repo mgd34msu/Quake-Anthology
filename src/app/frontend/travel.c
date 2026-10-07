@@ -15,7 +15,7 @@ bool frontend_travel(qa_frontend *frontend, qa_error *error)
         qa_application_q2_map_event_count(frontend->application) || qa_application_q3_map_event_count(frontend->application) ||
         qa_application_q2_player_event_count(frontend->application) || qa_application_protocol_event_count(frontend->application) ||
         (frontend->scene_world && !qa_scene_world_idle(frontend->scene_world)))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "map travel requires drained frontend event and scene owners");
+        return true;
     uint64_t completed;
     if (qa_application_travel_publication_read(frontend->application,&completed))
         return (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages,error)) &&
