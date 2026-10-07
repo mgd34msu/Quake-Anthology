@@ -8,6 +8,7 @@
 #include "particle_clock.h"
 #include "legacy_render_policy.h"
 #include "qa/application_selected_effects.h"
+#include "qa/application_players.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
@@ -1067,7 +1068,12 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     frontend_event_resources *resources;
     if (!resources_read(frontend, event->provider, family, &resources, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
+    if (family == QA_AUDIO_Q2 && name[0] == '*') {
+        qa_builtin_player_info player = {0};
+        (void)qa_application_player_info_read(frontend->application, event->actor, &player);
+        if (!qa_audio_bank_sexed(resources->sounds, name, player.skin ? player.skin : "", &asset, error))
+            return false;
+    } else if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
     if (resources->gear && !resources_current(frontend->application, resources)) {
         qa_audio_asset_release(asset);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear sound source retired during registration");

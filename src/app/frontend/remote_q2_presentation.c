@@ -276,17 +276,8 @@ static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_erro
     if (!*name) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound has no actual configstring");
     const qa_q2_entity *source = entity(&row->frame, event->entity);
     qa_vec3 origin = event->has_position ? vector(event->position) : source ? vector(source->origin) : qa_v3(0, 0, 0);
-    qa_audio_asset *asset = NULL; bool ok;
-    if (name[0] == '*') {
-        const char *value = event->entity && event->entity <= 256 ?
-            frontend_remote_q2_config(row, (uint16_t)(row->layout.players + event->entity - 1)) : "";
-        const char *appearance = strchr(value, '\\'); appearance = appearance ? appearance + 1 : value;
-        const char *slash = strchr(appearance, '/'); char model[1024];
-        size_t length = slash ? (size_t)(slash - appearance) : 0;
-        if (!length || length >= sizeof(model)) strcpy(model, "male");
-        else { memcpy(model, appearance, length); model[length] = 0; }
-        ok = qa_audio_bank_sexed(row->sounds, name, model, &asset, error);
-    } else ok = qa_audio_bank_register(row->sounds, name, QA_AUDIO_Q2, &asset, error);
+    qa_audio_asset *asset = NULL;
+    bool ok = remote_q2_sound_asset(row, name, event->entity, &asset, error);
     if (!ok || !asset) return ok;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_AUDIO_Q2,

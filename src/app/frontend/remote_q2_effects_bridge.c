@@ -115,6 +115,16 @@ static bool viewer(void *context, qa_actor_id *out, qa_error *error)
     if (!actor(row, (uint32_t)number + 1, &pose, error)) return false;
     *out = pose.actor; return true;
 }
+bool remote_q2_sound_asset(frontend_remote_q2 *row, const char *path, uint32_t entity,
+    qa_audio_asset **out, qa_error *error)
+{
+    if (path[0] != '*') return qa_audio_bank_register(row->sounds, path, QA_AUDIO_Q2, out, error);
+    const char *info = entity && entity <= 256 ?
+        frontend_remote_q2_config(row, (uint16_t)(row->layout.players + entity - 1)) : "";
+    const char *appearance = strchr(info, '\\');
+    return qa_audio_bank_sexed(row->sounds, path, appearance ? appearance + 1 : "", out, error);
+}
+
 bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_actor_id actor_id,
     double time, int32_t channel, float volume, float attenuation, double delay, qa_error *error)
 {
@@ -132,16 +142,7 @@ bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_
     }
     if (!row->frontend->audio) return true;
     qa_audio_asset *asset = NULL;
-    if (path[0] == '*') {
-        const char *info = actor_number && actor_number <= 256 ?
-            frontend_remote_q2_config(row, (uint16_t)(row->layout.players + actor_number - 1)) : "";
-        const char *appearance = strchr(info, '\\'); appearance = appearance ? appearance + 1 : info;
-        const char *slash = strchr(appearance, '/'); char model_name[1024];
-        size_t length = slash ? (size_t)(slash - appearance) : 0;
-        if (!length || length >= sizeof(model_name)) strcpy(model_name, "male");
-        else { memcpy(model_name, appearance, length); model_name[length] = 0; }
-        if (!qa_audio_bank_sexed(row->sounds, path, model_name, &asset, error)) return false;
-    } else if (!qa_audio_bank_register(row->sounds, path, QA_AUDIO_Q2, &asset, error)) return false;
+    if (!remote_q2_sound_asset(row, path, (uint32_t)actor_number, &asset, error)) return false;
     if (!asset) return true;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = path, .family = QA_AUDIO_Q2,

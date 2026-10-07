@@ -1034,11 +1034,10 @@ static bool builtin_players(void *opaque, qa_actor_id *actors, size_t capacity,
     return true;
 }
 
-static bool builtin_player_info(void *opaque, qa_actor_id actor,
-                                qa_builtin_player_info *out)
+bool qa_application_player_info_read(qa_application *application, qa_actor_id actor,
+                                     qa_builtin_player_info *out)
 {
-    qa_application *application = opaque;
-    if (out == NULL ||
+    if (application == NULL || out == NULL ||
         qa_actors_get(qa_session_actors(application->session), actor) == NULL)
         return false;
     application_provider *provider = application_provider_for(
@@ -1080,6 +1079,11 @@ static bool builtin_player_info(void *opaque, qa_actor_id actor,
     qa_combat_state combat;
     if (qa_combat_read(application->combat, actor, &combat, NULL)) out->dead = combat.health <= 0;
     return true;
+}
+
+static bool builtin_player_info(void *opaque, qa_actor_id actor, qa_builtin_player_info *out)
+{
+    return qa_application_player_info_read(opaque, actor, out);
 }
 
 static bool builtin_traits(void *opaque, qa_actor_id actor,

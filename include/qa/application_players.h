@@ -31,5 +31,7 @@ bool qa_application_local_player_detach(qa_application *, uint32_t logical_seat,
  * published, release only the original CLIENT rows for omitted seats. */
 bool qa_application_local_player_clients_retire(qa_application *, qa_error *);
 bool qa_application_player_seat(const qa_application *, qa_actor_id, uint32_t *);
+/* Borrow the actual selected CHARACTER player identity, including its current skin. */
+bool qa_application_player_info_read(qa_application *, qa_actor_id, qa_builtin_player_info *);
 
 #endif
