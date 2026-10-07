@@ -30,7 +30,7 @@ static void source_sort_fix_rows(material_source_submission *row, uint32_t inser
     for (; row; row = row->next) {
         uint32_t packed = row->packed_sort, shader = (packed >> 17) & 16383u;
         if (shader >= inserted) row->packed_sort = ((shader + 1) << 17) |
-            ((packed >> 7) & 1023u) | (((packed >> 2) & 31u) << 2) | (packed & 3u);
+            (packed & UINT32_C(0x1ffff));
     }
 }
 void material_source_sort_inserted(qa_material_source_scratch *source, uint32_t inserted)
