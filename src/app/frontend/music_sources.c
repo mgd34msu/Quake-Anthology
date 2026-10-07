@@ -243,12 +243,6 @@ bool frontend_music_sources_preferences_read(const frontend_music_sources *owner
     const qa_cvars *cvars = qa_application_cvars(owner->application);
     const qa_cvar_view *a = qa_cvars_find(cvars, "music_shuffle"), *b = qa_cvars_find(cvars, "music_menu_track");
     if (!a || !a->value || !b || !b->value || (strcmp(a->value, "0") && strcmp(a->value, "1"))) return false;
-    bool canonical_a = false, canonical_b = false;
-    for (const qa_cvar_view *row = qa_cvars_next(cvars, NULL); row;
-         row = qa_cvars_next(cvars, row)) {
-        canonical_a |= row == a; canonical_b |= row == b;
-    }
-    if (!canonical_a || !canonical_b) return false;
     *shuffle = !strcmp(a->value, "1"); *menu_track = b->value; return true;
 }
 static bool retire_world(frontend_music_sources *owner, bool map, qa_error *e) {
