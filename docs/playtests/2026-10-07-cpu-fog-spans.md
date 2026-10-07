@@ -48,10 +48,89 @@ A separate six-second CPU640 diagnostic profile of the baseline collected
 `shade_rows` 12.18%, `depth_fog_rows` 11.81%, `sample_levels` 9.89% and
 `fog_exp_four` 7.06%. Percentages are relative to all sampled game threads;
 the diagnostic includes sampling overhead and is not a frame-time measurement.
-Shading, texture sampling and the full-frame fog pass remain the next costs to
-reduce. THE-196 and THE-566 remain open; this change does not close choppiness.
+Shading, texture sampling and the full-frame fog pass remain costs to reduce.
+THE-196 remains open; this change does not close Q2 rerelease choppiness.
 
 Evidence identifiers: `mike14-fog-carry-20261007/span-pixel-comparison.json`,
 `qa-private-av-61sji88c/console-qualification.json`,
 `qa-the196-paired-plan-2_pz70g3/paired-result.json` and
 `qa-private-av-k0xuzay4/minimal-profile-result.json`.
+
+## Paired Q1 measurements
+
+The same `1c0ab5dc` baseline and installed `3765bb6b` were compared on retail
+e1m1 in both editions. Rerelease worldspawn supplies EXP2 fog density 0.025
+and RGB (171, 169, 234)/255; classic e1m1 has no authored fog. No fog setting
+was added to either map. Only `brush_spans.c` differs in their production
+sources; native runner and profile bytes match.
+
+Each of the eight sequential runs used affinity `0-7,12-19`, a fresh copy of
+the same 34 owner settings files, private Xvfb/Openbox and no audio, debugger
+or profiler. Public reads before and after confirmed caps, swap interval and
+timedemo zero, FOV 120, `r_smp` zero and `r_skyfog` 0.5. `sv_fps` read 20 in
+every case; this is a setting readback, not a measured fixed NetQuake tick
+rate. Each run captured 600 actual completed presentation intervals after
+819–840 warm intervals, then quit normally. All owned processes were gone;
+owner settings and build files remained unchanged.
+
+| Edition | Drawable | Version | Median ms | p99 ms | Render mean ms |
+| --- | --- | --- | ---: | ---: | ---: |
+| Classic | 640×400 | Baseline | 3.201216 | 4.571434 | 2.580053 |
+| Classic | 640×400 | Installed | 2.841614 | 4.163666 | 2.252108 |
+| Classic | 320×200 | Baseline | 1.979121 | 2.770827 | 1.502731 |
+| Classic | 320×200 | Installed | 1.903794 | 2.648304 | 1.411125 |
+| Rerelease | 640×400 | Baseline | 3.460477 | 11.118970 | 2.942256 |
+| Rerelease | 640×400 | Installed | 3.180206 | 10.815984 | 2.664379 |
+| Rerelease | 320×200 | Baseline | 2.200100 | 4.812059 | 1.739938 |
+| Rerelease | 320×200 | Installed | 2.083803 | 4.630906 | 1.619646 |
+
+These single pairs show rerelease median reductions of 8.10% and 5.29%.
+Classic reductions were 11.23% and 3.81%, despite lacking authored fog, so
+the whole change cannot be attributed to eliminating exponential fog fits.
+Span counts and written pixels match within each pair. Live triangle work
+varied at 640×400; at 320×200, triangle counts and written pixels match.
+Private presentation, timer and observer overhead remain included. The
+rerelease 320×200 median still misses 2 ms, and all p99 values exceed the
+corresponding 4 ms or 2 ms target.
+
+Timing evidence: `qa-the566-q1-plan-szjxyuy0/paired-result.json`.
+
+## Separate Q1 CPU320 profiles
+
+Four separate six-second, 199 Hz userspace captures followed the timing runs.
+They used the same private display, copied settings, affinity and builds,
+with no debugger. Sampling began after 602–624 actual warm presents. Each
+capture lost zero samples and ended with normal quit and complete owned
+process cleanup. These samples include profiler overhead and are not the
+frame-time measurements above.
+
+The top five self costs, relative to all sampled game threads, were:
+
+| Rank | Classic baseline | Classic installed | Rerelease baseline | Rerelease installed |
+| --- | --- | --- | --- | --- |
+| 1 | `shade_rows` 43.80% | `shade_rows` 36.10% | `shade_rows` 44.82% | `shade_rows` 35.08% |
+| 2 | `mip_sample` 10.10% | `mip_sample` 11.90% | `mip_sample` 7.84% | `mip_sample` 9.51% |
+| 3 | `sample_levels` 7.44% | `fragment_row` 7.45% | `fragment_row` 5.56% | `fragment_row` 7.33% |
+| 4 | `fragment_row` 6.61% | `sample_levels` 6.80% | `sample_levels` 5.51% | `sample_levels` 5.93% |
+| 5 | `fragment_store.isra.0` 3.41% | `fragment_store.isra.0` 4.72% | `fragment_store.isra.0` 3.19% | `fragment_store.isra.0` 4.44% |
+
+Retained inline callchains confirm that the rerelease actually ran EXP2 span
+fits. `cpu_fog_span_prepare → shade_span → shade_rows` appeared in 66 of
+2,412 baseline sampled blocks and 11 of 2,209 installed blocks. Classic also
+ran this code: 66 of 2,555 baseline blocks and nine of 2,310 installed blocks.
+The current frontend emits EXP2 fog even when its density is zero, and the
+span preparation enables it without checking density. Classic's reduction
+therefore also removes wasted zero-density fits. Generic fragment fog samples
+remain in all four cases; no full-frame depth-fog samples appeared.
+
+The audit's estimate that fitting accounts for about 30% of the Q1 frame was
+wrong for these measured cases. The observed gain is modest. `shade_rows`
+includes texture filtering and pixel processing as well as fog, so its whole
+self percentage cannot be assigned to fitting. The baseline already uses
+the shared table-based `cpu_fog_exp`; these are not repeated libc `exp` calls.
+Sample attribution and the single timing pairs do not establish a universal
+cost or speedup across other maps, cameras or settings.
+
+Profile evidence: `qa-the566-q1-profile-plan-3ck06xlv/separate-profiles-result.json`.
+Raw rerelease captures are `qa-private-av-93fsz_cs` and `qa-private-av-5ya3meld`;
+classic captures are `qa-private-av-7xg792nw` and `qa-private-av-f_2a7myu`.
