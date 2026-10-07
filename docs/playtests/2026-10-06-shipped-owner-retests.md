@@ -13,7 +13,18 @@ The 03:51:48 CDT installation passed private copied-owner-profile startup before
 
 Evidence identifiers: `qa-the153-mouse-20261006/qualification.json`, `qa-the420-contained-20261007/ab78171b-consolidated-proof.json`, and `qa-private-av-mnoe1g9d/user/evidence/m0-reviewed-evidence.json`. Earlier missing-window-manager and camera-target observer failures are retained as helper failures, not gameplay defects. Original world-camera proof filters out later no-world HUD icon scenes. Input-state and combined-mode checks use bounded read-only debugger observations; none establish frame time. All displays and audio servers were private. Except for the separately recorded pickup output capture, audio was disabled. Owner retests remain pending.
 
-THE-420 remains In Progress. These checks did not explicitly configure OS autorepeat or the owner's 85-fps setting. The next acceptance cases hold Space and C with X autorepeat enabled at `com_maxfps` 85, uncapped, 250 and 333, with `r_swapInterval 0`, recording actual SDL repeat events and jump counts. Frame rate is a test condition, not an established cause. Original Q3 ignores a repeated button source in `cl_input.c:83–84`; `cl_keys.c:1031–1036` counts key repeats. `PMF_JUMP_HELD` is checked, cleared and carried across substeps in `bg_pmove.c:370–378`, `1916–1918` and `2061–2062`.
+THE-420 remains In Progress. A subsequent native GL check held Space for two seconds, released and pressed it again for 1.5 seconds, then held C for 1.5 seconds. X autorepeat was enabled at its unchanged default delay of 660 ms and rate of 25 Hz. Actual SDL key events retained their repeat flags. The four configured `com_maxfps` values and `r_swapInterval 0` were read back from the installed engine.
+
+| Configured `com_maxfps` | Repeated Space key-downs, first/second hold | Repeated C key-downs | Jump events / real presses | Observed presentation cadence per second |
+|---|---|---|---|---|
+| 85 | 34 / 21 | 21 | 2 / 2 | 49.03 |
+| 0 | 34 / 21 | 21 | 2 / 2 | 49.27 |
+| 250 | 33 / 21 | 21 | 2 / 2 | 48.08 |
+| 333 | 34 / 21 | 22 | 2 / 2 | 49.23 |
+
+All eight real presses produced exactly eight jump events. The held-jump flag stayed set through 292 grounded samples, and 338 crouched samples retained the duck state. Release cleared the held state, and the next press jumped once. Each run quit normally, removed its owned processes and preserved the installed artifact and all 34 owner settings files. Evidence: `qa-the420-repeat-20261007/ab78171b-native-gl-autorepeat-proof.json`.
+
+These are configured frame-rate conditions; the private software GL runs did not achieve 85, 250 or 333 fps. The missing visible-frame cap consumer is tracked under THE-583. Original Q3 autorepeat remains untested, and no new repeat-input production patch is supported by these results. Frame rate is a test condition, not an established cause. Original Q3 ignores a repeated button source in `cl_input.c:83–84`; `cl_keys.c:1031–1036` only counts key repeats. `PMF_JUMP_HELD` is checked, cleared and carried across substeps in `bg_pmove.c:370–378`, `1916–1918` and `2061–2062`.
 
 An additional detached native GL check (`qa-private-av-69ycntmw/result.json`) recorded three jump events for three presses and 103 grounded-held samples without retriggering. An airborne public kill preserved nonzero corpse momentum; the first live post-respawn sample had zero horizontal velocity and vertical velocity from the subsequent gravity step. It does not measure velocity at the spawn function return.
 
