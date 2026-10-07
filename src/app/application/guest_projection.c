@@ -393,6 +393,25 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
 static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out, qa_error *error)
 {
     application_guest_projection *p = role->projection;
+    if (p && p->located_inventory && !p->state) {
+        uint32_t slot;
+        qa_q3_player player;
+        if (!qa_q3_host_actor_slot(role->host, actor, &slot, error) ||
+            !qa_q3_host_source_player(role->host, slot, &player, error)) return false;
+        qa_combat_state state = {.health = (float)player.stats[0], .mass = 200,
+            .can_take_damage = player.pmType != 2,
+            .armor.regular = {.kind = QA_ARMOR_Q3,
+                .points = player.stats[role->engine->product == QA_Q3_TEAM_ARENA ? 4 : 3],
+                .protection.q3_protection = 0.66f}};
+        int32_t team = player.persistant[3];
+        if (team == 1 || team == 2) {
+            qa_strings *strings = qa_session_strings(role->engine->provider->application->session);
+            if (!qa_strings_intern_cstr(strings, team == 1 ? "q3:1" : "q3:2", &state.team, error))
+                return false;
+        }
+        *out = state;
+        return true;
+    }
     if (!p || !p->state || !role->artifact || p->state != role->artifact->combat_profile)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest player state requires a qualified original combat interface");
     application_q3_combat_actor source;
