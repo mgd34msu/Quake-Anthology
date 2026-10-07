@@ -771,14 +771,7 @@ bool qa_audio_device_selection_ready(qa_audio_device_selection *selection, qa_er
     if (selection->invalidated)
         return device_error(error, QA_ERROR_ARGUMENT, "Audio selection refused intervening owner mutation");
     if (!selection_native_current(selection, error)) return false;
-    if (selection->ready) {
-        if (!selection->unchanged) {
-            size_t count = selection->conversion ? selection->converted.count : selection->device->pcm.count;
-            if (SDL_GetQueuedAudioSize(selection->replacement) != count * frame_bytes(selection->selected.format))
-                return device_error(error, QA_ERROR_IO, "Prepared audio replacement lost its retained PCM prefix");
-        }
-        return true;
-    }
+    if (selection->ready) return true;
     if (selection->unchanged) {
         selection->ready = true;
         return true;
@@ -815,10 +808,6 @@ bool qa_audio_device_selection_ready(qa_audio_device_selection *selection, qa_er
             selection->replacement, pending->samples + start * 2,
             frames, selection->selected.format, error)) goto failed;
         offset += frames;
-    }
-    if (SDL_GetQueuedAudioSize(selection->replacement) != pending->count * frame_bytes(selection->selected.format)) {
-        device_error(error, QA_ERROR_IO, "Prepared audio output did not retain its exact paused PCM prefix");
-        goto failed;
     }
     selection->ready = true;
     return true;
