@@ -283,3 +283,64 @@ weapon, selects key3, consumes shells10→9 and emits event23. World frames
 continue past the event and public quit0. It does not reproduce THE-592,
 so no audio fix or closure is claimed; the previous failing packet is
 retained. Bot travel/death, THE-213 and the later queued fixes remain open.
+
+## Qualified native Q3 bot travel after the sweep
+
+THE-589 is In Review after f8308097,6a2e6c90 and daaa4fa6. Map travel
+now rebuilds the native allocation pool, carries dynamic local bots through
+the shared roster and begins retained clients once. The splash-aim query
+uses map navigation, as qsrc BotPredictVisiblePosition does; it no longer
+mistakes a bot-library client number for a physical client slot.
+
+The daaa4fa6 candidate was built2026-10-07 13:24:23CDT and installed at
+13:29:43CDT with tools/install_qualified_build.py and the copied-owner GL
+qualification. Installed receipt: installed-m0-bot-travel-20261007.json.
+Shipped CPU /tmp/qa-private-av-udpsunn2 and NVIDIA GL
+/tmp/qa-private-av-0pvddgrt both pass q3dm1→q3dm7→q3dm1 travel, retain Crash,
+join Sarge/Visor/Bitterman and complete later frames before public quit0.
+Owner34 originals and package pins are unchanged; owned tokens are absent.
+
+THE-423 remains partial. GL records three genuine bot deaths followed by
+physical Mouse1 respawns, with rocket, shotgun and rocket-splash causes.
+CPU records one such cycle; the second death had already respawned before
+the requested press. Neither proves a long Original-module match. These
+debugger observations make no performance claim.
+
+## Installed transient audio and fence-mip fixes
+
+THE-592 is In Review after 724b9779. The shared mixer accepts a finite
+position for a transient Q3 event that has no persistent audio actor; it
+does not allocate a position queue entry. Explicit-origin playback remains
+unchanged. The retained failing packet in `/tmp/qa-private-av-6_goape5`
+records this operation returning false on the earlier build. The shared
+audio probe also confirms nonfinite positions remain rejected and positions
+for persistent actors still queue normally.
+
+The 756c2ce7 candidate was built at 13:42:38 CDT and installed at 13:54:16
+with `tools/install_qualified_build.py`. Receipt:
+`installed-m0-audio-fence-20261007.json`. Shipped Original Q3 CPU
+`/tmp/qa-private-av-3qgsozav` and NVIDIA GL `/tmp/qa-private-av-8gneq9nc`
+both record genuine shotgun pickup, weapon keys, three one-shell Mouse1
+shots, later current-world frames, physical movement and public quit0.
+CPU observes three formerly rejected actorless position operations, all
+accepted without queue allocation. GL has no such rare operation in this
+run, but records 4,671 audio submissions without rejection or observer error.
+The initial GL forward walk was blocked by the retail wall; the retained
+clip trace confirms that result, and the final route proves a 141.822-unit
+backward walk. No movement code was changed to satisfy the route.
+
+THE-213 / MIKE-17 is In Review after 756c2ce7. The shared Q1 texture
+preparation regenerates fence mips from the base image and stops before a
+mip loses all cutout or visible texels. Retail `{mgrate3` lower authored
+mips had no palette-255 transparency; its last two were solid tan. Shipped
+MG3 CPU `/tmp/qa-private-av-h_9lu5nj` and NVIDIA GL
+`/tmp/qa-private-av-dvaszpxx` now show the grate lattice and slime through
+the holes at near and distant viewpoints. The prepared four-mip image
+retains alpha on both sides of the common alpha-test threshold.
+
+Both issues used fresh copies of the 34 owner settings files, private
+displays and captured private SDL output, unchanged package pins and owner
+originals, and recorded owned-process cleanup. Root reviewed the actual
+window PNGs. These attached-debugger checks prove behavior, not speed or
+an isolated shotgun waveform. Earlier Q2 rerelease glass evidence remains
+historical; this Q1 mip fix does not claim a new Q2 glass retest.
