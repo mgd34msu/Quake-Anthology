@@ -412,6 +412,9 @@ qa_application_state qa_application_get_state(const qa_application *);
 const qa_error *qa_application_error(const qa_application *);
 void qa_application_request_stop(qa_application *);
 bool qa_application_should_stop(const qa_application *);
+/* Report each retained site/code/message once. A full diagnostic budget emits
+ * one notice and suppresses further new messages. This does not recover state. */
+void qa_application_feature_report(qa_application *, const char *site, const qa_error *);
 /* The actual Quake source pause holds shared simulation and source clocks.
  * Host presentation and transport clocks remain owned by the frontend. */
 bool qa_application_q1_paused(const qa_application *);

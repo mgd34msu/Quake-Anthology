@@ -245,6 +245,11 @@ typedef struct application_campaign_travel {
     struct application_player_travel *players;
 } application_campaign_travel;
 
+typedef struct application_feature_report {
+    char site[96];
+    qa_error error;
+} application_feature_report;
+
 struct qa_application {
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
@@ -414,6 +419,9 @@ struct qa_application {
     bool finalizing;
     qa_error publication_error;
     struct application_supplies *supplies;
+    application_feature_report feature_reports[16];
+    size_t feature_report_count;
+    bool feature_report_overflow;
 };
 
 static inline void application_snapshot_mutated(qa_application *application)

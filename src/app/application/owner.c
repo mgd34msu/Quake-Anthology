@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 bool application_fail(qa_error *error, qa_status code, const char *message)
 {
@@ -41,6 +42,38 @@ void application_fault(qa_application *application, const qa_error *error)
     else
         qa_error_set(&application->publication_error, QA_ERROR_ARGUMENT, 0,
                      "application publication failed");
+}
+
+
+void qa_application_feature_report(qa_application *application, const char *site,
+    const qa_error *error)
+{
+    if (!application || !site || !error) return;
+    for (size_t i = 0; i < application->feature_report_count; ++i) {
+        const application_feature_report *record = application->feature_reports + i;
+        if (!strcmp(record->site, site) && record->error.code == error->code &&
+            !strcmp(record->error.message, error->message)) return;
+    }
+    if (application->feature_report_overflow) return;
+    char text[416];
+    if (application->feature_report_count ==
+            sizeof(application->feature_reports) / sizeof(*application->feature_reports) ||
+        strlen(site) >= sizeof(application->feature_reports[0].site)) {
+        application->feature_report_overflow = true;
+        snprintf(text, sizeof(text), "Runtime feature diagnostic budget reached; further new failures suppressed.\n");
+    } else {
+        application_feature_report *record = application->feature_reports + application->feature_report_count++;
+        strcpy(record->site, site);
+        record->error = *error;
+        snprintf(text, sizeof(text), "Feature %s skipped: %s\n", site,
+            error->message[0] ? error->message : "returned no diagnostic");
+    }
+    qa_command_context command;
+    qa_error capture = {0};
+    if (application->console && qa_console_context_read(application->console, &command, &capture))
+        qa_console_emit(application->console, &command, text);
+    else
+        application_console_print(application, NULL, text);
 }
 
 typedef struct application_think_call {
