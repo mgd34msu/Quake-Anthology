@@ -196,6 +196,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
         else value = round(value / 1000);
         break;
     case QA_CATALOG_OP_SKILL: value += 1; break;
+    case QA_CATALOG_OP_VIEW_SIZE: return true;
     case QA_CATALOG_OP_DEATHMATCH:
         value = value > 0 ? (family(current, true) ? current : 0) : 8;
         break;

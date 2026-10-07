@@ -118,8 +118,7 @@ bool frontend_shared_render_controls_abort(frontend_shared_render_controls **out
 const qa_cvar_view *frontend_render_control_record(const qa_cvars *registry, const char *name)
 {
     if (!registry || !name) return NULL;
-    if (qa_cvars_canonical_name(registry, name) != name) return NULL;
-    return qa_cvars_find(registry, name);
+    return qa_cvars_find(registry, qa_cvars_canonical_name(registry, name));
 }
 bool frontend_render_controls_live(qa_frontend *f, qa_error *error)
 {
