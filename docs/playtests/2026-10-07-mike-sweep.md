@@ -64,6 +64,17 @@ decision. The supervisor makes Done transitions. At11:10 the supervisor
 reported MIKE05/08/09/21/22/24/33/36 closed after evidence review; this
 agent made no Done transitions.
 
+THE-196 has a fresh sound check on installed `98225ced`, built 18:32 and
+installed 18:39 CDT. Native Q2 rerelease CPU `base1` records real Space
+and Mouse1, authored cells pickup and door events, positive live target
+sample windows, and 48 accepted nonzero mixed SDL buffers independently
+matched to captured private output. Pickup/door transit was assisted by
+noclip. All 910 observed Source tick transitions match 25 ms; this
+debugger-assisted check is not a frame-time or feel measurement. Public
+quit0, unchanged owner profile/artifacts and all 12 owned process tokens
+absent are retained in `qa-private-av-wk79hw6_`. See the Q2 rerelease audio
+record for target-attribution limits. CPU targets remain open.
+
 ## Q1 gameplay and output
 
 Shared raw packets live under _q1-common; per-issue bundles link to them.

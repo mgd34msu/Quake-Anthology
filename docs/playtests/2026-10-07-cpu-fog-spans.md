@@ -416,3 +416,41 @@ this result does not establish a general frame-time speedup.
 Evidence: `qa-the196-direct-fog-rays-20261007/root-results.json`,
 `qa-private-av-_7xifk75/installer-shaped-qualification.json` and
 `qa-the196-vector-return-plan-etpe2uwf/paired-result.json`.
+
+The direct-ray source is committed and pushed as `98225ced`. The qualified
+candidate was installed at 18:39:19.680938 CDT, with all three runtime
+files byte-equal to the build. Receipt:
+`installed-m0-direct-fog-rays-20261007.json`.
+
+## Rejected final fog packing candidate
+
+Two final SSE2 packing calls were replaced temporarily with integer
+conversion because every lane was already an integral byte. The reused
+bounded comparison ran 576 cases and 49,206,144 pixels in each SSE2 and
+portable build. RGBA, depth and stencil matched exactly across four
+rounding modes; warmed fog allocated nothing. Strict build, six configured
+CTests and copied-owner gameplay/normal-quit qualification passed.
+
+The quiet sequential retail pair held texture filtering and fog equations
+identical to installed `98225ced`. Each case sampled 600 presentation
+intervals after at least 835 warm intervals, pinned to physical cores 0–7,
+without a debugger, profiler, compiler, audio or another game.
+
+| Drawable | Baseline median ms | Candidate median ms | Baseline p99 ms | Candidate p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 6.010870 | 5.876943 | 16.325701 | 15.206207 |
+| 320×200 | 4.283349 | 4.340015 | 6.045136 | 6.585097 |
+
+Separate warmed renderer means were 4.915826 → 4.776615 ms and
+3.351086 → 3.373569 ms. Span counts and written pixels match within each
+pair. Source cadence remains 40 Hz; caps and swap interval are zero,
+FOV is 120 and `r_smp` is zero in all four runs. Every run preserved
+settings/build pins, quit with zero and left no owned processes.
+
+The result is small and mixed, so the candidate was reverted in both
+the repository and SDK. The installed executable was never replaced.
+This is not a speedup claim, and both CPU targets remain open.
+
+Evidence: `qa-the196-integral-fog-pack-20261007/root-results.json`,
+`qa-private-av-9_4e7ixf/installer-shaped-qualification.json` and
+`qa-the196-vector-return-plan-xc_7fu16/paired-result.json`.
