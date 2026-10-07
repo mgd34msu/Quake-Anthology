@@ -96,15 +96,8 @@ static void first_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,con
         r->origin.z=(r->origin.z + (float)p->viewheight); return;
     }
     qa_vec3 angles=q3ne_sum(f->view_angles,v->kick_angles);
-    if(g->damage_time!=0) {
-        float delta=((float)f->time + -g->damage_time),ratio;
-        if(delta<100)ratio=(delta / 100);
-        else ratio=(1 + -((delta + -100) / 400));
-        if(delta<100 || ratio>0) {
-            angles.x=(angles.x + (ratio * g->damage_pitch));
-            angles.z=(angles.z + (ratio * g->damage_roll));
-        }
-    }
+    q3n_damage_feedback damage={.time=g->damage_time,.pitch=g->damage_pitch,.roll=g->damage_roll};
+    angles=q3n_damage_feedback_angles(&damage,f->time,angles);
     /* Source refdef axes are still zero here, before AnglesToAxis. */
     qa_vec3 velocity=q3ne_array(p->velocity);
     angles.x=(angles.x + (q3ne_dot(velocity,r->axis[0]) * s->run_pitch));

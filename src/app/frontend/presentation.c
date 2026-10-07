@@ -18,6 +18,8 @@
 #include "remote_unified.h"
 #include "remote_q1_camera.h"
 #include "qa/network_q1.h"
+#include "qa/application_selected_q3_character.h"
+#include "qa/text.h"
 #include "q3_render_policy.h"
 #include "q3_color_policy.h"
 #include "view_settings.h"
@@ -268,6 +270,40 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,client.items);
     return true;
 }
+static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor,
+    const qa_application_camera_view *camera,qa_scene_view *view,bool *changed,qa_error *error)
+{
+    *changed=false;
+    qa_application_selected_q3_character source;
+    bool found;
+    if(!qa_application_selected_q3_character_read(f->application,actor,&source,&found,error))return false;
+    if(!found) {
+        seat->q3_damage_actor=(qa_actor_id){0}; seat->q3_damage=(q3n_damage_feedback){0};
+        return true;
+    }
+    qa_q3_player_state player;
+    if(!qa_q3_player_read(source.game,actor,&player))
+        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Selected Q3 camera lost its actual character");
+    if(!qa_actor_id_equal(seat->q3_damage_actor,actor) || seat->q3_damage_provider!=source.provider ||
+        seat->q3_damage_map!=source.map_revision || seat->q3_damage_spawn!=player.spawn_count ||
+        source.source_time_ms<seat->q3_damage_time) {
+        seat->q3_damage=(q3n_damage_feedback){0}; seat->q3_damage_actor=actor;
+        seat->q3_damage_provider=source.provider; seat->q3_damage_map=source.map_revision;
+        seat->q3_damage_spawn=player.spawn_count; seat->q3_damage_event=player.damage_event;
+    }
+    if(player.damage_event!=seat->q3_damage_event && player.damage_count) {
+        qa_combat_state combat;
+        if(!qa_combat_read(qa_application_combat(f->application),actor,&combat,error))return false;
+        q3n_damage_feedback_latch(&seat->q3_damage,source.source_time_ms,source.source_time_ms,
+            qa_source_float_to_i32(combat.health),player.damage_yaw,player.damage_pitch,player.damage_count,view->axis);
+    }
+    seat->q3_damage_event=player.damage_event; seat->q3_damage_time=source.source_time_ms;
+    if(!source.present || player.dead || camera->cutscene)return true;
+    qa_vec3 angles=q3n_damage_feedback_angles(&seat->q3_damage,source.source_time_ms,camera->angles);
+    if(!qa_application_selected_q3_character_current(f->application,&source))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Selected Q3 camera changed its actual character");
+    frontend_camera_axes(angles,view->axis); *changed=true; return true;
+}
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
     *render = false;
@@ -419,6 +455,14 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (remote_rendered) native_rendered=true;
         else if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
+            bool changed;
+            if (!local_q3_damage(frontend,seat,actor,&camera,&view,&changed,error)) return false;
+            if (changed) {
+                if (!frontend_tools_camera(frontend,i,false,&view,error)) return false;
+                begin.data.view=view;
+                begin.data.view.clear_color=begin.data.view.clear_depth=begin.data.view.clear_stencil=false;
+                if (!qa_scene_frame_emit(&frontend->frame,&begin,error)) return false;
+            }
             qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4,
                 .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend};

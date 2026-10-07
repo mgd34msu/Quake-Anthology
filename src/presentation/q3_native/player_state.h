@@ -31,6 +31,14 @@ typedef struct q3n_player_state_context {
     bool intermission_started, show_miss;
 } q3n_player_state_context;
 typedef struct q3n_reward { int32_t sound, shader, count; } q3n_reward;
+typedef struct q3n_damage_feedback {
+    int32_t attacker_time, kick_end_time;
+    float time, x, y, roll, pitch, value;
+} q3n_damage_feedback;
+void q3n_damage_feedback_latch(q3n_damage_feedback *, int32_t client_time,
+    int32_t server_time, int32_t health, int32_t yaw, int32_t pitch, int32_t damage,
+    const qa_vec3 axis[3]);
+qa_vec3 q3n_damage_feedback_angles(const q3n_damage_feedback *, int32_t time, qa_vec3 angles);
 typedef struct q3n_player_feedback {
     int32_t duck_time, attacker_time, damage_kick_end_time, low_ammo_warning;
     float duck_change, damage_time, damage_x, damage_y, damage_roll, damage_pitch, damage_value;

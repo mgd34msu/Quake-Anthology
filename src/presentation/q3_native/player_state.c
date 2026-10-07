@@ -79,25 +79,49 @@ static void remember(q3n_transition_history *h,const q3n_frame *f,const qa_q3_pl
 }
 static void respawn(q3n_player_state *o,const q3n_frame *f)
 { o->feedback.this_frame_teleport=true; q3n_weapons_set_selected(f->weapons,q3n_frame_snapshot_player(f)->weapon,f->time); }
+void q3n_damage_feedback_latch(q3n_damage_feedback *g,int32_t client_time,
+    int32_t server_time,int32_t health,int32_t yaw,int32_t pitch,int32_t damage,
+    const qa_vec3 axis[3])
+{
+    g->attacker_time=client_time;
+    float scale=health<40?1:(40 / (float)health);
+    float kick=q3nh_clamp(((float)damage * scale),5,10);
+    if(yaw==255 && pitch==255) {
+        g->x=g->y=g->roll=0; g->pitch=-kick;
+    } else {
+        qa_vec3 dir; q3nh_vectors(qa_v3((((float)pitch / 255) * 360),
+            (((float)yaw / 255) * 360),0),&dir,NULL,NULL);
+        dir=q3ne_scale(dir,-1);
+        float front=q3ne_dot(dir,axis[0]),left=q3ne_dot(dir,axis[1]),up=q3ne_dot(dir,axis[2]);
+        float distance=fmaxf(0.1f,q3ne_length(qa_v3(front,left,0)));
+        g->roll=(kick * left); g->pitch=-(kick * front);
+        front=fmaxf(front,0.1f); g->x=(-left / front); g->y=(up / distance);
+    }
+    g->x=q3nh_clamp(g->x,-1,1); g->y=q3nh_clamp(g->y,-1,1);
+    g->value=kick; g->kick_end_time=q3ne_plus(client_time,500); g->time=(float)server_time;
+}
+qa_vec3 q3n_damage_feedback_angles(const q3n_damage_feedback *g,int32_t time,qa_vec3 angles)
+{
+    if(g->time!=0) {
+        float delta=((float)time + -g->time),ratio;
+        if(delta<100)ratio=(delta / 100);
+        else ratio=(1 + -((delta + -100) / 400));
+        if(delta<100 || ratio>0) {
+            angles.x=(angles.x + (ratio * g->pitch));
+            angles.z=(angles.z + (ratio * g->roll));
+        }
+    }
+    return angles;
+}
 static void damage(q3n_player_state *o,const q3n_frame *f,const qa_q3_player *p,const qa_q3_player *snapshot,int32_t server_time)
 {
+    q3n_damage_feedback damage;
+    q3n_damage_feedback_latch(&damage,f->time,server_time,snapshot->stats[0],
+        p->damageYaw,p->damagePitch,p->damageCount,f->refdef.axis);
     q3n_player_feedback *g=&o->feedback;
-    g->attacker_time=f->time;
-    float scale=snapshot->stats[0]<40?1:(40 / (float)snapshot->stats[0]);
-    float kick=q3nh_clamp(((float)p->damageCount * scale),5,10);
-    if(p->damageYaw==255 && p->damagePitch==255) {
-        g->damage_x=g->damage_y=g->damage_roll=0; g->damage_pitch=-kick;
-    } else {
-        qa_vec3 dir; q3nh_vectors(qa_v3((((float)p->damagePitch / 255) * 360),
-            (((float)p->damageYaw / 255) * 360),0),&dir,NULL,NULL);
-        dir=q3ne_scale(dir,-1);
-        float front=q3ne_dot(dir,f->refdef.axis[0]),left=q3ne_dot(dir,f->refdef.axis[1]),up=q3ne_dot(dir,f->refdef.axis[2]);
-        float distance=fmaxf(0.1f,q3ne_length(qa_v3(front,left,0)));
-        g->damage_roll=(kick * left); g->damage_pitch=-(kick * front);
-        front=fmaxf(front,0.1f); g->damage_x=(-left / front); g->damage_y=(up / distance);
-    }
-    g->damage_x=q3nh_clamp(g->damage_x,-1,1); g->damage_y=q3nh_clamp(g->damage_y,-1,1);
-    g->damage_value=kick; g->damage_kick_end_time=q3ne_plus(f->time,500); g->damage_time=(float)server_time;
+    g->attacker_time=damage.attacker_time; g->damage_kick_end_time=damage.kick_end_time;
+    g->damage_x=damage.x; g->damage_y=damage.y; g->damage_roll=damage.roll;
+    g->damage_pitch=damage.pitch; g->damage_value=damage.value; g->damage_time=damage.time;
 }
 static bool selected_ammo(q3n_player_state *o,const q3n_frame *f,bool *selected,qa_error *e)
 {

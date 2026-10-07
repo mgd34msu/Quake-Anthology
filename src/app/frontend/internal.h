@@ -14,6 +14,7 @@
 #include "qa/q3_presentation.h"
 #include "qa/q3_key.h"
 #include "qa/application_q3_client.h"
+#include "../../presentation/q3_native/player_state.h"
 #include "qa/persistence_content.h"
 #include "qa/tools.h"
 #include "qa/http.h"
@@ -168,6 +169,12 @@ typedef struct frontend_seat {
     qa_scene_vec4 q1_blend;
     qa_actor_id q1_view_actor;
     bool q1_view_ready, q1_chase;
+    q3n_damage_feedback q3_damage;
+    qa_actor_id q3_damage_actor;
+    qa_actor_owner q3_damage_provider;
+    uint64_t q3_damage_map;
+    uint32_t q3_damage_spawn;
+    int32_t q3_damage_event, q3_damage_time;
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
     qa_hud_value q2_vitals[3];
