@@ -327,3 +327,41 @@ and cleaned up its owned processes. Both CPU targets remain open.
 Evidence: `qa-the196-vector-return-plan-k1c6k8xn/paired-result.json`.
 These performance runs do not by themselves prove live GL resident
 texture changes or qualify installation of the candidate.
+
+### Policy checks and installation
+
+The exact `31b55a7a` candidate passed native Q2 rerelease base1 checks in
+CPU and GPU0 GL with fresh copies of the 34 owner settings files. Each
+route captured the untouched baseline, changed `gl_texturemode` through
+the real console, restored `r_textureMode`, captured the resulting world
+frames and quit normally with zero. The original profile and candidate
+files stayed unchanged; recorded owned processes were absent after cleanup.
+
+CPU observations confirmed actual drawn WALL sampler changes, with UI and
+SKY retaining literal filters. GL observations confirmed actual min/mag
+`TexParameteri` calls and the same resident world texture changing and
+restoring. These API calls are not an independent driver-state query.
+Root viewed all six completed-world PNGs. No SKIN image was sampled in
+these retained banks, so that category remains unqualified.
+
+The three files were installed through `tools/install_qualified_build.py`
+at 18:31:29 CDT from the build completed at 18:09:39 CDT. The installer
+recorded byte equality for the executable and both native companions.
+THE-843 is In Review; THE-196 remains In Progress. Slack received the
+new-build note with the remaining CPU targets stated explicitly.
+
+Evidence: `qa-private-av-noh7h37y` for CPU,
+`qa-private-av-jmlzmtmq` for GL, and
+`installed-m0-common-texture-mode-20261007.json` for installation.
+Three earlier observer attempts were unqualified and remain retained:
+`u8zjpqcb` rejected a symlink-containing input directory before launch,
+`fem9_2c4` lost its cached world-view record, and `9lw1f3_a` rejected a
+stale observer target. No production fix was made for these fixture errors.
+
+A separate Original Q3 CPU attempt, `qa-private-av-uk0py81z`, loaded
+Source image entries but did not qualify: the observer read the ordinary
+frontend frame after Source commands had retired. Loaded image metadata
+alone does not prove Source gameplay sampling. The Source-specific policy
+still precedes ordinary image handling in code; live Source policy proof
+remains a separate gap. These checks do not establish every game's,
+remote play's or combined mode's complete filtering behavior.
