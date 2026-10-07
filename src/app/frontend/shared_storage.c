@@ -1,6 +1,4 @@
 #include "shared_storage.h"
-#include "qa/console_cvar_observer.h"
-#include "qa/cvars_alias.h"
 #include "shared_register.h"
 #include "save_private.h"
 #include "qa/json.h"
@@ -59,8 +57,7 @@ static bool image_owned(const frontend_shared_storage *owner,const qa_resource *
 bool frontend_shared_storage_current(const frontend_shared_storage *owner,
     qa_settings_store user,qa_settings_store devices,qa_settings_store input,bool graphical)
 {
-    return owner && owner->graphical==graphical && store_valid(user) && store_valid(devices) && input_valid(input) &&
-        store_valid(owner->user) && store_valid(owner->devices) && input_valid(owner->input) &&
+    return owner && owner->graphical==graphical &&
         qa_fs_root_same_object(qa_vfs_mount_root(owner->user.vfs,owner->user.mount),qa_vfs_mount_root(user.vfs,user.mount)) &&
         qa_fs_root_same_object(qa_vfs_mount_root(owner->devices.vfs,owner->devices.mount),qa_vfs_mount_root(devices.vfs,devices.mount)) &&
         same_store(owner->input,input);
@@ -191,43 +188,21 @@ static bool archive_capture(const qa_cvars *registry,bool player,qa_cvar_archive
 bool frontend_shared_storage_seed_player(const frontend_shared_storage *owner,qa_cvars *shared,
     uint32_t seat,bool preserve_current,qa_cvar_archive *archive,qa_error *e)
 {
-    if (!owner || !shared || !archive) return fail(e,"Player archive requires its actual canonical table and seat");
     qa_cvars *view=player_view(shared,seat,e);
     if (!view) return false;
-    for (size_t i=0;i<owner->canonical.count;++i) {
-        const qa_cvar_archive_entry *entry=owner->canonical.entries+i;
-        const qa_cvar_view *row=qa_cvars_find(view,entry->name);
-        if ((row && row->player_scoped) || strcmp(qa_cvars_canonical_name(view,entry->name),entry->name)) {
-            qa_cvars_destroy(view); return fail(e,"Global canonical archive contains a player setting or alias");
-        }
-    }
     const qa_cvar_archive *saved=frontend_shared_storage_player_archive(owner,seat);
-    bool ok=true;
-    for (size_t i=0;saved && ok && i<saved->count;++i) {
-        const qa_cvar_archive_entry *entry=saved->entries+i;
-        const qa_cvar_view *row=qa_cvars_find(view,entry->name);
-        ok=row && row->player_scoped && !strcmp(qa_cvars_canonical_name(view,entry->name),entry->name);
-        if (!ok) fail(e,"Player canonical archive contains a global setting or alias");
-    }
-    if (ok) ok=archive_merge(archive,saved,e);
+    bool ok=archive_merge(archive,saved,e);
     if (ok && preserve_current) ok=archive_capture(view,true,archive,e);
     qa_cvars_destroy(view); return ok;
 }
 bool frontend_shared_storage_apply_players(const frontend_shared_storage *owner,qa_cvars *shared,qa_error *e)
 {
-    if (!owner || !shared) return fail(e,"Player restore requires its actual canonical table and settings root");
     for (size_t i=0;i<owner->player_count;++i) {
         const storage_player *row=owner->players+i;
         qa_cvars *view=player_view(shared,row->seat,e);
         if (!view) return false;
-        qa_cvar_archive checked={0};
-        bool ok=frontend_shared_storage_seed_player(owner,view,row->seat,false,&checked,e);
-        qa_cvars_edit *edit=qa_cvars_prepared_edit(view);
-        bool entered=ok && edit && qa_cvars_edit_enter(edit,view,e);
-        if (ok && edit && !entered) ok=false;
-        if (ok) ok=qa_cvar_archive_apply(view,&checked,e);
-        if (entered && !qa_cvars_edit_leave(edit,view,e)) ok=false;
-        qa_cvar_archive_free(&checked); qa_cvars_destroy(view);
+        bool ok=qa_cvar_archive_apply(view,&row->archive,e);
+        qa_cvars_destroy(view);
         if (!ok) return false;
     }
     return true;
@@ -295,8 +270,6 @@ static bool view_load(frontend_shared_storage *owner,qa_error *e)
 bool frontend_shared_storage_load_devices(const frontend_shared_storage *owner,
     qa_cvar_archive *out,qa_error *e)
 {
-    if (!owner || !out || out->entries || out->count || !store_valid(owner->devices))
-        return fail(e,"Fresh input preferences require their retained actual device store");
     static const char *const input_owner[]={"input","devices"};
     return qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,out,e);
 }
@@ -315,7 +288,6 @@ bool frontend_shared_storage_open(qa_settings_store user,qa_settings_store devic
     bool found=false;
     static const char *const input_owner[]={"input","devices"};
     bool ok=owner->user.vfs && owner->devices.vfs && (!input.vfs || owner->input.vfs) &&
-        frontend_shared_storage_current(owner,user,devices,input,graphical) &&
         canonical_load(owner,e) &&
         (owner->canonical_present || !graphical || qa_settings_read(owner->user,"settings/images.cfg",&owner->images,&found,e)) &&
         (owner->canonical_present || qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,&owner->archive,e)) &&
@@ -330,9 +302,9 @@ bool frontend_shared_storage_open(qa_settings_store user,qa_settings_store devic
 }
 bool frontend_shared_storage_adopt_input(frontend_shared_storage *owner,qa_settings_store input,qa_error *e)
 {
-    if (!owner || !store_valid(input) || !store_valid(owner->user) || !store_valid(owner->devices))
+    if (!store_valid(input))
         return fail(e,"Sticky preference adoption requires the real global and selected product stores");
-    if (owner->input.vfs) return (store_valid(owner->input) && same_store(owner->input,input)) ||
+    if (owner->input.vfs) return same_store(owner->input,input) ||
         fail(e,"Sticky product preference authority cannot be replaced");
     frontend_shared_storage *pending=calloc(1,sizeof(*pending));
     if (!pending) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining sticky product preference admission");
@@ -363,8 +335,6 @@ bool frontend_shared_storage_adopt_input(frontend_shared_storage *owner,qa_setti
 }
 bool frontend_shared_storage_input(const frontend_shared_storage *owner,qa_settings_store *out)
 {
-    if (!owner || !out || !store_valid(owner->user) || !store_valid(owner->devices) ||
-        !input_valid(owner->input)) return false;
     *out=owner->input; return true;
 }
 qa_bytes frontend_shared_storage_images(const frontend_shared_storage *owner)
@@ -402,22 +372,19 @@ static bool selected_seat(const uint32_t *seats,size_t count,uint32_t seat)
 bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_cvars *shared,qa_error *e)
 {
     size_t actual=qa_cvars_player_count(shared);
-    if (!owner || !shared || !store_valid(owner->user) || !qa_cvars_observer_idle(shared) ||
-        owner->player_count>SIZE_MAX/sizeof(storage_player) || actual>SIZE_MAX/sizeof(storage_player)-owner->player_count)
-        return fail(e,"Canonical settings save requires its returned table and actual player identities");
+    if (owner->player_count>SIZE_MAX/sizeof(storage_player) || actual>SIZE_MAX/sizeof(storage_player)-owner->player_count)
+        return frontend_fail(e,QA_ERROR_MEMORY,"Canonical player archives exceed native storage");
     size_t selected_count=0,selected_capacity=actual;
     uint32_t *selected=selected_capacity?malloc(selected_capacity*sizeof(*selected)):NULL;
     if (selected_capacity && !selected) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining canonical player identities");
-    bool ok=true;
-    for (size_t i=0;ok && i<actual;++i) {
+    for (size_t i=0;i<actual;++i) {
         uint32_t seat=0;
-        ok=qa_cvars_player_at(shared,i,&seat);
-        if (!ok) fail(e,"Canonical player identity left its returned table");
-        else if (!selected_seat(selected,selected_count,seat)) selected[selected_count++]=seat;
+        (void)qa_cvars_player_at(shared,i,&seat);
+        if (!selected_seat(selected,selected_count,seat)) selected[selected_count++]=seat;
     }
     qa_cvar_archive global={0}; size_t capacity=owner->player_count+selected_count;
     storage_player *players=capacity?calloc(capacity,sizeof(*players)):NULL; size_t used=0;
-    ok=ok && (!capacity || players) && archive_capture(shared,false,&global,e);
+    bool ok=(!capacity || players) && archive_capture(shared,false,&global,e);
     if (!players && capacity) frontend_fail(e,QA_ERROR_MEMORY,"Capturing canonical player settings");
     for (size_t i=0;ok && i<owner->player_count;++i) {
         if (selected_seat(selected,selected_count,owner->players[i].seat)) continue;
@@ -451,7 +418,7 @@ bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_cvar
 bool frontend_shared_storage_save_audio(frontend_shared_storage *owner,
     const frontend_shared_audio_preferences *value,qa_error *e)
 {
-    if (!owner || !owner->graphical || !store_valid(owner->input) || !value || !format_valid(value->format) || !isfinite(value->effects) ||
+    if (!format_valid(value->format) || !isfinite(value->effects) ||
         value->effects<0 || value->effects>1 || !isfinite(value->music) || value->music<0 || value->music>1 ||
         (value->device && !*value->device) || !frontend_shared_menu_track_valid(value->menu_track))
         return fail(e,"Invalid published shared audio preferences");
@@ -468,7 +435,7 @@ bool frontend_shared_storage_save_audio(frontend_shared_storage *owner,
 bool frontend_shared_storage_save_view(frontend_shared_storage *owner,
     const frontend_shared_view_preferences *value,qa_error *e)
 {
-    if (!owner || !owner->graphical || !store_valid(owner->input) || !value || !view_valid(*value))
+    if (!view_valid(*value))
         return fail(e,"View save requires its actual published explicit preference");
     if (!value->present) return true;
     qa_json_writer writer={0}; qa_json_writer_object(&writer);
