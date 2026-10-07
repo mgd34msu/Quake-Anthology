@@ -375,3 +375,62 @@ pass, but the combined QASV restore fails with a captured player-archive
 canonical-table/settings-root rejection in `/tmp/qa-private-av-68cn9khr`.
 That bundle preserves both coexisting save files and the failed restore.
 No combined-save load pass is claimed.
+
+## Combined save restore and Q3 notify proof at 15:01 install
+
+This record supersedes the failed restore and uninstalled notify status
+above. The 1ff8f190 candidate was built at 14:59:06 CDT and installed at
+15:01:38 through `tools/install_qualified_build.py`. Receipt:
+`installed-m0-custom-restore-notify-20261007.json`. Exact candidate
+`/tmp/qa-private-av-v_c34dzi/qualification.json` passed stock and combined
+gameplay, public load/resave and normal quit with copied owner settings.
+The qualified installation contains the shared bot diagnostic fix
+cb59918d and rejected-console-line fix bc3315ea as well.
+
+THE-588 shipped repetition is `/tmp/qa-private-av-1vkd4s_o`. In the same
+private profile, `autosave-q1-classic-id1.sav` is 40,570 bytes of original
+v5 text and `autosave-custom-q1-classic-id1.sav` is 290,717 bytes of QASV.
+The vanilla bytes remain exactly unchanged after combined launch. Public
+load in each file's own mode replaces the actual world/session, retains
+the intended providers and resumes completed gameplay. Public resaves
+remain v5 and QASV respectively. The combined session uses Q1 classic
+start, Q3 movement/Ranger/weapons and Q2 rerelease monsters. Both launches
+quit normally with code zero. Root opened the stock and combined restored
+gameplay PNGs. Package pins and the original 34 owner settings files are
+unchanged; all owned processes are cleaned up. This is functional
+debugger-attached proof, with no audio or performance claim.
+
+Restore corrections are 328c6ee8, 63720db4, 3e4d5fcc and 1ff8f190.
+Restored seat archives no longer compare against the old frontend cvar
+table; map callback binding does not rerun fresh-rule initialization;
+compacted resource IDs retain their saved serials; restored Q3 inventory
+can reconnect its imported leases before the restore flag is cleared.
+No save fields, asset bytes, fingerprints or user-facing formats were added.
+The actual shared serial parser preserves IDs 64,65,66,67,84,85 and chooses
+86 next, with overflow rejected.
+
+Failure-return count across the seven changed restore files versus the
+9ccde2b3 installation: zero added and two removed, 481 to 479 source lines
+matching `return fail`, `return *_fail` or `application_fault`. Four
+existing valid-state rejection conditions were narrowed. The scope excludes
+unrelated protected save work and is not a runtime reachability count.
+Full method and removed sites are retained in
+`/tmp/qa-the588-proof-20261007/persistence-failure-path-count.json`.
+THE-588 is In Review. Separate M9 THE-595 tracks original v5 import from a
+custom session; this round proves each file in its own mode only.
+
+THE-586 shipped Q3 GL notify proof is `/tmp/qa-private-av-aokb_1oj`.
+`THE586-ordinary-notify-lines.png` visibly shows the two genuine public
+echo outputs on separate ordinary notify rows, and the actual console draw
+contains both eligible row sequences. Startup bot and renderer diagnostic
+rows are also separate. The private route sets `con_notifytime 30` and
+uses a real F8 binding after closing the console, then captures before
+another console toggle clears notify. These overrides affect only the
+copied profile. Actual SDL output is captured privately, world frames
+advance, public quit returns zero, and package/profile pins and owned
+cleanup pass. Root opened the PNG. THE-586 is In Review; the supervisor
+has closed THE-587 after its four-case proof.
+
+The same Q3 route proves stock 1023-byte command truncation and dispatch
+of both valid suffix commands exactly once. THE-145's non-Q3 rejection
+cases still need their live checks before its final review transition.
