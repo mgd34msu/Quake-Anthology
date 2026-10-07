@@ -623,6 +623,8 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
   unsigned mip_shift = second->mip - first->mip;
   float blend = (float)surface->mip_blend;
   uint32_t remaining = span->count;
+  cpu_fog_span fog = {0};
+  uint32_t fog_left = 0;
   while (remaining) {
     depth = first_depth + depth_step * (float)(span->count - remaining);
     uint32_t count = remaining >= 8 ? 8 : remaining;
@@ -638,12 +640,11 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
     int64_t next_t = fixed_texel(tdivw * reciprocal, first->height, 8);
     int64_t ds = remaining ? (next_s - s) >> 3 : advance ? (next_s - s) / advance : 0;
     int64_t dt = remaining ? (next_t - t) >> 3 : advance ? (next_t - t) / advance : 0;
-    cpu_fog_span fog = {0};
-    uint32_t fog_end = 0;
     for (uint32_t i = 0; i < count; ++i, ++index, depth += depth_step) {
-      if (surface->fog.enabled && i == fog_end) {
-        fog = cpu_fog_span_prepare(&surface->fog, fog_q + qdx * (float)i, qdx, count - i);
-        fog_end = i + fog.count;
+      if (surface->fog.enabled && !fog_left) {
+        fog = cpu_fog_span_prepare(&surface->fog, fog_q + qdx * (float)i, qdx,
+                                   remaining + count - i);
+        fog_left = fog.count;
       }
       float written_depth = depth < 0 ? 0 : depth > 1 ? 1 : depth;
       if (written_depth <= buffer->depth[index]) {
@@ -687,7 +688,10 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
         buffer->depth[index] = written_depth;
         if (statistics) ++written;
       }
-      if (surface->fog.enabled) cpu_fog_span_step(&fog);
+      if (surface->fog.enabled) {
+        cpu_fog_span_step(&fog);
+        --fog_left;
+      }
       s += ds; t += dt;
     }
     s = next_s; t = next_t;
