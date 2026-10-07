@@ -153,18 +153,18 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
         owner->preparation || owner->notifying || !qa_cvars_observer_idle(owner->registry))
         return fail(e,"Q1 view settings require their returned published canonical parent");
     const char *const names[]={"viewsize","cl_sbar","chase_active","chase_back","chase_up","chase_right"};
+    const char *canonical[6];
     double numbers[6];
     for (size_t i=0;i<6;++i) {
-        const qa_cvar_view *row=qa_cvars_find(owner->registry,names[i]); bool canonical=false;
-        for (size_t j=0;row && j<qa_cvars_count(owner->registry);++j)
-            if (row==qa_cvars_at(owner->registry,j)) { canonical=true; break; }
-        if (!canonical || !isfinite(row->number))
+        canonical[i]=qa_cvars_canonical_name(owner->registry,names[i]);
+        const qa_cvar_view *row=qa_cvars_find(owner->registry,canonical[i]);
+        if (!row || strcmp(row->name,canonical[i]) || !isfinite(row->number))
             return fail(e,"Q1 view settings lost an actual finite canonical record");
         numbers[i]=row->number;
     }
     if (numbers[0]<30 || numbers[0]>120) {
         const char *value=numbers[0]<30?"30":"120";
-        if (!qa_cvars_set(owner->registry,"viewsize",value,false,e)) return false;
+        if (!qa_cvars_set(owner->registry,canonical[0],value,false,e)) return false;
         numbers[0]=numbers[0]<30?30:120;
     }
     *out=(frontend_q1_view_settings){.size=numbers[0],
