@@ -155,6 +155,7 @@ typedef struct cvar_projection_context {
 } cvar_projection_context;
 struct qa_cvars {
     qa_cvar_options options;
+    bool canonical_root;
     cvar_store *store;
     struct qa_cvars *next_view;
     struct qa_cvars_edit *entered_edit, *candidate_edit;

@@ -1043,7 +1043,7 @@ void qa_cvars_destroy(qa_cvars *registry)
 
 qa_console_dialect qa_cvars_dialect(const qa_cvars *registry)
 {
-    if (registry->options.role!=QA_CVAR_ROLE_ENGINE) return registry->options.dialect;
+    if (!registry->canonical_root || registry->options.role!=QA_CVAR_ROLE_ENGINE) return registry->options.dialect;
     qa_cvars_edit *edit=qac_cvars_current_edit(registry);
     return edit?edit->active_dialect:registry->store->active_dialect;
 }

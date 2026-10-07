@@ -112,7 +112,7 @@ bool qa_cvars_set_video_resolver(qa_cvars *registry, qa_cvar_video_resolver reso
 qa_cvar_options qac_cvars_view_options(const qa_cvars *registry,const cvar_values *values)
 {
     qa_cvar_options options=registry->options;
-    if (options.role==QA_CVAR_ROLE_ENGINE) {
+    if (registry->canonical_root && options.role==QA_CVAR_ROLE_ENGINE) {
         const qa_cvars_edit *edit=registry->store->edit;
         options.dialect=edit && values && values->canonical_values==&edit->values
             ? edit->active_dialect:registry->store->active_dialect;
@@ -781,7 +781,8 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
         qac_fail(error, QA_ERROR_MEMORY, "cvar view identities exhausted"); return NULL;
     }
     registry->view_identity = ++next_view_identity; registry->references = 1;
-    registry->options = *options; registry->store = store; registry->values.cheats = true;
+    registry->options = *options; registry->canonical_root=true;
+    registry->store = store; registry->values.cheats = true;
     store->active_dialect = options->dialect; store->references = 1;
     store->views = store->last_view = registry;
     if (!qac_cvars_index_reserve(registry, &store->values, qa_cvar_catalog_binding_count, error) ||
