@@ -1208,6 +1208,7 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
         body->origin = point.origin;
         if (source_point) *source_point = point.actor;
         body->angles = point.angles;
+        body->velocity = qa_v3(0, 0, 0);
         *found = true;
         return true;
     }
@@ -1243,8 +1244,8 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
         if (!qa_world_body_read(application->world, fallback->point.actor, &pose, error)) return false;
         body->origin = pose.origin;
         body->angles = pose.angles;
-        body->velocity = qa_v3(0, 0, 0);
     }
+    body->velocity = qa_v3(0, 0, 0);
     body->origin.z += roster->family == QA_BSP_Q3 ? 9 : 1;
     *found = true;
     return true;
