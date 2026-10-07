@@ -284,6 +284,13 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     frame->commands = data;
     if (copied.kind == QA_SCENE_COMMAND_DRAW) {
         qa_scene_draw *draw = &copied.data.draw;
+        qa_scene_fog *fog = &draw->fog;
+        if ((fog->kind == QA_FOG_CONSTANT && fog->amount == 0) ||
+            (fog->kind == QA_FOG_EXP2 && (fog->effect == QA_FOG_NO_EFFECT ||
+             (fog->density == 0 && (fog->effect == QA_FOG_COLOR ||
+              fog->effect == QA_FOG_RGB || fog->effect == QA_FOG_ALPHA ||
+              fog->effect == QA_FOG_RGBA)))))
+            fog->kind = QA_FOG_NONE;
         if (draw->texture_count > 2 || (draw->mesh.identity != 0 && draw->mesh.geometry == NULL) ||
             !material_source_vertex_storage_valid(draw) ||
             (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||

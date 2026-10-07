@@ -1,5 +1,52 @@
 # CPU fog spans and remaining Q2 rerelease frame cost
 
+## Zero-density fog follow-up, THE-566
+
+Classic Q1's zero-density fog still selected fog fitting and generic fragment
+shading. `qa_scene_frame_emit` now classifies inactive fog once on the copied
+draw packet, before either renderer consumes it. Zero-amount CONSTANT,
+EXP2 NO_EFFECT and zero-density EXP2 COLOR/RGB/ALPHA/RGBA become NONE.
+OVERLAY, negative/nonzero density, Q2 global fog packets and the retained
+numeric fog state are preserved. There is no new per-span or per-pixel check.
+
+The qualified installed `3765bb6b` baseline and candidate differ only by this
+shared draw classification in production code. Eight sequential retail e1m1
+runs used the same copied 34 owner settings, private Xvfb/Openbox,
+affinity `0-7,12-19`, no audio, debugger, profiler or concurrent build.
+Each sampled 600 completed presents after 817–841 warm presents. Public
+before/after reads matched: caps, swap interval and timedemo zero, FOV 120,
+`r_smp` zero and `r_skyfog` 0.5. The variable NetQuake clock was unchanged.
+
+| Edition | Drawable | Version | Median ms | p99 ms | Render mean ms |
+| --- | --- | --- | ---: | ---: | ---: |
+| Classic | 640×400 | Baseline | 2.913900 | 4.342889 | 2.283963 |
+| Classic | 640×400 | Candidate | 2.502762 | 3.952092 | 1.878036 |
+| Classic | 320×200 | Baseline | 1.903920 | 2.631894 | 1.427964 |
+| Classic | 320×200 | Candidate | 1.717306 | 2.447640 | 1.244356 |
+| Rerelease | 640×400 | Baseline | 3.082919 | 10.465315 | 2.595090 |
+| Rerelease | 640×400 | Candidate | 3.187741 | 10.629399 | 2.673497 |
+| Rerelease | 320×200 | Baseline | 2.117658 | 4.660216 | 1.645971 |
+| Rerelease | 320×200 | Candidate | 2.099753 | 4.651035 | 1.633600 |
+
+Classic medians improved 14.11% and 9.80%. The 320×200 renderer work counters
+match exactly in both editions. At 640×400, live triangle/draw work varies;
+classic span counts match, but the complete workload is not identical.
+These single pairs support no gain on fogged rerelease: its 640×400 median
+increased 3.40%, and its 320×200 reduction is only 0.85%. The rerelease
+320×200 median still misses 2 ms. Its tails also remain above the targets.
+All runs quit normally; all 72 recorded processes were absent afterward,
+and owner settings and build files were unchanged.
+
+Timing evidence: `qa-the566-zero-fog-plan-z6hot_01/paired-result.json`.
+The exact candidate passed the full GCC build, six existing registered checks,
+a strict Clang translation-unit check, and Original Q3 CPU gameplay with a
+fresh copied owner profile and normal public quit. The visible Original
+autosave/recovery ownership error is separately tracked by THE-585; this
+startup/console qualification does not qualify saving. Candidate receipt:
+`qa-private-av-5pfxkaa5/console-qualification.json`.
+
+## Fog-fit carry, installed 3765bb6b
+
 The shared cached-surface shader now retains its existing adaptive fog fit
 across texture subdivisions. Texture coordinates still advance in the original
 eight-pixel fixed-point steps. Every traversed pixel advances fog, including
