@@ -345,7 +345,7 @@ static bool client_think_body(void *opaque, qa_session *session,
     application_control_record *record = &app->controls[call->actor.slot];
     int32_t type, gravity, speed; bool projected_spectator;
     if (!application_native_q3_client_movement_parameters(provider, call->actor,
-        &type, &gravity, &speed, &projected_spectator, error)) return false;
+        true, &type, &gravity, &speed, &projected_spectator, error)) return false;
     if (record->state.kind == QA_MOVEMENT_Q3) {
         record->state.data.q3.movement_type = type;
         record->state.data.q3.gravity = gravity;

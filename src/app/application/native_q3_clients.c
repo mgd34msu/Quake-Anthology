@@ -1473,32 +1473,42 @@ bool application_native_q3_client_spectator_buttons(application_provider *provid
 }
 
 bool application_native_q3_client_movement_parameters(application_provider *provider,
-    qa_actor_id actor, int32_t *pm_type, int32_t *gravity, int32_t *speed,
+    qa_actor_id actor, bool source_client, int32_t *pm_type, int32_t *gravity, int32_t *speed,
     bool *spectator, qa_error *error)
 {
     uint32_t slot;
-    qa_q3_client_session sess;
-    qa_q3_player_state player;
     qa_combat_state combat;
     qa_application *app = provider ? provider->application : NULL;
     bool selected = app && application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") == provider;
     if (!pm_type || !gravity || !speed || !spectator || !app || app->destroy_requested ||
         provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending ||
+        (!source_client && !selected) ||
         !qa_actors_get(qa_session_actors(app->session), actor) ||
-        (!selected && !source(provider, actor, &slot, error)) ||
-        !qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
         actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
         !qa_actor_id_equal(app->controls[actor.slot].actor, actor) ||
-        !session(provider, actor, &sess, error) ||
-        !qa_q3_player_read(provider->state.q3, actor, &player) ||
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
     application_control_record *control = &app->controls[actor.slot];
     bool foreign = control->state.kind != QA_MOVEMENT_Q3;
+    bool noclip;
     qa_q3_wire_policy policy = {0};
-    if (foreign && !qa_q3_wire_player_policy_read(provider->state.q3, actor, &policy, error)) return false;
-    *spectator = sess.team == 3;
+    if (source_client) {
+        qa_q3_client_session sess;
+        qa_q3_player_state player;
+        if (!source(provider, actor, &slot, error) ||
+            !session(provider, actor, &sess, error) ||
+            !qa_q3_player_read(provider->state.q3, actor, &player) ||
+            (foreign && !qa_q3_wire_player_policy_read(provider->state.q3, actor, &policy, error)))
+            return false;
+        *spectator = sess.team == 3;
+        noclip = player.noclip;
+    } else {
+        if (foreign) return application_fail(error, QA_ERROR_ARGUMENT,
+            "Selected Q3 movement requires its actual Q3 control state");
+        *spectator = control->state.data.q3.movement_type == 2;
+        noclip = control->state.data.q3.movement_type == 1;
+    }
     if (*spectator) {
         *pm_type = 2;
         *speed = 400;
@@ -1507,31 +1517,29 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         float gravity_value, speed_value;
         if (!application_native_q3_settings_number(provider, "g_gravity", &gravity_value, error) ||
             !application_native_q3_settings_number(provider, "g_speed", &speed_value, error)) return false;
-        *pm_type = player.noclip ? 1 : combat.health <= 0 ? 3 : 0;
+        *pm_type = noclip ? 1 : combat.health <= 0 ? 3 : 0;
         *gravity = qa_source_float_to_i32(gravity_value);
         *speed = qa_source_float_to_i32(speed_value);
         application_provider *equipment = application_provider_for(app, actor, QA_ROLE_EQUIPMENT, "");
-        application_provider *speed_owner = provider;
-        qa_q3_player_state speed_player = player;
         if (!equipment || !equipment->constructed || !equipment->attached || equipment->close_pending)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 movement lost its selected equipment owner");
         if (equipment->kind == APPLICATION_PROVIDER_Q3) {
+            qa_q3_player_state speed_player;
             if (!equipment->state.q3 ||
                 !qa_q3_player_read(equipment->state.q3, actor, &speed_player) ||
                 !(speed_player.selections & QA_Q3_EQUIPMENT))
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 movement lost its selected equipment state");
-            speed_owner = equipment;
+            double multiplier = equipment->product && !strcmp(equipment->product->campaign, "missionpack") &&
+                speed_player.persistent == QA_Q3_P_SCOUT ? 1.5 : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3 : 1.0;
+            if (multiplier != 1.0) {
+                double scaled = *speed * multiplier;
+                *speed = scaled >= -2147483648.0 && scaled < 2147483648.0 ? (int32_t)scaled : INT32_MIN;
+            }
         } else if ((equipment->kind == APPLICATION_PROVIDER_QVM ||
                     equipment->kind == APPLICATION_PROVIDER_NATIVE) &&
                    equipment->component.clock.kind == QA_CLOCK_Q3) {
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "selected guest Q3 equipment has no typed movement speed capability");
-        }
-        double multiplier = speed_owner->product && !strcmp(speed_owner->product->campaign, "missionpack") &&
-            speed_player.persistent == QA_Q3_P_SCOUT ? 1.5 : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3 : 1.0;
-        if (multiplier != 1.0) {
-            double scaled = *speed * multiplier;
-            *speed = scaled >= -2147483648.0 && scaled < 2147483648.0 ? (int32_t)scaled : INT32_MIN;
         }
     }
     if (!foreign) return true;

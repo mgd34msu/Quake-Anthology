@@ -59,7 +59,7 @@ bool application_native_q3_client_think_special(application_provider *, qa_actor
 bool application_native_q3_client_spectator_buttons(application_provider *, qa_actor_id,
     const qa_q3_usercmd *, qa_error *);
 bool application_native_q3_client_movement_parameters(application_provider *, qa_actor_id,
-    int32_t *pm_type, int32_t *gravity, int32_t *speed, bool *spectator, qa_error *);
+    bool source_client, int32_t *pm_type, int32_t *gravity, int32_t *speed, bool *spectator, qa_error *);
 bool application_native_q3_client_deferred(application_provider *, qa_actor_id, bool *, qa_error *);
 bool application_native_q3_source_client_run(void *, qa_actor_id,
     const qa_source_frame *, qa_error *);

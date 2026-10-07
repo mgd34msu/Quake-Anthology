@@ -2122,7 +2122,7 @@ static bool prepare_input(application_move_call *move,
             int32_t type, gravity, speed;
             bool spectator;
             if (!application_native_q3_client_movement_parameters(move->movement,
-                record->actor, &type, &gravity, &speed, &spectator, error)) return false;
+                record->actor, false, &type, &gravity, &speed, &spectator, error)) return false;
             input->state.data.q3.movement_type = type;
             input->state.data.q3.gravity = gravity;
             input->state.data.q3.speed = speed;
