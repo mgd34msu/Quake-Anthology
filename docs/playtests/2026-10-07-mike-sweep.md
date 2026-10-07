@@ -32,11 +32,11 @@ separately and are not counted as new installed-build evidence.
 | THE-153 / MIKE-05 | Q3 mouse snaps back | Original CPU: eight stationary/moving checks pass; other paths pending. |
 | THE-159 / MIKE-06 | Q3 wrong sounds | Original CPU: authored weapon-pickup PCM and output delivery pass; other events pending. |
 | THE-163 / MIKE-07 | Q3 weapon pickup/keys | Original CPU: natural shotgun grant/hide pass; keys/firing and other paths pending. |
-| THE-167 / MIKE-08 | Shareware menu option | Pending. |
-| THE-171 / MIKE-09 | Custom monsters unavailable | Pending. |
-| THE-172 / MIKE-10 | Custom Start crash | Pending. |
+| THE-167 / MIKE-08 | Shareware menu option | CPU/GL actual catalog-backed product menus contain no shareware option. |
+| THE-171 / MIKE-09 | Custom monsters unavailable | CPU/GL list 396 available creatures in 16 rosters; actual Q2RR whole-roster mixed launch succeeds. Per-class/combat coverage excluded. |
+| THE-172 / MIKE-10 | Custom Start crash | Exact reported mix starts/plays/quits on CPU/GL; additional combinations are being checked. |
 | THE-180 / MIKE-11 | Split-screen views/control | Pending. |
-| THE-185 / MIKE-12 | Ported menus | Historical TypeScript reference PNGs retained; current comparison pending. |
+| THE-185 / MIKE-12 | Ported menus | Ten CPU pages visually compared: authored design matches; Sound choice formatting differs. GL/Custom pending. |
 | THE-190 / MIKE-13 | Q2 smoothness/aim/sounds | Pending current qsrc comparison and captured output. |
 | THE-201 / MIKE-15 | Q2 dark video | Pending. |
 | THE-208 / MIKE-16 | Q3 menu startup | FAIL: native CPU and NVIDIA GL Start exit 1 before gameplay; reopened In Progress. |
@@ -58,7 +58,7 @@ separately and are not counted as new installed-build evidence.
 | THE-410 / MIKE-32 | Console cvars/FOV | Pending. |
 | THE-416 / MIKE-33 | Broken Q3 sky | Pending. |
 | THE-423 / MIKE-35 | Q3 death/respawn crash | Pending genuine bot deaths/respawns. |
-| THE-431 / MIKE-36 | Exact mixed-game startup | Pending. |
+| THE-431 / MIKE-36 | Exact mixed-game startup | CPU/GL exact configuration starts, traverses Normal gate and quits 0; actual common camera takes forced angle. |
 | THE-438 / MIKE-37 | Q1 status bar | Pending. |
 
 THE-196 / MIKE-14 and THE-420 / MIKE-34 are already In Progress and are
@@ -139,3 +139,44 @@ checks use explicit public noclip-assisted positioning. Accepted sound
 output and completed rotating item matrices are retained, with unproved
 aim, weapon-effect, quad and other-edition/renderer criteria listed in the
 readouts. Every recorded owned PID is independently absent afterward.
+
+THE-185's `UI/review-cpu-cy19cvdt` bundle compares ten actual CPU 960x600
+pages with retained TypeScript GL references. Artwork/crop, panel/title,
+row/focus geometry and settings clipping match visibly; state/backend and
+conditional-row differences are listed. The retained references lack a
+commit stamp, and image differences do not establish pixel identity. Sound
+has a concrete integer-choice formatting deviation (`22050.000000 Hz`);
+the disabled-audio device row is a separate launch-state difference. The
+enclosing run later stops on an optional per-class-selection helper
+mismatch. Its prior menu captures are retained, without whole-run, enabled
+audio, GL or broad Custom/in-game parity claims.
+
+THE-431's `mixed/cpu` and `mixed/gl` bundles preserve real Custom menu
+selection of Q1 classic `maps/start.bsp`, Q3 movement, Ranger, Q3 weapons,
+Q2 rerelease monsters and single player. Gameplay follows startup debugger
+detach. Keyboard/mouse traversal reaches the Normal gate with entry yaw
+88.939819 degrees; forced-angle revision changes 2 to 4, body/retained
+command/result yaw becomes 90, and the actual common emitted world camera
+is 90.0000025 degrees after teleport and settling. CPU/GL retain 383/464
+accepted cuts. Both public quits return 0. The coordinator inspected the
+configuration and settled world PNGs and checked recorded client processes
+absent. GL uses private Mesa llvmpipe; these audio-disabled functional
+sessions make no sound or performance claim. The unrelated duplicate hall
+message remains visible and is queued as THE-586.
+
+The same batches' THE-167/The-171 UI bundles retain the complete actual
+catalog-backed product/creature tables and visible choices. There is no
+shareware row; 396 available creatures across 16 supported rosters plus two
+default rows make 398 choices. Actual Q2 rerelease whole-roster selection
+is published in the mixed launch. Optional per-class Soldier navigation
+was not completed; combat of every creature is not inferred from availability.
+THE-172 preserves this exact launch with actual Q3 starting inventory,
+while broader world/arsenal combinations remain separate criteria.
+
+A Native Q3 direct-CLI CPU session reaches mouse/pickup/key/firing/FOV and
+visual stages, then public `addbot sarge 5` after travel to q3dm1 exits 1.
+The actual log records `BotAISetupClient: client 1 already setup` and a
+lost physical source binding. This new M0 defect is THE-589, queued after
+the sweep with THE-208/586/587. Prior passing stages are separate evidence;
+no bot-death/respawn or normal-quit pass is claimed for this run. A prior
+different-map PNG is labeled as context, not the closed failure window.
