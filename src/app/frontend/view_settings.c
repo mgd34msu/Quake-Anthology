@@ -18,7 +18,6 @@ struct frontend_view_settings {
     void *context;
     bool (*changed)(void *,double,qa_error *);
     qa_cvar_observer_token observer;
-    size_t handle;
     double value;
     uint64_t modification_count;
     bool explicit_override,published,notifying;
@@ -59,16 +58,7 @@ static bool validate(void *context,const char *value,qa_error *e)
 { (void)context; return decimal(value,NULL,e); }
 static const qa_cvar_view *record(const frontend_view_settings *owner)
 {
-    const qa_cvar_view *row=owner?qa_cvars_handle(owner->registry,owner->handle):NULL;
-    if (!row) return NULL;
-    const char *name=row->name,*expected="fov";
-    while (*name && *expected) {
-        unsigned char letter=(unsigned char)*name++;
-        if (qa_cvars_dialect(owner->registry)==QA_CONSOLE_Q3 && letter>='A' && letter<='Z')
-            letter=(unsigned char)(letter+'a'-'A');
-        if (letter!=(unsigned char)*expected++) return NULL;
-    }
-    return !*name && !*expected?row:NULL;
+    return owner?qa_cvars_find(owner->registry,qa_cvars_canonical_name(owner->registry,"fov")):NULL;
 }
 bool frontend_view_settings_parent_is(const frontend_view_settings *owner,
     const qa_frontend *f,const qa_cvars *registry)
@@ -112,23 +102,24 @@ bool frontend_view_settings_create(qa_frontend *f,qa_cvars *registry,void *conte
     if (!f || !f->application || registry!=qa_application_cvars(f->application) ||
         !out || *out || !changed || !qa_cvars_observer_idle(registry))
         return fail(e,"View settings require the returned canonical registry and real recipient");
-    const qa_cvar_view *row=qa_cvars_find(registry,"fov");
+    const char *name=qa_cvars_canonical_name(registry,"fov");
+    const qa_cvar_view *row=qa_cvars_find(registry,name);
     if (!row) return fail(e,"View settings require their actual registered fov");
     double number;
     if (!decimal(row->value,&number,NULL)) {
-        if (!qa_cvars_set(registry,"fov","90",true,e)) return false;
-        row=qa_cvars_find(registry,"fov"); number=90;
+        if (!qa_cvars_set(registry,name,"90",true,e)) return false;
+        row=qa_cvars_find(registry,name); number=90;
     }
     frontend_view_settings *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining explicit view preference");
     owner->frontend=f; owner->application=f->application; owner->registry=registry;
     owner->installed=out; owner->context=context; owner->changed=changed;
-    owner->handle=row->handle; owner->value=number; owner->modification_count=row->modification_count;
+    owner->value=number; owner->modification_count=row->modification_count;
     owner->explicit_override=number!=90;
-    if (!qa_cvars_bind(registry,"fov",&(qa_cvar_binding){.owner=QA_FRONTEND_COMMAND_OWNER,
+    if (!qa_cvars_bind(registry,name,&(qa_cvar_binding){.owner=QA_FRONTEND_COMMAND_OWNER,
         .user=owner,.validate=validate},e)) { free(owner); return false; }
-    if (!qa_cvars_observe(registry,"fov",QA_FRONTEND_COMMAND_OWNER,observed,owner,&owner->observer,e)) {
-        qa_cvars_unbind(registry,"fov",QA_FRONTEND_COMMAND_OWNER); free(owner); return false;
+    if (!qa_cvars_observe(registry,name,QA_FRONTEND_COMMAND_OWNER,observed,owner,&owner->observer,e)) {
+        qa_cvars_unbind(registry,name,QA_FRONTEND_COMMAND_OWNER); free(owner); return false;
     }
     *out=owner; return true;
 }
@@ -531,9 +522,10 @@ static bool prepare(frontend_view_settings *owner,const qa_launch_snapshot *cand
             qa_application_startup_resource_phase(owner->application,candidate)) ||
         !qa_cvars_edit_returned_is(edit,owner->registry))
         return fail(e,"View preparation requires its real publication transition and canonical ticket");
-    const qa_cvar_view *row=qa_cvars_edit_canonical_record(edit,"fov"),*previous=record(owner);
+    const qa_cvar_view *canonical=qa_cvars_edit_canonical_record(edit,"fov");
+    const qa_cvar_view *row=canonical?qa_cvars_edit_find(edit,canonical->name):NULL,*previous=record(owner);
     double number;
-    if (!row || !previous || row->handle!=owner->handle)
+    if (!row || !previous || strcmp(row->name,previous->name))
         return fail(e,"View preparation lost its physical canonical fov record");
     if (!decimal(row->value,&number,e)) return false;
     frontend_view_preparation *held=calloc(1,sizeof(*held));
@@ -570,8 +562,9 @@ bool frontend_view_settings_ready_is(const frontend_view_preparation *held)
                 qa_application_client_prepare_entered(held->client,QA_CLIENT_PREPARE_CONSUMING))):
             (qa_application_startup_resource_phase_associated(owner->application,held->candidate) ||
                 qa_application_startup_publication_consuming(owner->application,held->candidate)))) return false;
-    const qa_cvar_view *row=qa_cvars_edit_canonical_record(held->edit,"fov"),*previous=record(owner);
-    return row && previous && row->handle==owner->handle &&
+    const qa_cvar_view *canonical=qa_cvars_edit_canonical_record(held->edit,"fov");
+    const qa_cvar_view *row=canonical?qa_cvars_edit_find(held->edit,canonical->name):NULL,*previous=record(owner);
+    return row && previous && !strcmp(row->name,previous->name) &&
         row->modification_count==held->modification_count && !strcmp(row->value,held->value) &&
         !strcmp(previous->value,held->previous);
 }
@@ -658,7 +651,7 @@ static void destroy(frontend_view_settings **in)
 {
     frontend_view_settings *owner=*in;
     qa_cvars_unobserve(owner->registry,owner->observer);
-    qa_cvars_unbind(owner->registry,"fov",QA_FRONTEND_COMMAND_OWNER);
+    qa_cvars_unbind(owner->registry,qa_cvars_canonical_name(owner->registry,"fov"),QA_FRONTEND_COMMAND_OWNER);
     if (owner->installed && *owner->installed==owner) *owner->installed=NULL;
     free(owner); *in=NULL;
 }
