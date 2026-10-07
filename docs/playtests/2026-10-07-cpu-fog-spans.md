@@ -45,6 +45,26 @@ autosave/recovery ownership error is separately tracked by THE-585; this
 startup/console qualification does not qualify saving. Candidate receipt:
 `qa-private-av-5pfxkaa5/console-qualification.json`.
 
+A separate offline comparison used actual `qa_scene_frame_emit` and the
+production CPU renderer, with only the baseline/candidate frame object
+changed. Complete RGBA and float-depth buffers matched exactly for 600
+deterministic 64×48 draws, totaling 1,843,200 pixels per version. The 240
+inactive-fog cases also matched their actual NONE reference. Preserved
+OVERLAY, positive/negative EXP2 and active CONSTANT cases differed from NONE
+and matched between versions. The cases include cached brush spans, generic
+triangles, blending, overbright vertices, dynamic-lit models, alpha tests and
+valid unlit preblend gamma. Q2 packets matched between versions; their chosen
+small densities did not visibly alter output, so this is not active Q2 fog
+proof. This is measured CPU output preservation, not GL pixel qualification
+or a universal numerical bound. Evidence:
+`qa-the566-zero-fog-20261007/pixels/result.json`.
+
+Commit `41861a12` was pushed and its exact qualified build installed through
+`tools/install_qualified_build.py` at 2026-10-07 08:12 CDT. Build time was
+07:59 CDT. All three installed native files were byte-equal to the qualified
+SDK outputs. The superseded `1c0ab5dc` binary package was removed after its
+comparisons; the latest qualified `3765bb6b` fallback and prior evidence remain.
+
 ## Fog-fit carry, installed 3765bb6b
 
 The shared cached-surface shader now retains its existing adaptive fog fit
