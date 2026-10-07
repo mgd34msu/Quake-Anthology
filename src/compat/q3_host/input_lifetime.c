@@ -48,15 +48,14 @@ bool q3_bot_entity_number(const q3_call *call,int32_t source,int32_t *out,qa_err
     if(!call->host->options.remapped_bot_namespace) { *out=source;return true; }
     if(source<0 || source>=1024)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 bot source entity is outside its reserved range");
-    qa_actor_id actor=call->host->game?call->host->game->slots[source].actor:(qa_actor_id){0};
-    if(actor.registry && qa_actors_get(qa_session_actors(call->host->options.session),actor))
-        *out=(int32_t)actor.slot;
-    else *out=(int32_t)call->host->options.bot_entity_base+source;
+    *out=(int32_t)call->host->options.bot_entity_base+source;
     return true;
 }
 bool q3_bot_source_entity(const q3_call *call,int32_t canonical,int32_t *out,qa_error *error)
 {
-    if(!call->host->options.remapped_bot_namespace || canonical<0) { *out=canonical;return true; }
+    (void)error;
+    if(!call->host->options.remapped_bot_namespace || canonical<0 || canonical==1022 || canonical==1023)
+        { *out=canonical;return true; }
     uint32_t base=call->host->options.bot_entity_base;
     if((uint32_t)canonical>=base && (uint32_t)canonical-base<1024) {
         *out=(int32_t)((uint32_t)canonical-base);return true;
@@ -66,7 +65,7 @@ bool q3_bot_source_entity(const q3_call *call,int32_t canonical,int32_t *out,qa_
         if(actor.registry && actor.slot==(uint32_t)canonical &&
            qa_actors_get(qa_session_actors(call->host->options.session),actor)) { *out=(int32_t)i;return true; }
     }
-    return q3_fail(error,QA_ERROR_NOT_FOUND,0,"canonical bot entity has no generation-matched source projection");
+    *out=1023;return true;
 }
 
 bool qa_q3_host_detach_actor(qa_q3_host *host, uint32_t number, qa_actor_id actor,
