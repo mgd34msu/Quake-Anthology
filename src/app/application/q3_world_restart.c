@@ -14,17 +14,12 @@
 #include "startup_program.h"
 #include "qa/game_q3_round.h"
 #include "qa/game_q3_source.h"
-#include "qa/cvars_save.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct restart_cvar {
-    char *name, *value, *reset, *latched, *description;
-    uint32_t flags;
-} restart_cvar;
 typedef struct restart_client {
     qa_actor_id actor;
     qa_q3_usercmd command;
@@ -40,12 +35,7 @@ struct application_q3_world_restart {
     application_publication *publication;
     application_native_q3_wire_carry *wire;
     application_bots_original *bots;
-    qa_buffer guest_cvars;
-    qa_buffer native_cvars;
-    uint64_t guest_cvar_owner;
     application_q3_world_startup startup;
-    restart_cvar *cvars;
-    size_t cvar_count;
     restart_client clients[64];
     size_t client_count;
     uint32_t retained_capacity;
@@ -71,7 +61,7 @@ static char *copy_text(const char *text, qa_error *error)
     return copy;
 }
 
-static bool capture_cvars(application_q3_world_restart_state *, qa_error *);
+static bool source_startup_values(application_q3_world_restart_state *, qa_error *);
 
 static qa_cvars *source_cvars(application_provider *provider)
 {
@@ -174,26 +164,11 @@ bool application_q3_world_restart_cvars(qa_application *app,
 {
     application_q3_world_startup startup;
     if (!application_q3_world_restart_source(app, provider, &startup)) return true;
-    application_q3_world_restart_state *state = app->q3_world_restart;
-    /* Original GAME service construction can share the installed registry.
-     * The actual old Shutdown owns its final carry, before new GAME Init. */
-    if (!state->native) return true;
-    if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || provider->attached)
+    if (!cvars || !qa_cvars_same_store(cvars, app->cvars) ||
+        qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || provider->attached)
         return application_fail(error, QA_ERROR_ARGUMENT,
-            "Q3 startup cvars require their fresh candidate registry");
-    for (size_t i = 0; i < state->cvar_count; ++i) {
-        const restart_cvar *saved = &state->cvars[i];
-        if (!strcmp(saved->name, "mapname") || !strcmp(saved->name, "sv_mapname")) continue;
-        if (!qa_cvars_register(cvars, saved->name, saved->reset, saved->flags,
-                provider->owner, saved->description, error) ||
-            !qa_cvars_set(cvars, saved->name,
-                saved->latched ? saved->latched : saved->value, true, error)) return false;
-    }
-    char text[32];
-    snprintf(text, sizeof(text), "%u", startup.max_clients);
-    if (!qa_cvars_set(cvars, "sv_maxclients", text, true, error)) return false;
-    snprintf(text, sizeof(text), "%d", startup.game_type);
-    return qa_cvars_set(cvars, "g_gametype", text, true, error);
+            "Q3 startup cvars require their canonical candidate view");
+    return true;
 }
 
 bool application_q3_world_restart_client(const qa_application *app, qa_actor_id actor,
@@ -218,15 +193,7 @@ bool application_q3_world_restart_client(const qa_application *app, qa_actor_id 
 static void dispose(application_q3_world_restart_state *state)
 {
     application_bots_original_dispose(state->bots);
-    for (size_t i = 0; i < state->cvar_count; ++i) {
-        restart_cvar *cvar = &state->cvars[i];
-        free(cvar->name); free(cvar->value); free(cvar->reset);
-        free(cvar->latched); free(cvar->description);
-    }
-    free(state->cvars);
     application_native_q3_wire_carry_dispose(state->wire);
-    qa_buffer_free(&state->guest_cvars);
-    qa_buffer_free(&state->native_cvars);
     for (size_t i = 0; i < state->client_count; ++i) free(state->clients[i].userinfo);
     qa_launch_snapshot_release(state->launch);
     qa_launch_snapshot_release(state->candidate);
@@ -250,9 +217,8 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
         !state->prepared || state->guest_handed_off || !state->publication ||
         !state->publication->players || cvars != source_cvars(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 handoff has no actual old GAME shutdown");
-    if (!application_bots_original_validate_source(state->bots, provider, cvars, error) ||
-        !application_q3_guest_cvar_owner(provider, &state->guest_cvar_owner, error) ||
-        !qa_cvars_save_capture(cvars, &state->guest_cvars, error)) return false;
+    if (!qa_cvars_same_store(cvars, app->cvars) ||
+        !application_bots_original_validate_source(state->bots, provider, cvars, error)) return false;
     application_player_travel *travel = state->publication->players;
     state->retained_capacity = 0;
     for (size_t i = 0; i < travel->count; ++i) {
@@ -307,17 +273,7 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Q3 Shutdown admitted a new client outside its prepared canonical roster");
     }
-    for (size_t i = 0; i < state->cvar_count; ++i) {
-        restart_cvar *saved = &state->cvars[i];
-        free(saved->name); free(saved->value); free(saved->reset);
-        free(saved->latched); free(saved->description);
-    }
-    free(state->cvars);
-    state->cvars = NULL;
-    state->cvar_count = 0;
-    uint32_t capacity = state->startup.max_clients;
-    if (!capture_cvars(state, error)) return false;
-    state->startup.max_clients = capacity;
+    if (!source_startup_values(state, error)) return false;
     static const qa_mode_kind kinds[] = {QA_MODE_FFA, QA_MODE_DUEL,
         QA_MODE_SINGLE_PLAYER, QA_MODE_TEAM_DEATHMATCH, QA_MODE_CTF,
         QA_MODE_ONE_FLAG, QA_MODE_OVERLOAD, QA_MODE_HARVESTER};
@@ -337,111 +293,49 @@ static bool import_guest_handoff(application_q3_world_restart_state *state,
     application_provider *provider, qa_error *error)
 {
     if (!state->guest_handed_off)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement did not capture its actual Shutdown continuation");
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 replacement did not complete its actual Shutdown continuation");
     qa_cvars *cvars = source_cvars(provider);
-    uint64_t owner;
-    qa_cvars_restore *ticket = NULL;
-    if (!cvars || !application_q3_guest_cvar_owner(provider, &owner, error) ||
-        !qa_cvars_save_prepare(cvars, (qa_bytes){state->guest_cvars.data, state->guest_cvars.size},
-            &ticket, error)) return false;
-    if (!qa_cvars_save_commit(ticket, error)) {
-        qa_cvars_save_abort(ticket);
-        return false;
-    }
-    size_t count = qa_cvars_count(cvars);
-    if (count > SIZE_MAX / sizeof(qa_cvar_record_state))
-        return application_fail(error, QA_ERROR_MEMORY, "Q3 carried cvar metadata is exhausted");
-    qa_cvar_record_state *rows = count ? calloc(count, sizeof(*rows)) : NULL;
-    if (count && !rows)
-        return application_fail(error, QA_ERROR_MEMORY, "cannot qualify Q3 carried cvar ownership");
-    qa_cvar_registry_state registry;
-    bool okay = qa_cvars_capture_metadata(cvars, &registry, rows, count, error);
-    for (size_t i = 0; okay && i < count; ++i) {
-        if (rows[i].owner == state->source->owner) rows[i].owner = provider->owner;
-        else if (rows[i].owner == state->guest_cvar_owner) rows[i].owner = owner;
-    }
-    if (okay) okay = qa_cvars_restore_metadata(cvars, &registry, rows, count, error);
-    free(rows);
-    for (size_t i = 0; okay && i < count; ++i) {
-        const qa_cvar_view *view = qa_cvars_at(cvars, i);
-        if (view->latched_value) okay = qa_cvars_apply_latched(cvars, view->name, error);
-    }
-    char text[32];
-    snprintf(text, sizeof(text), "%u", state->startup.max_clients);
-    if (okay) okay = qa_cvars_set(cvars, "sv_maxclients", text, true, error);
-    const char *map = qa_strings_cstr(qa_session_strings(state->application->session),
-        state->application->current_map);
-    if (okay) okay = map && qa_cvars_set(cvars, "mapname", map, true, error) &&
-        qa_cvars_set(cvars, "sv_mapname", map, true, error);
-    return okay && application_bots_original_validate_source(state->bots, provider, cvars, error);
+    if (!cvars || !qa_cvars_same_store(cvars, state->application->cvars))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 replacement lost its canonical cvar view");
+    return application_bots_original_validate_source(state->bots, provider, cvars, error);
 }
 
-static bool capture_cvars(application_q3_world_restart_state *state, qa_error *error)
+static bool source_startup_values(application_q3_world_restart_state *state, qa_error *error)
 {
     qa_cvars *source = source_cvars(state->source);
-    if (!source || qa_cvars_dialect(source) != QA_CONSOLE_Q3)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement source has no actual cvar registry");
-    size_t count = qa_cvars_count(source);
-    if (count > SIZE_MAX / sizeof(*state->cvars))
-        return application_fail(error, QA_ERROR_MEMORY, "Q3 replacement cvar inventory is exhausted");
-    state->cvars = count ? calloc(count, sizeof(*state->cvars)) : NULL;
-    if (count && !state->cvars)
-        return application_fail(error, QA_ERROR_MEMORY, "cannot retain Q3 replacement source cvars");
-    qa_cvar_options options = {.dialect = QA_CONSOLE_Q3};
-    qa_cvars *resolved = qa_cvars_create(&options, error);
-    if (!resolved) return false;
-    bool okay = true;
-    const qa_cvar_view *view = qa_cvars_next(source, NULL);
-    for (size_t i = 0; okay && i < count; ++i, view = qa_cvars_next(source, view)) {
-        if (!view || !view->name || !view->value || !view->reset_value ||
-            (state->native && view->owner != state->source->owner && view->owner != 0)) {
-            okay = application_fail(error, QA_ERROR_ARGUMENT,
-                "Q3 replacement cvar belongs to another source owner");
-            break;
-        }
-        restart_cvar *saved = &state->cvars[state->cvar_count++];
-        saved->flags = view->flags;
-        saved->name = copy_text(view->name, error);
-        saved->value = copy_text(view->value, error);
-        saved->reset = copy_text(view->reset_value, error);
-        saved->latched = copy_text(view->latched_value, error);
-        saved->description = copy_text(view->description ? view->description : "", error);
-        okay = saved->name && saved->value && saved->reset && saved->description &&
-            (!view->latched_value || saved->latched) &&
-            qa_cvars_register(resolved, saved->name,
-                saved->latched ? saved->latched : saved->value, 0, 0, NULL, error);
-    }
-    const qa_cvar_view *capacity = okay ? qa_cvars_find(resolved, "sv_maxclients") : NULL;
-    const qa_cvar_view *game_type = okay ? qa_cvars_find(resolved, "g_gametype") : NULL;
-    const qa_cvar_view *warmup = okay ? qa_cvars_find(resolved, "g_doWarmup") : NULL;
-    const qa_cvar_view *restarted = okay ? qa_cvars_find(resolved, "g_restarted") : NULL;
-    const qa_cvar_view *dedicated = okay ? qa_cvars_find(resolved, "dedicated") : NULL;
+    qa_cvar_view capacity, game_type, warmup, restarted, dedicated;
+    if (!source || !qa_cvars_same_store(source, state->application->cvars) ||
+        qa_cvars_dialect(source) != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 replacement has no canonical cvar source view");
+    if (!qa_cvars_effective_view(source, "sv_maxclients", &capacity, error) ||
+        !qa_cvars_effective_view(source, "g_gametype", &game_type, error) ||
+        !qa_cvars_effective_view(source, "g_doWarmup", &warmup, error) ||
+        !qa_cvars_effective_view(source, "g_restarted", &restarted, error) ||
+        !qa_cvars_effective_view(source, "dedicated", &dedicated, error)) return false;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(state->launch);
-    if (okay && (!capacity || !game_type || !warmup || !restarted ||
-                 !dedicated || !choices || choices->seat_count > 64))
-        okay = application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement has no complete source startup settings");
-    if (okay) {
-        float number = truncf(capacity->number);
-        float minimum = dedicated->number != 0 ? 1.0f
-            : (float)(choices->seat_count ? choices->seat_count : 1);
-        if (minimum < (float)state->retained_capacity)
-            minimum = (float)state->retained_capacity;
-        if (number < minimum) number = minimum;
-        if (number > 64) number = 64;
-        if (!isfinite(number) || number < 1 || number > 64)
-            okay = application_fail(error, QA_ERROR_FORMAT,
-                "Q3 replacement client capacity must be between 1 and 64");
-        else {
-            state->startup.max_clients = (uint32_t)number;
-            state->startup.game_type = game_type->integer;
-            state->startup.warmup = warmup->integer != 0;
-            state->startup.restarted = restarted->integer;
-            if (state->startup.game_type < 0 || state->startup.game_type > 7)
-                state->startup.game_type = 0;
-        }
-    }
-    qa_cvars_destroy(resolved);
-    return okay;
+    if (!choices || choices->seat_count > 64)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 replacement has no complete source startup settings");
+    float number = truncf(capacity.number);
+    float minimum = dedicated.number != 0 ? 1.0f
+        : (float)(choices->seat_count ? choices->seat_count : 1);
+    if (minimum < (float)state->retained_capacity)
+        minimum = (float)state->retained_capacity;
+    if (number < minimum) number = minimum;
+    if (number > 64) number = 64;
+    if (!isfinite(number) || number < 1 || number > 64)
+        return application_fail(error, QA_ERROR_FORMAT,
+            "Q3 replacement client capacity must be between 1 and 64");
+    state->startup.max_clients = (uint32_t)number;
+    state->startup.game_type = game_type.integer;
+    state->startup.warmup = warmup.integer != 0;
+    state->startup.restarted = restarted.integer;
+    if (state->startup.game_type < 0 || state->startup.game_type > 7)
+        state->startup.game_type = 0;
+    return true;
 }
 
 static bool capture_capacity(application_q3_world_restart_state *state, qa_error *error)
@@ -593,9 +487,6 @@ bool application_q3_world_restart_prepared(qa_application *app,
         for (size_t j = 0; j < app->provider_count; ++j)
             if (publication->next[i] == app->providers[j])
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q3 full replacement retained a gameplay instance");
-    if (state->native &&
-        !application_native_q3_wire_carry_import(publication->map_provider, state->wire, error))
-        return false;
     state->publication = publication;
     state->candidate = publication->candidate;
     if (!state->native &&
@@ -727,51 +618,39 @@ bool application_q3_world_restart_shutdown(qa_application *app,
     if (!reconcile_native_clients(source, travel, error) ||
         !application_native_q3_session_capture_carry(source, error)) return false;
     qa_cvars *cvars = source_cvars(source);
-    if (!cvars || !qa_cvars_save_capture(cvars, &state->native_cvars, error)) return false;
+    if (!cvars || !qa_cvars_same_store(cvars, app->cvars))
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 Shutdown lost its canonical cvar view");
     application_native_q3_wire_carry *final = NULL;
     if (!application_native_q3_wire_carry_capture(source, &final, error)) return false;
-    if (!application_native_q3_wire_carry_refresh(publication->map_provider, final, error)) {
-        application_native_q3_wire_carry_dispose(final);
-        return false;
-    }
     application_native_q3_wire_carry_dispose(state->wire);
     state->wire = final;
     state->native_handed_off = true;
     return true;
 }
 
+bool application_q3_world_restart_constructed(qa_application *app,
+    application_publication *publication, qa_error *error)
+{
+    application_q3_world_restart_state *state = app ? app->q3_world_restart : NULL;
+    if (!state || !state->native) return true;
+    if (!state->prepared || !state->mutated || !state->native_handed_off ||
+        state->publication != publication || !publication->map_provider->constructed ||
+        publication->map_provider->attached)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native wire carry lost its actual post-Shutdown constructor");
+    return application_native_q3_wire_carry_import(publication->map_provider, state->wire, error);
+}
+
 static bool import_native_handoff(application_q3_world_restart_state *state,
     application_provider *provider, qa_error *error)
 {
     qa_cvars *cvars = source_cvars(provider);
-    const qa_cvar_view *map = qa_cvars_find(cvars, "mapname");
-    const qa_cvar_view *server_map = qa_cvars_find(cvars, "sv_mapname");
-    if (!state->native_handed_off || !cvars || provider->owner != state->source->owner ||
-        application_native_q3_settings_initialized(provider) || !map || !server_map)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 replacement has no final source registry handoff");
-    char *map_name = copy_text(map->value, error);
-    char *server_map_name = copy_text(server_map->value, error);
-    qa_cvars_restore *ticket = NULL;
-    bool okay = map_name && server_map_name && qa_cvars_save_prepare(cvars,
-        (qa_bytes){state->native_cvars.data, state->native_cvars.size}, &ticket, error);
-    if (okay) {
-        okay = qa_cvars_save_commit(ticket, error);
-        if (okay) ticket = NULL;
-    }
-    if (ticket) qa_cvars_save_abort(ticket);
-    size_t count = qa_cvars_count(cvars);
-    for (size_t i = 0; okay && i < count; ++i) {
-        const qa_cvar_view *view = qa_cvars_at(cvars, i);
-        if (view->latched_value) okay = qa_cvars_apply_latched(cvars, view->name, error);
-    }
-    char capacity[16];
-    snprintf(capacity, sizeof(capacity), "%u", state->startup.max_clients);
-    if (okay) okay = qa_cvars_set(cvars, "sv_maxclients", capacity, true, error) &&
-        qa_cvars_set(cvars, "mapname", map_name, true, error) &&
-        qa_cvars_set(cvars, "sv_mapname", server_map_name, true, error);
-    free(map_name);
-    free(server_map_name);
-    return okay;
+    if (!state->native_handed_off || !cvars ||
+        !qa_cvars_same_store(cvars, state->application->cvars) ||
+        provider->owner != state->source->owner ||
+        application_native_q3_settings_initialized(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "native Q3 replacement has no actual completed Shutdown");
+    return true;
 }
 
 bool application_q3_world_restart_retired(qa_application *app,
@@ -868,7 +747,7 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
     if (okay) state.startup.initial_time_ns = clock.frame.time_ns;
     if (okay && state.native)
         okay = application_native_q3_session_capture_carry(provider, error);
-    if (okay) okay = capture_capacity(&state, error) && capture_cvars(&state, error) &&
+    if (okay) okay = capture_capacity(&state, error) && source_startup_values(&state, error) &&
         capture_clients(&state, error) && retained(&state, error);
     if (okay && state.native)
         okay = application_native_q3_wire_carry_capture(provider, &state.wire, error);
@@ -884,12 +763,6 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
             qa_launch_snapshot_retain(state.candidate);
             okay = qa_configuration_validate(transaction, error);
         }
-        if (okay)
-            okay = application_startup_publication_prepare(app, state.publication, error);
-        if (okay)
-            okay = application_startup_program_publication_prepare(app, state.publication,
-                &state.publication->programs, error) &&
-                application_startup_program_publication_seal(state.publication->programs, error);
         if (okay) okay = qa_configuration_commit(transaction, error);
         if (okay) transaction = NULL;
         if (transaction) {

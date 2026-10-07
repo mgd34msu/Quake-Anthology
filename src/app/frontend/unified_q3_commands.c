@@ -12,6 +12,7 @@ struct frontend_unified_q3_commands {
     frontend_unified_q3_commands_options options;
     qa_console *console;
     uint64_t receiver;
+    qa_command_context constructor;
     qa_q3_product product;
     size_t installed;
     bool registered, closed, busy, retiring, resetting;
@@ -79,12 +80,20 @@ static bool current(const frontend_unified_q3_commands *o,bool checkpoint,q3n_co
     const qa_command_context *origin=checkpoint?frontend_unified_q3_client_checkpoint_stage_context(o->options.client,
         frontend_unified_q3_runtime_rebind_frame(o->options.runtime)):
         frontend_unified_q3_client_context(o->options.client);
+    const qa_command_context *domain_command=domain?&domain->command_context:NULL;
     if(!domain || domain->application!=o->options.frontend->application || domain->console!=o->console ||
-        actual.basis.receiver!=o->receiver || actual.basis.product!=o->product || !origin ||
-        origin->owner!=o->receiver || origin->session!=domain->command_context.session ||
-        origin->registry!=actual.basis.viewer.registry || origin->generation!=actual.basis.publication ||
-        origin->seat!=actual.basis.physical_seat || origin->dialect!=QA_CONSOLE_Q3 ||
-        !qa_actor_id_equal(origin->actor,actual.basis.viewer))
+        actual.basis.application!=domain->application || actual.basis.registry!=frontend_remote_unified_registry(o->options.replica) ||
+        actual.basis.receiver!=o->receiver || actual.basis.product!=o->product ||
+        actual.basis.seat!=domain->seat.index || actual.basis.physical_seat!=domain->physical_seat || !origin ||
+        origin->owner!=domain_command->owner || origin->session!=domain_command->session ||
+        origin->client!=domain_command->client || origin->seat!=domain_command->seat ||
+        origin->dialect!=domain_command->dialect || origin->origin!=domain_command->origin ||
+        origin->direct!=domain_command->direct || origin->console_text!=domain_command->console_text ||
+        origin->cvar_view!=o->constructor.cvar_view || origin->cvar_view!=qa_cvars_view_identity(domain->cvars) ||
+        origin->cvar_view!=domain_command->cvar_view || origin->registry!=domain_command->registry ||
+        origin->generation!=domain_command->generation || !qa_actor_id_equal(origin->actor,domain_command->actor) ||
+        ((!origin->script)!=(!domain_command->script)) ||
+        (origin->script && strcmp(origin->script,domain_command->script)))
         return fail(e,QA_ERROR_ARGUMENT,"Unified console changed its actual Source receiver namespace");
     if(out)*out=actual;
     return true;
@@ -93,29 +102,35 @@ static bool invocation_current(frontend_unified_q3_commands *o,const qa_command_
 {
     if(!current(o,false,NULL,e))return false;
     const qa_command_context *b=frontend_unified_q3_client_context(o->options.client),*a=&call->context;
+    bool source=a->owner==b->owner && a->cvar_view==b->cvar_view && a->dialect==b->dialect && a->origin==b->origin &&
+        a->client==b->client && a->seat==b->seat && a->registry==b->registry && a->generation==b->generation &&
+        qa_actor_id_equal(a->actor,b->actor);
+    bool engine=!a->owner && a->cvar_view==qa_cvars_view_identity(qa_application_cvars(o->options.frontend->application)) &&
+        qa_console_invocation_delivered_view(call,o->constructor.cvar_view,o->receiver,o->receiver);
     return call->console==o->console && qa_console_invocation_current(o->console,call) &&
-        a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
-        a->dialect==b->dialect && a->origin==b->origin && a->registry==b->registry &&
-        a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) ? true :
+        a->session==b->session && (source||engine) &&
+        qa_application_command_context_active(o->options.frontend->application,a) ? true :
         fail(e,QA_ERROR_ARGUMENT,"Unified command differs from its actual entered CLIENT invocation");
 }
 static bool send(frontend_unified_q3_commands *o,const qa_command_invocation *call,const char *text,qa_error *e)
 {
-    return invocation_current(o,call,e) && o->options.send_client(o->options.context,o->options.client,
-        &call->context,text,e) && invocation_current(o,call,e);
+    if(!invocation_current(o,call,e))return false;
+    qa_command_context origin=*frontend_unified_q3_client_context(o->options.client);
+    return o->options.send_client(o->options.context,o->options.client,&origin,text,e) && invocation_current(o,call,e);
 }
 static bool append(frontend_unified_q3_commands *o,const qa_command_invocation *call,const char *text,qa_error *e)
 {
     if(!invocation_current(o,call,e))return false;
-    qa_command_context origin=call->context;
+    qa_command_context origin=*frontend_unified_q3_client_context(o->options.client);
     origin.script="q3-cgame"; origin.direct=false; origin.console_text=false;
     return qa_console_append(call->console,&origin,text,e) && invocation_current(o,call,e);
 }
 static bool set(frontend_unified_q3_commands *o,const qa_command_invocation *call,const char *name,const char *value,qa_error *e)
 {
     qa_cvars_edit_command command={.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true};
-    return invocation_current(o,call,e) && qa_console_cvar_apply(call->console,&call->context,&command,e) &&
-        invocation_current(o,call,e);
+    if(!invocation_current(o,call,e))return false;
+    qa_command_context origin=*frontend_unified_q3_client_context(o->options.client);
+    return qa_console_cvar_apply(call->console,&origin,&command,e) && invocation_current(o,call,e);
 }
 static int32_t crosshair(const q3n_frame *f,const q3n_hud_state *hud)
 { return f->time>sum(hud->crosshair_client_time,1000)?-1:hud->crosshair_client; }
@@ -331,6 +346,9 @@ bool frontend_unified_q3_commands_create(const frontend_unified_q3_commands_opti
     frontend_unified_q3_commands *o=calloc(1,sizeof(*o));
     if(!o)return fail(e,QA_ERROR_MEMORY,"Retaining compiled Unified console continuation");
     o->options=*options; o->console=domain->console; o->receiver=source.basis.receiver; o->product=source.basis.product;
+    const qa_command_context *constructor=frontend_unified_q3_client_context(options->client);
+    if(!constructor) { free(o); return fail(e,QA_ERROR_ARGUMENT,"Unified command constructor lost its actual CLIENT receipt"); }
+    o->constructor=*constructor;
     if(!current(o,false,NULL,e)) { free(o); return false; }
     *out=o; return true;
 }
@@ -341,14 +359,14 @@ static bool bind(frontend_unified_q3_commands *o,size_t count,qa_error *e)
         qa_command_handler handler=i<local_count(o->product)?handle:NULL;
         void *user=handler?o:NULL;
         uint64_t owner; qa_command_handler actual_handler; void *actual_user;
-        if(qa_console_registration_read(o->console,command_name(o->product,i),o->receiver,
+        if(qa_console_registration_read_context(o->console,&o->constructor,command_name(o->product,i),o->receiver,
             &owner,&actual_handler,&actual_user)) {
             if(owner!=o->receiver || actual_handler!=handler || actual_user!=user)
                 return fail(e,QA_ERROR_FORMAT,"Unified command prefix has a different actual callback owner");
             ++o->installed; continue;
         }
         /* Q3 AddCommand names without CG handlers remain engine fallbacks. */
-        if(!qa_console_register_owned(o->console,command_name(o->product,i),NULL,o->receiver,o->receiver,
+        if(!qa_console_register_context(o->console,&o->constructor,command_name(o->product,i),NULL,o->receiver,o->receiver,
             false,handler,user,e))return false;
         ++o->installed;
     }
@@ -358,7 +376,7 @@ static bool bindings_current(const frontend_unified_q3_commands *o)
 {
     for(size_t i=0;i<command_count(o->product);++i) {
         uint64_t owner; qa_command_handler handler; void *user;
-        bool present=qa_console_registration_read(o->console,command_name(o->product,i),o->receiver,&owner,&handler,&user);
+        bool present=qa_console_registration_read_context(o->console,&o->constructor,command_name(o->product,i),o->receiver,&owner,&handler,&user);
         if(i>=o->installed) { if(present)return false; continue; }
         qa_command_handler expected=i<local_count(o->product)?handle:NULL;
         if(!present || owner!=o->receiver || handler!=expected || user!=(expected?(void *)o:NULL))return false;
@@ -407,7 +425,7 @@ bool frontend_unified_q3_commands_video_reset(frontend_unified_q3_commands *o,qa
         return fail(e,QA_ERROR_ARGUMENT,"Unified CG video reset retains a command invocation or stale Source");
     o->resetting=true;
     while(o->installed) {
-        if(!qa_console_unregister(o->console,command_name(o->product,o->installed-1),o->receiver))
+        if(!qa_console_unregister_context(o->console,&o->constructor,command_name(o->product,o->installed-1),o->receiver))
             return fail(e,QA_ERROR_ARGUMENT,"Unified CG video command removal was refused");
         --o->installed;
     }
@@ -422,7 +440,7 @@ bool frontend_unified_q3_commands_destroy(frontend_unified_q3_commands **owned,q
         return fail(e,QA_ERROR_ARGUMENT,"Unified console retirement retains a CG or console invocation");
     o->retiring=true;
     while(o->installed) {
-        if(!qa_console_unregister(o->console,command_name(o->product,o->installed-1),o->receiver))
+        if(!qa_console_unregister_context(o->console,&o->constructor,command_name(o->product,o->installed-1),o->receiver))
             return fail(e,QA_ERROR_ARGUMENT,"Unified console callback retirement was refused");
         --o->installed;
     }

@@ -1,5 +1,5 @@
 #include "startup_config.h"
-#include "qa/source_save.h"
+#include "qa/console_release.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,7 +10,8 @@ struct frontend_startup_config {
     size_t count, index, depth, capacity;
     char **stack;
     char *image_text;
-    qa_console *image_console;
+    qa_console *console;
+    qa_console_release *prefix;
     bool active, completed, defaults, archive, running, images;
     qa_error failure;
 };
@@ -20,7 +21,8 @@ static bool same_owner(const qa_command_context *a, const qa_command_context *b)
 {
     return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client &&
         a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
-        a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor);
+        a->registry==b->registry && a->generation==b->generation && a->cvar_view==b->cvar_view &&
+        qa_actor_id_equal(a->actor,b->actor);
 }
 static void add(frontend_startup_config *owner, const char *name, frontend_script_scope scope)
 { owner->scripts[owner->count++]=(startup_script){name,scope}; }
@@ -68,19 +70,23 @@ frontend_startup_config *frontend_startup_images_create(const qa_command_context
 bool frontend_startup_images_command_current(const frontend_startup_config *owner,
     const qa_console *console,const qa_command_context *command)
 {
-    return owner && owner->images && owner->running && owner->image_console==console &&
-        console && !qa_console_idle(console) && same_owner(command,&owner->options.command) &&
-        command->console_text==owner->options.command.console_text;
+    return owner && owner->images && owner->running && owner->console==console &&
+        qa_console_release_context_current(owner->prefix,console,command);
 }
 bool frontend_startup_images_completed(const frontend_startup_config *owner,const qa_console *console)
 {
     return owner && owner->images && owner->completed && !owner->running &&
-        owner->image_console==console && console && qa_console_idle(console) && !qa_console_pending(console);
+        owner->console==console && console && qa_console_idle(console) && !owner->prefix;
 }
 bool frontend_startup_config_destroy(frontend_startup_config *owner, qa_error *error)
 {
     if (!owner) return true;
     if (owner->running) return fail(error,QA_ERROR_ARGUMENT,"Startup configuration is executing");
+    if (owner->prefix) {
+        qa_console_release_outcome outcome;
+        if (!qa_console_release_abort(owner->prefix,&outcome,error)) return false;
+        owner->prefix=NULL;
+    }
     for (size_t i=0;owner->stack && i<owner->depth;++i) free(owner->stack[i]);
     free(owner->stack); free(owner->image_text); free(owner); return true;
 }
@@ -161,128 +167,67 @@ bool frontend_startup_config_restrict_shared(const frontend_startup_config *owne
     const char *name=owner->scripts[owner->index-1].name;
     return !strcmp(name,"config.cfg") || !strcmp(name,"q3config.cfg");
 }
+static bool prefix_advance(frontend_startup_config *owner,qa_console *console,
+    const char *text,bool *complete,qa_error *error)
+{
+    if (!owner->prefix && !qa_console_release_prepare(console,&owner->options.command,
+            text,&owner->prefix,error)) return false;
+    qa_console_release_outcome outcome;
+    bool ok=qa_console_release_advance(owner->prefix,&outcome,error);
+    *complete=ok && outcome==QA_CONSOLE_RELEASE_COMPLETED;
+    if (*complete) {
+        if (!qa_console_release_ready(owner->prefix,console,error)) return false;
+        qa_console_release_publish(owner->prefix); owner->prefix=NULL;
+    }
+    return ok;
+}
 bool frontend_startup_config_advance(frontend_startup_config *owner,qa_console *console,bool *complete,qa_error *error)
 {
-    if (!owner || !console || !complete || owner->running || !qa_console_idle(console))
-        return fail(error,QA_ERROR_ARGUMENT,"Startup frame requires its idle exclusive source console");
+    if (!owner || !console || !complete || owner->running || !qa_console_idle(console) ||
+        (owner->console && owner->console!=console))
+        return fail(error,QA_ERROR_ARGUMENT,"Startup frame requires its idle retained console");
     *complete=false;
     if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; return false; }
-    if (owner->images && ((owner->image_console && owner->image_console!=console) ||
-        (!owner->index && qa_console_pending(console))))
-        return fail(error,QA_ERROR_ARGUMENT,"Image programme requires its actual initially empty console");
     if (owner->completed) { *complete=true; return true; }
-    if (owner->images) {
-        owner->image_console=console; owner->running=true;
-        bool ok=true;
-        if (!owner->index) {
-            ok=qa_console_append(console,&owner->options.command,owner->image_text,error);
-            if (ok) owner->index=1;
-        }
-        if (ok) ok=qa_console_drain(console,0,NULL,error);
-        owner->running=false;
-        if (!ok) {
-            if (error && error->code!=QA_OK) owner->failure=*error;
-            else qa_error_set(&owner->failure,QA_ERROR_ARGUMENT,0,"Image configuration programme failed");
-            return false;
-        }
-        owner->completed=!qa_console_drain_yielded(console) && !qa_console_pending(console);
-        *complete=owner->completed; return true;
-    }
+    owner->console=console;
     owner->running=true; bool ok=true;
-    if (!owner->options.seat_scope && owner->options.command.dialect==QA_CONSOLE_QW &&
-        owner->options.command.origin==QA_COMMAND_SERVER && !owner->archive) {
-        owner->defaults=true; ok=apply(owner,owner->options.apply_defaults);
-        if (ok) { owner->archive=true; ok=apply(owner,owner->options.apply_archive); }
-    }
-    while (ok) {
-        if (!owner->active) {
-            if (qa_console_pending(console)) {
-                size_t executed;
-                ok=qa_console_drain(console,0,&executed,error);
-                if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; ok=false; }
-                if (!ok || qa_console_drain_yielded(console) || qa_console_pending(console)) break;
-            }
-            if (owner->index==owner->count) {
-                if (!owner->defaults || !owner->archive) { ok=fail(error,QA_ERROR_FORMAT,"Startup scripts did not reach defaults and archived configuration"); break; }
-                owner->completed=true; ok=apply(owner,owner->options.apply_launch); *complete=ok; break;
-            }
-            const startup_script *script=owner->scripts+owner->index++;
-            if (owner->options.command.dialect==QA_CONSOLE_Q3 && owner->options.safe_mode && !strcmp(script->name,"q3config.cfg")) {
-                owner->archive=true; continue;
-            }
-            char command[64]; size_t length=strlen(script->name);
-            memcpy(command,"exec ",5); memcpy(command+5,script->name,length); memcpy(command+5+length,"\n",2);
-            owner->active=true;
-            ok=qa_console_append(console,&owner->options.command,command,error);
-            if (!ok) break;
+    if (owner->images) {
+        bool done=false;
+        ok=prefix_advance(owner,console,owner->image_text,&done,error);
+        if (ok) { owner->index=1; owner->completed=done; *complete=done; }
+    } else {
+        if (!owner->options.seat_scope && owner->options.command.dialect==QA_CONSOLE_QW &&
+            owner->options.command.origin==QA_COMMAND_SERVER && !owner->archive) {
+            owner->defaults=true; ok=apply(owner,owner->options.apply_defaults);
+            if (ok) { owner->archive=true; ok=apply(owner,owner->options.apply_archive); }
         }
-        size_t executed;
-        ok=qa_console_drain(console,0,&executed,error);
-        if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; ok=false; }
-        if (!ok || qa_console_drain_yielded(console) || owner->active) break;
+        while (ok) {
+            char command[64]={0};
+            if (!owner->active && !owner->prefix) {
+                if (owner->index==owner->count) {
+                    if (!owner->defaults || !owner->archive) {
+                        ok=fail(error,QA_ERROR_FORMAT,"Startup scripts did not reach defaults and archived configuration"); break;
+                    }
+                    owner->completed=true; ok=apply(owner,owner->options.apply_launch); *complete=ok; break;
+                }
+                const startup_script *script=owner->scripts+owner->index++;
+                if (owner->options.command.dialect==QA_CONSOLE_Q3 && owner->options.safe_mode && !strcmp(script->name,"q3config.cfg")) {
+                    owner->archive=true; continue;
+                }
+                size_t length=strlen(script->name);
+                memcpy(command,"exec ",5); memcpy(command+5,script->name,length); memcpy(command+5+length,"\n",2);
+                owner->active=true;
+            }
+            bool done=false;
+            ok=prefix_advance(owner,console,command,&done,error);
+            if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; ok=false; }
+            if (!ok || !done || owner->active) break;
+        }
     }
     owner->running=false;
     if (!ok && owner->failure.code==QA_OK) {
         if (error && error->code!=QA_OK) owner->failure=*error;
         else qa_error_set(&owner->failure,QA_ERROR_ARGUMENT,0,"Startup configuration frame failed");
     }
-    return ok;
-}
-static bool text_fields(qa_source_save_io *io,char **text)
-{
-    size_t length=*text?strlen(*text):0;
-    if (!qa_source_save_count(io,&length,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX) || length==SIZE_MAX) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        *text=malloc(length+1); if (!*text) return fail(io->error,QA_ERROR_MEMORY,"Importing startup script ancestry");
-    }
-    if (!qa_source_save_bytes(io,*text,length)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ) { if (memchr(*text,0,length)) return false; (*text)[length]=0; }
-    return true;
-}
-static bool fields(qa_source_save_io *io,frontend_startup_config *owner)
-{
-    uint8_t magic[4]={'Q','F','S','C'}; uint32_t dialect=owner->options.command.dialect;
-    bool mod=owner->options.has_mod,seat=owner->options.seat_scope,safe=owner->options.safe_mode;
-    uint32_t failure=owner->failure.code;
-    size_t offset=owner->failure.offset;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSC",4) || !qa_source_save_u32(io,&dialect) || dialect!=(uint32_t)owner->options.command.dialect ||
-        !qa_source_save_bool(io,&mod) || mod!=owner->options.has_mod || !qa_source_save_bool(io,&seat) || seat!=owner->options.seat_scope ||
-        !qa_source_save_bool(io,&safe) || safe!=owner->options.safe_mode || !qa_source_save_count(io,&owner->index,owner->count) ||
-        !qa_source_save_bool(io,&owner->active) || !qa_source_save_bool(io,&owner->completed) ||
-        !qa_source_save_bool(io,&owner->defaults) || !qa_source_save_bool(io,&owner->archive) ||
-        !qa_source_save_u32(io,&failure) || failure>QA_ERROR_NOT_FOUND || !qa_source_save_count(io,&offset,SIZE_MAX) ||
-        !qa_source_save_bytes(io,owner->failure.message,sizeof(owner->failure.message)) ||
-        !memchr(owner->failure.message,0,sizeof(owner->failure.message)) ||
-        !qa_source_save_count(io,&owner->depth,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
-    owner->failure.code=(qa_status)failure; owner->failure.offset=offset;
-    if (io->direction==QA_SOURCE_SAVE_READ && owner->depth) {
-        if (owner->depth>SIZE_MAX/sizeof(*owner->stack)) return false;
-        owner->stack=calloc(owner->depth,sizeof(*owner->stack)); owner->capacity=owner->depth;
-        if (!owner->stack) return fail(io->error,QA_ERROR_MEMORY,"Importing startup script stack");
-    }
-    for (size_t i=0;i<owner->depth;++i) if (!text_fields(io,owner->stack+i) || !*owner->stack[i]) return false;
-    return (!owner->active || owner->index) && (!owner->depth || owner->active) &&
-        (!owner->depth || !strcmp(owner->stack[0],owner->scripts[owner->index-1].name)) &&
-        (!owner->completed || (!owner->active && owner->index==owner->count && owner->defaults && owner->archive));
-}
-bool frontend_startup_config_checkpoint(const frontend_startup_config *owner,qa_buffer *out,qa_error *error)
-{
-    if (!owner || owner->images || owner->running || !out || out->data || out->size)
-        return fail(error,QA_ERROR_ARGUMENT,"Startup capture requires its returned phase owner");
-    frontend_startup_config state=*owner; qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,NULL,error) && fields(&io,&state) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
-}
-bool frontend_startup_config_restore(frontend_startup_config *owner,qa_bytes bytes,qa_error *error)
-{
-    if (!owner || owner->images || owner->running || owner->index || owner->active || owner->completed || owner->depth)
-        return fail(error,QA_ERROR_ARGUMENT,"Startup import requires its empty detached phase owner");
-    frontend_startup_config *state=frontend_startup_config_create(&owner->options,error);
-    if (!state) return false;
-    qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && fields(&io,state) && qa_source_save_finish(&io,NULL);
-    qa_source_save_dispose(&io);
-    if (ok) { free(owner->stack); *owner=*state; free(state); }
-    else { frontend_startup_config_destroy(state,NULL); if (!error || error->code==QA_OK) fail(error,QA_ERROR_FORMAT,"Invalid startup phase continuation"); }
     return ok;
 }

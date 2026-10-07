@@ -10,6 +10,7 @@ typedef struct frontend_config_binding_commands {
     void *context;
     bool (*current)(void *,const qa_command_context *);
     void (*print)(void *,const char *);
+    qa_command_context command;
 } frontend_config_binding_commands;
 
 /* Dedicated command data has no input device, focus or interactive seat. */

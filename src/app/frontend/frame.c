@@ -99,7 +99,7 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
         qa_application_startup_source configuration;
         if (!(remote?frontend_network_q3_client_context_read(f,receiver,seat,&client,error):
             qa_application_q3_client_context_read(f->application,receiver,seat,&client,error)) ||
-            !qa_application_q3_client_configuration_read(f->application,receiver,seat,&configuration,error)) return false;
+            !qa_application_q3_client_configuration_read(f->application,receiver,QA_QVM_CGAME,seat,&configuration,error)) return false;
         if (client.cvars!=configuration.cvars || client.console!=configuration.console ||
             !configuration.declaration_owner || (q3 && (client.source_owner!=source.scope.provider ||
             client.source_cvars!=source.cvars)) || !pause_client_current(f,&client,remote,error))

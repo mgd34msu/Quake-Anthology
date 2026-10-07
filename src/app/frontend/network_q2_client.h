@@ -51,13 +51,6 @@ bool frontend_network_q2_client_admit(frontend_network_q2_client *,
     const qa_net_connect *, bool *recognized, qa_error *);
 void frontend_network_q2_client_disconnected(frontend_network_q2_client *, qa_net_client_id);
 bool frontend_network_q2_client_destroy(frontend_network_q2_client **, qa_error *);
-bool frontend_network_q2_client_commands_owned(const frontend_network_q2_client *,const qa_application *,
-    const qa_application_console_scope *,const qa_console *);
-bool frontend_network_q2_client_commands_capture(frontend_network_q2_client *,qa_application *,
-    const qa_application_console_scope *,const qa_console *,qa_buffer *,qa_error *);
-bool frontend_network_q2_client_commands_restore(frontend_network_q2_client *,qa_application *,
-    const qa_application_console_scope *,qa_console *,qa_bytes,qa_error *);
-bool frontend_network_q2_client_finish_restore(frontend_network_q2_client *,qa_error *);
 bool frontend_network_q2_client_publication_ready(const frontend_network_q2_client *,qa_error *);
 void frontend_network_q2_client_publish(frontend_network_q2_client *);
 bool frontend_network_q2_client_qualified(const frontend_network_q2_client *,const qa_network_runtime *,

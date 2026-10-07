@@ -19,6 +19,7 @@ static bool command_equal(const qa_command_context *a,const qa_command_context *
     return a->session==b->session && a->owner==b->owner && a->client==b->client &&
         a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
         a->direct==b->direct && a->console_text==b->console_text && a->registry==b->registry &&
+        a->cvar_view==b->cvar_view &&
         a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
         ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
 }
@@ -41,7 +42,7 @@ static bool current(const frontend_unified_input *p,qa_error *e)
         p->arsenal==frontend_remote_unified_provider_published(p->replica,QA_ROLE_ARSENAL,"") &&
         frontend_remote_unified_current(p->replica,e) && frontend_client_source_current(&p->client_view) &&
         domain_matches(d,&p->client_view) && frontend_neutral_config_current(&p->configuration) &&
-        frontend_config_store_neutral_read(p->frontend->config_store,d->console,&configuration,e) &&
+        frontend_config_store_neutral_read(p->frontend->config_store,d->cvars,&configuration,e) &&
         configuration.owner==p->configuration.owner && configuration.ready && configuration.published &&
         configuration.client==d->cvars && configuration.mouse==p->configuration.mouse &&
         configuration.movement==p->configuration.movement && configuration.kind==p->builder.kind;
@@ -60,9 +61,9 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
         !movement->selection.instance || !arsenal->selection.instance ||
         !(importing ? frontend_prediction_checkpoint_snapshot(prediction,&snapshot,e) :
             frontend_remote_unified_prediction_snapshot(prediction,&snapshot,e)) ||
-        (!importing && !frontend_config_store_neutral_movement_adopt(f->config_store,d->console,snapshot.state.kind,e)) ||
-        !(importing?frontend_config_store_neutral_checkpoint_read(f->config_store,d->console,&configuration,e):
-            frontend_config_store_neutral_read(f->config_store,d->console,&configuration,e)) ||
+        (!importing && !frontend_config_store_neutral_movement_adopt(f->config_store,d->cvars,snapshot.state.kind,e)) ||
+        !(importing?frontend_config_store_neutral_checkpoint_read(f->config_store,d->cvars,&configuration,e):
+            frontend_config_store_neutral_read(f->config_store,d->cvars,&configuration,e)) ||
         !configuration.ready || !configuration.published || configuration.client!=d->cvars ||
         configuration.physical_seat!=d->physical_seat || configuration.kind!=snapshot.state.kind)
         return fail(e,"Unified input lacks its actual completed CLIENT settings and prediction baseline");
@@ -72,7 +73,7 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
         frontend_client_source *candidate=frontend_client_source_at(f,i);
         frontend_client_source_view view;
         if(!frontend_client_source_metadata_read(candidate,&view,e)) return false;
-        if(view.source.context.console!=d->console) continue;
+        if(view.source.context.cvars!=d->cvars) continue;
         if(client || (!importing && !frontend_client_source_read(candidate,&view,e)) || !domain_matches(d,&view))
             return fail(e,"Unified input changed its unique physical CLIENT constructor");
         client=candidate;selected=view;

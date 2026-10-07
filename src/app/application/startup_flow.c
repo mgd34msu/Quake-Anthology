@@ -17,7 +17,7 @@
 typedef struct startup_source {
     application_provider *provider;
     qa_application_startup_source owner;
-    application_startup_program *program;
+    bool programmed;
     void *phase;
 } startup_source;
 
@@ -27,6 +27,7 @@ struct application_startup_flow {
     qa_configuration_transaction *transaction;
     application_publication *publication;
     application_publication *validated_publication;
+    application_startup_program *program;
     const qa_launch_snapshot *candidate, *previous;
     qa_console *console;
     qa_cvars *cvars;
@@ -51,19 +52,6 @@ static bool source_consoles_idle(const struct application_startup_flow *);
 
 bool qa_application_startup_pending(const qa_application *app)
 { return app && app->startup_flow; }
-
-void application_startup_flow_bound_client(qa_application *app, application_provider *provider,
-    const qa_application_startup_source *source)
-{
-    struct application_startup_flow *flow = app->startup_flow;
-    for (size_t i = 0; flow && i < flow->count; ++i) {
-        startup_source *held = flow->sources + i;
-        if (held->provider == provider && held->owner.console == source->console &&
-            held->owner.descriptor->storage == source->descriptor->storage &&
-            held->owner.scope.kind == source->scope.kind && held->owner.scope.seat == source->scope.seat)
-            held->owner.cvars = source->cvars;
-    }
-}
 
 const qa_launch_snapshot *qa_application_startup_candidate(const qa_application *app)
 { return app && app->startup_flow ? app->startup_flow->candidate : NULL; }
@@ -207,7 +195,7 @@ static bool game_scope(qa_application_console_kind kind)
         kind == QA_APPLICATION_CONSOLE_NATIVE_Q2;
 }
 
-static startup_source *source_at(application_provider *provider, const qa_console *console)
+static startup_source *source_at(application_provider *provider, const qa_console *console, uint64_t view)
 {
     struct application_startup_flow *flow = provider && provider->application
         ? provider->application->startup_flow : NULL;
@@ -216,7 +204,8 @@ static startup_source *source_at(application_provider *provider, const qa_consol
     for (size_t i = 0; i < flow->count; ++i)
         if (flow->sources[i].provider == provider && flow->sources[i].owner.console) {
             startup_source *source = flow->sources + i;
-            if (console ? source->owner.console == console : game_scope(source->owner.scope.kind))
+            if ((!console || source->owner.console == console) &&
+                (view ? source->owner.command.cvar_view == view : game_scope(source->owner.scope.kind)))
                 return source;
         }
     return NULL;
@@ -235,7 +224,7 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
     application_provider *provider = instance->state;
     if (!provider || provider->application != app || provider->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup source read lost its actual provider");
-    startup_source *source = source_at(provider, NULL);
+    startup_source *source = source_at(provider, NULL, 0);
     if (source) {
         *out = source->owner;
         out->descriptor = instance;
@@ -272,9 +261,9 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
 bool application_startup_source_active(const application_provider *provider)
 { return application_startup_console_active(provider, NULL); }
 
-bool application_startup_console_active(const application_provider *provider, const qa_console *console)
+bool application_startup_console_active(const application_provider *provider, const qa_cvars *cvars)
 {
-    startup_source *source = source_at((application_provider *)provider, console);
+    startup_source *source = source_at((application_provider *)provider, NULL, qa_cvars_view_identity(cvars));
     return source && source->phase;
 }
 
@@ -284,7 +273,7 @@ bool application_startup_command_allowed(application_provider *provider, const q
 bool application_startup_console_command_allowed(application_provider *provider,
     const qa_console *console, const qa_command_invocation *command)
 {
-    startup_source *source = source_at(provider, console);
+    startup_source *source = source_at(provider, console, command ? command->context.cvar_view : 0);
     if (!source || !source->phase) return true;
     struct application_startup_flow *flow = provider->application->startup_flow;
     return !flow->hooks.allow_command || flow->hooks.allow_command(flow->hooks.context, source->phase, command);
@@ -305,7 +294,8 @@ bool qa_application_startup_replay_variables(qa_application *app, qa_console *co
     app->routing_provider_count = flow->publication ? flow->publication->next_count : 0;
     bool ok = false, found = false;
     for (size_t i = 0; i < flow->count; ++i)
-        if (flow->sources[i].owner.console == console) {
+        if (flow->sources[i].owner.console == console &&
+            flow->sources[i].owner.command.cvar_view == command->cvar_view) {
             found = true;
             ok = qa_application_command_context_active(app, command) &&
                 command->owner == flow->sources[i].owner.command.owner &&
@@ -336,7 +326,7 @@ bool application_startup_script_read(application_provider *provider,
 bool application_startup_console_script_read(application_provider *provider, const qa_console *console,
     const qa_command_context *command, const char *name, qa_bytes *out, void **lease, qa_error *error)
 {
-    startup_source *source = source_at(provider, console);
+    startup_source *source = source_at(provider, console, command ? command->cvar_view : 0);
     if (!source || !source->phase || !qa_application_command_context_active(provider->application, command))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup script lost its retained source phase");
     struct application_startup_flow *flow = provider->application->startup_flow;
@@ -347,9 +337,9 @@ void application_startup_script_release(application_provider *provider, void *le
 { application_startup_console_script_release(provider, NULL, lease); }
 
 void application_startup_console_script_release(application_provider *provider,
-    const qa_console *console, void *lease)
+    const qa_cvars *cvars, void *lease)
 {
-    startup_source *source = source_at(provider, console);
+    startup_source *source = source_at(provider, NULL, qa_cvars_view_identity(cvars));
     if (source && source->phase) {
         struct application_startup_flow *flow = provider->application->startup_flow;
         flow->hooks.release_script(flow->hooks.context, source->phase, lease);
@@ -363,7 +353,7 @@ void application_startup_script_complete(application_provider *provider,
 void application_startup_console_script_complete(application_provider *provider,
     const qa_console *console, const qa_command_context *command, const char *name, bool success)
 {
-    startup_source *source = source_at(provider, console);
+    startup_source *source = source_at(provider, console, command ? command->cvar_view : 0);
     if (source && source->phase) {
         struct application_startup_flow *flow = provider->application->startup_flow;
         flow->hooks.script_complete(flow->hooks.context, source->phase, command, name, success);
@@ -400,20 +390,19 @@ static bool source_consoles_idle(const struct application_startup_flow *flow)
     return true;
 }
 
-static bool release_sources(application_provider *provider, const qa_console *console, qa_error *error)
+static bool release_sources(application_provider *provider, const qa_cvars *cvars, qa_error *error)
 {
     struct application_startup_flow *flow = provider && provider->application
         ? provider->application->startup_flow : NULL;
     if (!flow) return true;
     for (size_t i = flow->count; i-- > 0;) {
         startup_source *source = flow->sources + i;
-        if (source->provider != provider || (console && source->owner.console!=console)) continue;
+        if (source->provider != provider || (cvars && source->owner.cvars!=cvars)) continue;
         if (source->phase)
             return application_fail(error, QA_ERROR_ARGUMENT, "Source teardown requires its returned configuration phase");
-        if (!application_startup_program_abort(&source->program, error)) return false;
     }
     for (size_t i = 0; i < flow->count; ++i)
-        if (flow->sources[i].provider == provider && (!console || flow->sources[i].owner.console==console)) {
+        if (flow->sources[i].provider == provider && (!cvars || flow->sources[i].owner.cvars==cvars)) {
             flow->sources[i].owner.console = NULL;
             flow->sources[i].owner.cvars = NULL;
         }
@@ -423,9 +412,9 @@ static bool release_sources(application_provider *provider, const qa_console *co
 bool application_startup_flow_release_provider(application_provider *provider, qa_error *error)
 { return release_sources(provider,NULL,error); }
 
-bool application_startup_flow_release_console(application_provider *provider,
-    const qa_console *console, qa_error *error)
-{ return release_sources(provider,console,error); }
+bool application_startup_flow_release_view(application_provider *provider,
+    const qa_cvars *cvars, qa_error *error)
+{ return release_sources(provider,cvars,error); }
 
 static void finish_candidate(qa_application *app, struct application_startup_flow *flow,
     const qa_launch_snapshot *candidate, bool published)
@@ -478,7 +467,7 @@ bool qa_application_startup_images_phase(const qa_application *app,
             actual->console == linked->console && actual->cvars == linked->cvars &&
             actual->scope.provider == linked->scope.provider && actual->scope.kind == linked->scope.kind &&
             actual->scope.seat == linked->scope.seat && actual->declaration_owner == linked->declaration_owner &&
-            a->owner == b->owner && a->session == b->session && a->client == b->client &&
+            a->cvar_view == b->cvar_view && a->owner == b->owner && a->session == b->session && a->client == b->client &&
             a->seat == b->seat && a->origin == b->origin && a->dialect == b->dialect &&
             a->registry == b->registry && a->generation == b->generation &&
             a->console_text == b->console_text && a->script == b->script &&
@@ -589,7 +578,7 @@ static bool resource_phase_ready(const qa_application *app,
         (app->pickups && !qa_pickups_idle(app->pickups)) ||
         (app->modes && !qa_modes_idle(app->modes))) return false;
     qa_error error = {0};
-    const qa_cvars_edit *values = NULL;
+    qa_cvars_edit *values = NULL;
     if (flow->hooks.candidate_values &&
         !flow->hooks.candidate_values(flow->hooks.context, app, candidate, &values, &error))
         return false;
@@ -612,7 +601,7 @@ bool application_startup_flow_configuration_idle(const qa_application *app)
     if (!flow) return application_guests_idle(app);
     if (!flow->resources) {
         if (flow->resources_consumed && !flow->resources_finished) return false;
-        const qa_cvars_edit *values = NULL;
+        qa_cvars_edit *values = NULL;
         qa_error error = {0};
         if ((flow->candidate || flow->engine_only) && flow->hooks.candidate_values &&
             !flow->hooks.candidate_values(flow->hooks.context, app, flow->candidate, &values, &error)) return false;
@@ -659,7 +648,7 @@ bool application_startup_flow_retirement_ready(const qa_application *app,
         !flow->hooks.candidate_values || !flow->hooks.candidate_retirement_ready)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Candidate ENGINE retirement requires its refused retained cancellation");
-    const qa_cvars_edit *owned = NULL;
+    qa_cvars_edit *owned = NULL;
     if (!flow->hooks.candidate_values(flow->hooks.context, app, candidate, &owned, error)) return false;
     if (owned != values || !qa_cvars_edit_abort_is(values, app->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -696,7 +685,7 @@ bool application_startup_flow_consume_publication(qa_application *app, applicati
         !app->publication_started || flow->generation != app->command_generation)
         return application_fail(error, QA_ERROR_ARGUMENT, "Resource consume lost its actual entered publication ticket");
     if (!flow->resources) {
-        const qa_cvars_edit *values = NULL;
+        qa_cvars_edit *values = NULL;
         if (flow->resources_candidate || flow->resources_consumed || !flow->hooks.candidate_values)
             return application_fail(error, QA_ERROR_ARGUMENT, "Publication lost its actual final resource owner");
         return flow->hooks.candidate_values(flow->hooks.context, app, candidate, &values, error) &&
@@ -740,6 +729,12 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     flow->images_waiting = false;
     flow->advancing = true;
     flow->cancelling = true;
+    if (!flow->committed) {
+        if (!application_startup_program_abort(&flow->program, error)) goto fail;
+        if (!release_phases(flow, error)) goto fail;
+        application_publication *publication = flow->validated_publication ? flow->validated_publication : flow->publication;
+        if (publication && !application_publication_discard_sources(app, publication, error)) goto fail;
+    }
     if (flow->resources || (flow->resources_consumed && !flow->resources_finished)) {
         if (flow->resources_consumed) {
             if (!finish_resources(app, flow, error)) goto fail;
@@ -763,8 +758,7 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
         application_fail(error, QA_ERROR_ARGUMENT, "Startup cancellation retains settings or language children");
         goto fail;
     }
-    for (size_t i = flow->count; i-- > 0;)
-        if (!application_startup_program_abort(&flow->sources[i].program, error)) goto fail;
+    if (!application_startup_program_abort(&flow->program, error)) goto fail;
     if (flow->committed) {
         if (flow->engine_only) finish_candidate(app, flow, NULL, true);
         else if (!application_q3_campaign_launch_finish(app, true, error)) goto fail;
@@ -858,7 +852,8 @@ static startup_source *append_source(struct application_startup_flow *flow, qa_e
 static bool prepare_root(qa_application *app, struct application_startup_flow *flow, qa_error *error)
 {
     if (!flow->hooks.prepare_root) return true;
-    qa_command_context actual = {.dialect = qa_cvars_dialect(flow->cvars), .origin = QA_COMMAND_LOCAL};
+    qa_command_context actual = {.dialect = qa_cvars_dialect(flow->cvars), .origin = QA_COMMAND_LOCAL,
+        .cvar_view = qa_cvars_view_identity(flow->cvars)};
     if (!qa_application_capture_command_context(app, &actual, &flow->root_command, error)) return false;
     flow->root_admitted = true;
     flow->root_preparing = true;
@@ -924,9 +919,12 @@ static bool prepare_physical_source(qa_application *app, struct application_star
         bool inherited = false;
         ok = flow->hooks.program_source(flow->hooks.context, app, flow->candidate,
             &source->owner, &previous, &inherited, error);
-        if (ok && inherited)
+        if (ok && inherited) {
+            application_startup_program *program=NULL;
             ok = application_startup_program_prepare(app, flow->publication, &previous,
-                &source->owner, &source->program, error);
+                &source->owner, &program, error);
+            source->programmed=ok;
+        }
     }
     ok = ok && qa_application_capture_command_context(app, &source->owner.command, &source->owner.command, error) &&
         flow->hooks.prepare_source(flow->hooks.context, app, flow->candidate,
@@ -937,16 +935,19 @@ static bool prepare_physical_source(qa_application *app, struct application_star
         qa_application_startup_source refreshed;
         for (size_t index=0; ok; ++index) {
             ok=application_provider_startup_source_at(provider,index,&refreshed,&found,error);
-            if (!ok || !found || refreshed.console==physical->console) break;
+            if (!ok || !found || (refreshed.console==physical->console &&
+                refreshed.cvars==physical->cvars && refreshed.scope.kind==physical->scope.kind &&
+                refreshed.scope.seat==physical->scope.seat)) break;
         }
         if (ok && (!found || refreshed.console != physical->console ||
             refreshed.descriptor->storage != selected->storage ||
             refreshed.scope.provider != physical->scope.provider || refreshed.scope.kind != physical->scope.kind ||
-            refreshed.scope.seat != physical->scope.seat || !refreshed.cvars))
+            refreshed.scope.seat != physical->scope.seat || refreshed.cvars != physical->cvars ||
+            refreshed.command.cvar_view != physical->command.cvar_view))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Startup configuration replaced its physical console authority");
         if (ok) {
-            source->owner.cvars = refreshed.cvars;
-            if (source->program) ok = application_startup_program_refresh(source->program, &source->owner, error);
+            source->owner.declaration_owner = refreshed.declaration_owner;
+            if (source->programmed) ok = application_startup_program_refresh(flow->program, &source->owner, error);
         }
     }
     return ok;
@@ -984,6 +985,11 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
     if (ok) flow->candidate = qa_configuration_candidate(flow->transaction);
     if (ok) ok = prepare_root(app, flow, error);
     if (ok) ok = application_publication_begin(app, flow->previous, flow->candidate, &flow->publication, error);
+    if (ok) {
+        qa_application_startup_source engine={.scope={.kind=QA_APPLICATION_CONSOLE_ENGINE},
+            .console=flow->console,.cvars=flow->cvars,.command=flow->root_command};
+        ok=application_startup_program_prepare(app,flow->publication,&engine,&engine,&flow->program,error);
+    }
     size_t provider_count = ok ? flow->publication->next_count : 0;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(flow->candidate);
     const qa_launch_snapshot *routing = app->routing_snapshot;
@@ -1044,8 +1050,10 @@ static bool begin(qa_application *app, const qa_launch_draft *draft,
                 startup_source *source = append_source(flow, error);
                 if (!source) { ok = false; break; }
                 source->provider = provider; source->owner = target;
+                application_startup_program *program=NULL;
                 ok = application_startup_program_prepare(app, flow->publication, &previous,
-                    &source->owner, &source->program, error);
+                    &source->owner, &program, error);
+                source->programmed=ok;
             }
             continue;
         }
@@ -1173,7 +1181,7 @@ static bool advance_root(qa_application *app, struct application_startup_flow *f
             if (!ok || !done) return ok;
             flow->root_settled = true;
         }
-        const qa_cvars_edit *values = NULL;
+        qa_cvars_edit *values = NULL;
         if (!flow->hooks.candidate_values(flow->hooks.context, app, NULL, &values, error)) return false;
         if (!values || !qa_cvars_edit_returned_is(values, flow->cvars))
             return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE bootstrap lost its actual returned canonical edit");
@@ -1236,9 +1244,9 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
         bool done = false;
         ok = flow->hooks.advance_source(flow->hooks.context, source->phase, source->owner.console, &done, error);
         if (!ok || !done) break;
-        if (!qa_console_idle(source->owner.console) || qa_console_pending(source->owner.console)) {
+        if (!qa_console_idle(source->owner.console)) {
             ok = application_fail(error, QA_ERROR_ARGUMENT,
-                "Startup phase completion requires its drained physical console");
+                "Startup phase completion requires its returned physical console");
             break;
         }
         ++flow->index;
@@ -1271,13 +1279,16 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             if (ok) ok = qa_configuration_validate(flow->transaction, error);
             if (ok) flow->validated = true;
         }
+        if (ok) ok = application_publication_retire_sources(app, flow->validated_publication, error);
         for (size_t i = 0; ok && i < flow->count; ++i) {
             startup_source *source = flow->sources + i;
             qa_application_startup_source actual;
             bool found = false;
             for (size_t index = 0; ok; ++index) {
                 ok = application_provider_startup_source_at(source->provider, index, &actual, &found, error);
-                if (!ok || !found || actual.console == source->owner.console) break;
+                if (!ok || !found || (actual.console == source->owner.console &&
+                    actual.cvars == source->owner.cvars && actual.scope.kind == source->owner.scope.kind &&
+                    actual.scope.seat == source->owner.scope.seat)) break;
             }
             if (ok && (!found || !actual.descriptor ||
                 actual.descriptor->storage != source->owner.descriptor->storage ||
@@ -1287,7 +1298,7 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Validated source changed its actual physical configuration authority");
             if (ok) {
                 source->owner.declaration_owner = actual.declaration_owner;
-                if (source->program) ok = application_startup_program_refresh(source->program, &source->owner, error);
+                if (source->programmed) ok = application_startup_program_refresh(flow->program, &source->owner, error);
                 if (ok && flow->hooks.refresh_source)
                     ok = flow->hooks.refresh_source(flow->hooks.context, app,
                         flow->candidate, &source->owner, error);
@@ -1302,7 +1313,7 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             flow->resource_waiting = ok && !publication_complete;
         }
         if (ok && !publication_complete) goto returned;
-        const qa_cvars_edit *values = NULL;
+        qa_cvars_edit *values = NULL;
         if (ok && flow->hooks.candidate_values)
             ok = flow->hooks.candidate_values(flow->hooks.context, app, flow->candidate, &values, error);
         if (ok && values && !flow->hooks.prepare_publication)
@@ -1326,10 +1337,10 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Publication resources lack actual owned child proofs");
             }
         }
-        for (size_t i = 0; ok && i < flow->count; ++i)
-            ok = application_startup_program_preflight(flow->sources[i].program, error);
-        for (size_t i = 0; ok && i < flow->count; ++i)
-            ok = application_startup_program_seal(flow->sources[i].program, error);
+        if (ok) ok = application_startup_program_preflight(flow->program, error);
+        if (ok) ok = application_startup_program_seal(flow->program, error);
+        if (ok && flow->validated_publication->owns_values)
+            ok = application_publication_ready_values(app, flow->validated_publication, error);
         if (ok) ok = qa_configuration_commit(flow->transaction, error);
         if (ok) {
             flow->transaction = NULL;
@@ -1340,9 +1351,8 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             application_q3_product_finish(app, &flow->product, published);
             application_map_load_finish(app, published);
             if (published) ok = application_map_level_entry(app, true, error);
-            for (size_t i = 0; ok && i < flow->count; ++i)
-                ok = published ? application_startup_program_adopt(&flow->sources[i].program, error)
-                    : application_startup_program_abort(&flow->sources[i].program, error);
+            if (ok) ok = published ? application_startup_program_adopt(&flow->program, error)
+                : application_startup_program_abort(&flow->program, error);
             if (ok && (flow->resources || (flow->resources_consumed && !flow->resources_finished))) {
                 if (app->state == QA_APPLICATION_FAULTED) {
                     if (error) *error = app->publication_error;

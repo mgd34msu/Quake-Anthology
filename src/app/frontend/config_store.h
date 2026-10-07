@@ -41,8 +41,10 @@ const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_
 /* Rebuild local dictionaries and publish actual Source rows after GAME state
  * restores; user preferences come from the normal selected ConfigStore. */
 bool frontend_config_store_rebuild_finish(frontend_config_store *,qa_error *);
-frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_console *);
-frontend_remote_config *frontend_config_store_client(const frontend_config_store *,const qa_console *);
+frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_cvars *);
+frontend_remote_config *frontend_config_store_client(const frontend_config_store *,const qa_cvars *);
+frontend_config_source *frontend_config_store_source_context(const frontend_config_store *,const qa_command_context *);
+frontend_remote_config *frontend_config_store_client_context(const frontend_config_store *,const qa_command_context *);
 /* Qualifies the actual retained pending tuple without executing commands or
  * borrowing a published owner as an isolated configuration source. */
 bool frontend_config_store_source_pending(const frontend_config_store *,qa_application *,const qa_launch_snapshot *,
@@ -157,7 +159,11 @@ bool frontend_config_store_client_view_transition(const frontend_config_store *,
     const qa_application_client_preparation *,frontend_view_transition *,qa_error *);
 bool frontend_config_store_client_settings_begin(frontend_config_store *,qa_application_client_preparation *,qa_error *);
 bool frontend_config_store_client_settings_seed(frontend_config_store *,qa_application_client_preparation *,qa_cvar_archive *,qa_error *);
+bool frontend_config_store_has_canonical_archive(const frontend_config_store *);
+bool frontend_config_store_legacy_globals(const frontend_config_store *);
+bool frontend_config_store_seed_player_archive(frontend_config_store *,qa_cvars *,uint32_t,qa_cvar_archive *,qa_error *);
 bool frontend_config_store_client_settings_advance(frontend_config_store *,qa_application_client_preparation *,bool,bool *,qa_error *);
+bool frontend_config_store_client_settings_archive(frontend_config_store *,qa_application_client_preparation *,const qa_cvar_archive *,qa_error *);
 bool frontend_config_store_client_settings_prepare(frontend_config_store *,qa_application_client_preparation *,qa_error *);
 bool frontend_config_store_client_settings_ready_is(const frontend_config_store *,const qa_application_client_preparation *);
 void frontend_config_store_client_settings_consume(frontend_config_store *,qa_application_client_preparation *);
@@ -165,20 +171,13 @@ bool frontend_config_store_client_settings_finish(frontend_config_store *,qa_app
 bool frontend_config_store_client_settings_abort(frontend_config_store *,qa_application_client_preparation *,bool *complete,qa_error *);
 bool frontend_config_store_client_settings_cancel(frontend_config_store *,qa_application_client_preparation *,bool *complete,qa_error *);
 qa_application_client_preparation *frontend_config_store_client_preparation(const frontend_config_store *);
-/* The actual source factory calls before destination options/capacity/Init.
- * A different physical program/profile returns carried=false. The supplied
- * tuple identifies that fresh factory's real console, registry, GAME scope
- * and module declaration owner. Completed script phases are preserved. */
-bool frontend_config_store_carry_variables(frontend_config_store *,qa_application *,
-    const qa_launch_snapshot *,const qa_application_startup_source *,bool *carried,qa_error *);
-/* The manager owns one canonical wrapper reference; each actual client lease
- * acquires another. The first acquisition adopts the prepared heap once.
- * Pure import creates an empty physical heap for the canonical QFCR prefix
- * decoder; the post-decode restore binder must qualify it before Init. */
+/* The manager owns one typed wrapper reference; actual client leases retain
+ * the same view. Import reconstructs declarations on the common table and
+ * qualifies the restored Source before Init. */
 bool frontend_config_source_acquire_seat_registry(frontend_config_source *,uint32_t,
     frontend_client_registry **,qa_error *);
-/* Actual client registry wrappers retain this callback context until their
- * final observer-idle QACV destruction. Checked source retirement waits for it. */
+/* The Source wrapper retains this callback context until owner retirement.
+ * Borrowed views remain readable after the callback context is released. */
 bool frontend_config_source_registry_retain(frontend_config_source *,qa_error *);
 bool frontend_config_source_registry_release(frontend_config_source *,qa_error *);
 qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *,const qa_console *,
@@ -233,19 +232,18 @@ bool frontend_config_store_admin_adopt(frontend_config_store *,qa_error *);
 /* Includes a restored early child. Transport adoption belongs to the normal
  * network pump after its actual Source and directory bindings finish. */
 bool frontend_config_store_admin_pending(const frontend_config_store *);
-void frontend_config_store_release(frontend_config_store *,const qa_console *,void *lease);
+void frontend_config_store_release(frontend_config_store *,const qa_cvars *,void *lease);
 bool frontend_config_store_save(frontend_config_store *,qa_error *);
-bool frontend_config_store_retire(frontend_config_store *,const qa_console *,qa_error *);
+bool frontend_config_store_retire(frontend_config_store *,const qa_cvars *,qa_error *);
 void frontend_config_store_rebind(frontend_config_store *,qa_frontend *);
 bool frontend_config_store_visit(const frontend_config_store *,const qa_application_content_visitor *,qa_error *);
-/* The real factory calls this after canonical client QACV decode, before Init.
- * Repeated UI/CGAME aliases must qualify that same physical registry. */
+/* The real factory qualifies reconstructed Source views before Init. */
 bool frontend_config_source_restore_seat_cvars(frontend_config_source *,uint32_t,
     qa_cvars *,const frontend_keys_cvar_refs *,qa_error *);
 bool frontend_config_source_restore_seat_registry(frontend_config_source *,uint32_t,
     frontend_client_registry *,const frontend_keys_cvar_refs *,qa_error *);
-/* Genuine primary CLIENT slots bind the decoded roster before services copy
- * their canonical heap. Supplemental GAME-owned roles use the GAME binder. */
+/* Actual CLIENT slots qualify the decoded roster before copying services.
+ * Supplemental GAME roles retain their actual GAME association. */
 bool frontend_config_store_restore_client(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_error *);
 #endif

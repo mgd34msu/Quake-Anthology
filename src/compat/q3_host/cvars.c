@@ -299,8 +299,29 @@ static bool access_name(q3_call *call,const char *name,q3_cvar_access *out,qa_er
     return qa_console_cvar_context(options->console,&options->command_context,&out->command,error) &&
         qa_console_cvar_access(options->console,&out->command,name,&out->registry,&out->edit,error);
 }
-static const qa_cvar_view *find(q3_cvar_access access,const char *name)
-{ return access.edit?qa_cvars_edit_find(access.edit,name):qa_cvars_find(access.registry,name); }
+static bool access_enter(q3_cvar_access access,qa_error *error)
+{ return !access.edit || qa_cvars_edit_enter(access.edit,access.registry,error); }
+static bool access_leave(q3_cvar_access access,bool okay,qa_error *error)
+{
+    qa_error returned={0};
+    bool left=!access.edit || qa_cvars_edit_leave(access.edit,access.registry,&returned);
+    if (!left && okay && error) *error=returned;
+    return okay && left;
+}
+static bool find(q3_cvar_access access,const char *name,const qa_cvar_view **out,qa_error *error)
+{
+    if (!access_enter(access,error)) return false;
+    *out=qa_cvars_find(access.registry,name);
+    return access_leave(access,true,error);
+}
+static bool handle_view(q3_cvar_access access,size_t handle,const qa_cvar_view **out,
+    size_t *count,qa_error *error)
+{
+    if (!access_enter(access,error)) return false;
+    *out=qa_cvars_handle(access.registry,handle);
+    if (count) *count=qa_cvars_handle_count(access.registry);
+    return access_leave(access,true,error);
+}
 static bool apply(q3_call *call,q3_cvar_access access,const qa_cvars_edit_command *command,qa_error *error)
 {
     if (call->host->options.console)
@@ -326,8 +347,7 @@ static bool classify(q3_call *call,q3_cvar_access access,const char *name,
     if (!apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SAVE_POLICY,.name=name,
         .save_policy=call->host->options.role==QA_QVM_GAME?
             QA_CVAR_SAVE_GAMEPLAY:QA_CVAR_SAVE_SETTING},error)) return false;
-    *actual=find(access,name);
-    return true;
+    return find(access,name,actual,error);
 }
 static bool declare(q3_call *call,q3_cvar_access access,const char *name,const char *value,
     uint32_t flags,qa_error *error)
@@ -336,7 +356,8 @@ static bool declare(q3_call *call,q3_cvar_access access,const char *name,const c
         const char *canonical=qa_cvars_canonical_name(access.registry,name);
         if (strcmp(canonical,name) && (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|QA_CVAR_SYSTEMINFO)))
             return q3_fail(error,QA_ERROR_ARGUMENT,0,"Guest alias requires its canonical protocol info-key mapping");
-        const qa_cvar_view *actual=find(access,name);
+        const qa_cvar_view *actual=NULL;
+        if (!find(access,name,&actual,error)) return false;
         return (actual!=NULL ||
             q3_fail(error,QA_ERROR_NOT_FOUND,0,"Unknown guest cvar requires its actual Q3 seat owner")) &&
             classify(call,access,name,&actual,error);
@@ -344,8 +365,8 @@ static bool declare(q3_call *call,q3_cvar_access access,const char *name,const c
     if (!apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,.name=name,
         .value=value,.flags=flags,.owner=access.registry==call->host->options.cvars?
             call->host->options.service_owner:0},error)) return false;
-    const qa_cvar_view *actual=find(access,name);
-    return classify(call,access,name,&actual,error);
+    const qa_cvar_view *actual=NULL;
+    return find(access,name,&actual,error) && classify(call,access,name,&actual,error);
 }
 
 static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
@@ -386,9 +407,9 @@ static bool routed_view(q3_call *call,q3_cvar_binding *binding,const qa_cvar_vie
     if (!access_name(call,binding->name,&access,error)) return false;
     if (access.registry!=registry)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding changed its admitted namespace");
-    const qa_cvar_view *view=access.edit?qa_cvars_edit_handle(access.edit,binding->handle):
-        qa_cvars_handle(registry,binding->handle);
-    size_t count=access.edit?qa_cvars_edit_handle_count(access.edit):qa_cvars_handle_count(registry);
+    const qa_cvar_view *view=NULL;
+    size_t count=0;
+    if (!handle_view(access,binding->handle,&view,&count,error)) return false;
     if (binding->handle>=count)
         return q3_fail(error,QA_ERROR_FORMAT,0,"Cvar_Update: handle out of range");
     *out=view;
@@ -454,7 +475,7 @@ static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **re
         if (!access_name(call,"sv_cheats",&access,error)) return false;
         if (access.registry!=call->host->options.engine_cvars)
             return q3_fail(error,QA_ERROR_ARGUMENT,0,"GAME cheats handle changed its actual ENGINE namespace");
-        view=find(access,"sv_cheats");
+        if (!find(access,"sv_cheats",&view,error)) return false;
         if (view) modification=(uint32_t)view->modification_count;
     } else if (handle>=0) {
         qa_q3_host_options *options=&call->host->options;
@@ -590,11 +611,15 @@ static bool register_vm(q3_call *call, qa_error *error)
     bool engine=ok && engine_name(call,(const char *)name.data) &&
         access.registry==call->host->options.engine_cvars;
     uint64_t owner=!engine && access.registry==call->host->options.cvars?call->host->options.service_owner:0;
-    if (ok) ok=access.edit?qa_cvars_edit_vm_bind(access.edit,(const char *)name.data,
-        (const char *)value.data,(uint32_t)call->arguments[3],owner,&handle,error):
-        qa_cvars_vm_bind(access.registry,(const char *)name.data,(const char *)value.data,
-            (uint32_t)call->arguments[3],owner,&handle,error);
-    if (ok) view=access.edit?qa_cvars_edit_handle(access.edit,handle):qa_cvars_handle(access.registry,handle);
+    if (ok) {
+        ok=access_enter(access,error);
+        if (ok) {
+            ok=qa_cvars_vm_bind(access.registry,(const char *)name.data,(const char *)value.data,
+                (uint32_t)call->arguments[3],owner,&handle,error);
+            if (ok) view=qa_cvars_handle(access.registry,handle);
+            ok=access_leave(access,ok,error);
+        }
+    }
     if (ok) ok=classify(call,access,(const char *)name.data,&view,error);
     if (ok && !view) ok=q3_fail(error,QA_ERROR_NOT_FOUND,0,"Q3 VM registration lacks its actual admitted handle");
     if (ok && !engine && access.registry==call->host->options.cvars)
@@ -699,8 +724,8 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
     q3_cvar_access access;
     if (!access_name(call,key,&access,error)) { qa_buffer_free(&name); return Q3_FAILED; }
     cvars=access.registry;
-    const qa_cvar_view *view=find(access,key);
-    bool ok = classify(call,access,key,&view,error);
+    const qa_cvar_view *view=NULL;
+    bool ok = find(access,key,&view,error) && classify(call,access,key,&view,error);
     if (!ok) { qa_buffer_free(&name); return Q3_FAILED; }
     if (trap == (ui ? 3 : 5)) {
         ok = call->arguments[1] ?
@@ -708,7 +733,7 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
                     .name=key,.value=(const char *)value.data,.force=true},error) :
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESET,.name=key,.force=true},error);
-        if (ok) { view=find(access,key); ok=classify(call,access,key,&view,error); }
+        if (ok) ok=find(access,key,&view,error) && classify(call,access,key,&view,error);
     } else if (trap == (ui ? 5 : game ? 7 : 6)) {
         qa_cvar_view effective;
         if (view && !effective_status(call,view,&effective,error)) ok=false;

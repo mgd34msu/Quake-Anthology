@@ -26,6 +26,6 @@ struct application_native_q3_remote_role {
     uint64_t argument_revision, module_sequence, module_generation;
     size_t calls, module_calls;
     native_q3_remote_lifecycle lifecycle;
-    bool owns_cvars, initialized, acquired_initialized, retiring;
+    bool initialized, acquired_initialized, retiring;
 };
 #endif

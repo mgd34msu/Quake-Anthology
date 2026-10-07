@@ -70,8 +70,8 @@ typedef struct qa_application_client_options {
 bool qa_application_client_provider_prepare(qa_application *, const qa_launch_instance *,
     qa_actor_owner *, qa_error *);
 bool qa_application_client_provider_release(qa_application *, qa_actor_owner, qa_error *);
-/* Capture the actual local input origin after metadata admission. Pending
- * CLIENT commands remain actorless; decoded viewers have separate receipts. */
+/* Preview admitted CLIENT metadata before its cvar view exists. This actorless
+ * context becomes executable only after the actual view is constructed. */
 bool qa_application_client_provider_command(qa_application *, qa_actor_owner, uint32_t seat,
     const qa_command_context *input, qa_command_context *, uint64_t *configuration_generation, qa_error *);
 

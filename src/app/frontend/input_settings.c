@@ -55,6 +55,12 @@ bool frontend_input_settings_command_current(const frontend_input_settings *owne
         if (qa_input_release_context_current(owner->release[slot],console,command)) return true;
     return false;
 }
+static bool release_view_is(const frontend_input_settings *owner,unsigned slot,const qa_cvars *view)
+{
+    if (!view || !owner->release[slot]) return false;
+    qa_command_context command=qa_input_seat_context(owner->physical[slot]);
+    return command.cvar_view==qa_cvars_view_identity(view);
+}
 bool frontend_input_settings_shutdown_ready(const frontend_input_settings *owner,
     const qa_frontend *frontend,qa_error *error)
 {
@@ -451,8 +457,8 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
             return fail(error,"Input retirement lost its actual returned canonical cancellation ticket");
         for (unsigned slot=0;slot<owner->seat_count;++slot)
             if (!(owner->all_scopes&(1u<<slot)) &&
-                (!owner->release[slot] || (qa_input_release_console(owner->release[slot])!=console &&
-                    (!client_source || qa_input_release_console(owner->release[slot])!=client_source->context.console)) ||
+                (!owner->release[slot] || (!release_view_is(owner,slot,cvars) &&
+                    (!client_source || !release_view_is(owner,slot,client_source->context.cvars))) ||
                  !qa_input_release_reserved_retirement_ready(owner->release[slot],
                     QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error))) return false;
         for (unsigned slot=0;slot<owner->seat_count;++slot)
@@ -468,8 +474,8 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
         int keys[528]; qa_input_release_scope scope;
         if (owner->all_scopes&(1u<<slot)) scope=(qa_input_release_scope){.all=true,.controller=-1};
         else if (!qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error)) return false;
-        if ((qa_input_release_console(owner->release[slot])!=console &&
-                (!client_source || qa_input_release_console(owner->release[slot])!=client_source->context.console)) ||
+        if ((!release_view_is(owner,slot,cvars) &&
+                (!client_source || !release_view_is(owner,slot,client_source->context.cvars))) ||
             !qa_input_release_retirement_scope_ready(owner->release[slot],owner->physical[slot],&scope,
                 QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error)) return false;
     }
@@ -510,10 +516,14 @@ bool frontend_input_settings_retire_actor(frontend_input_settings *owner,qa_erro
     return ok;
 }
 bool frontend_input_settings_retire_source(frontend_input_settings *owner,qa_application *application,
-    const qa_console *console,qa_error *error)
+    const qa_cvars *view,qa_error *error)
 {
-    if (!owner || !console || owner->application!=application || owner->terminal ||
+    if (!owner || !view || owner->application!=application || owner->terminal ||
         !parents_returned(owner,owner->frontend,error)) return false;
+    unsigned retiring=0;
+    for (unsigned slot=0;slot<owner->seat_count;++slot)
+        if (release_view_is(owner,slot,view)) retiring|=1u<<slot;
+    if (!retiring) return true;
     if (qa_input_platform_settings_result(owner->native)==QA_INPUT_PLATFORM_SETTINGS_ENTERED) {
         /* A detached source cannot supply current-command completion. Admit
          * every retained native scope through the real retirement loan before
@@ -533,13 +543,11 @@ bool frontend_input_settings_retire_source(frontend_input_settings *owner,qa_app
         if (!ok) retain_failure(owner,error);
         return ok;
     }
-    for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot] &&
-        qa_input_release_console(owner->release[slot])==console) {
+    for (unsigned slot=0;slot<owner->seat_count;++slot) if (retiring&(1u<<slot)) {
         if (!qa_input_release_retirement_ready(owner->release[slot],QA_CONSOLE_RELEASE_DETACHED_SOURCE,
             retirement,owner,error)) return false;
     }
-    for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot] &&
-        qa_input_release_console(owner->release[slot])==console) {
+    for (unsigned slot=0;slot<owner->seat_count;++slot) if (retiring&(1u<<slot)) {
         owner->aborting=true;
         qa_input_release_retirement_publish(owner->release[slot]);
         owner->release[slot]=NULL;

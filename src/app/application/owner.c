@@ -222,6 +222,7 @@ static bool create_application(const qa_application_options *options,
     application->before_world_change = options->before_world_change;
     application->world_retired = options->world_retired;
     application->console_print = options->console_print;
+    application->console_forward = options->console_forward;
     if (!application_console_create(application, error)) goto fail;
     if (!restore && !baseline_strings && !application_startup_create(application,
         options->startup_commands, options->startup_command_count, error)) goto fail;

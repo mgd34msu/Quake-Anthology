@@ -385,13 +385,17 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
         .identity_light = 1, .lod_scale = 5, .rail_segment_length = 32,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
     if (!presenter->recipient) {
-        for (size_t i = 0; i < qa_application_console_count(frontend->application); ++i) {
-            qa_actor_owner owner;
-            qa_console *console = qa_application_console_at(frontend->application, i, &owner);
-            if (owner != source->provider) continue;
-            frontend_config_source *config = frontend_config_store_source(frontend->config_store, console);
+        const qa_launch_snapshot *publication = qa_application_launch(frontend->application);
+        const char *instance = qa_application_provider_instance(frontend->application, source->provider);
+        const qa_launch_instance *descriptor = instance ? qa_launch_snapshot_find(publication, instance) : NULL;
+        if (descriptor) {
+            qa_application_startup_source tuple;
+            if (!qa_application_startup_source_read(frontend->application, publication, descriptor, &tuple, error))
+                return false;
+            if (tuple.scope.provider != source->provider)
+                return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected presenter changed its actual equipment provider");
+            frontend_config_source *config = frontend_config_store_source(frontend->config_store, tuple.cvars);
             presenter->cvars = frontend_config_source_seat_cvars(config, launch_seat);
-            break;
         }
         if (!frontend_source_identity_allocate(frontend, &settings.owner, error) ||
             !qa_q3_presentation_create(&settings, &presenter->recipient, error)) return false;

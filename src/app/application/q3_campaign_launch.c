@@ -15,8 +15,8 @@ struct application_q3_campaign_launch {
     qa_actor_owner previous_owner;
     application_provider *candidate;
     qa_cvars *candidate_cvars;
-    uint64_t candidate_cvar_owner, previous_cvar_owner;
-    qa_cvars *final_cvars;
+    uint64_t candidate_cvar_owner;
+    bool shutdown_returned;
     bool original;
     qa_application_q3_setting *settings;
     size_t count;
@@ -50,15 +50,10 @@ bool application_q3_campaign_launch_finish(qa_application *app,
 {
     struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
     if (!state) return true;
-    bool okay = true;
-    if (published && app->state != QA_APPLICATION_FAULTED)
-        for (size_t i = 0; okay && i < state->count; ++i)
-            if (named(state->settings[i].name, "sv_cheats"))
-                okay = qa_cvars_set(app->cvars, "sv_cheats", state->settings[i].value, true, error);
-    if (!okay) application_fault(app, error);
+    (void)published;
+    (void)error;
     app->q3_campaign_launch = NULL;
     qa_launch_snapshot_release(state->previous);
-    qa_cvars_destroy(state->final_cvars);
     for (size_t i = 0; i < state->count; ++i) {
         free((void *)state->settings[i].name);
         free((void *)state->settings[i].value);
@@ -66,7 +61,7 @@ bool application_q3_campaign_launch_finish(qa_application *app,
     free(state->settings);
     free(state->instance);
     free(state);
-    return okay;
+    return true;
 }
 
 bool application_q3_campaign_launch_cvars(application_provider *provider,
@@ -81,24 +76,10 @@ bool application_q3_campaign_launch_cvars(application_provider *provider,
         provider->launch->selection.product != state->product ||
         provider->launch->selection.runtime != state->runtime ||
         !provider->product || provider->product->family != QA_GAME_Q3 ||
-        !cvars || !cvar_owner || cvars == app->cvars ||
+        !cvars || !cvar_owner || !qa_cvars_same_store(cvars, app->cvars) ||
         cvars == state->previous_cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign startup values require their fresh physical GAME registry");
-    for (const qa_cvar_view *value = qa_cvars_next(state->previous_cvars, NULL); value;
-         value = qa_cvars_next(state->previous_cvars, value)) {
-        if (named(value->name, "mapname") || named(value->name, "sv_mapname") ||
-            named(value->name, "sv_cheats")) continue;
-        uint64_t owner = value->owner == state->previous_owner ? provider->owner :
-            value->owner ? cvar_owner : 0;
-        if (!qa_cvars_register(cvars, value->name, value->reset_value, value->flags,
-                owner, value->description, error) ||
-            !qa_cvars_set(cvars, value->name,
-                value->latched_value ? value->latched_value : value->value,
-                true, error) ||
-            (value->save_policy != QA_CVAR_SAVE_UNCLASSIFIED &&
-             !qa_cvars_declare_save_policy(cvars, value->name, value->save_policy, error))) return false;
-    }
     for (size_t i = 0; i < state->count; ++i) {
         if (named(state->settings[i].name, "sv_cheats")) continue;
         if (!qa_cvars_set(cvars, state->settings[i].name,
@@ -118,13 +99,29 @@ bool application_q3_campaign_launch_guest_handoff(application_provider *provider
     if (!state || provider->owner != state->previous_owner) return true;
     if (!state->original || app->operation != APPLICATION_CONFIGURING ||
         !provider->attached || !provider->constructed || provider->close_pending ||
-        cvars != state->previous_cvars || !cvar_owner || state->final_cvars)
+        cvars != state->previous_cvars || !cvar_owner || state->shutdown_returned ||
+        !qa_cvars_same_store(cvars, app->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign Shutdown carry lost its actual previous GAME registry");
-    state->final_cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_CONSOLE_Q3}, error);
-    if (!state->final_cvars || !qa_cvars_copy(state->final_cvars, cvars, error)) return false;
-    state->previous_cvar_owner = cvar_owner;
+    state->shutdown_returned = true;
     state->previous_cvars = NULL;
+    return true;
+}
+
+bool application_q3_campaign_launch_retired(qa_application *app,
+    application_publication *publication, qa_error *error)
+{
+    struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
+    if (!state) return true;
+    if (!publication || !publication->sources_retired ||
+        (state->original && !state->shutdown_returned) ||
+        publication->map_provider != state->candidate || !state->candidate_cvars ||
+        !qa_cvars_same_store(state->candidate_cvars, app->cvars))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Campaign values require the actual completed Source Shutdown");
+    for (size_t i = 0; i < state->count; ++i)
+        if (!qa_cvars_set(state->candidate_cvars, state->settings[i].name,
+                state->settings[i].value, true, error)) return false;
     return true;
 }
 
@@ -134,55 +131,12 @@ bool application_q3_campaign_launch_admitted(qa_application *app,
     struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
     if (!state || !state->original) return true;
     application_provider *provider = publication ? publication->map_provider : NULL;
-    qa_cvars *cvars = state->candidate_cvars;
-    const qa_cvar_view *map = qa_cvars_find(cvars, "mapname");
-    const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
-    if (app->operation != APPLICATION_CONFIGURING || !publication ||
-        !publication->published || provider != state->candidate ||
-        !provider->attached || !provider->constructed || !state->final_cvars ||
-        !map || !capacity || !state->candidate_cvar_owner)
-        return application_fail(error, QA_ERROR_ARGUMENT,
-            "Campaign admission lacks its genuine final Shutdown carry");
-    size_t map_length = strlen(map->value);
-    char *map_name = malloc(map_length + 1);
-    if (!map_name) return application_fail(error, QA_ERROR_MEMORY,
-        "Retaining campaign destination map identity");
-    memcpy(map_name, map->value, map_length + 1);
-    size_t capacity_length = strlen(capacity->value);
-    char *max_clients = malloc(capacity_length + 1);
-    if (!max_clients) {
-        free(map_name);
-        return application_fail(error, QA_ERROR_MEMORY,
-            "Retaining campaign physical client capacity");
-    }
-    memcpy(max_clients, capacity->value, capacity_length + 1);
-    bool okay = qa_cvars_copy(cvars, state->final_cvars, error);
-    size_t count = okay ? qa_cvars_count(cvars) : 0;
-    qa_cvar_record_state *rows = NULL;
-    if (okay && count > SIZE_MAX / sizeof(*rows))
-        okay = application_fail(error, QA_ERROR_MEMORY, "Campaign cvar owners are exhausted");
-    if (okay && count && !(rows = calloc(count, sizeof(*rows))))
-        okay = application_fail(error, QA_ERROR_MEMORY, "Retaining campaign cvar owners");
-    qa_cvar_registry_state registry;
-    if (okay) okay = qa_cvars_capture_metadata(cvars, &registry, rows, count, error);
-    for (size_t i = 0; okay && i < count; ++i) {
-        if (rows[i].owner == state->previous_owner) rows[i].owner = provider->owner;
-        else if (rows[i].owner == state->previous_cvar_owner)
-            rows[i].owner = state->candidate_cvar_owner;
-    }
-    if (okay) okay = qa_cvars_restore_metadata(cvars, &registry, rows, count, error);
-    free(rows);
-    if (okay) okay = qa_cvars_apply_latched(cvars, NULL, error) &&
-        qa_cvars_set(cvars, "mapname", map_name, true, error) &&
-        qa_cvars_set(cvars, "sv_mapname", map_name, true, error);
-    for (size_t i = 0; okay && i < state->count; ++i)
-        if (!named(state->settings[i].name, "sv_cheats"))
-            okay = qa_cvars_set(cvars, state->settings[i].name,
-                state->settings[i].value, true, error);
-    if (okay) okay = qa_cvars_set(cvars, "sv_maxclients", max_clients, true, error);
-    free(max_clients);
-    free(map_name);
-    return okay;
+    return app->operation == APPLICATION_CONFIGURING && publication &&
+        publication->published && publication->sources_retired && state->shutdown_returned &&
+        provider == state->candidate && provider->attached && provider->constructed &&
+        state->candidate_cvar_owner && qa_cvars_same_store(state->candidate_cvars, app->cvars)
+        ? true : application_fail(error, QA_ERROR_ARGUMENT,
+            "Campaign admission lacks its genuine completed Source Shutdown");
 }
 
 static bool campaign_launch(qa_application *app,

@@ -94,9 +94,17 @@ static bool cvar_edit(void *context, const qa_command_context *command,
         command, registry, out, error);
 }
 
+static qa_command_result forward(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    qa_application *application=context;
+    return application->console_forward ?
+        application->console_forward(application->guest_context,command,error) : QA_COMMAND_UNHANDLED;
+}
+
 bool application_console_create(qa_application *application, qa_error *error)
 {
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_UNSPECIFIED, .role = QA_CVAR_ROLE_ENGINE,
         .user = application, .print = cvar_print};
     application->cvars = qa_cvars_create(&cvars, error);
     if (application->cvars == NULL) return false;
@@ -108,7 +116,8 @@ bool application_console_create(qa_application *application, qa_error *error)
         .read_script = read_script, .release_script = release_script,
         .capture_context = application_command_capture,
         .context_active = application_command_active,
-        .source_command = application_command_fallback};
+        .source_command = application_command_fallback, .forward = forward};
+    console.context.cvar_view = qa_cvars_view_identity(application->cvars);
     application->console = qa_console_create(&console, error);
     return application->console != NULL;
 }
@@ -234,7 +243,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         services.engine_cvars = application->cvars;
         if (!services.cvars || !services.console)
             return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME has no private console owner");
-    } else if (!application_guest_q3_client_console_at(engine, seat, &services.console, &services.cvars)) {
+    } else if (!application_guest_q3_client_console_at(engine, role, seat, &services.console, &services.cvars)) {
         return application_fail(error, QA_ERROR_ARGUMENT, "Original CLIENT has no retained private seat console");
     }
     for (size_t i = 0; i < qa_vfs_mount_count(services.mounts); ++i) {
@@ -279,6 +288,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
     }
     if (!writable_owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed their selected write-root authority");
+    services.command_context.cvar_view = qa_cvars_view_identity(services.cvars);
     *out = services;
     return true;
 }

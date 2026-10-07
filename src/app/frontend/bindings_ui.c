@@ -110,11 +110,12 @@ static bool reset_available(const frontend_seat *seat)
 {
     qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
     if(!seat->frontend->config_store || !qa_input_seat_recipient_read(seat->input,&console,&cvars,&command)) return false;
+    if(frontend_config_store_source_context(seat->frontend->config_store,&command)!=NULL ||
+        frontend_config_store_client_context(seat->frontend->config_store,&command)!=NULL) return true;
     frontend_neutral_config_view view;
-    if(frontend_config_store_neutral_read(seat->frontend->config_store,console,&view,NULL))
-        return view.ready && view.published && frontend_neutral_config_current(&view);
-    return frontend_config_store_source(seat->frontend->config_store,console)!=NULL ||
-        frontend_config_store_client(seat->frontend->config_store,console)!=NULL;
+    if(frontend_config_store_neutral_read(seat->frontend->config_store,cvars,&view,NULL))
+        return view.physical_seat==seat->id && view.ready && view.published && frontend_neutral_config_current(&view);
+    return false;
 }
 static bool bind_pending(frontend_seat *seat, qa_error *error)
 {

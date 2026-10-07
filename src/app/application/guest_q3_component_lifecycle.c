@@ -204,7 +204,8 @@ bool application_q3_component_destroy(application_q3_component **slot,qa_error *
     if(c->actor_resolver) { if(!qa_qvm_unbind(c->vm,c->actor_resolver,e)) return false; c->actor_resolver=0; }
     if(c->vm) { if(!qa_qvm_destroy(c->vm,e)) return false; c->vm=NULL; qa_q3_host_qvm_consumed(c->host); }
     if(c->host) { if(!qa_q3_host_destroy(c->host,e)) return false; c->host=NULL; }
-    qa_console_destroy(c->console); qa_cvars_destroy(c->cvars); free(c->hooks); free(c->frame_branches); free(c->frame_locals); free(c->initial_stores);
+    if(!qa_console_unbind_source(c->console,qa_cvars_view_identity(c->cvars),e)) return false;
+    qa_cvars_detach_callbacks(c->cvars); qa_cvars_destroy(c->cvars); free(c->hooks); free(c->frame_branches); free(c->frame_locals); free(c->initial_stores);
     application_q3_mod_items_profile_destroy(c->items_profile);
     application_q3_mod_profile_destroy(c->profile); qa_qvm_image_release(c->options.image);
     qa_resource_release(c->options.program); qa_resource_release(c->options.declaration);

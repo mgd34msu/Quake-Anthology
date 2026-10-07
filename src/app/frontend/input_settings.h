@@ -84,7 +84,7 @@ bool frontend_input_settings_abort_empty(frontend_input_settings *,qa_error *);
 bool frontend_input_settings_retire_entered(frontend_input_settings *,qa_error *);
 bool frontend_input_settings_retire_actor(frontend_input_settings *,qa_error *);
 bool frontend_input_settings_retire_source(frontend_input_settings *,qa_application *,
-    const qa_console *,qa_error *);
+    const qa_cvars *,qa_error *);
 /* Actual detach-first final ENGINE loan. Preflights every captured history
  * and physical scope before checked native cleanup; no command dispatch runs.
  * complete reports terminal consumption even when a real close error returns

@@ -157,15 +157,19 @@ static bool send_command(void *context, int32_t client, const char *text, qa_err
 
 bool q3gear_services(application_q3_gear *gear, qa_error *error)
 {
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = gear, .print = print, .cheats_allowed = cheats,
+    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = gear, .print = print, .cheats_allowed = cheats,
         .declaration_save_policy = application_native_q3_cvar_save_policy};
-    gear->cvars = qa_cvars_create(&cvars, error);
+    gear->cvars = qa_cvars_create_view(gear->options.host.engine_cvars, &cvars, error);
     if (!gear->cvars) return false;
     qa_console_options console = {.context = gear->options.host.command_context,
         .cvars = gear->cvars, .user = gear, .print = console_print, .cvar_owner = cvar_owner,
         .read_script = read_script, .release_script = release_script, .source_command = source_command,
         .capture_context = command_capture, .context_active = command_active};
-    gear->console = qa_console_create(&console, error);
+    gear->options.host.command_context.cvar_view = qa_cvars_view_identity(gear->cvars);
+    console.context = gear->options.host.command_context;
+    if (qa_console_bind_source(gear->options.host.console, &console, error))
+        gear->console = gear->options.host.console;
     if (!gear->console) return false;
     {
         static const struct {

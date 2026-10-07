@@ -8,9 +8,9 @@
 #include "qa/console_cvars_prepare.h"
 
 typedef struct qa_settings_store qa_settings_store;
-/* A borrowed physical configuration authority. CLIENT scopes retain their
- * receiver descriptor and authored seat independently of GAME. A heap is
- * transferred only through its actual factory's checked ownership operation. */
+/* A borrowed Source view of the application-owned console and cvar table.
+ * CLIENT scopes retain their receiver descriptor and authored seat separately
+ * from GAME; the command records the view's actual constructor identity. */
 typedef struct qa_application_startup_source {
     const qa_launch_instance *descriptor;
     qa_application_console_scope scope;
@@ -21,7 +21,7 @@ typedef struct qa_application_startup_source {
 } qa_application_startup_source;
 
 /* The platform retains its real configuration, input and archive owners here.
- * Consoles and registries are the selected physical GAME or CLIENT owners.
+ * GAME and CLIENT views borrow the common console and canonical table.
  * The options hook pointer and its context must outlive the application. */
 typedef struct qa_application_startup_hooks {
     void *context;
@@ -46,7 +46,7 @@ typedef struct qa_application_startup_hooks {
     bool (*retire_source)(void *, qa_application *, const qa_application_startup_source *, qa_error *);
     qa_cvars *(*cvar_owner)(void *, qa_application *, qa_console *,
         const qa_command_context *, const char *);
-    /* Pure initial local admission borrows the completed physical seat heap
+    /* Pure initial local admission borrows the completed physical seat view
      * and canonical view preference; no command context is synthesized. */
     bool (*local_userinfo)(void *,qa_application *,const qa_launch_choices *,
         const qa_launch_seat *,qa_cvars **,const qa_cvar_view **field_of_view,
@@ -55,30 +55,24 @@ typedef struct qa_application_startup_hooks {
         const qa_command_context *, size_t, qa_cvars **);
     bool (*read_source_script)(void *, qa_application *, qa_console *,
         const qa_command_context *, const char *, qa_bytes *, void **lease, qa_error *);
-    void (*release_source_script)(void *, qa_application *, qa_console *, void *lease);
+    void (*release_source_script)(void *, qa_application *, const qa_cvars *, void *lease);
     /* Entered detached teardown releases physical client/read leases before
      * GAME readiness and Shutdown. The configuration owner remains live. */
     bool (*begin_retire_source)(void *, qa_application *, const qa_application_startup_source *, qa_error *);
-    bool (*carry_source_variables)(void *, qa_application *, const qa_launch_snapshot *,
-        const qa_application_startup_source *, bool *carried, qa_error *);
     bool (*configuration_store)(void *, qa_application *,
         const qa_application_startup_source *, qa_settings_store *, qa_error *);
     /* Borrow the compatible published physical program before its candidate
      * cfg prefix. No command capture, effects or registry transfer occurs. */
     bool (*program_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, qa_application_startup_source *, bool *found, qa_error *);
-    /* Qualify an actual ENGINE-owned Source configuration programme after
-     * GAME shutdown. Its metadata never supplies a retired GAME callback. */
-    bool (*parked_program_source_current)(void *,qa_application *,const qa_application_startup_source *,
-        qa_application_console_scope *origin_scope,uint64_t *origin_generation,qa_error *);
     bool (*startup_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, bool *primary, qa_error *);
     /* Advance real retained input/settings releases before final candidate
      * preflight. Incomplete work retains the candidate and all source phases. */
     bool (*advance_candidate)(void *, qa_application *, const qa_launch_snapshot *,
         bool *complete, qa_error *);
-    /* Hosted CLIENT roles have released their old GAME leases. The retained
-     * physical console remains closed until its completed new heap is bound. */
+    /* Hosted CLIENT roles release their old GAME leases before binding the
+     * replacement Source view to the common console. */
     bool (*retire_hosted_configuration)(void *, qa_application *,
         const qa_application_startup_source *, qa_error *);
     bool (*bind_hosted_configuration)(void *, qa_application *, const qa_launch_snapshot *,
@@ -106,13 +100,13 @@ typedef struct qa_application_startup_hooks {
     bool (*advance_validated_candidate)(void *, qa_application *, const qa_launch_snapshot *,
         bool *complete, qa_error *);
     /* Receive the actual postvalidation declaration owner while the retained
-     * descriptor, scope, console and heap remain unchanged. */
+     * descriptor, scope, console and Source view remain unchanged. */
     bool (*refresh_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, qa_error *);
-    /* Purely borrow the ENGINE edit actually held by this candidate. A null
-     * result means the candidate owns no canonical scalar preparation. */
+    /* Borrow the candidate's canonical edit. Its creator retains publication
+     * and cancellation ownership; Source views leave before either operation. */
     bool (*candidate_values)(void *, const qa_application *, const qa_launch_snapshot *,
-        const qa_cvars_edit **, qa_error *);
+        qa_cvars_edit **, qa_error *);
     /* Pure proof of this candidate's entered failed input history, retained
      * complete physical coverage, native ticket and returned parents. Dormant
      * captured rows become shutdown metadata only under the ENGINE loan. */
@@ -140,9 +134,6 @@ typedef struct qa_application_startup_hooks {
      * invocation after its GAME declined it. No text forwarding or reparse. */
     bool (*source_common_command)(void *, qa_application *, const qa_application_startup_source *,
         const qa_command_invocation *, bool *, qa_error *);
-    /* An entered ENGINE request may queue work on its genuine current Source
-     * console. The receiver owns capture, alias expansion and later dispatch. */
-    bool (*engine_source_command)(void *,qa_application *,const qa_command_invocation *,bool *,qa_error *);
     /* Flood policy reads local wall time or the entered remote action receipt,
      * independently of the paused/scaled GAME clock. */
     bool (*source_command_realtime)(void *,qa_application *,const qa_application_startup_source *,
@@ -181,8 +172,8 @@ bool qa_application_startup_root_read(const qa_application *, const qa_launch_sn
  * released hosted CLIENT child. Historical stamps alone are insufficient. */
 bool qa_application_startup_source_retiring(const qa_application *, const qa_console *,
     const qa_command_context *);
-/* Borrow canonical ENGINE only through this actual physical source. A
- * detached heap additionally requires its entered provider shutdown loan. */
+/* Borrow canonical ENGINE through this actual Source. A detached Source view
+ * additionally requires its entered provider shutdown loan. */
 bool qa_application_startup_source_engine_cvars(const qa_application *,
     const qa_application_startup_source *, qa_cvars **, qa_error *);
 const qa_launch_snapshot *qa_application_startup_candidate(const qa_application *);
@@ -214,9 +205,11 @@ bool qa_application_startup_images_phase(const qa_application *, const qa_launch
  * identifies the producer independently of the common console/table. */
 bool qa_application_startup_source_read(qa_application *, const qa_launch_snapshot *,
     const qa_launch_instance *, qa_application_startup_source *, qa_error *);
+bool qa_application_console_source_at(qa_application *, size_t,
+    qa_application_startup_source *, bool *present, qa_error *);
 bool qa_application_startup_replay_variables(qa_application *, qa_console *,
     const qa_command_context *, qa_error *);
 bool qa_application_startup_console_primary(qa_application *, qa_console *, bool *primary, qa_error *);
 bool qa_application_startup_q3_safe_mode(qa_application *, const qa_launch_instance *,
-    qa_console *, bool *safe, qa_error *);
+    const qa_application_startup_source *, bool *safe, qa_error *);
 #endif

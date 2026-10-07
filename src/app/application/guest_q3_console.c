@@ -48,26 +48,25 @@ bool application_guest_q3_console_startup(application_provider *provider, qa_err
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
     if (!provider || !engine || !cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME startup lost its physical registry");
-    qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
+    qa_command_context command = {.owner = provider->owner, .cvar_view = qa_cvars_view_identity(cvars), .dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_SERVER};
     if (!provider->attached && !application_startup_source_preinit(provider,
         application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
-    if (!cvars || !qa_cvars_apply_latched(cvars, NULL, error)) return false;
-    const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
-    const qa_cvar_view *dedicated = qa_cvars_find(cvars, "dedicated");
-    if (!engine || engine->restore_pending || engine->game || !capacity || !dedicated)
+    if (!cvars || !application_startup_apply_latched(provider, cvars, error)) return false;
+    qa_cvar_view capacity, dedicated;
+    if (!engine || engine->restore_pending || engine->game ||
+        !qa_cvars_effective_view(cvars, "sv_maxclients", &capacity, error) ||
+        !qa_cvars_effective_view(cvars, "dedicated", &dedicated, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME startup lacks its fresh physical registry");
     size_t seats = 0;
     for (size_t i = 0; i < 64; ++i) seats += engine->seats[i] != UINT32_MAX;
-    float minimum = dedicated->number != 0 ? 1.0f : (float)(seats ? seats : 1);
-    float requested = truncf(capacity->number);
+    float minimum = dedicated.number != 0 ? 1.0f : (float)(seats ? seats : 1);
+    float requested = truncf(capacity.number);
     if (requested < minimum) requested = minimum;
     if (requested > 64) requested = 64;
     if (!isfinite(requested) || requested < 1 || requested > 64)
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME capacity must be between 1 and 64");
-    char value[16];
-    snprintf(value, sizeof(value), "%u", (uint32_t)requested);
-    return qa_cvars_set(cvars, "sv_maxclients", value, true, error);
+    return application_publication_source_capacity(provider, (uint32_t)requested, error);
 }
 
 static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
@@ -166,7 +165,7 @@ static void release_script(void *context, void *lease)
         return;
     }
     if (application_startup_source_scripts(owner->engine->provider)) {
-        application_startup_source_script_release(owner->engine->provider, owner->console, lease);
+        application_startup_source_script_release(owner->engine->provider, owner->cvars, lease);
         return;
     }
     qa_resource_release(lease);
@@ -224,23 +223,6 @@ static bool register_engine(struct application_guest_q3_console *owner,
         {"cm_playerCurveClip", "1", QA_CVAR_ARCHIVE | QA_CVAR_CHEAT, QA_CVAR_SAVE_GAMEPLAY}, {"dedicated", "0", 0, QA_CVAR_SAVE_SETTING}
     };
     application_provider *provider = owner->engine->provider;
-    qa_cvars *startup = provider->application->cvars;
-    for (const qa_cvar_view *value = qa_cvars_next(startup, NULL); value;
-         value = qa_cvars_next(startup, value)) {
-        if (value->owner || named(value->name, "sv_cheats") || named(value->name, "mapname") ||
-            named(value->name, "sv_mapname") || named(value->name, "com_prereleaseDemo") ||
-            named(value->name, "com_prereleaseTeamArenaDemo") || named(value->name, "fs_restrict")) continue;
-        uint32_t flags = value->flags | QA_CVAR_USER_CREATED;
-        for (size_t j = 0; j < sizeof(definitions) / sizeof(*definitions); ++j)
-            if (named(value->name, definitions[j].name)) { flags = QA_CVAR_USER_CREATED; break; }
-        if (!qa_cvars_find(owner->cvars, value->name) &&
-            !qa_cvars_register(owner->cvars, value->name, value->reset_value,
-                flags, 0, value->description, error)) return false;
-        if (value->save_policy != QA_CVAR_SAVE_UNCLASSIFIED &&
-            !qa_cvars_declare_save_policy(owner->cvars, value->name, value->save_policy, error)) return false;
-        if (!qa_cvars_set(owner->cvars, value->name,
-            value->latched_value ? value->latched_value : value->value, true, error)) return false;
-    }
     if (!application_startup_seed_source(provider, owner->cvars, error) ||
         !application_q3_product_register_source(application_q3_product_source_policy(provider->application),
             owner->cvars, provider->owner, error)) return false;
@@ -259,8 +241,7 @@ static bool register_engine(struct application_guest_q3_console *owner,
     bool okay = qa_cvars_register(owner->cvars, "mapname", map,
         QA_CVAR_SERVERINFO | QA_CVAR_READONLY, provider->owner, NULL, error) &&
         qa_cvars_register(owner->cvars, "sv_mapname", "",
-            QA_CVAR_SERVERINFO | QA_CVAR_READONLY, provider->owner, NULL, error) &&
-        qa_cvars_set(owner->cvars, "sv_mapname", map, true, error);
+            QA_CVAR_SERVERINFO | QA_CVAR_READONLY, provider->owner, NULL, error);
     if (okay) okay = qa_cvars_declare_save_policy(owner->cvars, "mapname", QA_CVAR_SAVE_SETTING, error) &&
         qa_cvars_declare_save_policy(owner->cvars, "sv_mapname", QA_CVAR_SAVE_SETTING, error);
     free(map);
@@ -276,10 +257,11 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
     struct application_guest_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original GAME console");
     owner->engine = engine;
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = owner,
+    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = owner,
         .print = cvar_print, .cheats_allowed = cheats_allowed,
         .declaration_save_policy = application_native_q3_cvar_save_policy};
-    owner->cvars = qa_cvars_create(&cvars, error);
+    owner->cvars = qa_cvars_create_view(engine->provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
         .user = owner, .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
@@ -287,9 +269,11 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
-    if (owner->cvars) owner->console = qa_console_create(&options, error);
+    options.context.cvar_view = qa_cvars_view_identity(owner->cvars);
+    if (owner->cvars && qa_console_bind_source(engine->provider->application->console, &options, error))
+        owner->console = engine->provider->application->console;
     if (!owner->console || !register_engine(owner, map_path, error)) {
-        qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars); free(owner);
+        qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error); qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars); free(owner);
         return false;
     }
     engine->console = owner;
@@ -310,8 +294,10 @@ bool application_guest_q3_console_destroy(struct application_q3_guest *engine, q
     if (engine && engine->console) {
         if (!application_startup_source_retire(engine->provider, engine->console->console,
             engine->console->cvars, error)) return false;
-        qa_console_destroy(engine->console->console);
-        qa_cvars_destroy(engine->console->cvars);
+        if (!qa_console_unbind_source(engine->console->console,
+            qa_cvars_view_identity(engine->console->cvars), error)) return false;
+        qa_cvars_remove_owner(engine->console->cvars, engine->provider->owner);
+        qa_cvars_detach_callbacks(engine->console->cvars); qa_cvars_destroy(engine->console->cvars);
         free(engine->console); engine->console = NULL;
     }
     return true;

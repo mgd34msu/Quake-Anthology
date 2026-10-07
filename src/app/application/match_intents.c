@@ -2,6 +2,7 @@
 #include "match_intents.h"
 #include "q3_restart.h"
 #include "native_q3_clients.h"
+#include "startup_flow.h"
 #include "qa/launch_identity.h"
 #include "qa/source_save.h"
 
@@ -139,31 +140,41 @@ static bool destination(application_match_intents *state, qa_application *app, q
         return application_fail(error, QA_ERROR_ARGUMENT, "match map destination was not published");
     return true;
 }
-static qa_console *plan_console(qa_application *app, const application_next_map_plan *plan) {
-    qa_console *found = NULL;
-    for (size_t i = 0, count = qa_application_console_count(app); i < count; ++i) {
-        qa_console *console = qa_application_console_at(app, i, NULL);
-        qa_application_console_scope scope;
-        if (!qa_application_console_scope_read(app, console, &scope) ||
-            scope.provider != plan->scope.provider || scope.kind != plan->scope.kind ||
-            scope.seat != plan->scope.seat) continue;
-        if (found && found != console) return NULL;
-        found = console;
+static bool plan_source(qa_application *app, const application_next_map_plan *plan,
+                        qa_application_startup_source *out, qa_error *error) {
+    application_provider *provider = source(app, plan->scope.provider);
+    if (!provider) return application_fail(error, QA_ERROR_ARGUMENT, "match map Source scope retired");
+    bool matched = false;
+    for (size_t i = 0;; ++i) {
+        qa_application_startup_source current;
+        bool present;
+        if (!application_provider_startup_source_at(provider, i, &current, &present, error)) return false;
+        if (!present) break;
+        if (current.scope.provider != plan->scope.provider || current.scope.kind != plan->scope.kind ||
+            current.scope.seat != plan->scope.seat || current.command.owner != plan->context.owner ||
+            current.command.dialect != plan->context.dialect) continue;
+        if (matched) return application_fail(error, QA_ERROR_ARGUMENT, "match map Source scope is ambiguous");
+        *out = current;
+        matched = true;
     }
-    return found;
+    return matched || application_fail(error, QA_ERROR_ARGUMENT, "match map Source scope retired");
 }
 static bool context_read(application_match_intents *state, qa_application *app,
                          bool after, qa_error *error) {
     if (!qualify(state, app, !after, error)) return false;
     application_next_map_plan *plan = &state->plan;
-    if (!plan_console(app, plan))
-        return application_fail(error, QA_ERROR_ARGUMENT, "match map console scope retired");
+    qa_application_startup_source current;
+    if (!plan_source(app, plan, &current, error)) return false;
     if (after) {
         qa_command_context context = plan->context;
+        context.session = current.command.session;
+        context.cvar_view = current.command.cvar_view;
         context.registry = context.generation = 0;
         if (!qa_application_capture_command_context(app, &context, &context, error)) return false;
         plan->context = context;
-    } else if (!qa_application_command_context_active(app, &plan->context))
+    } else if (plan->context.session != current.command.session ||
+        plan->context.cvar_view != current.command.cvar_view ||
+        !qa_application_command_context_active(app, &plan->context))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map command publication retired");
     return true;
 }
@@ -208,7 +219,9 @@ static bool assignments(application_match_intents *state, qa_application *app,
                         size_t end, bool after, qa_error *error) {
     while (state->cursor < end) {
         if (!boundary(app, error) || !context_read(state, app, after, error)) return false;
-        qa_console *console = plan_console(app, &state->plan);
+        qa_application_startup_source current;
+        if (!plan_source(app, &state->plan, &current, error)) return false;
+        qa_console *console = current.console;
         application_map_assignment *value = &state->plan.assignments[state->cursor];
         if (config_intent(state->kind) &&
             !application_native_config_command_allowed(app, &state->plan, value->name, error)) return false;
@@ -428,10 +441,16 @@ bool application_match_intents_reconnect(application_match_intents *state, qa_ap
     if (!application_q3_restart_reconnect(state->restart, app, error)) return false;
     if (state->stage == MATCH_MAP_EMPTY) return true;
     bool after = state->stage == MATCH_MAP_AFTER;
+    bool restoring = state->restoring;
     if (!qualify(state, app, !after, error)) return false;
     if (after && !destination(state, app, error)) return false;
     if (state->stage == MATCH_MAP_UNRESOLVED) return true;
-    if (!plan_console(app, &state->plan)) return application_fail(error, QA_ERROR_FORMAT, "saved match console scope is absent");
+    qa_application_startup_source current;
+    if (!plan_source(app, &state->plan, &current, error)) return false;
+    if (restoring) {
+        state->plan.context.session = current.command.session;
+        state->plan.context.cvar_view = current.command.cvar_view;
+    }
     if (config_intent(state->kind)) {
         application_next_map_plan actual = {0};
         if (!application_native_config_plan(app, state->mode, state->kind,
@@ -452,7 +471,9 @@ bool application_match_intents_reconnect(application_match_intents *state, qa_ap
         free(map);
         if (!exact_map) return application_fail(error, QA_ERROR_FORMAT, "saved match map is not qualified by its actual source");
     }
-    if (!after && !qa_application_command_context_active(app, &state->plan.context))
+    if (!after && (state->plan.context.session != current.command.session ||
+        state->plan.context.cvar_view != current.command.cvar_view ||
+        !qa_application_command_context_active(app, &state->plan.context)))
         return application_fail(error, QA_ERROR_FORMAT, "saved match command publication differs");
     if (state->stage == MATCH_MAP_WAIT && state->revision &&
         !travel_matches(state, app, state->revision, error)) return false;

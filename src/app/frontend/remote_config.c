@@ -44,7 +44,8 @@ struct frontend_remote_config {
     qa_application_startup_source retarget_origin;
     const void *retarget_game_storage;
     uint64_t declaration_owner;
-    qa_console *console,*hosted_console;
+    qa_console *console;
+    qa_cvars *hosted_cvars;
     qa_cvars *owned,*cvars,*q3_mouse,*q3_view,*movement_mouse;
     frontend_client_registry *registry;
     frontend_key_profile *keys;
@@ -88,18 +89,26 @@ static bool scope_equal(qa_application_console_scope a,qa_application_console_sc
 { return a.provider==b.provider && a.kind==b.kind && a.seat==b.seat; }
 static bool active(const frontend_remote_config *row,const qa_command_context *command)
 {
-    return row && !row->retargeting && command && command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
-        command->owner==row->scope.provider && command->seat==row->scope.seat &&
-        command->session==row->command.session && qa_application_command_context_active(row->application,command);
+    if (!row || row->retargeting || !command || command->origin==QA_COMMAND_REMOTE ||
+        command->dialect!=QA_CONSOLE_Q3 || command->session!=row->command.session ||
+        !qa_application_command_context_active(row->application,command)) return false;
+    if (command->origin==QA_COMMAND_SEAT && command->owner==row->scope.provider &&
+        command->seat==row->scope.seat && command->cvar_view==row->command.cvar_view) return true;
+    return !command->owner && row->published && row->configured && row->released && !row->imported && !row->phase &&
+        (command->origin!=QA_COMMAND_SEAT || command->seat==row->scope.seat) &&
+        command->cvar_view==qa_cvars_view_identity(qa_application_cvars(row->application)) &&
+        (qa_console_context_delivered_view(row->console,command,row->command.cvar_view,0,row->scope.provider) ||
+         qa_console_context_delivered_view(row->console,command,row->command.cvar_view,row->scope.provider,row->scope.provider));
 }
 static bool cvar_context(const frontend_remote_config *row,const qa_command_context *command)
 {
     if (active(row,command)) return true;
     return row && command && !row->retargeting && !row->imported && row->configured && row->released &&
-        descriptor(row) && row->console && row->cvars && qa_console_cvars(row->console)==row->cvars &&
+        descriptor(row) && row->console && row->cvars && qa_cvars_same_store(qa_console_cvars(row->console),row->cvars) &&
         command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
         command->owner==row->scope.provider && command->seat==row->scope.seat &&
-        command->session==row->command.session && qa_console_cvar_entered(row->console,command);
+        command->session==row->command.session && command->cvar_view==row->command.cvar_view &&
+        qa_console_cvar_entered(row->console,command);
 }
 bool frontend_remote_config_cvar_active(const frontend_remote_config *row,const qa_command_context *command)
 { return cvar_context(row,command); }
@@ -116,9 +125,11 @@ static bool cheats(void *context)
 }
 static qa_cvars *settings_registry(frontend_remote_config *row,qa_console_dialect dialect,qa_error *error)
 {
-    qa_cvar_options options={.dialect=dialect,.user=row,.print=print,.cheats_allowed=cheats,
+    qa_cvar_options options={.dialect=dialect,.side=QA_CVAR_SIDE_CLIENT,
+        .role=row->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI?QA_CVAR_ROLE_UI:QA_CVAR_ROLE_CGAME,
+        .seat=row->scope.seat,.user=row,.print=print,.cheats_allowed=cheats,
         .default_save_policy=QA_CVAR_SAVE_SETTING};
-    return qa_cvars_create(&options,error);
+    return qa_cvars_create_view(qa_application_cvars(row->application),&options,error);
 }
 static bool retain_context(void *context,qa_error *error)
 {
@@ -142,10 +153,21 @@ frontend_remote_configs *frontend_remote_configs_create(qa_frontend *f,frontend_
     owner->frontend=f; owner->manager=manager; return owner;
 }
 bool frontend_remote_configs_empty(const frontend_remote_configs *owner) { return !owner || !owner->rows; }
-frontend_remote_config *frontend_remote_config_find(const frontend_remote_configs *owner,const qa_console *console)
+frontend_remote_config *frontend_remote_config_find(const frontend_remote_configs *owner,const qa_cvars *view)
 {
     for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next)
-        if (row->console==console) return row;
+        if (row->cvars==view) return row;
+    return NULL;
+}
+frontend_remote_config *frontend_remote_config_find_context(const frontend_remote_configs *owner,
+    const qa_command_context *command)
+{
+    if (!command || !command->cvar_view) return NULL;
+    for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next)
+        if ((!command->owner && active(row,command)) ||
+            (command->cvar_view==qa_cvars_view_identity(row->cvars) &&
+             command->owner==row->scope.provider && command->seat==row->scope.seat &&
+             command->session==row->command.session)) return row;
     return NULL;
 }
 bool frontend_remote_config_phase(const frontend_remote_configs *owner,const void *phase)
@@ -195,7 +217,8 @@ bool frontend_remote_configs_local_routes(frontend_remote_configs *owner,qa_appl
             row->phase || row->input || row->staging || physical>=f->options.seats || !f->seats ||
             !f->seats[physical].input || !f->seats[physical].console ||
             qa_input_seat_ordinal(f->seats[physical].input)!=physical ||
-            !qa_application_q3_client_configuration_read(application,row->scope.provider,row->scope.seat,&actual,error) ||
+            !qa_application_q3_client_configuration_read(application,row->scope.provider,
+                row->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI?QA_QVM_UI:QA_QVM_CGAME,row->scope.seat,&actual,error) ||
             actual.console!=row->console || actual.cvars!=row->cvars || !scope_equal(actual.scope,row->scope) ||
             !descriptor(row) || actual.descriptor->storage!=descriptor(row)->storage ||
             !qa_application_q3_client_configuration_unborrowed(application,&actual))
@@ -225,7 +248,8 @@ bool frontend_remote_config_pending(const frontend_remote_config *row,qa_applica
 bool frontend_remote_config_tuple(const frontend_remote_config *row,qa_application_startup_source *out)
 {
     if (!row || !out || row->imported || row->retargeting || !descriptor(row) || !row->console ||
-        !row->cvars || qa_console_cvars(row->console)!=row->cvars) return false;
+        !row->cvars || !qa_cvars_same_store(qa_console_cvars(row->console),row->cvars) ||
+        row->command.cvar_view!=qa_cvars_view_identity(row->cvars)) return false;
     *out=(qa_application_startup_source){descriptor(row),row->scope,row->console,row->cvars,
         row->command,row->declaration_owner}; return true;
 }
@@ -237,7 +261,7 @@ bool frontend_remote_config_refresh(frontend_remote_config *row,qa_application *
     row->declaration_owner=source->declaration_owner; return true;
 }
 bool frontend_remote_config_registries(const frontend_remote_config *row,qa_application *application,
-    const qa_application_startup_source *source,qa_cvars *namespaces[8],qa_console **hosted_game,qa_error *error)
+    const qa_application_startup_source *source,qa_cvars *namespaces[8],qa_cvars **hosted_game,qa_error *error)
 {
     const qa_launch_instance *held=descriptor(row);
     if (!row || !application || !source || !source->descriptor || !namespaces || !hosted_game ||
@@ -251,13 +275,13 @@ bool frontend_remote_config_registries(const frontend_remote_config *row,qa_appl
     namespaces[QA_Q3_HOST_CVAR_MOUSE-1]=row->q3_mouse;
     namespaces[QA_Q3_HOST_CVAR_Q3_VIEW-1]=row->q3_view;
     namespaces[QA_Q3_HOST_CVAR_SELECTED_VIEW-1]=row->movement_mouse;
-    *hosted_game=row->hosted?row->hosted_console:NULL;
+    *hosted_game=row->hosted?row->hosted_cvars:NULL;
     return true;
 }
 bool frontend_remote_config_bindings(const frontend_remote_config *row,qa_application *application,
     const qa_application_startup_source *source,const qa_input_seat *physical,qa_input_seat **out,qa_error *error)
 {
-    qa_cvars *namespaces[8]={0}; qa_console *hosted=NULL;
+    qa_cvars *namespaces[8]={0}; qa_cvars *hosted=NULL;
     if (!physical || !out) return fail(error,QA_ERROR_ARGUMENT,"CLIENT binding access needs its physical seat and output");
     if (!frontend_remote_config_registries(row,application,source,namespaces,&hosted,error)) return false;
     qa_frontend *f=row->owner->frontend;
@@ -267,8 +291,8 @@ bool frontend_remote_config_bindings(const frontend_remote_config *row,qa_applic
     qa_input_seat *input=NULL;
     if (hosted) {
         frontend_config_source *game=frontend_config_store_source(row->owner->manager,hosted);
-        if (!game || frontend_config_source_seat_cvars(game,row->scope.seat)!=row->cvars)
-            return fail(error,QA_ERROR_ARGUMENT,"CLIENT bindings lost their actual hosted GAME-seat heap");
+        if (!game || !qa_cvars_same_store(frontend_config_source_seat_cvars(game,row->scope.seat),row->cvars))
+            return fail(error,QA_ERROR_ARGUMENT,"CLIENT bindings lost their actual hosted GAME seat");
         input=frontend_config_source_input(game,row->scope.seat);
     } else input=row->published?f->seats[row->physical_seat].input:row->input;
     if (!input || qa_input_seat_ordinal(input)!=row->physical_seat)
@@ -318,31 +342,18 @@ bool frontend_remote_config_reset_bindings(frontend_remote_config *row,int32_t c
 }
 qa_cvars *frontend_remote_config_cvar_owner(frontend_remote_config *row,const qa_command_context *command,const char *name)
 {
-    if (!cvar_context(row,command) || !name || !strcmp(name,"sv_cheats")) return NULL;
-    frontend_config_source *game=row->hosted?frontend_config_store_source(row->owner->manager,row->hosted_console):NULL;
-    qa_cvars *server=frontend_config_source_cvars(game);
-    if (server && qa_cvars_find(server,name)) return server;
-    if (qa_cvars_find(row->q3_mouse,name)) return row->q3_mouse;
-    if (row->movement_mouse!=row->q3_mouse && qa_cvars_find(row->movement_mouse,name)) return row->movement_mouse;
-    return row->cvars;
+    (void)name;
+    return cvar_context(row,command)?row->cvars:NULL;
 }
 qa_cvars *frontend_remote_config_visible(frontend_remote_config *row,const qa_command_context *command,size_t index)
-{
-    if (!cvar_context(row,command)) return NULL;
-    frontend_config_source *game=row->hosted?frontend_config_store_source(row->owner->manager,row->hosted_console):NULL;
-    qa_cvars *server=frontend_config_source_cvars(game);
-    if (server) { if (!index) return server; --index; }
-    if (!index) return row->q3_mouse;
-    if (row->movement_mouse!=row->q3_mouse) { if (index==1) return row->movement_mouse; --index; }
-    return index==1?row->cvars:NULL;
-}
+{ return !index && cvar_context(row,command)?row->cvars:NULL; }
 static qa_input_seat *binding_seat(void *context,const qa_command_context *command)
 {
     frontend_remote_config *row=context;
     if (!active(row,command)) return NULL;
     if (row->hosted) {
-        frontend_config_source *game=frontend_config_store_source(row->owner->manager,row->hosted_console);
-        if (!game || frontend_config_source_seat_cvars(game,row->scope.seat)!=row->cvars) return NULL;
+        frontend_config_source *game=frontend_config_store_source(row->owner->manager,row->hosted_cvars);
+        if (!game || !qa_cvars_same_store(frontend_config_source_seat_cvars(game,row->scope.seat),row->cvars)) return NULL;
         return frontend_config_source_input(game,row->scope.seat);
     }
     qa_frontend *f=row->owner->frontend;
@@ -397,23 +408,26 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
 static bool install_commands(frontend_remote_config *row,qa_error *error)
 {
     if (!row->bindings) row->bindings=qa_input_console_create(&(qa_input_console_options){.console=row->console,.owner=row->scope.provider,
-        .user=row,.seat=binding_seat,.print=print},error);
+        .user=row,.seat=binding_seat,.print=print,.context=row->command},error);
     if (!row->bindings) return false;
-    if (!row->write_registered) row->write_registered=qa_console_register_owned(row->console,"writeconfig","Save the actual CLIENT configuration",
+    if (!row->write_registered) row->write_registered=qa_console_register_context(row->console,&row->command,"writeconfig","Save the actual CLIENT configuration",
         row->scope.provider,row->scope.provider,true,config_command,row,error);
     if (!row->write_registered) return false;
-    if (!row->dump_registered) row->dump_registered=qa_console_register_owned(row->console,"condump","Dump the actual CLIENT console",
+    if (!row->dump_registered) row->dump_registered=qa_console_register_context(row->console,&row->command,"condump","Dump the actual CLIENT console",
         row->scope.provider,row->scope.provider,true,config_command,row,error);
     return row->dump_registered;
 }
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
     remote_input *input=context;
-    return (input && command && ordinal==input->physical_seat && command->origin==QA_COMMAND_SEAT &&
-        command->owner==input->source_command.owner && command->session==input->source_command.session &&
+    if (input && command && ordinal==input->physical_seat && command->origin==QA_COMMAND_SEAT &&
         command->seat==input->logical_seat && command->dialect==QA_CONSOLE_Q3 &&
-        qa_application_command_context_active(input->application,command)) ||
-        fail(error,QA_ERROR_ARGUMENT,"CLIENT input left its actual authored and physical seat");
+        qa_application_command_context_active(input->application,command))
+        for (const frontend_remote_config *row=input->owner->rows;row;row=row->next)
+            if (row->staging==input && row->application==input->application &&
+                command->owner==row->command.owner && command->session==row->command.session &&
+                command->cvar_view==row->command.cvar_view) return true;
+    return fail(error,QA_ERROR_ARGUMENT,"CLIENT input left its actual authored and physical seat");
 }
 static bool script_read(void *context,frontend_script_scope scope,const char *name,const qa_command_context *command,
     qa_bytes *bytes,void **lease,qa_error *error)
@@ -495,19 +509,16 @@ static bool apply_archive(void *context,qa_error *error)
     if (!previous_seat(row,&old,error)) return false;
     if (old) {
         qa_frontend *f=row->owner->frontend;
-        qa_input_command_tuning tuning;
         qa_input_seat *live=f->seats[row->physical_seat].input;
-        if (!frontend_authored_bindings_restore_previous(row->authored,old->authored,live,row->input,error) ||
-            !qa_input_settings_read_routed(old->q3_mouse,old->movement_mouse,old->movement,&tuning,error) ||
-            !qa_input_mouse_settings_write(row->q3_mouse,&tuning.mouse,error)) return false;
-        const qa_cvar_view *run=qa_cvars_find(old->q3_mouse,"cl_run");
-        return !run || qa_cvars_set_flags(row->q3_mouse,"cl_run",run->value,QA_CVAR_ARCHIVE,error);
+        return frontend_authored_bindings_restore_previous(row->authored,old->authored,live,row->input,error);
     }
     if (row->found) {
         if (!qa_input_seat_replace_bindings(row->input,row->settings.bindings,row->settings.binding_count,error) ||
-            !qa_input_mouse_settings_write(row->q3_mouse,&row->settings.mouse,error)) return false;
+            (row->settings.has_mouse && frontend_config_store_legacy_globals(manager) &&
+                !qa_input_mouse_settings_write(row->q3_mouse,&row->settings.mouse,error))) return false;
         *qa_input_seat_gamepad_tuning(row->input)=row->settings.gamepad;
-        if (row->settings.has_always_run && !qa_cvars_set_flags(row->q3_mouse,"cl_run",
+        if (frontend_config_store_legacy_globals(manager) && row->settings.has_always_run &&
+            !qa_cvars_set_flags(row->q3_mouse,"cl_run",
             row->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
         if (!frontend_authored_bindings_profile(row->authored,row->input,&row->settings,error)) return false;
     }
@@ -587,8 +598,9 @@ bool frontend_remote_config_program_source(const frontend_remote_configs *owner,
     frontend_remote_config *row=previous(owner,application,candidate,fresh);
     if (!row) return true;
     qa_application_console_scope scope;
-    if (!qa_application_console_scope_read(application,row->console,&scope) || !scope_equal(scope,row->scope) ||
-        qa_console_cvars(row->console)!=row->cvars || !qa_console_idle(row->console) || !qa_cvars_observer_idle(row->cvars))
+    scope=row->scope;
+    if (!scope_equal(scope,fresh->scope) ||
+        !qa_cvars_same_store(qa_console_cvars(row->console),row->cvars) || !qa_console_idle(row->console) || !qa_cvars_observer_idle(row->cvars))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT continuation lost its published physical console");
     qa_command_context command=row->command;
     command.registry=command.generation=0; command.actor=(qa_actor_id){0};
@@ -597,7 +609,8 @@ bool frontend_remote_config_program_source(const frontend_remote_configs *owner,
 }
 static bool copy_registry(qa_cvars *destination,const qa_cvars *source,qa_error *error)
 {
-    return qa_cvars_copy(destination,source,error);
+    return qa_cvars_same_store(destination,source) ||
+        fail(error,QA_ERROR_ARGUMENT,"CLIENT continuation changed its canonical backing table");
 }
 bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,void **out,qa_error *error)
@@ -607,7 +620,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
         (source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME && source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI) ||
         source->command.dialect!=QA_CONSOLE_Q3 || source->command.origin!=QA_COMMAND_SEAT ||
         source->command.seat!=source->scope.seat || source->command.owner!=source->scope.provider ||
-        frontend_remote_config_find(owner,source->console))
+        frontend_remote_config_find(owner,source->cvars))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT preparation needs its fresh physical receiver tuple");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
     unsigned ordinal;
@@ -634,23 +647,28 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const qa_launch_instance *game=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     qa_application_startup_source game_source={0};
     if (game && !qa_application_startup_source_read(application,candidate,game,&game_source,error)) return false;
-    frontend_config_source *hosted=game_source.console?frontend_config_store_source(owner->manager,game_source.console):NULL;
+    frontend_config_source *hosted=game_source.console?frontend_config_store_source(owner->manager,game_source.cvars):NULL;
     row->hosted=!frontend_network_remote(f) && hosted && frontend_config_source_cvars(hosted)==game_source.cvars &&
         frontend_config_source_scope(hosted).kind==QA_APPLICATION_CONSOLE_Q3_GAME;
     frontend_remote_config *old=previous(owner,application,candidate,source);
     if (old && old->hosted!=row->hosted) old=NULL;
     row->input_fresh=!row->hosted && !old;
     if (row->hosted) {
-        row->hosted_console=game_source.console;
-        if (!frontend_config_source_acquire_seat_registry(hosted,row->scope.seat,&row->registry,error)) return false;
-        row->cvars=frontend_client_registry_cvars(row->registry);
+        row->hosted_cvars=game_source.cvars;
+        if (!qa_cvars_retain(row->hosted_cvars,error)) return false;
+        row->cvars=source->cvars;
+        if (!qa_cvars_retain(row->cvars,error)) return false;
+        row->owned=row->cvars;
+        frontend_client_registry_context callback={row,retain_context,release_context,true};
+        if (!frontend_client_registry_create(f,source->descriptor,row->scope.seat,&row->owned,
+            &callback,&row->registry,error)) return false;
         row->keys=frontend_config_source_keys(hosted);
         if (!row->keys || !frontend_key_profile_retain(row->keys,error)) { row->keys=NULL; return false; }
         row->files=frontend_key_profile_files(row->keys);
-        if (!qa_application_q3_client_configuration_bind_cvars(application,source,row->cvars,error)) return false;
     } else {
-        if (!qa_application_q3_client_configuration_take_cvars(application,source,&row->owned,error)) return false;
-        row->cvars=row->owned;
+        row->cvars=source->cvars;
+        if (!qa_cvars_retain(row->cvars,error)) return false;
+        row->owned=row->cvars;
         qa_q3_product_policy policy;
         qa_catalog *catalog=qa_launch_instance_catalog(source->descriptor);
         const qa_product *product=qa_catalog_product(catalog,source->descriptor->selection.product);
@@ -662,7 +680,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
                 f->options.character_model?f->options.character_model:"sarge",error)) return false;
         if (old && (!copy_registry(row->cvars,old->cvars,error) ||
             !qa_q3_product_policy_register_source(&policy,row->cvars,row->declaration_owner,error))) return false;
-        frontend_client_registry_context callback={row,retain_context,release_context};
+        frontend_client_registry_context callback={row,retain_context,release_context,true};
         if (!frontend_client_registry_create(f,source->descriptor,row->scope.seat,&row->owned,&callback,&row->registry,error)) return false;
         if (old) {
             if (!frontend_config_files_clone(old->files,&row->files,error) ||
@@ -677,7 +695,8 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
             !frontend_key_profile_scope(row->keys,row->scope,row->cvars,error)) return false;
         char seat[16]; snprintf(seat,sizeof(seat),"%" PRIu32,row->scope.seat);
         const char *archive_owner[]={"client",product->key,source->descriptor->selection.implementation,seat};
-        if (!old && !qa_settings_load_cvars(frontend_config_files_store(row->files,false),archive_owner,4,
+        if (!old && !frontend_config_store_has_canonical_archive(owner->manager) &&
+            !qa_settings_load_cvars(frontend_config_files_store(row->files,false),archive_owner,4,
             QA_CONSOLE_Q3,&row->archive,error)) return false;
     }
     if (row->hosted) {
@@ -729,13 +748,15 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     const char *view_owner[]={"movement","q3"};
     const char *movement_owner[]={"movement",dialects[row->movement]};
-    if (!qa_settings_load_cvars(input_store,mouse_owner,3,QA_CONSOLE_Q3,&row->mouse_archive,error) ||
-        !qa_settings_load_cvars(input_store,view_owner,2,QA_CONSOLE_Q3,&row->view_archive,error) ||
-        (row->movement_mouse!=row->q3_view && !qa_settings_load_cvars(input_store,movement_owner,2,
-            (qa_console_dialect)row->movement,&row->movement_archive,error)) ||
+    if ((!frontend_config_store_has_canonical_archive(owner->manager) &&
+        (!qa_settings_load_cvars(input_store,mouse_owner,3,QA_CONSOLE_Q3,&row->mouse_archive,error) ||
+         !qa_settings_load_cvars(input_store,view_owner,2,QA_CONSOLE_Q3,&row->view_archive,error) ||
+         (row->movement_mouse!=row->q3_view && !qa_settings_load_cvars(input_store,movement_owner,2,
+             (qa_console_dialect)row->movement,&row->movement_archive,error)))) ||
         !qa_settings_load_seat(input_store,path,&row->settings,&row->found,error)) return false;
+    if (!frontend_config_store_seed_player_archive(owner->manager,row->cvars,row->scope.seat,&row->archive,error)) return false;
     bool safe=false;
-    if (!qa_application_startup_q3_safe_mode(application,source->descriptor,row->console,&safe,error)) return false;
+    if (!qa_application_startup_q3_safe_mode(application,source->descriptor,source,&safe,error)) return false;
     frontend_startup_config_options options={.command=row->command,.safe_mode=safe,.seat_scope=row->secondary_pending,.context=row,
         .read=script_read,.release=script_release,.apply_defaults=apply_defaults,.apply_archive=apply_archive,
         .apply_launch=apply_launch,.replay_startup_variables=replay};
@@ -748,7 +769,7 @@ bool frontend_remote_config_advance(frontend_remote_config *row,qa_console *cons
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT frame lacks its retained physical preparation");
     *complete=false;
     if (row->hosted_pending) {
-        frontend_config_source *game=frontend_config_store_source(row->owner->manager,row->hosted_console);
+        frontend_config_source *game=frontend_config_store_source(row->owner->manager,row->hosted_cvars);
         frontend_authored_bindings *authored=NULL;
         if (!game || !frontend_config_source_clone_bindings(game,row->scope.seat,&authored,error)) return false;
         if (!frontend_authored_bindings_completed(authored)) {
@@ -809,7 +830,8 @@ bool frontend_remote_config_allow(frontend_remote_config *row,const qa_command_i
     if (!target) return true;
     qa_cvars *owner=frontend_config_store_cvar_owner(row->owner->manager,row->console,&command->context,target);
     if (!setter && (!owner || !qa_cvars_find(owner,target))) return true;
-    if (owner==row->cvars || owner==row->q3_mouse || owner==row->movement_mouse) return true;
+    const qa_cvar_view *declared=owner?qa_cvars_find(owner,target):NULL;
+    if (declared && declared->player_scoped) return true;
     print(row,"Ignoring shared cvar in saved secondary-seat configuration; use autoexec.cfg for shared overrides.\n");
     return false;
 }
@@ -825,7 +847,7 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
         if (row->application!=application || row->published || row->candidate!=candidate) continue;
         if (!row->configured || row->running || row->failure.code!=QA_OK || row->imported || row->retargeting ||
             !frontend_authored_bindings_completed(row->authored) || !qa_console_idle(row->console) ||
-            qa_console_pending(row->console) || !frontend_config_files_idle(row->files))
+            !frontend_config_files_idle(row->files))
             return fail(error,QA_ERROR_ARGUMENT,"CLIENT publication requires its completed actual configuration");
         remote_input *shared=row->staging;
         if (!shared) continue;
@@ -868,7 +890,7 @@ void frontend_remote_configs_finish(frontend_remote_configs *owner,qa_applicatio
 bool frontend_remote_config_preinit(frontend_remote_configs *owner,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)
 {
-    frontend_remote_config *row=source?frontend_remote_config_find(owner,source->console):NULL;
+    frontend_remote_config *row=source?frontend_remote_config_find(owner,source->cvars):NULL;
     const qa_launch_instance *held=descriptor(row);
     return (row && row->application==application && row->candidate==candidate &&
         source->descriptor && held->storage==source->descriptor->storage && scope_equal(row->scope,source->scope) &&
@@ -890,18 +912,21 @@ static bool destroy_row(frontend_remote_config *row,qa_error *error)
         if (!frontend_config_files_destroy(row->files,error)) return false;
         row->files=NULL;
     }
-    if (!frontend_client_registry_release(&row->registry,error)) return false;
+    if (!frontend_client_registry_retire(&row->registry,error)) return false;
     if (row->callback_references) return fail(error,QA_ERROR_ARGUMENT,"CLIENT callback context remains retained");
     qa_input_console_destroy(row->bindings);
-    if (row->write_registered) qa_console_unregister(row->console,"writeconfig",row->scope.provider);
-    if (row->dump_registered) qa_console_unregister(row->console,"condump",row->scope.provider);
+    if (row->write_registered) qa_console_unregister_context(row->console,&row->command,"writeconfig",row->scope.provider);
+    if (row->dump_registered) qa_console_unregister_context(row->console,&row->command,"condump",row->scope.provider);
     release_input(row);
     frontend_authored_bindings_destroy(row->authored);
     qa_cvars_destroy(row->owned);
+    qa_cvars_destroy(row->hosted_cvars);
     if (!row->hosted) {
-        if (row->movement_mouse!=row->q3_view) qa_cvars_destroy(row->movement_mouse);
-        qa_cvars_destroy(row->q3_view);
-        qa_cvars_destroy(row->q3_mouse);
+        if (row->movement_mouse!=row->q3_view) {
+            qa_cvars_detach_callbacks(row->movement_mouse); qa_cvars_destroy(row->movement_mouse);
+        }
+        qa_cvars_detach_callbacks(row->q3_view); qa_cvars_destroy(row->q3_view);
+        qa_cvars_detach_callbacks(row->q3_mouse); qa_cvars_destroy(row->q3_mouse);
     }
     qa_cvar_archive_free(&row->archive); qa_cvar_archive_free(&row->mouse_archive);
     qa_cvar_archive_free(&row->view_archive); qa_cvar_archive_free(&row->movement_archive);
@@ -920,7 +945,7 @@ bool frontend_remote_config_retire(frontend_remote_configs *owner,qa_application
     const qa_application_startup_source *source,qa_error *error)
 {
     frontend_remote_config **link=&owner->rows;
-    while (*link && (*link)->console!=source->console) link=&(*link)->next;
+    while (*link && (*link)->cvars!=source->cvars) link=&(*link)->next;
     if (!*link) return true;
     frontend_remote_config *row=*link,*next=row->next;
     const qa_launch_instance *held=descriptor(row);
@@ -937,7 +962,7 @@ bool frontend_remote_config_retire_hosted(frontend_remote_configs *owner,qa_appl
     if (!owner || !application || !source || !source->descriptor ||
         !qa_application_q3_client_configuration_retiring(application,source))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT cleanup requires its entered physical retirement loan");
-    frontend_remote_config *row=frontend_remote_config_find(owner,source->console);
+    frontend_remote_config *row=frontend_remote_config_find(owner,source->cvars);
     if (!row) return true;
     const qa_launch_instance *held=descriptor(row);
     if (!row->hosted || row->application!=application || !held ||
@@ -959,7 +984,7 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
         !backing || !backing->descriptor || backing->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME ||
         !backing->console || !backing->cvars || frontend_network_remote(owner->frontend))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding needs its actual new publication and GAME tuple");
-    frontend_config_source *game=frontend_config_store_source(owner->manager,backing->console);
+    frontend_config_source *game=frontend_config_store_source(owner->manager,backing->cvars);
     qa_application_startup_source actual;
     if (!game || !frontend_config_source_primary(game) || !frontend_config_source_tuple(game,&actual) ||
         actual.descriptor->storage!=backing->descriptor->storage || actual.cvars!=backing->cvars ||
@@ -976,16 +1001,17 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
         !frontend_local_seat_ordinal_read(choices,target->scope.seat,&ordinal) || ordinal>=f->options.seats || !f->seats ||
         !f->seats[ordinal].input || (target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME && target->scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding changed its genuine receiver or authored seat");
-    frontend_remote_config *row=frontend_remote_config_find(owner,target->console);
+    frontend_remote_config *row=frontend_remote_config_find(owner,target->cvars);
     if (row && (!retarget_origin(row,target) || row->application!=application || row->candidate!=candidate ||
-        row->hosted_console!=backing->console))
+        row->hosted_cvars!=backing->cvars))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding already owns another retained transition");
     if (!row) {
         row=calloc(1,sizeof(*row));
         if (!row) return fail(error,QA_ERROR_MEMORY,"Retaining actual hosted CLIENT rebinding");
         row->owner=owner; row->application=application; row->candidate=candidate; row->scope=target->scope;
         row->console=target->console; row->command=target->command; row->declaration_owner=target->declaration_owner;
-        row->hosted=true; row->hosted_console=backing->console; row->physical_seat=(uint32_t)ordinal;
+        row->hosted=true; row->hosted_cvars=backing->cvars;
+        if (!qa_cvars_retain(row->hosted_cvars,error)) { free(row); return false; } row->physical_seat=(uint32_t)ordinal;
         row->retargeting=row->frontend_retired=true; row->retarget_game_storage=parent->storage;
         if (!qa_launch_instance_retain_metadata(receiver,&row->metadata,error)) { free(row); return false; }
         row->retarget_origin=*target; row->retarget_origin.descriptor=descriptor(row);
@@ -997,8 +1023,16 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks its selected movement source");
     row->movement=(qa_movement_kind)selected->selection.clock.kind;
-    if (!row->registry && !frontend_config_source_acquire_seat_registry(game,row->scope.seat,&row->registry,error)) return false;
-    row->cvars=frontend_client_registry_cvars(row->registry);
+    if (row->cvars && row->cvars!=target->cvars)
+        return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT changed its actual Source view");
+    row->cvars=target->cvars;
+    if (!row->registry) {
+        if (!qa_cvars_retain(row->cvars,error)) return false;
+        row->owned=row->cvars;
+        frontend_client_registry_context callback={row,retain_context,release_context,true};
+        if (!frontend_client_registry_create(f,target->descriptor,row->scope.seat,&row->owned,
+            &callback,&row->registry,error)) return false;
+    }
     frontend_key_profile *profile=frontend_config_source_keys(game);
     if (!profile || (row->keys && row->keys!=profile))
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lost its new GAME key profile");
@@ -1020,10 +1054,10 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
 void frontend_remote_config_publish_hosted(frontend_remote_configs *owner,qa_application *application,
     const qa_application_startup_source *source)
 {
-    frontend_remote_config *row=source?frontend_remote_config_find(owner,source->console):NULL;
+    frontend_remote_config *row=source?frontend_remote_config_find(owner,source->cvars):NULL;
     if (!row || !row->retargeting || row->application!=application || !source->descriptor ||
         descriptor(row)->storage!=source->descriptor->storage || !scope_equal(row->scope,source->scope) ||
-        row->cvars!=source->cvars || qa_console_cvars(row->console)!=row->cvars || !row->configured || !row->released) return;
+        row->cvars!=source->cvars || !qa_cvars_same_store(qa_console_cvars(row->console),row->cvars) || !row->configured || !row->released) return;
     row->command=source->command; row->declaration_owner=source->declaration_owner;
     release_input(row);
     row->published=true; row->candidate=NULL; row->retargeting=false;
@@ -1036,15 +1070,15 @@ bool frontend_remote_configs_retire_staged_parent(frontend_remote_configs *owner
         source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME || !source->console)
         return fail(error,QA_ERROR_ARGUMENT,"Unadopted CLIENT cleanup needs its entered physical GAME parent");
     for (const frontend_remote_config *row=owner->rows;row;row=row->next) {
-        if (row->application!=application || !row->retargeting || row->hosted_console!=source->console) continue;
+        if (row->application!=application || !row->retargeting || row->hosted_cvars!=source->cvars) continue;
         if (!row->frontend_retired || row->retarget_game_storage!=source->descriptor->storage || row->running || row->phase ||
-            !qa_console_idle(row->console) || (row->cvars && qa_console_cvars(row->console)==row->cvars))
+            !qa_console_idle(row->console) || (row->cvars && !qa_cvars_observer_idle(row->cvars)))
             return fail(error,QA_ERROR_ARGUMENT,"Unadopted CLIENT still owns an entered or physically bound namespace");
     }
     frontend_remote_config **link=&owner->rows;
     while (*link) {
         frontend_remote_config *row=*link;
-        if (row->application!=application || !row->retargeting || row->hosted_console!=source->console) { link=&row->next; continue; }
+        if (row->application!=application || !row->retargeting || row->hosted_cvars!=source->cvars) { link=&row->next; continue; }
         frontend_remote_config *next=row->next;
         if (!destroy_row(row,error)) return false;
         *link=next;
@@ -1092,30 +1126,22 @@ static bool save_input(frontend_remote_config *row,qa_error *error)
         if (bindings[i].input.kind==QA_PHYSICAL_BUTTON || bindings[i].input.kind==QA_PHYSICAL_AXIS) bindings[i].input.device=0;
     }
     for (size_t i=0;i<lines_count;++i) lines[i]=(char *)qa_console_history_at(history,i);
-    qa_input_command_tuning tuning;
-    bool ok=qa_input_settings_read_routed(row->q3_mouse,row->movement_mouse,row->movement,&tuning,error);
+    bool ok=true;
     qa_seat_settings settings=row->settings;
     if (ok) {
         settings.bindings=bindings; settings.binding_count=count;
         frontend_authored_bindings_archive(row->authored,&settings);
         settings.history=lines; settings.history_count=lines_count;
-        settings.mouse=tuning.mouse; settings.gamepad=*qa_input_seat_gamepad_tuning(input);
-        settings.has_always_run=true; settings.always_run=tuning.view.always_run;
+        settings.has_mouse=false; settings.gamepad=*qa_input_seat_gamepad_tuning(input);
+        settings.has_always_run=false;
         qa_haptic_player *haptics=f->input?qa_input_platform_haptics(f->input,row->physical_seat):NULL;
         if (haptics) { settings.rumble=haptics->enabled; settings.rumble_strength=haptics->strength; }
         if (f->input && !qa_input_platform_selection(f->input,row->physical_seat,&settings.controller))
             ok=fail(error,QA_ERROR_ARGUMENT,"CLIENT input archive lost its actual controller selection");
-        char logical[16],path[64]; snprintf(logical,sizeof(logical),"%" PRIu32,row->scope.seat);
+        char path[64];
         snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)row->scope.seat+1);
-        const char *mouse_owner[]={"input","q3",logical};
-        const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
-        const char *view_owner[]={"movement","q3"};
-        const char *movement_owner[]={"movement",dialects[row->movement]};
         qa_settings_store store=frontend_config_store_input_store(row->owner->manager);
-        ok=ok && qa_settings_save_cvars(store,mouse_owner,3,row->q3_mouse,error) &&
-            qa_settings_save_cvars(store,view_owner,2,row->q3_view,error) &&
-            (row->movement_mouse==row->q3_view || qa_settings_save_cvars(store,movement_owner,2,row->movement_mouse,error)) &&
-            qa_settings_save_seat(store,path,&settings,error);
+        ok=ok && qa_settings_save_seat(store,path,&settings,error);
     }
     free(bindings); free(lines); return ok;
 }
@@ -1127,48 +1153,24 @@ bool frontend_remote_configs_save(frontend_remote_configs *owner,qa_application 
         if (row->application!=application || !row->published) continue;
         frontend_remote_config_view view; qa_application_startup_source actual;
         if (!frontend_remote_config_read(row,&view) || !view.ready || !frontend_config_files_idle(row->files) ||
-            !qa_application_q3_client_configuration_read(application,row->scope.provider,row->scope.seat,&actual,error) ||
+            !qa_application_q3_client_configuration_read(application,row->scope.provider,
+                row->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI?QA_QVM_UI:QA_QVM_CGAME,row->scope.seat,&actual,error) ||
             actual.console!=row->console || actual.cvars!=row->cvars || !scope_equal(actual.scope,row->scope))
             return fail(error,QA_ERROR_ARGUMENT,"CLIENT archive lost its current physical source owner");
         if (row->hosted) continue;
-        const qa_product *product=qa_catalog_product(frontend_config_files_catalog(row->files),frontend_config_files_product(row->files));
-        char logical[16]; snprintf(logical,sizeof(logical),"%" PRIu32,row->scope.seat);
-        const char *archive[]={"client",product->key,descriptor(row)->selection.implementation,logical};
-        if (!qa_settings_save_cvars(frontend_config_files_store(row->files,false),archive,4,row->cvars,error) ||
-            !frontend_key_profile_save(row->keys,error)) return false;
+        if (!frontend_key_profile_save(row->keys,error)) return false;
     }
     if (frontend_network_remote(owner->frontend)) {
         uint32_t logical;
         frontend_remote_config_view view;
         if (!frontend_seat_launch_id_read(owner->frontend,0,&logical) ||
             !frontend_network_client_configuration(owner->frontend,logical,&view,error)) return false;
-        frontend_remote_config *row=frontend_remote_config_find(owner,view.console);
+        frontend_remote_config *row=frontend_remote_config_find(owner,view.cvars);
         if (!row || !frontend_remote_config_current(row,&view))
             return fail(error,QA_ERROR_ARGUMENT,"CLIENT input save lost its actual network configuration");
         return save_input(row,error);
     }
     return true;
-}
-static bool blob(qa_source_save_io *io,qa_bytes *bytes)
-{
-    size_t count=bytes->size;
-    if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
-    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,count);
-    if (count>io->input.size-io->offset) return fail(io->error,QA_ERROR_FORMAT,"CLIENT section exceeds its admitted extent");
-    *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true;
-}
-static bool settings_fields(frontend_remote_config *row,qa_source_save_io *io,qa_cvars **cvars,qa_console_dialect dialect)
-{
-    qa_buffer captured={0}; qa_bytes bytes={0}; bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
-    bool ok=true;
-    if (writing) { ok=*cvars && qa_cvars_save_capture(*cvars,&captured,io->error); bytes=(qa_bytes){captured.data,captured.size}; }
-    if (ok) ok=blob(io,&bytes) && bytes.size;
-    if (ok && !writing) {
-        *cvars=settings_registry(row,dialect,io->error); qa_cvars_restore *ticket=NULL;
-        ok=*cvars && qa_cvars_save_prepare(*cvars,bytes,&ticket,io->error) && qa_cvars_save_commit(ticket,io->error);
-        if (!ok) qa_cvars_save_abort(ticket);
-    }
-    qa_buffer_free(&captured); return ok;
 }
 static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_keys *keys)
 {
@@ -1178,8 +1180,15 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
     char *registry=NULL;
     uint32_t scope=row->scope.kind,movement=row->movement,seat=row->scope.seat;
     uint64_t key=frontend_key_profile_id(row->keys);
-    if (writing && (!frontend_client_registry_source(row->registry,&physical,&seat) || seat!=row->scope.seat)) return false;
-    if (writing) registry=(char *)physical->selection.instance;
+    if (writing) {
+        if (row->hosted) {
+            frontend_config_source *parent=frontend_config_store_source(row->owner->manager,row->hosted_cvars);
+            qa_application_startup_source tuple;
+            if (!parent || !frontend_config_source_tuple(parent,&tuple)) return false;
+            physical=tuple.descriptor;
+        } else if (!frontend_client_registry_source(row->registry,&physical,&seat) || seat!=row->scope.seat) return false;
+        registry=(char *)physical->selection.instance;
+    }
     bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
         qa_source_save_u32(io,&scope) &&
         (scope==QA_APPLICATION_CONSOLE_Q3_CGAME || scope==QA_APPLICATION_CONSOLE_Q3_UI) &&
@@ -1196,12 +1205,12 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
         else row->files=frontend_key_profile_files(row->keys);
     }
     if (ok && !row->hosted && strcmp(name,registry)) ok=false;
-    if (ok && !row->hosted) {
-        ok=settings_fields(row,io,&row->q3_mouse,QA_CONSOLE_Q3) && settings_fields(row,io,&row->q3_view,QA_CONSOLE_Q3);
-        bool same=row->movement_mouse==row->q3_view;
-        if (ok) ok=qa_source_save_bool(io,&same) && same==(row->movement==QA_MOVEMENT_Q3);
-        if (ok && !writing && same) row->movement_mouse=row->q3_view;
-        else if (ok && !same) ok=settings_fields(row,io,&row->movement_mouse,(qa_console_dialect)row->movement);
+    if (ok && !writing && !row->hosted) {
+        row->q3_mouse=settings_registry(row,QA_CONSOLE_Q3,io->error);
+        row->q3_view=settings_registry(row,QA_CONSOLE_Q3,io->error);
+        row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:
+            settings_registry(row,(qa_console_dialect)row->movement,io->error);
+        ok=row->q3_mouse && row->q3_view && row->movement_mouse;
     }
     if (ok && !writing) { row->authored=frontend_authored_bindings_create(io->error); ok=row->authored!=NULL; }
     if (ok) ok=frontend_authored_bindings_fields(row->authored,io) && frontend_authored_bindings_completed(row->authored);
@@ -1246,7 +1255,7 @@ bool frontend_remote_configs_restore(frontend_remote_configs *owner,qa_applicati
         *tail=row; tail=&row->next;
         ok=fields(row,&io,keys);
         for (frontend_remote_config *previous=owner->rows;ok && previous!=row;previous=previous->next)
-            if (!strcmp(previous->saved_instance,row->saved_instance) && previous->scope.seat==row->scope.seat) ok=false;
+            if (!strcmp(previous->saved_instance,row->saved_instance) && previous->scope.seat==row->scope.seat && previous->scope.kind==row->scope.kind) ok=false;
     }
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
@@ -1305,24 +1314,30 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
         frontend_config_source_scope(backing).kind==QA_APPLICATION_CONSOLE_Q3_GAME;
     if (row->hosted!=hosted)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its actual local GAME or remote backing");
+    row->cvars=source->cvars;
+    if (!row->registry) {
+        if (!row->owned) {
+            if (!qa_cvars_retain(row->cvars,error)) return false;
+            row->owned=row->cvars;
+        }
+        frontend_client_registry_context callback={row,retain_context,release_context,true};
+        if (!frontend_client_registry_create(owner->frontend,source->descriptor,row->scope.seat,
+            &row->owned,&callback,&row->registry,error)) return false;
+    }
+    if (frontend_client_registry_cvars(row->registry)!=source->cvars)
+        return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its exact Source view");
     if (row->hosted) {
         frontend_config_source *game=frontend_config_store_named_source(owner->manager,row->saved_registry);
-        if (game!=backing || (!row->registry && !frontend_config_source_acquire_seat_registry(game,row->scope.seat,&row->registry,error))) return false;
-        row->hosted_console=frontend_config_source_console(game);
+        if (game!=backing) return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its retained GAME parent");
+        if (!row->hosted_cvars) {
+            row->hosted_cvars=frontend_config_source_cvars(game);
+            if (!qa_cvars_retain(row->hosted_cvars,error)) { row->hosted_cvars=NULL; return false; }
+        }
         row->q3_mouse=row->q3_view=row->movement_mouse=frontend_config_source_mouse_cvars(game,row->scope.seat);
-        if (!row->q3_mouse) return fail(error,QA_ERROR_FORMAT,"Decoded hosted CLIENT lacks its actual GAME-seat input settings");
-        row->cvars=frontend_client_registry_cvars(row->registry);
-        if (frontend_config_source_keys(game)!=row->keys ||
-            !qa_application_q3_client_configuration_bind_cvars(application,source,row->cvars,error)) return false;
+        if (!row->q3_mouse || frontend_config_source_keys(game)!=row->keys)
+            return fail(error,QA_ERROR_FORMAT,"Decoded hosted CLIENT lacks its actual GAME-seat settings");
     } else {
-        row->cvars=source->cvars;
-        if (!row->registry && !row->owned &&
-            !qa_application_q3_client_configuration_take_cvars(application,source,&row->owned,error)) return false;
-        frontend_client_registry_context callback={row,retain_context,release_context};
-        if (!row->registry && !frontend_client_registry_create(owner->frontend,source->descriptor,row->scope.seat,&row->owned,&callback,&row->registry,error)) return false;
-        row->cvars=frontend_client_registry_cvars(row->registry);
-        qa_application_startup_source canonical=*source; canonical.cvars=row->cvars;
-        restored_key_scope context={&canonical};
+        restored_key_scope context={source};
         frontend_keys_cvar_refs refs={.context=&context,.resolve=resolve_key,.qualify=qualify_key};
         if (!frontend_key_profile_bind(row->keys,row->cvars,&refs,error)) return false;
     }

@@ -23,8 +23,5 @@ bool application_guest_q3_factory_reuse(qa_application *, application_provider *
     qa_world *, const qa_product *, const qa_launch_choices *, qa_error *);
 bool application_guest_q3_startup_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *found, qa_error *);
-bool application_guest_q3_program_identity(application_provider *, application_provider *,
-    const qa_application_startup_source *, const qa_application_startup_source *,
-    qa_console_program_identity, uint64_t, uint64_t *, bool *, qa_error *);
 
 #endif

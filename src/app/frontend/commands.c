@@ -52,6 +52,7 @@ struct frontend_client_commands {
     qa_frontend *frontend;
     qa_console *console;
     qa_cvars *cvars;
+    qa_command_context registration;
     const void *lifetime;
     qa_actor_owner receiver;
     uint64_t command_owner;
@@ -75,11 +76,11 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
     if (!client_name(name,"map") && !client_name(name,"gamemap") &&
         !client_name(name,"changelevel") && !client_name(name,"killserver")) return true;
     bool engine=call->console==qa_application_console(f->application) && !call->context.owner;
+    bool parked=frontend_config_store_parked_current(f->config_store,source);
     if (!source->descriptor || !source->scope.provider ||
-        source->command.owner!=source->scope.provider ||
+        (!parked && source->command.owner!=source->scope.provider) ||
         (!engine && (call->console!=source->console || call->context.owner!=source->scope.provider)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World command lost its actual Source provider");
-    bool parked=frontend_config_store_parked_current(f->config_store,source);
     bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
         source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
     bool map=client_name(name,"map"),gamemap=client_name(name,"gamemap");
@@ -182,26 +183,23 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
     }
     if (!world_command(f,source,call,handled,error)) return false;
     if (*handled) return true;
-    qa_console *engine=qa_application_console(f->application);
-    qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=call->context.dialect,.direct=true};
-    const qa_console_entry *entry=qa_console_find(engine,&context,name);
-    uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
-    if (!entry || !entry->engine_command ||
-        !qa_console_registration_read(engine,entry->name,entry->owner,&lifetime,&handler,&user) || !handler) return true;
-    *handled=true;
-    return handler(user,call,error);
+    return true;
 }
 static bool client_menu_command(void *context,const qa_command_invocation *command,qa_error *error)
 {
     frontend_client_commands *owner=context;
     qa_frontend *f=owner?owner->frontend:NULL;
     qa_application_client_source source;
+    bool engine=command && !command->context.owner;
     if (!f || !command || !command->argc || command->console!=owner->console ||
         !qa_application_client_physical_read(f->application,owner->receiver,owner->seat,&source,error) ||
         source.context.console!=owner->console || source.context.cvars!=owner->cvars ||
         source.context.lifetime!=owner->lifetime || source.context.physical_seat!=owner->physical ||
+        !qa_console_invocation_delivered_view(command,qa_cvars_view_identity(owner->cvars),0,owner->receiver) ||
         !qa_application_command_context_active(f->application,&command->context) ||
-        command->context.owner!=source.context.command.owner || command->context.session!=source.context.command.session ||
+        (!engine && (command->context.owner!=source.context.command.owner ||
+            command->context.cvar_view!=source.context.command.cvar_view)) ||
+        command->context.session!=source.context.command.session ||
         command->context.client!=source.context.command.client || command->context.seat!=source.context.command.seat ||
         command->context.registry!=source.context.command.registry || command->context.generation!=source.context.command.generation ||
         command->context.dialect!=source.context.command.dialect ||
@@ -231,9 +229,8 @@ bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *e
     if (!owner) return true;
     if (!qa_console_cvar_returned(owner->console))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu handler has not returned");
-    if (!frontend_demo_dispatch_unregister(owner->frontend->demos,owner->console,
-        owner->command_owner,owner->receiver,error)) return false;
-    for (size_t i=0;i<owner->registered;++i) qa_console_unregister(owner->console,client_menus[i],owner->receiver);
+    for (size_t i=0;i<owner->registered;++i)
+        qa_console_unregister_context(owner->console,&owner->registration,client_menus[i],0);
     free(owner); *slot=NULL; return true;
 }
 bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_source *source,
@@ -249,12 +246,13 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
     *owner=(frontend_client_commands){.frontend=f,.console=source->context.console,.cvars=source->context.cvars,
         .lifetime=source->context.lifetime,.receiver=source->context.receiver,
         .command_owner=source->context.command.owner,
+        .registration=source->context.command,
         .seat=source->context.seat,.physical=source->context.physical_seat};
     *out=owner;
     for (size_t i=0;i<sizeof(client_menus)/sizeof(*client_menus);++i) {
         if (client_name(client_menus[i],"help") && source->context.command.dialect!=QA_CONSOLE_Q1 &&
             source->context.command.dialect!=QA_CONSOLE_QW)continue;
-        if (!qa_console_register_owned(owner->console,client_menus[i],"Native client menu command",0,
+        if (!qa_console_register_context(owner->console,&owner->registration,client_menus[i],"Native client menu command",0,
             owner->receiver,true,client_menu_command,owner,error)) {
             qa_error original=error?*error:(qa_error){0};
             if (!frontend_commands_client_unbind(out,error)) return false;
@@ -262,13 +260,6 @@ bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_so
             return false;
         }
         ++owner->registered;
-    }
-    if (f->demos && !frontend_demo_dispatch_register(f->demos,owner->console,owner->command_owner,
-        owner->receiver,error)) {
-        qa_error original=error?*error:(qa_error){0};
-        if (!frontend_commands_client_unbind(out,error)) return false;
-        if (error) *error=original;
-        return false;
     }
     return true;
 }

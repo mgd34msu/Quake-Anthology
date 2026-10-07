@@ -249,7 +249,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         bool prepared = found && (engine->restore_pending ?
             application_startup_tuple_restore(provider, &source, error) :
             application_startup_tuple_preinit(provider, &source, error) &&
-                qa_cvars_apply_latched(source.cvars, NULL, error));
+                application_startup_apply_latched(provider, source.cvars, error));
         if (!prepared) {
             if (!found) application_fail(error, QA_ERROR_ARGUMENT,
                 "CLIENT construction lost its completed physical preparation");
@@ -258,7 +258,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     }
     if (kind == QA_QVM_GAME && !engine->game) {
         qa_application_startup_source source;
-        bool found = false, carried = false;
+        bool found = false;
         engine->constructing_role = role;
         bool prepared = application_provider_startup_source_at(provider, 0, &source, &found, error);
         if (prepared && !found)
@@ -268,8 +268,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             if (saved_owner)
                 prepared = application_startup_tuple_restore(provider, &source, error);
             else
-                prepared = (provider->attached || application_startup_source_carry(provider, &source, &carried, error)) &&
-                    application_q3_world_restart_cvars(provider->application, provider, source.cvars, error) &&
+                prepared = application_q3_world_restart_cvars(provider->application, provider, source.cvars, error) &&
                     application_q3_campaign_launch_cvars(provider, source.cvars, role->service_owner, error) &&
                     application_guest_q3_console_startup(provider, error);
         }
@@ -295,15 +294,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         .resolver = qa_catalog_write_resolver_services(role->write_resolver)};
     if (provider->application->baseline_write_root) options.writable_mount = 0;
     if (kind != QA_QVM_GAME) {
-        qa_console *console = NULL;
-        if (!application_guest_q3_client_console_at(engine, seat, &console, NULL) ||
-            options.console != console || !application_guest_q3_client_console_bind(engine, seat, options.cvars, error)) {
+        qa_console *console = NULL; qa_cvars *cvars = NULL;
+        if (!application_guest_q3_client_console_at(engine, kind, seat, &console, &cvars) ||
+            options.console != console || options.cvars != cvars) {
             if (error && error->code == QA_OK)
                 application_fail(error, QA_ERROR_ARGUMENT, "CLIENT services displaced its retained physical console");
             goto failed;
         }
         qa_string_id globals_owner = QA_STRING_NONE;
-        if (!application_guest_q3_client_console_globals(engine, seat, &options.script_globals,
+        if (!application_guest_q3_client_console_globals(engine, kind, seat, &options.script_globals,
             &globals_owner, error)) goto failed;
         options.script_globals_owner = globals_owner;
     }

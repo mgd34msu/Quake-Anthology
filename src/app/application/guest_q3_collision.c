@@ -76,7 +76,7 @@ bool qa_application_q3_collision_scene_hold(qa_application *app, qa_actor_owner 
         return application_fail(error, QA_ERROR_ARGUMENT, "Collision hold lost its actual completed CGAME role");
     qa_application_startup_source source;
     qa_q3_host_client_context host;
-    if (!qa_application_q3_client_configuration_read(app, receiver, seat, &source, error) ||
+    if (!qa_application_q3_client_configuration_read(app, receiver, QA_QVM_CGAME, seat, &source, error) ||
         !qa_q3_host_client_context_read(found->host, &host) || !source.descriptor || !found->descriptor ||
         source.descriptor->storage != found->descriptor->storage ||
         source.descriptor->content != found->descriptor->content ||

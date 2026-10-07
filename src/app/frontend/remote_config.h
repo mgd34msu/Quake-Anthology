@@ -20,7 +20,8 @@ typedef struct frontend_remote_config_view {
 frontend_remote_configs *frontend_remote_configs_create(qa_frontend *,frontend_config_store *,qa_error *);
 bool frontend_remote_configs_destroy(frontend_remote_configs *,qa_error *);
 bool frontend_remote_configs_empty(const frontend_remote_configs *);
-frontend_remote_config *frontend_remote_config_find(const frontend_remote_configs *,const qa_console *);
+frontend_remote_config *frontend_remote_config_find(const frontend_remote_configs *,const qa_cvars *);
+frontend_remote_config *frontend_remote_config_find_context(const frontend_remote_configs *,const qa_command_context *);
 bool frontend_remote_config_phase(const frontend_remote_configs *,const void *);
 bool frontend_remote_config_read(const frontend_remote_config *,frontend_remote_config_view *);
 bool frontend_remote_config_current(const frontend_remote_config *,const frontend_remote_config_view *);
@@ -35,7 +36,7 @@ bool frontend_remote_config_cvar_active(const frontend_remote_config *,const qa_
 bool frontend_remote_config_refresh(frontend_remote_config *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_error *);
 bool frontend_remote_config_registries(const frontend_remote_config *,qa_application *,
-    const qa_application_startup_source *,qa_cvars *namespaces[8],qa_console **hosted_game,qa_error *);
+    const qa_application_startup_source *,qa_cvars *namespaces[8],qa_cvars **hosted_game,qa_error *);
 bool frontend_remote_config_bindings(const frontend_remote_config *,qa_application *,
     const qa_application_startup_source *,const qa_input_seat *,qa_input_seat **,qa_error *);
 qa_input_seat *frontend_remote_configs_candidate_input(const frontend_remote_configs *,qa_application *,
@@ -71,8 +72,8 @@ bool frontend_remote_configs_visit(const frontend_remote_configs *,const qa_appl
 bool frontend_remote_configs_save(frontend_remote_configs *,qa_application *,qa_error *);
 bool frontend_remote_configs_checkpoint(const frontend_remote_configs *,const qa_application_content_graph *,qa_buffer *,qa_error *);
 bool frontend_remote_configs_restore(frontend_remote_configs *,qa_application *,qa_application_content_graph *,frontend_keys *,qa_bytes,qa_error *);
-/* Actual core slot qualification precedes canonical QFCR import and services.
- * The later tuple restore only verifies that same decoded physical heap. */
+/* Actual core slot qualification precedes QFCR import and services.
+ * The later tuple restore verifies the same reconstructed Source view. */
 bool frontend_remote_config_bind_restored(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_error *);
 bool frontend_remote_configs_finish_restore(frontend_remote_configs *,qa_error *);

@@ -8,7 +8,7 @@ bool frontend_source_admin_create(qa_frontend *,qa_application *,qa_console *,qa
     const qa_command_context *,frontend_source_admin **,qa_error *);
 bool frontend_source_admin_bind(frontend_source_admin *,qa_application *,qa_console *,qa_cvars *,
     const qa_command_context *,qa_error *);
-bool frontend_source_admin_unbind(frontend_source_admin *,const qa_console *,qa_error *);
+bool frontend_source_admin_unbind(frontend_source_admin *,const qa_cvars *,qa_error *);
 void frontend_source_admin_rebind(frontend_source_admin *,qa_frontend *);
 bool frontend_source_admin_dispatch(frontend_source_admin *,const qa_command_invocation *,
     size_t skip,bool *handled,qa_error *);

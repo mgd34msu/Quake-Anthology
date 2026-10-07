@@ -405,15 +405,17 @@ bool qa_seat_settings_parse(qa_bytes bytes, qa_seat_settings *out, qa_error *e) 
     if (!ok)
         goto done;
     qa_json_id always = qa_json_get(d, root, "alwaysRun"),
-               strength = qa_json_get(d, root, "rumbleStrength");
+               strength = qa_json_get(d, root, "rumbleStrength"),
+               mouse = qa_json_get(d, root, "mouse");
     result.has_always_run = always != QA_JSON_NONE;
+    result.has_mouse = mouse != QA_JSON_NONE;
     ok = (!result.has_always_run || qa_json_bool(d, always, &result.always_run, e)) &&
          qa_json_bool(d, qa_json_get(d, root, "rumble"), &result.rumble, e) &&
          (strength == QA_JSON_NONE || settings_float(d, strength, &result.rumble_strength, e)) &&
          controller_read(d, qa_json_get(d, root, "controller"), &result.controller, e) &&
          gamepad_read(d, qa_json_get(d, root, "gamepad"), &result.gamepad, e) &&
-         fields_read(d, qa_json_get(d, root, "mouse"), &result.mouse, mouse_fields,
-                     COUNT(mouse_fields), e);
+         (!result.has_mouse || fields_read(d, mouse, &result.mouse, mouse_fields,
+                     COUNT(mouse_fields), e));
     if (ok && (result.rumble_strength < 0 || result.rumble_strength > 1))
         ok = settings_fail(e, "Vibration strength must be in [0,1]");
 done:
@@ -429,7 +431,7 @@ bool qa_seat_settings_encode(const qa_seat_settings *s, qa_buffer *out, qa_error
         (s->binding_default_count && !s->binding_defaults) ||
         (s->binding_override_count && !s->binding_overrides) ||
         (!s->has_binding_defaults && (s->binding_default_count || s->binding_override_count)) ||
-        !qa_gamepad_tuning_valid(&s->gamepad) || !qa_mouse_tuning_valid(&s->mouse) ||
+        !qa_gamepad_tuning_valid(&s->gamepad) || (s->has_mouse && !qa_mouse_tuning_valid(&s->mouse)) ||
         !controller_valid(&s->controller) || !isfinite(s->rumble_strength) ||
         s->rumble_strength < 0 || s->rumble_strength > 1)
         return settings_fail(e, "Invalid seat settings");
@@ -464,10 +466,12 @@ bool qa_seat_settings_encode(const qa_seat_settings *s, qa_buffer *out, qa_error
     }
     qa_json_writer_key(&w, "gamepad");
     gamepad_write(&w, &s->gamepad);
-    qa_json_writer_key(&w, "mouse");
-    qa_json_writer_object(&w);
-    fields_write(&w, &s->mouse, mouse_fields, COUNT(mouse_fields));
-    qa_json_writer_end(&w);
+    if (s->has_mouse) {
+        qa_json_writer_key(&w, "mouse");
+        qa_json_writer_object(&w);
+        fields_write(&w, &s->mouse, mouse_fields, COUNT(mouse_fields));
+        qa_json_writer_end(&w);
+    }
     qa_json_writer_key(&w, "history");
     qa_json_writer_array(&w);
     for (size_t i = 0; i < s->history_count; ++i)

@@ -62,6 +62,20 @@ static qa_command_result q3_round_command(qa_application *application,
         return QA_COMMAND_UNHANDLED;
     qa_command_invocation command = *invocation;
     command.context.owner = provider->owner;
+    bool game_view = false;
+    for (size_t i = 0;; ++i) {
+        qa_application_startup_source source;
+        bool present;
+        if (!application_provider_startup_source_at(provider, i, &source, &present, error))
+            return QA_COMMAND_FAILED;
+        if (!present) break;
+        if (source.scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME) continue;
+        command.context.session = source.command.session;
+        command.context.cvar_view = source.command.cvar_view;
+        game_view = true;
+        break;
+    }
+    if (!game_view) return QA_COMMAND_UNHANDLED;
     if (!qa_application_capture_command_context(application, &command.context,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
@@ -88,6 +102,7 @@ bool qa_application_command_context_active(const qa_application *application,
     application_provider *physical = context->owner ? command_owner(application, context->owner) : NULL;
     if (!physical && context->owner)
         physical = application_startup_flow_provider(application, context->owner);
+    if (!qa_console_context_bound(application->console, context)) return false;
     if (physical && physical->client_only_owned) {
         /* A standalone decoded CLIENT has its own observer namespace. Its
          * pending seat origin must never acquire the old local GAME actor. */
@@ -111,6 +126,8 @@ bool qa_application_capture_command_context(qa_application *application,
     if (application == NULL || source == NULL || out == NULL || application->session == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "command capture requires an application session");
     qa_command_context next = *source;
+    if (!next.owner && !next.cvar_view)
+        next.cvar_view = qa_cvars_view_identity(application->cvars);
     if ((next.registry != 0 || next.generation != 0) &&
         !qa_application_command_context_active(application, &next))
         return application_fail(error, QA_ERROR_ARGUMENT, "command belongs to a retired publication");
@@ -186,106 +203,62 @@ qa_vfs *qa_application_context_files(qa_application *application,
     return files;
 }
 
-static bool console_seen_before(const qa_application *application,
-                                 const application_provider *stop, size_t ordinal,
-                                 qa_console *console)
-{
-    if (console == application->console)
-        return true;
-    for (application_provider *provider = application->live_providers;
-         provider != NULL; provider = provider->next_live) {
-        if (!provider->attached || !provider->constructed)
-            continue;
-        for (size_t index = 0;; ++index) {
-            if (provider == stop && index == ordinal)
-                return false;
-            qa_console *prior;
-            if (!application_guest_console_at(provider, index, &prior, NULL, NULL))
-                break;
-            if (prior == console)
-                return true;
-        }
-    }
-    return false;
-}
-
 size_t qa_application_console_count(const qa_application *application)
 {
-    if (application == NULL)
-        return 0;
-    size_t count = application->console != NULL;
-    for (application_provider *provider = application->live_providers;
-         provider != NULL; provider = provider->next_live)
-        if (provider->attached && provider->constructed)
-            for (size_t index = 0;; ++index) {
-                qa_console *console;
-                if (!application_guest_console_at(provider, index, &console, NULL, NULL))
-                    break;
-                if (!console_seen_before(application, provider, index, console))
-                    ++count;
-            }
-    return count;
+    return application && application->console ? 1 : 0;
 }
 
 qa_console *qa_application_console_at(qa_application *application, size_t index,
                                        qa_actor_owner *owner)
 {
-    if (application == NULL)
-        return NULL;
-    if (application->console != NULL) {
-        if (index == 0) {
-            if (owner != NULL) *owner = 0;
-            return application->console;
+    if (!application || !application->console || index) return NULL;
+    if (owner) *owner = 0;
+    return application->console;
+}
+
+bool qa_application_console_source_at(qa_application *application, size_t index,
+    qa_application_startup_source *out, bool *present, qa_error *error)
+{
+    if (!application || !out || !present)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Console Source enumeration requires its application and outputs");
+    *present = false;
+    if (application->console) {
+        if (!index) {
+            qa_application_startup_source root = {
+                .scope = {.kind = QA_APPLICATION_CONSOLE_ENGINE},
+                .console = application->console, .cvars = application->cvars};
+            if (!qa_console_context_read(root.console, &root.command, error)) return false;
+            *out = root;
+            *present = true;
+            return true;
         }
         --index;
     }
     for (application_provider *provider = application->live_providers;
-         provider != NULL; provider = provider->next_live) {
-        if (!provider->attached || !provider->constructed)
-            continue;
+         provider; provider = provider->next_live) {
+        if (!provider->attached || !provider->constructed || provider->close_pending) continue;
         for (size_t ordinal = 0;; ++ordinal) {
-            qa_console *console;
-            if (!application_guest_console_at(provider, ordinal, &console, NULL, NULL))
-                break;
-            if (console_seen_before(application, provider, ordinal, console))
-                continue;
-            if (index == 0) {
-                if (owner != NULL) *owner = provider->owner;
-                return console;
+            qa_application_startup_source source;
+            bool found;
+            if (!application_provider_startup_source_at(provider, ordinal, &source, &found, error)) return false;
+            if (!found) break;
+            if (!index) {
+                *out = source;
+                *present = true;
+                return true;
             }
             --index;
         }
     }
-    return NULL;
+    return true;
 }
 
 bool qa_application_console_scope_read(const qa_application *application,
     const qa_console *console, qa_application_console_scope *out)
 {
-    if (!application || !console || !out)
+    if (!application || !console || !out || console != application->console)
         return false;
-    if (console == application->console) {
-        *out = (qa_application_console_scope){.kind = QA_APPLICATION_CONSOLE_ENGINE};
-        return true;
-    }
-    const char *instance = NULL;
-    qa_application_console_scope result = {0};
-    for (application_provider *provider = application->live_providers;
-         provider; provider = provider->next_live) {
-        qa_application_console_scope scope;
-        if (!provider->attached || !provider->constructed || provider->close_pending ||
-            !provider->launch ||
-            !application_guest_console_scope(provider, console, &scope))
-            continue;
-        const char *name = provider->launch->selection.instance;
-        if (!instance || strcmp(name, instance) < 0) {
-            instance = name;
-            result = scope;
-        }
-    }
-    if (!instance)
-        return false;
-    *out = result;
+    *out = (qa_application_console_scope){.kind = QA_APPLICATION_CONSOLE_ENGINE};
     return true;
 }
 
@@ -346,15 +319,6 @@ static qa_command_result command_dispatch(qa_application *application,
     qa_command_result flight = application_native_engine_fly(application, invocation,
         &command.context, error);
     if (flight != QA_COMMAND_UNHANDLED) return flight;
-    const qa_application_startup_hooks *hooks=application->startup_hooks;
-    if (invocation->console==application->console && !command.context.owner &&
-        qa_console_invocation_current(invocation->console,invocation) &&
-        hooks && hooks->engine_source_command) {
-        bool routed=false;
-        if (!hooks->engine_source_command(hooks->context,application,invocation,&routed,error))
-            return QA_COMMAND_FAILED;
-        if (routed) return QA_COMMAND_HANDLED;
-    }
     qa_command_result round = q3_round_command(application, &command, error);
     if (round != QA_COMMAND_UNHANDLED)
         return round;

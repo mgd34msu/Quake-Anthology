@@ -173,12 +173,14 @@ bool qa_application_engine_shutdown_retiring(const qa_application *app,
         if (source && console==source->context.console && qa_application_client_associated(app,source) &&
             command->origin==QA_COMMAND_SEAT && command->script && !strcmp(command->script,"key-binding") &&
             !command->direct && !command->console_text &&
+            held->cvar_view==qa_cvars_view_identity(source->context.cvars) && command->cvar_view==held->cvar_view &&
             command->session==held->session && command->owner==held->owner && command->client==held->client &&
             command->seat==held->seat && command->dialect==held->dialect &&
             command->registry==held->registry && command->generation==held->generation &&
             qa_actor_id_equal(command->actor,held->actor)) return true;
     }
     return console == loan->console && !command->owner &&
+        command->cvar_view == qa_cvars_view_identity(loan->cvars) &&
         loan->registry && command->registry == loan->registry && command->generation &&
         command->generation <= loan->generation;
 }

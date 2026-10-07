@@ -22,14 +22,14 @@ typedef struct frontend_startup_config_options {
 
 frontend_startup_config *frontend_startup_config_create(const frontend_startup_config_options *, qa_error *);
 /* Own a copy of the genuine image-settings script before source configuration.
- * Its separate console keeps aliases private and preserves native wait frames.
+ * Its retained prefix borrows the shared aliases and preserves native wait frames.
  * No source defaults, archives, launch options or variables run here. */
 frontend_startup_config *frontend_startup_images_create(const qa_command_context *,qa_bytes,qa_error *);
 bool frontend_startup_images_command_current(const frontend_startup_config *,const qa_console *,
     const qa_command_context *);
 bool frontend_startup_images_completed(const frontend_startup_config *,const qa_console *);
 bool frontend_startup_config_destroy(frontend_startup_config *, qa_error *);
-/* These hooks belong to the actual source console. Its enclosing owner still
+/* These hooks belong to the actual retained source. Its enclosing owner still
  * qualifies candidate/publication identity before calling them. */
 bool frontend_startup_config_read(frontend_startup_config *, const qa_command_context *,
                                  const char *, qa_bytes *, void **lease, qa_error *);
@@ -37,11 +37,7 @@ void frontend_startup_config_release(frontend_startup_config *, void *lease);
 void frontend_startup_config_script_complete(frontend_startup_config *,
                                             const qa_command_context *, const char *, bool);
 bool frontend_startup_config_restrict_shared(const frontend_startup_config *);
-/* The console buffer is exclusively owned by this preparation. One call is
- * one source frame; an actual wait returns complete=false. */
+/* Configuration uses a retained prefix of the shared console, preserving the
+ * original pending tail. One call is one source frame; wait returns incomplete. */
 bool frontend_startup_config_advance(frontend_startup_config *, qa_console *, bool *complete, qa_error *);
-bool frontend_startup_config_checkpoint(const frontend_startup_config *, qa_buffer *, qa_error *);
-/* Import phase state before importing the matching source console buffer.
- * Import never reads scripts, executes commands, or applies configuration. */
-bool frontend_startup_config_restore(frontend_startup_config *, qa_bytes, qa_error *);
 #endif

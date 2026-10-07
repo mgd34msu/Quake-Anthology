@@ -743,13 +743,13 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     qa_q3_host_options *host = request->services;
     host->frontend_lifetime = lease; host->release_frontend = released;
     qa_application_startup_source tuple;
-    frontend_remote_config *config = frontend_config_store_client(f->config_store, host->console);
+    frontend_remote_config *config = frontend_config_store_client(f->config_store, host->cvars);
     frontend_remote_config_view configuration_view;
     bool ok = config && frontend_remote_config_read(config, &configuration_view) &&
         frontend_remote_config_current(config, &configuration_view) && configuration_view.ready &&
         configuration_view.cvars == host->cvars && configuration_view.physical_seat == physical_seat(owner) &&
         frontend_client_registry_retain(registry(owner), &lease->registry, error) &&
-        qa_application_q3_client_configuration_read(owner->application, host->owner,
+        qa_application_q3_client_configuration_read(owner->application, host->owner, host->role,
             request->source->receiver.seat, &tuple, error) &&
         frontend_config_host_cvars_prepare(&lease->namespaces, f->config_store,
             owner->application, &tuple, NULL, &host->cvar_namespaces, error);
@@ -866,7 +866,7 @@ bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q
         !frontend_remote_q3_initial_read(initial, &view, error) ||
         !frontend_network_client_attempt_current(f, &view.attempt) || !f->seats ||
         view.physical_seat >= f->options.seats || view.input != f->seats[view.physical_seat].input ||
-        frontend_config_store_client(f->config_store, view.attempt.source.receiver.console) != view.attempt.configuration.owner ||
+        frontend_config_store_client(f->config_store, view.attempt.source.receiver.cvars) != view.attempt.configuration.owner ||
         frontend_client_registry_cvars(view.registry) != view.attempt.source.receiver.cvars)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial source UI requires its actual CLIENT attempt and structural media parent");
     frontend_remote_q3_modules *owner = calloc(1, sizeof(*owner));

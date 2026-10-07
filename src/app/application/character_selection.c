@@ -187,23 +187,29 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
             qa_cvars_dialect(prepared):product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_RERELEASE?
             QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2;
         const char *model=found && declaration.family==QA_GAME_Q2?declaration.appearance.model:"male";
-        qa_cvars *protocol_cvars=qa_cvars_create(&(qa_cvar_options){.dialect=dialect},error);
-        if (!protocol_cvars) return false;
-        bool ok=qa_application_player_userinfo_register(protocol_cvars,seat->id,model,error) &&
-            qa_cvars_set(protocol_cvars,"name",name,true,error);
-        bool q2_registry=prepared && (qa_cvars_dialect(prepared)==QA_CONSOLE_Q2 ||
-            qa_cvars_dialect(prepared)==QA_CONSOLE_Q2_RERELEASE);
-        for (const qa_cvar_view *row=configured?qa_cvars_next(prepared,NULL):NULL;
-             ok && row;row=qa_cvars_next(prepared,row))
-            if ((row->flags&QA_CVAR_USERINFO) && !(q2_registry && (row->flags&QA_Q2_CVAR_PRIVATE)))
-                ok=qa_cvars_full_set(protocol_cvars,row->name,row->value,QA_CVAR_USERINFO,error);
-        if (ok && field_of_view)
-            ok=qa_cvars_set(protocol_cvars,"fov",field_of_view->value,true,error);
+        char *fov = NULL;
+        if (field_of_view) {
+            size_t size = strlen(field_of_view->value) + 1;
+            fov = malloc(size);
+            if (!fov) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual player FOV");
+            memcpy(fov, field_of_view->value, size);
+        }
+        qa_cvar_options projection = {.dialect=dialect, .side=QA_CVAR_SIDE_CLIENT,
+            .role=QA_CVAR_ROLE_CGAME, .seat=seat->id};
+        qa_cvars *protocol_cvars=configured && prepared && qa_cvars_dialect(prepared)==dialect
+            ? prepared : qa_cvars_create_view(app->cvars,&projection,error);
+        if (!protocol_cvars || (protocol_cvars==prepared && !qa_cvars_retain(protocol_cvars,error))) {
+            free(fov); return false;
+        }
+        bool ok=qa_application_player_userinfo_register(protocol_cvars,seat->id,model,error);
+        if (ok && !configured && !qa_cvars_is_set(protocol_cvars,"name"))
+            ok=qa_cvars_set(protocol_cvars,"name",name,true,error);
+        if (ok && fov) ok=qa_cvars_set(protocol_cvars,"fov",fov,true,error);
         if (ok) ok=qa_cvars_set(protocol_cvars,"spectator",seat->spectator?"1":"0",true,error);
         qa_buffer info={0};
         if (ok) ok=qa_cvars_info(protocol_cvars,QA_CVAR_USERINFO,capacity,&info,error);
         if (ok) memcpy(out,info.data,info.size+1);
-        qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
+        free(fov); qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
     } else return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo has no declared protocol constructor");
     return (length >= 0 && (size_t)length < capacity) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Initial CHARACTER userinfo exceeds its source extent");

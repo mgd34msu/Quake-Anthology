@@ -33,4 +33,6 @@ bool application_players_advance(qa_application *, qa_error *);
 void application_map_travel_options(const qa_application *, bool *, bool *,
                                     const qa_q2_landmark **);
 
+bool application_map_identity(qa_application *, const application_publication *, qa_string_id *, qa_error *);
+
 #endif

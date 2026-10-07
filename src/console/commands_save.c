@@ -27,6 +27,8 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context,
         context = &captured;
         context->registry = qa_console_save_context_registry(io->session, context->registry, captured_registry);
     }
+    /* Runtime view receipts are reconstructed by the actual caller resolver. */
+    context->cvar_view = 0;
     uint32_t dialect = context->dialect, origin = context->origin;
     if (!qa_source_save_u64(io, &context->session) ||
         !qa_source_save_u64(io, &context->owner) || !qa_source_save_u64(io, &context->client) ||
@@ -119,6 +121,8 @@ static bool queue_valid(const qa_console *state, const command_chunk *head, size
             (chunk->completion && chunk->caller.session != state->options.context.session) ||
             is_retired(state->owners, context->owner) || (context->client && is_retired(state->clients, context->client)))
             return invalid(error, "Console queue has an incompatible lifetime");
+        if (!qac_console_context_view_current(state, context, false, error) ||
+            (chunk->completion && !qac_console_context_view_current(state, &chunk->caller, false, error))) return false;
     }
     return true;
 }
@@ -129,6 +133,7 @@ static bool state_valid(const qa_console *state, const qa_console *candidate, qa
         is_retired(candidate->owners, state->wait_context.owner) ||
         (state->wait_context.client && is_retired(candidate->clients, state->wait_context.client))))
         return invalid(error, "Console wait names a retired context");
+    if (state->wait && !qac_console_context_view_current(candidate, &state->wait_context, false, error)) return false;
     return queue_valid(candidate, state->head, state->queued_bytes, error) &&
         queue_valid(candidate, state->deferred, state->deferred_bytes, error);
 }
@@ -215,11 +220,12 @@ static bool release_context_equal(const qa_command_context *a,const qa_command_c
 {
     return a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
         a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct &&
-        a->console_text==b->console_text && a->registry==b->registry && a->generation==b->generation &&
+        a->console_text==b->console_text && a->cvar_view==b->cvar_view &&
+        a->registry==b->registry && a->generation==b->generation &&
         qa_actor_id_equal(a->actor,b->actor) && ((!a->script && !b->script) ||
             (a->script && b->script && !strcmp(a->script,b->script)));
 }
-static bool releases_fields(qa_source_save_io *io,qa_console *state,
+static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_console *candidate,
     const qa_console_save_resolvers *resolve,uint64_t registry)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -242,13 +248,14 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,
             owner->context.session!=state->options.context.session ||
             is_retired(state->owners,owner->context.owner) ||
             (owner->context.client && is_retired(state->clients,owner->context.client)) ||
+            !qac_console_context_view_current(candidate,&owner->context,false,io->error) ||
             (owner->entered && !owner->started) || (owner->complete && !owner->started) ||
             (!owner->started && owner->fault.code!=QA_OK)) return false;
         size_t prepared_bytes=owner->prepared?owner->prepared->length-owner->prepared->offset:0;
         command_chunk *last=NULL;
         if (!chunks_fields(io,&owner->prepared,&last,&prepared_bytes,resolve,registry) ||
             (owner->started && owner->prepared) || (owner->prepared && owner->prepared->next) ||
-            !queue_valid(state,owner->prepared,prepared_bytes,io->error)) return false;
+            !queue_valid(candidate,owner->prepared,prepared_bytes,io->error)) return false;
         if (owner->prepared) {
             qa_command_context empty={0};
             if (owner->prepared->offset || owner->prepared->completion || owner->prepared->success ||
@@ -263,8 +270,9 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,
                 (owner->wait && !context_fields(io,&owner->wait_context,resolve,registry)) ||
                 !qa_source_save_count(io,&owner->alias_count,SIZE_MAX) ||
                 !qa_source_save_bool(io,&owner->drain_yielded) ||
-                !queue_valid(state,owner->head,owner->queued_bytes,io->error) ||
-                !queue_valid(state,owner->deferred,owner->deferred_bytes,io->error) ||
+                !queue_valid(candidate,owner->head,owner->queued_bytes,io->error) ||
+                !queue_valid(candidate,owner->deferred,owner->deferred_bytes,io->error) ||
+                (owner->wait && !qac_console_context_view_current(candidate,&owner->wait_context,false,io->error)) ||
                 (owner->wait && (owner->wait_context.session!=state->options.context.session ||
                     is_retired(state->owners,owner->wait_context.owner) ||
                     (owner->wait_context.client && is_retired(state->clients,owner->wait_context.client))))) return false;
@@ -308,7 +316,7 @@ bool qa_console_save_capture_in_registry(const qa_console *console,qa_session *s
     bool ok=qa_source_save_writer(&io,session,error) && (!releases || qa_source_save_bytes(&io,magic,4)) &&
         fields(&io,&copy,(qa_console *)console,NULL,captured_registry) &&
         (!releases || (qa_source_save_bool(&io,&copy.drain_yielded) &&
-            releases_fields(&io,&copy,NULL,captured_registry))) && qa_source_save_finish(&io,out);
+            releases_fields(&io,&copy,console,NULL,captured_registry))) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     if (!ok && (!error || error->code==QA_OK))
         invalid(error,releases?"Invalid retained console release roster":"Invalid console continuation");
@@ -335,7 +343,7 @@ bool qa_console_release_save_restore(qa_console *console,qa_session *session,
     bool ok=qa_source_save_reader(&io,session,bytes,error) && qa_source_save_bytes(&io,magic,4) &&
         !memcmp(magic,"QACR",4) &&
         fields(&io,scratch,console,resolve,0) && qa_source_save_bool(&io,&scratch->drain_yielded) &&
-        releases_fields(&io,scratch,resolve,0) && qa_source_save_finish(&io,NULL) && qa_console_idle(console);
+        releases_fields(&io,scratch,console,resolve,0) && qa_source_save_finish(&io,NULL) && qa_console_idle(console);
     if (ok) state_exchange(console,scratch);
     imported_storage_free(scratch); qa_console_destroy(scratch);
     qa_source_save_dispose(&io);

@@ -15,6 +15,7 @@ typedef struct qa_seat_settings {
     size_t binding_override_count;
     bool has_binding_defaults;
     qa_gamepad_tuning gamepad;
+    bool has_mouse;
     qa_mouse_tuning mouse;
     char **history;
     size_t history_count;

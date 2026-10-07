@@ -3,6 +3,7 @@
 #include <math.h>
 #include <limits.h>
 #include "qa/console.h"
+#include "qa/console_cvar_observer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,7 +134,14 @@ static bool entered(void *context,application_q3_scene_context *out)
 static bool active(void *context,const qa_command_context *command)
 {
     remote_component *r=context;
-    return published(r)&&command&&command->owner==r->services&&command->dialect==QA_CONSOLE_Q3;
+    const qa_command_context *bound=r?&r->host.command_context:NULL;
+    return published(r)&&command&&r->console&&r->cvars&&
+        r->host.owner==r->owner&&r->host.service_owner==r->services&&
+        command->owner==r->services&&command->session==bound->session&&command->client==bound->client&&
+        command->seat==bound->seat&&command->dialect==bound->dialect&&command->origin==bound->origin&&
+        command->registry==bound->registry&&command->generation==r->state.generation&&
+        command->generation==bound->generation&&qa_actor_id_equal(command->actor,bound->actor)&&
+        command->cvar_view==bound->cvar_view&&command->cvar_view==qa_cvars_view_identity(r->cvars);
 }
 static bool capture(void *context,const qa_command_context *command,qa_command_context *out,qa_error *e)
 {
@@ -146,8 +154,8 @@ static bool cheats(void *context)
 { remote_component *r=context; const qa_cvar_view *view=qa_cvars_find(r->cvars,"sv_cheats"); return view&&view->integer!=0; }
 static void print(void *context,const char *text)
 {
-    remote_component *r=context; qa_command_context command={.owner=r->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_REMOTE};
-    frontend_console_print(r->parent->frontend,&command,text);
+    remote_component *r=context;
+    frontend_console_print(r->parent->frontend,&r->host.command_context,text);
 }
 static void console_print(void *context,const qa_command_context *command,const char *text)
 { (void)command; print(context,text); }
@@ -156,7 +164,7 @@ static qa_command_result console_command(void *context,const qa_command_invocati
     remote_component *r=context;
     if(!published(r)||!r->frame) return QA_COMMAND_UNHANDLED;
     if(!r->initialized) return QA_COMMAND_UNHANDLED;
-    if(!qa_console_invocation_delivered(command,r->owner,r->services)) {
+    if(!qa_console_invocation_delivered_view(command,qa_cvars_view_identity(r->cvars),r->owner,r->services)) {
         bool handled=false;
         if(!application_q3_scene_console(r->scene,command,&handled,e)) return QA_COMMAND_FAILED;
         if(handled) return QA_COMMAND_HANDLED;
@@ -168,6 +176,39 @@ static qa_command_result console_command(void *context,const qa_command_invocati
     qa_unified_component_owner owner={r->state.provider,r->state.owner_generation};
     return frontend_remote_unified_component_command(r->parent->replica,&owner,
         command->argv,command->argc,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
+}
+static bool console_prepare(remote_component *r,const frontend_remote_unified_domain *domain,qa_error *e)
+{
+    qa_console *common=domain?qa_application_console(domain->application):NULL;
+    qa_cvars *shared=domain?qa_application_cvars(domain->application):NULL;
+    qa_actor_registry *registry=r&&r->parent?frontend_remote_unified_registry(r->parent->replica):NULL;
+    if(!r||!domain||!common||!shared||domain->application!=r->parent->frontend->application||
+        domain->console!=common||!qa_cvars_same_store(shared,domain->cvars)||
+        domain->command_context.cvar_view!=qa_cvars_view_identity(domain->cvars)||
+        !registry||!r->frame||r->frame->viewer.registry!=qa_actors_identity(registry)||
+        !r->owner||!r->services||!r->state.generation||r->state.owner_generation!=r->state.generation)
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Received CG constructor lost its actual common owners or player provenance");
+    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,
+        .seat=domain->command_context.seat,.user=r,.print=print,.cheats_allowed=cheats};
+    if(!r->cvars) r->cvars=qa_cvars_create_view(shared,&cvars,e);
+    if(!r->cvars) return false;
+    qa_command_context command=domain->command_context;
+    command.owner=r->services; command.dialect=QA_CONSOLE_Q3; command.origin=QA_COMMAND_REMOTE;
+    command.registry=qa_actors_identity(registry); command.generation=r->state.generation;
+    command.actor=r->frame->viewer; command.cvar_view=qa_cvars_view_identity(r->cvars);
+    command.direct=false; command.console_text=false; command.script=NULL;
+    r->host.command_context=command;
+    qa_console_options console={.context=command,.cvars=r->cvars,.user=r,.print=console_print,
+        .cvar_owner=cvar_owner,.source_command=console_command,.capture_context=capture,.context_active=active};
+    if(!r->console&&qa_console_bind_source(common,&console,e)) r->console=common;
+    return r->console==common||q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Received CG callbacks lost their exact common console");
+}
+static bool console_retire(remote_component *r,qa_error *e)
+{
+    if(r->cvars&&!qa_cvars_observer_idle(r->cvars))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Received CG retirement retains entered cvar work");
+    if(r->console&&!qa_console_unbind_source(r->console,qa_cvars_view_identity(r->cvars),e)) return false;
+    r->console=NULL; qa_cvars_detach_callbacks(r->cvars); return true;
 }
 bool q3remote_component_open(remote_component *r,qa_error *e)
 {
@@ -199,15 +240,10 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
     ok=count>=0&&(size_t)count<size&&qa_strings_intern_cstr(strings,name,&r->owner,e);
     if(ok) { size_t length=strlen(name); ok=length+9<size; if(ok) { memcpy(name+length,":services",10); ok=qa_strings_intern_cstr(strings,name,&r->services,e); } }
     free(name); if(!ok) return false;
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=r,.print=print,.cheats_allowed=cheats};
-    if(!r->cvars) r->cvars=qa_cvars_create(&cvars,e);
-    if(!r->cvars) return false;
-    qa_console_options console={.context={.owner=r->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_REMOTE},.cvars=r->cvars,.user=r,
-        .print=console_print,.cvar_owner=cvar_owner,.source_command=console_command,.capture_context=capture,.context_active=active};
-    if(!r->console) r->console=qa_console_create(&console,e);
-    if(!r->console) return false;
+    if(!console_prepare(r,domain,e)) return false;
+    qa_command_context command=r->host.command_context;
     r->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=r->state.abi,.session=qa_application_session(domain->application),
-        .owner=r->owner,.service_owner=r->services,.mounts=files,.cvars=r->cvars,.console=r->console,.command_context=console.context,
+        .owner=r->owner,.service_owner=r->services,.mounts=files,.cvars=r->cvars,.console=r->console,.command_context=command,
         .common={.context=r,.print=print}};
     application_q3_scene_source source={r,acquire,source_current,source_actor,source_live,release,weapon_presented};
     application_q3_component_scene_preparation request={.origin=APPLICATION_Q3_COMPONENT_SCENE_REMOTE,.component=r->state.mod,
@@ -223,7 +259,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
         if(r->host.frontend_lifetime&&r->host.release_frontend) {
             r->host.release_frontend(r->host.frontend_lifetime); r->host.frontend_lifetime=NULL;
         }
-        return true;
+        return console_retire(r,e);
     }
     application_q3_scene_options create={.profile=r->profile,.host=r->host,.assets=r->assets,.viewer=r->frame->viewer,.source=source,
         .output_context=r->frontend.owner,.finish_output=r->frontend.finish};
@@ -234,7 +270,8 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
 }
 bool q3remote_component_retire(remote_component *row,qa_error *error)
 {
-    if(row->acquired||(row->scene&&!application_q3_scene_idle(row->scene)))
+    if(row->acquired||(row->scene&&!application_q3_scene_idle(row->scene))||
+        (row->console&&!qa_console_idle(row->console))||(row->cvars&&!qa_cvars_observer_idle(row->cvars)))
         return q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component retirement retains real execution or body leases");
     if(!application_q3_scene_destroy(&row->scene,error)) return false;
     if(!row->host_entered&&row->host.frontend_lifetime&&row->host.release_frontend) {
@@ -243,6 +280,7 @@ bool q3remote_component_retire(remote_component *row,qa_error *error)
     row->retired=true; row->initialized=false; row->host_entered=false;
     if(row->frontend.owner&&(!row->frontend.retire||!row->frontend.retire(row->frontend.owner,error)))
         return error&&error->code!=QA_OK?false:q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component registry lacks its real service retirement owner");
+    if(!console_retire(row,error)) return false;
     while(row->events) { remote_component_event *next=row->events->next; free(row->events); row->events=next; }
     q3remote_component_admissions_clear(row); return true;
 }
@@ -250,13 +288,16 @@ bool q3remote_component_close(remote_component **slot,qa_error *e)
 {
     if(!slot||!*slot) return true;
     remote_component *r=*slot;
-    if(r->acquired||(r->scene&&!application_q3_scene_idle(r->scene))) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote CG retirement retains Source output leases");
+    if(r->acquired||(r->scene&&!application_q3_scene_idle(r->scene))||
+        (r->console&&!qa_console_idle(r->console))||(r->cvars&&!qa_cvars_observer_idle(r->cvars)))
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote CG retirement retains Source output or console leases");
     if(!application_q3_scene_destroy(&r->scene,e)) return false;
     if(!r->host_entered&&r->host.frontend_lifetime&&r->host.release_frontend) {
         r->host.release_frontend(r->host.frontend_lifetime); r->host.frontend_lifetime=NULL;
     }
     if(r->frontend.owner&&!r->frontend.destroy(&r->frontend.owner,e)) return false;
-    qa_console_destroy(r->console); qa_cvars_destroy(r->cvars);
+    if(!console_retire(r,e)) return false;
+    qa_cvars_destroy(r->cvars);
     application_q3_scene_profile_destroy(r->profile); qa_qvm_image_release(r->image); qa_qvm_image_release(r->gameplay_image);
     qa_resource_release(r->artifact); qa_resource_release(r->gameplay); qa_vfs_acquisition_dispose(&r->acquisition); qa_vfs_acquisition_dispose(&r->gameplay_acquisition);
     if(r->frame!=r->baseline) q3remote_component_frame_free(r->frame);

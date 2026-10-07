@@ -559,14 +559,30 @@ static bool q3_input_read(void *context,frontend_remote_unified *replica,
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG input has no published physical CLIENT builder");
     *out=p->physical; return true;
 }
+static bool command_receipt_equal(const qa_command_context *a,const qa_command_context *b)
+{
+    return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client &&
+        a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
+        a->direct==b->direct && a->console_text==b->console_text && a->cvar_view==b->cvar_view &&
+        a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
+        ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
+}
+static bool q3_command_current(const unified_q3_client_row *row,const qa_command_context *origin)
+{
+    const frontend_remote_unified_domain *domain=row?frontend_remote_unified_domain_read(row->owner->replica):NULL;
+    const qa_command_context *actual=row?frontend_unified_q3_client_context(row->client):NULL;
+    return domain && actual && frontend_unified_q3_client_cvars(row->client)==domain->cvars &&
+        actual->cvar_view==qa_cvars_view_identity(domain->cvars) &&
+        command_receipt_equal(actual,&domain->command_context) && command_receipt_equal(origin,actual);
+}
 static bool q3_send_client(void *context,frontend_unified_q3_client *client,
     const qa_command_context *origin,const char *text,qa_error *error)
 {
     unified_q3_client_row *row=context;
     unified_presentation *p=row?row->owner:NULL;
     frontend_unified_q3_source_view source;
-    if (!p || row->client!=client || !origin || !text || origin->owner!=row->receiver ||
-        !q3_row_source(row,false,&source,error) || !qa_actor_id_equal(origin->actor,source.viewer) ||
+    if (!p || row->client!=client || !text || !q3_command_current(row,origin) ||
+        !q3_row_source(row,false,&source,error) ||
         !frontend_remote_unified_current(p->replica,error))
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled client command changed its actual lexical Source");
     if (!p->replica->options.source_command)
@@ -589,11 +605,7 @@ bool frontend_remote_unified_presentation_source_command_current(const frontend_
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
         if (strcmp(source.instance,instance)) continue;
-        const qa_command_context *actual=frontend_unified_q3_client_context(row->client);
-        return (actual && source.publication==publication && source.map_revision==map_revision &&
-            origin->owner==row->receiver && origin->session==actual->session && origin->client==actual->client &&
-            origin->seat==actual->seat && origin->registry==actual->registry && origin->generation==actual->generation &&
-            origin->dialect==QA_CONSOLE_Q3 && origin->origin==actual->origin && qa_actor_id_equal(origin->actor,source.viewer)) ||
+        return (source.publication==publication && source.map_revision==map_revision && q3_command_current(row,origin)) ||
             frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source command lost its real compiled CLIENT origin");
     }
     return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source command has no published compiled CLIENT namespace");

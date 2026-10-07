@@ -157,7 +157,7 @@ bool qa_console_release_active(const qa_console_release *owner)
 static bool same_source(const qa_command_context *a,const qa_command_context *b)
 {
     return a->session==b->session && a->owner==b->owner && a->client==b->client &&
-        a->seat==b->seat && a->origin==b->origin && a->registry==b->registry &&
+        a->seat==b->seat && a->origin==b->origin && a->cvar_view==b->cvar_view && a->registry==b->registry &&
         a->generation==b->generation && a->actor.registry==b->actor.registry &&
         a->actor.generation==b->actor.generation && a->actor.slot==b->actor.slot;
 }

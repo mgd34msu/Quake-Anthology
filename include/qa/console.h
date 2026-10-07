@@ -340,13 +340,17 @@ typedef struct qa_console_entry {
 } qa_console_entry;
 
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
+/* Bind Source callbacks to the shared console without another command queue. */
+bool qa_console_bind_source(qa_console *, const qa_console_options *, qa_error *);
+bool qa_console_unbind_source(qa_console *, uint64_t cvar_view, qa_error *);
+/* Call an exact bound Source forwarder inside the original entered invocation. */
+qa_command_result qa_console_forward_source(qa_console *, const qa_command_invocation *,
+    const qa_command_context *target, uint64_t lifetime_owner, qa_error *);
+/* Constructor receipt for a Source already bound to the common console. */
+bool qa_console_context_bound(const qa_console *, const qa_command_context *);
 /* Pure teardown qualification; NULL is ready. */
 bool qa_console_destroy_ready(const qa_console *console);
 void qa_console_destroy(qa_console *console);
-/* Queued chunks retain their original dialect and origin. Change the default
- * profile only between command invocations. */
-bool qa_console_set_profile(qa_console *console, qa_console_dialect dialect,
-                              qa_cvars *cvars, qa_error *error);
 /* Borrowed physical default registry; does not invoke namespace routing. */
 qa_cvars *qa_console_cvars(const qa_console *console);
 bool qa_console_register(qa_console *console, const char *name, const char *description,
@@ -357,6 +361,9 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
 bool qa_console_register_owned(qa_console *, const char *name, const char *description,
                                  uint64_t dispatch_owner, uint64_t lifetime_owner,
                                  bool engine_command, qa_command_handler, void *, qa_error *);
+bool qa_console_register_context(qa_console *, const qa_command_context *,
+    const char *name, const char *description, uint64_t dispatch_owner, uint64_t lifetime_owner,
+    bool engine_command, qa_command_handler, void *, qa_error *);
 /* Reads an installed ordinary handler's lifetime owner by name and receiver. The output remains unchanged when absent. */
 bool qa_console_registration_owner(const qa_console *, const char *exact_name,
                                    uint64_t dispatch_owner, uint64_t *out);
@@ -364,10 +371,14 @@ bool qa_console_registration_owner(const qa_console *, const char *exact_name,
  * Outputs remain unchanged when that registration is absent. */
 bool qa_console_registration_read(const qa_console *, const char *exact_name,
     uint64_t dispatch_owner, uint64_t *lifetime_owner, qa_command_handler *, void **user);
+bool qa_console_registration_read_context(const qa_console *, const qa_command_context *,
+    const char *exact_name, uint64_t dispatch_owner, uint64_t *lifetime_owner,
+    qa_command_handler *, void **user);
 /* A name has one record. Module declarations retain their actual callable
  * owner and seat; a NULL callback declares a stock forwarded name. */
 typedef struct qa_console_contribution {
     uint64_t receiver, lifetime_owner;
+    uint64_t cvar_view;
     uint32_t seat;
     qa_command_fallback callback;
     void *user;
@@ -377,6 +388,8 @@ bool qa_console_contribute(qa_console *, const char *name,
 bool qa_console_uncontribute(qa_console *, const char *name, uint64_t dispatch_owner,
                               uint64_t lifetime_owner);
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner);
+bool qa_console_unregister_context(qa_console *, const qa_command_context *,
+    const char *name, uint64_t dispatch_owner);
 /* Documentation is copied; NULL removes it. Registration owns its lifetime. */
 bool qa_console_document(qa_console *, const char *name, uint64_t owner,
                          const qa_console_documentation *, qa_error *);
@@ -462,6 +475,10 @@ bool qa_console_invocation_current(const qa_console *,const qa_command_invocatio
 /* True only while this entered invocation has called the exact registration. */
 bool qa_console_invocation_delivered(const qa_command_invocation *,uint64_t receiver,
     uint64_t lifetime_owner);
+bool qa_console_invocation_delivered_view(const qa_command_invocation *, uint64_t cvar_view,
+    uint64_t receiver, uint64_t lifetime_owner);
+bool qa_console_context_delivered_view(const qa_console *, const qa_command_context *,
+    uint64_t cvar_view, uint64_t receiver, uint64_t lifetime_owner);
 /* Borrow the original wire text of an entered invocation. Explicit cmd uses
  * its untouched argument tail; each Source retains its own admission policy. */
 bool qa_console_forward_text(const qa_command_invocation *,const char **text,

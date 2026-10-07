@@ -114,7 +114,7 @@ bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_c
         if(p->resources.domain.source.receiver.receiver==domain->source.receiver.receiver &&
             p->resources.domain.source.receiver.seat==domain->source.receiver.seat)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote CLIENT resource owner is already retained");
-    frontend_remote_config *configuration=frontend_config_store_client(f->config_store,domain->source.receiver.console);
+    frontend_remote_config *configuration=frontend_config_store_client(f->config_store,domain->source.receiver.cvars);
     frontend_remote_config_view settings;
     if(!configuration || !frontend_remote_config_read(configuration,&settings) || !settings.ready || !settings.published ||
         settings.physical_seat!=ordinal || settings.console!=domain->source.receiver.console ||

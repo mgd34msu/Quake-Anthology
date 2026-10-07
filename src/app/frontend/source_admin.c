@@ -1,5 +1,6 @@
 #include "source_admin.h"
 #include "internal.h"
+#include "config_store.h"
 #include "network_admin.h"
 #include "qa/application_network_qw.h"
 #include "qa/filesystem.h"
@@ -30,6 +31,12 @@ struct frontend_source_admin {
 };
 static bool fail(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message); return false; }
+static bool source_view(const qa_console *console,const qa_cvars *cvars,const qa_command_context *command)
+{
+    return console && cvars && command && command->owner &&
+        qa_cvars_same_store(qa_console_cvars(console),cvars) &&
+        command->cvar_view==qa_cvars_view_identity(cvars) && command->dialect==qa_cvars_dialect(cvars);
+}
 static bool send_packet(void *context,const qa_net_address *address,qa_bytes bytes,qa_error *error)
 {
     frontend_source_admin *owner=context;
@@ -62,6 +69,7 @@ static bool command_current(frontend_source_admin *owner,qa_command_context *out
     *out=owner->command;
     out->registry=0; out->generation=0; out->actor=(qa_actor_id){0};
     return qa_application_capture_command_context(owner->application,out,out,error) &&
+        source_view(owner->console,owner->cvars,out) &&
         qa_application_command_context_active(owner->application,out);
 }
 static void print(void *context,const char *text)
@@ -141,22 +149,22 @@ static qa_admin_options admin_options(frontend_source_admin *owner,qa_console_di
 bool frontend_source_admin_bind(frontend_source_admin *owner,qa_application *application,
     qa_console *console,qa_cvars *cvars,const qa_command_context *command,qa_error *error)
 {
-    if (!owner || owner->busy || owner->restoring || !owner->admin || !application || !console || !cvars || !command ||
-        !command->owner || qa_console_cvars(console)!=cvars || command->dialect!=qa_cvars_dialect(cvars))
+    if (!owner || owner->busy || owner->restoring || !owner->admin || !application ||
+        !source_view(console,cvars,command))
         return fail(error,QA_ERROR_ARGUMENT,"Early administration requires its actual returned Source namespace");
     owner->application=application; owner->console=console; owner->cvars=cvars;
     owner->command=*command;
     owner->command.script=NULL;
     return policy(owner,error);
 }
-bool frontend_source_admin_unbind(frontend_source_admin *owner,const qa_console *console,qa_error *error)
+bool frontend_source_admin_unbind(frontend_source_admin *owner,const qa_cvars *view,qa_error *error)
 {
     if (!owner) return true;
+    if (!view) return fail(error,QA_ERROR_ARGUMENT,"Early administration release needs its actual Source view");
+    if (owner->cvars!=view) return true;
     if (owner->busy) return fail(error,QA_ERROR_ARGUMENT,"Early administration is entered by its actual Source");
-    if (owner->console==console) {
-        owner->application=NULL; owner->console=NULL; owner->cvars=NULL;
-        owner->command=(qa_command_context){0};
-    }
+    owner->application=NULL; owner->console=NULL; owner->cvars=NULL;
+    owner->command=(qa_command_context){0};
     return true;
 }
 void frontend_source_admin_rebind(frontend_source_admin *owner,qa_frontend *frontend)
@@ -166,8 +174,7 @@ void frontend_source_admin_rebind(frontend_source_admin *owner,qa_frontend *fron
 bool frontend_source_admin_create(qa_frontend *frontend,qa_application *application,qa_console *console,
     qa_cvars *cvars,const qa_command_context *command,frontend_source_admin **out,qa_error *error)
 {
-    if (!frontend || !out || *out || !application || !console || !cvars || !command ||
-        !command->owner || qa_console_cvars(console)!=cvars || command->dialect!=qa_cvars_dialect(cvars))
+    if (!frontend || !out || *out || !application || !source_view(console,cvars,command))
         return fail(error,QA_ERROR_ARGUMENT,"Early administration requires the real Source constructor");
     frontend_source_admin *owner=calloc(1,sizeof(*owner));
     if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating early Source administration owner");
@@ -189,10 +196,15 @@ bool frontend_source_admin_create(qa_frontend *frontend,qa_application *applicat
 bool frontend_source_admin_dispatch(frontend_source_admin *owner,const qa_command_invocation *call,
     size_t skip,bool *handled,qa_error *error)
 {
-    if (!owner || owner->busy || !owner->admin || !call || !handled || call->console!=owner->console ||
-        qa_console_cvars(call->console)!=owner->cvars || !qa_console_invocation_current(call->console,call) ||
-        call->context.owner!=owner->command.owner || call->context.session!=owner->command.session ||
-        call->context.dialect!=owner->command.dialect ||
+    if (!owner || owner->busy || !owner->admin || !call || !handled)
+        return fail(error,QA_ERROR_ARGUMENT,"Early administration requires its actual returned Source owner");
+    qa_application_startup_source source;
+    if (!frontend_config_store_server_invocation_read(owner->frontend->config_store,call,&source,error) ||
+        source.console!=owner->console || source.cvars!=owner->cvars ||
+        source.scope.provider!=owner->command.owner || source.command.session!=owner->command.session ||
+        !source_view(source.console,source.cvars,&source.command) ||
+        source.command.cvar_view!=owner->command.cvar_view || call->console!=owner->console ||
+        !qa_console_invocation_current(call->console,call) || call->context.dialect!=source.command.dialect ||
         !qa_application_command_context_active(owner->application,&call->context))
         return fail(error,QA_ERROR_ARGUMENT,"Early administration lost its actual entered Source invocation");
     if (!policy(owner,error)) return false;
@@ -296,7 +308,7 @@ bool frontend_source_admin_checkpoint(const frontend_source_admin *owner,qa_appl
     if (!owner || owner->busy || owner->restoring || !owner->admin || !out || out->data || out->size ||
         owner->application!=application || owner->console!=console || owner->cvars!=cvars || !command ||
         owner->command.owner!=command->owner || owner->command.session!=command->session ||
-        owner->command.dialect!=command->dialect || qa_console_cvars(console)!=cvars ||
+        owner->command.dialect!=command->dialect || !source_view(console,cvars,command) ||
         !root || !qa_fs_root_same_object(root,owner->preferences))
         return fail(error,QA_ERROR_ARGUMENT,"Source administration capture lost its exact returned Source and preference owner");
     frontend_source_admin copy=*owner; copy.saved_dialect=qa_cvars_dialect(cvars);
@@ -333,7 +345,7 @@ bool frontend_source_admin_finish_restore(frontend_source_admin *owner,qa_applic
 {
     qa_fs_root *root=qa_vfs_mount_root(store.vfs,store.mount);
     if (!owner || !owner->restoring || owner->busy || !owner->admin || owner->preferences || !application ||
-        !console || !cvars || !command || !command->owner || qa_console_cvars(console)!=cvars ||
+        !source_view(console,cvars,command) ||
         command->dialect!=owner->saved_dialect || qa_cvars_dialect(cvars)!=owner->saved_dialect ||
         !root || !root_matches(store,&owner->saved_preferences))
         return fail(error,QA_ERROR_FORMAT,"Saved Source administration differs from its actual reconstructed Source and directory lineage");

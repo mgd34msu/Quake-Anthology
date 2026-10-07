@@ -20,6 +20,9 @@
 #include "network_declarations.h"
 #include "network_local_groups.h"
 #include "network_player_drop.h"
+#include "network_config.h"
+#include "network_q3_restart.h"
+#include "network_presentation.h"
 #include "internal.h"
 #include "settings_devices.h"
 #include "startup_menus.h"
@@ -309,6 +312,72 @@ static bool source_prompt_supported(void *context,qa_actor_id actor,bool *out,qa
         if (f->seats && frontend_source_prompt_supported(f->seats[i].source_prompt,actor)) { *out=true; break; }
     return true;
 }
+qa_command_result frontend_console_forward(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    qa_frontend *frontend=context;
+    if (!frontend || !frontend->application || !command ||
+        command->console!=qa_application_console(frontend->application) ||
+        !qa_console_invocation_current(command->console,command) ||
+        !qa_application_command_context_active(frontend->application,&command->context)) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Console forwarding lost its entered application invocation");
+        return QA_COMMAND_FAILED;
+    }
+    if (frontend->options.dedicated || frontend->capture || frontend->resource_inventory ||
+        frontend->source_restoring || frontend->shutdown ||
+        (command->context.origin!=QA_COMMAND_LOCAL && command->context.origin!=QA_COMMAND_SEAT))
+        return QA_COMMAND_UNHANDLED;
+    if (!command->context.owner &&
+        command->context.cvar_view!=qa_cvars_view_identity(qa_application_cvars(frontend->application)))
+        return QA_COMMAND_UNHANDLED;
+    uint32_t physical,seat;
+    if (!frontend_command_seat_read(frontend,&command->context,&physical) ||
+        !frontend_seat_launch_id_read(frontend,physical,&seat) || seat!=command->context.seat ||
+        !frontend->seats || !frontend->seats[physical].input) return QA_COMMAND_UNHANDLED;
+    qa_console *console; qa_cvars *cvars; qa_command_context recipient;
+    if (!qa_input_seat_recipient_read(frontend->seats[physical].input,&console,&cvars,&recipient))
+        return QA_COMMAND_UNHANDLED;
+    if (recipient.owner) {
+        qa_application_client_source source;
+        qa_command_context target;
+        if (command->context.owner || recipient.owner>UINT32_MAX ||
+            !qa_application_client_physical_read(frontend->application,(qa_actor_owner)recipient.owner,
+                recipient.seat,&source,error) ||
+            !qa_application_client_current(frontend->application,&source) ||
+            source.context.physical_seat!=physical || source.context.seat!=seat ||
+            source.context.console!=console || source.context.cvars!=cvars ||
+            recipient.cvar_view!=qa_cvars_view_identity(cvars) ||
+            recipient.cvar_view!=source.context.command.cvar_view ||
+            !qa_application_capture_command_context(frontend->application,&source.context.command,&target,error)) {
+            if (error && error->code==QA_OK)
+                frontend_fail(error,QA_ERROR_ARGUMENT,"Console forwarding lost its installed CLIENT recipient");
+            return QA_COMMAND_FAILED;
+        }
+        return qa_console_forward_source(command->console,command,&target,source.context.receiver,error);
+    }
+    frontend_remote_config_view configuration; bool present=false;
+    if (!frontend_network_client_configuration_read(frontend,seat,&configuration,&present,error))
+        return QA_COMMAND_FAILED;
+    if (!present) return QA_COMMAND_UNHANDLED;
+    qa_application_q3_client_context source; qa_command_context target;
+    if (console!=command->console || cvars!=qa_application_cvars(frontend->application) ||
+        recipient.cvar_view!=qa_cvars_view_identity(cvars) || recipient.seat!=seat ||
+        configuration.physical_seat!=physical ||
+        !frontend_network_q3_client_context_read(frontend,configuration.scope.provider,seat,&source,error) ||
+        !frontend_network_q3_client_context_current(frontend,&source) || source.cvars!=configuration.cvars ||
+        source.console!=configuration.console ||
+        source.command_context.cvar_view!=qa_cvars_view_identity(source.cvars) ||
+        !qa_application_capture_command_context(frontend->application,&source.command_context,&target,error)) {
+        if (error && error->code==QA_OK)
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Console forwarding lost its admitted CLIENT connection");
+        return QA_COMMAND_FAILED;
+    }
+    bool delivered=qa_console_invocation_delivered_view(command,target.cvar_view,source.receiver,source.service_owner);
+    bool sender=command->context.owner==target.owner && command->context.cvar_view==target.cvar_view;
+    if (sender || delivered)
+        return frontend_network_client_forward(frontend,command,error)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
+    if (command->context.owner) return QA_COMMAND_UNHANDLED;
+    return qa_console_forward_source(command->console,command,&target,source.service_owner,error);
+}
 void frontend_application_options(qa_frontend *frontend, qa_application_options *application)
 {
     application->native_runtime=frontend->native_runtime;
@@ -322,6 +391,7 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->guest_context = frontend;
     application->model_admission=frontend_visual_model_admission;
     application->console_print = frontend_console_print;
+    application->console_forward = frontend_console_forward;
     application->prompt_context=frontend; application->prompt_supported=source_prompt_supported;
     application->q3_services = frontend_source_services;
     application->q3_component_scene_prepare=frontend_component_scene_prepare;

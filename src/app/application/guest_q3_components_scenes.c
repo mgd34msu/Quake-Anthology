@@ -115,19 +115,22 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     if(!ok) return false;
     }
     if(!scene_identity(row,e)) return false;
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=row,.print=print,.cheats_allowed=cheats};
-    if(!row->cvars) row->cvars=qa_cvars_create(&cvars,e);
+    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,
+        .side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,.seat=row->seat,.user=row,.print=print,.cheats_allowed=cheats};
+    if(!row->cvars) row->cvars=qa_cvars_create_view(options->application->cvars,&cvars,e);
     if(!row->cvars) return false;
-    qa_console_options console={.context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},
+    qa_console_options console={.context={.owner=row->services,.seat=row->seat,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},
         .cvars=row->cvars,.user=row,.print=console_print,.cvar_owner=cvar_owner,.source_command=console_command,
         .capture_context=capture,.context_active=active};
-    if(!row->console) row->console=qa_console_create(&console,e);
+    console.context.cvar_view=qa_cvars_view_identity(row->cvars);
+    if(!row->console&&qa_console_bind_source(options->application->console,&console,e))
+        row->console=options->application->console;
     if(!row->console) return false;
     row->host=(qa_q3_host_options){.role=QA_QVM_CGAME,.abi=game->publication.abi,.session=options->application->session,
         .world=options->world,.owner=game->publication.owner,.service_owner=row->services,.mounts=game->publication.content,
         .write_view={.root=qa_catalog_write_resolver_root(game->write_resolver),
             .resolver=qa_catalog_write_resolver_services(game->write_resolver)},
-        .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},.common={.context=row,.print=print}};
+        .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.seat=row->seat,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL,.cvar_view=qa_cvars_view_identity(row->cvars)},.common={.context=row,.print=print}};
     if(!options->scene_factory.prepare) return application_fail(e,QA_ERROR_UNSUPPORTED,"Component scene lacks its real renderer factory");
     application_q3_component_scene_preparation preparation={.component=game->publication.metadata,.descriptor=game->publication.descriptor,
         .catalog=game->provider->product_catalog,.owner=game->publication.owner,.generation=game->publication.generation,
@@ -204,7 +207,8 @@ bool q3components_scenes_destroy(component_game_row *game,qa_error *e)
             row->host.release_frontend(row->host.frontend_lifetime); row->host.frontend_lifetime=NULL;
         }
         if(row->frontend.owner&&(!row->frontend.destroy||!row->frontend.destroy(&row->frontend.owner,e))) return false;
-        qa_console_destroy(row->console); qa_cvars_destroy(row->cvars);
+        if(!qa_console_unbind_source(row->console,qa_cvars_view_identity(row->cvars),e)) return false;
+        qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
         application_q3_scene_profile_destroy(row->profile); qa_qvm_image_release(row->image);
         qa_resource_release(row->artifact); qa_vfs_acquisition_dispose(&row->acquisition);
         game->scenes=row->next; free(row->events); free(row);

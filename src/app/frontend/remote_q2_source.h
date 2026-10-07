@@ -11,7 +11,7 @@ typedef struct frontend_remote_q2_source_options {
     qa_launch_q2_client_metadata metadata;
     frontend_remote_q2_options client;
     /* Admit the real metadata-only app provider and return its actual pending
-     * command namespace before constructing the physical registry/console. */
+     * command namespace before constructing the CLIENT view and binding its callbacks. */
     bool (*prepare_namespace)(void *, const qa_launch_instance *, frontend_remote_q2_domain *, qa_error *);
     void (*print)(void *, const qa_command_context *, const char *);
     qa_command_fallback command;
@@ -81,7 +81,7 @@ bool frontend_remote_q2_source_drain(frontend_remote_q2_source *, size_t budget,
 bool frontend_remote_q2_source_destroy(frontend_remote_q2_source **, qa_error *);
 bool frontend_remote_q2_source_rebind_ready(const frontend_remote_q2_source *, qa_frontend *, qa_error *);
 void frontend_remote_q2_source_rebind(frontend_remote_q2_source *, qa_frontend *);
-/* Physical app CLIENT rows borrow this real heap owner. These qualifiers use
+/* Physical app CLIENT rows borrow this real view owner. These qualifiers use
  * retained metadata/registry fields directly and never call app/current hooks.
  * The configure callback may use them before the receiver is constructed. */
 bool frontend_remote_q2_source_owner_retain(void *, qa_error *);
@@ -97,11 +97,6 @@ bool frontend_remote_q2_source_owner_current(const frontend_remote_q2_source *,
     const qa_launch_instance *, const qa_console *, const qa_cvars *, const qa_command_context *, qa_error *);
 bool frontend_remote_q2_source_content_visit(const frontend_remote_q2_source *,
     const qa_application_content_visitor *, qa_error *);
-bool frontend_remote_q2_source_commands_capture(const frontend_remote_q2_source *, qa_application *,
-    const qa_application_console_scope *, const qa_console *, qa_buffer *, qa_error *);
-bool frontend_remote_q2_source_commands_restore(frontend_remote_q2_source *, qa_application *,
-    const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
-bool frontend_remote_q2_source_finish_restore(frontend_remote_q2_source *, qa_error *);
 bool frontend_remote_q2_source_restore_abort_ready(const frontend_remote_q2_source *,
     const qa_application_client_source *,qa_error *);
 #endif

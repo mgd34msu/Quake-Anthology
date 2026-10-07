@@ -56,7 +56,7 @@ static bool context_equal(const qa_command_context *a, const qa_command_context 
     return a->session == b->session && a->owner == b->owner && a->client == b->client &&
         a->seat == b->seat && a->dialect == b->dialect && a->origin == b->origin &&
         a->direct == b->direct && a->console_text == b->console_text &&
-        text_equal(a->script, b->script) && a->registry == b->registry &&
+        text_equal(a->script, b->script) && a->cvar_view == b->cvar_view && a->registry == b->registry &&
         a->generation == b->generation && a->actor.registry == b->actor.registry &&
         a->actor.generation == b->actor.generation && a->actor.slot == b->actor.slot;
 }
@@ -253,8 +253,8 @@ static bool map_aliases(qa_console_program *program, alias_entry *head, const re
         if (is_retired(owners, entry->view.owner))
             return qac_fail(error, QA_ERROR_ARGUMENT, "command program alias names a retired candidate owner");
         for (alias_entry *prior = head; prior != entry; prior = prior->next)
-            if (prior->view.owner == entry->view.owner && !strcmp(prior->view.name, entry->view.name))
-                return qac_fail(error, QA_ERROR_ARGUMENT, "command program aliases lose their actual owner distinction");
+            if (qac_equal(prior->view.name, entry->view.name))
+                return qac_fail(error, QA_ERROR_ARGUMENT, "command program aliases duplicate the common name");
     }
     return true;
 }
@@ -364,19 +364,13 @@ static bool map_context(qa_console_program *program, qa_command_context *context
         !text_equal(mapped.script, context->script) ||
         (mapped.actor.registry == 0) != (context->actor.registry == 0))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command program resolver changed retained command semantics");
+    if (!qac_console_context_view_current(program->candidate, &mapped, false, error)) return false;
     mapped.script = context->script; *context = mapped; return true;
 }
 
 static bool context_live(const qa_console *candidate, const qa_command_context *context, bool published, qa_error *error)
 {
-    if (context->session != candidate->options.context.session || !qac_dialect_valid(context->dialect) ||
-        context->origin < QA_COMMAND_LOCAL || context->origin > QA_COMMAND_REMOTE ||
-        is_retired(candidate->owners, context->owner) ||
-        (context->client && is_retired(candidate->clients, context->client)) ||
-        (published && candidate->options.context_active &&
-         !candidate->options.context_active(candidate->options.user, context)))
-        return qac_fail(error, QA_ERROR_ARGUMENT, "command program context has no live candidate owner");
-    return true;
+    return qac_console_context_view_current(candidate, context, published, error);
 }
 
 static bool tail_valid(const qa_console_program *program, const program_state *tail, bool published, qa_error *error)
@@ -560,6 +554,7 @@ static bool publish_context(qa_console_program *program, const qa_command_contex
     qa_command_context value = *prepared;
     if (!program->resolve.published_context(program->resolve.context, source, prepared, &value, error)) return false;
     if (value.session != prepared->session || value.owner != prepared->owner || value.client != prepared->client ||
+        value.cvar_view != prepared->cvar_view ||
         value.dialect != prepared->dialect || value.origin != prepared->origin || value.seat != prepared->seat ||
         value.direct != prepared->direct || value.console_text != prepared->console_text ||
         !text_equal(value.script, prepared->script) ||
@@ -576,6 +571,7 @@ static bool publish_candidate_context(qa_console_program *program, const qa_comm
     if (!program->resolve.published_candidate_context(program->resolve.context, captured, published, error)) return false;
     if (published->session != captured->session || published->owner != captured->owner ||
         published->client != captured->client || published->seat != captured->seat ||
+        published->cvar_view != captured->cvar_view ||
         published->dialect != captured->dialect || published->origin != captured->origin ||
         published->direct != captured->direct || published->console_text != captured->console_text ||
         !text_equal(published->script, captured->script))

@@ -16,7 +16,7 @@ static void clear_staged(qa_seat_console *seat) {
 static bool engine_template(const qa_command_context *command) {
     return command && command->origin == QA_COMMAND_SEAT && command->direct &&
         !command->session && !command->owner && !command->client && !command->registry &&
-        !command->generation && !command->actor.registry && !command->actor.generation &&
+        !command->generation && !command->cvar_view && !command->actor.registry && !command->actor.generation &&
         !command->actor.slot && !command->script && !command->console_text;
 }
 bool qac_seat_context_ready(const qa_seat_console_options *options,

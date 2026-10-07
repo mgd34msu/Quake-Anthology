@@ -796,15 +796,6 @@ bool frontend_native_q3_effect(qa_frontend *f,qa_application *application,qa_act
     }
     return true;
 }
-static qa_console *source_console(qa_frontend *f,qa_actor_owner owner)
-{
-    for(size_t i=0;i<qa_application_console_count(f->application);++i) {
-        qa_console *console=qa_application_console_at(f->application,i,NULL); qa_application_console_scope scope;
-        if(qa_application_console_scope_read(f->application,console,&scope) &&
-            scope.provider==owner && scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME)return console;
-    }
-    return NULL;
-}
 static bool namespace_name(frontend_native_q3 *row,char **out,qa_error *e)
 {
     const char *instance=row->view.source_launch->selection.instance;
@@ -824,8 +815,7 @@ static bool row_identity(frontend_native_q3 *row,qa_error *e)
     if(!row->view.source_launch || !row->view.source_launch->storage ||
         row->view.source_files!=row->view.source_launch->content ||
         !qa_application_constructor_seat_ordinal(f->application,row->view.source_owner,row->view.launch_seat,&ordinal,e) ||
-        ordinal!=row->view.seat || ordinal>=f->options.seats ||
-        !(row->console=source_console(f,row->view.source_owner)))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native frontend row lacks its true source descriptor/console/seat route");
+        ordinal!=row->view.seat || ordinal>=f->options.seats)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native frontend row lacks its true source descriptor and seat route");
     for(frontend_native_q3 *p=f->native_q3;p;p=p->next)if(p!=row &&
         (p->view.identity==row->view.identity || (p->view.source_owner==row->view.source_owner && p->view.launch_seat==row->view.launch_seat)))
         return frontend_fail(e,QA_ERROR_FORMAT,"Native frontend physical row or service recipient is duplicated");
@@ -835,9 +825,27 @@ static bool row_identity(frontend_native_q3 *row,qa_error *e)
     qa_strings *strings=qa_session_strings(qa_application_session(f->application));
     if(!qa_strings_intern_cstr(strings,name,&row->view.service_owner,e)) { free(name); return false; }
     free(name);
-    row->command=(qa_command_context){.owner=row->view.source_owner,.seat=row->view.launch_seat,.dialect=QA_CONSOLE_Q3,
-        .origin=QA_COMMAND_SEAT,.actor=frontend_native_q3_actor(row)};
-    return qa_application_capture_command_context(f->application,&row->command,&row->command,e);
+    return true;
+}
+static bool registry_context_retain(void *context,qa_error *e)
+{ return frontend_config_source_registry_retain(context,e); }
+static bool registry_context_release(void *context,qa_error *e)
+{ return frontend_config_source_registry_release(context,e); }
+static bool client_registry_acquire(frontend_native_q3 *row,frontend_config_source *configuration,
+    const qa_application_startup_source *source,qa_error *e)
+{
+    qa_frontend *f=row->frontend;
+    if (frontend_client_registry_lookup(f,source->cvars))
+        return frontend_client_registry_acquire_view(f,source->descriptor,source->scope.seat,
+            source->cvars,&row->view.registry,e);
+    if (!qa_cvars_retain(source->cvars,e)) return false;
+    qa_cvars *owned=source->cvars;
+    frontend_client_registry_context callback={configuration,registry_context_retain,registry_context_release,true};
+    if (!frontend_client_registry_create(f,source->descriptor,source->scope.seat,&owned,
+            &callback,&row->view.registry,e)) {
+        qa_cvars_destroy(owned); return false;
+    }
+    row->owns_registry=true; return true;
 }
 static bool shader_movies_current(void *context,const frontend_material_movie_source *view)
 {
@@ -972,7 +980,9 @@ static bool row_destroy(frontend_native_q3 *row,qa_error *e)
     else if(row->view.client) { if(!qa_native_q3_client_service_destroy(row->view.client,e))return false; row->view.client=NULL; }
     if(!media_close(row,e))return false;
     if(row->owns_services && row->view.reader && !qa_native_q3_wire_reader_destroy(&row->view.reader,e))return false;
-    if(row->owns_services && !frontend_client_registry_release(&row->view.registry,e))return false;
+    if(row->owns_services && !(row->owns_registry?
+        frontend_client_registry_retire(&row->view.registry,e):
+        frontend_client_registry_release(&row->view.registry,e)))return false;
     row->view.cvars=NULL;
     qa_launch_instance_lease_release(row->source_lease); free(row->music_intro); free(row->music_loop); free(row->disconnect);
     frontend_native_q3 **link=&row->frontend->native_q3; while(*link && *link!=row)link=&(*link)->next;
@@ -1037,10 +1047,26 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
     bool ok=row_identity(row,e) && qa_launch_instance_retain_metadata(source->launch,&row->source_lease,e);
     if(ok)row->view.source_launch=qa_launch_instance_lease_view(row->source_lease);
     if(ok)ok=qa_native_q3_wire_reader_acquire(f->application,row->view.receiver,seat,physical,actor,&row->view.reader,e);
-    frontend_config_source *configuration=ok?frontend_config_store_source(f->config_store,row->console):NULL;
-    if(ok && (!configuration || !(row->view.input=frontend_config_source_input(configuration,seat)) ||
-        !frontend_config_source_acquire_seat_registry(configuration,seat,&row->view.registry,e)))
-        ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client requires its actual prepared source input and client registry");
+    qa_native_q3_wire_basis basis; qa_application_startup_source game,actual;
+    if(ok)ok=qa_native_q3_wire_reader_basis(row->view.reader,&basis,e);
+    frontend_config_source *configuration=ok?frontend_config_store_source(f->config_store,basis.source_cvars):NULL;
+    if(ok && (!configuration || !frontend_config_source_tuple(configuration,&game) ||
+        game.scope.provider!=row->view.source_owner || game.scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME ||
+        !(row->view.input=frontend_config_source_input(configuration,seat))))
+        ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client requires its actual prepared GAME input");
+    if(ok)ok=qa_application_q3_client_configuration_read(f->application,row->view.source_owner,
+        QA_QVM_CGAME,seat,&actual,e);
+    if(ok && (!actual.descriptor || actual.descriptor->storage!=row->view.source_launch->storage ||
+        actual.scope.provider!=row->view.source_owner || actual.scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME ||
+        actual.scope.seat!=seat || actual.console!=game.console || !actual.cvars ||
+        actual.command.cvar_view!=qa_cvars_view_identity(actual.cvars) || actual.command.owner!=row->view.source_owner ||
+        actual.command.seat!=seat || actual.command.dialect!=QA_CONSOLE_Q3 ||
+        !qa_application_command_context_active(f->application,&actual.command)))
+        ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client lost its actual prepared CGAME constructor");
+    if(ok) {
+        row->console=actual.console; row->command=actual.command;
+        ok=client_registry_acquire(row,configuration,&actual,e);
+    }
     if(ok)row->view.cvars=frontend_client_registry_cvars(row->view.registry);
     qa_native_q3_client_services services={0}; qa_native_q3_character_selection character={0};
     if(ok)ok=qa_application_character_selection_read(f->application,seat,&character,&found,e) && found;

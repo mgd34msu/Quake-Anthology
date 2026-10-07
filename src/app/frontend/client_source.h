@@ -16,8 +16,8 @@ typedef struct frontend_client_source_options {
     uint32_t physical_seat;
     qa_command_context input_origin;
     void *context;
-    /* Registers the genuine selected CLIENT's declarations on its new heap.
-     * Restoration imports that heap from QFCR instead of replaying this hook. */
+    /* Registers the genuine selected CLIENT declarations on its typed view.
+     * Restoration replays declarations while the common table retains values. */
     bool (*initialize)(void *, const qa_launch_instance *, qa_cvars *, const qa_command_context *, qa_error *);
     /* Advances the actual retained configuration programme. Completion is
      * supplied by that owner, never inferred from an empty console queue. */
@@ -71,8 +71,6 @@ bool frontend_client_source_retirement_current(const frontend_client_source *,
     const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
 bool frontend_client_sources_retirement_current(const qa_frontend *,
     const qa_application_client_source *,const qa_console *,const qa_command_context *,qa_error *);
-bool frontend_client_sources_restore_discarded(const qa_frontend *,
-    const qa_application_client_source *,qa_error *);
 bool frontend_client_sources_restore_abort_ready(const qa_frontend *,
     const qa_application_client_source *,qa_error *);
 bool frontend_client_source_idle(const frontend_client_source *);
@@ -95,10 +93,9 @@ bool frontend_client_sources_visit(const qa_frontend *, const qa_application_con
 typedef struct frontend_client_source_state {
     qa_application_client_state application;
     qa_command_context command;
-    qa_buffer console;
     uint32_t capabilities;
     bool ready;
-    bool retiring, programme_retired, release_programmes;
+    bool retiring, programme_retired;
 } frontend_client_source_state;
 typedef struct frontend_client_source_prefix {
     qa_launch_client_metadata recipe;
@@ -107,7 +104,7 @@ typedef struct frontend_client_source_prefix {
     uint64_t content_id;
 } frontend_client_source_prefix;
 /* Catalog/content borrow the candidate graph. Decoded instance/implementation
- * strings and state arrays/queue are owned; recipe.instance aliases the owned
+ * strings and state arrays are owned; recipe.instance aliases the owned
  * descriptor selection. No view claim or callbacks occur. */
 bool frontend_client_source_prefix_read(qa_frontend *, qa_application_content_graph *, qa_bytes,
     frontend_client_source_prefix *, qa_error *);
@@ -121,12 +118,6 @@ bool frontend_client_source_checkpoint(frontend_client_source *, const qa_applic
 bool frontend_client_source_restore_prefix(qa_frontend *, const frontend_client_source_options *,
     qa_application_content_graph *, const qa_console_save_resolvers *, qa_bytes,
     frontend_client_source **, qa_error *);
-bool frontend_client_source_commands_capture(qa_frontend *, qa_application *,
-    const qa_application_console_scope *, const qa_console *, qa_buffer *, qa_error *);
-bool frontend_client_source_commands_restore(qa_frontend *, qa_application *,
-    const qa_application_console_scope *, qa_console *, qa_bytes, qa_error *);
 bool frontend_client_sources_finish_restore(qa_frontend *, qa_error *);
 bool frontend_client_source_restore_finished(const frontend_client_source *);
-bool frontend_client_source_commands_owned(const qa_frontend *, const qa_application *,
-    const qa_application_console_scope *, const qa_console *);
 #endif

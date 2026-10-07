@@ -11,6 +11,48 @@
 static const qa_application_startup_hooks *hooks_for(const application_provider *provider)
 { return provider && provider->application ? provider->application->startup_hooks : NULL; }
 
+bool application_startup_values_enter(qa_application *app, qa_cvars_edit **out,
+    qa_error *error)
+{
+    if (!app || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation requires its application values");
+    *out = NULL;
+    application_publication *publication = app->startup_publication;
+    if (publication) *out = publication->values;
+    else {
+        const qa_launch_snapshot *candidate = qa_application_startup_candidate(app);
+        const qa_application_startup_hooks *hooks = app->startup_hooks;
+        qa_cvars_edit *borrowed = NULL;
+        if (candidate && hooks && hooks->candidate_values &&
+            !hooks->candidate_values(hooks->context, app, candidate, &borrowed, error)) return false;
+        if (borrowed) {
+            *out = qa_cvars_prepared_edit(app->cvars);
+            if (*out != borrowed)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation lost its canonical edit owner");
+        }
+    }
+    return !*out || qa_cvars_edit_enter(*out, qa_cvars_edit_registry(*out), error);
+}
+
+bool application_startup_values_leave(qa_cvars_edit *values, qa_error *error)
+{
+    return !values || qa_cvars_edit_leave(values, qa_cvars_edit_registry(values), error);
+}
+
+bool application_startup_apply_latched(application_provider *provider,
+    qa_cvars *cvars, qa_error *error)
+{
+    qa_application *app = provider ? provider->application : NULL;
+    application_publication *publication = app ? app->startup_publication : NULL;
+    const qa_launch_snapshot *candidate = app ? qa_application_startup_candidate(app) : NULL;
+    qa_cvars_edit *values = app ? qa_cvars_prepared_edit(app->cvars) : NULL;
+    if (!values || (!publication && !candidate) ||
+        (publication && publication->sources_retired) || candidate == qa_application_launch(app))
+        return qa_cvars_apply_latched(cvars, NULL, error);
+    /* The real old GAME keeps every pending latch until its Shutdown returns. */
+    return true;
+}
+
 static const qa_launch_snapshot *source_snapshot(application_provider *provider)
 {
     qa_application *app = provider->application;
@@ -33,8 +75,11 @@ static bool physical_source(application_provider *provider, qa_console *console,
         qa_application_startup_source source;
         if (!application_provider_startup_source_at(provider, i, &source, &found, error)) return false;
         if (!found) break;
-        if (source.console == console && source.cvars == cvars) {
+        if (source.console == console && source.cvars == cvars &&
+            (!command || !command->cvar_view ||
+             command->cvar_view == qa_cvars_view_identity(source.cvars))) {
             if (command) source.command = *command;
+            source.command.cvar_view = qa_cvars_view_identity(source.cvars);
             *out = source;
             return true;
         }
@@ -50,7 +95,8 @@ static bool qualify_source(application_provider *provider, const qa_launch_snaps
     if (!provider || !source || !selected || selected->state != provider ||
         selected->storage != source->descriptor->storage || source->scope.provider != provider->owner ||
         source->scope.kind == QA_APPLICATION_CONSOLE_ENGINE || !source->console || !source->cvars ||
-        source->command.owner != provider->owner || !source->declaration_owner)
+        source->command.owner != provider->owner || !source->declaration_owner ||
+        source->command.cvar_view != qa_cvars_view_identity(source->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source lifecycle lost its retained receiver authority");
     qa_application_startup_source physical;
     if (!physical_source(provider, source->console, source->cvars, NULL, &physical, error)) return false;
@@ -108,52 +154,10 @@ bool qa_application_startup_source_engine_cvars(const qa_application *app,
 bool qa_application_startup_console_primary(qa_application *app, qa_console *console,
     bool *primary, qa_error *error)
 {
-    if (!app || !console || !primary || app->destroy_requested)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup consumption requires its live physical console");
-    *primary = false;
-    const qa_launch_snapshot *snapshot = qa_application_launch(app);
-    if (!snapshot)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup consumption has no published source roster");
-    for (size_t i = 0; i < app->provider_count; ++i) {
-        application_provider *provider = app->providers[i];
-        if (!provider || !provider->constructed || !provider->attached || provider->close_pending) continue;
-        for (size_t index = 0;; ++index) {
-            qa_application_startup_source source, qualified;
-            bool found;
-            if (!application_provider_startup_source_at(provider, index, &source, &found, error)) return false;
-            if (!found) break;
-            if (source.console != console) continue;
-            if (!qualify_source(provider, snapshot, &source, &qualified, error)) return false;
-            const qa_application_startup_hooks *hooks = app->startup_hooks;
-            if (hooks && hooks->startup_source)
-                return hooks->startup_source(hooks->context, app, snapshot, &qualified, primary, error);
-            const qa_launch_binding *binding = qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
-                (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
-            *primary = binding && !strcmp(binding->instance, qualified.descriptor->selection.instance) &&
-                qualified.scope.kind != QA_APPLICATION_CONSOLE_Q3_CGAME &&
-                qualified.scope.kind != QA_APPLICATION_CONSOLE_Q3_UI;
-            return true;
-        }
-    }
-    return application_fail(error, QA_ERROR_ARGUMENT, "Startup consumption lost its published physical source");
-}
-
-bool application_startup_source_carry(application_provider *provider,
-    const qa_application_startup_source *source, bool *carried, qa_error *error)
-{
-    if (!provider || !source || !carried)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source carry requires its actual physical configuration tuple");
-    *carried = false;
-    const qa_application_startup_hooks *hooks = hooks_for(provider);
-    if (!hooks || !hooks->carry_source_variables || provider->application->operation == APPLICATION_PERSISTING)
-        return true;
-    const qa_launch_snapshot *snapshot = source_snapshot(provider);
-    if (source->cvars == provider->application->cvars || provider->attached)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source carry lost its detached candidate registry authority");
-    qa_application_startup_source qualified;
-    if (!qualify_source(provider, snapshot, source, &qualified, error)) return false;
-    return hooks->carry_source_variables(hooks->context, provider->application,
-        snapshot, &qualified, carried, error);
+    if (!app || !console || !primary || app->destroy_requested || console != app->console)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup consumption requires its live application console");
+    *primary = true;
+    return true;
 }
 
 bool application_startup_source_configuration(application_provider *provider, qa_console *console,
@@ -170,7 +174,8 @@ bool application_startup_source_configuration(application_provider *provider, qa
     qa_application_startup_source source = {.descriptor = selected,
         .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
         .console = console, .cvars = cvars, .declaration_owner = provider->owner,
-        .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}};
+        .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER,
+            .cvar_view = qa_cvars_view_identity(cvars)}};
     if (!provider->product || provider->product->family != QA_GAME_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Campaign configuration requires its actual Q3 GAME source");
     return hooks->configuration_store(hooks->context, provider->application, &source, out, error);
@@ -237,14 +242,15 @@ bool application_startup_tuple_preinit(application_provider *provider,
     qa_application *app = provider->application;
     const qa_launch_snapshot *snapshot = source_snapshot(provider);
     if (!hooks->preinit_source || provider->attached || provider->close_pending ||
-        app->startup_preinit_provider)
+        (app->startup_preinit_provider && app->startup_preinit_provider != provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source preinitialization lost its real candidate owner");
     qa_application_startup_source qualified;
     if (!qualify_source(provider, snapshot, source, &qualified, error)) return false;
+    application_provider *previous = app->startup_preinit_provider;
     app->startup_preinit_provider = provider;
     bool ok = qa_application_capture_command_context(app, &source->command, &qualified.command, error) &&
         hooks->preinit_source(hooks->context, app, snapshot, &qualified, error);
-    app->startup_preinit_provider = NULL;
+    app->startup_preinit_provider = previous;
     return ok;
 }
 
@@ -265,16 +271,18 @@ bool application_startup_tuple_restore(application_provider *provider,
     const qa_launch_snapshot *snapshot = source_snapshot(provider);
     qa_application *app = provider->application;
     if (!hooks->restore_source ||
-        app->operation != APPLICATION_PERSISTING || provider->close_pending || app->startup_preinit_provider)
+        app->operation != APPLICATION_PERSISTING || provider->close_pending ||
+        (app->startup_preinit_provider && app->startup_preinit_provider != provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Source restoration needs its decoded physical owner");
     qa_application_startup_source qualified;
     if (!qualify_source(provider, snapshot, source, &qualified, error)) return false;
     const qa_launch_snapshot *routing = app->routing_snapshot;
     app->routing_snapshot = snapshot;
+    application_provider *previous = app->startup_preinit_provider;
     app->startup_preinit_provider = provider;
     bool ok = qa_application_capture_command_context(app, &source->command, &qualified.command, error) &&
         hooks->restore_source(hooks->context, app, snapshot, &qualified, error);
-    app->startup_preinit_provider = NULL;
+    app->startup_preinit_provider = previous;
     app->routing_snapshot = routing;
     return ok;
 }
@@ -362,8 +370,6 @@ void application_startup_tuple_bound_client(application_provider *provider,
     if (!provider || !provider->application ||
         !application_guest_q3_client_console_bound(provider, source)) return;
     qa_application *app = provider->application;
-    application_startup_program_bound_client(app, provider, source);
-    application_startup_flow_bound_client(app, provider, source);
     const qa_application_startup_hooks *hooks = hooks_for(provider);
     if (hooks && hooks->publish_hosted_configuration)
         hooks->publish_hosted_configuration(hooks->context, app, source);
@@ -407,7 +413,7 @@ bool qa_application_startup_source_retiring(const qa_application *app, const qa_
         qa_error error = {0};
         if (!application_provider_startup_source_at(provider, i, &source, &found, &error) || !found)
             return false;
-        if (source.console != console) continue;
+        if (source.console != console || source.command.cvar_view != command->cvar_view) continue;
         if (!source.descriptor || source.descriptor->storage != provider->launch->storage ||
             source.scope.provider != provider->owner || source.scope.kind == QA_APPLICATION_CONSOLE_ENGINE ||
             source.command.session != command->session || source.command.dialect != command->dialect)
@@ -451,7 +457,7 @@ bool application_startup_console_cvar_edit(qa_application *app, qa_console *cons
             bool found;
             if (!application_provider_startup_source_at(provider, index, &source, &found, error)) return false;
             if (!found) break;
-            if (source.console == console && source.command.dialect == command->dialect &&
+            if (source.console == console && source.command.cvar_view == command->cvar_view && source.command.dialect == command->dialect &&
                 (!entered || (source.descriptor && provider->launch &&
                     source.descriptor->storage == provider->launch->storage &&
                     source.command.owner == command->owner && source.command.session == command->session &&
@@ -502,9 +508,9 @@ bool application_startup_source_script_read(application_provider *provider, qa_c
 }
 
 void application_startup_source_script_release(application_provider *provider,
-    qa_console *console, void *lease)
+    qa_cvars *cvars, void *lease)
 {
     const qa_application_startup_hooks *hooks = hooks_for(provider);
     if (application_startup_source_scripts(provider))
-        hooks->release_source_script(hooks->context, provider->application, console, lease);
+        hooks->release_source_script(hooks->context, provider->application, cvars, lease);
 }

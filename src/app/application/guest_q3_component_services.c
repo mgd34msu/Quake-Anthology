@@ -119,9 +119,10 @@ static qa_command_result console_command(void *context,const qa_command_invocati
 }
 bool q3component_services(application_q3_component *c,qa_error *e)
 {
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.user=c,.print=print,.cheats_allowed=cheats,
+    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,
+        .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_GAME,.user=c,.print=print,.cheats_allowed=cheats,
         .declaration_save_policy=application_native_q3_cvar_save_policy};
-    c->cvars=qa_cvars_create(&cvars,e); if(!c->cvars) return false;
+    c->cvars=qa_cvars_create_view(qa_application_cvars(c->options.application),&cvars,e); if(!c->cvars) return false;
     if(c->options.map_path) {
         const char *path=c->options.map_path;
         if(!strncmp(path,"maps/",5)) path+=5;
@@ -137,7 +138,10 @@ bool q3component_services(application_q3_component *c,qa_error *e)
     }
     qa_console_options console={.context=c->options.host.command_context,.cvars=c->cvars,.user=c,.print=console_print,.cvar_owner=cvar_owner,
         .read_script=read_script,.release_script=release_script,.source_command=console_command,.capture_context=command_capture,.context_active=command_current};
-    c->console=qa_console_create(&console,e); if(!c->console) return false;
+    c->options.host.command_context.cvar_view=qa_cvars_view_identity(c->cvars);
+    console.context=c->options.host.command_context;
+    c->console=qa_application_console(c->options.application);
+    if(!qa_console_bind_source(c->console,&console,e)) return false;
     qa_q3_host_options host=c->options.host; host.cvars=c->cvars; host.console=c->console; host.engine_cvars=NULL;
     host.common=(qa_q3_host_common_services){.context=c,.print=print,.milliseconds=milliseconds,.arguments=arguments,.calendar=calendar};
     const char *entity,*player; uint32_t maximum=0; application_q3_mod_clients(c->profile,&maximum,&entity,&player);

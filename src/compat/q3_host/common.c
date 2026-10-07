@@ -7,6 +7,8 @@ static qa_command_result declared_command(void *context,
     if (!host || host->retired || !command || command->console!=host->options.console ||
         !qa_console_invocation_current(command->console,command) ||
         command->receiver!=host->options.owner || command->registration_owner!=host->options.service_owner ||
+        !qa_console_invocation_delivered_view(command,host->options.command_context.cvar_view,
+            host->options.owner,host->options.service_owner) ||
         command->context.seat!=host->options.command_context.seat || !host->options.console_command) {
         q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 declaration lost its retained module command owner");
         return QA_COMMAND_FAILED;
@@ -129,6 +131,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
             } else {
                 qa_console_contribution owner={.receiver=host->options.owner,
                     .lifetime_owner=host->options.service_owner,.seat=host->options.command_context.seat,
+                    .cvar_view=host->options.command_context.cvar_view,
                     .callback=declared_command,.user=host};
                 ok=qa_console_contribute(host->options.console,(const char *)text.data,&owner,error);
             }

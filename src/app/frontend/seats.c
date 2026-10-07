@@ -577,7 +577,10 @@ static bool engine_recipient_command(qa_frontend *f,uint32_t physical,qa_command
     if (seat->frontend!=f || seat->id!=physical || !seat->input || !seat->console)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"ENGINE input handoff lost its installed physical services");
     qa_command_context previous=qa_input_seat_context(seat->input);
-    qa_command_context command={.seat=physical,.origin=QA_COMMAND_SEAT,.dialect=previous.dialect,.direct=true};
+    qa_command_context command;
+    if (!qa_console_context_read(qa_application_console(f->application),&command,error)) return false;
+    command.seat=physical; command.origin=QA_COMMAND_SEAT;
+    command.dialect=previous.dialect; command.direct=true;
     (void)frontend_seat_launch_id_read(f,physical,&command.seat);
     *out=command; return true;
 }

@@ -1,4 +1,5 @@
 #include "native_q1_console.h"
+#include "q3_product.h"
 #include "native_q1_wire.h"
 #include "startup_flow.h"
 #include "map_players_private.h"
@@ -300,6 +301,7 @@ static bool files_source(application_provider *provider,const qa_command_context
         .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q1_GAME},
         .console=owner->console,.cvars=owner->cvars,.declaration_owner=provider->owner,
         .command=command?*command:(qa_command_context){.owner=provider->owner,.dialect=QA_CONSOLE_QW,.origin=QA_COMMAND_SERVER}};
+    out->command.cvar_view=qa_cvars_view_identity(owner->cvars);
     return true;
 }
 bool application_native_q1_source_files(application_provider *provider,qa_launch_source_files *out,
@@ -739,7 +741,7 @@ static void release_script(void *opaque, void *lease)
     if (application_startup_source_active(owner->provider))
         application_startup_script_release(owner->provider, lease);
     else if (application_startup_source_scripts(owner->provider))
-        application_startup_source_script_release(owner->provider, owner->console, lease);
+        application_startup_source_script_release(owner->provider, owner->cvars, lease);
     else qa_resource_release(lease);
 }
 
@@ -767,18 +769,24 @@ bool application_native_q1_console_create_restored(application_provider *provide
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q1 source console");
     owner->provider = provider;
     owner->chat=(native_q1_chat_policy){.messages=4,.persecond=4,.secondsdead=10};
-    qa_cvar_options cvars = {.dialect = dialect(provider), .user = owner, .print = cvar_print, .effect = cvar_effect};
-    owner->cvars = qa_cvars_create(&cvars, error);
+    qa_cvar_options cvars = {.dialect = dialect(provider),
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = owner, .print = cvar_print, .effect = cvar_effect};
+    owner->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
-    if (owner->cvars) owner->console = qa_console_create(&options, error);
+    if (owner->cvars && !application_startup_seed_source(provider, owner->cvars, error)) {
+        qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars); free(owner); return false;
+    }
+    options.context.cvar_view = qa_cvars_view_identity(owner->cvars);
+    if (owner->cvars && qa_console_bind_source(provider->application->console, &options, error))
+        owner->console = provider->application->console;
     if (!owner->console) {
-        qa_console_destroy(owner->console);
-        qa_cvars_destroy(owner->cvars);
+        qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error);
+        qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars);
         free(owner);
         return false;
     }
@@ -788,28 +796,26 @@ bool application_native_q1_console_create_restored(application_provider *provide
     if (application->operation == APPLICATION_PERSISTING)
         application->startup_preinit_provider = provider;
     bool registered = dialect(provider) != QA_CONSOLE_QW ||
-        (qa_console_register(owner->console, "serverinfo", NULL, provider->owner,
+        (qa_console_register_context(owner->console, &options.context, "serverinfo", NULL, provider->owner, provider->owner,
             false, info_command, owner, error) &&
-         qa_console_register(owner->console, "localinfo", NULL, provider->owner,
+         qa_console_register_context(owner->console, &options.context, "localinfo", NULL, provider->owner, provider->owner,
             false, info_command, owner, error) &&
-         qa_console_register(owner->console, "sv_gamedir", NULL, provider->owner,
+         qa_console_register_context(owner->console, &options.context, "sv_gamedir", NULL, provider->owner, provider->owner,
             false, visible_gamedir_command, owner, error) &&
-         qa_console_register(owner->console, "gamedir", NULL, provider->owner,
+         qa_console_register_context(owner->console, &options.context, "gamedir", NULL, provider->owner, provider->owner,
             false, physical_gamedir_command, owner, error) &&
-         qa_console_register(owner->console,"floodprot",NULL,provider->owner,false,flood_command,owner,error) &&
-         qa_console_register(owner->console,"floodprotmsg",NULL,provider->owner,false,flood_command,owner,error));
+         qa_console_register_context(owner->console, &options.context,"floodprot",NULL,provider->owner,provider->owner,false,flood_command,owner,error) &&
+         qa_console_register_context(owner->console, &options.context,"floodprotmsg",NULL,provider->owner,provider->owner,false,flood_command,owner,error));
     application->startup_preinit_provider = prior;
     if (!registered) {
-        qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars);
+        qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error); qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars);
         free(owner); provider->native_q1_console = NULL; return false;
     }
     return true;
 }
 
-static bool clone_source(application_provider *provider, qa_cvars *destination,
-                         bool *cloned, qa_error *error)
+static bool retain_source_info(application_provider *provider, qa_error *error)
 {
-    *cloned = false;
     if (provider->application->operation == APPLICATION_PERSISTING) return true;
     struct application_native_q1_console *owner = provider->native_q1_console;
     for (application_provider *previous = provider->application->live_providers; previous;
@@ -827,27 +833,6 @@ static bool clone_source(application_provider *provider, qa_cvars *destination,
         owner->chat=previous->native_q1_console->chat;
         break;
     }
-    if (provider->application->startup_hooks) {
-        qa_application_startup_source source = {.descriptor = provider->launch,
-            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q1_GAME},
-            .cvars = destination, .declaration_owner = provider->owner};
-        if (!application_native_q1_console_at(provider, &source.console, NULL, &source.command))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 carry lost its fresh physical console");
-        return application_startup_source_carry(provider, &source, cloned, error);
-    }
-    for (application_provider *previous = provider->application->live_providers; previous;
-         previous = previous->next_live) {
-        if (previous == provider || previous->kind != APPLICATION_PROVIDER_Q1 ||
-            !previous->constructed || !previous->attached || previous->close_pending ||
-            !previous->launch || strcmp(previous->launch->selection.instance, provider->launch->selection.instance) ||
-            previous->owner != provider->owner) continue;
-        qa_cvars *source = application_native_q1_console_registry(previous);
-        if (!source || qa_cvars_dialect(source) != qa_cvars_dialect(destination)) continue;
-        bool okay = application_native_q1_console_idle(previous) &&
-            qa_cvars_copy(destination, source, error);
-        if (okay) *cloned = true;
-        return okay;
-    }
     return true;
 }
 
@@ -856,19 +841,7 @@ bool application_native_q1_console_create(application_provider *provider,
 {
     if (!rules || !application_native_q1_console_create_restored(provider, error)) return false;
     qa_cvars *cvars = application_native_q1_console_registry(provider);
-    bool cloned;
-    bool okay = clone_source(provider, cvars, &cloned, error);
-    for (const qa_cvar_view *startup = qa_cvars_next(provider->application->cvars, NULL);
-         okay && !cloned && startup; startup = qa_cvars_next(provider->application->cvars, startup)) {
-        if (!startup || (startup->owner && startup->owner != provider->owner) ||
-            (!startup->console_created && !(startup->flags & QA_CVAR_ARCHIVE) && startup->owner != provider->owner)) continue;
-        okay = qa_cvars_register(cvars, startup->name,
-            startup->latched_value ? startup->latched_value : startup->value,
-            startup->flags & (QA_CVAR_ARCHIVE | QA_CVAR_USERINFO | QA_CVAR_SERVERINFO),
-            provider->owner, startup->description, error) &&
-            (startup->save_policy == QA_CVAR_SAVE_UNCLASSIFIED ||
-             qa_cvars_declare_save_policy(cvars, startup->name, startup->save_policy, error));
-    }
+    bool okay = retain_source_info(provider, error);
     static const struct { const char *name; qa_cvar_save_policy policy; } names[] = {
         {"skill", QA_CVAR_SAVE_GAMEPLAY},
         {"deathmatch", QA_CVAR_SAVE_GAMEPLAY},
@@ -902,13 +875,9 @@ bool application_native_q1_console_create(application_provider *provider,
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
         "0", "1", maximum, registered ? "1" : "0", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
     for (size_t i = 0; okay && i < sizeof(names) / sizeof(*names); ++i) {
-        if (!qa_cvars_find(cvars, names[i].name))
-            okay = qa_cvars_register(cvars, names[i].name, values[i], 0, provider->owner, NULL, error);
-        if (okay) okay = qa_cvars_declare_save_policy(cvars, names[i].name, names[i].policy, error);
-        const qa_cvar_view *startup = !cloned ? qa_cvars_find(provider->application->cvars, names[i].name) : NULL;
-        if (okay && startup && (!startup->owner || startup->owner == provider->owner))
-            okay = qa_cvars_set(cvars, names[i].name, startup->latched_value ? startup->latched_value : startup->value,
-                true, error);
+        okay = qa_cvars_register(cvars, names[i].name, values[i], 0,
+            provider->owner, NULL, error) &&
+            qa_cvars_declare_save_policy(cvars, names[i].name, names[i].policy, error);
     }
     if (rules->quakeworld) {
         static const struct { const char *name; qa_cvar_save_policy policy; } qw_names[] = {
@@ -933,15 +902,9 @@ bool application_native_q1_console_create(application_provider *provider,
         static const char *const qw_values[] = {"2000", "100", "500", "10", "0.7",
             "10", "4", "4", "8", "1", "1", "1", "0", "0", "1", "", "", "1"};
         for (size_t i = 0; okay && i < sizeof(qw_names) / sizeof(*qw_names); ++i) {
-            if (!qa_cvars_find(cvars, qw_names[i].name))
-                okay = qa_cvars_register(cvars, qw_names[i].name, qw_values[i], 0,
-                    provider->owner, NULL, error);
-            if (okay) okay = qa_cvars_declare_save_policy(cvars, qw_names[i].name, qw_names[i].policy, error);
-            const qa_cvar_view *startup = !cloned
-                ? qa_cvars_find(provider->application->cvars, qw_names[i].name) : NULL;
-            if (okay && startup && (!startup->owner || startup->owner == provider->owner))
-                okay = qa_cvars_set(cvars, qw_names[i].name,
-                    startup->latched_value ? startup->latched_value : startup->value, true, error);
+            okay = qa_cvars_register(cvars, qw_names[i].name, qw_values[i], 0,
+                provider->owner, NULL, error) &&
+                qa_cvars_declare_save_policy(cvars, qw_names[i].name, qw_names[i].policy, error);
         }
         static const char *const info_names[] = {"fraglimit", "timelimit", "teamplay",
             "samelevel", "maxclients", "maxspectators", "hostname", "deathmatch", "spawn",
@@ -979,8 +942,9 @@ bool application_native_q1_console_destroy(application_provider *provider, qa_er
     struct application_native_q1_console *owner = provider->native_q1_console;
     if (owner) {
         if (!application_startup_source_retire(provider, owner->console, owner->cvars, error)) return false;
-        qa_console_destroy(owner->console);
-        qa_cvars_destroy(owner->cvars);
+        if (!qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error)) return false;
+        qa_cvars_remove_owner(owner->cvars, provider->owner);
+        qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars);
         free(owner);
         provider->native_q1_console = NULL;
     }
@@ -995,6 +959,7 @@ bool application_native_q1_console_at(application_provider *provider, qa_console
     *console = owner->console;
     if (cvars) *cvars = owner->cvars;
     if (context) *context = (qa_command_context){.owner = provider->owner,
+        .cvar_view = qa_cvars_view_identity(owner->cvars),
         .dialect = dialect(provider), .origin = QA_COMMAND_SERVER};
     return true;
 }

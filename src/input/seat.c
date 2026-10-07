@@ -163,12 +163,13 @@ bool qa_input_recipient_command_equal(const qa_command_context *a,const qa_comma
     return a && b && !a->script && !b->script && a->owner==b->owner && a->session==b->session &&
         a->client==b->client && a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
         a->direct==b->direct && a->console_text==b->console_text && a->registry==b->registry &&
-        a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor);
+        a->generation==b->generation && a->cvar_view==b->cvar_view && qa_actor_id_equal(a->actor,b->actor);
 }
 static bool recipient_endpoints_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
     const qa_command_context *command) {
     if (!s || !console || !cvars || !command || !qa_console_idle(s->options.console) ||
-        !qa_console_idle(console) || qa_console_cvars(console)!=cvars ||
+        !qa_console_idle(console) || !qa_cvars_same_store(qa_console_cvars(console),cvars) ||
+        command->cvar_view!=qa_cvars_view_identity(cvars) || !qa_console_context_bound(console,command) ||
         command->origin!=QA_COMMAND_SEAT || command->script || command->console_text ||
         command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3) return false;
     return true;

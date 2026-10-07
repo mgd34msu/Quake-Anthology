@@ -388,7 +388,7 @@ static qa_cvars *client_cvars(frontend_seat *seat,qa_cvars **mouse)
     *mouse=NULL;
     if(!qa_input_seat_recipient_read(seat->input,&console,&cvars,&command)) return NULL;
     frontend_neutral_config_view view;
-    if(frontend_config_store_neutral_read(seat->frontend->config_store,console,&view,NULL) && view.ready) *mouse=view.mouse;
+    if(frontend_config_store_neutral_read(seat->frontend->config_store,cvars,&view,NULL) && view.ready) *mouse=view.mouse;
     else *mouse=cvars;
     return cvars;
 }

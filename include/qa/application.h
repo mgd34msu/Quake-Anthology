@@ -365,6 +365,7 @@ typedef struct qa_application_options {
     qa_application_world_hook_fn before_world_change;
     qa_application_world_hook_fn world_retired;
     void (*console_print)(void *, const qa_command_context *, const char *);
+    qa_command_fallback console_forward;
     bool discover_mods;
     bool mixed_source_order;
     /* Actual host mode when a Source has no dedicated cvar (QW GAME). */

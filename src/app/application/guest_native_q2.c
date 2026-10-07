@@ -236,7 +236,7 @@ static void release_script(void *opaque, void *lease)
         return;
     }
     if (application_startup_source_scripts(engine->provider)) {
-        application_startup_source_script_release(engine->provider, engine->console, lease);
+        application_startup_source_script_release(engine->provider, engine->cvars, lease);
         return;
     }
     qa_resource_release(lease);
@@ -324,8 +324,10 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
-    qa_cvar_options cvars = {.dialect = dialect};
-    engine->cvars = qa_cvars_create(&cvars, error);
+    qa_cvar_options cvars = {.dialect = dialect,
+        .side = cgame ? QA_CVAR_SIDE_CLIENT : QA_CVAR_SIDE_SERVER,
+        .role = cgame ? QA_CVAR_ROLE_CGAME : QA_CVAR_ROLE_GAME};
+    engine->cvars = qa_cvars_create_view(app->cvars, &cvars, error);
     if (!engine->cvars) return false;
     if (!application_startup_seed_source(provider, engine->cvars, error)) return false;
     qa_console_options console = {.context = engine->command_context, .cvars = engine->cvars,
@@ -333,17 +335,12 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         .script_complete = script_complete, .allow_command = allow_command,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .source_command = console_command, .capture_context = capture_context, .context_active = context_active};
-    engine->console = qa_console_create(&console, error);
+    engine->command_context.cvar_view = qa_cvars_view_identity(engine->cvars);
+    console.context = engine->command_context;
+    if (qa_console_bind_source(app->console, &console, error)) engine->console = app->console;
     if (!engine->console) return false;
-    if (!cgame && app->operation != APPLICATION_PERSISTING) {
-        qa_application_startup_source source = {.descriptor = provider->launch,
-            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_NATIVE_Q2},
-            .console = engine->console, .cvars = engine->cvars,
-            .command = engine->command_context, .declaration_owner = provider->owner};
-        bool carried = false;
-        if (!application_startup_source_carry(provider, &source, &carried, error)) return false;
-        if (!carried && !application_native_q2_engine_cvars(engine->cvars, provider->owner, error)) return false;
-    }
+    if (!cgame && !application_native_q2_engine_cvars(engine->cvars, provider->owner, error)) return false;
+
     uint32_t clients = choices->seat_count ? (uint32_t)choices->seat_count : 1;
     if(engine->callbacks) {
         const qa_json_document *d=application_native_q2_callbacks_document(engine->callbacks);
@@ -379,9 +376,9 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
             bool ok = qa_json_string(d, qa_json_get(d, row, "name"), &name, error) &&
                 qa_json_string(d, qa_json_get(d, row, "value"), &value, error) &&
                 !memchr(name.data, 0, name.size) && !memchr(value.data, 0, value.size);
-            if (ok) ok = qa_cvars_find(engine->cvars, (char *)name.data)
-                ? qa_cvars_set(engine->cvars, (char *)name.data, (char *)value.data, true, error)
-                : qa_cvars_register(engine->cvars, (char *)name.data, (char *)value.data, 0, provider->owner, NULL, error);
+            if (ok) ok = qa_cvars_register(engine->cvars, (char *)name.data,
+                (char *)value.data, 0, provider->owner, NULL, error) &&
+                qa_cvars_set(engine->cvars, (char *)name.data, (char *)value.data, true, error);
             qa_buffer_free(&name); qa_buffer_free(&value);
             if (!ok) return false;
         }
@@ -463,7 +460,7 @@ bool application_construct_native_q2(qa_application *app, application_provider *
         return true;
     return application_startup_source_preinit(provider, engine->console, engine->cvars,
         &engine->command_context, error) && (app->operation == APPLICATION_PERSISTING ||
-        qa_cvars_apply_latched(engine->cvars, NULL, error));
+        application_startup_apply_latched(provider, engine->cvars, error));
 }
 
 static bool load_host(struct application_native_q2 *engine, qa_error *error)
@@ -838,7 +835,9 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
     if (engine->platform.release_frontend)
         engine->platform.release_frontend(engine->platform.frontend_lifetime);
-    qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
+    if (!qa_console_unbind_source(engine->console, qa_cvars_view_identity(engine->cvars), error)) return false;
+    qa_cvars_remove_owner(engine->cvars, provider->owner);
+    qa_cvars_detach_callbacks(engine->cvars); qa_cvars_destroy(engine->cvars);
     application_native_q2_publication_destroy(&engine->publication);
     application_native_q2_wire_destroy(&engine->wire_engine);
     application_native_q2_visibility_destroy(&engine->visibility);

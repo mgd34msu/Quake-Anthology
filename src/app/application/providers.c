@@ -428,24 +428,23 @@ static bool q1_final_options(application_provider *provider, const qa_launch_cho
     qa_q1_options *options, qa_error *error)
 {
     qa_cvars *cvars = application_native_q1_console_registry(provider);
-    if (!qa_cvars_apply_latched(cvars, NULL, error)) return false;
+    if (!application_startup_apply_latched(provider, cvars, error)) return false;
     static const char *const names[] = {"skill", "deathmatch", "coop", "teamplay", "gamecfg",
         "sv_gravity", "sv_aim", "maxclients"};
-    const qa_cvar_view *value[8];
+    qa_cvar_view value[8];
     for (size_t i = 0; i < 8; ++i) {
-        value[i] = qa_cvars_find(cvars, names[i]);
-        if (!value[i] || !isfinite(value[i]->number) ||
-            (value[i]->owner && value[i]->owner != provider->owner))
+        if (!qa_cvars_effective_view(cvars, names[i], value + i, error) ||
+            !isfinite(value[i].number) || (value[i].owner && value[i].owner != provider->owner))
             return application_fail(error, QA_ERROR_FORMAT, "Q1 configuration lost a finite actual source value");
     }
-    options->skill = (uint8_t)(int32_t)(fmaxf(0, fminf(3, value[0]->number)) + 0.5);
-    options->deathmatch = value[1]->integer;
-    options->coop = value[2]->number != 0;
-    options->teamplay = value[3]->integer;
-    options->gamecfg = (uint32_t)value[4]->integer;
-    options->gravity = value[5]->number;
-    options->aim_threshold = value[6]->number;
-    float capacity = truncf(value[7]->number);
+    options->skill = (uint8_t)(int32_t)(fmaxf(0, fminf(3, value[0].number)) + 0.5);
+    options->deathmatch = value[1].integer;
+    options->coop = value[2].number != 0;
+    options->teamplay = value[3].integer;
+    options->gamecfg = (uint32_t)value[4].integer;
+    options->gravity = value[5].number;
+    options->aim_threshold = value[6].number;
+    float capacity = truncf(value[7].number);
     if (!options->quakeworld && provider->application->operation != APPLICATION_PERSISTING &&
         !qa_cvars_set_number(cvars, "skill", (float)options->skill, error)) return false;
     if (options->quakeworld) {
@@ -459,9 +458,7 @@ static bool q1_final_options(application_provider *provider, const qa_launch_cho
     if (capacity < 1 || capacity > 64)
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source client capacity must be between 1 and 64");
     options->max_clients = (uint32_t)capacity;
-    char normalized[16];
-    snprintf(normalized, sizeof(normalized), "%u", options->max_clients);
-    return qa_cvars_set(cvars, "maxclients", normalized, true, error);
+    return application_publication_source_capacity(provider, options->max_clients, error);
 }
 
 static bool native_console_preinit(application_provider *provider, qa_error *error)
@@ -548,8 +545,7 @@ static bool construct_q1(qa_application *application,
         if (choices->modes[i].rules.enabled && choices->modes[i].rules.source == QA_MODE_Q1_HORDE &&
             !strcmp(choices->modes[i].instance, provider->launch->selection.instance)) {
             qa_cvars *cvars = application_native_q1_console_registry(provider);
-            if ((!qa_cvars_find(cvars, "horde") &&
-                 !qa_cvars_register(cvars, "horde", "0", 0, provider->owner, NULL, error)) ||
+            if (!qa_cvars_register(cvars, "horde", "0", 0, provider->owner, NULL, error) ||
                 !qa_cvars_declare_save_policy(cvars, "horde", QA_CVAR_SAVE_GAMEPLAY, error) ||
                 !qa_cvars_set(cvars, "horde", "1", true, error)) return false;
         }
@@ -900,39 +896,54 @@ static int32_t q3_game_type(qa_mode_kind kind)
     }
 }
 
-static bool q3_console_prepare(application_provider *provider,
-    const qa_launch_choices *choices, application_native_profile profile, qa_error *error)
+static bool seed_number(qa_cvars *cvars, const char *name, float number,
+    qa_error *error)
 {
-    if (!application_native_q3_console_create(provider, choices->world.map, error)) return false;
-    qa_cvars *cvars = application_native_q3_console_registry(provider);
-    static const char *const names[] = {"g_gametype", "g_friendlyFire", "fraglimit", "timelimit",
-        "capturelimit", "g_warmup", "g_doWarmup"};
-    bool present[7];
-    for (size_t i = 0; i < 7; ++i) present[i] = qa_cvars_find(cvars, names[i]) != NULL;
-    qa_q3_product product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
-    if (!application_native_q3_settings_prepare_definitions(provider, product, error)) return false;
-    qa_application_startup_source source = {.descriptor = provider->launch,
-        .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
-        .cvars = cvars, .declaration_owner = provider->owner};
-    bool carried;
-    if (!application_native_q3_console_at(provider, &source.console, NULL, &source.command) ||
-        !application_startup_source_carry(provider, &source, &carried, error)) return false;
-    qa_mode_rules mode = {0};
-    bool found = selected_mode(choices, &mode);
-    char values[7][64];
-    snprintf(values[0], sizeof(values[0]), "%d", q3_game_type(profile.mode_kind));
-    snprintf(values[1], sizeof(values[1]), "%d", profile.friendly_fire);
-    snprintf(values[2], sizeof(values[2]), "%d", found ? mode.frag_limit : 20);
-    snprintf(values[3], sizeof(values[3]), "%.9g", found ? (double)mode.time_limit_minutes : 0.0);
-    snprintf(values[4], sizeof(values[4]), "%d", found ? mode.capture_limit : 8);
-    snprintf(values[5], sizeof(values[5]), "%d", found && mode.warmup_seconds ? mode.warmup_seconds : 20);
-    snprintf(values[6], sizeof(values[6]), "%d", found && mode.warmup_seconds != 0);
-    for (size_t i = 0; i < 7; ++i)
-        if (!carried && !present[i] && !qa_cvars_set(cvars, names[i], values[i], true, error)) return false;
-    return true;
+    if (qa_cvars_is_set(cvars, name)) return true;
+    qa_cvar_view effective;
+    return qa_cvars_effective_view(cvars, name, &effective, error) &&
+        (effective.number == number || qa_cvars_set_number(cvars, name, number, error));
 }
 
-bool application_provider_console_prepare(qa_application *application,
+bool application_provider_seed_cvars(application_provider *provider, qa_cvars *cvars,
+    const qa_launch_choices *choices, qa_error *error)
+{
+    application_native_profile profile;
+    if (!native_profile(provider->launch, choices, &profile, error)) return false;
+    qa_mode_rules mode = {0};
+    bool found = selected_mode(choices, &mode);
+    bool mode_unset = !qa_cvars_is_set(cvars, "g_gametype");
+    if (profile.family != QA_GAME_Q3) {
+        if (!seed_number(cvars, "skill", (float)profile.skill, error) ||
+            !seed_number(cvars, "gamecfg", (float)profile.gamecfg, error)) return false;
+        if (mode_unset && profile.family == QA_GAME_Q1 &&
+            !seed_number(cvars, "teamplay", (float)profile.teamplay, error)) return false;
+    }
+    if (mode_unset) {
+        int32_t type = profile.family == QA_GAME_Q3 ? q3_game_type(profile.mode_kind) :
+            profile.cooperative ? 9 : profile.deathmatch ? q3_game_type(profile.mode_kind) : 8;
+        qa_cvar_view effective;
+        if (!qa_cvars_effective_view(cvars, "g_gametype", &effective, error) ||
+            (effective.integer != type && !qa_cvars_set_number(cvars, "g_gametype", (float)type, error))) return false;
+    }
+    if (profile.family != QA_GAME_Q3) return true;
+    return seed_number(cvars, "g_friendlyFire", profile.friendly_fire ? 1 : 0, error) &&
+        seed_number(cvars, "fraglimit", (float)(found ? mode.frag_limit : 20), error) &&
+        seed_number(cvars, "timelimit", found ? mode.time_limit_minutes : 0, error) &&
+        seed_number(cvars, "capturelimit", (float)(found ? mode.capture_limit : 8), error) &&
+        seed_number(cvars, "g_warmup", (float)(found && mode.warmup_seconds ? mode.warmup_seconds : 20), error) &&
+        seed_number(cvars, "g_doWarmup", found && mode.warmup_seconds != 0 ? 1 : 0, error);
+}
+
+static bool q3_console_prepare(application_provider *provider,
+    const qa_launch_choices *choices, qa_error *error)
+{
+    if (!application_native_q3_console_create(provider, choices->world.map, error)) return false;
+    qa_q3_product product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    return application_native_q3_settings_prepare_definitions(provider, product, error);
+}
+
+static bool provider_console_prepare(qa_application *application,
     application_provider *provider, qa_world *world, qa_catalog *catalog,
     const qa_product *product, const qa_launch_choices *choices, qa_console **console,
     qa_cvars **cvars, qa_command_context *command, qa_error *error)
@@ -966,7 +977,7 @@ bool application_provider_console_prepare(qa_application *application,
     }
     case APPLICATION_PROVIDER_Q3: {
         bool client_only = application_native_q3_remote_client_only(provider);
-        if ((!client_only && !q3_console_prepare(provider, choices, profile, error)) ||
+        if ((!client_only && !q3_console_prepare(provider, choices, error)) ||
             !application_native_q3_remote_roles_prepare(provider, choices, error)) return false;
         if (!client_only) return application_native_q3_console_at(provider, console, cvars, command);
         qa_application_startup_source source;
@@ -990,6 +1001,47 @@ bool application_provider_console_prepare(qa_application *application,
                     "Selected original GAME requires its retained private console preparation");
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Unknown startup source kind");
+}
+
+static bool provider_preparation_enter(qa_application *application,
+    application_provider *provider, const qa_launch_choices *choices,
+    application_provider **previous, qa_cvars_edit **values, qa_error *error)
+{
+    const qa_launch_snapshot *snapshot = application ? application->routing_snapshot : NULL;
+    const qa_launch_instance *selected = provider && provider->launch && snapshot
+        ? qa_launch_snapshot_find(snapshot, provider->launch->selection.instance) : NULL;
+    if (!application || !provider || provider->application != application ||
+        !selected || selected->state != provider || selected->storage != provider->launch->storage ||
+        qa_launch_snapshot_choices(snapshot) != choices ||
+        (application->startup_preinit_provider && application->startup_preinit_provider != provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source constructor lost its actual candidate descriptor");
+    if (!application_startup_values_enter(application, values, error)) return false;
+    *previous = application->startup_preinit_provider;
+    application->startup_preinit_provider = provider;
+    return true;
+}
+
+static bool provider_preparation_leave(qa_application *application,
+    application_provider *previous, qa_cvars_edit *values, qa_error *error)
+{
+    application->startup_preinit_provider = previous;
+    return application_startup_values_leave(values, error);
+}
+
+bool application_provider_console_prepare(qa_application *application,
+    application_provider *provider, qa_world *world, qa_catalog *catalog,
+    const qa_product *product, const qa_launch_choices *choices, qa_console **console,
+    qa_cvars **cvars, qa_command_context *command, qa_error *error)
+{
+    qa_cvars_edit *values = NULL;
+    application_provider *previous = NULL;
+    if (!provider_preparation_enter(application, provider, choices, &previous, &values, error)) return false;
+    bool ok = provider_console_prepare(application, provider, world, catalog,
+        product, choices, console, cvars, command, error);
+    qa_error returned = {0};
+    bool left = provider_preparation_leave(application, previous, values, &returned);
+    if (!left && ok && error) *error = returned;
+    return ok && left;
 }
 
 bool application_provider_startup_source_at(application_provider *provider, size_t index,
@@ -1198,7 +1250,7 @@ static bool construct_q3(qa_application *application,
             ? (application_native_q3_console_create(provider, choices->world.map, error) &&
                application_native_q3_settings_prepare_definitions(provider,
                    !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA, error))
-            : q3_console_prepare(provider, choices, profile, error)))
+            : q3_console_prepare(provider, choices, error)))
         return false;
     if (!native_console_preinit(provider, error)) return false;
     qa_cvars *cvars = application_native_q3_console_registry(provider);
@@ -1211,17 +1263,18 @@ static bool construct_q3(qa_application *application,
     if (replacing)
         rules.game_type = replacement.game_type;
     if (application->operation != APPLICATION_PERSISTING) {
-        if (!qa_cvars_apply_latched(cvars, NULL, error)) return false;
+        if (!application_startup_apply_latched(provider, cvars, error)) return false;
         const qa_cvar_view *game_type = qa_cvars_find(cvars, "g_gametype");
         const qa_cvar_view *friendly = qa_cvars_find(cvars, "g_friendlyFire");
         if (game_type && !replacing) rules.game_type = game_type->integer;
         if (friendly) rules.friendly_fire = friendly->number != 0;
     }
-    const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
-    if (!capacity || capacity->owner != provider->owner || choices->seat_count > 64)
+    qa_cvar_view capacity;
+    if (!qa_cvars_effective_view(cvars, "sv_maxclients", &capacity, error) ||
+        !capacity.declared || capacity.owner != provider->owner || choices->seat_count > 64)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 startup has no actual scoped client capacity");
-    float requested = truncf(capacity->number);
+    float requested = truncf(capacity.number);
     const qa_cvar_view *dedicated = qa_cvars_find(cvars, "dedicated");
     if (!dedicated || dedicated->owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -1235,10 +1288,7 @@ static bool construct_q3(qa_application *application,
         return application_fail(error, QA_ERROR_FORMAT,
                                 "Q3 source client capacity must be between 1 and 64");
     uint32_t max_clients = (uint32_t)requested;
-    char normalized[16];
-    snprintf(normalized, sizeof(normalized), "%u", max_clients);
-    if (!qa_cvars_set(cvars, "sv_maxclients", normalized, true, error))
-        return false;
+    if (!application_publication_source_capacity(provider, max_clients, error)) return false;
     qa_q3_options options = {
         .services = application_builtin_services(application, world,
                                                  application->physics),
@@ -1386,15 +1436,14 @@ static bool provider_clock_bind(application_provider *provider, qa_error *error)
         static const char *const names[] = {"sv_mintic", "sv_maxtic"};
         static const char *const values[] = {"0.03", "0.1"};
         for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
-            if (!qa_cvars_find(cvars, names[i]) &&
-                !qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
+            if (!qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
     }
     provider->component.clock_admit = provider_clock_admit;
     provider->component.clock_context = provider;
     return true;
 }
 
-bool application_provider_construct(qa_application *application,
+static bool construct_provider(qa_application *application,
                                     application_provider *provider,
                                     qa_world *world,
                                     qa_catalog *catalog,
@@ -1455,6 +1504,20 @@ bool application_provider_construct(qa_application *application,
     }
     if (!provider_clock_bind(provider, error)) return false;
     return true;
+}
+
+bool application_provider_construct(qa_application *application,
+    application_provider *provider, qa_world *world, qa_catalog *catalog,
+    const qa_product *product, const qa_launch_choices *choices, qa_error *error)
+{
+    qa_cvars_edit *values = NULL;
+    application_provider *previous = NULL;
+    if (!provider_preparation_enter(application, provider, choices, &previous, &values, error)) return false;
+    bool ok = construct_provider(application, provider, world, catalog, product, choices, error);
+    qa_error returned = {0};
+    bool left = provider_preparation_leave(application, previous, values, &returned);
+    if (!left && ok && error) *error = returned;
+    return ok && left;
 }
 
 bool application_provider_construct_q3_restored(qa_application *application,

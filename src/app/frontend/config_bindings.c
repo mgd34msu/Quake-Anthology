@@ -122,6 +122,10 @@ static bool execute(frontend_config_bindings *owner,const qa_command_invocation 
 static bool handler(void *context,const qa_command_invocation *command,qa_error *error)
 {
     frontend_config_bindings *owner=context;
+    if (!qa_console_invocation_current(owner->commands.console,command) ||
+        !qa_console_invocation_delivered_view(command,owner->commands.command.cvar_view,
+            owner->commands.owner,owner->commands.owner))
+        return fail(error,QA_ERROR_ARGUMENT,"Dedicated binding command lost its actual Source registration");
     if (!command->argc) return true;
     if (owner->busy) return fail(error,QA_ERROR_ARGUMENT,"Dedicated binding dictionary is already executing");
     if (command->context.origin!=QA_COMMAND_SERVER && command->context.origin!=QA_COMMAND_LOCAL) {
@@ -145,11 +149,12 @@ bool frontend_config_bindings_commands(frontend_config_bindings *owner,
     const frontend_config_binding_commands *commands,qa_error *error)
 {
     if (!owner || owner->busy || owner->registered || !commands || !commands->console ||
-        !commands->owner || !commands->context || !commands->current || !commands->print)
+        !commands->owner || !commands->context || !commands->current || !commands->print ||
+        !commands->command.cvar_view)
         return fail(error,QA_ERROR_ARGUMENT,"Dedicated commands need their actual source console authority");
     owner->commands=*commands;
     for (unsigned i=0;i<4;++i) {
-        if (!qa_console_register_owned(commands->console,names[i],"Dedicated console binding",commands->owner,
+        if (!qa_console_register_context(commands->console,&commands->command,names[i],"Dedicated console binding",commands->owner,
             commands->owner,true,handler,owner,error)) return false;
         owner->registered|=1u<<i;
     }
@@ -160,7 +165,7 @@ bool frontend_config_bindings_destroy(frontend_config_bindings *owner,qa_error *
     if (!owner) return true;
     if (owner->busy) return fail(error,QA_ERROR_ARGUMENT,"Dedicated binding dictionary is executing");
     for (unsigned i=0;i<4;++i) if (owner->registered&(1u<<i))
-        qa_console_unregister(owner->commands.console,names[i],owner->commands.owner);
+        qa_console_unregister_context(owner->commands.console,&owner->commands.command,names[i],owner->commands.owner);
     while (owner->count) remove_at(owner,owner->count-1);
     free(owner->rows); free(owner); return true;
 }

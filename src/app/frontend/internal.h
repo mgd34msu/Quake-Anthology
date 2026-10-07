@@ -365,6 +365,7 @@ bool frontend_player_events(qa_frontend *, qa_error *);
 void frontend_player_retire(frontend_seat *);
 void frontend_print(void *, const char *);
 void frontend_console_print(void *, const qa_command_context *, const char *);
+qa_command_result frontend_console_forward(void *,const qa_command_invocation *,qa_error *);
 bool frontend_menu_open(frontend_seat *, qa_ui_id, qa_error *);
 bool frontend_game_menu(frontend_seat *, qa_error *);
 bool frontend_wheel_create(frontend_seat *, qa_error *);

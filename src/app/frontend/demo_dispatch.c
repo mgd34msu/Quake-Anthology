@@ -179,10 +179,8 @@ static bool completing(void *context,const qa_command_context *request,frontend_
     size_t length=strlen(view->value);d->completion=malloc(length+2);
     if(!d->completion)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual demo completion command");
     memcpy(d->completion,view->value,length);d->completion[length]='\n';d->completion[length+1]=0;
-    qa_cvars *registry;qa_cvars_edit *edit;
-    if(!qa_console_cvar_access(console,&source,name,&registry,&edit,error))return false;
     qa_cvars_edit_command clear={.kind=QA_CVARS_EDIT_SET,.name=name,.value="",.force=true};
-    return edit?qa_cvars_edit_apply(edit,&clear,error):qa_cvars_apply(registry,&clear,error);
+    return qa_console_cvar_apply(console,&source,&clear,error);
 }
 static bool completed(void *context,const qa_command_context *source,frontend_demo_format format,
     frontend_demo_end end,bool attract,qa_error *error) {

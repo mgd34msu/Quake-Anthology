@@ -8,8 +8,8 @@
 typedef struct frontend_shared_values frontend_shared_values;
 struct frontend_input_settings;
 /* One retained scalar ticket edits the actual application ENGINE registry.
- * The manager owns this ticket and keeps its app/candidate/source rows alive.
- * Begin once before cfg; subsequent sources join that same admitted ticket. */
+ * Begin joins an app-first ticket or prepares the frontend-owned root ticket.
+ * Its actual preparer retains terminal ownership; Sources join before cfg. */
 bool frontend_shared_values_begin(qa_frontend *,frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,const qa_application_startup_source *,
     frontend_shared_values **,qa_error *);
@@ -73,7 +73,9 @@ bool frontend_shared_values_source_color_register(frontend_shared_values *,qa_er
 bool frontend_shared_values_native_initialize(frontend_shared_values *,qa_error *);
 bool frontend_shared_values_window_observed(frontend_shared_values *,const qa_display_info *,
     int swap_interval,bool opengl,qa_error *);
-const qa_cvars_edit *frontend_shared_values_prepared(const frontend_shared_values *);
+/* Borrow the owned ticket for entered candidate work; publication and abort
+ * remain with this owner. Borrowers return before ready or consumption. */
+qa_cvars_edit *frontend_shared_values_prepared(const frontend_shared_values *);
 /* Scalar admission is only one child of shared settings. The enclosing owner
  * must ready all actual resource/device/UI children before publishing any. */
 bool frontend_shared_values_ready(frontend_shared_values *,qa_error *);

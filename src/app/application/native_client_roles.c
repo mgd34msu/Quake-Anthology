@@ -82,7 +82,8 @@ bool qa_application_client_provider_command(qa_application *app, qa_actor_owner 
     const qa_command_context *input, qa_command_context *out, uint64_t *generation, qa_error *error)
 {
     application_provider *p = provider_read(app, receiver);
-    if (!p || !p->client_only_owned || p->close_pending || !input || !out || !generation ||
+    if (!app || !app->session || app->destroy_requested || app->engine_shutdown ||
+        app->state == QA_APPLICATION_FAULTED || !p || !p->client_only_owned || p->close_pending || !input || !out || !generation ||
         input->seat != seat || (input->owner && input->owner != receiver) || input->script || input->actor.registry ||
         input->actor.generation || input->actor.slot ||
         (input->origin != QA_COMMAND_SEAT && input->origin != QA_COMMAND_LOCAL))
@@ -98,14 +99,18 @@ bool qa_application_client_provider_command(qa_application *app, qa_actor_owner 
     }
     if (input->dialect != dialect)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT input dialect differs from its selected descriptor");
-    qa_command_context source = *input; source.owner = receiver;
-    uint64_t actual = qa_application_configuration_generation(app);
-    if (!qa_application_capture_command_context(app, &source, out, error)) return false;
-    *generation = actual; return true;
+    uint64_t registry = qa_actors_identity(qa_session_actors(app->session));
+    if ((input->registry && input->registry != registry) ||
+        (input->generation && input->generation != app->command_generation))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT metadata origin belongs to a retired publication");
+    qa_command_context source = *input;
+    source.owner = receiver; source.registry = registry; source.generation = app->command_generation;
+    source.cvar_view = 0;
+    *out = source; *generation = qa_application_configuration_generation(app); return true;
 }
 static bool command_equal(const qa_command_context *a, const qa_command_context *b)
 {
-    return a->session == b->session && a->owner == b->owner && a->client == b->client && a->seat == b->seat &&
+    return a->cvar_view == b->cvar_view && a->session == b->session && a->owner == b->owner && a->client == b->client && a->seat == b->seat &&
         a->dialect == b->dialect && a->origin == b->origin && a->direct == b->direct &&
         a->console_text == b->console_text && a->script == b->script && a->registry == b->registry &&
         a->generation == b->generation && qa_actor_id_equal(a->actor, b->actor);
@@ -158,9 +163,10 @@ static bool create(qa_application *app, const qa_application_client_options *o,
         !o->descriptor || !o->descriptor->storage || !o->descriptor->content || o->descriptor->artifact ||
         o->descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
         strcmp(o->descriptor->selection.instance, p->launch->selection.instance) ||
-        !o->console || !o->cvars || !o->runtime ||
+        o->console != app->console || !o->cvars || !qa_cvars_same_store(o->cvars, app->cvars) || !o->runtime ||
         o->command.owner != p->owner || o->command.seat != o->seat || !o->command.registry ||
-        !o->command.generation || o->command.script || qa_cvars_dialect(o->cvars) != o->command.dialect ||
+        !o->command.generation || o->command.script || o->command.cvar_view != qa_cvars_view_identity(o->cvars) ||
+        qa_cvars_dialect(o->cvars) != o->command.dialect ||
         !qa_application_command_context_active(app, &o->command) ||
         !o->owner.context || !o->owner.retain || !o->owner.release || !o->owner.current ||
         !o->owner.idle || !o->owner.connection_current)
@@ -335,7 +341,9 @@ bool qa_application_client_rebind(qa_application *app, const qa_application_clie
         !source_equal(retained, &r->source) || !descriptor ||
         !descriptor->storage || !descriptor->content || descriptor->artifact || !command || command->script ||
         command->owner != r->source.context.receiver || command->seat != r->source.context.seat ||
-        command->dialect != r->source.context.command.dialect || !qa_application_command_context_active(app, command) ||
+        command->dialect != r->source.context.command.dialect ||
+        command->cvar_view != qa_cvars_view_identity(r->source.context.cvars) ||
+        !qa_application_command_context_active(app, command) ||
         descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
         descriptor->selection.clock.kind != r->source.descriptor->selection.clock.kind ||
         strcmp(descriptor->selection.instance, r->source.descriptor->selection.instance) ||

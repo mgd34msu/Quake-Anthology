@@ -694,12 +694,19 @@ static bool console_context(void *context, uint64_t captured_registry,
     const qa_command_context *saved, qa_command_context *restored, qa_error *error)
 {
     (void)captured_registry; equipment_source *source = context;
+    qa_command_context actual;
     if (saved->owner != source->view.gear_owner || saved->dialect != QA_CONSOLE_Q3 ||
         saved->origin != QA_COMMAND_SERVER || saved->session || saved->client || saved->seat ||
         saved->registry || saved->generation || saved->actor.registry || saved->actor.slot ||
         saved->actor.generation || !source_current(source))
         return application_fail(error, QA_ERROR_FORMAT, "Gear console command belongs to another source lifetime");
-    *restored = *saved; return true;
+    if (!source->view.gear ||
+        !qa_q3_host_console(source->view.gear->host, NULL, &actual))
+        return application_fail(error, QA_ERROR_FORMAT, "Gear console command lost its actual restored host");
+    *restored = *saved;
+    restored->session = actual.session;
+    restored->cvar_view = actual.cvar_view;
+    return true;
 }
 static bool source_restore(void *context, qa_bytes bytes, qa_error *error)
 {

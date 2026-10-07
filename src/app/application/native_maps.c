@@ -2,6 +2,7 @@
 #include "native_maps.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
+#include "startup_flow.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -134,22 +135,22 @@ static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error)
     qa_application *app = parser->application;
     application_provider *source = application_native_q3_mode_source_provider(app, mode);
     if (!source) return application_fail(error, QA_ERROR_NOT_FOUND, "nextmap source has retired");
-    qa_console *selected = NULL;
-    qa_command_context context = {.owner = source->owner, .dialect = QA_CONSOLE_Q3,
-                                  .origin = QA_COMMAND_SERVER};
+    qa_application_startup_source selected = {0};
+    bool has_selected = false;
     for (size_t i = 0;; ++i) {
-        qa_console *console;
-        qa_command_context candidate;
-        qa_application_console_scope scope;
-        if (!application_guest_console_at(source, i, &console, NULL, &candidate)) break;
-        if (!application_guest_console_scope(source, console, &scope) ||
-            scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME) continue;
-        if (selected && selected != console)
-            return application_fail(error, QA_ERROR_ARGUMENT, "nextmap has ambiguous source game consoles");
-        selected = console;
-        context = candidate;
+        qa_application_startup_source candidate;
+        bool present;
+        if (!application_provider_startup_source_at(source, i, &candidate, &present, error)) return false;
+        if (!present) break;
+        if (candidate.scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME) continue;
+        if (has_selected)
+            return application_fail(error, QA_ERROR_ARGUMENT, "nextmap has ambiguous Source GAME views");
+        selected = candidate;
+        has_selected = true;
     }
-    if (!selected || context.owner != source->owner || context.dialect != QA_CONSOLE_Q3)
+    qa_command_context context = selected.command;
+    if (!has_selected || !selected.console || selected.scope.provider != source->owner ||
+        context.owner != source->owner || context.dialect != QA_CONSOLE_Q3)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "nextmap needs an actual Q3 source console");
     context.origin = QA_COMMAND_SERVER;
     context.client = 0;
@@ -158,12 +159,11 @@ static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error)
     context.console_text = false;
     context.script = NULL;
     if (!qa_application_capture_command_context(app, &context, &context, error)) return false;
-    if (!qa_application_console_scope_read(app, selected, &parser->plan.scope))
-        return application_fail(error, QA_ERROR_ARGUMENT, "nextmap console has no current source scope");
-    if (!qa_console_limits(selected, &context, &parser->command_limit, &parser->buffer_limit, error))
+    if (!qa_console_limits(selected.console, &context, &parser->command_limit, &parser->buffer_limit, error))
         return false;
     parser->source = source;
-    parser->console = selected;
+    parser->console = selected.console;
+    parser->plan.scope = selected.scope;
     parser->plan.mode = mode;
     parser->plan.owner = source->owner;
     parser->plan.context = context;
@@ -455,11 +455,13 @@ bool application_native_config_command_allowed(qa_application *app,
     const application_next_map_plan *plan, const char *name, qa_error *error) {
     application_provider *source = app && plan ? application_mode_provider(app, plan->mode) : NULL;
     qa_console *console = NULL;
+    qa_command_context actual;
     if (!source || source->kind != APPLICATION_PROVIDER_Q3 || source->owner != plan->owner ||
         plan->scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME || plan->scope.provider != source->owner ||
         plan->scope.seat || plan->context.owner != source->owner || plan->context.actor.registry ||
         plan->context.dialect != QA_CONSOLE_Q3 || plan->context.origin != QA_COMMAND_SERVER ||
-        !application_native_q3_console_at(source, &console, NULL, NULL) ||
+        !application_native_q3_console_at(source, &console, NULL, &actual) ||
+        actual.session != plan->context.session || actual.cvar_view != plan->context.cvar_view ||
         !qa_application_command_context_active(app, &plan->context))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "config command has no qualified native source fallback");
     /* This actual source callback routes the retained zero-actor context to

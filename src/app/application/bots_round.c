@@ -87,16 +87,9 @@ static bool original_library_ready(const qa_cvars *configuration,bool initialize
     const qa_cvar_view *enabled=configuration?qa_cvars_find(configuration,"bot_enable"):NULL;
     if(!enabled)
         return application_fail(error,QA_ERROR_ARGUMENT,"original bots require their actual source bot_enable cvar");
-    int32_t effective=enabled->integer;
-    if(enabled->latched_value) {
-        qa_cvar_options options={.dialect=QA_CONSOLE_Q3};
-        qa_cvars *resolved=qa_cvars_create(&options,error);
-        if(!resolved) return false;
-        bool okay=qa_cvars_register(resolved,"bot_enable",enabled->latched_value,0,0,NULL,error);
-        if(okay) effective=qa_cvars_find(resolved,"bot_enable")->integer;
-        qa_cvars_destroy(resolved);
-        if(!okay) return false;
-    }
+    qa_cvar_view value;
+    if (!qa_cvars_effective_view(configuration,"bot_enable",&value,error)) return false;
+    int32_t effective=value.integer;
     return !effective || (initialized && loaded)?true:
         application_fail(error,QA_ERROR_ARGUMENT,"enabled original restart bots require their genuinely initialized loaded retained library");
 }
@@ -181,7 +174,7 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
             if(next) goto invalid;
             next=publication->next[j];
         }
-        if(!next || !previous->constructed || !next->constructed || next->attached) goto invalid;
+        if(!next || !previous->constructed || next->attached) goto invalid;
         for(size_t j=0;j<i;++j)
             if(cut->pairs[j].previous==previous || cut->pairs[j].next==next) goto invalid;
         cut->pairs[i]=(bot_original_pair){previous,next};
@@ -190,7 +183,7 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next) {
         application_provider *next=original_next(cut,guest->provider);
         struct application_q3_guest *engine=next?q3g_engine(next):NULL;
-        if(!engine || !engine->game || engine->game->initialized) goto invalid;
+        if(!next->constructed || !engine || !engine->game || engine->game->initialized) goto invalid;
     }
     for(application_bot_graph *graph=bots->graphs;graph;graph=graph->next) {
         if(graph->movement && !original_next(cut,graph->movement)) goto invalid;

@@ -33,6 +33,7 @@ bool application_q3_world_restart(qa_application *, application_provider *,
 
 /* Called by the ordinary publication owner on this transaction's actual
  * ticket. These calls are no-ops for other configuration publications. */
+bool application_q3_world_restart_constructed(qa_application *, application_publication *, qa_error *);
 bool application_q3_world_restart_prepared(qa_application *,
     application_publication *, qa_error *);
 void application_q3_world_restart_configuration_finish(qa_application *,

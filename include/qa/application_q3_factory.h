@@ -66,15 +66,10 @@ bool qa_application_q3_remote_source_current(qa_application *,
  * source_client remains unbound until the real GAME binding follows. */
 bool qa_application_q3_preconstruction_source_read(qa_application *, qa_actor_owner,
     qa_qvm_role, uint32_t seat, qa_application_q3_client_preparation *, qa_error *);
-/* Actual CLIENT configuration owners exist before any role host or imports.
- * Bind a prepared hosted registry or transfer the private heap once to its
- * configuration owner; the retained physical console continues borrowing it. */
+/* Actual CLIENT configuration views exist before role hosts and imports.
+ * GAME, CGAME and UI use the common console and canonical cvar store. */
 bool qa_application_q3_client_configuration_read(qa_application *, qa_actor_owner,
-    uint32_t authored_seat, qa_application_startup_source *, qa_error *);
-bool qa_application_q3_client_configuration_take_cvars(qa_application *,
-    const qa_application_startup_source *, qa_cvars **, qa_error *);
-bool qa_application_q3_client_configuration_bind_cvars(qa_application *,
-    const qa_application_startup_source *, qa_cvars *, qa_error *);
+    qa_qvm_role role, uint32_t authored_seat, qa_application_startup_source *, qa_error *);
 /* The exact retained native CLIENT has returned its service, transport,
  * acquired modules and synchronous callbacks. Its configuration stays owned. */
 bool qa_application_q3_client_configuration_unborrowed(qa_application *,

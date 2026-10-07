@@ -84,7 +84,7 @@ static bool read_script(void *context, const qa_command_context *command, const 
 {
     struct application_native_q3_remote_role *row = context;
     if (!active(row, command)) return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT script source has retired");
-    if (application_startup_console_active(row->provider, row->console))
+    if (application_startup_console_active(row->provider, row->cvars))
         return application_startup_console_script_read(row->provider, row->console, command, path, out, lease, error);
     if (application_startup_source_scripts(row->provider))
         return application_startup_source_script_read(row->provider, row->console, command, path, out, lease, error);
@@ -96,10 +96,10 @@ static bool read_script(void *context, const qa_command_context *command, const 
 static void release_script(void *context, void *lease)
 {
     struct application_native_q3_remote_role *row = context;
-    if (application_startup_console_active(row->provider, row->console))
-        application_startup_console_script_release(row->provider, row->console, lease);
+    if (application_startup_console_active(row->provider, row->cvars))
+        application_startup_console_script_release(row->provider, row->cvars, lease);
     else if (application_startup_source_scripts(row->provider))
-        application_startup_source_script_release(row->provider, row->console, lease);
+        application_startup_source_script_release(row->provider, row->cvars, lease);
     else qa_resource_release(lease);
 }
 static void script_complete(void *context, const qa_command_context *command, const char *path, bool success)
@@ -166,7 +166,13 @@ static qa_command_result dispatch(void *context, const qa_command_invocation *co
 static qa_command_result forward(void *context, const qa_command_invocation *command, qa_error *error)
 {
     struct application_native_q3_remote_role *row = context;
-    if (!command || command->console != row->console || !active(row, &command->context) || row->calls == SIZE_MAX) {
+    bool delivered=command && !command->context.owner && !row->retiring &&
+        command->context.cvar_view==qa_cvars_view_identity(row->provider->application->cvars) &&
+        qa_console_invocation_delivered_view(command,qa_cvars_view_identity(row->cvars),
+            row->provider->owner,row->service_owner) &&
+        qa_application_command_context_active(row->provider->application,&command->context);
+    if (!command || command->console != row->console ||
+        (!active(row, &command->context) && !delivered) || row->calls == SIZE_MAX) {
         application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT forwarding lost its physical console and origin");
         return QA_COMMAND_FAILED;
     }
@@ -247,23 +253,26 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     if (find(provider, seat->id)) return true;
     struct application_native_q3_remote_role *row = calloc(1, sizeof(*row));
     if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining native CLIENT console");
-    row->provider = provider; row->seat = seat->id; row->owns_cvars = true;
+    row->provider = provider; row->seat = seat->id;
     char name[160];
     snprintf(name, sizeof(name), "q3-native-client:%u:%llu:%u", provider->owner,
         (unsigned long long)provider->launch->identity, seat->id);
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = row, .print = cvar_print, .cheats_allowed = cheats};
-    row->cvars = qa_cvars_create(&cvars, error);
+    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_CLIENT, .role = QA_CVAR_ROLE_CGAME, .seat = row->seat, .user = row, .print = cvar_print, .cheats_allowed = cheats};
+    row->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .seat = seat->id,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars, .user = row,
         .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allowed,
         .source_command = dispatch, .forward = forward};
-    if (row->cvars) row->console = qa_console_create(&options, error);
+    options.context.cvar_view = qa_cvars_view_identity(row->cvars);
+    if (row->cvars && qa_console_bind_source(provider->application->console, &options, error))
+        row->console = provider->application->console;
     if (!row->console || !qa_strings_intern_cstr(qa_session_strings(provider->application->session), name,
         &row->service_owner, error) ||
         !engine_defaults(row, choices, seat, error)) {
-        qa_console_destroy(row->console); qa_cvars_destroy(row->cvars); free(row); return false;
+        qa_console_unbind_source(row->console, qa_cvars_view_identity(row->cvars), error); qa_cvars_destroy(row->cvars); free(row); return false;
     }
     struct application_native_q3_remote_role **tail = &provider->native_q3_remote_roles;
     while (*tail) tail = &(*tail)->next;
@@ -291,7 +300,8 @@ bool application_native_q3_remote_role_source_at(application_provider *provider,
     if (row) *out = (qa_application_startup_source){.descriptor = provider->launch,
         .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_CGAME, .seat = row->seat},
         .console = row->console, .cvars = row->cvars, .declaration_owner = provider->owner,
-        .command = {.owner = provider->owner, .seat = row->seat, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}};
+        .command = {.owner = provider->owner, .seat = row->seat,
+            .cvar_view = qa_cvars_view_identity(row->cvars), .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}};
     return true;
 }
 bool application_native_q3_remote_role_configuration(application_provider *provider, uint32_t seat,
@@ -304,7 +314,7 @@ bool application_native_q3_remote_role_configuration(application_provider *provi
         bool found;
         if (!application_native_q3_remote_role_source_at(provider, i, out, &found, error)) return false;
         if (!found) return application_fail(error, QA_ERROR_NOT_FOUND, "Native CLIENT console left its actual inventory");
-        if (out->console == row->console) return true;
+        if (out->console == row->console && out->cvars == row->cvars && out->scope.seat == row->seat) return true;
     }
 }
 bool application_native_q3_remote_roles_preinit(application_provider *provider, qa_error *error)
@@ -314,7 +324,7 @@ bool application_native_q3_remote_roles_preinit(application_provider *provider, 
         if (!application_native_q3_remote_role_source_at(provider, i, &source, &found, error)) return false;
         if (!found) return true;
         if (!application_startup_tuple_preinit(provider, &source, error) ||
-            !qa_cvars_apply_latched(source.cvars, NULL, error)) return false;
+            !application_startup_apply_latched(provider, source.cvars, error)) return false;
     }
 }
 static bool replace_ready(const struct application_native_q3_remote_role *row)
@@ -324,24 +334,6 @@ static bool replace_ready(const struct application_native_q3_remote_role *row)
 }
 bool application_native_q3_remote_role_unborrowed(application_provider *provider,uint32_t seat)
 { return replace_ready(find(provider,seat)); }
-bool application_native_q3_remote_role_take(application_provider *provider, uint32_t seat, qa_cvars **out, qa_error *error)
-{
-    struct application_native_q3_remote_role *row = find(provider, seat);
-    if (!replace_ready(row) || !row->owns_cvars || !out || *out)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT heap transfer requires its unborrowed pre-service owner");
-    *out = row->cvars; row->owns_cvars = false; return true;
-}
-bool application_native_q3_remote_role_bind(application_provider *provider, uint32_t seat, qa_cvars *cvars, qa_error *error)
-{
-    struct application_native_q3_remote_role *row = find(provider, seat);
-    if (!row || row->retiring || !cvars)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT heap binding lost its physical owner");
-    if (row->cvars == cvars) return true;
-    if (!replace_ready(row)) return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT heap is borrowed by an actual service");
-    if (!qa_console_set_profile(row->console, QA_CONSOLE_Q3, cvars, error)) return false;
-    if (row->owns_cvars) qa_cvars_destroy(row->cvars);
-    row->cvars = cvars; row->owns_cvars = false; return true;
-}
 bool application_native_q3_remote_role_context(application_provider *provider, uint32_t seat,
     qa_application_q3_client_context *out, qa_error *error)
 {
@@ -352,6 +344,7 @@ bool application_native_q3_remote_role_context(application_provider *provider, u
         .seat = seat, .source_client = UINT32_MAX, .service_owner = row->service_owner, .frontend_lifetime = row,
         .console = row->console, .cvars = row->cvars, .client_time_cvars = row->cvars,
         .client_time_owner = provider->owner, .command_context = {.owner = provider->owner, .seat = seat,
+            .cvar_view = qa_cvars_view_identity(row->cvars),
             .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .native_source = true, .initialized = row->initialized};
     return true;
 }
@@ -364,7 +357,8 @@ bool application_native_q3_remote_role_current(application_provider *provider, c
         source->service_owner == actual.service_owner && source->frontend_lifetime == actual.frontend_lifetime &&
         source->console == actual.console && source->cvars == actual.cvars && source->client_time_cvars == actual.cvars &&
         source->client_time_owner == actual.receiver && source->command_context.owner == actual.receiver &&
-        source->command_context.seat == actual.seat && source->command_context.dialect == QA_CONSOLE_Q3 &&
+        source->command_context.seat == actual.seat && source->command_context.cvar_view == actual.command_context.cvar_view &&
+        source->command_context.dialect == QA_CONSOLE_Q3 &&
         source->command_context.origin == QA_COMMAND_SEAT && !source->command_context.client &&
         qa_actor_id_equal(source->command_context.actor, (qa_actor_id){0}) &&
         source->native_source && source->initialized == actual.initialized;
@@ -655,6 +649,7 @@ bool application_native_q3_remote_role_modules_retained(application_provider *pr
         receiver->client_time_cvars == row->cvars && receiver->client_time_owner == provider->owner &&
         !receiver->source_owner && !receiver->source_cvars && qa_actor_id_equal(receiver->source_actor, (qa_actor_id){0}) &&
         receiver->native_source && command->owner == provider->owner && command->seat == row->seat &&
+        command->cvar_view == qa_cvars_view_identity(row->cvars) &&
         command->dialect == QA_CONSOLE_Q3 && command->origin == QA_COMMAND_SEAT && !command->client &&
         qa_actor_id_equal(command->actor, (qa_actor_id){0});
 }
@@ -739,16 +734,17 @@ static bool role_destroy(application_provider *provider,
         if (!application_native_q3_remote_role_source_at(provider,i,&source,&found,error)) return false;
         if (!found)
             return application_fail(error,QA_ERROR_ARGUMENT,"Native CLIENT teardown lost its physical console");
-        if (source.console==row->console) break;
+        if (source.console==row->console && source.cvars==row->cvars) break;
     }
     row->retiring=true;
     bool retired=provider->attached
         ? application_startup_tuple_retire_client(provider,&source,error)
         : application_startup_tuple_retire(provider,&source,error);
-    if (!retired || !application_startup_flow_release_console(provider,row->console,error)) return false;
+    if (!retired || !application_startup_flow_release_view(provider,row->cvars,error)) return false;
+    if (!qa_console_unbind_source(row->console, qa_cvars_view_identity(row->cvars), error)) return false;
     *link=row->next;
-    qa_console_destroy(row->console);
-    if (row->owns_cvars) qa_cvars_destroy(row->cvars);
+    qa_cvars_remove_owner(row->cvars, row->service_owner);
+    qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
     qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
     qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
     return true;

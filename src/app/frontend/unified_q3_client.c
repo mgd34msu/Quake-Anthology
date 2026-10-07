@@ -369,19 +369,21 @@ bool frontend_unified_q3_client_create(frontend_remote_unified *replica, fronten
     const frontend_unified_q3_source_view *v, uint64_t receiver,
     frontend_unified_q3_client **out, qa_error *e)
 {
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
     if (!replica || !sources || !v || v->owner != sources || !v->has_client || !receiver || !out || *out ||
-        !frontend_unified_q3_source_current(v))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT requires its real bound Source and receiver namespace");
+        !frontend_unified_q3_source_current(v) || !domain || !domain->console || !domain->cvars ||
+        domain->command_context.cvar_view!=qa_cvars_view_identity(domain->cvars) ||
+        domain->command_context.dialect!=qa_cvars_dialect(domain->cvars) ||
+        !qa_cvars_same_store(domain->cvars,qa_application_cvars(domain->application)) ||
+        !qa_application_command_context_active(domain->application,&domain->command_context))
+        return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT requires its actual domain command view and receiver lifetime");
     frontend_unified_q3_client *c = calloc(1,sizeof(*c));
     if (!c) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT transport");
     c->replica = replica; c->sources = sources; c->constructor = *v; c->receiver = receiver;
-    c->domain = frontend_remote_unified_domain_read(replica); c->revision = 1;
-    if (c->domain) { c->command_context = c->domain->command_context;
-        c->command_context.owner = receiver; c->command_context.actor = v->viewer;
-        c->command_context.registry = v->viewer.registry; c->command_context.generation = v->publication;
-        c->command_context.dialect = QA_CONSOLE_Q3; }
+    c->domain = domain; c->revision = 1;
+    c->command_context=domain->command_context;
     c->provider_name = copy(v->provider_name); c->instance = copy(v->instance); c->history = calloc(1,sizeof(*c->history));
-    bool ok = c->domain && c->provider_name && c->instance && c->history &&
+    bool ok = c->provider_name && c->instance && c->history &&
         receive(c->history,v,true,false,e) && create_source(c,e);
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
@@ -395,7 +397,7 @@ bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const fro
     frontend_unified_q3_client_frame *t = calloc(1,sizeof(*t));
     if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT publication");
     t->owner = c; t->source = *v; t->revision = c->revision+1;
-    t->command_context = c->command_context; t->command_context.actor = v->viewer;
+    t->command_context = c->domain->command_context;
     bool round = v->snapshot_bit != c->constructor.snapshot_bit;
     bool ok = history_clone(c->history,&t->history,e) && receive(t->history,v,false,round,e);
     if (!ok) { history_free(t->history); free(t); return false; }

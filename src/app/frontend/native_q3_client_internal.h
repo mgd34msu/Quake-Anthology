@@ -13,7 +13,7 @@ struct frontend_native_q3 {
     qa_command_context command;
     frontend_native_q3_commands *commands;
     char *music_intro, *music_loop, *disconnect;
-    bool music_looping, service_released, owns_media, owns_services;
+    bool music_looping, service_released, owns_media, owns_services, owns_registry;
     bool frame_active, constructed;
     size_t callbacks;
     struct frontend_native_q3_video *video;

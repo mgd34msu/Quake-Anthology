@@ -79,9 +79,12 @@ static bool transport_invocation(qa_native_q3_remote_client_transport *transport
         !qa_application_capture_command_context(transport->application, &source.receiver.command_context, &expected, error))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote forwarding lost its captured physical CLIENT invocation");
     const qa_command_context *actual = &call->context;
-    return (actual->session == expected.session && actual->owner == expected.owner && actual->seat == expected.seat &&
-        actual->client == expected.client && actual->dialect == expected.dialect && actual->origin == expected.origin &&
-        actual->registry == expected.registry && actual->generation == expected.generation &&
+    bool sender=actual->owner==expected.owner && actual->cvar_view==expected.cvar_view &&
+        actual->dialect==expected.dialect && actual->origin==expected.origin;
+    bool engine=!actual->owner && actual->cvar_view==qa_cvars_view_identity(qa_application_cvars(transport->application)) &&
+        qa_console_invocation_delivered_view(call,expected.cvar_view,source.receiver.receiver,source.receiver.service_owner);
+    return ((sender || engine) && actual->session == expected.session && actual->seat == expected.seat &&
+        actual->client == expected.client && actual->registry == expected.registry && actual->generation == expected.generation &&
         qa_actor_id_equal(actual->actor, expected.actor) &&
         qa_application_command_context_active(transport->application, actual)) ||
         native_client_fail(error, QA_ERROR_ARGUMENT, "Remote forwarding changed its original CLIENT origin");
@@ -386,11 +389,15 @@ static bool invocation_current(qa_native_q3_remote_client_service *service,
             &service->services.basis.client.command_context, &expected, error))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote console lost its actual CLIENT invocation");
     const qa_command_context *actual = &call->context;
-    if (actual->session != expected.session || actual->owner != expected.owner || actual->seat != expected.seat ||
-        actual->client != expected.client || actual->dialect != expected.dialect || actual->origin != expected.origin ||
-        actual->registry != expected.registry || actual->generation != expected.generation ||
+    const qa_native_q3_remote_client_basis *basis=&service->services.basis;
+    bool sender=actual->owner==expected.owner && actual->cvar_view==expected.cvar_view &&
+        actual->dialect==expected.dialect && actual->origin==expected.origin;
+    bool engine=!actual->owner && actual->cvar_view==qa_cvars_view_identity(qa_application_cvars(basis->application)) &&
+        qa_console_invocation_delivered_view(call,expected.cvar_view,basis->client.receiver,basis->client.service_owner);
+    if ((!sender && !engine) || actual->session != expected.session || actual->seat != expected.seat ||
+        actual->client != expected.client || actual->registry != expected.registry || actual->generation != expected.generation ||
         !qa_actor_id_equal(actual->actor, expected.actor) ||
-        !qa_application_command_context_active(service->services.basis.application, actual))
+        !qa_application_command_context_active(basis->application, actual))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote console changed its captured CLIENT origin");
     return true;
 }

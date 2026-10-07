@@ -20,7 +20,7 @@ struct frontend_shared_values {
     qa_cvars_edit *edit;
     qa_console *root_console;
     shared_source *sources;
-    bool published,terminal,input_restart;
+    bool owns_edit,published,terminal,input_restart;
 };
 static bool fail(qa_error *error,const char *text)
 { return frontend_fail(error,QA_ERROR_ARGUMENT,text); }
@@ -55,7 +55,7 @@ static bool command_current(const frontend_shared_values *owner,const qa_applica
 {
     if (!pending(owner,source,error) || !command || command->origin==QA_COMMAND_REMOTE ||
         command->owner!=source->command.owner || command->session!=source->command.session ||
-        command->dialect!=source->command.dialect ||
+        command->dialect!=source->command.dialect || command->cvar_view!=source->command.cvar_view ||
         (!qa_application_command_context_active(owner->application,command) &&
             !qa_console_cvar_entered(source->console,command)))
         return fail(error,"Shared values require the source's actual captured command context");
@@ -86,7 +86,9 @@ bool frontend_shared_values_begin(qa_frontend *frontend,frontend_config_store *m
         if (!owner) { free(row); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining canonical ENGINE preparation"); }
         owner->frontend=frontend; owner->manager=manager; owner->application=application;
         owner->candidate=candidate; owner->registry=qa_application_cvars(application);
-        if (!qa_cvars_edit_prepare(owner->registry,&owner->edit,error)) { free(row); free(owner); return false; }
+        owner->edit=qa_cvars_prepared_edit(owner->registry);
+        owner->owns_edit=owner->edit==NULL;
+        if (owner->owns_edit && !qa_cvars_edit_prepare(owner->registry,&owner->edit,error)) { free(row); free(owner); return false; }
         *out=owner;
     }
     row->next=owner->sources; owner->sources=row; return true;
@@ -109,7 +111,9 @@ bool frontend_shared_values_begin_root(qa_frontend *f,frontend_config_store *man
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining canonical ENGINE root preparation");
     owner->frontend=f; owner->manager=manager; owner->application=app; owner->candidate=candidate;
     owner->registry=registry; owner->root_console=console;
-    if (!qa_cvars_edit_prepare(registry,&owner->edit,error)) { free(owner); return false; }
+    owner->edit=qa_cvars_prepared_edit(registry);
+    owner->owns_edit=owner->edit==NULL;
+    if (owner->owns_edit && !qa_cvars_edit_prepare(registry,&owner->edit,error)) { free(owner); return false; }
     *out=owner; return true;
 }
 bool frontend_shared_values_root_access(const frontend_shared_values *owner,
@@ -130,6 +134,7 @@ bool frontend_shared_values_root_access(const frontend_shared_values *owner,
         command->dialect!=actual.dialect || command->origin!=actual.origin ||
         command->direct!=actual.direct || command->console_text!=actual.console_text ||
         command->registry!=actual.registry || command->generation!=actual.generation ||
+        command->cvar_view!=actual.cvar_view ||
         !qa_actor_id_equal(command->actor,actual.actor) ||
         ((!command->script)!=(!actual.script)) ||
         (command->script && strcmp(command->script,actual.script)) ||
@@ -155,6 +160,7 @@ bool frontend_shared_values_root_definition_access(const frontend_shared_values 
         command->dialect!=actual.dialect || command->origin!=actual.origin ||
         command->direct!=actual.direct || command->console_text!=actual.console_text ||
         command->registry!=actual.registry || command->generation!=actual.generation ||
+        command->cvar_view!=actual.cvar_view ||
         !qa_actor_id_equal(command->actor,actual.actor) ||
         ((!command->script)!=(!actual.script)) ||
         (command->script && strcmp(command->script,actual.script)) ||
@@ -175,7 +181,9 @@ bool frontend_shared_values_begin_client(qa_frontend *f,frontend_config_store *m
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining canonical CLIENT settings preparation");
     owner->frontend=f; owner->manager=manager; owner->application=app;
     owner->client=client; owner->registry=qa_application_cvars(app);
-    if (!qa_cvars_edit_prepare(owner->registry,&owner->edit,error)) { free(owner); return false; }
+    owner->edit=qa_cvars_prepared_edit(owner->registry);
+    owner->owns_edit=owner->edit==NULL;
+    if (owner->owns_edit && !qa_cvars_edit_prepare(owner->registry,&owner->edit,error)) { free(owner); return false; }
     *out=owner; return true;
 }
 bool frontend_shared_values_client_access(const frontend_shared_values *owner,
@@ -190,11 +198,12 @@ bool frontend_shared_values_client_access(const frontend_shared_values *owner,
         command->seat!=source->context.command.seat || command->client!=source->context.command.client ||
         command->dialect!=source->context.command.dialect || command->origin!=source->context.command.origin ||
         command->registry!=source->context.command.registry || command->generation!=source->context.command.generation ||
+        command->cvar_view!=source->context.command.cvar_view ||
         !qa_actor_id_equal(command->actor,source->context.command.actor) ||
         (!qa_application_command_context_active(owner->application,command) &&
             !qa_console_cvar_entered(source->context.console,command)))
         return fail(error,"Shared CLIENT edit requires its actual entered routed console operation");
-    *registry=owner->registry; *edit=owner->edit; return true;
+    *registry=source->context.cvars; *edit=owner->edit; return true;
 }
 bool frontend_shared_values_refresh(frontend_shared_values *owner,
     const qa_application_startup_source *source,qa_error *error)
@@ -213,21 +222,23 @@ bool frontend_shared_values_refresh(frontend_shared_values *owner,
     }
     return fail(error,"Validated shared source has no retained physical preparation");
 }
-const qa_cvars_edit *frontend_shared_values_prepared(const frontend_shared_values *owner)
+qa_cvars_edit *frontend_shared_values_prepared(const frontend_shared_values *owner)
 { return owner && !owner->terminal && !owner->published?owner->edit:NULL; }
 bool frontend_shared_values_resolve(const frontend_shared_values *owner,
     const qa_application_startup_source *source,const qa_command_context *command,const char *name,
     qa_cvars **out,qa_error *error)
 {
     if (!out || !name || !command_current(owner,source,command,error)) return false;
-    *out=qa_cvars_edit_find(owner->edit,name)?owner->registry:NULL; return true;
+    if (!qa_cvars_same_store(owner->registry,source->cvars))
+        return fail(error,"Source values must use the canonical cvar store");
+    *out=source->cvars; return true;
 }
 bool frontend_shared_values_edit(const frontend_shared_values *owner,
     const qa_application_startup_source *source,const qa_command_context *command,qa_cvars *registry,
     qa_cvars_edit **out,qa_error *error)
 {
     if (!out || !registry || !command_current(owner,source,command,error)) return false;
-    *out=registry==owner->registry?owner->edit:NULL; return true;
+    *out=qa_cvars_same_store(registry,owner->registry)?owner->edit:NULL; return true;
 }
 bool frontend_shared_values_release_access(const frontend_shared_values *owner,
     const frontend_input_settings *input,const qa_console *console,const qa_command_context *command,
@@ -359,12 +370,15 @@ bool frontend_shared_values_ready_is(const frontend_shared_values *owner)
     return true;
 }
 void frontend_shared_values_publish(frontend_shared_values *owner)
-{ qa_cvars_edit_publish(owner->edit); owner->edit=NULL; owner->published=true; }
+{
+    if (owner->owns_edit) qa_cvars_edit_publish(owner->edit);
+    owner->edit=NULL; owner->published=true;
+}
 bool frontend_shared_values_finish(frontend_shared_values *owner,qa_error *error)
 {
     if (!current(owner,error) || !owner->published || owner->terminal)
         return fail(error,"Shared scalar notifications require actual publication");
-    if (!qa_cvars_edit_finish(owner->registry,error)) return false;
+    if (owner->owns_edit && !qa_cvars_edit_finish(owner->registry,error)) return false;
     owner->terminal=true; return true;
 }
 bool frontend_shared_values_abort(frontend_shared_values *owner,qa_error *error)
@@ -372,7 +386,8 @@ bool frontend_shared_values_abort(frontend_shared_values *owner,qa_error *error)
     if (!current(owner,error) || owner->published || owner->terminal ||
         !qa_cvars_edit_abort_is(owner->edit,owner->registry))
         return fail(error,"Shared abort requires its actual unpublished scalar ticket");
-    qa_cvars_edit_abort(owner->edit); owner->edit=NULL; owner->terminal=true; return true;
+    if (owner->owns_edit) qa_cvars_edit_abort(owner->edit);
+    owner->edit=NULL; owner->terminal=true; return true;
 }
 bool frontend_shared_values_destroy(frontend_shared_values **in,qa_error *error)
 {
@@ -399,7 +414,8 @@ bool frontend_shared_values_engine_shutdown(frontend_shared_values **in,
         !qa_application_engine_shutdown_read(loan,&console,&registry,error) || registry!=owner->registry ||
         !qa_console_idle(console) || !qa_cvars_edit_abort_is(owner->edit,registry))
         return fail(error,"Detached scalar cleanup lost its exact cancellation loan and edit");
-    qa_cvars_edit_abort(owner->edit); owner->edit=NULL; owner->terminal=true;
+    if (owner->owns_edit) qa_cvars_edit_abort(owner->edit);
+    owner->edit=NULL; owner->terminal=true;
     while (owner->sources) { shared_source *row=owner->sources; owner->sources=row->next; free(row); }
     free(owner); *in=NULL; return true;
 }

@@ -229,7 +229,7 @@ static void release_script(void *opaque, void *lease)
     if (application_startup_source_active(engine->provider))
         application_startup_script_release(engine->provider, lease);
     else if (application_startup_source_scripts(engine->provider))
-        application_startup_source_script_release(engine->provider, engine->console, lease);
+        application_startup_source_script_release(engine->provider, engine->cvars, lease);
     else qa_resource_release(lease);
 }
 static void script_complete(void *opaque, const qa_command_context *context,
@@ -290,7 +290,10 @@ bool application_qc_create_console(struct application_qc_state *engine, qa_cvars
         .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture_context, .context_active = context_active};
-    qa_console *console = qa_console_create(&options, error);
+    engine->command_context.cvar_view = qa_cvars_view_identity(cvars);
+    options.context = engine->command_context;
+    qa_console *console = engine->provider->application->console;
+    if (!qa_console_bind_source(console, &options, error)) return false;
     if (!console) return false;
     engine->console = console; engine->cvars = cvars;
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
@@ -300,13 +303,13 @@ bool application_qc_create_console(struct application_qc_state *engine, qa_cvars
         application->startup_preinit_provider = engine->provider;
     bool ok = true;
     for (size_t i = 0; ok && profile && i < profile->command_count; ++i)
-        if (!qa_console_register(console, profile->commands[i].name, "Declared QuakeC command",
-            engine->provider->owner, false, application_qc_declared_command, engine, error)) {
+        if (!qa_console_register_context(console, &options.context, profile->commands[i].name, "Declared QuakeC command",
+            engine->provider->owner, engine->provider->owner, false, application_qc_declared_command, engine, error)) {
             ok = false;
         }
     application->startup_preinit_provider = previous_provider;
     engine->console = previous_console; engine->cvars = previous_cvars;
-    if (!ok && qa_console_destroy_ready(console)) { qa_console_destroy(console); console = NULL; }
+    if (!ok && qa_console_unbind_source(console, qa_cvars_view_identity(cvars), error)) console = NULL;
     *out = console;
     return ok;
 }
@@ -1241,12 +1244,31 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     struct application_qc_state *engine = provider->state.qc.engine;
     engine->services = application_builtin_services(app, world, app->physics);
     const struct application_qc_profile *profile = provider->state.qc.qualified;
-    if (!application_startup_source_preinit(provider, console, cvars, &command, error)) return false;
+    if (!application_startup_source_preinit(provider, console, cvars, &command, error) ||
+        (app->operation != APPLICATION_PERSISTING && !application_startup_apply_latched(provider, cvars, error))) return false;
     const qa_cvar_view *skill = qa_cvars_find(cvars, "skill"), *deathmatch = qa_cvars_find(cvars, "deathmatch");
     const qa_cvar_view *maximum = qa_cvars_find(cvars, "maxclients");
     if (!skill || !deathmatch || !maximum || !isfinite(skill->number) || !isfinite(deathmatch->number) ||
-        !isfinite(maximum->number) || maximum->number != (float)engine->max_clients)
+        !isfinite(maximum->number))
         return application_fail(error, QA_ERROR_FORMAT, "QC initialization lost its actual finite source rules");
+    if (!profile && engine->profile != QA_QC_QUAKEWORLD) {
+        float capacity = truncf(maximum->number);
+        float minimum = (float)(choices->seat_count ? choices->seat_count : 1);
+        if (capacity < minimum) capacity = minimum;
+        if (capacity < 1 || capacity > 64)
+            return application_fail(error, QA_ERROR_FORMAT, "QC source client capacity must be between 1 and 64");
+        engine->max_clients = (uint32_t)capacity;
+        if (!application_publication_source_capacity(provider, engine->max_clients, error)) return false;
+    }
+    if ((profile || engine->profile == QA_QC_QUAKEWORLD) && maximum->number != (float)engine->max_clients)
+        return application_fail(error, QA_ERROR_FORMAT, "QC initialization differs from its actual source client capacity");
+    if (engine->max_clients == UINT32_MAX || engine->max_clients + 1 >= engine->actor_capacity)
+        return application_fail(error, QA_ERROR_FORMAT, "QC reserved clients exceed the actual source entity capacity");
+    if (!application_qc_player_roster_ready(provider, choices, error)) return false;
+    engine->clients = calloc((size_t)engine->max_clients + 1, sizeof(*engine->clients));
+    engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
+    if (!engine->clients || !engine->actors)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating QC physical client and actor rows");
     int32_t difficulty = (int32_t)(fmaxf(0, fminf(3, skill->number)) + 0.5);
     static const qa_qc_builtin imports[] = {
         QA_QC_BUILTIN_CHECKCLIENT, QA_QC_BUILTIN_AIM, QA_QC_BUILTIN_STUFFCMD,
@@ -1477,7 +1499,9 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     engine->output_channels = 0;
     if (engine->console && engine->cvars &&
         !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
-    qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
+    if (!qa_console_unbind_source(engine->console, qa_cvars_view_identity(engine->cvars), error)) return false;
+    qa_cvars_remove_owner(engine->cvars, provider->owner);
+    qa_cvars_detach_callbacks(engine->cvars); qa_cvars_destroy(engine->cvars);
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource_dispose(&engine->resources[i]);
     }

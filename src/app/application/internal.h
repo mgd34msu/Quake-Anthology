@@ -3,6 +3,7 @@
 
 #include "qa/arena.h"
 #include "qa/application.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/application_native_q2_delivery.h"
 #include "qa/campaign_q1.h"
 #include "qa/campaign_q1_sources.h"
@@ -206,6 +207,16 @@ typedef struct application_publication {
     bool failed_retained;
     const qa_launch_snapshot *previous;
     const qa_launch_snapshot *candidate;
+    qa_cvars_edit *values;
+    bool owns_values;
+    void *resources;
+    bool resources_ready, resources_consumed;
+    bool source_retirement_started;
+    bool sources_retired;
+    bool gameplay_prepared;
+    bool native_map_cut;
+    uint32_t source_max_clients;
+    bool source_capacity_prepared;
     application_provider **next;
     size_t next_count;
     application_provider **removed;
@@ -291,6 +302,7 @@ struct qa_application {
     qa_application_world_hook_fn before_world_change;
     qa_application_world_hook_fn world_retired;
     void (*console_print)(void *, const qa_command_context *, const char *);
+    qa_command_fallback console_forward;
     struct application_map_state *map_state;
     qa_campaign_unit *campaign_unit;
     application_campaign_travel *campaign_travel;
@@ -559,8 +571,7 @@ bool application_guest_bots_admit(application_provider *, qa_error *);
 bool application_guest_clients_drain(application_provider *, qa_error *);
 bool application_guest_console_at(application_provider *, size_t, qa_console **,
                                     qa_cvars **, qa_command_context *);
-bool application_guest_console_scope(application_provider *, const qa_console *,
-                                       qa_application_console_scope *);
+
 bool application_guest_frontend_rebind_ready(application_provider *, const qa_scene_frame *,
                                                void *, qa_error *);
 void application_guest_frontend_rebind(application_provider *, qa_scene_frame *, void *, void *);

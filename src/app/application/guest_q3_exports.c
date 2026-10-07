@@ -1,6 +1,7 @@
 #include "guest_q3_private.h"
 #include "qa/application_q3_body_entry.h"
 #include "guest_q3_client_console.h"
+#include "startup_flow.h"
 #include "guest_q3_console.h"
 #include "guest_q3_factory.h"
 #include "guest_q3_weapon_models.h"
@@ -103,7 +104,7 @@ bool application_guest_console_at(application_provider *provider, size_t index,
                 *console = game;
                 if (cvars) *cvars = application_guest_q3_console_registry(provider);
                 if (context) *context = (qa_command_context){.owner = provider->owner,
-                    .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+                    .cvar_view = qa_cvars_view_identity(application_guest_q3_console_registry(provider)), .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
             }
             return true;
         }
@@ -111,76 +112,16 @@ bool application_guest_console_at(application_provider *provider, size_t index,
     }
     qa_application_startup_source source;
     if (application_guest_q3_client_console_source(engine, index, &source) &&
-        application_guest_q3_client_console_at(engine, source.scope.seat, console, cvars)) {
+        application_guest_q3_client_console_at(engine, source.scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME, source.scope.seat, console, cvars)) {
         if (context) *context = source.command;
         for (q3g_role *role = engine->roles; role; role = role->next)
-            if (qa_q3_host_console(role->host, NULL, NULL) == *console) {
+            if (role->kind == (source.scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME) && role->seat == source.scope.seat && qa_q3_host_console(role->host, NULL, NULL) == *console) {
                 *console = qa_q3_host_console(role->host, cvars, context);
                 break;
             }
         return true;
     }
     return false;
-}
-
-bool application_guest_console_scope(application_provider *provider,
-    const qa_console *console, qa_application_console_scope *out)
-{
-    if (!provider || !provider->constructed || !console || !out)
-        return false;
-    if (provider->client_only_owned || application_native_client_only(provider))
-        return application_native_client_console_scope(provider, console, out);
-    qa_application_console_scope scope = {.provider = provider->owner};
-    if (provider->kind == APPLICATION_PROVIDER_Q1) {
-        qa_console *source = NULL;
-        if (!application_native_q1_console_at(provider, &source, NULL, NULL) || source != console)
-            return false;
-        scope.kind = QA_APPLICATION_CONSOLE_Q1_GAME;
-    } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
-        qa_console *source = NULL;
-        if (!application_native_q2_console_at(provider, &source, NULL, NULL) || source != console)
-            return false;
-        scope.kind = QA_APPLICATION_CONSOLE_Q2_GAME;
-    } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
-        qa_console *source = NULL;
-        if (application_native_q3_console_at(provider, &source, NULL, NULL) && source == console)
-            scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
-        else {
-            qa_application_startup_source client;
-            bool matched = false;
-            for (size_t index = 0;; ++index) {
-                bool found;
-                if (!application_native_q3_remote_role_source_at(provider, index, &client, &found, NULL) || !found) break;
-                if (client.console == console && application_native_q3_remote_role_configuration(provider,
-                    client.scope.seat, &client, NULL)) { scope = client.scope; matched = true; break; }
-            }
-            if (!matched) return false;
-        }
-    } else if (provider->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = provider->state.qc.engine;
-        if (!engine || engine->console != console)
-            return false;
-        scope.kind = QA_APPLICATION_CONSOLE_QC;
-    } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
-        if (provider->state.native.q2_engine->console != console)
-            return false;
-        scope.kind = QA_APPLICATION_CONSOLE_NATIVE_Q2;
-    } else {
-        struct application_q3_guest *engine = q3g_engine(provider);
-        if (!engine) return false;
-        if (application_guest_q3_console_owner(provider) == console)
-            scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
-        else {
-            qa_application_startup_source client;
-            bool matched = false;
-            for (size_t index = 0; application_guest_q3_client_console_source(engine, index, &client); ++index)
-                if (client.console == console && application_guest_q3_client_console_at(engine,
-                    client.scope.seat, NULL, NULL)) { scope = client.scope; matched = true; break; }
-            if (!matched) return false;
-        }
-    }
-    *out = scope;
-    return true;
 }
 
 bool application_q3_guest_role_loading(const application_provider *provider,

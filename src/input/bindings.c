@@ -36,6 +36,11 @@ static void print(qa_input_console *c, const char *text) {
 }
 static bool command(void *user, const qa_command_invocation *cmd, qa_error *error) {
     qa_input_console *c = user;
+    if (!qa_console_invocation_current(c->options.console, cmd) ||
+        !qa_console_invocation_delivered_view(cmd, c->options.context.cvar_view, 0, c->options.owner)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input command lost its actual Source registration");
+        return false;
+    }
     if (cmd->context.origin != QA_COMMAND_SEAT && cmd->context.origin != QA_COMMAND_LOCAL)
         return true;
     qa_input_seat *s = c->options.seat(c->options.user, &cmd->context);
@@ -162,12 +167,10 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
     return qa_input_seat_bind(s, &binding, error);
 }
 static bool register_command(qa_input_console *c, const char *name, qa_error *error) {
-    if (qa_console_find(c->options.console, NULL, name))
-        return true;
     if (c->count >= sizeof(c->names) / sizeof(*c->names) || strlen(name) >= sizeof(c->names[0]))
         return false;
-    if (!qa_console_register_owned(c->options.console, name, "Local seat input", 0, c->options.owner, true,
-                             command, c, error))
+    if (!qa_console_register_context(c->options.console, &c->options.context, name,
+        "Local seat input", 0, c->options.owner, true, command, c, error))
         return false;
     (void)snprintf(c->names[c->count++], sizeof(c->names[0]), "%s", name);
     return true;
@@ -183,6 +186,9 @@ qa_input_console *qa_input_console_create(const qa_input_console_options *o, qa_
         return NULL;
     }
     c->options = *o;
+    if (!c->options.context.cvar_view &&
+        !qa_console_context_read(o->console, &c->options.context, error))
+        goto fail;
     char name[32];
     static const qa_input_action order[] = {
         QA_INPUT_ATTACK, QA_INPUT_JUMP, QA_INPUT_FORWARD, QA_INPUT_BACK,
@@ -230,7 +236,7 @@ void qa_input_console_destroy(qa_input_console *c) {
     if (!c)
         return;
     for (size_t i = 0; i < c->count; ++i)
-        qa_console_unregister(c->options.console, c->names[i], 0);
+        qa_console_unregister_context(c->options.console, &c->options.context, c->names[i], 0);
     free(c);
 }
 static const char *const default_rows[][2] = {{"w", "+forward"},

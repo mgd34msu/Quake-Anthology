@@ -5,7 +5,7 @@ typedef struct qa_console_release qa_console_release;
 
 typedef struct command_contribution {
     qa_console_entry view;
-    uint64_t lifetime_owner;
+    uint64_t lifetime_owner, cvar_view;
     qa_command_handler handler;
     qa_command_fallback callback;
     void *user;
@@ -59,7 +59,7 @@ typedef struct retired_id {
     struct retired_id *next;
 } retired_id;
 typedef struct command_call {
-    const command_contribution *contribution;
+    uint64_t receiver, lifetime_owner, cvar_view;
     struct command_call *parent;
 } command_call;
 typedef struct command_frame {
@@ -72,10 +72,16 @@ typedef struct output_frame {
     void *user;
     struct output_frame *parent;
 } output_frame;
+typedef struct console_source {
+    qa_console_options options;
+    char *startup;
+    struct console_source *next;
+} console_source;
 struct qa_console_program;
 struct qac_cvar_scope;
 struct qa_console {
     qa_console_options options;
+    console_source *sources;
     char *startup;
     command_entry *commands;
     alias_entry *aliases;
@@ -111,6 +117,7 @@ struct qa_console {
 };
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);
+bool qac_console_context_view_current(const qa_console *,const qa_command_context *,bool publication,qa_error *);
 bool qac_console_release_access(const qa_console *, qa_error *);
 void qac_console_release_enter(qa_console *);
 /* Shared namespaces remain visible to the retained program during a release.

@@ -1,24 +1,31 @@
 #include "shared_storage.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/cvars_alias.h"
 #include "shared_register.h"
 #include "save_private.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
 #include "qa/text.h"
 #include <math.h>
+#include <limits.h>
 
+typedef struct storage_player {
+    uint32_t seat;
+    qa_cvar_archive archive;
+} storage_player;
+static const char canonical_path[]="cvars/shared/canonical.json";
 struct frontend_shared_storage {
     qa_settings_store user,devices,input;
     qa_resource *images;
-    qa_cvar_archive archive;
+    qa_cvar_archive archive,canonical;
+    storage_player *players;
+    size_t player_count;
+    bool canonical_present;
     frontend_shared_audio_preferences audio;
     frontend_shared_view_preferences view;
     char *device,*menu;
     bool graphical;
 };
-static const char *const input_names[]={"in_midi","in_midiport","in_midichannel","in_mididevice",
-    "in_midiseat","in_mouse","in_dgamouse","in_subframe","in_nograb","in_joystick",
-    "in_debugjoystick","joy_threshold","in_joystickProfile","in_joyBallScale","in_joystickSeat"};
 static bool fail(qa_error *e,const char *text)
 { return frontend_fail(e,QA_ERROR_FORMAT,text); }
 static bool store_valid(qa_settings_store store)
@@ -84,6 +91,146 @@ static bool archive_add(frontend_shared_storage *owner,const char *name,const ch
     row->name=malloc(strlen(name)+1); row->value=malloc(strlen(value)+1);
     if (!row->name || !row->value) return frontend_fail(e,QA_ERROR_MEMORY,"Copying shared preference value");
     strcpy(row->name,name); strcpy(row->value,value); return true;
+}
+static void players_free(storage_player *players,size_t count)
+{
+    for (size_t i=0;i<count;++i) qa_cvar_archive_free(&players[i].archive);
+    free(players);
+}
+static bool archive_put(qa_cvar_archive *archive,const char *name,const char *value,qa_error *e)
+{
+    size_t at=0;
+    while (at<archive->count && strcmp(archive->entries[at].name,name)) ++at;
+    char *text=malloc(strlen(value)+1);
+    if (!text) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining canonical setting value");
+    strcpy(text,value);
+    if (at<archive->count) { free(archive->entries[at].value); archive->entries[at].value=text; return true; }
+    if (archive->count==SIZE_MAX/sizeof(*archive->entries)) { free(text); return fail(e,"Canonical archive exceeds storage"); }
+    char *key=malloc(strlen(name)+1);
+    qa_cvar_archive_entry *rows=key?realloc(archive->entries,(archive->count+1)*sizeof(*rows)):NULL;
+    if (!rows) { free(key); free(text); return frontend_fail(e,QA_ERROR_MEMORY,"Retaining canonical setting name"); }
+    strcpy(key,name); archive->entries=rows; rows[archive->count++]=(qa_cvar_archive_entry){key,text}; return true;
+}
+static bool archive_merge(qa_cvar_archive *out,const qa_cvar_archive *source,qa_error *e)
+{
+    for (size_t i=0;source && i<source->count;++i)
+        if (!archive_put(out,source->entries[i].name,source->entries[i].value,e)) return false;
+    return true;
+}
+static bool archive_read(const qa_json_document *d,qa_json_id entries,qa_cvar_archive *out,qa_error *e)
+{
+    if (qa_json_type(d,entries)!=QA_JSON_ARRAY) return fail(e,"Canonical settings require archive entries");
+    size_t count=qa_json_size(d,entries);
+    if (count>SIZE_MAX/sizeof(*out->entries)) return fail(e,"Canonical settings archive exceeds storage");
+    out->entries=count?calloc(count,sizeof(*out->entries)):NULL;
+    if (count && !out->entries) return frontend_fail(e,QA_ERROR_MEMORY,"Reading canonical setting entries");
+    for (size_t i=0;i<count;++i) {
+        qa_json_id row=qa_json_at(d,entries,i); qa_cvar_archive_entry *entry=out->entries+i;
+        ++out->count;
+        if (qa_json_type(d,row)!=QA_JSON_OBJECT || !string(d,qa_json_get(d,row,"name"),&entry->name,e) ||
+            !*entry->name || !string(d,qa_json_get(d,row,"value"),&entry->value,e)) return false;
+        for (size_t previous=0;previous<i;++previous)
+            if (!strcmp(out->entries[previous].name,entry->name)) return fail(e,"Duplicate canonical setting name");
+    }
+    return true;
+}
+static bool canonical_load(frontend_shared_storage *owner,qa_error *e)
+{
+    qa_resource *file=NULL; bool found=false;
+    if (!qa_settings_read(owner->user,canonical_path,&file,&found,e)) return false;
+    if (!found) return true;
+    qa_json_document *d=NULL; bool ok=qa_json_parse(qa_resource_bytes(file),&d,e);
+    qa_json_id root=ok?qa_json_root(d):QA_JSON_NONE; double version=0;
+    qa_json_id players=ok?qa_json_get(d,root,"players"):QA_JSON_NONE;
+    if (ok) ok=qa_json_type(d,root)==QA_JSON_OBJECT && number(d,root,"version",&version,e) && version==1 &&
+        qa_json_string_equal(d,qa_json_get(d,root,"dialect"),"q3") &&
+        archive_read(d,qa_json_get(d,root,"entries"),&owner->canonical,e) && qa_json_type(d,players)==QA_JSON_ARRAY;
+    size_t count=ok?qa_json_size(d,players):0;
+    if (count>SIZE_MAX/sizeof(*owner->players)) ok=fail(e,"Canonical player archive exceeds storage");
+    if (ok && count) {
+        owner->players=calloc(count,sizeof(*owner->players));
+        if (!owner->players) ok=frontend_fail(e,QA_ERROR_MEMORY,"Reading canonical player settings");
+    }
+    for (size_t i=0;ok && i<count;++i) {
+        qa_json_id row=qa_json_at(d,players,i); uint64_t seat=0;
+        ++owner->player_count;
+        ok=qa_json_type(d,row)==QA_JSON_OBJECT && qa_json_u64(d,qa_json_get(d,row,"seat"),&seat,e) &&
+            seat<=UINT32_MAX && archive_read(d,qa_json_get(d,row,"entries"),&owner->players[i].archive,e);
+        owner->players[i].seat=(uint32_t)seat;
+        for (size_t previous=0;ok && previous<i;++previous)
+            if (owner->players[previous].seat==owner->players[i].seat) ok=fail(e,"Duplicate canonical player seat");
+    }
+    qa_json_destroy(d); qa_resource_release(file);
+    if (!ok) return fail(e,"Invalid canonical settings archive");
+    owner->canonical_present=true; return true;
+}
+bool frontend_shared_storage_has_archive(const frontend_shared_storage *owner)
+{ return owner && owner->canonical_present; }
+const qa_cvar_archive *frontend_shared_storage_canonical_archive(const frontend_shared_storage *owner)
+{ return owner && owner->canonical_present?&owner->canonical:NULL; }
+const qa_cvar_archive *frontend_shared_storage_player_archive(const frontend_shared_storage *owner,uint32_t seat)
+{
+    for (size_t i=0;owner && i<owner->player_count;++i)
+        if (owner->players[i].seat==seat) return &owner->players[i].archive;
+    return NULL;
+}
+static qa_cvars *player_view(qa_cvars *shared,uint32_t seat,qa_error *e)
+{
+    qa_cvar_options options={.dialect=QA_CONSOLE_Q3,.side=QA_CVAR_SIDE_CLIENT,
+        .role=QA_CVAR_ROLE_ENGINE,.seat=seat,.default_save_policy=QA_CVAR_SAVE_SETTING};
+    return qa_cvars_create_view(shared,&options,e);
+}
+static bool archive_capture(const qa_cvars *registry,bool player,qa_cvar_archive *archive,qa_error *e)
+{
+    for (const qa_cvar_view *row=qa_cvars_next(registry,NULL);row;row=qa_cvars_next(registry,row)) {
+        const char *value=row->player_scoped==player?qa_cvars_archive_value(registry,row):NULL;
+        if (value && !archive_put(archive,row->name,value,e)) return false;
+    }
+    return true;
+}
+bool frontend_shared_storage_seed_player(const frontend_shared_storage *owner,qa_cvars *shared,
+    uint32_t seat,bool preserve_current,qa_cvar_archive *archive,qa_error *e)
+{
+    if (!owner || !shared || !archive) return fail(e,"Player archive requires its actual canonical table and seat");
+    qa_cvars *view=player_view(shared,seat,e);
+    if (!view) return false;
+    for (size_t i=0;i<owner->canonical.count;++i) {
+        const qa_cvar_archive_entry *entry=owner->canonical.entries+i;
+        const qa_cvar_view *row=qa_cvars_find(view,entry->name);
+        if ((row && row->player_scoped) || strcmp(qa_cvars_canonical_name(view,entry->name),entry->name)) {
+            qa_cvars_destroy(view); return fail(e,"Global canonical archive contains a player setting or alias");
+        }
+    }
+    const qa_cvar_archive *saved=frontend_shared_storage_player_archive(owner,seat);
+    bool ok=true;
+    for (size_t i=0;saved && ok && i<saved->count;++i) {
+        const qa_cvar_archive_entry *entry=saved->entries+i;
+        const qa_cvar_view *row=qa_cvars_find(view,entry->name);
+        ok=row && row->player_scoped && !strcmp(qa_cvars_canonical_name(view,entry->name),entry->name);
+        if (!ok) fail(e,"Player canonical archive contains a global setting or alias");
+    }
+    if (ok) ok=archive_merge(archive,saved,e);
+    if (ok && preserve_current) ok=archive_capture(view,true,archive,e);
+    qa_cvars_destroy(view); return ok;
+}
+bool frontend_shared_storage_apply_players(const frontend_shared_storage *owner,qa_cvars *shared,qa_error *e)
+{
+    if (!owner || !shared) return fail(e,"Player restore requires its actual canonical table and settings root");
+    for (size_t i=0;i<owner->player_count;++i) {
+        const storage_player *row=owner->players+i;
+        qa_cvars *view=player_view(shared,row->seat,e);
+        if (!view) return false;
+        qa_cvar_archive checked={0};
+        bool ok=frontend_shared_storage_seed_player(owner,view,row->seat,false,&checked,e);
+        qa_cvars_edit *edit=qa_cvars_prepared_edit(view);
+        bool entered=ok && edit && qa_cvars_edit_enter(edit,view,e);
+        if (ok && edit && !entered) ok=false;
+        if (ok) ok=qa_cvar_archive_apply(view,&checked,e);
+        if (entered && !qa_cvars_edit_leave(edit,view,e)) ok=false;
+        qa_cvar_archive_free(&checked); qa_cvars_destroy(view);
+        if (!ok) return false;
+    }
+    return true;
 }
 static bool audio_load(frontend_shared_storage *owner,qa_error *e)
 {
@@ -169,8 +316,9 @@ bool frontend_shared_storage_open(qa_settings_store user,qa_settings_store devic
     static const char *const input_owner[]={"input","devices"};
     bool ok=owner->user.vfs && owner->devices.vfs && (!input.vfs || owner->input.vfs) &&
         frontend_shared_storage_current(owner,user,devices,input,graphical) &&
-        (!graphical || qa_settings_read(owner->user,"settings/images.cfg",&owner->images,&found,e)) &&
-        qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,&owner->archive,e) &&
+        canonical_load(owner,e) &&
+        (owner->canonical_present || !graphical || qa_settings_read(owner->user,"settings/images.cfg",&owner->images,&found,e)) &&
+        (owner->canonical_present || qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,&owner->archive,e)) &&
         (!graphical || !input.vfs || (audio_load(owner,e) && view_load(owner,e)));
     if (ok && owner->images) {
         qa_bytes bytes=qa_resource_bytes(owner->images);
@@ -227,41 +375,6 @@ const frontend_shared_audio_preferences *frontend_shared_storage_audio(const fro
 { return owner?&owner->audio:NULL; }
 const frontend_shared_view_preferences *frontend_shared_storage_view(const frontend_shared_storage *owner)
 { return owner?&owner->view:NULL; }
-static bool same_name(const qa_cvars *registry,const char *a,const char *b)
-{
-    bool folded=qa_cvars_dialect(registry)==QA_CONSOLE_Q3;
-    while (*a && *b) {
-        unsigned char left=(unsigned char)*a++,right=(unsigned char)*b++;
-        if (folded && left>='A' && left<='Z') left+='a'-'A';
-        if (folded && right>='A' && right<='Z') right+='a'-'A';
-        if (left!=right) return false;
-    }
-    return !*a && !*b;
-}
-static bool input_name(const qa_cvars *registry,const char *name)
-{
-    for (size_t i=0;i<sizeof(input_names)/sizeof(*input_names);++i)
-        if (same_name(registry,name,input_names[i])) return true;
-    return false;
-}
-static bool image_filter(void *context,const qa_cvars *registry,const qa_cvar_view *row)
-{
-    (void)context;
-    static const char *const audio[]={"gamma","volume","bgmvolume","music_shuffle","music_menu_track",
-        "s_outputRate","s_outputBits","s_outputChannels"};
-    if (input_name(registry,row->name)) return false;
-    for (size_t i=0;i<sizeof(audio)/sizeof(*audio);++i)
-        if (same_name(registry,row->name,audio[i])) return false;
-    return true;
-}
-bool frontend_shared_storage_save_images(frontend_shared_storage *owner,const qa_cvars *registry,qa_error *e)
-{
-    if (!owner || !owner->graphical || !qa_cvars_observer_idle(registry)) return fail(e,"Shared image save requires published returned graphical scalars");
-    qa_buffer text={0};
-    bool ok=qa_cvars_config_filtered(registry,image_filter,NULL,&text,e) &&
-        qa_settings_write(owner->user,"settings/images.cfg",(qa_bytes){text.data,text.size},e);
-    qa_buffer_free(&text); return ok;
-}
 static void key_number(qa_json_writer *w,const char *name,double value)
 { qa_json_writer_key(w,name); qa_json_writer_number(w,value); }
 static void key_string(qa_json_writer *w,const char *name,const char *value)
@@ -272,20 +385,69 @@ static bool write_json(qa_settings_store store,const char *path,qa_json_writer *
         qa_settings_write(store,path,(qa_bytes){bytes.data,bytes.size},e);
     qa_buffer_free(&bytes); qa_json_writer_destroy(w); return ok;
 }
-bool frontend_shared_storage_save_input(frontend_shared_storage *owner,const qa_cvars *registry,qa_error *e)
+static void archive_write(qa_json_writer *w,const qa_cvar_archive *archive)
 {
-    if (!owner || !qa_cvars_observer_idle(registry)) return fail(e,"Shared input save requires published returned scalars");
-    qa_json_writer w={0}; qa_json_writer_object(&w); key_number(&w,"version",1); key_string(&w,"dialect","q3");
-    qa_json_writer_key(&w,"entries"); qa_json_writer_array(&w);
-    for (const qa_cvar_view *row=qa_cvars_next(registry,NULL);row;
-         row=qa_cvars_next(registry,row)) {
-        const char *value=qa_cvars_archive_value(registry,row);
-        if (!value || !input_name(registry,row->name)) continue;
-        qa_json_writer_object(&w); key_string(&w,"name",row->name); key_string(&w,"value",value); qa_json_writer_end(&w);
+    qa_json_writer_key(w,"entries"); qa_json_writer_array(w);
+    for (size_t i=0;i<archive->count;++i) {
+        qa_json_writer_object(w); key_string(w,"name",archive->entries[i].name);
+        key_string(w,"value",archive->entries[i].value); qa_json_writer_end(w);
     }
-    qa_json_writer_end(&w); qa_json_writer_end(&w);
-    return write_json(owner->devices,"cvars/input/devices.json",&w,e);
+    qa_json_writer_end(w);
 }
+static bool selected_seat(const uint32_t *seats,size_t count,uint32_t seat)
+{
+    for (size_t i=0;i<count;++i) if (seats[i]==seat) return true;
+    return false;
+}
+bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_cvars *shared,qa_error *e)
+{
+    size_t actual=qa_cvars_player_count(shared);
+    if (!owner || !shared || !store_valid(owner->user) || !qa_cvars_observer_idle(shared) ||
+        owner->player_count>SIZE_MAX/sizeof(storage_player) || actual>SIZE_MAX/sizeof(storage_player)-owner->player_count)
+        return fail(e,"Canonical settings save requires its returned table and actual player identities");
+    size_t selected_count=0,selected_capacity=actual;
+    uint32_t *selected=selected_capacity?malloc(selected_capacity*sizeof(*selected)):NULL;
+    if (selected_capacity && !selected) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining canonical player identities");
+    bool ok=true;
+    for (size_t i=0;ok && i<actual;++i) {
+        uint32_t seat=0;
+        ok=qa_cvars_player_at(shared,i,&seat);
+        if (!ok) fail(e,"Canonical player identity left its returned table");
+        else if (!selected_seat(selected,selected_count,seat)) selected[selected_count++]=seat;
+    }
+    qa_cvar_archive global={0}; size_t capacity=owner->player_count+selected_count;
+    storage_player *players=capacity?calloc(capacity,sizeof(*players)):NULL; size_t used=0;
+    ok=ok && (!capacity || players) && archive_capture(shared,false,&global,e);
+    if (!players && capacity) frontend_fail(e,QA_ERROR_MEMORY,"Capturing canonical player settings");
+    for (size_t i=0;ok && i<owner->player_count;++i) {
+        if (selected_seat(selected,selected_count,owner->players[i].seat)) continue;
+        storage_player *row=players+used++; row->seat=owner->players[i].seat;
+        ok=archive_merge(&row->archive,&owner->players[i].archive,e);
+    }
+    for (size_t i=0;ok && i<selected_count;++i) {
+        storage_player *row=players+used++; row->seat=selected[i];
+        qa_cvars *view=player_view(shared,row->seat,e);
+        ok=view && archive_capture(view,true,&row->archive,e); qa_cvars_destroy(view);
+    }
+    if (ok) {
+        qa_json_writer writer={0}; qa_json_writer_object(&writer); key_number(&writer,"version",1);
+        key_string(&writer,"dialect","q3"); archive_write(&writer,&global);
+        qa_json_writer_key(&writer,"players"); qa_json_writer_array(&writer);
+        for (size_t i=0;i<used;++i) {
+            qa_json_writer_object(&writer); qa_json_writer_key(&writer,"seat");
+            qa_json_writer_u64(&writer,players[i].seat); archive_write(&writer,&players[i].archive); qa_json_writer_end(&writer);
+        }
+        qa_json_writer_end(&writer); qa_json_writer_end(&writer);
+        ok=write_json(owner->user,canonical_path,&writer,e);
+    }
+    if (ok) {
+        qa_cvar_archive_free(&owner->canonical); players_free(owner->players,owner->player_count);
+        owner->canonical=global; global=(qa_cvar_archive){0}; owner->players=players; players=NULL;
+        owner->player_count=used; owner->canonical_present=true;
+    }
+    free(selected); qa_cvar_archive_free(&global); players_free(players,players?used:0); return ok;
+}
+
 bool frontend_shared_storage_save_audio(frontend_shared_storage *owner,
     const frontend_shared_audio_preferences *value,qa_error *e)
 {
@@ -323,12 +485,40 @@ bool frontend_shared_storage_visit(const frontend_shared_storage *owner,
 }
 typedef struct storage_state {
     uint64_t user,devices,input,user_mount,devices_mount,input_mount,image_pool,image;
-    qa_cvar_archive archive;
+    qa_cvar_archive archive,canonical;
+    storage_player *players;
+    size_t player_count;
+    bool canonical_present;
     frontend_shared_audio_preferences audio;
     frontend_shared_view_preferences view;
     char *device,*menu;
     bool graphical;
 } storage_state;
+static bool archive_fields(qa_source_save_io *io,qa_cvar_archive *archive)
+{
+    size_t count=archive->count;
+    size_t limit=io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/2:SIZE_MAX;
+    if (!qa_source_save_count(io,&count,limit) || count>SIZE_MAX/sizeof(*archive->entries)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        archive->entries=count?calloc(count,sizeof(*archive->entries)):NULL;
+        if (count && !archive->entries) return frontend_fail(io->error,QA_ERROR_MEMORY,"Importing shared settings archive");
+        archive->count=count;
+    }
+    for (size_t i=0;i<count;++i)
+        if (!qa_source_save_owned_text(io,&archive->entries[i].name) ||
+            !qa_source_save_owned_text(io,&archive->entries[i].value)) return false;
+    return true;
+}
+static bool archive_valid(const qa_cvar_archive *archive,bool unique)
+{
+    if (archive->count && !archive->entries) return false;
+    for (size_t i=0;i<archive->count;++i) {
+        if (!archive->entries[i].name || !*archive->entries[i].name || !archive->entries[i].value) return false;
+        for (size_t previous=0;unique && previous<i;++previous)
+            if (!strcmp(archive->entries[previous].name,archive->entries[i].name)) return false;
+    }
+    return true;
+}
 static bool state_valid(const storage_state *state)
 {
     const frontend_shared_audio_preferences *value=&state->audio;
@@ -338,8 +528,14 @@ static bool state_valid(const storage_state *state)
         (!!state->image!=!!state->image_pool) || (state->archive.count && !state->archive.entries)) return false;
     if (!view_valid(state->view) || (!state->input && (state->audio.present || state->view.present)) || (!state->graphical &&
         (state->image || state->audio.present || state->view.present))) return false;
-    for (size_t i=0;i<state->archive.count;++i)
-        if (!state->archive.entries[i].name || !state->archive.entries[i].value) return false;
+    if (!archive_valid(&state->archive,false) || !archive_valid(&state->canonical,true) ||
+        (state->player_count && !state->players) ||
+        (!state->canonical_present && (state->canonical.count || state->player_count))) return false;
+    for (size_t i=0;i<state->player_count;++i) {
+        if (!archive_valid(&state->players[i].archive,true)) return false;
+        for (size_t previous=0;previous<i;++previous)
+            if (state->players[previous].seat==state->players[i].seat) return false;
+    }
     if (!value->present) return !state->device && !state->menu && !value->has_shuffle && !value->shuffle &&
         !value->has_menu_track && !value->format.sample_rate && !value->format.sample_bits && !value->format.channels &&
         value->effects==0 && value->music==0;
@@ -363,17 +559,18 @@ static bool fields(qa_source_save_io *io,storage_state *state)
         !qa_source_save_owned_text(io,&state->menu) || !qa_source_save_bool(io,&state->view.present) ||
         !qa_source_save_f64(io,&state->view.field_of_view)) return false;
     state->audio.format=(qa_audio_output_format){rate,channels,bits};
-    size_t count=state->archive.count;
-    size_t limit=io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/2:SIZE_MAX;
-    if (!qa_source_save_count(io,&count,limit) || count>SIZE_MAX/sizeof(*state->archive.entries)) return false;
+    if (!archive_fields(io,&state->archive) || !qa_source_save_bool(io,&state->canonical_present) ||
+        !archive_fields(io,&state->canonical)) return false;
+    size_t count=state->player_count;
+    size_t limit=io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/5:SIZE_MAX;
+    if (!qa_source_save_count(io,&count,limit) || count>SIZE_MAX/sizeof(*state->players)) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) {
-        state->archive.entries=count?calloc(count,sizeof(*state->archive.entries)):NULL;
-        if (count && !state->archive.entries) return frontend_fail(io->error,QA_ERROR_MEMORY,"Importing shared settings archive");
-        state->archive.count=count;
+        state->players=count?calloc(count,sizeof(*state->players)):NULL;
+        if (count && !state->players) return frontend_fail(io->error,QA_ERROR_MEMORY,"Importing canonical player settings");
+        state->player_count=count;
     }
     for (size_t i=0;i<count;++i)
-        if (!qa_source_save_owned_text(io,&state->archive.entries[i].name) ||
-            !qa_source_save_owned_text(io,&state->archive.entries[i].value)) return false;
+        if (!qa_source_save_u32(io,&state->players[i].seat) || !archive_fields(io,&state->players[i].archive)) return false;
     return state_valid(state);
 }
 bool frontend_shared_storage_checkpoint(const frontend_shared_storage *owner,
@@ -385,7 +582,8 @@ bool frontend_shared_storage_checkpoint(const frontend_shared_storage *owner,
         .devices=qa_application_content_view_id(graph,owner->devices.vfs),
         .input=owner->input.vfs?qa_application_content_view_id(graph,owner->input.vfs):0,.user_mount=owner->user.mount,
         .devices_mount=owner->devices.mount,.input_mount=owner->input.mount,.graphical=owner->graphical,
-        .archive=owner->archive,.audio=owner->audio,.view=owner->view,.device=owner->device,.menu=owner->menu};
+        .archive=owner->archive,.canonical=owner->canonical,.players=owner->players,.player_count=owner->player_count,
+        .canonical_present=owner->canonical_present,.audio=owner->audio,.view=owner->view,.device=owner->device,.menu=owner->menu};
     if (owner->images && !qa_application_content_resource_id(graph,owner->images,&state.image_pool,&state.image))
         return fail(e,"Shared image script leaves its genuine captured resource graph");
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,e) && fields(&io,&state) && qa_source_save_finish(&io,out);
@@ -421,17 +619,22 @@ bool frontend_shared_storage_restore(qa_application_content_graph *graph,qa_byte
         qa_application_content_claim_view(graph,state.devices,&owner->devices.vfs,e) &&
         (!state.input || qa_application_content_claim_view(graph,state.input,&owner->input.vfs,e));
     if (ok) {
-        owner->archive=state.archive; state.archive=(qa_cvar_archive){0}; owner->audio=state.audio; owner->view=state.view;
+        owner->archive=state.archive; state.archive=(qa_cvar_archive){0};
+        owner->canonical=state.canonical; state.canonical=(qa_cvar_archive){0};
+        owner->players=state.players; state.players=NULL; owner->player_count=state.player_count;
+        owner->canonical_present=state.canonical_present; owner->audio=state.audio; owner->view=state.view;
         owner->device=state.device; state.device=NULL; owner->menu=state.menu; state.menu=NULL;
         owner->audio.device=owner->device; owner->audio.menu_track=owner->menu;
         owner->images=(qa_resource *)image; qa_resource_retain(owner->images); *out=owner;
     } else { frontend_shared_storage_destroy(owner); fail(e,"Invalid actual shared storage continuation"); }
-    qa_cvar_archive_free(&state.archive); free(state.device); free(state.menu); return ok;
+    qa_cvar_archive_free(&state.archive); qa_cvar_archive_free(&state.canonical);
+    players_free(state.players,state.players?state.player_count:0); free(state.device); free(state.menu); return ok;
 }
 void frontend_shared_storage_destroy(frontend_shared_storage *owner)
 {
     if (!owner) return;
     qa_resource_release(owner->images); qa_cvar_archive_free(&owner->archive);
+    qa_cvar_archive_free(&owner->canonical); players_free(owner->players,owner->player_count);
     free(owner->device); free(owner->menu); qa_vfs_destroy(owner->input.vfs);
     qa_vfs_destroy(owner->devices.vfs); qa_vfs_destroy(owner->user.vfs); free(owner);
 }

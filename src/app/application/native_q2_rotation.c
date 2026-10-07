@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/application_q2_rotation.h"
 #include "qa/console_cvars_prepare.h"
+#include "startup_flow.h"
 
 static application_provider *rotation_source(qa_application *app, qa_actor_owner owner)
 {
@@ -16,12 +17,16 @@ bool qa_application_q2_rotation_read(qa_application *app, qa_actor_owner owner,
 {
     application_provider *provider = rotation_source(app, owner);
     qa_application_q2_rotation_view view = {.application = app, .owner = owner};
-    qa_command_context raw;
-    if (!provider || !out || !application_guest_console_at(provider, 0, &view.console, &view.cvars, &raw) ||
-        !qa_application_console_scope_read(app, view.console, &view.scope) || view.scope.provider != owner ||
-        (view.scope.kind != QA_APPLICATION_CONSOLE_Q2_GAME && view.scope.kind != QA_APPLICATION_CONSOLE_NATIVE_Q2) ||
-        !qa_application_capture_command_context(app, &raw, &view.command, error))
+    if (!provider || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Rotation requires its actual constructed Q2 Source console");
+    qa_application_startup_source source;
+    bool present;
+    if (!application_provider_startup_source_at(provider, 0, &source, &present, error)) return false;
+    if (!present || source.scope.provider != owner ||
+        (source.scope.kind != QA_APPLICATION_CONSOLE_Q2_GAME && source.scope.kind != QA_APPLICATION_CONSOLE_NATIVE_Q2))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Rotation requires its actual constructed Q2 Source console");
+    if (!qa_application_capture_command_context(app, &source.command, &view.command, error)) return false;
+    view.console = source.console; view.cvars = source.cvars; view.scope = source.scope;
     qa_console_dialect dialect = qa_cvars_dialect(view.cvars);
     if (dialect != QA_CONSOLE_Q2 && dialect != QA_CONSOLE_Q2_RERELEASE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Rotation Source has no actual Q2 edition");
@@ -55,6 +60,7 @@ bool qa_application_q2_rotation_current(const qa_application_q2_rotation_view *v
     qa_application_q2_rotation_view actual;
     return view && qa_application_q2_rotation_read((qa_application *)view->application, view->owner, &actual, NULL) &&
         view->descriptor == actual.descriptor && view->console == actual.console && view->cvars == actual.cvars &&
+        view->command.session == actual.command.session && view->command.cvar_view == actual.command.cvar_view &&
         view->scope.provider == actual.scope.provider && view->scope.kind == actual.scope.kind &&
         view->scope.seat == actual.scope.seat && view->configuration_generation == actual.configuration_generation &&
         view->rerelease == actual.rerelease && view->prepared == actual.prepared &&

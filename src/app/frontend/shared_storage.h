@@ -37,8 +37,15 @@ const frontend_shared_view_preferences *frontend_shared_storage_view(const front
 /* A fresh physical input source owns this new archive. The caller applies it
  * once under its actual candidate receipt; cached initial archives are separate. */
 bool frontend_shared_storage_load_devices(const frontend_shared_storage *,qa_cvar_archive *,qa_error *);
-bool frontend_shared_storage_save_images(frontend_shared_storage *,const qa_cvars *,qa_error *);
-bool frontend_shared_storage_save_input(frontend_shared_storage *,const qa_cvars *,qa_error *);
+/* One canonical archive holds explicit global values and actual player seats.
+ * Older profile files remain read-only migration inputs. */
+bool frontend_shared_storage_has_archive(const frontend_shared_storage *);
+const qa_cvar_archive *frontend_shared_storage_canonical_archive(const frontend_shared_storage *);
+const qa_cvar_archive *frontend_shared_storage_player_archive(const frontend_shared_storage *,uint32_t seat);
+bool frontend_shared_storage_seed_player(const frontend_shared_storage *,qa_cvars *,uint32_t seat,
+    bool preserve_current,qa_cvar_archive *,qa_error *);
+bool frontend_shared_storage_apply_players(const frontend_shared_storage *,qa_cvars *,qa_error *);
+bool frontend_shared_storage_save_archive(frontend_shared_storage *,qa_cvars *,qa_error *);
 bool frontend_shared_storage_save_audio(frontend_shared_storage *,const frontend_shared_audio_preferences *,qa_error *);
 /* The supplied preference must come from the actual published view owner.
  * No explicit override leaves the existing file untouched. */

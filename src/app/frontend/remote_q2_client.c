@@ -42,6 +42,7 @@ bool remote_q2_domain_equal(const frontend_remote_q2_domain *a, const frontend_r
         a->command_context.seat == b->command_context.seat &&
         a->command_context.registry == b->command_context.registry &&
         a->command_context.generation == b->command_context.generation &&
+        a->command_context.cvar_view == b->command_context.cvar_view &&
         a->command_context.dialect == b->command_context.dialect &&
         a->command_context.origin == b->command_context.origin &&
         a->command_context.direct == b->command_context.direct &&

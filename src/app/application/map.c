@@ -170,7 +170,7 @@ static bool entity_vector(const qa_entities *entities, size_t entity,
     return true;
 }
 
-static bool map_name(qa_application *application,
+bool application_map_identity(qa_application *application,
                      const application_publication *publication,
                      qa_string_id *out, qa_error *error)
 {
@@ -2844,7 +2844,7 @@ bool application_map_restore_identity(qa_application *application,
                                        qa_error *error)
 {
     application_publication names = {.candidate = snapshot};
-    return map_name(application, &names, &application->current_map, error);
+    return application_map_identity(application, &names, &application->current_map, error);
 }
 
 bool application_map_restore_bind(qa_application *application,
@@ -3036,7 +3036,7 @@ bool application_map_publish(qa_application *application,
         qa_launch_snapshot_choices(publication->candidate);
     qa_catalog *catalog = qa_launch_snapshot_catalog(publication->candidate);
     qa_string_id current_map, spawn_point;
-    if (!map_name(application, publication, &current_map, error) ||
+    if (!application_map_identity(application, publication, &current_map, error) ||
         !application_map_spawn_point(application, choices, &spawn_point, error))
         return false;
 

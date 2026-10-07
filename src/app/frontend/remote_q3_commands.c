@@ -16,7 +16,8 @@ struct frontend_remote_q3_commands {
     uint64_t identity;
     uint64_t service;
     uint32_t seat;
-    size_t contributed;
+    qa_command_context constructor;
+    size_t installed, contributed;
     bool registered, closed, busy, retiring;
 };
 struct remote_dispatch {
@@ -24,7 +25,6 @@ struct remote_dispatch {
     qa_console *console;
     qa_actor_owner receiver;
     qa_q3_product product;
-    size_t installed;
 };
 static const char *const common[]={"testgun","testmodel","nextframe","prevframe","nextskin","prevskin","viewpos",
     "+scores","-scores","+zoom","-zoom","sizeup","sizedown","weapnext","weapprev","weapon",
@@ -87,6 +87,7 @@ static bool current(const frontend_remote_q3_commands *o,frontend_remote_q3_serv
         actual.resources.identity!=o->identity || actual.resources.domain.source.receiver.console!=o->dispatch->console ||
         actual.resources.domain.source.receiver.receiver!=o->dispatch->receiver ||
         actual.resources.domain.source.receiver.service_owner!=o->service ||
+        actual.resources.domain.source.receiver.command_context.cvar_view!=o->constructor.cvar_view ||
         actual.resources.domain.source.receiver.seat!=o->seat)
         return fail(e,QA_ERROR_ARGUMENT,"Remote console lost its actual runtime and CLIENT parents");
     qa_native_q3_remote_client_basis basis;
@@ -95,28 +96,38 @@ static bool current(const frontend_remote_q3_commands *o,frontend_remote_q3_serv
     if(out)*out=actual;
     return true;
 }
+static bool source_context(frontend_remote_q3_commands *o,qa_command_context *out,qa_error *e)
+{
+    frontend_remote_q3_services_view actual;
+    qa_frontend *f=frontend_remote_q3_frontend(o->row);
+    return f && current(o,&actual,e) && qa_application_capture_command_context(f->application,
+        &actual.resources.domain.source.receiver.command_context,out,e);
+}
 static bool invocation_current(frontend_remote_q3_commands *o,const qa_command_invocation *call,qa_error *e)
 {
-    frontend_remote_q3_services_view actual; qa_command_context expected;
+    qa_command_context expected;
     qa_frontend *f=frontend_remote_q3_frontend(o->row);
-    if(!f || !current(o,&actual,e) || !qa_application_capture_command_context(f->application,
-        &actual.resources.domain.source.receiver.command_context,&expected,e))return false;
+    if(!source_context(o,&expected,e))return false;
     const qa_command_context *a=&call->context,*b=&expected;
-    return call->console==o->dispatch->console && a->session==b->session && a->owner==b->owner &&
-        a->client==b->client && a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
+    bool source=a->owner==b->owner && a->cvar_view==b->cvar_view && a->dialect==b->dialect && a->origin==b->origin;
+    bool engine=!a->owner && qa_console_invocation_delivered_view(call,o->constructor.cvar_view,
+        o->dispatch->receiver,o->service);
+    return call->console==o->dispatch->console && a->session==b->session && (source||engine) &&
+        a->client==b->client && a->seat==b->seat &&
         a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
         qa_application_command_context_active(f->application,a) ? true :
         fail(e,QA_ERROR_ARGUMENT,"Remote command differs from its captured physical CLIENT origin");
 }
 static bool send(frontend_remote_q3_commands *o,const qa_command_invocation *call,const char *text,qa_error *e)
 {
-    return invocation_current(o,call,e) && frontend_network_client_reliable(
-        frontend_remote_q3_frontend(o->row),&call->context,text,e) && invocation_current(o,call,e);
+    qa_command_context origin;
+    return invocation_current(o,call,e) && source_context(o,&origin,e) && frontend_network_client_reliable(
+        frontend_remote_q3_frontend(o->row),&origin,text,e) && invocation_current(o,call,e);
 }
 static bool append(frontend_remote_q3_commands *o,const qa_command_invocation *call,const char *text,qa_error *e)
 {
-    if(!invocation_current(o,call,e))return false;
-    qa_command_context origin=call->context;
+    qa_command_context origin;
+    if(!invocation_current(o,call,e) || !source_context(o,&origin,e))return false;
     origin.script="q3-cgame"; origin.direct=false; origin.console_text=false;
     return qa_console_append(call->console,&origin,text,e) && invocation_current(o,call,e);
 }
@@ -284,8 +295,7 @@ static bool invocation_valid(remote_dispatch *d,const qa_command_invocation *cal
 {
     if(!call || !call->argc || call->argc>1024 || !call->argv || !call->raw ||
         call->console!=d->console ||
-        (call->registration_owner ? call->receiver!=d->receiver ||
-            call->registration_owner!=d->receiver || !qa_console_invocation_current(call->console,call) :
+        (call->registration_owner ? call->receiver!=d->receiver || !qa_console_invocation_current(call->console,call) :
             call->context.owner!=d->receiver))
         return fail(e,QA_ERROR_ARGUMENT,"Remote console lost its real tokenized CLIENT invocation");
     size_t bytes=0;
@@ -301,7 +311,9 @@ static bool handle(void *context,const qa_command_invocation *call,qa_error *e)
 {
     remote_dispatch *d=context; frontend_remote_q3_commands *o=NULL;
     if(!invocation_valid(d,call,e))return false;
-    for(frontend_remote_q3_commands *p=d->owners;p;p=p->next)if(p->seat==call->context.seat && !p->retiring) {
+    for(frontend_remote_q3_commands *p=d->owners;p;p=p->next)if(p->seat==call->context.seat && !p->retiring &&
+        (call->registration_owner?qa_console_invocation_delivered_view(call,p->constructor.cvar_view,d->receiver,p->service):
+            call->context.cvar_view==p->constructor.cvar_view)) {
         if(!invocation_current(p,call,e))return false;
         if(o)return fail(e,QA_ERROR_FORMAT,"Remote console has duplicate actual CLIENT recipients");
         o=p;
@@ -354,7 +366,8 @@ static bool create(frontend_remote_q3_runtime *runtime,bool restoring,frontend_r
     for(size_t i=0;i<frontend_remote_q3_count(f);++i) {
         frontend_remote_q3 *p=frontend_remote_q3_at(f,i);
         frontend_remote_q3_commands *other=frontend_remote_q3_runtime_console(frontend_remote_q3_runtime_read(p));
-        if(other && other->dispatch->console==basis.client.console && other->dispatch->receiver==basis.client.receiver) {
+        if(other && other->constructor.cvar_view==basis.client.command_context.cvar_view &&
+            other->service==basis.client.service_owner && other->dispatch->receiver==basis.client.receiver) {
             if(other->dispatch->product!=basis.product || other->retiring) { free(o); return fail(e,QA_ERROR_ARGUMENT,"Remote console namespace has another product or retiring owner"); }
             o->dispatch=other->dispatch;
         }
@@ -366,6 +379,7 @@ static bool create(frontend_remote_q3_runtime *runtime,bool restoring,frontend_r
     }
     o->runtime=runtime; o->row=row; o->identity=services.resources.identity;
     o->service=basis.client.service_owner; o->seat=basis.client.seat;
+    o->constructor=basis.client.command_context;
     o->next=o->dispatch->owners; o->dispatch->owners=o; *out=o; return true;
 }
 bool frontend_remote_q3_commands_create(frontend_remote_q3_runtime *runtime,frontend_remote_q3_commands **out,qa_error *e)
@@ -377,12 +391,13 @@ static bool bind(frontend_remote_q3_commands *o,size_t installed,size_t contribu
     remote_dispatch *d=o->dispatch;
     for(size_t i=0;i<installed;++i) {
         const char *name=command_name(d->product,i);
-        if(i>=d->installed) {
-            if(!qa_console_register_owned(d->console,name,NULL,d->receiver,d->receiver,false,handle,d,e))return false;
-            d->installed=i+1;
+        if(i>=o->installed) {
+            if(!qa_console_register_context(d->console,&o->constructor,name,NULL,d->receiver,o->service,false,handle,d,e))return false;
+            o->installed=i+1;
         }
         if(i<contributed && i>=o->contributed) {
-            qa_console_contribution owner={.receiver=d->receiver,.lifetime_owner=o->service,.seat=o->seat};
+            qa_console_contribution owner={.receiver=d->receiver,.lifetime_owner=o->service,.seat=o->seat,
+                .cvar_view=o->constructor.cvar_view};
             if(!qa_console_contribute(d->console,name,&owner,e))return false;
             o->contributed=i+1;
         }
@@ -410,10 +425,10 @@ bool frontend_remote_q3_commands_destroy(frontend_remote_q3_commands **owned,qa_
             return fail(e,QA_ERROR_ARGUMENT,"Remote console contribution retirement was refused");
         --o->contributed;
     }
-    if(d->owners==o && !o->next)while(d->installed) {
-        if(!qa_console_unregister(d->console,command_name(d->product,d->installed-1),d->receiver))
+    while(o->installed) {
+        if(!qa_console_unregister_context(d->console,&o->constructor,command_name(d->product,o->installed-1),d->receiver))
             return fail(e,QA_ERROR_ARGUMENT,"Remote console callback retirement was refused");
-        --d->installed;
+        --o->installed;
     }
     frontend_remote_q3_commands **link=&d->owners;
     while(*link && *link!=o)link=&(*link)->next;

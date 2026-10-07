@@ -196,18 +196,20 @@ bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical
     uint32_t seat; qa_application_presentation_view selected;
     if (!frontend_seat_launch_id_read(f,physical,&seat) ||
         !qa_application_presentation_read(f->application,seat,&selected) || !selected.source_hud) return true;
-    for (size_t i=0;i<qa_application_console_count(f->application);++i) {
-        qa_console *console=qa_application_console_at(f->application,i,NULL);
-        qa_application_console_scope scope;
-        if (!qa_application_console_scope_read(f->application,console,&scope) || scope.provider!=selected.hud ||
+    for (size_t i=0;;++i) {
+        qa_application_startup_source tuple; bool found;
+        if (!qa_application_console_source_at(f->application,i,&tuple,&found,error)) return false;
+        if (!found) break;
+        qa_application_console_scope scope=tuple.scope;
+        if (scope.provider!=selected.hud ||
             scope.seat!=seat || (scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME &&
                 scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2 && scope.kind!=QA_APPLICATION_CONSOLE_CLIENT)) continue;
-        if (*present && out->console!=console)
+        if (*present && out->cvars!=tuple.cvars)
             return frontend_fail(error,QA_ERROR_FORMAT,"Source recipient has multiple physical CLIENT registries");
-        qa_cvars *cvars=qa_console_cvars(console);
-        if (!cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source CLIENT console lost its own registry");
+        if (!tuple.console || !tuple.cvars)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source CLIENT tuple lost its own registry");
         *out=(frontend_source_client_registry){.publication=qa_application_launch(f->application),
-            .console=console,.cvars=cvars,.receiver=scope.provider,.physical_seat=physical,.launch_seat=seat,.kind=scope.kind};
+            .console=tuple.console,.cvars=tuple.cvars,.receiver=scope.provider,.physical_seat=physical,.launch_seat=seat,.kind=scope.kind};
         *present=true;
     }
     return true;
@@ -1501,8 +1503,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         qa_application_q3_client_preparation preparation;
         if(application!=frontend->application || !host ||
             !qa_application_q3_preconstruction_source_read(application,owner,role,seat,&preparation,error)) return false;
-        frontend_config_source *configured=preparation.source_console?
-            frontend_config_store_source(frontend->config_store,preparation.source_console):NULL;
+        frontend_config_source *configured=preparation.source_cvars?
+            frontend_config_store_source(frontend->config_store,preparation.source_cvars):NULL;
         if(!configured || frontend_config_source_cvars(configured)!=host->cvars || preparation.source_cvars!=host->cvars ||
             !frontend_config_source_host_cvars(configured,&host->cvar_namespaces,error))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"GAME host namespaces require their actual retained configuration source");
@@ -1517,10 +1519,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     qa_application_q3_client_preparation preparation;
     if (!qa_application_q3_preconstruction_source_read(application,owner,role,seat,&preparation,error)) return false;
     qa_application_startup_source client_tuple;
-    if (!qa_application_q3_client_configuration_read(application,owner,seat,&client_tuple,error)) return false;
+    if (!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error)) return false;
     if (client_tuple.console!=host->console)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor changed its retained physical console");
-    frontend_remote_config *client_config=frontend_config_store_client(frontend->config_store,client_tuple.console);
+    frontend_remote_config *client_config=frontend_config_store_client(frontend->config_store,client_tuple.cvars);
     frontend_remote_config_view client_view;
     if (client_config && (!frontend_remote_config_read(client_config,&client_view) || !client_view.ready ||
         client_view.physical_seat!=ordinal || client_view.scope.provider!=client_tuple.scope.provider ||
@@ -1528,8 +1530,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         client_view.console!=client_tuple.console || client_view.cvars!=client_tuple.cvars ||
         !frontend_remote_config_current(client_config,&client_view)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its prepared physical configuration");
-    frontend_config_source *configured=preparation.source_console?
-        frontend_config_store_source(frontend->config_store,preparation.source_console):NULL;
+    frontend_config_source *configured=preparation.source_cvars?
+        frontend_config_store_source(frontend->config_store,preparation.source_cvars):NULL;
     frontend_key_profile *profile=client_config?client_view.keys:configured?frontend_config_source_keys(configured):NULL;
     if ((!client_config && frontend_network_remote(frontend)) ||
         (configured && !client_config && frontend_config_source_cvars(configured)!=preparation.source_cvars) ||
@@ -1628,7 +1630,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
     lease->common=host->common; lease->cvars=host->cvars;
     qa_application_startup_source parent_game;
-    if(!qa_application_q3_client_configuration_read(application,owner,seat,&client_tuple,error) ||
+    if(!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error) ||
         client_tuple.console!=host->console || client_tuple.cvars!=host->cvars ||
         (!client_config && (!configured || !frontend_config_source_tuple(configured,&parent_game))) ||
         !frontend_config_host_cvars_prepare(&lease->namespaces,frontend->config_store,application,
@@ -2013,12 +2015,12 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation requires its actual constructed frontend role lease");
     if (lease->registry) {
         qa_application_startup_source client_tuple;
-        if (!qa_application_q3_client_configuration_read(application,preparation->receiver,preparation->seat,
+        if (!qa_application_q3_client_configuration_read(application,preparation->receiver,preparation->role,preparation->seat,
             &client_tuple,error)) return false;
-        frontend_remote_config *client_config=frontend_config_store_client(f->config_store,client_tuple.console);
+        frontend_remote_config *client_config=frontend_config_store_client(f->config_store,client_tuple.cvars);
         frontend_remote_config_view client_view;
-        frontend_config_source *configured=preparation->source_console?
-            frontend_config_store_source(f->config_store,preparation->source_console):NULL;
+        frontend_config_source *configured=preparation->source_cvars?
+            frontend_config_store_source(f->config_store,preparation->source_cvars):NULL;
         if ((!client_config && !configured) || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
             lease->cvars!=host->cvars)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its canonical source seat registry");

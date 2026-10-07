@@ -8,12 +8,13 @@ typedef struct native_dispatch {
     qa_console *console;
     qa_actor_owner source;
     qa_q3_product product;
-    size_t users, installed;
+    size_t users;
 } native_dispatch;
 struct frontend_native_q3_commands {
     frontend_native_q3 *row;
     native_dispatch *dispatch;
-    size_t contributed;
+    qa_command_context constructor;
+    size_t installed, contributed;
     bool registered, closed, busy;
 };
 static const char *const common[]={"testgun","testmodel","nextframe","prevframe","nextskin","prevskin","viewpos",
@@ -213,7 +214,9 @@ static bool handle(void *context,const qa_command_invocation *command,qa_error *
     size_t bytes=0;
     for(size_t i=0;i<command->argc;++i) { size_t n=strlen(command->argv[i]); if(n>=9216-bytes)return false; bytes+=n+1; }
     for(frontend_native_q3 *row=d->frontend->native_q3;row;row=row->next)
-        if(row->constructed && row->console==d->console && row->view.source_owner==d->source &&
+        if(row->constructed && row->commands && row->console==d->console && row->view.source_owner==d->source &&
+            qa_console_invocation_delivered_view(command,row->commands->constructor.cvar_view,
+                row->view.source_owner,row->view.service_owner) &&
             row->view.launch_seat==command->context.seat && qa_actor_id_equal(frontend_native_q3_actor(row),command->context.actor)) {
             if(o)return frontend_fail(e,QA_ERROR_FORMAT,"Native console has duplicate actual recipients");
             o=row->commands;
@@ -232,7 +235,7 @@ bool frontend_native_q3_commands_create(frontend_native_q3 *row,frontend_native_
     if(!row || !out || *out || !row->view.client ||
         (row->view.product!=QA_Q3_ARENA && row->view.product!=QA_Q3_TEAM_ARENA))return false;
     frontend_native_q3_commands *o=calloc(1,sizeof(*o)); if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Allocating native console state");
-    o->row=row;
+    o->row=row; o->constructor=row->command;
     for(frontend_native_q3 *p=row->frontend->native_q3;p;p=p->next)if(p!=row && p->commands &&
         p->console==row->console && p->view.source_owner==row->view.source_owner)o->dispatch=p->commands->dispatch;
     if(!o->dispatch) {
@@ -245,15 +248,17 @@ bool frontend_native_q3_commands_create(frontend_native_q3 *row,frontend_native_
 static bool bind_commands(frontend_native_q3_commands *o,size_t count,qa_error *e)
 {
     native_dispatch *d=o->dispatch;
+    qa_command_context constructor=o->constructor;
     for(size_t i=0;i<count;++i) {
         const char *name=command_name(d->product,i);
-        if(i<local_count(d->product) && i>=d->installed) {
-            if(!qa_console_register_owned(d->console,name,NULL,d->source,d->source,false,handle,d,e))return false;
-            d->installed=i+1;
+        if(i<local_count(d->product) && i>=o->installed) {
+            if(!qa_console_register_context(d->console,&constructor,name,NULL,d->source,
+                o->row->view.service_owner,false,handle,d,e))return false;
+            o->installed=i+1;
         }
         if(i>=o->contributed) {
             qa_console_contribution owner={.receiver=d->source,.lifetime_owner=o->row->view.service_owner,
-                .seat=o->row->view.launch_seat};
+                .seat=o->row->view.launch_seat,.cvar_view=constructor.cvar_view};
             if(!qa_console_contribute(d->console,name,&owner,e))return false;
             o->contributed=i+1;
         }
@@ -273,7 +278,8 @@ bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error
     if(!o)return true;
     if(o->busy || !qa_console_idle(o->dispatch->console))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console teardown requires inactive callbacks");
     native_dispatch *d=o->dispatch;
-    if(d->users==1)for(size_t i=0;i<d->installed;++i)qa_console_unregister(d->console,command_name(d->product,i),d->source);
+    qa_command_context constructor=o->constructor;
+    for(size_t i=0;i<o->installed;++i)qa_console_unregister_context(d->console,&constructor,command_name(d->product,i),d->source);
     for(size_t i=0;i<o->contributed;++i)qa_console_uncontribute(d->console,command_name(d->product,i),d->source,o->row->view.service_owner);
     if(!--d->users)free(d);
     free(o); return true;

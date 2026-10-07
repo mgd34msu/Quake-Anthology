@@ -30,13 +30,13 @@ bool frontend_neutral_config_options(frontend_neutral_configs *, uint32_t physic
 bool frontend_neutral_config_pending_options(frontend_neutral_configs *,uint32_t physical_seat,
     frontend_client_source_options *,qa_error *);
 bool frontend_neutral_config_options_cancel(frontend_neutral_configs *,frontend_client_source_options *,qa_error *);
-bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *,const qa_console *,
+bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *,const qa_cvars *,
     qa_movement_kind actual_movement,qa_error *);
-bool frontend_neutral_config_read(const frontend_neutral_configs *, const qa_console *,
+bool frontend_neutral_config_read(const frontend_neutral_configs *, const qa_cvars *,
     frontend_neutral_config_view *, qa_error *);
 bool frontend_neutral_config_current(const frontend_neutral_config_view *);
 /* Returned capture/import namespace custody only; this does not admit live input. */
-bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *,const qa_console *,
+bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *,const qa_cvars *,
     frontend_neutral_config_view *,qa_error *);
 /* Normal shutdown borrows only the exact returned CLIENT-owned ALL ticket. */
 bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *,
@@ -51,9 +51,9 @@ bool frontend_neutral_config_reset_bindings(frontend_neutral_configs *,uint32_t,
 bool frontend_neutral_config_select_bindings(frontend_neutral_configs *,uint32_t,qa_strings *,
     const qa_item_definition *,size_t,int32_t,bool *,qa_error *);
 bool frontend_config_store_neutral_startup_read(const frontend_config_store *,qa_application_client_source *,bool *,qa_error *);
-bool frontend_config_store_neutral_read(const frontend_config_store *, const qa_console *,
+bool frontend_config_store_neutral_read(const frontend_config_store *, const qa_cvars *,
     frontend_neutral_config_view *, qa_error *);
-bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *,const qa_console *,
+bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *,const qa_cvars *,
     frontend_neutral_config_view *,qa_error *);
 bool frontend_config_store_neutral_retired_recipient(const frontend_config_store *,
     const qa_application_client_source *,bool *,qa_error *);
@@ -62,7 +62,7 @@ bool frontend_config_store_neutral_options(frontend_config_store *,uint32_t phys
 bool frontend_config_store_neutral_pending_options(frontend_config_store *,uint32_t physical_seat,
     frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_options_cancel(frontend_config_store *,frontend_client_source_options *,qa_error *);
-bool frontend_config_store_neutral_movement_adopt(frontend_config_store *,const qa_console *,
+bool frontend_config_store_neutral_movement_adopt(frontend_config_store *,const qa_cvars *,
     qa_movement_kind actual_movement,qa_error *);
 bool frontend_config_store_client_profile(const frontend_config_store *,qa_game_family,
     qa_product_id *,qa_error *);

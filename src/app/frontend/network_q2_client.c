@@ -139,6 +139,7 @@ static bool configure(void *context,const qa_launch_instance *descriptor,qa_cvar
     for(size_t i=0;i<sizeof(permissions)/sizeof(*permissions);++i)
         if(!qa_cvars_register(cvars,permissions[i],"1",QA_CVAR_ARCHIVE,owner->receiver,"",error)) return false;
     owner->domain.console=console; owner->domain.cvars=cvars;
+    owner->domain.command_context.cvar_view=qa_cvars_view_identity(cvars);
     qa_application_client_options options={.descriptor=descriptor,.receiver=owner->receiver,
         .seat=owner->domain.command_context.seat,.physical_seat=owner->options.physical_seat,
         .configuration_generation=owner->domain.configuration_generation,.runtime=owner->options.runtime,
@@ -240,7 +241,8 @@ static bool source_current(void *context,const frontend_remote_q2_domain *domain
         domain->physical_seat!=owner->options.physical_seat || domain->catalog!=owner->domain.catalog ||
         domain->product!=owner->domain.product || domain->console!=owner->domain.console || domain->cvars!=owner->domain.cvars ||
         domain->configuration_generation!=owner->domain.configuration_generation ||
-        domain->command_context.owner!=owner->receiver || !protocol_equal(domain->protocol,protocol))
+        domain->command_context.owner!=owner->receiver ||
+        domain->command_context.cvar_view!=owner->domain.command_context.cvar_view || !protocol_equal(domain->protocol,protocol))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT left its actual pending or attached source claim");
     if(!domain->client.owner) return !owner->domain.client.owner && !domain->client.generation && !domain->epoch && !domain->seat.owner;
     return qa_net_client_id_equal(domain->client,owner->domain.client) && domain->epoch==owner->domain.epoch &&
@@ -606,34 +608,6 @@ bool frontend_network_q2_client_destroy(frontend_network_q2_client **owned,qa_er
     if(owner->receiver && !qa_application_client_provider_release(owner->domain.application,owner->receiver,error)) return false;
     owner->receiver=0; owner->closing=true;
     qa_network_q2_bootstrap_destroy(owner->bootstrap); free(owner); *owned=NULL; return true;
-}
-bool frontend_network_q2_client_commands_owned(const frontend_network_q2_client *owner,const qa_application *app,
-    const qa_application_console_scope *scope,const qa_console *console)
-{
-    return owner && !owner->cleaning_import && parent(owner) && owner->app_created && owner->source && app==owner->domain.application &&
-        scope && scope->kind==QA_APPLICATION_CONSOLE_CLIENT && scope->provider==owner->receiver &&
-        scope->seat==owner->domain.command_context.seat && console==owner->domain.console &&
-        idle((void *)owner) && qa_application_client_idle(owner->domain.application,&owner->application_source);
-}
-bool frontend_network_q2_client_commands_capture(frontend_network_q2_client *owner,qa_application *app,
-    const qa_application_console_scope *scope,const qa_console *console,qa_buffer *out,qa_error *error)
-{
-    return frontend_network_q2_client_commands_owned(owner,app,scope,console) &&
-        frontend_remote_q2_source_commands_capture(owner->source,app,scope,console,out,error);
-}
-bool frontend_network_q2_client_commands_restore(frontend_network_q2_client *owner,qa_application *app,
-    const qa_application_console_scope *scope,qa_console *console,qa_bytes bytes,qa_error *error)
-{
-    return frontend_network_q2_client_commands_owned(owner,app,scope,console) &&
-        frontend_remote_q2_source_commands_restore(owner->source,app,scope,console,bytes,error);
-}
-bool frontend_network_q2_client_finish_restore(frontend_network_q2_client *owner,qa_error *error)
-{
-    if(!owner) return true;
-    if(!parent(owner) || !owner->importing || owner->calls) return false;
-    if(owner->restore_finished) return true;
-    if(!frontend_remote_q2_source_finish_restore(owner->source,error)) return false;
-    owner->restore_finished=true; return true;
 }
 bool frontend_network_q2_client_publication_ready(const frontend_network_q2_client *owner,qa_error *error)
 {

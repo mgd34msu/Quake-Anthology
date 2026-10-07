@@ -45,7 +45,6 @@
 #include "network_q1_client.h"
 #include "neutral_config.h"
 #include "config_store.h"
-#include "network_client_commands.h"
 #include "network_q2_host.h"
 #include "network_q2_host_save.h"
 #include "network_unified.h"
@@ -461,25 +460,6 @@ static bool q2_restore_stage(void *context,qa_fs_root *root,const char *path,uin
         initial || !qa_fs_stage_write(*out,0,prefix,&written,error) || written!=prefix.size) return false;
     *nonce=n->preparation_nonce; return true;
 }
-bool frontend_network_client_commands_owned(const qa_frontend *f,const qa_application *app,
-    const qa_application_console_scope *scope,const qa_console *console)
-{
-    return f && f->network && frontend_network_q2_client_commands_owned(f->network->q2_client_owner,app,scope,console);
-}
-bool frontend_network_client_commands_capture(qa_frontend *f,qa_application *app,
-    const qa_application_console_scope *scope,const qa_console *console,qa_buffer *out,qa_error *error)
-{
-    return frontend_network_client_commands_owned(f,app,scope,console) &&
-        frontend_network_q2_client_commands_capture(f->network->q2_client_owner,app,scope,console,out,error);
-}
-bool frontend_network_client_commands_restore(qa_frontend *f,qa_application *app,
-    const qa_application_console_scope *scope,qa_console *console,qa_bytes bytes,qa_error *error)
-{
-    return frontend_network_client_commands_owned(f,app,scope,console) &&
-        frontend_network_q2_client_commands_restore(f->network->q2_client_owner,app,scope,console,bytes,error);
-}
-bool frontend_network_client_sources_finish_restore(qa_frontend *f,qa_error *error)
-{ return !f || !f->network || frontend_network_q2_client_finish_restore(f->network->q2_client_owner,error); }
 bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa_application_client_source *source)
 {
     const qa_frontend_network *n=f?f->network:NULL;
@@ -2637,8 +2617,8 @@ static bool client_configuration_view(const qa_frontend *f, frontend_remote_conf
     const qa_frontend_network *n = f ? f->network : NULL;
     qa_application_startup_source source;
     if (!n || !out || !n->q3_client_requested || !qa_application_q3_client_configuration_read(f->application,
-        n->q3_cgame_owner, n->q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.console);
+        n->q3_cgame_owner, QA_QVM_CGAME, n->q3_client_launch_seat, &source, error)) return false;
+    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
     if (!frontend_remote_config_read(row, out) || !out->ready || !out->published ||
         out->scope.provider != source.scope.provider || out->scope.kind != source.scope.kind ||
         out->scope.seat != source.scope.seat || out->console != source.console || out->cvars != source.cvars ||
@@ -2675,8 +2655,8 @@ bool frontend_network_client_configuration_read(const qa_frontend *f, uint32_t s
     }
     if (qa_application_startup_pending(f->application)) {
         qa_application_startup_source source;
-        if (!qa_application_q3_client_configuration_read(f->application, n->q3_cgame_owner, seat, &source, error)) return false;
-        frontend_remote_config *row = frontend_config_store_client(f->config_store, source.console);
+        if (!qa_application_q3_client_configuration_read(f->application, n->q3_cgame_owner, QA_QVM_CGAME, seat, &source, error)) return false;
+        frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
         frontend_remote_config_view view;
         if (!frontend_remote_config_read(row, &view) || !view.ready || !view.published) return true;
     }
@@ -2887,7 +2867,7 @@ bool frontend_network_client_previous_configuration_read(const qa_frontend *f, u
     qa_application_q3_client_context receiver;
     if (!qa_application_q3_remote_published_context_read(f->application, n->q3_cgame_owner, seat, &receiver, error))
         return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, receiver.console);
+    frontend_remote_config *row = frontend_config_store_client(f->config_store, receiver.cvars);
     frontend_remote_config_view view;
     if (!frontend_remote_config_read(row, &view) || !view.ready || !view.published ||
         !view.receiver || !view.receiver->selection.instance ||
@@ -2910,11 +2890,11 @@ static bool client_authorization_current(void *context, qa_error *error)
     qa_application_startup_source source; qa_application_q3_client_context role;
     frontend_remote_config_view configuration; frontend_key_profile_view profile;
     if (!n || !n->frontend || !n->q3_client_requested ||
-        !qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner,
+        !qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner, QA_QVM_CGAME,
             n->q3_client_launch_seat, &source, error) ||
         !qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner,
             n->q3_client_launch_seat, &role, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.console);
+    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.cvars);
     const frontend_remote_config_view *retained = &n->q3_authorization_configuration;
     const frontend_key_profile_view *key = &n->q3_authorization_profile;
     if (!frontend_remote_config_read(row, &configuration) || !frontend_remote_config_current(row, &configuration) ||
@@ -2953,9 +2933,9 @@ static bool client_authorization_prepare(qa_frontend_network *n, qa_bytes saved,
         return (!saved.size || frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 authorization import needs an empty actual owner")) &&
             client_authorization_current(n, error);
     qa_application_startup_source source;
-    if (!qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner,
+    if (!qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner, QA_QVM_CGAME,
         n->q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.console);
+    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.cvars);
     frontend_remote_config_view configuration; frontend_key_profile_view profile;
     if (!frontend_remote_config_read(row, &configuration) || !frontend_remote_config_current(row, &configuration) ||
         (!saved.size && (!configuration.ready || !configuration.published)) ||
@@ -3137,9 +3117,9 @@ bool frontend_network_client_time_cvars_read(const qa_frontend *f,
     }
     if (!n || !n->q3_client_requested || !n->q3_cgame_owner) return true;
     qa_application_startup_source source;
-    if (!qa_application_q3_client_configuration_read(f->application, n->q3_cgame_owner,
+    if (!qa_application_q3_client_configuration_read(f->application, n->q3_cgame_owner, QA_QVM_CGAME,
         n->q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.console);
+    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
     frontend_remote_config_view view;
     if (!frontend_remote_config_read(row, &view)) {
         if (qa_application_startup_pending(f->application)) return true;
@@ -3195,7 +3175,8 @@ bool frontend_network_client_reliable(qa_frontend *f, const qa_command_context *
         !frontend_network_q3_client_context_read(f, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
         !frontend_network_q3_client_context_current(f, &role) ||
         !qa_application_capture_command_context(f->application, &role.command_context, &actual, error) ||
-        origin->owner != actual.owner || origin->seat != actual.seat ||
+        origin->session != actual.session || origin->owner != actual.owner || origin->seat != actual.seat ||
+        origin->cvar_view != actual.cvar_view ||
         origin->dialect != actual.dialect || origin->origin != actual.origin ||
         origin->client != actual.client || !qa_actor_id_equal(origin->actor, actual.actor) ||
         origin->registry != actual.registry || origin->generation != actual.generation ||
@@ -3210,22 +3191,30 @@ bool frontend_network_client_forward(qa_frontend *f, const qa_command_invocation
     const char *text;bool explicit_command;
     if(!qa_console_forward_text(call,&text,&explicit_command,error))return false;
     if (!n ||
-        !qa_application_q3_remote_context_read(f->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
-        !qa_application_q3_remote_context_current(f->application, &role) || call->console != role.console ||
+        !frontend_network_q3_client_context_read(f, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) ||
+        !frontend_network_q3_client_context_current(f, &role) || call->console != role.console ||
+        !qa_console_invocation_current(call->console,call) ||
         !qa_application_capture_command_context(f->application, &role.command_context, &actual, error) ||
-        call->context.owner != actual.owner || call->context.seat != actual.seat ||
-        call->context.dialect != actual.dialect || call->context.origin != actual.origin ||
-        call->context.client != actual.client || !qa_actor_id_equal(call->context.actor, actual.actor) ||
-        call->context.registry != actual.registry || call->context.generation != actual.generation ||
         !qa_application_command_context_active(f->application, &call->context))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Console forwarding lost its actual CLIENT invocation");
+    const qa_command_context *sender=&call->context;
+    bool source=sender->session==actual.session && sender->owner==actual.owner &&
+        sender->cvar_view==actual.cvar_view && sender->seat==actual.seat &&
+        sender->dialect==actual.dialect && sender->origin==actual.origin && sender->client==actual.client &&
+        qa_actor_id_equal(sender->actor,actual.actor) && sender->registry==actual.registry &&
+        sender->generation==actual.generation;
+    bool engine=!sender->owner && sender->session==actual.session &&
+        sender->cvar_view==qa_cvars_view_identity(qa_application_cvars(f->application)) &&
+        qa_console_invocation_delivered_view(call,qa_cvars_view_identity(role.cvars),role.receiver,role.service_owner);
+    if (!source && !engine)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Console forwarding lacks its delivered CLIENT capability");
     const qa_q3_client_peer *peer = remote_view(f);
     bool demo = peer && qa_q3_client_peer_demo(peer);
     if (explicit_command) {
         if (!n->q3_client_active || n->q3_client_closed || n->q3_client_retiring || demo) {
             frontend_console_print(f, &call->context, "Not connected to a server.\n"); return true;
         }
-        return call->argc == 1 || frontend_network_client_reliable(f, &call->context, text, error);
+        return call->argc == 1 || frontend_network_client_reliable(f, &actual, text, error);
     }
     if (call->argv[0][0] == '-') return true;
     if (demo || n->q3_client_admission.phase != QA_Q3_ADMITTED || !n->q3_client_attached ||
@@ -3238,7 +3227,7 @@ bool frontend_network_client_forward(qa_frontend *f, const qa_command_invocation
         snprintf(message, length + sizeof("Unknown command \"\"\n"), "Unknown command \"%s\"\n", call->argv[0]);
         frontend_console_print(f, &call->context, message); free(message); return true;
     }
-    return frontend_network_client_reliable(f, &call->context, text, error);
+    return frontend_network_client_reliable(f, &actual, text, error);
 }
 bool frontend_network_client_command(qa_frontend *f, const char *text, qa_error *error)
 { return frontend_network_client_command_seat(f, 0, text, error); }
@@ -3619,7 +3608,8 @@ bool frontend_network_source_admin_dispatch(qa_frontend *f,qa_server_admin *admi
         emit(call,(const char *)filters.data); qa_buffer_free(&filters); return true;
     }
     if (!strcmp(name,"writeip")) {
-        const qa_cvar_view *filterban=qa_cvars_find(qa_console_cvars(call->console),"filterban");
+        qa_cvars *registry=frontend_config_store_cvar_owner(f->config_store,call->console,&call->context,"filterban");
+        const qa_cvar_view *filterban=qa_cvars_find(registry,"filterban");
         if (!filterban) return frontend_fail(error,QA_ERROR_ARGUMENT,"Filter write requires the actual Source filterban declaration");
         qa_buffer filters={0};
         if (!qa_server_admin_filters_text(admin,true,call->context.dialect,filterban->integer!=0,&filters,error)) return false;
@@ -3637,7 +3627,7 @@ bool frontend_network_source_admin_dispatch(qa_frontend *f,qa_server_admin *admi
         if (q2 && !f->options.dedicated) { emit(call,"Only dedicated servers use masters.\n"); return true; }
         if (q2) {
             qa_application_startup_source source; bool present=true;
-            if (call->console==qa_application_console(f->application)) {
+            if (!call->context.owner) {
                 if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
             } else if (!frontend_config_store_server_invocation_read(f->config_store,call,&source,error)) return false;
             if (!present) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 masters require their actual Source public declaration");
@@ -3681,7 +3671,7 @@ static bool operator_command(qa_frontend_network *n,const qa_command_invocation 
     size_t skip,bool *handled,qa_error *error)
 {
     qa_application *application=n->frontend->application;
-    if (call->console!=qa_application_console(application) &&
+    if (call->context.owner &&
         !frontend_config_store_server_invocation_application(n->frontend->config_store,call,&application,error)) return false;
     qa_application *previous=n->operator_application; n->operator_application=application;
     bool ok=frontend_network_source_admin_dispatch(n->frontend,n->admin,n,send_address,
@@ -3695,7 +3685,7 @@ static bool source_admin_command(void *context,const qa_command_invocation *call
     qa_frontend *f=context; qa_application_startup_source source;
     if (!f || !call || !call->argc ||
         !frontend_config_store_server_invocation_read(f->config_store,call,&source,error) ||
-        source.console!=call->console || source.command.owner!=call->context.owner)
+        source.console!=call->console)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source operator command lost its actual hosted console");
     size_t skip=!strcmp(call->argv[0],"sv")?1:0;
     if (skip && call->argc<2) { emit(call,"Usage: sv <command>\n"); return true; }
@@ -3706,62 +3696,61 @@ static bool source_admin_command(void *context,const qa_command_invocation *call
     } else if (!frontend_config_store_admin_dispatch(f->config_store,call,skip,&handled,error)) return false;
     return handled || qa_application_source_command(f->application,call,error);
 }
-static void source_admin_span(const qa_console *console,size_t *first,size_t *count)
+static void source_admin_span(qa_console_dialect dialect,size_t *first,size_t *count)
 {
-    qa_console_dialect dialect=qa_cvars_dialect(qa_console_cvars(console));
     bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
     *first=dialect==QA_CONSOLE_Q3?6:q2?0:1;
     *count=dialect==QA_CONSOLE_Q1?0:dialect==QA_CONSOLE_Q3?1:q2?12:8;
 }
-bool frontend_network_source_admin_binding(qa_frontend *f,const qa_console *console,
+bool frontend_network_source_admin_binding(qa_frontend *f,const qa_console *console,const qa_command_context *command,
     const char *name,qa_command_handler *handler,void **user)
 {
-    if (!f || !console || !name || !handler || !user) return false;
-    size_t first,count; source_admin_span(console,&first,&count);
+    if (!f || !console || !command || !command->owner || !command->cvar_view || !name || !handler || !user) return false;
+    size_t first,count; source_admin_span(command->dialect,&first,&count);
     for (size_t i=0;i<count;++i) if (!strcmp(name,source_admin_names[first+i])) {
         *handler=source_admin_command; *user=f; return true;
     }
     return false;
 }
-static bool source_admin_custody(qa_frontend *f,qa_console *console,uint64_t owner,
+static bool source_admin_custody(qa_frontend *f,qa_console *console,const qa_command_context *command,uint64_t owner,
     size_t *registered,bool install,qa_error *error)
 {
-    if (!f || !console || !owner || !registered)
+    if (!f || !console || !command || command->owner!=owner || !command->cvar_view || !owner || !registered)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration handlers require their physical lifetime");
-    size_t first,count; source_admin_span(console,&first,&count);
+    size_t first,count; source_admin_span(command->dialect,&first,&count);
     *registered=0;
     for (size_t i=0;i<count;++i) {
         const char *name=source_admin_names[first+i];
         qa_command_handler expected=NULL,actual=NULL; void *binding=NULL,*user=NULL; uint64_t lifetime=0;
-        if (!frontend_network_source_admin_binding(f,console,name,&expected,&binding))
+        if (!frontend_network_source_admin_binding(f,console,command,name,&expected,&binding))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration declaration disappeared");
-        if (qa_console_registration_read(console,name,owner,&lifetime,&actual,&user)) {
+        if (qa_console_registration_read_context(console,command,name,owner,&lifetime,&actual,&user)) {
             if (lifetime!=owner || actual!=expected || user!=binding)
                 return frontend_fail(error,QA_ERROR_FORMAT,"Source administration callback has another physical owner");
         } else if (install) {
-            if (!qa_console_register_owned(console,name,"Operate the actual Source network service",
+            if (!qa_console_register_context(console,command,name,"Operate the actual Source network service",
                 owner,owner,true,expected,binding,error)) return false;
         } else continue;
         ++*registered;
     }
     return true;
 }
-bool frontend_network_source_admin_bind(qa_frontend *f,qa_console *console,uint64_t owner,
+bool frontend_network_source_admin_bind(qa_frontend *f,qa_console *console,const qa_command_context *command,uint64_t owner,
     size_t *registered,qa_error *error)
-{ return source_admin_custody(f,console,owner,registered,true,error); }
-bool frontend_network_source_admin_adopt(qa_frontend *f,qa_console *console,uint64_t owner,
+{ return source_admin_custody(f,console,command,owner,registered,true,error); }
+bool frontend_network_source_admin_adopt(qa_frontend *f,qa_console *console,const qa_command_context *command,uint64_t owner,
     size_t *registered,qa_error *error)
-{ return source_admin_custody(f,console,owner,registered,false,error); }
-void frontend_network_source_admin_unbind(qa_console *console,uint64_t owner,size_t registered)
+{ return source_admin_custody(f,console,command,owner,registered,false,error); }
+void frontend_network_source_admin_unbind(qa_console *console,const qa_command_context *command,uint64_t owner,size_t registered)
 {
-    if (!console || !registered) return;
-    size_t first,count; source_admin_span(console,&first,&count);
+    if (!console || !command || command->owner!=owner || !command->cvar_view || !registered) return;
+    size_t first,count; source_admin_span(command->dialect,&first,&count);
     if (registered>count) return;
     for (size_t i=0;i<count;++i) {
         uint64_t lifetime=0; qa_command_handler handler=NULL; void *user=NULL;
-        if (qa_console_registration_read(console,source_admin_names[first+i],owner,&lifetime,&handler,&user) &&
+        if (qa_console_registration_read_context(console,command,source_admin_names[first+i],owner,&lifetime,&handler,&user) &&
             lifetime==owner && handler==source_admin_command)
-            qa_console_unregister(console,source_admin_names[first+i],owner);
+            qa_console_unregister_context(console,command,source_admin_names[first+i],owner);
     }
 }
 static bool command(void *context, const qa_command_invocation *call, qa_error *error)

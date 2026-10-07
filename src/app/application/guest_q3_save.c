@@ -805,8 +805,8 @@ static bool saved_collect(application_provider *provider,
     if (!application_guest_q3_state_capture(provider, &saved->state_storage, error)) { saved_free(saved); return false; }
     saved->state = (qa_bytes){saved->state_storage.data, saved->state_storage.size};
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
-    if ((cvars != NULL) != (engine->game != NULL) ||
-        (cvars && qa_cvars_find(cvars, "sv_cheats"))) {
+    const qa_cvar_view *cheats = cvars ? qa_cvars_find(cvars, "sv_cheats") : NULL;
+    if ((cvars != NULL) != (engine->game != NULL) || (cheats && cheats->declared)) {
         saved_free(saved);
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
     }
@@ -1265,7 +1265,8 @@ bool application_guest_q3_save_declarations(application_provider *provider,
         qa_cvars_save_commit(ticket, error);
     if (!ok) qa_cvars_save_abort(ticket);
     qa_buffer_free(&settings);
-    if (ok && qa_cvars_find(cvars, "sv_cheats"))
+    const qa_cvar_view *cheats = ok ? qa_cvars_find(cvars, "sv_cheats") : NULL;
+    if (cheats && cheats->declared)
         ok = application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
     if (ok && scratch) ok = application_native_q2_baselines_destroy(app, error);
     return ok;

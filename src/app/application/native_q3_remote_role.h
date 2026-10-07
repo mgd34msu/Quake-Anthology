@@ -19,9 +19,7 @@ bool application_native_q3_remote_role_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *, qa_error *);
 bool application_native_q3_remote_role_configuration(application_provider *, uint32_t,
     qa_application_startup_source *, qa_error *);
-bool application_native_q3_remote_role_take(application_provider *, uint32_t, qa_cvars **, qa_error *);
 bool application_native_q3_remote_role_unborrowed(application_provider *,uint32_t);
-bool application_native_q3_remote_role_bind(application_provider *, uint32_t, qa_cvars *, qa_error *);
 bool application_native_q3_remote_role_context(application_provider *, uint32_t,
     qa_application_q3_client_context *, qa_error *);
 bool application_native_q3_remote_role_current(application_provider *, const qa_application_q3_client_context *);

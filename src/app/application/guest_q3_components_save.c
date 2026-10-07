@@ -1,4 +1,5 @@
 #include "guest_q3_components_private.h"
+#include "guest_q3_component_private.h"
 #include "qa/persistence_fields.h"
 #include "qa/binary.h"
 #include <limits.h>
@@ -62,9 +63,14 @@ static bool identity(void *context,qa_console_save_identity kind,uint64_t saved,
 static bool command_context(void *context,uint64_t registry,const qa_command_context *saved,qa_command_context *out,qa_error *e)
 {
     component_game_row *row=context; qa_session *session=row->roster->options.application->session;
+    qa_command_context actual;
     if(!registry||saved->session||saved->client||saved->owner!=row->publication.owner||saved->dialect!=QA_CONSOLE_Q3)
         return application_fail(e,QA_ERROR_FORMAT,"Component queued command lost its saved physical context");
+    if(!row->publication.game||!qa_q3_host_console(row->publication.game->host,NULL,&actual))
+        return application_fail(e,QA_ERROR_FORMAT,"Component queued command lost its actual restored host");
     *out=*saved;
+    out->session=actual.session;
+    out->cvar_view=actual.cvar_view;
     if(saved->registry==registry) out->registry=qa_actors_identity(qa_session_actors(session));
     else if(saved->registry) out->registry=0;
     return true;

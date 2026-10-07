@@ -369,7 +369,7 @@ static void release_script(void *context, void *lease)
     if (application_startup_source_active(owner->provider))
         application_startup_script_release(owner->provider, lease);
     else if (application_startup_source_scripts(owner->provider))
-        application_startup_source_script_release(owner->provider, owner->console, lease);
+        application_startup_source_script_release(owner->provider, owner->cvars, lease);
     else qa_resource_release(lease);
 }
 
@@ -464,20 +464,9 @@ bool application_native_q3_console_at(application_provider *provider, qa_console
     *console = owner->console;
     if (cvars) *cvars = owner->cvars;
     if (context) *context = (qa_command_context){.owner = provider->owner,
+        .cvar_view = qa_cvars_view_identity(owner->cvars),
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
     return true;
-}
-
-static bool startup_cvar(struct application_native_q3_console *owner,
-    const char *name, qa_error *error)
-{
-    const qa_cvar_view *startup = qa_cvars_find(owner->provider->application->cvars, name);
-    if (!startup) return true;
-    if (startup->owner && startup->owner != owner->provider->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "native Q3 startup cvar belongs to another source");
-    return qa_cvars_set(owner->cvars, name,
-        startup->latched_value ? startup->latched_value : startup->value, true, error);
 }
 
 static bool register_engine_cvars(struct application_native_q3_console *owner,
@@ -503,18 +492,8 @@ static bool register_engine_cvars(struct application_native_q3_console *owner,
             definition->value ? definition->value : map, definition->flags,
             owner->provider->owner, NULL, error);
     }
-    if (okay) okay = qa_cvars_set(owner->cvars, "sv_mapname", map, true, error);
-    for (size_t i = 0; okay && i < sizeof(engine_cvars) / sizeof(engine_cvars[0]); ++i) {
-        const char *variable = engine_cvars[i].name;
-        if (!strcmp(variable, "mapname") || !strcmp(variable, "sv_mapname")) continue;
-        okay = startup_cvar(owner, variable, error);
-    }
-    if (okay)
-        okay = qa_cvars_set(owner->cvars, "mapname", map, true, error) &&
-               qa_cvars_set(owner->cvars, "sv_mapname", map, true, error) &&
-               qa_cvars_register(owner->cvars, "dedicated", "0", 0,
-                   owner->provider->owner, NULL, error) &&
-               startup_cvar(owner, "dedicated", error);
+    if (okay) okay = qa_cvars_register(owner->cvars, "dedicated", "0", 0,
+        owner->provider->owner, NULL, error);
     free(map);
     return okay;
 }
@@ -530,21 +509,24 @@ bool application_native_q3_console_create(application_provider *provider,
     struct application_native_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q3 source console");
     owner->provider = provider;
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .user = owner, .print = cvar_print,
+    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = owner, .print = cvar_print,
         .cheats_allowed = cheats_allowed};
-    owner->cvars = qa_cvars_create(&cvars, error);
+    owner->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
-    if (owner->cvars) owner->console = qa_console_create(&options, error);
+    options.context.cvar_view = qa_cvars_view_identity(owner->cvars);
+    if (owner->cvars && qa_console_bind_source(provider->application->console, &options, error))
+        owner->console = provider->application->console;
     if (!owner->console || !application_startup_seed_source(provider, owner->cvars, error) ||
         !application_q3_product_register_source(application_q3_product_source_policy(provider->application),
             owner->cvars, provider->owner, error) || !register_engine_cvars(owner, map_path, error)) {
-        qa_console_destroy(owner->console);
-        qa_cvars_destroy(owner->cvars);
+        qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error);
+        qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars);
         free(owner);
         return false;
     }
@@ -552,8 +534,8 @@ bool application_native_q3_console_create(application_provider *provider,
     qa_application *application=provider->application;
     application_provider *previous=application->startup_preinit_provider;
     if (application->operation==APPLICATION_PERSISTING) application->startup_preinit_provider=provider;
-    bool registered=qa_console_register(owner->console,"kick","Kick a Q3 player by name, slot, all or allbots",
-        provider->owner,true,operator_kick,owner,error);
+    bool registered=qa_console_register_context(owner->console, &options.context,"kick","Kick a Q3 player by name, slot, all or allbots",
+        provider->owner,provider->owner,true,operator_kick,owner,error);
     application->startup_preinit_provider=previous;
     if (!registered) {
         application_native_q3_console_destroy(provider,NULL);
@@ -569,8 +551,9 @@ bool application_native_q3_console_destroy(application_provider *provider, qa_er
     struct application_native_q3_console *owner = provider->native_q3_console;
     if (owner) {
         if (!application_startup_source_retire(provider, owner->console, owner->cvars, error)) return false;
-        qa_console_destroy(owner->console);
-        qa_cvars_destroy(owner->cvars);
+        if (!qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error)) return false;
+        qa_cvars_remove_owner(owner->cvars, provider->owner);
+        qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars);
         free(owner);
         provider->native_q3_console = NULL;
     }

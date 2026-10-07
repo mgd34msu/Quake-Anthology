@@ -464,6 +464,9 @@ typedef struct qa_input_console_options {
     bool (*scores)(void *, const qa_command_invocation *);
     void (*wheel)(void *, qa_input_seat *, bool powerups, bool down);
     void (*center)(void *, qa_input_seat *);
+    /* Exact Source constructor. An uncaptured ENGINE adapter may use the
+     * console's current constructor when cvar_view is zero. */
+    qa_command_context context;
 } qa_input_console_options;
 typedef struct qa_input_console qa_input_console;
 qa_input_console *qa_input_console_create(const qa_input_console_options *, qa_error *);

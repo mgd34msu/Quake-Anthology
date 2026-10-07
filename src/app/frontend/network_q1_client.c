@@ -974,9 +974,9 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
     if(o->input_sequence==UINT64_MAX)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q1 physical command sequence is exhausted");
     frontend_neutral_config_view settings;
-    if(!frontend_config_store_neutral_movement_adopt(f->config_store,source.physical.source.context.console,
+    if(!frontend_config_store_neutral_movement_adopt(f->config_store,source.physical.source.context.cvars,
             o->input.kind,error) ||
-        !frontend_config_store_neutral_read(f->config_store,source.physical.source.context.console,&settings,error) ||
+        !frontend_config_store_neutral_read(f->config_store,source.physical.source.context.cvars,&settings,error) ||
         !settings.ready || settings.kind!=o->input.kind || settings.physical_seat!=physical ||
         settings.client!=source.physical.source.context.cvars || !frontend_neutral_config_current(&settings)) return false;
     qa_input_command_builder next=o->input;
