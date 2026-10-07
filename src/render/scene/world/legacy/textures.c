@@ -34,7 +34,9 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
     scene_image_asset_palette(world->resources, &recipe, &world->options.images);
     recipe.options.wrap = QA_SCENE_REPEAT;
     recipe.options.transparent = texture->name[0] == '{'; recipe.options.transparent_index = 255;
-    for (size_t mip = 0; mip < 4; ++mip) {
+    recipe.generate_mips = recipe.options.transparent && world->options.images.mipmap;
+    size_t source_levels = recipe.options.transparent ? 1 : 4;
+    for (size_t mip = 0; mip < source_levels; ++mip) {
         uint32_t width = source->width >> mip, height = source->height >> mip;
         if (!source->levels[mip].size || !width || !height) break;
         levels[mip] = (qa_indexed_level){width, height,
@@ -61,13 +63,14 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
         .fullbright_last = 255, .layer = QA_PALETTE_COMBINED,
         .translation = world->options.images.translation.size == 256 ? world->options.images.translation.data : NULL};
     qa_scene_image_options upload = world->options.images; upload.wrap = QA_SCENE_REPEAT;
+    upload.transparent = recipe.options.transparent; upload.transparent_index = recipe.options.transparent_index;
     if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
-        &options, false, (qa_scene_vec4){0,0,0,1}, &texture->image, error) ||
+        &options, recipe.generate_mips, (qa_scene_vec4){0,0,0,1}, &texture->image, error) ||
         !scene_image_asset_copy(texture->image, &recipe, error)) return false;
     if (fullbright) {
         options.layer = QA_PALETTE_FULLBRIGHT; recipe.layer = QA_PALETTE_FULLBRIGHT;
         if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
-            &options, false, (qa_scene_vec4){0}, &texture->fullbright, error) ||
+            &options, recipe.generate_mips, (qa_scene_vec4){0}, &texture->fullbright, error) ||
             !scene_image_asset_copy(texture->fullbright, &recipe, error)) return false;
     }
     texture->image->recipient_upload_pixels = true;

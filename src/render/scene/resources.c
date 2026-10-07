@@ -1668,6 +1668,32 @@ static void alpha_edge_fill(qa_image *image, qa_scene_family family, const uint8
     }
 }
 
+static bool alpha_mask_mixed(const qa_image *image)
+{
+    bool visible = false, rejected = false;
+    size_t count = (size_t)image->width * image->height;
+    for (size_t i = 0; i < count; ++i) {
+        /* GT666 passes byte alpha 170 and above. */
+        if (image->rgba.data[i * 4 + 3] >= 170) visible = true;
+        else rejected = true;
+        if (visible && rejected) return true;
+    }
+    return false;
+}
+
+static bool image_mip_chain(const qa_image *source, bool cutout,
+    qa_mip_chain *chain, qa_error *error)
+{
+    if (!qa_image_mip_chain(source, QA_MIP_BOX, chain, error)) return false;
+    if (cutout && alpha_mask_mixed(source)) {
+        size_t retained = 0;
+        while (retained < chain->count && alpha_mask_mixed(chain->levels + retained)) ++retained;
+        for (size_t i = retained; i < chain->count; ++i) qa_image_free(chain->levels + i);
+        chain->count = retained;
+    }
+    return true;
+}
+
 static bool image_from_rgba_complete(qa_scene_resources *resources, const char *name, const qa_image *source,
     const qa_scene_image_options *options, bool after_border, qa_scene_vec4 upload_border,
     bool dlight, qa_scene_image **out, qa_error *error)
@@ -1723,7 +1749,8 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
         base = &scaled;
     }
     qa_mip_chain chain = {0};
-    if (options->mipmap && !qa_image_mip_chain(base, QA_MIP_BOX, &chain, error)) {
+    if (options->mipmap && !image_mip_chain(base,
+        options->family == QA_SCENE_Q1 && options->transparent, &chain, error)) {
         qa_image_free(&scaled); return false;
     }
     size_t count = chain.count + 1;
@@ -2131,7 +2158,8 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
     }
     qa_scene_image_level *generated = NULL;
     if (ok && generate_mips) {
-        ok = count == 1 && qa_image_mip_chain(expanded, QA_MIP_BOX, &chain, error);
+        ok = count == 1 && image_mip_chain(expanded,
+            options->family == QA_SCENE_Q1 && colors->transparent_index >= 0, &chain, error);
         if (ok) generated = calloc(chain.count + 1, sizeof(*generated));
         if (ok && !generated) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating model skin mip descriptors"); ok = false; }
         if (ok) {
