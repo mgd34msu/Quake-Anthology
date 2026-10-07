@@ -75,8 +75,6 @@ bool application_publication_finish(qa_application *, application_publication *,
 bool application_publication_retire_sources(qa_application *, application_publication *, qa_error *);
 bool application_publication_discard_sources(qa_application *, application_publication *, qa_error *);
 bool application_publication_ready_values(qa_application *, application_publication *, qa_error *);
-bool application_publication_values_enter(qa_application *, application_publication *, qa_error *);
-bool application_publication_values_leave(qa_application *, application_publication *, qa_error *);
 bool application_startup_values_enter(qa_application *, qa_cvars_edit **, qa_error *);
 bool application_startup_values_leave(qa_cvars_edit *, qa_error *);
 bool application_publication_source_capacity(application_provider *, uint32_t, qa_error *);

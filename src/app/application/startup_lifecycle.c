@@ -450,66 +450,17 @@ qa_cvars *application_startup_cvar_owner(application_provider *provider, qa_cons
 bool application_startup_console_cvar_edit(qa_application *app, qa_console *console,
     const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
 {
-    if (!app || !console || !registry || !out)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access requires its physical application console");
-    *out = NULL;
-    const qa_application_startup_hooks *hooks = app->startup_hooks;
-    if (!hooks || !hooks->cvar_edit) return true;
-    bool captured = command && qa_application_command_context_active(app, command);
-    bool entered = !captured && qa_console_cvar_entered(console, command);
-    if (!captured && !entered)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access lost its actual command or entered lexical operation");
-    bool physical = console == app->console;
-    for (application_provider *provider = app->live_providers; !physical && provider;
-         provider = provider->next_live) {
-        if (provider->application != app || provider->owner != command->owner) continue;
-        for (size_t index = 0;; ++index) {
-            qa_application_startup_source source;
-            bool found;
-            if (!application_provider_startup_source_at(provider, index, &source, &found, error)) return false;
-            if (!found) break;
-            if (source.console == console && source.command.cvar_view == command->cvar_view && source.command.dialect == command->dialect &&
-                (!entered || (source.descriptor && provider->launch &&
-                    source.descriptor->storage == provider->launch->storage &&
-                    source.command.owner == command->owner && source.command.session == command->session &&
-                    ((source.scope.kind != QA_APPLICATION_CONSOLE_Q3_CGAME &&
-                      source.scope.kind != QA_APPLICATION_CONSOLE_Q3_UI) || source.scope.seat == command->seat)))) {
-                physical = true;
-                break;
-            }
-        }
-    }
-    if (!physical)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared cvar access selected another physical console");
-    return hooks->cvar_edit(hooks->context, app, console, command, registry, out, error);
+    (void)app; (void)console; (void)command;
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Cvar edit lookup requires its output");
+    *out = qa_cvars_prepared_edit(registry);
+    return true;
 }
 
 bool application_startup_cvar_edit(application_provider *provider, qa_console *console,
     const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
 {
-    if (!provider || !provider->application || !console || !registry || !out ||
-        !command || command->owner != provider->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Prepared source cvar access lost its actual provider");
-    *out=NULL;
-    qa_application *app=provider->application;
-    qa_cvars_edit *values=qa_cvars_prepared_edit(registry);
-    if (values && app->startup_preinit_provider==provider && app->operation==APPLICATION_CONFIGURING &&
-        !provider->constructed && !provider->attached && !provider->close_pending) {
-        qa_application_startup_source source,qualified;
-        if (console!=app->console || command->cvar_view!=qa_cvars_view_identity(registry) ||
-            !qa_cvars_same_store(registry,app->cvars) || qa_cvars_edit_registry(values)!=app->cvars ||
-            !qa_application_command_context_active(app,command))
-            return application_fail(error,QA_ERROR_ARGUMENT,"Source constructor lost its actual prepared values");
-        if (!physical_source(provider,console,registry,NULL,&source,error) ||
-            !qualify_source(provider,source_snapshot(provider),&source,&qualified,error)) return false;
-        if (command->session!=source.command.session || command->dialect!=source.command.dialect ||
-            command->origin!=source.command.origin ||
-            (source.command.origin==QA_COMMAND_SEAT && command->seat!=source.command.seat))
-            return application_fail(error,QA_ERROR_ARGUMENT,"Source constructor selected another command projection");
-        *out=values;
-        return true;
-    }
-    return application_startup_console_cvar_edit(app, console, command, registry, out, error);
+    (void)provider;
+    return application_startup_console_cvar_edit(NULL, console, command, registry, out, error);
 }
 
 bool application_startup_visible_cvars(application_provider *provider, qa_console *console,

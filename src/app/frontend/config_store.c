@@ -741,56 +741,10 @@ const qa_cvar_view *frontend_config_store_engine_value(const frontend_config_sto
 bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_application *application,
     const qa_console *console,const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
 {
-    if (!manager || !application || !console || !command || !registry || !out)
-        return fail(error,QA_ERROR_ARGUMENT,"Prepared cvar access requires its actual physical console");
-    *out=NULL;
-    if (!manager->shared) return true;
-    if (shared_consumed(manager,application)) {
-        frontend_remote_config *client=frontend_config_store_client_context(manager,command);
-        frontend_config_source *game=frontend_config_store_source_context(manager,command);
-        bool admitted=console==qa_application_console(application)?
-            qa_application_command_context_active(application,command):
-            client?frontend_remote_config_cvar_active(client,command):source_cvar_context(game,command);
-        return admitted || fail(error,QA_ERROR_ARGUMENT,"Published values require their actual physical command context");
-    }
-    frontend_shared_values *values=frontend_shared_settings_values(manager->shared);
-    qa_application_client_preparation *client=frontend_shared_settings_client(manager->shared);
-    if (client) {
-        const qa_application_client_source *actual=qa_application_client_prepare_source(client);
-        if (actual && actual->context.console==console &&
-            command->cvar_view==actual->context.command.cvar_view) {
-            if (!qa_cvars_same_store(registry,frontend_shared_values_registry(values)))
-                return fail(error,QA_ERROR_ARGUMENT,"CLIENT values left the canonical table");
-            qa_cvars *actual_view=NULL;
-            return frontend_shared_values_client_access(values,client,command,&actual_view,out,error) &&
-                qa_cvars_same_store(actual_view,registry);
-        }
-    }
-    qa_application_startup_source source;
-    if (pending_tuple(manager,application,console,command,&source))
-        return frontend_shared_values_edit(values,&source,command,registry,out,error);
-    if (!qa_cvars_same_store(registry,frontend_shared_values_registry(values)))
-        return fail(error,QA_ERROR_ARGUMENT,"Prepared values left the canonical table");
-    if (application==manager->shared_application && console==manager->root_console &&
-        registry==manager->root_cvars && root_current(manager) &&
-        same_command(command,&manager->root_command) &&
-        qa_application_startup_root_definition_phase(application,manager->shared_candidate) &&
-        frontend_config_store_shared(manager,application,manager->shared_candidate)) {
-        qa_cvars *actual=NULL;
-        return frontend_shared_values_root_definition_access(values,console,command,&actual,out,error) && actual==registry;
-    }
-    if (application==manager->shared_application && console==manager->root_console &&
-        registry==manager->root_cvars && root_current(manager) &&
-        same_command(command,&manager->root_command) &&
-        qa_application_startup_bootstrap_images_ready(application) && qa_console_idle(console) &&
-        frontend_config_store_shared(manager,application,manager->shared_candidate)) {
-        qa_cvars *actual=NULL;
-        return frontend_shared_values_root_access(values,console,command,&actual,out,error) && actual==registry;
-    }
-    qa_cvars *actual=NULL;
-    return application==manager->shared_application &&
-        frontend_shared_values_release_access(values,manager->frontend->input_settings,console,command,&actual,out,error) &&
-        qa_cvars_same_store(actual,registry);
+    (void)manager; (void)application; (void)console; (void)command;
+    if (!out) return fail(error,QA_ERROR_ARGUMENT,"Cvar edit lookup requires its output");
+    *out=qa_cvars_prepared_edit(registry);
+    return true;
 }
 bool frontend_config_store_config_filtered(frontend_config_store *manager,qa_application *application,
     const qa_console *console,const qa_command_context *command,qa_cvars *registry,

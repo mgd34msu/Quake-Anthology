@@ -715,8 +715,7 @@ static bool publication_select_values(qa_application *application,
         (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
     const qa_launch_instance *source = binding
         ? qa_launch_snapshot_find(candidate, binding->instance) : NULL;
-    if (!source || !source->state ||
-        ((application_provider *)source->state)->application != application)
+    if (!source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Canonical defaults require the actual WORLD GAME source");
     qa_console_dialect dialect;
     switch (source->selection.clock.kind) {
@@ -738,33 +737,14 @@ static bool publication_prepare_values(qa_application *application,
         if (!qa_cvars_edit_prepare(application->cvars, &publication->values, error)) return false;
         publication->owns_values = true;
     }
-    return qa_cvars_edit_registry(publication->values) == application->cvars ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Publication selected another canonical scalar owner");
-}
-
-bool application_publication_values_enter(qa_application *application,
-    application_publication *publication, qa_error *error)
-{
-    if (!application || !publication || !publication->values ||
-        qa_cvars_edit_registry(publication->values) != application->cvars)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Publication requires its retained scalar ticket");
-    return qa_cvars_edit_enter(publication->values, application->cvars, error);
-}
-
-bool application_publication_values_leave(qa_application *application,
-    application_publication *publication, qa_error *error)
-{
-    return publication && publication->values &&
-        qa_cvars_edit_leave(publication->values, application->cvars, error);
+    return true;
 }
 
 bool application_publication_source_capacity(application_provider *provider,
     uint32_t capacity, qa_error *error)
 {
-    qa_application *application = provider ? provider->application : NULL;
-    application_publication *publication = application ? application->startup_publication : NULL;
-    if (!application || !capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source capacity requires its actual constructor");
+    qa_application *application = provider->application;
+    application_publication *publication = application->startup_publication;
     if (publication) {
         if (publication->map_provider == provider) {
             publication->source_max_clients = capacity;
@@ -772,9 +752,7 @@ bool application_publication_source_capacity(application_provider *provider,
         }
         return true;
     }
-    return application->operation == APPLICATION_PERSISTING
-        ? qa_cvars_set_number(application->cvars, "sv_maxclients", (float)capacity, error)
-        : application_fail(error, QA_ERROR_ARGUMENT, "Source capacity lost its real publication target");
+    return qa_cvars_set_number(application->cvars, "sv_maxclients", (float)capacity, error);
 }
 
 bool application_publication_begin(qa_application *application,
@@ -818,7 +796,7 @@ bool application_publication_begin(qa_application *application,
     if (publication->travel && application->world_change_ready != NULL &&
         !application->world_change_ready(application->guest_context, application, error))
         return false;
-    if (!application_publication_values_enter(application, publication, error)) return false;
+    if (!qa_cvars_edit_enter(publication->values, application->cvars, error)) return false;
     application_publication *previous_publication = application->startup_publication;
     application->startup_publication = publication;
     bool ok = (!previous || previous == candidate
@@ -826,7 +804,7 @@ bool application_publication_begin(qa_application *application,
         (!publication->travel || prepare_world(application, publication, error));
     application->startup_publication = previous_publication;
     qa_error returned = {0};
-    bool left = application_publication_values_leave(application, publication, &returned);
+    bool left = qa_cvars_edit_leave(publication->values, application->cvars, &returned);
     if (!left && ok && error) *error = returned;
     return ok && left;
 }
@@ -887,13 +865,13 @@ static bool finish_publication(qa_application *application,
 bool application_publication_finish(qa_application *application,
     application_publication *publication, qa_error *error)
 {
-    if (!application_publication_values_enter(application, publication, error)) return false;
+    if (!qa_cvars_edit_enter(publication->values, application->cvars, error)) return false;
     application_publication *previous_publication = application->startup_publication;
     application->startup_publication = publication;
     bool ok = finish_publication(application, publication, error);
     application->startup_publication = previous_publication;
     qa_error returned = {0};
-    bool left = application_publication_values_leave(application, publication, &returned);
+    bool left = qa_cvars_edit_leave(publication->values, application->cvars, &returned);
     if (!left && ok && error) *error = returned;
     return ok && left;
 }
@@ -933,7 +911,7 @@ bool application_publication_discard_sources(qa_application *application,
 {
     if (!publication) return true;
     bool entered = publication->values != NULL && !publication->published;
-    if (entered && !application_publication_values_enter(application, publication, error)) return false;
+    if (entered && !qa_cvars_edit_enter(publication->values, application->cvars, error)) return false;
     application_publication *previous_publication = application->startup_publication;
     const qa_launch_snapshot *routing = application->routing_snapshot;
     application_provider **providers = application->routing_providers;
@@ -979,7 +957,7 @@ returned:
     application->routing_providers = providers;
     application->routing_provider_count = count;
     qa_error returned = {0};
-    bool left = !entered || application_publication_values_leave(application, publication, &returned);
+    bool left = !entered || qa_cvars_edit_leave(publication->values, application->cvars, &returned);
     if (!left && ok && error) *error = returned;
     if (ok && left && !publication->owns_values) publication->values = NULL;
     return ok && left;
@@ -993,7 +971,6 @@ static bool publication_dispose_checked(qa_application *application,
     if (!application_startup_flow_cleanup_publication(application, publication, error)) return false;
     if (publication->resources) {
         const qa_application_startup_hooks *hooks = application->startup_hooks;
-        if (!hooks) return application_fail(error, QA_ERROR_ARGUMENT, "Direct resources lost their real owner hooks");
         if (publication->resources_consumed) {
             bool complete = false;
             if (!hooks->finish_publication(hooks->context, application, publication->candidate,
@@ -1007,8 +984,6 @@ static bool publication_dispose_checked(qa_application *application,
         application_q3_world_restart_configuration_finish(application, publication->candidate, false);
     }
     if (publication->owns_values && publication->values) {
-        if (!qa_cvars_edit_abort_is(publication->values, application->cvars))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Candidate cleanup retains its scalar callback owner");
         qa_cvars_edit_abort(publication->values);
         publication->values = NULL;
     }
@@ -1456,7 +1431,7 @@ static bool publication_stage_values(qa_application *application,
         found = true;
         break;
     }
-    if (!found || !actual.cvars || !qa_cvars_same_store(actual.cvars, application->cvars))
+    if (!found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Default activation lost its real candidate GAME view");
     if (!qa_cvars_select_dialect(actual.cvars, qa_cvars_dialect(actual.cvars), error) ||
         !application_provider_seed_cvars(source, actual.cvars,
@@ -1476,17 +1451,13 @@ static bool publication_stage_values(qa_application *application,
 bool application_publication_retire_sources(qa_application *application,
     application_publication *publication, qa_error *error)
 {
-    if (!application || !publication || !publication->candidate || publication->published ||
-        publication->failed_retained || application->operation != APPLICATION_CONFIGURING ||
-        publication->previous != qa_configuration_current(application->configuration))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source retirement requires its real precommit publication");
     if (!publication->travel) return true;
     if (publication->sources_retired)
         return publication->gameplay_prepared || application_fail(error, QA_ERROR_ARGUMENT,
             "Source retirement retains a failed final gameplay admission");
     if (publication->source_retirement_started)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source retirement retains an unfinished entered owner");
-    if (!application_publication_values_enter(application, publication, error)) return false;
+    if (!qa_cvars_edit_enter(publication->values, application->cvars, error)) return false;
     application_publication *previous_publication = application->startup_publication;
     bool previous_started = application->publication_started;
     application->startup_publication = publication;
@@ -1531,7 +1502,7 @@ bool application_publication_retire_sources(qa_application *application,
     application->startup_publication = previous_publication;
     application->publication_started = previous_started;
     qa_error returned = {0};
-    bool left = application_publication_values_leave(application, publication, &returned);
+    bool left = qa_cvars_edit_leave(publication->values, application->cvars, &returned);
     if (!left && staged && error) *error = returned;
     if ((!staged || !left) && publication->previous) application_fault(application, error);
     return staged && left;
@@ -1540,12 +1511,8 @@ bool application_publication_retire_sources(qa_application *application,
 bool application_publication_ready_values(qa_application *application,
     application_publication *publication, qa_error *error)
 {
-    if (!application || !publication || !publication->values || publication->published ||
-        qa_cvars_edit_registry(publication->values) != application->cvars)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Scalar readiness lost its actual publication ticket");
-    if (qa_cvars_edit_ready_is(publication->values)) return true;
-    return publication->owns_values ? qa_cvars_edit_ready(publication->values, error) :
-        application_fail(error, QA_ERROR_ARGUMENT, "Borrowed scalars await their real resource owner admission");
+    (void)application;
+    return qa_cvars_edit_ready(publication->values, error);
 }
 
 static bool prepare_direct_publication(qa_application *application,
@@ -1555,25 +1522,18 @@ static bool prepare_direct_publication(qa_application *application,
         !application_startup_program_publication_prepare(application, publication,
             &publication->programs, error) ||
         !application_startup_program_publication_preflight(publication->programs, error)) return false;
-    if (!application_publication_values_enter(application, publication, error)) return false;
+    if (!qa_cvars_edit_enter(publication->values, application->cvars, error)) return false;
     bool ok = application_startup_publication_prepare(application, publication, error);
     qa_error returned = {0};
-    bool left = application_publication_values_leave(application, publication, &returned);
+    bool left = qa_cvars_edit_leave(publication->values, application->cvars, &returned);
     if (!left && ok && error) *error = returned;
     if (!ok || !left) return false;
     const qa_application_startup_hooks *hooks = application->startup_hooks;
     if (hooks && hooks->prepare_publication) {
-        if (!hooks->ready_publication || !hooks->owned_publication_ready ||
-            !hooks->consume_publication || !hooks->finish_publication || !hooks->abort_publication)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Direct resources require their complete existing owner hooks");
         if (!hooks->prepare_publication(hooks->context, application, publication->candidate,
-                &publication->resources, error) || !publication->resources ||
+                &publication->resources, error) ||
             !hooks->ready_publication(hooks->context, application, publication->candidate,
                 publication->resources, error)) return false;
-        publication->resources_ready = hooks->owned_publication_ready(hooks->context,
-            application, publication->candidate, publication->resources);
-        if (!publication->resources_ready)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Direct resources lack actual retained child admission");
     }
     return application_publication_ready_values(application, publication, error) &&
         application_startup_program_publication_seal(publication->programs, error);
@@ -1591,8 +1551,6 @@ static bool publish_travel(qa_application *application,
     application_provider **routing_providers = application->routing_providers;
     size_t routing_count = application->routing_provider_count;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
-    if (!publication->sources_retired)
-        return application_fail(error, QA_ERROR_ARGUMENT, "World publication lacks completed Source retirement");
     if (!qc_objectives(application, false, error)) return false;
     if (!application_acoustics_idle(application))
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -1810,21 +1768,14 @@ static bool consume_publication_values(qa_application *application,
     application_publication *publication, const qa_launch_snapshot *candidate,
     qa_error *error)
 {
-    if (!publication->values || !qa_cvars_edit_ready_is(publication->values))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Configuration committed without admitted canonical scalars");
     qa_cvars_edit *owned = publication->owns_values ? publication->values : NULL;
     if (!owned) publication->values = NULL;
     if (application->startup_flow) {
         if (!application_startup_flow_consume_publication(application, publication, candidate, error)) return false;
     } else if (publication->resources) {
         const qa_application_startup_hooks *hooks = application->startup_hooks;
-        if (!hooks || !publication->resources_ready || publication->resources_consumed ||
-            !hooks->owned_publication_ready(hooks->context, application, candidate, publication->resources))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Direct consume lost its actual admitted resource owner");
         publication->resources_consumed = true;
         hooks->consume_publication(hooks->context, application, candidate, publication->resources);
-    } else if (!owned) {
-        return application_fail(error, QA_ERROR_ARGUMENT, "Borrowed scalars lost their real publication owner");
     }
     if (owned) {
         publication->values = NULL;
@@ -1840,8 +1791,7 @@ static bool finish_publication_values(qa_application *application,
     if (!publication->resources) return true;
     const qa_application_startup_hooks *hooks = application->startup_hooks;
     bool complete = false;
-    return hooks && publication->resources_consumed &&
-        hooks->finish_publication(hooks->context, application, publication->candidate,
+    return hooks->finish_publication(hooks->context, application, publication->candidate,
             &publication->resources, &complete, error) && complete && !publication->resources;
 }
 

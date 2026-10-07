@@ -210,7 +210,7 @@ typedef struct application_publication {
     qa_cvars_edit *values;
     bool owns_values;
     void *resources;
-    bool resources_ready, resources_consumed;
+    bool resources_consumed;
     bool source_retirement_started;
     bool sources_retired;
     bool gameplay_prepared;
