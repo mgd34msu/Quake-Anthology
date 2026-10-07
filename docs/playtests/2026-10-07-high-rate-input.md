@@ -187,6 +187,37 @@ directory. Temporary objects, extracted map and executable were removed;
 the 72 KB source/result directory, prior 17 ms proof and captured cuts remain.
 No game was launched and no source or SDK file was changed.
 
+## Current installed Original Q3 at the owner's 85 fps setting
+
+Installed `41861a12` passed a new real-clock Original q3dm1 input check on
+private GPU0, RTX 5060 Ti, at 640×400. A fresh copy of the actual 34 owner
+settings retained Space `+moveup` and C `+movedown`. Public reads confirmed
+`com_maxfps 85`, `r_maxfps 0` and swap interval zero. Completed swap rates
+during first Space, second Space and C were 85.093, 84.952 and 85.000 fps.
+
+Two actual Space presses, 55 repeated key-downs and two releases produced
+exactly two jump events. The held flag persisted through 228 grounded cuts,
+release cleared it, and no physical downward-to-upward reversal was observed.
+C held the duck flag and view height 12, then release restored height 26.
+Root inspected the actual lowered and restored gameplay screenshots.
+
+Space holds lasted 1.9998 and 1.5060 seconds. C lasted 2.0706 seconds because
+the synchronous screenshot extended its requested 1.5-second hold. Screenshot
+capture also caused two explicit gaps of 47 commands in the detached sampler.
+Observed new sequences had advancing server/command times; this is not a
+trace of every Think invocation. The material camera may select a HUD scene,
+so no detached world-camera qualification is claimed from that field.
+
+Startup debugger capture detached before input, with `TracerPid=0` before
+and afterward. Public quit and client exit were zero; all 15 recorded owned
+processes and the private X socket were absent. No game audio stream or
+hardware audio reached the desktop. Owner settings, artifact and helpers
+remained unchanged. Startup still displayed the separate THE-585 recovery
+ownership error. Evidence: `qa-private-av-rqsnkofp/owner85-input-proof.json`.
+
+This qualifies the current saved-85 condition at the reduced private window.
+It does not close THE-420's uncapped physical bounce or replace Mike's retest.
+
 ## Current installed Q3 client and render caps
 
 Two additional cases used installed `3765bb6b`, a fresh copy of the same owner
