@@ -390,11 +390,17 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
 
 bool application_match_mode_source_owned(const application_provider *provider)
 {
-    const struct application_native_q2 *engine =
-        provider && provider->kind == APPLICATION_PROVIDER_NATIVE
-            ? provider->state.native.q2_engine : NULL;
-    return engine && engine->prepared && !engine->declaration &&
-        engine->profile != QA_NATIVE_Q2_CGAME_API2023;
+    if (!provider) return false;
+    const struct application_native_q2 *q2 = provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.q2_engine : NULL;
+    if (q2) return q2->prepared && !q2->declaration &&
+        q2->profile != QA_NATIVE_Q2_CGAME_API2023;
+    const struct application_q3_guest *q3 = provider->kind == APPLICATION_PROVIDER_QVM
+        ? provider->state.qvm.engine : provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.engine : NULL;
+    const q3g_role *game = q3 ? q3->game : NULL;
+    return game && game->kind == QA_QVM_GAME && game->ready && !game->declaration &&
+        game->artifact && !game->artifact->primary.size;
 }
 
 bool application_match_prepare_modes(qa_application *application,
