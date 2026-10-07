@@ -357,8 +357,9 @@ typedef struct qa_console_entry {
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
 /* Bind Source callbacks to the shared console without another command queue. */
 bool qa_console_bind_source(qa_console *, const qa_console_options *, qa_error *);
-/* Bind a seat projection to the existing common application services. */
-bool qa_console_bind_view(qa_console *, qa_cvars *, const qa_command_context *, qa_error *);
+/* Bind a seat projection to an existing Source packet, or common services. */
+bool qa_console_bind_view(qa_console *, const qa_command_context *services,
+    qa_cvars *, const qa_command_context *constructor, qa_error *);
 bool qa_console_unbind_source(qa_console *, uint64_t cvar_view, qa_error *);
 /* Call an exact bound Source forwarder inside the original entered invocation. */
 qa_command_result qa_console_forward_source(qa_console *, const qa_command_invocation *,

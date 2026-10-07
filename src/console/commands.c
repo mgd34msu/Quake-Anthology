@@ -593,11 +593,13 @@ bool qa_console_bind_source(qa_console *console,const qa_console_options *option
     return true;
 }
 
-bool qa_console_bind_view(qa_console *console,qa_cvars *view,
+bool qa_console_bind_view(qa_console *console,const qa_command_context *services,qa_cvars *view,
     const qa_command_context *constructor,qa_error *error)
 {
     if (!console || !constructor) return qa_console_bind_source(console,NULL,error);
-    qa_console_options options=console->options;
+    const qa_console_options *packet=services?options_for(console,services):&console->options;
+    if (!packet) return qa_console_bind_source(console,NULL,error);
+    qa_console_options options=*packet;
     options.cvars=view; options.context=*constructor; options.startup_commands=NULL;
     return qa_console_bind_source(console,&options,error);
 }

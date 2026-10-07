@@ -254,13 +254,22 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
     return captured;
 }
 
+static startup_source *advancing_source(const application_provider *provider)
+{
+    struct application_startup_flow *flow = provider->application->startup_flow;
+    startup_source *source = flow && flow->advancing && flow->index < flow->count
+        ? flow->sources + flow->index : NULL;
+    return source && source->provider == provider ? source : NULL;
+}
+
 bool application_startup_source_active(const application_provider *provider)
 { return application_startup_console_active(provider, NULL); }
 
 bool application_startup_console_active(const application_provider *provider, const qa_cvars *cvars)
 {
-    startup_source *source = source_at((application_provider *)provider, NULL, qa_cvars_view_identity(cvars));
-    return source && source->phase;
+    startup_source *source = advancing_source(provider);
+    return source && source->phase &&
+        (!cvars || source->owner.cvars == cvars);
 }
 
 bool application_startup_command_allowed(application_provider *provider, const qa_command_invocation *command)
@@ -269,9 +278,10 @@ bool application_startup_command_allowed(application_provider *provider, const q
 bool application_startup_console_command_allowed(application_provider *provider,
     const qa_console *console, const qa_command_invocation *command)
 {
-    startup_source *source = source_at(provider, console, command ? command->context.cvar_view : 0);
-    if (!source || !source->phase) return true;
+    (void)console;
     struct application_startup_flow *flow = provider->application->startup_flow;
+    startup_source *source = advancing_source(provider);
+    if (!source || !source->phase) return true;
     return !flow->hooks.allow_command || flow->hooks.allow_command(flow->hooks.context, source->phase, command);
 }
 
@@ -328,10 +338,11 @@ bool application_startup_script_read(application_provider *provider,
 bool application_startup_console_script_read(application_provider *provider, const qa_console *console,
     const qa_command_context *command, const char *name, qa_bytes *out, void **lease, qa_error *error)
 {
-    startup_source *source = source_at(provider, console, command ? command->cvar_view : 0);
+    (void)console;
+    struct application_startup_flow *flow = provider->application->startup_flow;
+    startup_source *source = advancing_source(provider);
     if (!source || !source->phase || !qa_application_command_context_active(provider->application, command))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup script lost its retained source phase");
-    struct application_startup_flow *flow = provider->application->startup_flow;
     return flow->hooks.read_script(flow->hooks.context, source->phase, command, name, out, lease, error);
 }
 
@@ -341,11 +352,11 @@ void application_startup_script_release(application_provider *provider, void *le
 void application_startup_console_script_release(application_provider *provider,
     const qa_cvars *cvars, void *lease)
 {
-    startup_source *source = source_at(provider, NULL, qa_cvars_view_identity(cvars));
-    if (source && source->phase) {
-        struct application_startup_flow *flow = provider->application->startup_flow;
+    (void)cvars;
+    struct application_startup_flow *flow = provider->application->startup_flow;
+    startup_source *source = advancing_source(provider);
+    if (source && source->phase)
         flow->hooks.release_script(flow->hooks.context, source->phase, lease);
-    }
 }
 
 void application_startup_script_complete(application_provider *provider,
@@ -355,11 +366,11 @@ void application_startup_script_complete(application_provider *provider,
 void application_startup_console_script_complete(application_provider *provider,
     const qa_console *console, const qa_command_context *command, const char *name, bool success)
 {
-    startup_source *source = source_at(provider, console, command ? command->cvar_view : 0);
-    if (source && source->phase) {
-        struct application_startup_flow *flow = provider->application->startup_flow;
+    (void)console;
+    struct application_startup_flow *flow = provider->application->startup_flow;
+    startup_source *source = advancing_source(provider);
+    if (source && source->phase)
         flow->hooks.script_complete(flow->hooks.context, source->phase, command, name, success);
-    }
 }
 
 application_publication *application_startup_flow_take_publication(qa_application *app,

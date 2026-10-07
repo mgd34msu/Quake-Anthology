@@ -289,11 +289,11 @@ static bool seat_input_create(frontend_config_source *source,config_seat *seat,
     if (!current_command(source,&command,error) ||
         !capture_seat_command(source,&command,seat->logical,&command,error)) return false;
     if (seat->cvars && !qa_console_context_bound(source->console,&command) &&
-        !qa_console_bind_view(source->console,seat->cvars,&command,error)) return false;
+        !qa_console_bind_view(source->console,&source->command,seat->cvars,&command,error)) return false;
     command.cvar_view=qa_cvars_view_identity(seat->mouse);
     command.dialect=seat->movement_dialect;
     if (!qa_console_context_bound(source->console,&command) &&
-        !qa_console_bind_view(source->console,seat->mouse,&command,error)) return false;
+        !qa_console_bind_view(source->console,NULL,seat->mouse,&command,error)) return false;
     qa_input_seat_options options={.context=command,.console=source->console,.cvars=seat->mouse,
         .gamepad=active?*qa_input_seat_gamepad_tuning((qa_input_seat *)active):qa_gamepad_defaults(),
         .seat=physical,.context_ready=input_context,.context_user=source};
