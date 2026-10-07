@@ -28,6 +28,23 @@ These are configured frame-rate conditions; the private software GL runs did not
 
 An additional detached native GL check (`qa-private-av-69ycntmw/result.json`) recorded three jump events for three presses and 103 grounded-held samples without retriggering. An airborne public kill preserved nonzero corpse momentum; the first live post-respawn sample had zero horizontal velocity and vertical velocity from the subsequent gravity step. It does not measure velocity at the spawn function return.
 
+## Q1 skill gates and persistence, THE-345 / MIKE-28
+
+Native classic Q1 now has completed CPU and GL checks for all four authored skill gates in `start.bsp`, followed by the ordinary episode-one slipgate into `e1m1`. The checks use real keyboard input. No console skill assignment or position write selects the difficulty.
+
+| Skill | Retail e1m1 excluded entities | Spawned monsters | CPU artifact | GL artifact |
+|---|---|---|---|---|
+| Easy, 0 | 46 | 10 | `bb7f2ec1` | `5ae7b91a` |
+| Normal, 1 | 33 | 23 | `bb7f2ec1` | `5ae7b91a` |
+| Hard, 2 | 18 | 42 | `5ae7b91a` | `5ae7b91a` |
+| Nightmare, 3 | 18 | 42 | `5ae7b91a` | `ab78171b` |
+
+Every case matched the exact excluded indices among the retail map's 369 authored entities and wrote the corresponding original-save skill header. The historical seven cases share four session receipts, recorded in `the345-gates-20261007/historical-seven-receipts.json`; their artifact identities remain separate.
+
+The final GL Nightmare case ran on the 03:51:48 CDT `ab78171b` installation with a fresh copy of all 34 owner settings files. The hidden gate set public `skill` to 3 and canonical `g_spSkill` to 4. The next map spawned with skill 3, deathmatch 0 and coop 0. Public save, load and resave retained skill 3 and the 42-monster roster. Public quit returned zero; all 30 recorded owned process tokens were absent, the private display socket was removed, and the artifact and original settings bytes stayed unchanged. Evidence: `qa-private-av-0wjt9qrv/user/the345/qualified-gl-nightmare.json` and its final cleanup receipt. The historical CPU Nightmare case also completed load/resave.
+
+The installed build contains the existing carry/rounding fixes `6b809853`, `66d5744b` and `3c5e8bfb`. Earlier route, observer and focus-helper failures remain separate from these successful gameplay checks. These runs cover native classic Q1; Original QC, rerelease, mods, audio and performance are not qualified here. Mike's retest remains pending.
+
 ## Earlier installed `685cab51`
 
 Artifact: `qfiles/qa-c`, commit `685cab51`, 138,906,552 bytes. GCC and Clang full builds and the six registered checks passed. The executable and its twelve sibling native-runtime files matched the installation receipts.
