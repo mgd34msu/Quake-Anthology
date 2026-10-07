@@ -29,7 +29,8 @@ observed a 1920×1080 window and drawable on the private virtual screen. The
 250 and 333 cases used the same directly observed dimensions. These installed
 measurements establish the configured cap's effect in Native Q3. The additional
 Native game and alias checks below extend that result. Original cap behavior
-remains unqualified.
+was not measured on that artifact; the later installed-build checks below
+qualify it separately.
 
 Native uncapped retained 3,953 completed command sequence advances across
 8.351 seconds. Typical interior 50 ms server-frame groups contained 20–25
@@ -150,3 +151,34 @@ this observation scope. The subsequent `3765bb6b` installation changes only
 the CPU fog shader; this record identifies the precise earlier test artifact.
 The compact aggregate is
 `qa-the420-frame-clock-20261007/1c0ab5dc-original-fixed-frame-summary.json`.
+
+## Current installed Q3 client and render caps
+
+Two additional cases used installed `3765bb6b`, a fresh copy of the same owner
+settings, affinity `0-7,12-19` and the private RTX 5060 Ti display. Actual
+window and drawable dimensions remained 640×400. Each setting warmed for
+two seconds, then sampled six seconds of completed GL swaps. No debugger
+was attached; swap interval and timedemo read back as zero.
+
+| Session and public setting | Completed swaps/s | Completed swaps |
+| --- | ---: | ---: |
+| Native Q3, `com_maxfps 0`, `r_maxfps 85` | 84.995 | 510 |
+| Native Q3, both caps zero | 496.180 | 2,978 |
+| Original Q3, `com_maxfps 85`, `r_maxfps 0` | 85.006 | 510 |
+| Original Q3, canonical zero then `cl_maxfps 85` | 84.982 | 510 |
+| Original Q3, both caps zero | 246.161 | 1,477 |
+
+Public canonical and alias readbacks agreed before sampling. Root inspected
+the captured Native and Original q3dm1 gameplay images. Both runs quit through
+the public console with status zero, without cleanup signals. All 22 recorded
+owned process IDs were absent afterward; owner settings, installed artifacts
+and the swap observer remained unchanged.
+
+These checks qualify the separate render-cap consumer and Original Q3's
+canonical/alias client cap. They make no renderer speedup, 1080p target,
+Original Q1/Q2 cap or complete rendering-fidelity claim. The Original log also
+reported an autosave/recovery ownership failure; cap qualification does not
+qualify saving or recovery. THE-420's separate physical bounce remains open.
+
+Evidence: `qa-the583-q3-cap-20261007/q3-cap-result.json`,
+`qa-private-av-r9iba9pu/result.json` and `qa-private-av-cnp7flmp/result.json`.
