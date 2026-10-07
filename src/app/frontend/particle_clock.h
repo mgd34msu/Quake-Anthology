@@ -8,6 +8,7 @@
  * clamps the retained Classic client clock before source effect delivery. */
 bool frontend_particle_source_begin(qa_frontend *, uint64_t elapsed_ns, qa_error *);
 bool frontend_particle_source_complete(qa_frontend *, qa_error *);
+bool frontend_particle_source_cancel(qa_frontend *, qa_error *);
 
 /* Borrow the already completed local CLIENT clock for this emitting GAME. */
 bool frontend_particle_q2_client_time(qa_frontend *, qa_actor_owner,

@@ -643,7 +643,19 @@ static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
     return true;
 }
 
-static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
+static bool drain_runtime_console(qa_frontend *frontend, qa_console *console,
+    bool playing, const char *site, qa_error *error)
+{
+    size_t executed;
+    if (qa_console_drain(console, 4096, &executed, error)) return true;
+    if (!playing || qa_application_should_stop(frontend->application) ||
+        qa_application_startup_pending(frontend->application) || !qa_console_idle(console)) return false;
+    qa_application_feature_report(frontend->application, site, error);
+    if (error) *error = (qa_error){0};
+    return true;
+}
+
+static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *playing, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
         frontend_save_commands_restoring(frontend) ||
@@ -724,6 +736,9 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
     if (maintained) maintained = frontend_profiler_end(profiler,frontend_shared_resource_policy_live_sync(frontend,error),error);
     if (!frontend_profiler_end(profiler,maintained,error)) return false;
     bool client_only=frontend_network_client_only(frontend);
+    *playing = !frontend_startup_queued(frontend) &&
+        !qa_application_startup_pending(frontend->application) &&
+        (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING);
     qa_application_travel_view pending;
     bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
         pending.target.kind==QA_TRAVEL_MAP;
@@ -770,12 +785,11 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
         if (ok) ok = qa_dedicated_console_poll(frontend->terminal, 0, 65536, error) &&
              qa_dedicated_console_drain(frontend->terminal, source_console, &source_context, &lines, error);
     }
-    size_t executed;
     if (ok && source_console!=console &&
         !qa_application_startup_console_queued(frontend->application,source_console))
-        ok=qa_console_drain(source_console,4096,&executed,error);
+        ok=drain_runtime_console(frontend, source_console, *playing, "source console command", error);
     if (ok) ok = qa_application_startup_console_queued(frontend->application,console) ||
-        qa_console_drain(console, 4096, &executed, error);
+        drain_runtime_console(frontend, console, *playing, "ENGINE console command", error);
     if (ok && !qa_application_should_stop(frontend->application) &&
         frontend->server_stop_owner && !frontend->server_stopped) {
         bool complete=false;
@@ -794,7 +808,10 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
             frontend_tools_sync(frontend,error) && frontend_network_pump(frontend,error),error);
     }
     if (ok) ok=frontend_cinematic_drain(frontend,error);
-    if (ok) ok=frontend_restart_drain_frame(frontend->restart,error);
+    if (ok) {
+        ok=frontend_restart_drain_frame(frontend->restart,error);
+        if (!ok) *playing=false;
+    }
     if (ok && frontend->restart && !frontend_restart_idle(frontend->restart)) {
         frontend->stepping=false;
         return true;
@@ -812,7 +829,10 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
             bool console_open=false;
             for (uint32_t i=0;i<frontend->options.seats;++i)
                 console_open|=qa_input_seat_focus(frontend->seats[i].input)==QA_INPUT_CONSOLE;
-            if (console_open) ok=frontend_present(frontend,error);
+            if (console_open) {
+                ok=frontend_present(frontend,error);
+                if (!ok) *playing=false;
+            }
         }
         if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
         frontend->stepping=false;
@@ -872,7 +892,11 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
         }
         if (ok && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "presentation", error);
-            if (ok) ok = frontend_profiler_end(profiler, frontend_present(frontend, error), error);
+            if (ok) {
+                bool presented=frontend_present(frontend,error);
+                ok=frontend_profiler_end(profiler,presented,error);
+                if (!presented) *playing=false;
+            }
             if (ok) {
                 ok=qa_profiler_push(profiler,"client_pose_publication",error);
                 if (ok) ok=frontend_profiler_end(profiler,
@@ -927,7 +951,23 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *
 }
 bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
 {
-    bool ok=frontend_step(frontend,elapsed_ns,error);
-    if (!ok) frontend_save_commands_recovery_abandon(frontend);
-    return ok;
+    qa_error local = {0};
+    qa_error *fault = error ? error : &local;
+    bool playing = false;
+    uint64_t frame = frontend ? frontend->frame_number : 0;
+    bool ok=frontend_step(frontend,elapsed_ns,&playing,fault);
+    if (ok) return true;
+    frontend_save_commands_recovery_abandon(frontend);
+    if (!playing || qa_application_should_stop(frontend->application) ||
+        qa_application_startup_pending(frontend->application)) return false;
+    if (!qa_profiler_idle(qa_tools_profiler(frontend_tools_owner(frontend)))) return false;
+    qa_error cleanup = {0};
+    if (!frontend_frame_cancel(frontend, &cleanup)) {
+        if (error) *error = cleanup;
+        return false;
+    }
+    qa_application_feature_report(frontend->application, "frontend frame", fault);
+    if (frontend->frame_number == frame) ++frontend->frame_number;
+    *fault = (qa_error){0};
+    return true;
 }

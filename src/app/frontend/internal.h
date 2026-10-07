@@ -325,6 +325,7 @@ bool frontend_player_sources_drain(qa_frontend *, qa_error *);
 void frontend_player_sources_discard(qa_frontend *);
 const qa_product *frontend_product_selection(qa_catalog *,const char *);
 bool frontend_present(qa_frontend *, qa_error *);
+bool frontend_frame_cancel(qa_frontend *, qa_error *);
 bool frontend_display_ready(qa_frontend *, bool *ready, qa_error *);
 bool frontend_frame_present(qa_frontend *, qa_error *);
 bool frontend_scene_sync(qa_frontend *, qa_error *);

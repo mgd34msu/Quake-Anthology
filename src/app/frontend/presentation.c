@@ -8,6 +8,7 @@
 #include "menu_fonts.h"
 #include "qc_rerelease_events.h"
 #include "native_q3_client.h"
+#include "capture.h"
 #include "native_composition.h"
 #include "equipment_media.h"
 #include "component_scene.h"
@@ -579,14 +580,47 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
     return true;
 }
 
+bool frontend_frame_cancel(qa_frontend *frontend, qa_error *error)
+{
+    if (frontend->frame.source_pending && !qa_material_source_frame_end(
+            frontend->frame.source_pending, &frontend->frame, false, error)) return false;
+    for (unsigned i = 0; i < frontend->options.seats; ++i)
+        if (!frontend_component_scene_pictures_finish(frontend, i, false, error)) return false;
+    if (!frontend_particle_source_cancel(frontend, error)) return false;
+    qa_application *app = frontend->application;
+    qa_world *world = qa_application_world(app);
+    if (!qa_session_safe(qa_application_session(app)) || (world && !qa_world_idle(world)) ||
+        !frontend_owners_returned(frontend) || !frontend_seat_callbacks_returned(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT,
+            "Frame cancellation retains an entered feature owner");
+    qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
+    return true;
+}
+
 bool frontend_present(qa_frontend *frontend, qa_error *error)
 {
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     bool profiling = qa_profiler_enabled(profiler);
     bool render = false;
     if (profiling && !qa_profiler_push(profiler, "scene_build", error)) return false;
-    bool ok = scene_build(frontend, &render, error);
-    if (profiling) ok = frontend_profiler_end(profiler, ok, error);
-    if (!ok || !render) return ok;
+    qa_error feature = {0};
+    bool ok = scene_build(frontend, &render, &feature);
+    if (profiling && !frontend_profiler_end(profiler, true, error)) return false;
+    if (!ok) {
+        qa_application *app = frontend->application;
+        bool playing = !qa_application_startup_pending(app) &&
+            (qa_application_get_state(app) == QA_APPLICATION_RUNNING ||
+             frontend_network_client_only(frontend));
+        bool fatal = !playing || qa_application_should_stop(app) || qa_session_faulted(qa_application_session(app));
+        if (!frontend_frame_cancel(frontend, error)) return false;
+        if (fatal) {
+            if (error) *error = feature;
+            return false;
+        }
+        qa_application_feature_report(app, "presentation frame", &feature);
+        if (error) *error = (qa_error){0};
+        return true;
+    }
+    if (!render) return true;
     return frontend_frame_present(frontend, error);
 }

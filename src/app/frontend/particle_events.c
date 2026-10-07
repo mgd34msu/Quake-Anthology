@@ -356,6 +356,18 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
     return true;
 }
 
+bool frontend_particle_source_cancel(qa_frontend *frontend, qa_error *error)
+{
+    frontend_particle_state *state = frontend->particles;
+    if (!state || !state->client_pending) return true;
+    if (state->client_frame != frontend->frame_number || state->client_host_ns != frontend->time_ns)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client cancellation lost its entered host frame");
+    state->client_pending = false;
+    state->source_ready = false;
+    state->source_entity_count = state->source_client_count = 0;
+    return true;
+}
+
 static bool client_sample(qa_frontend *frontend, uint64_t *sample, uint64_t *server,
     float *back_lerp, bool *physical, qa_error *error)
 {

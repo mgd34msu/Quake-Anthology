@@ -249,6 +249,16 @@ static bool ready(qa_application *app, qa_error *error)
         application_fail(error, QA_ERROR_ARGUMENT, "Guest presentation requires an idle application");
 }
 
+static bool presentation_return(qa_application *app, bool ok, bool initialized,
+    qa_error *error)
+{
+    app->operation = APPLICATION_IDLE;
+    if (!ok && (!initialized || qa_session_faulted(app->session) ||
+        !ready(app, NULL) || (app->world && !qa_world_idle(app->world))))
+        application_fault(app, error);
+    return ok;
+}
+
 static bool initialize(q3g_role *role, qa_error *error)
 {
     if (role->initialized) return true;
@@ -272,7 +282,7 @@ bool qa_application_guest_menu_set(qa_application *app, uint32_t seat,
     if (!handled || (unsigned)menu > QA_APPLICATION_GUEST_MENU_INGAME || !ready(app, error)) return false;
     *handled = false;
     app->operation = APPLICATION_ADVANCING;
-    bool ok = true;
+    bool ok = true, initialized = true;
     int32_t command = menu == QA_APPLICATION_GUEST_MENU_MAIN ? 1 :
         menu == QA_APPLICATION_GUEST_MENU_INGAME ? 2 : 0;
     int32_t result;
@@ -290,13 +300,12 @@ bool qa_application_guest_menu_set(qa_application *app, uint32_t seat,
     } else {
         q3g_role *role = client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat);
         if (role && client_ready(role)) {
-            ok = initialize(role, error) && q3g_call(role, 7, &command, 1, &result, error);
+            initialized = initialize(role, error);
+            ok = initialized && q3g_call(role, 7, &command, 1, &result, error);
             *handled = true;
         }
     }
-    app->operation = APPLICATION_IDLE;
-    if (!ok) application_fault(app, error);
-    return ok;
+    return presentation_return(app, ok, initialized, error);
 }
 
 static bool source_time(q3g_role *role, uint32_t milliseconds, int32_t *out, qa_error *error)
@@ -325,24 +334,24 @@ bool qa_application_present(qa_application *app, uint32_t seat,
     application_provider *hud_provider = selected(app, seat, QA_ROLE_HUD);
     q3g_role *hud = client_role(hud_provider, QA_QVM_CGAME, seat);
     app->operation = APPLICATION_ADVANCING;
-    bool ok = true;
+    bool ok = true, initialized = true;
     int32_t result;
     if (hud && client_ready(hud)) {
         int32_t args[] = {0, 0, 0};
-        ok = source_time(hud, client_milliseconds, &args[0], error) &&
-            initialize(hud, error) && q3g_call(hud, 3, args, 3, &result, error);
+        ok = source_time(hud, client_milliseconds, &args[0], error);
+        if (ok) initialized = initialize(hud, error);
+        if (ok) ok = initialized && q3g_call(hud, 3, args, 3, &result, error);
     }
     if (ok && native_q2_hud(hud_provider))
         ok = application_native_q2_draw_hud(hud_provider, seat, client_milliseconds, error);
     q3g_role *menu = ok ? client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat) : NULL;
     if (ok && menu && client_ready(menu)) {
         int32_t time;
-        ok = source_time(menu, real_milliseconds, &time, error) &&
-            initialize(menu, error) && q3g_call(menu, 5, &time, 1, &result, error);
+        ok = source_time(menu, real_milliseconds, &time, error);
+        if (ok) initialized = initialize(menu, error);
+        if (ok) ok = initialized && q3g_call(menu, 5, &time, 1, &result, error);
     }
-    app->operation = APPLICATION_IDLE;
-    if (!ok) application_fault(app, error);
-    return ok;
+    return presentation_return(app, ok, initialized, error);
 }
 
 static bool key(q3g_role *role, int32_t code, bool down, qa_error *error)
@@ -369,7 +378,6 @@ static int32_t physical_key(const qa_input_event *input)
 
 static bool event(q3g_role *role, const qa_input_event *input, bool *handled, qa_error *error)
 {
-    if (!initialize(role, error)) return false;
     if (input->kind == QA_INPUT_EVENT_KEY || input->kind == QA_INPUT_EVENT_BUTTON) {
         int32_t source = physical_key(input);
         if (source < 0) return true;
@@ -426,8 +434,7 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
                     role->retired || !role->input_keys[released] || !client_ready(role)) continue;
                 app->operation = APPLICATION_ADVANCING;
                 bool ok = key(role, released, false, error);
-                app->operation = APPLICATION_IDLE;
-                if (!ok) { application_fault(app, error); return false; }
+                if (!presentation_return(app, ok, true, error)) return false;
                 *handled = true;
             }
         }
@@ -447,9 +454,9 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
         uint32_t catcher = qa_input_seat_catcher(source, owner);
         if (!(catcher & (role->kind == QA_QVM_UI ? QA_INPUT_CATCH_UI : QA_INPUT_CATCH_GAME))) continue;
         app->operation = APPLICATION_ADVANCING;
-        bool ok = event(role, input, handled, error);
-        app->operation = APPLICATION_IDLE;
-        if (!ok) { application_fault(app, error); return false; }
+        bool initialized = initialize(role, error);
+        bool ok = initialized && event(role, input, handled, error);
+        if (!presentation_return(app, ok, initialized, error)) return false;
         if (*handled) return true;
     }
     return true;
