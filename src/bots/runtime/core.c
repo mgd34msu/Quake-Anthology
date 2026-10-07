@@ -252,17 +252,18 @@ qa_bot_navigation *qa_bot_runtime_navigation(qa_bot_runtime *r, int32_t client) 
     r->busy = previous;
     return navigation;
 }
-bool qa_bot_runtime_predict_movement(qa_bot_runtime *r, int32_t client,
+bool qa_bot_runtime_predict_movement(qa_bot_runtime *r, int32_t entity,
                                       const qa_bot_movement_prediction_query *query,
                                       qa_bot_movement_prediction *out, qa_error *e) {
-    if (!r || r->busy || r->restore_pending || r->observation_leases ||
+    if (!r || !query || !out || r->busy || r->restore_pending || r->observation_leases ||
         (r->closed && r->options.observations != QA_BOT_OBSERVATION_MODULE))
-        return bot_runtime_fail(e, "bot runtime is absent or executing a callback");
+        return bot_runtime_fail(e, "bot runtime or movement query is absent or executing a callback");
     r->busy = true;
-    qa_bot_navigation *navigation = r->services.navigation(r->services.context, client);
-    bool ok = navigation && qa_bot_navigation_actor(navigation).registry ?
-        qa_bot_navigation_predict_movement(navigation, query, out, e) :
-        bot_runtime_fail(e, "source movement prediction client is not admitted");
+    qa_bot_movement_prediction_query source = *query;
+    source.world_only = entity < 0;
+    source.pass_actor = entity >= 0 && r->services.movement.actor ?
+        r->services.movement.actor(r->services.movement.context, entity) : (qa_actor_id){0};
+    bool ok = qa_bot_navigation_predict_movement(r->map.navigation, &source, out, e);
     r->busy = false;
     return ok;
 }

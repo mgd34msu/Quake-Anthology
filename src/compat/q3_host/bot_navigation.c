@@ -88,12 +88,13 @@ static bool predict_movement(q3_call *call, qa_bot_runtime *runtime, int32_t *re
         .frame_time = q3_float(call, 9), .stop_events = (uint32_t)q3_integer(call, 10),
         .stop_area = (uint32_t)q3_integer(call, 11)};
     qa_bot_movement_prediction prediction;
-    int32_t client;
-    if(!q3_bot_client_number(call,q3_integer(call,1),&client,error)) return false;
+    int32_t prediction_entity = q3_integer(call, 1);
+    if (prediction_entity >= 0 &&
+        !q3_bot_entity_number(call, prediction_entity, &prediction_entity, error)) return false;
     if (!q3_vector(call, call->arguments[2], &query.origin, error) ||
         !q3_vector(call, call->arguments[5], &query.velocity, error) ||
         !q3_vector(call, call->arguments[6], &query.command_move, error) ||
-        !qa_bot_runtime_predict_movement(runtime, client, &query, &prediction, error)) return false;
+        !qa_bot_runtime_predict_movement(runtime, prediction_entity, &query, &prediction, error)) return false;
     uint32_t entity = 0;
     if (prediction.trace.actor.registry &&
         !qa_q3_host_actor_slot(call->host, prediction.trace.actor, &entity, error)) return false;

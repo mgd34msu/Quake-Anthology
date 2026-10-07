@@ -307,11 +307,12 @@ bool qa_navigation_capture(const qa_navigation *, qa_nav_checkpoint *, qa_error 
 bool qa_navigation_restore(qa_navigation *, const qa_nav_checkpoint *, qa_error *);
 void qa_nav_checkpoint_free(qa_nav_checkpoint *);
 typedef struct qa_nav_prediction_query {
-    qa_actor_id actor;
+    qa_actor_id actor; /* Zero predicts from the graph profile without an actor continuation. */
+    qa_actor_id pass_actor; /* Optional collision exclusion independent of movement ownership. */
     qa_vec3 origin, velocity, command_move;
     uint32_t presence, command_frames, maximum_frames, frame_ms, stop_events,
         stop_area; /* NO_INDEX disables target-area stop. */
-    bool on_ground;
+    bool on_ground, world_only;
 } qa_nav_prediction_query;
 typedef struct qa_nav_prediction_result {
     qa_vec3 end, velocity;

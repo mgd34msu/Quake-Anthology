@@ -103,11 +103,12 @@ bool qa_bot_navigation_alternatives(qa_bot_navigation *, const qa_bot_nav_route_
                                     qa_bot_alternative_goal *, size_t capacity,
                                     size_t *, qa_error *);
 typedef struct qa_bot_movement_prediction_query {
+    qa_actor_id pass_actor;
     qa_vec3 origin, velocity, command_move;
     uint32_t presence, stop_events, stop_area;
     int32_t command_frames, maximum_frames;
     float frame_time;
-    bool on_ground;
+    bool on_ground, world_only;
 } qa_bot_movement_prediction_query;
 typedef struct qa_bot_movement_prediction {
     bool succeeded;
@@ -123,8 +124,8 @@ typedef struct qa_bot_movement_prediction {
         uint32_t last_area, area, plane;
     } trace;
 } qa_bot_movement_prediction;
-/* Replays the bound actor's selected real movement kernel on detached state.
- * The module host only translates the returned actor and encodes source bytes. */
+/* Replays selected movement on detached state. An actorless map binding uses
+ * its graph profile; pass_actor only excludes that actor from collision traces. */
 bool qa_bot_navigation_predict_movement(qa_bot_navigation *,
                                         const qa_bot_movement_prediction_query *,
                                         qa_bot_movement_prediction *, qa_error *);

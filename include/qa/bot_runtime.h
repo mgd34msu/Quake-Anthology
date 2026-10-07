@@ -87,7 +87,7 @@ qa_bot_goals *qa_bot_runtime_goals(qa_bot_runtime *);
 qa_bot_moves *qa_bot_runtime_moves(qa_bot_runtime *);
 qa_bot_chat_system *qa_bot_runtime_chat_system(qa_bot_runtime *);
 qa_bot_navigation *qa_bot_runtime_navigation(qa_bot_runtime *, int32_t client);
-bool qa_bot_runtime_predict_movement(qa_bot_runtime *, int32_t client,
+bool qa_bot_runtime_predict_movement(qa_bot_runtime *, int32_t entity,
                                       const qa_bot_movement_prediction_query *,
                                       qa_bot_movement_prediction *, qa_error *);
 /* Attach borrows immutable map metadata and the selected shared navigation.

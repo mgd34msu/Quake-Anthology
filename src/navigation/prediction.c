@@ -2,12 +2,15 @@
 
 static bool trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *e) {
     nav_prediction *p = context;
+    qa_trace_query actual = *query;
+    if (p->pass_actor.registry) actual.pass_actor = p->pass_actor;
+    if (p->world_only) { actual.target.inline_model = true; actual.target.model = 0; }
     bool ok = p->supplied.trace != NULL
-                  ? p->supplied.trace(p->supplied.context, query, out, e)
-                  : qa_world_trace(p->navigation->services.world, query, out, e);
+                  ? p->supplied.trace(p->supplied.context, &actual, out, e)
+                  : qa_world_trace(p->navigation->services.world, &actual, out, e);
     if (ok) {
         p->has_trace = true;
-        p->last_query = *query;
+        p->last_query = actual;
         p->last_trace = *out;
     }
     return ok;
@@ -15,9 +18,11 @@ static bool trace(void *context, const qa_trace_query *query, qa_trace_result *o
 static bool contents(void *context, const qa_point_query *query, qa_point_contents *out,
                      qa_error *e) {
     nav_prediction *p = context;
+    qa_point_query actual = *query;
+    if (p->world_only) { actual.target.inline_model = true; actual.target.model = 0; }
     return p->supplied.point_contents != NULL
-               ? p->supplied.point_contents(p->supplied.context, query, out, e)
-               : qa_world_point_contents(p->navigation->services.world, query, out, e);
+               ? p->supplied.point_contents(p->supplied.context, &actual, out, e)
+               : qa_world_point_contents(p->navigation->services.world, &actual, out, e);
 }
 static qa_movement_control phase(void *context, qa_movement_phase kind, qa_movement_call *call,
                                  qa_error *e) {
@@ -70,15 +75,18 @@ void nav_prediction_close(nav_prediction *p) {
 }
 static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error *e) {
     qa_navigation *n = p->navigation;
-    if (!nav_services_valid(&n->services, true, e) ||
-        !n->services.movement_input(n->services.context, actor, &p->input, e))
-        return false;
-    if (!qa_actor_id_equal(p->input.actor, actor) ||
-        p->input.state.kind != n->graph->view.profile.movement.kind ||
-        p->input.profile.kind != n->graph->view.profile.movement.kind) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0,
-                     "Navigation prediction does not match the actor's selected movement");
-        return false;
+    if (!nav_services_valid(&n->services, actor.registry != 0, e)) return false;
+    if (actor.registry) {
+        if (!n->services.movement_input(n->services.context, actor, &p->input, e)) return false;
+        if (!qa_actor_id_equal(p->input.actor, actor) ||
+            p->input.state.kind != n->graph->view.profile.movement.kind ||
+            p->input.profile.kind != n->graph->view.profile.movement.kind) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0,
+                         "Navigation prediction does not match the actor's selected movement");
+            return false;
+        }
+    } else {
+        p->input = qa_movement_input_default(n->graph->view.profile.movement.kind, actor);
     }
     p->input.profile = n->graph->view.profile.movement;
     p->input.prediction = true;
@@ -92,7 +100,7 @@ static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error
         return false;
     if (p->input.state.kind == QA_MOVEMENT_Q3)
         p->input.state.data.q3.movement_flags &= ~UINT32_C(2);
-    if (n->services.prediction_begin != NULL) {
+    if (actor.registry && n->services.prediction_begin != NULL) {
         if (!n->services.prediction_begin(n->services.context, actor, &p->supplied, &p->lease, e))
             return false;
         p->has_lease = true;
@@ -361,7 +369,7 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
     out->trajectory[out->trajectory_count++] = q->origin;
     if (q->maximum_frames == 0)
         return true;
-    nav_prediction p = {.navigation = n};
+    nav_prediction p = {.navigation = n, .pass_actor = q->pass_actor, .world_only = q->world_only};
     if (!begin(&p, q->actor, q->origin, e)) {
         nav_prediction_close(&p);
         return false;

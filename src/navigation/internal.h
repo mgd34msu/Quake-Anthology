@@ -51,11 +51,12 @@ typedef struct nav_prediction {
     qa_movement_result result;
     qa_movement_input input;
     qa_movement_services supplied, services;
+    qa_actor_id pass_actor;
     void *lease;
     qa_vec3 pml_origin;
     uint64_t sequence;
     bool initialized, has_lease, has_traversal;
-    bool has_trace, damaging_fall;
+    bool has_trace, damaging_fall, world_only;
     qa_trace_query last_query;
     qa_trace_result last_trace;
 } nav_prediction;
