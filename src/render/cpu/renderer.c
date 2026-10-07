@@ -1367,7 +1367,8 @@ bool qa_cpu_source_texture_filter_apply(qa_render_controls *controls,bool no_bin
   qa_cpu_renderer *renderer=controls->owner.cpu;
   cpu_raster_flush(renderer);
   const qa_scene_image *dlight=NULL;
-  if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
+  if (no_bind && renderer->source_image_count &&
+      !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
   uint32_t unit=controls->attributes.texture_unit;
   for (uint32_t i=0;i<renderer->source_image_count;++i) {
     cpu_source_image *row=renderer->source_images+i;

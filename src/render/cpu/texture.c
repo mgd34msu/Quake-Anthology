@@ -100,7 +100,7 @@ bool cpu_sampler_prepare(const qa_cpu_renderer *renderer,
   if (image->source_q3)
     filter=qa_cpu_source_image_sampling(&renderer->controls,image,&magnification_linear);
   else {
-    filter=image->filter;
+    filter=qa_render_controls_image_filter(&renderer->controls,image);
     magnification_linear=filter==QA_SCENE_LINEAR || filter==QA_SCENE_LINEAR_MIPMAP_NEAREST ||
         filter==QA_SCENE_LINEAR_MIPMAP_LINEAR;
   }

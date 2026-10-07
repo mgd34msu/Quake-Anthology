@@ -703,6 +703,7 @@ bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image 
     image->revision = ++owned->lineage->revision;
     image->logical_width = source->logical_width;
     image->logical_height = source->logical_height;
+    image->texture_mode = source->texture_mode;
     image->source_q3 = source->source_q3; image->source_mipmap = source->source_mipmap;
     image->source_format = source->source_format;
     image->source_texture_unit = source->source_texture_unit;
@@ -730,6 +731,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     ((owned_image *)image)->sampling_source = source;
     ((owned_image *)image)->sampling_mipmap = mipmap;
     image->source_q3 = source->source_q3; image->source_mipmap = source->source_mipmap && mipmap;
+    image->texture_mode = source->texture_mode && mipmap;
     image->source_format = source->source_format;
     image->source_texture_unit = source->source_texture_unit;
     image->recipient_mipmap = source->recipient_mipmap && mipmap;
@@ -763,6 +765,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             sampled->identity = image->identity; sampled->revision = ++owned->lineage->revision;
             sampled->logical_width = source->logical_width; sampled->logical_height = source->logical_height;
             sampled->source_q3 = frame->source_q3; sampled->source_mipmap = frame->source_mipmap && mipmap;
+            sampled->texture_mode = frame->texture_mode && mipmap;
             sampled->source_format = frame->source_format;
             sampled->source_texture_unit = frame->source_texture_unit;
             sampled->recipient_mipmap = frame->recipient_mipmap && mipmap;
@@ -1694,6 +1697,14 @@ static bool image_mip_chain(const qa_image *source, bool cutout,
     return true;
 }
 
+static bool image_uses_texture_mode(const qa_scene_image_options *options)
+{
+    bool mipmap = options->source_q3 ? options->source_upload.mipmap : options->mipmap;
+    return mipmap && options->filter >= QA_SCENE_NEAREST_MIPMAP_NEAREST &&
+        (options->usage == QA_IMAGE_USAGE_DEFAULT || options->usage == QA_IMAGE_USAGE_SKIN ||
+         options->usage == QA_IMAGE_USAGE_WALL);
+}
+
 static bool image_from_rgba_complete(qa_scene_resources *resources, const char *name, const qa_image *source,
     const qa_scene_image_options *options, bool after_border, qa_scene_vec4 upload_border,
     bool dlight, qa_scene_image **out, qa_error *error)
@@ -1733,6 +1744,7 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
                 owned->recipient_source.rgba.size = source->rgba.size;
             }
             (*out)->source_q3 = true; (*out)->source_mipmap = options->source_upload.mipmap;
+            (*out)->texture_mode = image_uses_texture_mode(options);
             (*out)->source_format = format;
             (*out)->source_after_upload_border = after_border; (*out)->source_upload_border = upload_border;
             (*out)->source_dlight = dlight;
@@ -1768,6 +1780,7 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
     }
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, levels, count, options->wrap,
                                     options->filter, (qa_scene_vec4){0}, out, error);
+    if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
     free(levels); qa_mip_chain_free(&chain); qa_image_free(&scaled);
     return ok;
 }
@@ -2049,6 +2062,7 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
                 }
                 if (ok) ok = qa_scene_image_create(resources, image_name, QA_SCENE_RGBA8, levels, 4,
                     options->wrap, options->filter, (qa_scene_vec4){0}, out, error);
+                if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
                 for (size_t i = 0; i < 4; ++i) qa_image_free(&images[i]);
                 qa_mip_texture_free(&mip);
                 return ok;
@@ -2174,6 +2188,7 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
     }
     if (ok) ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, generated ? generated : levels,
         generated ? chain.count + 1 : count, options->wrap, options->filter, border, out, error);
+    if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
     free(generated); qa_mip_chain_free(&chain);
     for (size_t i = 0; i < 4; ++i) qa_image_free(expanded + i);
     return ok;
@@ -2234,6 +2249,7 @@ static bool image_slice_decode(qa_scene_resources *resources, const char *name,
         qa_scene_image_level level = {recipe->widths[0], recipe->heights[0], pixels, count * 4};
         bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGB8, &level, 1, recipe->options.wrap,
             recipe->options.filter, (qa_scene_vec4){0}, out, error);
+        if (ok) (*out)->texture_mode = image_uses_texture_mode(&recipe->options);
         free(pixels); return ok;
     }
     qa_scene_image_options options = recipe->options;
@@ -2337,6 +2353,7 @@ bool scene_resource_image_decode(qa_scene_resources *resources, const char *name
             .filter = base->filter, .mipmap = recipe->post_mipmap,
             .source_q3 = recipe->recipient, .source_upload = recipe->recipient_upload};
         ok = image_from_rgba(resources, name, &pixels, &options, &uploaded, error);
+        if (ok) uploaded->texture_mode = base->texture_mode && recipe->post_mipmap;
         qa_scene_image_release(base); *out = uploaded;
     }
     if (ok) ok = scene_image_asset_copy(*out, recipe, error);
@@ -2554,6 +2571,7 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
         }
     }
     (*out)->logical_width = source->logical_width; (*out)->logical_height = source->logical_height;
+    (*out)->texture_mode = source->texture_mode && profile->mipmap;
     owned_image *variant = (owned_image *)*out;
     if (!scene_resource_variant_parent_retain(resources, source, &variant->source_variant_owner, error)) {
         qa_scene_image_release(*out); *out = NULL; return false;
@@ -2743,6 +2761,7 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
         qa_scene_image_retain(source); *out = (qa_scene_image *)source; return true;
     }
     (*out)->logical_width = source->logical_width; (*out)->logical_height = source->logical_height;
+    (*out)->texture_mode = source->texture_mode && mipmap;
     owned_image *variant = (owned_image *)*out;
     if (!scene_resource_variant_parent_retain(resources, source, &variant->source_variant_owner, error)) {
         qa_scene_image_release(*out); *out = NULL; return false;

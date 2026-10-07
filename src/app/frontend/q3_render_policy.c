@@ -212,7 +212,7 @@ bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):qa_gl_render_controls(f->gl);
     qa_scene_filter filter; bool initialized;
     if (!qa_render_controls_source_texture_mode_read(controls,&filter,&initialized,error)) return false;
-    if (!initialized) return true;
+    if (!initialized) return frontend_q3_texture_mode_initialize(f,error);
     qa_cvars *registry=qa_application_cvars(f->application);
     const qa_cvar_view *row=frontend_render_control_record(registry,"r_textureMode");
     if (!row || !row->value)

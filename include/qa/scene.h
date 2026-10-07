@@ -65,6 +65,9 @@ typedef struct qa_scene_image {
     size_t animation_count;
     size_t references;
     bool source_q3, source_mipmap;
+    /* Ordinary mipmapped images follow the common texture mode.
+     * Upload usage preserves independent picture, sky and sprite sampling. */
+    bool texture_mode;
     qa_q3_texture_format source_format;
     uint32_t source_texture_unit;
     bool source_after_upload_border;

@@ -208,7 +208,8 @@ bool qa_gl_source_texture_filter_apply(qa_render_controls *controls,bool no_bind
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;
     const qa_scene_image *dlight=NULL;
-    if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
+    if (no_bind && renderer->source_image_count &&
+        !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
     for (uint32_t i=0;i<renderer->source_image_count;++i) {
         gl_texture_entry *entry=renderer->source_images[i];
         if (entry->image->source_mipmap) {
@@ -222,6 +223,21 @@ bool qa_gl_source_texture_filter_apply(qa_render_controls *controls,bool no_bind
             } else qa_render_source_texture_filter(&controls->zero_texture,controls->source_filter);
         }
     }
+    gl_api *gl=&renderer->gl;
+    GLint active=0,binding=0;
+    gl->GetIntegerv(GL_ACTIVE_TEXTURE,&active);
+    gl_state_active_texture(renderer,GL_TEXTURE0);
+    gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&binding);
+    for (gl_texture_entry *entry=renderer->textures;entry;entry=entry->next) {
+        if (entry->image->source_q3 || !entry->image->texture_mode) continue;
+        qa_scene_filter filter=qa_render_controls_image_filter(controls,entry->image);
+        if (entry->source_filter==filter) continue;
+        gl_state_bind_texture(renderer,GL_TEXTURE_2D,entry->name);
+        texture_filter(renderer,filter);
+        entry->source_filter=filter;
+    }
+    gl_state_bind_texture(renderer,GL_TEXTURE_2D,(GLuint)binding);
+    gl_state_active_texture(renderer,(GLenum)active);
     return true;
 }
 
@@ -851,7 +867,7 @@ bool gl_texture_get(qa_gl_renderer *renderer, const qa_scene_image *image,
     entry->image = image;
     entry->stream_writes = image->stream_writes;
     entry->name = name;
-    entry->source_filter=image->source_q3 && image->source_mipmap?renderer->controls.source_filter:image->filter;
+    entry->source_filter=qa_render_controls_image_filter(&renderer->controls,image);
     qa_render_source_texture_init(&entry->source_texture);
     entry->next = renderer->textures;
     renderer->textures = entry;
