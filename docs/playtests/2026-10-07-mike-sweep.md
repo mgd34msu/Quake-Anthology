@@ -54,7 +54,7 @@ Historical checks and failed helpers are labeled separately.
 | THE-395 / MIKE-31 | Spin/Q1 pickup hide | Q1 natural accepted weapon/ammo touches show same-frame model 0/hidden/no DRAW; Q2 completed spin matrices match clocks. Armor/quad and full visual matrix remain partial. |
 | THE-410 / MIKE-32 | Console/FOV | Q1 and all-four Q2 routes; Native CPU/GL and Original Q3 GL alias/slash/plain world-FOV checks. Original Q3 CPU remains blocked before that stage. |
 | THE-416 / MIKE-33 | Q3 sky | Native CPU/GL three positions each on red q3dm1 and q3dm7; Original CPU/GL three red-sky positions. Other Original map unqualified. |
-| THE-423 / MIKE-35 | Death/respawn crash | BLOCKED: no genuine repeated rocket/plasma deaths; Native addbot-after-travel exits1, filedTHE-589. |
+| THE-423 / MIKE-35 | Death/respawn crash | Recovery: native CPU and Original CPU pass genuine repeated rocket/plasma deaths and Mouse1 respawns; native GL meets combat checks but exits1 on public quit. Current installed GL rechecks remain open. |
 | THE-431 / MIKE-36 | Exact combined startup | Required Q1 map/Q3 move+Ranger+weapons/Q2RR monsters launches, traverses Normal gate, applies forced camera and quits0 on CPU/GL. |
 | THE-438 / MIKE-37 | Q1 status bar | Four basic stock HUD captures; keys/powerups/armor/split remain partial and THE-587 backtile fails. |
 
@@ -595,3 +595,48 @@ input route; the GL matrix uses private software GL with no GPU binds.
 No performance or audio-fidelity claim follows from these runs, which
 use `--no-audio`. Original modules and combined configurations are
 outside this ten-case proof.
+
+## THE-423 / MIKE-35: Original bot combat and map travel
+
+Source 18b27fa1 builds with all six configured checks passing. All 3,061
+SDK source inputs byte-match the committed source. It was built at
+17:09:53 CDT and installed at 17:21:17 CDT through
+`tools/install_qualified_build.py`, using the exact candidate's fresh
+copied-owner-profile qualification. All three installed files are
+byte-equal to that qualified package. The receipt is
+`installed-m0-original-combat-20261007.json` under the recovery cache.
+
+The Original CPU candidate bundle `/tmp/qa-private-av-cemhxhvb` passes
+public map travel through q3dm1, q3dm7 and q3dm1, adds actual skill-5
+Sarge, Visor and Bitterman bots, then records five genuine bot deaths
+(two rocket and three plasma) followed by physical Mouse1 respawns.
+Actor-matched obituary, dead player state, manual-respawn eligibility,
+actual attack input and a later alive state with advancing command and
+spawn counts establish each cycle. The current world continues before
+public quit exits zero. Root inspected the final travel and respawn PNGs.
+The original 34 settings files and candidate pins stay unchanged, and
+all recorded owned processes are removed.
+
+The fixes retain one shared admission and presentation path. Fresh
+Original bots enter the existing navigation admission. Source bot
+entity numbers remain stable through removals, preserving the original
+WORLD/NONE values. A replacement GAME host now starts before CGAME binds
+it; no weaker host check or fabricated context is added.
+
+Earlier exact installed338 native CPU bundle
+`/tmp/qa-private-av-31b07e5d` qualifies nine bot deaths and Mouse1 respawns,
+including three rocket and two plasma cycles, continued world frames
+and quit zero. Native GPU0 GL bundle `/tmp/qa-private-av-ncsqqbrm` meets
+the combat and survival checks with nine physical respawns, including
+two rocket and two plasma cycles, but public quit exits one on
+X BadWindow from X_TranslateCoords. Its entire qualification is failed;
+the caller and resource ownership still require a stack capture. Current
+installed GL checks remain open, so THE-423 stays In Progress.
+
+These functional checks use private displays, captured private SDL Pulse
+output and read-only debugger observations. Public overrides in the
+private profile set unlimited FFA and manual respawn, confirmed from
+actual GAME consumer values. Original entry is direct, excluding menu
+proof. Its autosave still reports the existing THE-585 console-ownership
+defect; save behavior is excluded. No timing, full campaign, module
+composition or audio-fidelity claim follows from this bounded proof.
