@@ -251,3 +251,35 @@ In Progress M1 items with their exact listed gaps. THE-588 separates custom
 QASV autosave naming from vanilla Q1 autosave slots. THE-586 corrects the
 duplicated top-left skill centerprint. THE-587 restores status-bar backtile.
 No source/install change is part of this evidence checkpoint.
+
+## Qualified menu-start fix after the frozen sweep
+
+THE-208/MIKE-16 is now In Review. Commits6ba913e0,45c22e6d and3d4e1efd
+remove the premature campaign-constructor requirement, the two exact
+paused-queue byte checks, and the common engine-view owner mismatch.
+The captured propagated console rejection was the normal arena-start
+`addbot crash` command: source owner1, common engine view1 owned by0.
+The earlier unbound-view predicate capture was expected false before
+registration and was excluded from the root-cause finding.
+
+The candidate was built2026-10-07 12:46:46CDT. Six rebuilt existing tests
+pass. Fresh copied-owner CPU and private NVIDIA GL actual menu routes
+reach completed q3dm0 gameplay and normal public quit. Installation at
+12:50CDT used tools/install_qualified_build.py with the GL copied-profile
+receipt; executable and native companions are byte-equal to the candidate.
+Installed receipt: installed-m0-menu-20261007.json in the recovery cache.
+
+The installed qfiles/qa-c was then checked through the same real keyboard
+Home/Play/Q3/campaign/intro arena/Start route on CPU and NVIDIA GL:
+/tmp/qa-private-av-wbmzefw2 and /tmp/qa-private-av-nhr407qu. Each retains
+seven route/live PNGs, input and console logs, completed world state,
+private actual SDL output and normal quit0. All owned tokens are absent,
+owner34 originals unchanged. These debugger observations prove startup,
+not performance or audio fidelity. A Slack install notice requests that
+menu retest. The frozen418 sweep above remains historical evidence.
+
+A first Original Q3 shotgun recheck on this build naturally obtains the
+weapon, selects key3, consumes shells10→9 and emits event23. World frames
+continue past the event and public quit0. It does not reproduce THE-592,
+so no audio fix or closure is claimed; the previous failing packet is
+retained. Bot travel/death, THE-213 and the later queued fixes remain open.
