@@ -74,6 +74,10 @@ bool qa_application_qc_message_source_at(qa_application *,size_t,
  * This never writes source edicts or admits a new player. */
 bool qa_application_qc_message_angles(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,qa_vec3,qa_error *);
+/* Retain one decoded CD cue from its actual Source packet. A zero actor
+ * addresses the world; a physical recipient keeps MSG_ONE/multicast scope. */
+bool qa_application_qc_message_music(qa_application *,const qa_application_qc_message_source *,
+    qa_actor_id,uint64_t time_ns,uint8_t track,qa_error *);
 bool qa_application_qc_message_view_offset(qa_application *,const qa_application_qc_message_source *,
     qa_actor_id,qa_vec3 *,qa_error *);
 typedef struct qa_application_qc_client_presentation {

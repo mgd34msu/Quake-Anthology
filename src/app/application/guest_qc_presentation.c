@@ -2,6 +2,7 @@
 #include "qa/application_qc_presentation.h"
 #include "network_q1_signon.h"
 #include "qa/qc_observation.h"
+#include "unified_q1_events.h"
 #include <limits.h>
 
 static bool source_returned(const application_provider *p)
@@ -246,6 +247,19 @@ bool qa_application_qc_message_angles(qa_application *app,const qa_application_q
     uint32_t slot;
     return qa_application_qc_message_client(app,source,actor,&slot,error) &&
         application_control_set_angles(app,actor,angles,error);
+}
+bool qa_application_qc_message_music(qa_application *app,const qa_application_qc_message_source *source,
+    qa_actor_id recipient,uint64_t time_ns,uint8_t track,qa_error *error)
+{
+    uint32_t slot;
+    if(!qa_application_qc_message_source_current(app,source) ||
+        (recipient.registry && !qa_application_qc_message_client(app,source,recipient,&slot,error)))
+        return application_fail(error,QA_ERROR_ARGUMENT,"QC music cue lost its decoded Source recipient");
+    qa_string_id music;
+    return qa_strings_intern_cstr(qa_session_strings(app->session),"music",&music,error) &&
+        application_unified_q1_event(app,&(qa_builtin_event){.kind=QA_BUILTIN_EFFECT,
+            .family=QA_GAME_Q1,.provider=source->provider,.resource=music,
+            .time_ns=time_ns,.code=track,.count=track},recipient,error);
 }
 bool qa_application_qc_message_view_offset(qa_application *app,const qa_application_qc_message_source *source,
     qa_actor_id actor,qa_vec3 *out,qa_error *error)

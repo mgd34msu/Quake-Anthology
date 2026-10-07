@@ -466,7 +466,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
 {
     if (!application_q3_weapons_services_q2_muzzle(application, event, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
-        !application_unified_q1_event(application, event, error) ||
+        !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error) ||
         !reserve_event(application, error) ||
         !application_event_journal_reserve(application, error))
@@ -528,7 +528,8 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
     if (!fresh) for (size_t i = 0; i < application->unified_persistent_count; ++i) {
         const application_unified_event_record *row = &application->unified_persistent[i].event;
         const qa_unified_presentation_payload *payload = row->presentation;
-        if (row->provider != source->owner || !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
+        if (row->provider != source->owner || row->recipient.registry ||
+            !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
         const qa_unified_builtin_event *event = &payload->value.builtin;
         if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_EFFECT &&
             event->resource && !strcmp(event->resource, "music")) return true;

@@ -202,6 +202,7 @@ static bool read_message(qa_net_protocol_id protocol,qc_decoder decoder,qa_net_r
     case QA_QW_STAT:out->op=QA_NQ_STAT;out->data.indexed.index=source.data.stat.index;out->data.indexed.value=source.data.stat.value;break;
     case QA_QW_SET_VIEW:out->op=QA_NQ_SETVIEW;out->data.value=source.data.entity;break;
     case QA_QW_SET_ANGLE:out->op=QA_NQ_SETANGLE;memcpy(out->data.angles,source.data.angles,sizeof(out->data.angles));break;
+    case QA_QW_CD_TRACK:out->op=QA_NQ_CDTRACK;out->data.cd.track=out->data.cd.loop=source.data.byte;break;
     case QA_QW_INTERMISSION:out->op=QA_NQ_INTERMISSION;break;
     case QA_QW_FINALE:out->op=QA_NQ_FINALE;break;
     case QA_QW_TEMPORARY_ENTITY:out->op=QA_NQ_TEMPENTITY;out->data.temporary=source.data.temporary;break;
@@ -239,8 +240,22 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
     /* Native control/stats remain with their Source owners; this decoder
      * delivers only the actor-qualified transient view effects. */
     if(row->native) return true;
-    if(message->op==QA_NQ_CDTRACK)
-        return frontend_music_sources_world_cd(owner->frontend->music_sources,message->data.cd.track,error);
+    if(message->op==QA_NQ_CDTRACK) {
+        bool broadcast=!event->recipient.registry &&
+            (!event->multicast || event->destination==0 || event->destination==3);
+        qa_actor_id recipient=row_actor(row);
+        if((broadcast && !recipient.registry) || (!broadcast && recipient.registry))
+            if(!qa_application_qc_message_music(owner->application,&row->camera.source,
+                recipient,event->time_ns,message->data.cd.track,error)) return false;
+        bool local=broadcast && !recipient.registry;
+        for(uint32_t seat=0;!local && seat<owner->frontend->options.seats;++seat) {
+            uint32_t logical;qa_actor_id actor;
+            if(frontend_seat_launch_id_read(owner->frontend,seat,&logical) &&
+                qa_application_player_actor(owner->application,logical,&actor))
+                local=qa_actor_id_equal(actor,recipient);
+        }
+        return !local || frontend_music_sources_world_cd(owner->frontend->music_sources,message->data.cd.track,error);
+    }
     if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry) {
         qa_actor_id beam_actor={0};
         if(message->data.temporary.kind==QA_Q1_TEMP_BEAM) {

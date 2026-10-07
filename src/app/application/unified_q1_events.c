@@ -50,7 +50,7 @@ bool application_unified_q1_sound_precache(void *context, const char *path, qa_e
 
 
 bool application_unified_q1_event(qa_application *app, const qa_builtin_event *event,
-    qa_error *error)
+    qa_actor_id recipient, qa_error *error)
 {
     if (!event || event->family != QA_GAME_Q1) return true;
     bool reached = false, linked = false;
@@ -131,7 +131,7 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
         slot = (int32_t)record->source_slot; has_slot = true;
     }
     if (okay) okay = application_unified_event_emit(app, event->provider, &presentation, sim,
-        (qa_actor_id){0}, simulation_recipient, event->time_ns, slot, has_slot, linked, error);
+        recipient, simulation_recipient, event->time_ns, slot, has_slot, linked, error);
     application_unified_builtin_read_dispose(&presentation.value.builtin);
     return okay;
 }
