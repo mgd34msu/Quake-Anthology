@@ -985,11 +985,12 @@ static bool record_pump(qa_audio_device *device, qa_audio_engine *engine, double
 static size_t automatic_target(const qa_audio_device *device, bool initial) {
     uint64_t rate = device->options.format.sample_rate;
     uint64_t buffer_margin = (uint64_t)device->options.buffer_frames * 2;
+    uint64_t mixahead = (rate + 4) / 5;
+    if (mixahead < buffer_margin)
+        mixahead = buffer_margin;
     uint64_t target;
     if (initial) {
-        target = (rate + 4) / 5;
-        if (target < buffer_margin)
-            target = buffer_margin;
+        target = mixahead;
     } else {
         size_t interval = 0;
         for (size_t i = 0; i < device->pump_interval_count; ++i)
@@ -1000,6 +1001,10 @@ static size_t automatic_target(const qa_audio_device *device, bool initial) {
         if (target < recent)
             target = recent;
     }
+    /* Source DMA paints a bounded lead over playback. A missed pump must
+     * not turn a past loading stall into seconds of future sound latency. */
+    if (target > mixahead)
+        target = mixahead;
     size_t maximum = device->options.maximum_queued_frames;
     return target > maximum ? maximum : (size_t)target;
 }
