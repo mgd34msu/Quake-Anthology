@@ -245,3 +245,26 @@ cost or speedup across other maps, cameras or settings.
 Profile evidence: `qa-the566-q1-profile-plan-3ck06xlv/separate-profiles-result.json`.
 Raw rerelease captures are `qa-private-av-93fsz_cs` and `qa-private-av-5ya3meld`;
 classic captures are `qa-private-av-7xg792nw` and `qa-private-av-f_2a7myu`.
+
+
+## Current installed Q2 rerelease baseline, THE-196
+
+Installed ee1cb36a was measured after the combat checks had ended. Two
+sequential native retail base1 runs used copied owner settings, private
+Xvfb, affinity 0-7,12-19, caps/swap/timedemo zero, no debugger, profiler,
+compiler, other game or audio. Each samples 600 present intervals after
+835 or more warmed presents; actual Source sv_fps remains40.
+
+| Drawable | Median ms | p99 ms | Separate warmed render mean ms |
+|---|---:|---:|---:|
+| 640×400 | 6.319329 | 25.055940 | 5.410893 |
+| 320×200 | 4.440944 | 7.157502 | 3.667408 |
+
+Warmed scene-build means are0.809013 and0.729394 ms, respectively.
+These are a fresh baseline, not an attributed improvement over the
+earlier418 run. Present intervals include private presentation and
+observer overhead; the renderer means cover a separate720-call window.
+Both public quits return0, artifact and original profile remain
+unchanged, and the actual game processes are absent. CPU targets remain
+open. Raw receipts: `/tmp/qa-private-av-bqc3ugvn/timing-result.json` and
+`/tmp/qa-private-av-ifew4_8a/timing-result.json`.
