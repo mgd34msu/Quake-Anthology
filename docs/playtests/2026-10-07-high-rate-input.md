@@ -136,9 +136,10 @@ The held-jump and duck flags persisted through their real key holds; release
 cleared them and repress generated one jump. The 2 ms case captured four
 physical downward-to-upward reversals without new jump events, including after
 release. The 4 ms case captured none. This still does not close THE-420's
-physical symptom. Neither case entered a presentation pacing wait or requested
-`SDL_Delay`, so the measured 4.1–4.5 ms real frame work is not evidence of a
-hidden 240 FPS cap. Its CPU/VM/GPU breakdown was not measured here.
+physical symptom. Neither case entered the inspected frontend pacing-wait or
+`SDL_Delay` call sites. The measured 4.1–4.5 ms real frame work was not broken
+down by CPU/VM/GPU cost; pacing elsewhere and the Original throughput ceiling
+were not diagnosed here.
 
 Both cases quit normally. All 24 recorded owned process IDs were absent and
 the private display sockets removed; installed files and original owner
@@ -147,3 +148,5 @@ and `qa-private-av-2ikd5c9c`, each with `frame-clock-proof.json` and exact
 physical-state cuts. Original detached world-camera fidelity remains outside
 this observation scope. The subsequent `3765bb6b` installation changes only
 the CPU fog shader; this record identifies the precise earlier test artifact.
+The compact aggregate is
+`qa-the420-frame-clock-20261007/1c0ab5dc-original-fixed-frame-summary.json`.
