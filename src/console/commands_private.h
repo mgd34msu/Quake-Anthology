@@ -4,16 +4,19 @@
 typedef struct qa_console_release qa_console_release;
 
 typedef struct command_contribution {
-    uint64_t owner;
+    qa_console_entry view;
+    uint64_t lifetime_owner;
+    qa_command_handler handler;
+    qa_command_fallback callback;
+    void *user;
+    uint32_t seat;
+    bool ordinary, scoped, retired;
     struct command_contribution *next;
 } command_contribution;
 typedef struct command_entry {
-    qa_console_entry view;
-    qa_command_handler handler;
-    void *user;
+    char *name;
     command_contribution *contributions;
-    uint64_t registration_owner;
-    bool ordinary_registration;
+    unsigned calls;
     struct command_entry *next;
 } command_entry;
 typedef struct alias_entry {
@@ -55,8 +58,13 @@ typedef struct retired_id {
     uint64_t value;
     struct retired_id *next;
 } retired_id;
+typedef struct command_call {
+    const command_contribution *contribution;
+    struct command_call *parent;
+} command_call;
 typedef struct command_frame {
     const qa_command_invocation *invocation;
+    command_call *contributions;
     struct command_frame *parent;
 } command_frame;
 typedef struct output_frame {

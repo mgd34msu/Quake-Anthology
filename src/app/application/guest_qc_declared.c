@@ -117,6 +117,7 @@ bool application_qc_declared_command(void *opaque, const qa_command_invocation *
         return application_fail(error, QA_ERROR_ARGUMENT, "QC declared command requires its live source console");
     for (size_t i = 0; i < profile->command_count; ++i) {
         if (!application_qc_command_name_equal(profile->commands[i].name, command->argv[0])) continue;
+        application_snapshot_mutated(engine->provider->application);
         application_qc_calls calls = {.values = &profile->commands[i].call, .count = 1};
         application_qc_inputs inputs = {.console = command};
         return application_qc_run_calls(engine, &calls, &inputs, error);

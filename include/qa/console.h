@@ -239,6 +239,8 @@ typedef struct qa_command_invocation {
     const char *const *argv;
     const char *args_text;
     const char *raw;
+    /* Selected registration identity, separate from the captured sender. */
+    uint64_t receiver, registration_owner;
 } qa_command_invocation;
 
 typedef bool (*qa_command_handler)(void *user, const qa_command_invocation *command,
@@ -320,19 +322,23 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
 bool qa_console_register_owned(qa_console *, const char *name, const char *description,
                                  uint64_t dispatch_owner, uint64_t lifetime_owner,
                                  bool engine_command, qa_command_handler, void *, qa_error *);
-/* Reads an installed ordinary handler's lifetime owner by exact registration
- * name and dispatch owner. The output remains unchanged when absent. */
+/* Reads an installed ordinary handler's lifetime owner by name and receiver. The output remains unchanged when absent. */
 bool qa_console_registration_owner(const qa_console *, const char *exact_name,
                                    uint64_t dispatch_owner, uint64_t *out);
-/* Pure exact ordinary registration receipt, including entries without handlers.
+/* Pure ordinary registration receipt, including entries without handlers.
  * Outputs remain unchanged when that registration is absent. */
 bool qa_console_registration_read(const qa_console *, const char *exact_name,
     uint64_t dispatch_owner, uint64_t *lifetime_owner, qa_command_handler *, void **user);
-/* A shared dispatch entry retains independent role lifetime contributions.
- * Repeated contributions are idempotent. Removing the dispatch owner retires
- * the entry; removing a lifetime owner retires only its contributions. */
-bool qa_console_contribute(qa_console *, const char *name, uint64_t dispatch_owner,
-                            uint64_t lifetime_owner, qa_error *);
+/* A name has one record. Module declarations retain their actual callable
+ * owner and seat; a NULL callback declares a stock forwarded name. */
+typedef struct qa_console_contribution {
+    uint64_t receiver, lifetime_owner;
+    uint32_t seat;
+    qa_command_fallback callback;
+    void *user;
+} qa_console_contribution;
+bool qa_console_contribute(qa_console *, const char *name,
+                            const qa_console_contribution *, qa_error *);
 bool qa_console_uncontribute(qa_console *, const char *name, uint64_t dispatch_owner,
                               uint64_t lifetime_owner);
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner);
@@ -418,6 +424,9 @@ bool qa_console_idle(const qa_console *);
 bool qa_console_context_read(qa_console *,qa_command_context *,qa_error *);
 /* Pure exact innermost invocation identity, including post-dispatch receipt. */
 bool qa_console_invocation_current(const qa_console *,const qa_command_invocation *);
+/* True only while this entered invocation has called the exact registration. */
+bool qa_console_invocation_delivered(const qa_command_invocation *,uint64_t receiver,
+    uint64_t lifetime_owner);
 /* Borrow the original wire text of an entered invocation. Explicit cmd uses
  * its untouched argument tail; each Source retains its own admission policy. */
 bool qa_console_forward_text(const qa_command_invocation *,const char **text,

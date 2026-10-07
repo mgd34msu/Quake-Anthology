@@ -402,8 +402,8 @@ static bool operator_kick(void *context,const qa_command_invocation *call,qa_err
 {
     struct application_native_q3_console *owner=context;
     application_provider *provider=owner->provider; qa_application *app=provider->application;
-    if (!call || call->console!=owner->console || call->context.owner!=provider->owner ||
-        call->context.dialect!=QA_CONSOLE_Q3 || call->context.origin==QA_COMMAND_REMOTE ||
+    if (!call || call->console!=owner->console || call->receiver!=provider->owner || call->registration_owner!=provider->owner ||
+        call->context.origin==QA_COMMAND_REMOTE ||
         call->context.actor.registry || !qa_console_invocation_current(owner->console,call) ||
         !qa_application_command_context_active(app,&call->context))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q3 kick requires its actual entered Source operator");

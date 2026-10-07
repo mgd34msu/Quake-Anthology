@@ -484,7 +484,7 @@ static bool flood_command(void *opaque,const qa_command_invocation *invocation,q
     struct application_native_q1_console *owner=opaque;
     if (!owner || !invocation || invocation->console!=owner->console ||
         !qa_console_invocation_current(owner->console,invocation) ||
-        invocation->context.owner!=owner->provider->owner || invocation->context.dialect!=QA_CONSOLE_QW ||
+        invocation->receiver!=owner->provider->owner || invocation->registration_owner!=owner->provider->owner ||
         invocation->context.origin==QA_COMMAND_REMOTE ||
         !qa_application_command_context_active(owner->provider->application,&invocation->context))
         return application_fail(error,QA_ERROR_ARGUMENT,"QW flood policy lost its local Source operator");

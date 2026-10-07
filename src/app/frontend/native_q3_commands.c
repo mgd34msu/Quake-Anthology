@@ -208,7 +208,7 @@ static void dispose(frontend_native_q3_commands *o,const q3n_frame *frame)
 static bool handle(void *context,const qa_command_invocation *command,qa_error *e)
 {
     native_dispatch *d=context; frontend_native_q3_commands *o=NULL;
-    if(!command || !command->argc || command->argc>1024 || command->console!=d->console || command->context.owner!=d->source)
+    if(!command || !command->argc || command->argc>1024 || command->console!=d->console || command->receiver!=d->source)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console lost its real source invocation");
     size_t bytes=0;
     for(size_t i=0;i<command->argc;++i) { size_t n=strlen(command->argv[i]); if(n>=9216-bytes)return false; bytes+=n+1; }
@@ -252,7 +252,9 @@ static bool bind_commands(frontend_native_q3_commands *o,size_t count,qa_error *
             d->installed=i+1;
         }
         if(i>=o->contributed) {
-            if(!qa_console_contribute(d->console,name,d->source,o->row->view.service_owner,e))return false;
+            qa_console_contribution owner={.receiver=d->source,.lifetime_owner=o->row->view.service_owner,
+                .seat=o->row->view.launch_seat};
+            if(!qa_console_contribute(d->console,name,&owner,e))return false;
             o->contributed=i+1;
         }
     }

@@ -1,4 +1,6 @@
 #include "native_q3_client_modules_private.h"
+
+static qa_command_result declared_command(void *,const qa_command_invocation *,qa_error *);
 #include "qa/network_q3.h"
 #include "qa/q3_host_save.h"
 #include "qa/script.h"
@@ -351,6 +353,8 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         .mounts = actual.descriptor->content, .client_time_cvars = actual.receiver.client_time_cvars,
         .client_time_owner = actual.receiver.client_time_owner, .input_owner = actual.receiver.service_owner,
         .script_globals = owner->script_globals, .script_globals_owner = actual.receiver.service_owner};
+    options.console_command=declared_command;
+    options.console_command_context=role;
     if (role->image && role->kind == QA_QVM_CGAME) {
         options.source_entity = source_entity; options.source_entity_context = role;
         options.source_poly = source_poly; options.source_poly_context = role;
@@ -582,15 +586,24 @@ bool qa_application_native_q3_client_modules_call(application_native_q3_client_m
     return invoke(role, command, arguments, count, result, false, error);
 }
 
-static bool console_current(application_native_q3_client_modules *owner,
+static bool console_current(native_client_module *role,
     const qa_command_invocation *call, qa_error *error)
 {
+    application_native_q3_client_modules *owner=role->owner;
     qa_application_q3_remote_source source;
     qa_command_context expected;
     if (!call || !call->argc || !call->argv || !call->raw || !call->args_text ||
         !native_client_modules_physical(owner, &source, error) || call->console != source.receiver.console ||
         !application_command_capture(owner->app, &source.receiver.command_context, &expected, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry lost its physical invocation");
+    if (call->registration_owner) {
+        if (call->receiver!=source.receiver.receiver || call->registration_owner!=role->service_owner ||
+            call->context.seat!=source.receiver.seat ||
+            !qa_console_invocation_current(call->console,call) ||
+            !qa_application_command_context_active(owner->app,&call->context))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Acquired command lost its registered module or captured caller");
+        return true;
+    }
     const qa_command_context *actual = &call->context;
     return (actual->session == expected.session && actual->owner == expected.owner && actual->seat == expected.seat &&
         actual->client == expected.client && actual->dialect == expected.dialect && actual->origin == expected.origin &&
@@ -607,7 +620,7 @@ bool qa_application_native_q3_client_modules_console_command(application_native_
     qa_command_tokens snapshot = {0}; uint64_t revision = 0;
     if (!role || owner->video || owner->calls || owner->command_arguments)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry retains another source call");
-    if (!console_current(owner, call, error) ||
+    if (!console_current(role, call, error) ||
         !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
             &reached, &revision, error) || !command_snapshot(call, &snapshot, error)) return false;
     owner->command_role = role; owner->command_arguments = &snapshot; owner->command_revision = revision;
@@ -615,8 +628,18 @@ bool qa_application_native_q3_client_modules_console_command(application_native_
         kind == QA_QVM_UI ? &milliseconds : NULL, kind == QA_QVM_UI ? 1 : 0, result, false, error);
     owner->command_role = NULL; owner->command_arguments = NULL; owner->command_revision = 0;
     qa_command_tokens_free(&snapshot);
-    if (okay) okay = console_current(owner, call, error);
+    if (okay) okay = console_current(role, call, error);
     return okay;
+}
+
+static qa_command_result declared_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    native_client_module *role=context;
+    int32_t result=0;
+    if (!role || role->kind!=QA_QVM_CGAME ||
+        !qa_application_native_q3_client_modules_console_command(role->owner,role->kind,call,0,&result,error))
+        return QA_COMMAND_FAILED;
+    return result ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
 
 static bool init_current(application_native_q3_client_modules *owner,

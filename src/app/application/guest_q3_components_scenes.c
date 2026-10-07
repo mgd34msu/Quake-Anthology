@@ -76,14 +76,11 @@ static qa_cvars *cvar_owner(void *context,const qa_command_context *command,cons
 static qa_command_result console_command(void *context,const qa_command_invocation *invocation,qa_error *e)
 {
     component_scene_row *row=context;
-    if(!row->initialized) return QA_COMMAND_UNHANDLED;
-    qa_command_tokens tokens={.count=invocation->argc,.args_text=(char *)invocation->args_text};
-    tokens.values=tokens.count?calloc(tokens.count,sizeof(*tokens.values)):NULL;
-    if(tokens.count&&!tokens.values) { application_fail(e,QA_ERROR_MEMORY,"Retaining actual component console arguments"); return QA_COMMAND_FAILED; }
-    for(size_t i=0;i<tokens.count;++i) tokens.values[i]=(char *)invocation->argv[i];
+    if(!row->initialized || qa_console_invocation_delivered(invocation,row->host.owner,
+        row->host.service_owner)) return QA_COMMAND_UNHANDLED;
     bool handled=false;
-    bool ok=application_q3_scene_console(row->scene,&tokens,&handled,e);
-    free(tokens.values); return !ok?QA_COMMAND_FAILED:handled?QA_COMMAND_HANDLED:QA_COMMAND_UNHANDLED;
+    bool ok=application_q3_scene_console(row->scene,invocation,&handled,e);
+    return !ok?QA_COMMAND_FAILED:handled?QA_COMMAND_HANDLED:QA_COMMAND_UNHANDLED;
 }
 static bool scene_identity(component_scene_row *row,qa_error *e)
 {

@@ -283,7 +283,10 @@ static bool entered(void *context,const q3n_remote_frame *remote,qa_error *e)
 static bool invocation_valid(remote_dispatch *d,const qa_command_invocation *call,qa_error *e)
 {
     if(!call || !call->argc || call->argc>1024 || !call->argv || !call->raw ||
-        call->console!=d->console || call->context.owner!=d->receiver)
+        call->console!=d->console ||
+        (call->registration_owner ? call->receiver!=d->receiver ||
+            call->registration_owner!=d->receiver || !qa_console_invocation_current(call->console,call) :
+            call->context.owner!=d->receiver))
         return fail(e,QA_ERROR_ARGUMENT,"Remote console lost its real tokenized CLIENT invocation");
     size_t bytes=0;
     for(size_t i=0;i<call->argc;++i) {
@@ -379,7 +382,8 @@ static bool bind(frontend_remote_q3_commands *o,size_t installed,size_t contribu
             d->installed=i+1;
         }
         if(i<contributed && i>=o->contributed) {
-            if(!qa_console_contribute(d->console,name,d->receiver,o->service,e))return false;
+            qa_console_contribution owner={.receiver=d->receiver,.lifetime_owner=o->service,.seat=o->seat};
+            if(!qa_console_contribute(d->console,name,&owner,e))return false;
             o->contributed=i+1;
         }
     }

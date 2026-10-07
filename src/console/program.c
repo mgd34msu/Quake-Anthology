@@ -261,14 +261,11 @@ static bool map_aliases(qa_console_program *program, alias_entry *head, const re
 
 static bool declarations_live(const qa_console *candidate, const retired_id *owners, qa_error *error)
 {
-    for (const command_entry *entry = candidate->commands; entry; entry = entry->next) {
-        if (is_retired(owners, entry->view.owner) ||
-            (entry->ordinary_registration && is_retired(owners, entry->registration_owner)))
-            return qac_fail(error, QA_ERROR_ARGUMENT, "command program would retire a fresh candidate handler");
-        for (const command_contribution *part = entry->contributions; part; part = part->next)
-            if (is_retired(owners, part->owner))
-                return qac_fail(error, QA_ERROR_ARGUMENT, "command program would retire a fresh candidate contribution");
-    }
+    for (const command_entry *entry=candidate->commands; entry; entry=entry->next)
+        for (const command_contribution *part=entry->contributions; part; part=part->next)
+            if (!part->retired && (is_retired(owners,part->view.owner) || is_retired(owners,part->lifetime_owner)))
+                return qac_fail(error,QA_ERROR_ARGUMENT,"command program would retire a fresh candidate contribution");
+
     return true;
 }
 

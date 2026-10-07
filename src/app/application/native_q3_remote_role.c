@@ -127,11 +127,21 @@ static qa_command_result dispatch(void *context, const qa_command_invocation *co
         if (!qa_application_native_q3_client_modules_optional_receipt_read(row->modules, QA_QVM_UI,
             &ui, &ui_present, error)) result = QA_COMMAND_FAILED;
     }
+    qa_command_invocation continued=*command;
+    continued.receiver=continued.registration_owner=0;
     if (result != QA_COMMAND_FAILED && row->modules && row->acquired_initialized) {
-        int32_t handled = 0;
-        bool okay = qa_application_native_q3_client_modules_console_command(row->modules, QA_QVM_CGAME,
-            command, 0, &handled, error);
-        result = okay ? handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED : QA_COMMAND_FAILED;
+        qa_application_q3_role_receipt cgame;
+        bool present=false;
+        bool okay=qa_application_native_q3_client_modules_optional_receipt_read(row->modules,QA_QVM_CGAME,
+            &cgame,&present,error);
+        if (okay && present && qa_console_invocation_delivered(command,cgame.receiver,cgame.service_owner)) {
+            result=QA_COMMAND_UNHANDLED;
+        } else {
+            int32_t handled=0;
+            if (okay) okay=qa_application_native_q3_client_modules_console_command(row->modules,QA_QVM_CGAME,
+                &continued,0,&handled,error);
+            result=okay ? handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED : QA_COMMAND_FAILED;
+        }
     } else if (result != QA_COMMAND_FAILED && row->service)
         result = qa_native_q3_remote_client_command(row->service, command, error);
     if (result == QA_COMMAND_UNHANDLED && ui_present) {
@@ -144,7 +154,7 @@ static qa_command_result dispatch(void *context, const qa_command_invocation *co
             okay = qa_native_q3_remote_client_milliseconds(row->service, command, &milliseconds, error);
         else okay = application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT UI command has no retained frontend clock");
         if (okay) okay = qa_application_native_q3_client_modules_console_command(row->modules, QA_QVM_UI,
-            command, milliseconds, &handled, error);
+            &continued, milliseconds, &handled, error);
         result = okay ? handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED : QA_COMMAND_FAILED;
     }
     if (!active(row, &command->context)) {

@@ -61,7 +61,7 @@ bool application_q3_scene_initialize(application_q3_scene *, qa_error *);
 bool application_q3_scene_advance(application_q3_scene *, uint64_t sequence, qa_error *);
 bool application_q3_scene_hud(application_q3_scene *, uint64_t sequence, qa_error *);
 bool application_q3_scene_consume(application_q3_scene *,const application_q3_scene_player_event *,uint64_t,qa_error *);
-bool application_q3_scene_console(application_q3_scene *, const qa_command_tokens *, bool *, qa_error *);
+bool application_q3_scene_console(application_q3_scene *, const qa_command_invocation *, bool *, qa_error *);
 bool application_q3_scene_idle(const application_q3_scene *);
 bool application_q3_scene_destroy(application_q3_scene **, qa_error *);
 application_q3_component_body *application_q3_scene_bodies(application_q3_scene *);

@@ -222,7 +222,10 @@ static bool operator_command(void *opaque, const qa_command_invocation *invocati
     struct application_native_q2_console *owner = opaque;
     application_provider *provider = owner->provider;
     qa_application *app = provider->application;
-    if (!active(owner, &invocation->context) || !provider->state.q2)
+    if (invocation->console!=owner->console || invocation->receiver!=provider->owner ||
+        invocation->registration_owner!=provider->owner ||
+        !qa_console_invocation_current(owner->console,invocation) ||
+        !qa_application_command_context_active(app,&invocation->context) || !provider->state.q2)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 operator command has no admitted source");
     bool dump = !strcmp(invocation->argv[0], "dumpuser");
     if (dump && invocation->argc != 2) {

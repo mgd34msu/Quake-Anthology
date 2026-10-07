@@ -204,6 +204,9 @@ typedef struct qa_q3_host_options {
     bool client_time_from_game;
     qa_console *console;
     qa_command_context command_context;
+    /* Actual retained module export used by its AddCommand declarations. */
+    qa_command_fallback console_command;
+    void *console_command_context;
     qa_vfs *mounts;
     qa_mount_id writable_mount;
     qa_q3_host_write_view write_view;

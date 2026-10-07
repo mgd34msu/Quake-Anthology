@@ -783,13 +783,10 @@ bool application_q3_guest_console_command(application_provider *provider, const 
     return ok;
 }
 
-bool application_q3_guest_role_command(application_provider *provider, qa_qvm_role kind,
-                                         uint32_t seat, int32_t time, const char *text,
-                                         bool *handled, qa_error *error)
+static bool role_console_command(q3g_role *role,int32_t time,const char *text,
+    bool *handled,qa_error *error)
 {
-    if (kind == QA_QVM_GAME) return application_q3_guest_console_command(provider, text, handled, error);
-    q3g_role *role = find_role(provider, kind, seat, error);
-    if (!role) return false;
+    qa_qvm_role kind=role->kind;
     if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
     qa_command_tokens next = {0};
@@ -804,4 +801,29 @@ bool application_q3_guest_role_command(application_provider *provider, qa_qvm_ro
     role->arguments_scoped = prior_scope;
     if (ok) *handled = result != 0;
     return ok;
+}
+
+
+qa_command_result q3g_declared_command(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    q3g_role *role=context;
+    if (!role || role->kind!=QA_QVM_CGAME || !role->ready || role->retired ||
+        !command || command->receiver!=role->engine->provider->owner ||
+        command->registration_owner!=role->service_owner || command->context.seat!=role->seat ||
+        !qa_console_invocation_current(command->console,command) ||
+        !qa_application_command_context_active(role->engine->provider->application,&command->context)) {
+        application_fail(error,QA_ERROR_ARGUMENT,"Declared Q3 command lost its actual role and captured caller");
+        return QA_COMMAND_FAILED;
+    }
+    bool handled=false;
+    if (!role_console_command(role,0,command->raw,&handled,error)) return QA_COMMAND_FAILED;
+    return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
+bool application_q3_guest_role_command(application_provider *provider,qa_qvm_role kind,
+    uint32_t seat,int32_t time,const char *text,bool *handled,qa_error *error)
+{
+    if (kind==QA_QVM_GAME) return application_q3_guest_console_command(provider,text,handled,error);
+    q3g_role *role=find_role(provider,kind,seat,error);
+    return role && role_console_command(role,time,text,handled,error);
 }

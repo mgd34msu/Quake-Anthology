@@ -1,4 +1,18 @@
 #include "internal.h"
+
+static qa_command_result declared_command(void *context,
+    const qa_command_invocation *command, qa_error *error)
+{
+    qa_q3_host *host=context;
+    if (!host || host->retired || !command || command->console!=host->options.console ||
+        !qa_console_invocation_current(command->console,command) ||
+        command->receiver!=host->options.owner || command->registration_owner!=host->options.service_owner ||
+        command->context.seat!=host->options.command_context.seat || !host->options.console_command) {
+        q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 declaration lost its retained module command owner");
+        return QA_COMMAND_FAILED;
+    }
+    return host->options.console_command(host->options.console_command_context,command,error);
+}
 #include <stdio.h>
 
 q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
@@ -109,8 +123,15 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
         } else if (!host->options.console) {
             ok = q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 command registry is unbound");
         } else if (trap == 15) {
-            ok = qa_console_contribute(host->options.console, (const char *)text.data,
-                                        host->options.owner, host->options.service_owner, error);
+            if (!host->options.console_command) {
+                q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 AddCommand requires its actual module export");
+                ok=false;
+            } else {
+                qa_console_contribution owner={.receiver=host->options.owner,
+                    .lifetime_owner=host->options.service_owner,.seat=host->options.command_context.seat,
+                    .callback=declared_command,.user=host};
+                ok=qa_console_contribute(host->options.console,(const char *)text.data,&owner,error);
+            }
         } else {
             qa_console_uncontribute(host->options.console, (const char *)text.data,
                                       host->options.owner, host->options.service_owner);

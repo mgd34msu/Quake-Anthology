@@ -302,6 +302,8 @@ static qa_actor_id world_actor(void *context)
 void q3g_server_bind(q3g_role *role, qa_q3_host_options *options)
 {
     role->common = options->common; role->server = options->server;
+    options->console_command=q3g_declared_command;
+    options->console_command_context=role;
     options->common = (qa_q3_host_common_services){role, print, milliseconds, calendar,
         q3g_arguments, client_command, installed_mods, clipboard};
     if (role->kind != QA_QVM_GAME) return;

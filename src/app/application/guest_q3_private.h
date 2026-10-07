@@ -200,6 +200,7 @@ bool q3g_role_catalog_refresh(q3g_role *, qa_error *);
 bool application_guest_q3_collision_bind(q3g_role *, qa_error *);
 void q3g_game_aliases(struct application_q3_guest *, q3g_role *);
 bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
+qa_command_result q3g_declared_command(void *,const qa_command_invocation *,qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);
 bool q3g_client_bind(q3g_role *, qa_q3_host_options *, qa_error *);
 bool application_q3_guest_input_values_read(application_provider *, uint32_t seat,

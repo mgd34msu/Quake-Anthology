@@ -1,4 +1,6 @@
 #include "guest_q3_scene_private.h"
+
+static qa_command_result declared_command(void *,const qa_command_invocation *,qa_error *);
 #include "qa/builtin.h"
 #include <limits.h>
 
@@ -143,7 +145,9 @@ bool application_q3_scene_create(const application_q3_scene_options *options,
     s->game_state = calloc(1, sizeof(*s->game_state));
     s->players = calloc(options->profile->capacity, sizeof(*s->players));
     if (!s->game_state || !s->players) return q3scene_fail(e, QA_ERROR_MEMORY, "Retaining component source context");
-    qa_q3_host_options host = options->host; if(!options->profile->player_events) { host.source_entity = source_entity; host.source_entity_context = s; }
+    qa_q3_host_options host = options->host;
+    host.console_command=declared_command; host.console_command_context=s;
+    if(!options->profile->player_events) { host.source_entity = source_entity; host.source_entity_context = s; }
     if (!qa_q3_host_create(&host, &s->host, e)) return false;
     s->lower = qa_q3_host_qvm_options(s->host, QA_QVM_INTERPRETED);
     qa_qvm_options vm = s->lower; vm.context = s; vm.syscall = syscall; vm.checkpoint = host_checkpoint; vm.restore = host_restore;
@@ -416,16 +420,35 @@ bool application_q3_scene_hud(application_q3_scene *s,uint64_t sequence,qa_error
     if (!ok) s->failed=true;
     release(s); s->busy=false; return ok;
 }
-bool application_q3_scene_console(application_q3_scene *s,const qa_command_tokens *tokens,bool *handled,qa_error *e)
+bool application_q3_scene_console(application_q3_scene *s,const qa_command_invocation *command,bool *handled,qa_error *e)
 {
-    if (!application_q3_scene_idle(s)||!s->initialized||!tokens||!handled||s->failed)
+    if (!application_q3_scene_idle(s)||!s->initialized||!command||!handled||s->failed)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component console requires its genuine lexical invocation");
+    qa_command_tokens tokens={.count=command->argc,.args_text=(char *)command->args_text};
+    tokens.values=tokens.count?calloc(tokens.count,sizeof(*tokens.values)):NULL;
+    if(tokens.count&&!tokens.values) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining actual component console arguments");
+    for(size_t i=0;i<tokens.count;++i) tokens.values[i]=(char *)command->argv[i];
     s->busy=true; bool ok=acquire(s,false,e); int32_t args[]={2},result=0;
-    if (ok) { s->lexical=tokens; ok=qa_qvm_invoke(s->vm,0,args,1,&result,e)&&q3scene_current(s); s->lexical=NULL; }
+    if (ok) { s->lexical=&tokens; ok=qa_qvm_invoke(s->vm,0,args,1,&result,e)&&q3scene_current(s); s->lexical=NULL; }
     ok=finish_output(s,ok,e);
     if (!ok) s->failed=true; else *handled=result!=0;
-    release(s); s->busy=false; return ok;
+    release(s); s->busy=false; free(tokens.values); return ok;
 }
+
+static qa_command_result declared_command(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    application_q3_scene *scene=context;
+    if (!scene || !command || command->receiver!=scene->options.host.owner ||
+        command->registration_owner!=(scene->options.host.service_owner ?
+            scene->options.host.service_owner : scene->options.host.owner) ||
+        !qa_console_invocation_current(command->console,command)) {
+        q3scene_fail(error,QA_ERROR_ARGUMENT,"Component declaration lost its actual executor"); return QA_COMMAND_FAILED;
+    }
+    bool handled=false;
+    bool okay=application_q3_scene_console(scene,command,&handled,error);
+    return !okay ? QA_COMMAND_FAILED : handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
 void q3scene_history_clear(application_q3_scene *s)
 {
     for(size_t i=0;i<32;++i) free(s->snapshots[i].entities);
