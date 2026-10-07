@@ -209,7 +209,8 @@ bool qa_application_console_source_at(qa_application *, size_t,
     qa_application_startup_source *, bool *present, qa_error *);
 bool qa_application_startup_replay_variables(qa_application *, qa_console *,
     const qa_command_context *, qa_error *);
-bool qa_application_startup_console_primary(qa_application *, qa_console *, bool *primary, qa_error *);
+bool qa_application_startup_source_primary(qa_application *, const qa_application_startup_source *,
+    bool *primary, qa_error *);
 bool qa_application_startup_q3_safe_mode(qa_application *, const qa_launch_instance *,
     const qa_application_startup_source *, bool *safe, qa_error *);
 #endif

@@ -428,7 +428,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
         if (!qa_application_startup_command_queued_console(application,ordinal,&console,error)) return false;
         qa_application_travel_view travel;
         if (qa_application_should_stop(application) || (!console && qa_application_travel_read(application,&travel))) return true;
-        qa_command_context context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1};
+        qa_command_context context={0};
         if (!console) {
             qa_application_client_source neutral;
             bool neutral_primary=false;
@@ -441,37 +441,28 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
             const qa_launch_choices *choices=qa_launch_snapshot_choices(publication);
             const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
                 (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
-            for (size_t i=0;publication && i<qa_application_console_count(application);++i) {
-                qa_console *candidate=qa_application_console_at(application,i,NULL);
-                if (candidate==qa_application_console(application)) continue;
-                if (neutral_primary && candidate==console) continue;
+            qa_application_startup_source root={0};
+            for (size_t i=0;;++i) {
+                qa_application_startup_source candidate; bool present=false;
+                if (!qa_application_console_source_at(application,i,&candidate,&present,error)) return false;
+                if (!present) break;
+                if (candidate.scope.kind==QA_APPLICATION_CONSOLE_ENGINE) { root=candidate; continue; }
+                if (neutral_primary && candidate.command.cvar_view==context.cvar_view) continue;
                 bool primary=false;
-                if (!qa_application_startup_console_primary(application,candidate,&primary,error)) return false;
+                if (!qa_application_startup_source_primary(application,&candidate,&primary,error)) return false;
                 if (!primary) continue;
-                if (console && console!=candidate)
-                    return frontend_fail(error,QA_ERROR_FORMAT,"Startup has multiple primary physical consoles");
-                console=candidate;
+                if (console && context.cvar_view!=candidate.command.cvar_view)
+                    return frontend_fail(error,QA_ERROR_FORMAT,"Startup has multiple primary Source views");
+                console=candidate.console; context=candidate.command;
             }
-            if (console && !neutral_primary) {
-                qa_application_console_scope scope;
-                if (!qa_application_console_scope_read(application,console,&scope))
-                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup lost its primary physical console scope");
-                const char *name=qa_application_provider_instance(application,scope.provider);
-                const qa_launch_instance *instance=name?qa_launch_snapshot_find(publication,name):NULL;
-                const qa_product *product=instance?qa_catalog_product(qa_launch_instance_catalog(instance),instance->selection.product):NULL;
-                if (!product) return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup lost its primary source product");
-                context.owner=scope.provider;
-                context.seat=scope.seat;
-                if (scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME || scope.kind==QA_APPLICATION_CONSOLE_Q3_UI)
-                    context.origin=QA_COMMAND_SEAT;
-                context.dialect=product->family==QA_GAME_Q3?QA_CONSOLE_Q3:
-                    product->family==QA_GAME_Q2?(product->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2):
-                    product->edition==QA_EDITION_QUAKEWORLD?QA_CONSOLE_QW:QA_CONSOLE_Q1;
-            } else if (!console) {
+            if (!console) {
                 if (binding || frontend_network_remote(frontend))
-                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup source has no published primary console");
-                console=qa_application_console(application);
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup source has no published primary view");
+                if (!root.console)
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Startup lost its actual ENGINE command context");
+                console=root.console; context=root.command;
             }
+            if (!qa_application_capture_command_context(application,&context,&context,error)) return false;
             frontend->preparing=true;
             bool queued=qa_application_startup_command_queue(application,ordinal,console,&context,error);
             frontend->preparing=false;

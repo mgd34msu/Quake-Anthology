@@ -151,13 +151,24 @@ bool qa_application_startup_source_engine_cvars(const qa_application *app,
     return application_fail(error, QA_ERROR_ARGUMENT, "Source ENGINE namespace lost its retained provider");
 }
 
-bool qa_application_startup_console_primary(qa_application *app, qa_console *console,
-    bool *primary, qa_error *error)
+bool qa_application_startup_source_primary(qa_application *app,
+    const qa_application_startup_source *source, bool *primary, qa_error *error)
 {
-    if (!app || !console || !primary || app->destroy_requested || console != app->console)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup consumption requires its live application console");
-    *primary = true;
-    return true;
+    const qa_launch_snapshot *snapshot = qa_application_launch(app);
+    if (!app || !source || !primary || app->destroy_requested || !snapshot ||
+        qa_application_startup_pending(app) || source->console != app->console ||
+        source->scope.kind == QA_APPLICATION_CONSOLE_ENGINE)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup selection requires its actual published Source");
+    *primary = false;
+    application_provider *provider = NULL;
+    for (application_provider *current = app->live_providers; current; current = current->next_live)
+        if (current->owner == source->scope.provider) { provider = current; break; }
+    qa_application_startup_source qualified;
+    const qa_application_startup_hooks *hooks = hooks_for(provider);
+    if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
+        !hooks || !hooks->startup_source || !qualify_source(provider, snapshot, source, &qualified, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup selection lost its published Source capability");
+    return hooks->startup_source(hooks->context, app, snapshot, &qualified, primary, error);
 }
 
 bool application_startup_source_configuration(application_provider *provider, qa_console *console,
