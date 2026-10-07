@@ -1162,12 +1162,13 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
             source.product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
             &settings, error)) return false;
         if (gun->number == 0 || entities->number == 0 || settings.chase) return true;
-        qa_q1_clientdata player;
-        if (!qa_application_network_q1_clientdata(frontend->application, actor, &player, error)) return false;
-        if (player.health <= 0 || (player.items & 524288u)) return true;
-        if (!recipient->q1_view_ready || !qa_actor_id_equal(actor, recipient->q1_view_actor))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its actual prepared Source pose");
-        origin = recipient->q1_view_pose.gun_origin; angles = recipient->q1_view_pose.gun_angles;
+        if (recipient->q1_view_ready && qa_actor_id_equal(actor, recipient->q1_view_actor)) {
+            origin = recipient->q1_view_pose.gun_origin; angles = recipient->q1_view_pose.gun_angles;
+        } else {
+            origin = qa_vec_add(camera.origin, camera.view_offset);
+            origin = qa_vec_add(origin, weapon.has_source_gun_pose ? weapon.gun_origin : weapon.kick_origin);
+            angles = qa_vec_add(camera.angles, weapon.has_source_gun_pose ? weapon.gun_angles : weapon.kick_angles);
+        }
     } else {
         if (!recipient->q2_view_ready || !qa_actor_id_equal(actor, recipient->q2_actor) ||
             recipient->q2_view.spectator || recipient->q2_view.health <= 0) return true;

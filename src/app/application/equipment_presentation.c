@@ -414,6 +414,19 @@ static bool q3_warning(qa_application *app, qa_application_equipment_view *view,
     return true;
 }
 
+static bool q1_visibility(qa_application *app, qa_application_equipment_view *view,
+    qa_error *error)
+{
+    if (view->family != QA_GAME_Q1 || !view->visible) return true;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(app->combat, view->actor, &combat, error)) return false;
+    qa_builtin_services services = application_builtin_services(app, app->world, app->physics);
+    qa_builtin_actor_traits traits = {0};
+    bool invisible = services.actor_traits && services.actor_traits(services.context, view->actor, &traits) && traits.invisible;
+    view->visible = combat.health > 0 && !invisible;
+    return true;
+}
+
 bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
     qa_application_equipment_view *out,bool *present,qa_error *error)
 {
@@ -466,6 +479,7 @@ bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
         if(!qa_equipment_read(app->equipment,actor,&state))return false;
         if(state.weapon_slot.phase!=QA_WEAPON_SLOT_ACTIVE){view.pending=state.weapon_slot.next_item;view.pending_provider=state.weapon_slot.next_provider;}
         if(!view.pending)view.pending_provider=0;
+        if(!q1_visibility(app,&view,error))return false;
         if(!qa_application_equipment_current(app,&view))
             return application_fail(error,QA_ERROR_ARGUMENT,"Source weapon observation retired its actual registry binding");
         *out=view;*present=true;return true;
@@ -634,6 +648,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
     }
     view.low_ammo = view.family == QA_GAME_Q2 && view.finite_ammo && view.ammo_count <= low_threshold;
     if (standard_q3 && view.family == QA_GAME_Q3 && !q3_warning(app, &view, q3_product, error)) return false;
+    if (!q1_visibility(app, &view, error)) return false;
     if (!qa_application_equipment_current(app, &view))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation changed its actual actor or selected arsenal");
     *out = view; return true;

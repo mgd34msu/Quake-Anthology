@@ -558,8 +558,7 @@ static application_control_record *control(qa_application *app, qa_actor_id acto
     if (actor.slot >= app->control_capacity) return NULL;
     application_control_record *row = &app->controls[actor.slot];
     return row->active && !row->retired && !row->moving &&
-        qa_actor_id_equal(row->actor, actor) &&
-        (row->state.kind == QA_MOVEMENT_NETQUAKE || row->state.kind == QA_MOVEMENT_QUAKEWORLD) ? row : NULL;
+        row->application == app && qa_actor_id_equal(row->actor, actor) ? row : NULL;
 }
 bool application_native_q1_wire_host(qa_application *app, qa_application_network_q1_host *out,
     qa_error *error) {
@@ -712,9 +711,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         qa_q1_wire_index(&source.receipt, true, player.weapon_model, &model) &&
         qa_application_equipment_current(app, &equipment) &&
         application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
-        client(&source, actor, &slot, error) && actor.slot < app->control_capacity &&
-        (row = &app->controls[actor.slot])->active && !row->retired && !row->moving &&
-        qa_actor_id_equal(row->actor, actor);
+        client(&source, actor, &slot, error) && (row = control(app, actor)) != NULL;
     if (okay) {
         qa_q1_clientdata value = {.viewheight = row->view_height,
             .idealpitch = row->state.kind == QA_MOVEMENT_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
@@ -736,7 +733,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         vector(value.velocity, body.velocity);
         *out = value;
     } else if (error && error->code == QA_OK)
-        application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lacks its selected source movement or arsenal");
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lost its actual source player or selected control");
     application_native_q1_wire_end(&source); return okay;
 }
 static const application_player_record *roster(qa_application *app, qa_actor_id actor) {
@@ -775,6 +772,12 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 feedback consumption");
     application_native_q1_wire_source source = {0};
     if (!observation_begin(app, 0, &source, error)) return false;
+    uint32_t physical;
+    if (!qa_q1_native_client_slot(source.provider->state.q1, actor, &physical, NULL)) {
+        *out = (qa_application_network_q1_feedback){0};
+        application_native_q1_wire_end(&source);
+        return true;
+    }
     uint32_t slot; application_control_record *row = control(app, actor);
     const application_player_record *connection = roster(app, actor);
     qa_q1_wire_feedback feedback;
