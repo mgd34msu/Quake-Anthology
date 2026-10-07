@@ -3,13 +3,13 @@
     "rows": 1260,
     "aliases": 237,
     "bindings": 1530,
-    "defaults": 6358,
+    "defaults": 6363,
     "flag_clauses": 2327,
     "conversions": 235,
     "operands": 42,
     "maps": 67,
-    "pool_bytes": 487555,
-    "issues": 1402
+    "pool_bytes": 487569,
+    "issues": 1397
   },
   "policy_issues": [
     {
@@ -9496,41 +9496,6 @@
       "field": "type/range_units",
       "reason": "single-name inferred hints; not runtime validators",
       "bits": 1
-    },
-    {
-      "row": 1240,
-      "name": "in_joystickProfile",
-      "field": "default_Q1",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
-    },
-    {
-      "row": 1240,
-      "name": "in_joystickProfile",
-      "field": "default_QW",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
-    },
-    {
-      "row": 1240,
-      "name": "in_joystickProfile",
-      "field": "default_Q2",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
-    },
-    {
-      "row": 1240,
-      "name": "in_joystickProfile",
-      "field": "default_Q2R",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
-    },
-    {
-      "row": 1240,
-      "name": "in_joystickProfile",
-      "field": "default_Q3",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
     },
     {
       "row": 1240,

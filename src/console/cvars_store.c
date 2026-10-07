@@ -211,6 +211,13 @@ static bool condition_matches(uint8_t condition, const qa_cvar_options *options)
     case QA_CATALOG_CONDITION_LINUX: return false;
     case QA_CATALOG_CONDITION_NOT_LINUX: return true;
 #endif
+#ifdef _WIN32
+    case QA_CATALOG_CONDITION_WINDOWS: return true;
+    case QA_CATALOG_CONDITION_NOT_WINDOWS: return false;
+#else
+    case QA_CATALOG_CONDITION_WINDOWS: return false;
+    case QA_CATALOG_CONDITION_NOT_WINDOWS: return true;
+#endif
     case QA_CATALOG_CONDITION_ENGINE: return options->role == QA_CVAR_ROLE_ENGINE;
     case QA_CATALOG_CONDITION_GAME: return options->role == QA_CVAR_ROLE_GAME;
     case QA_CATALOG_CONDITION_CGAME: return options->role == QA_CVAR_ROLE_CGAME;

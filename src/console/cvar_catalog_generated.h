@@ -36,6 +36,8 @@ typedef enum qa_cvar_catalog_condition {
     QA_CATALOG_CONDITION_GAME,
     QA_CATALOG_CONDITION_CGAME,
     QA_CATALOG_CONDITION_UNRESOLVED,
+    QA_CATALOG_CONDITION_WINDOWS,
+    QA_CATALOG_CONDITION_NOT_WINDOWS,
 } qa_cvar_catalog_condition;
 typedef struct qa_cvar_catalog_default {
     qa_cvar_catalog_text member, value, condition, raw;

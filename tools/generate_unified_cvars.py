@@ -49,6 +49,8 @@ typedef enum qa_cvar_catalog_condition {
     QA_CATALOG_CONDITION_GAME,
     QA_CATALOG_CONDITION_CGAME,
     QA_CATALOG_CONDITION_UNRESOLVED,
+    QA_CATALOG_CONDITION_WINDOWS,
+    QA_CATALOG_CONDITION_NOT_WINDOWS,
 } qa_cvar_catalog_condition;
 typedef struct qa_cvar_catalog_default {
     qa_cvar_catalog_text member, value, condition, raw;
@@ -184,7 +186,7 @@ KINDS = ('IDENTITY', 'RECIPROCAL', 'BOOL_INVERT', 'LINEAR', 'ENUM_DETAIL',
          'BIT_VIEW', 'COMPOSITE', 'RESOLUTION', 'CONSUMER_UNITS', 'SIDE_SCOPE', 'POLICY')
 NUMBER = r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?'
 NAME = r'[A-Za-z_][A-Za-z_0-9<>*-]*'
-CONDITIONS = ('ALWAYS', 'MAC', 'NOT_MAC', 'LINUX', 'NOT_LINUX', 'DEDICATED', 'CLIENT', 'ENGINE', 'GAME', 'CGAME', 'UNRESOLVED')
+CONDITIONS = ('ALWAYS', 'MAC', 'NOT_MAC', 'LINUX', 'NOT_LINUX', 'DEDICATED', 'CLIENT', 'ENGINE', 'GAME', 'CGAME', 'UNRESOLVED', 'WINDOWS', 'NOT_WINDOWS')
 OPERATIONS = ('NONE', 'KHZ_HZ', 'SKILL', 'VIEW_SIZE', 'BOOL_DETAIL', 'AUTOSWITCH', 'GUN', 'FOOTSTEPS', 'LAGOMETER', 'DRAW_2D', 'SHADOWS', 'OLD_RAIL', 'INPUT_GRAB', 'SOUND_BACKEND', 'NO_SKINS', 'FORCE_RESPAWN', 'DEATHMATCH', 'COOP', 'TEAMPLAY', 'CTF', 'QW_SKIN', 'SEX', 'COLOR', 'PLAYER_COLORS', 'NEEDPASS', 'SAME_LEVEL', 'NO_EXIT', 'DOWNLOAD', 'CLEAR_COLOR', 'FULLSCREEN', 'VIDEO_MODE', 'MUSIC_MUTE', 'SPECTATOR')
 
 
@@ -280,9 +282,10 @@ class Catalog:
             return [('', '', 'ALWAYS')]
         value = r'(?:' + NUMBER + r'|"[^"\n]*")'
         # Only alternatives stated literally in the owner input become selectors.
-        operating_system = re.fullmatch(r'(' + value + r') \(([^ ]+) on (__(?:MACOS|linux)__|Linux)\)', raw)
-        if operating_system and re.fullmatch(value, operating_system[2]):
-            condition = 'MAC' if operating_system[3] == '__MACOS__' else 'LINUX'
+        platform_value = value if type_hint != 'string' else r'(?:' + value + r'|[A-Za-z_][A-Za-z_0-9.-]*)'
+        operating_system = re.fullmatch(r'(' + platform_value + r') \((' + platform_value + r') on (__(?:MACOS|linux)__|Linux|Windows)\)', raw)
+        if operating_system:
+            condition = {'__MACOS__': 'MAC', '__linux__': 'LINUX', 'Linux': 'LINUX', 'Windows': 'WINDOWS'}[operating_system[3]]
             return [(operating_system[1], operating_system[0], 'NOT_' + condition),
                     (operating_system[2], operating_system[0], condition)]
         roles = list(re.finditer(r'(' + value + r') \((game|server|engine|cgame)\)', raw))
