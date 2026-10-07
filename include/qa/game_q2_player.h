@@ -35,6 +35,8 @@ typedef struct qa_q2_player_view {
     float fov, health, ammo;
     double armor;
     qa_string_id ammo_icon, armor_icon;
+    qa_string_id pickup_icon, pickup_text, help_icon, selected_item_name;
+    qa_string_id key_icons[3];
     int32_t ammo_count;
     int score, flashes, layouts;
     int32_t hit_marker_damage;

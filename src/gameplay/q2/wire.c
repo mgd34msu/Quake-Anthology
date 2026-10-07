@@ -7,6 +7,119 @@
 #include "qa/text.h"
 #include <math.h>
 
+#define Q2_STATUS_VITALS \
+    "yb -24 xv 0 hnum xv 50 pic 0 " \
+    "if 2 xv 100 anum xv 150 pic 2 endif " \
+    "if 4 xv 200 rnum xv 250 pic 4 endif " \
+    "if 6 xv 296 pic 6 endif yb -50 "
+#define Q2_STATUS_TIMER \
+    "if 9 xv 262 num 2 10 xv 296 pic 9 endif "
+#define Q2_STATUS_SCORE \
+    "xr -50 yt 2 num 3 14 " \
+    "if 17 xv 0 yb -58 string2 \"SPECTATOR MODE\" endif " \
+    "if 16 xv 0 yb -68 string \"CHASING\" xv 64 stat_string 16 endif "
+#define Q2_CLASSIC_PICKUP \
+    "if 7 xv 0 pic 7 xv 26 yb -42 stat_string 8 yb -50 endif "
+#define Q2_RERELEASE_PICKUP \
+    "if 7 xv 0 pic 7 xv 26 yb -42 loc_stat_string 8 yb -50 endif " \
+    "if 51 yb -34 xv 319 loc_stat_rstring 51 yb -58 endif "
+const char *qa_q2_wire_statusbar(const qa_q2_game *g)
+{
+    static const char classic_single[] = Q2_STATUS_VITALS Q2_CLASSIC_PICKUP Q2_STATUS_TIMER
+        "if 11 xv 148 pic 11 endif ";
+    static const char classic_deathmatch[] = Q2_STATUS_VITALS Q2_CLASSIC_PICKUP
+        "if 9 xv 246 num 2 10 xv 296 pic 9 endif if 11 xv 148 pic 11 endif " Q2_STATUS_SCORE;
+    static const char rerelease_single[] = Q2_STATUS_VITALS Q2_RERELEASE_PICKUP Q2_STATUS_TIMER
+        "yb -50 if 11 xv 150 pic 11 endif "
+        "if 9 yb -76 endif if 51 yb -58 if 9 yb -84 endif endif "
+        "if 44 xv 296 pic 44 endif if 45 xv 272 pic 45 endif if 46 xv 248 pic 46 endif "
+        "if 52 yt 24 health_bars endif story ";
+    static const char rerelease_coop[] = Q2_STATUS_VITALS Q2_RERELEASE_PICKUP Q2_STATUS_TIMER
+        "yb -50 if 11 xv 150 pic 11 endif "
+        "if 9 yb -76 endif if 51 yb -58 if 9 yb -84 endif endif "
+        "if 44 xv 296 pic 44 endif if 45 xv 272 pic 45 endif if 46 xv 248 pic 46 endif "
+        "if 48 xv 0 yt 0 loc_stat_cstring2 48 endif "
+        "if 49 xr -16 yt 2 lives_num 49 xr 0 yt 28 loc_rstring \"$g_lives\" endif "
+        "if 52 yt 24 health_bars endif story ";
+    static const char rerelease_deathmatch[] = Q2_STATUS_VITALS Q2_RERELEASE_PICKUP Q2_STATUS_TIMER
+        "yb -50 if 11 xv 150 pic 11 endif " Q2_STATUS_SCORE
+        "if 27 yb -137 xr -26 pic 27 endif ";
+    if (g->options.edition == QA_Q2_CLASSIC)
+        return g->options.deathmatch ? classic_deathmatch : classic_single;
+    return g->options.deathmatch ? rerelease_deathmatch :
+        g->options.cooperative ? rerelease_coop : rerelease_single;
+}
+#undef Q2_STATUS_VITALS
+#undef Q2_STATUS_TIMER
+#undef Q2_STATUS_SCORE
+#undef Q2_CLASSIC_PICKUP
+#undef Q2_RERELEASE_PICKUP
+
+static void stat_word(int32_t value, int16_t *out)
+{
+    uint16_t bits = (uint16_t)(uint32_t)value;
+    memcpy(out, &bits, sizeof(bits));
+}
+static bool stat_number(double value, int16_t *out, qa_error *error)
+{
+    if (!isfinite(value)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source statistic is not finite");
+        return false;
+    }
+    stat_word(value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN, out);
+    return true;
+}
+static bool stat_image(const qa_q2_wire_stat_resources *resources, const char *name,
+    int16_t *out, qa_error *error)
+{
+    uint32_t image = 0;
+    if (name && *name && !resources->image(resources->context, name, &image, error)) return false;
+    if (image > INT16_MAX) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source HUD image exceeds its stat word");
+        return false;
+    }
+    *out = (int16_t)image;
+    return true;
+}
+bool qa_q2_wire_stats(const qa_q2_game *g, const qa_q2_player_view *view,
+    const qa_q2_wire_stat_resources *resources, int16_t out[64], qa_error *error)
+{
+    qa_strings *strings = qa_session_strings(g->services.session);
+    int16_t stats[64] = {0};
+    if (!stat_number(view->health, &stats[1], error) ||
+        !stat_number(view->armor, &stats[5], error) ||
+        !stat_image(resources, "i_health", &stats[0], error) ||
+        !stat_image(resources, qa_strings_cstr(strings, view->ammo_icon), &stats[2], error) ||
+        !stat_image(resources, qa_strings_cstr(strings, view->armor_icon), &stats[4], error) ||
+        !stat_image(resources, qa_strings_cstr(strings, view->pickup_icon), &stats[7], error) ||
+        !stat_image(resources, qa_strings_cstr(strings, view->help_icon), &stats[11], error)) return false;
+    stat_word(view->ammo_count, &stats[3]); stat_word(view->timer_seconds, &stats[10]);
+    stat_word(view->layouts, &stats[13]); stat_word(view->score, &stats[14]);
+    stat_word(view->flashes, &stats[15]); stats[17] = view->spectator ? 1 : 0;
+    const char *pickup = qa_strings_cstr(strings, view->pickup_text);
+    const char *selected_name = qa_strings_cstr(strings, view->selected_item_name);
+    for (size_t i = 0; i < qa_q2_item_count(g); ++i) {
+        const qa_q2_item_definition *item = qa_q2_item_at(g, i);
+        if (view->selected_item && item->item == view->selected_item) {
+            stat_word((int32_t)i + 1, &stats[12]);
+            if (!stat_image(resources, item->icon, &stats[6], error)) return false;
+        }
+        if (view->timer_item && item->item == view->timer_item &&
+            !stat_image(resources, item->icon, &stats[9], error)) return false;
+        if (pickup && item->name && !strcmp(pickup, item->name))
+            stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[8]);
+        if (selected_name && item->name && !strcmp(selected_name, item->name))
+            stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[51]);
+    }
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        stat_word(view->hit_marker_damage, &stats[50]);
+        for (unsigned i = 0; i < 3; ++i)
+            if (!stat_image(resources, qa_strings_cstr(strings, view->key_icons[i]), &stats[44 + i], error)) return false;
+    } else stats[51] = 0;
+    memcpy(out, stats, sizeof(stats));
+    return true;
+}
+
 static bool idle(const qa_q2_game *g, qa_error *error)
 {
     return (g && !g->current_actor.registry && !g->restoring_continuation &&

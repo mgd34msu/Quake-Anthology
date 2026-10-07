@@ -617,7 +617,8 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
     bool ok = application_network_q2_config(owner, 0, name, error) &&
         application_network_q2_config(owner, 2, world_field(owner, &state.value, "sky", "unit1_"), error) &&
         application_network_q2_config(owner, 3, world_field(owner, &state.value, "skyaxis", "0 0 0"), error) &&
-        application_network_q2_config(owner, 4, world_field(owner, &state.value, "skyrotate", "0"), error);
+        application_network_q2_config(owner, 4, world_field(owner, &state.value, "skyrotate", "0"), error) &&
+        application_network_q2_config(owner, 5, qa_q2_wire_statusbar(game), error);
     qa_q2_entity_checkpoint_free(&state);
     uint32_t ignored;
     if (ok) ok = application_network_q2_resource(owner, 0, qa_resource_path(owner->app->map_resource), &ignored, error);

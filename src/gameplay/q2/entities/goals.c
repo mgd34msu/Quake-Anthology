@@ -173,14 +173,6 @@ bool q2_rerelease_notify(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_rerelease_goal_frame(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_client_state *s = a->client;
-    if (s->mission_changed && s->mission_changed <= 3 && s->mission_time_ns < g->now_ns) {
-        if (s->mission_changed == 1 && !q2_entity_sound(g, a, "misc/pc_up.wav", 0, 1, 3, 0, e))
-            return false;
-        if (!q2_actor_live(g, a->id))
-            return true;
-        s->mission_changed++;
-        s->mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
-    }
     return q2_map_event(g,
                         &(qa_q2_map_event){.kind = QA_Q2_MAP_MISSION_STATUS,
                                            .recipient = a->id,

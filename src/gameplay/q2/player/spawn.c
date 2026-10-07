@@ -213,6 +213,8 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     if (!q2_actor_live(g, id))
         return true;
     ++a->character_birth_epoch;
+    a->pickup_icon = a->pickup_text = a->selected_item_name = 0;
+    a->pickup_until_ns = a->selected_item_name_until_ns = 0;
     s->info.dead = s->gibbed = false;
     s->old_water = 0;
     s->air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);

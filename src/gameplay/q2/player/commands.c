@@ -112,10 +112,17 @@ static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, q
             return false;
         if (owned > 0) {
             a->client->info.selected_item = d->item;
+            if (g->options.edition == QA_Q2_RERELEASE) {
+                if (!qa_builtin_resource(&g->services, d->name, &a->selected_item_name, e))
+                    return false;
+                a->selected_item_name_until_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+            }
             return true;
         }
     }
     a->client->info.selected_item = 0;
+    a->selected_item_name = 0;
+    a->selected_item_name_until_ns = 0;
     return true;
 }
 static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d, qa_error *e) {

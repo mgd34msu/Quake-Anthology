@@ -115,4 +115,14 @@ bool qa_q2_wire_map_read(const qa_q2_game *, qa_q2_wire_map *, qa_error *);
 bool qa_q2_wire_shadow_read(const qa_q2_game *, uint32_t,
     qa_q2_wire_shadow_light *, qa_error *);
 
+typedef struct qa_q2_wire_stat_resources {
+    void *context;
+    uint32_t items_base;
+    bool (*image)(void *, const char *, uint32_t *, qa_error *);
+} qa_q2_wire_stat_resources;
+/* One movement-independent native player-view projection for local and wire HUDs. */
+bool qa_q2_wire_stats(const qa_q2_game *, const qa_q2_player_view *,
+    const qa_q2_wire_stat_resources *, int16_t stats[64], qa_error *);
+const char *qa_q2_wire_statusbar(const qa_q2_game *);
+
 #endif

@@ -115,6 +115,12 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
         if (!qa_builtin_resource(&g->services, d->icon, &icon, e) ||
             !qa_builtin_resource(&g->services, d->name, &name, e))
             return false;
+        q2_actor *recipient = q2_actor_get(g, call->player, false, NULL);
+        if (recipient && recipient->client) {
+            recipient->pickup_icon = icon;
+            recipient->pickup_text = name;
+            recipient->pickup_until_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        }
         if (!qa_builtin_emit(&g->services,
                              &(qa_builtin_event){.kind = QA_BUILTIN_ITEM,
                                                  .family = QA_GAME_Q2,
@@ -138,6 +144,11 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
             return false;
         if (!live(call))
             return true;
+        recipient = q2_actor_get(g, call->player, false, NULL);
+        if (recipient && recipient->client && recipient->client->info.selected_item == d->item) {
+            recipient->selected_item_name = 0;
+            recipient->selected_item_name_until_ns = 0;
+        }
         if (instanced(g)) {
             uint32_t player;
             if (!slot(g, call->player, &player, e) || !mark_picked(item, player, e))

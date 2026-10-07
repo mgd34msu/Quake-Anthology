@@ -93,6 +93,9 @@ typedef struct q2_actor {
     qa_q2_wire_view wire_view;
     qa_q2_wire_movement wire_movement;
     qa_q2_wire_lifetime wire_lifetime;
+    /* Ephemeral HUD messages, rebuilt after load and excluded from checkpoints. */
+    qa_string_id pickup_icon, pickup_text, selected_item_name;
+    uint64_t pickup_until_ns, selected_item_name_until_ns;
     uint64_t extra_effects;
     uint32_t environment_flags;
     uint64_t combat_surprise_ns;

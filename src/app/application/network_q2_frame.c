@@ -483,21 +483,8 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
     return true;
 }
 
-static void integer_statistic(int32_t value, int16_t *out)
-{
-    uint16_t bits = (uint16_t)(uint32_t)value;
-    memcpy(out, &bits, sizeof(bits));
-}
-
-static bool statistic(double value, int16_t *out, qa_error *error)
-{
-    if (!isfinite(value))
-        return application_fail(error, QA_ERROR_FORMAT, "Q2 Source statistic is not finite");
-    /* Armor is a widened integer inventory field; retain its full precision. */
-    int32_t native = value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN;
-    integer_statistic(native, out);
-    return true;
-}
+static bool hud_image(void *context, const char *name, uint32_t *out, qa_error *error)
+{ return application_network_q2_resource(context, 2, name, out, error); }
 
 bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_actor_id actor,
     qa_q2_player *out, qa_error *error)
@@ -599,33 +586,8 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         value.gunrate = owner->host.source.edition == QA_Q2_CLASSIC && entity.weapon.gun_rate == 10 ?
             0 : (uint32_t)entity.weapon.gun_rate;
     }
-    uint32_t health_icon, ammo_icon, armor_icon;
-    if (!application_network_q2_resource(owner, 2, "i_health", &health_icon, error) || health_icon > INT16_MAX ||
-        !application_network_q2_resource(owner, 2, text(owner, view.ammo_icon), &ammo_icon, error) || ammo_icon > INT16_MAX ||
-        !application_network_q2_resource(owner, 2, text(owner, view.armor_icon), &armor_icon, error) || armor_icon > INT16_MAX ||
-        !statistic(view.health, &value.stats[1], error) ||
-        !statistic(view.armor, &value.stats[5], error)) return false;
-    integer_statistic(view.ammo_count, &value.stats[3]);
-    integer_statistic(view.timer_seconds, &value.stats[10]);
-    integer_statistic(view.layouts, &value.stats[13]);
-    integer_statistic(view.score, &value.stats[14]);
-    integer_statistic(view.flashes, &value.stats[15]);
-    value.stats[0] = (int16_t)health_icon; value.stats[17] = view.spectator ? 1 : 0;
-    value.stats[2] = (int16_t)ammo_icon; value.stats[4] = (int16_t)armor_icon;
-    for (size_t i = 0; i < qa_q2_item_count(game); ++i) {
-        const qa_q2_item_definition *item = qa_q2_item_at(game, i);
-        uint32_t image;
-        if (view.selected_item && item->item == view.selected_item) {
-            if (i + 1 > INT16_MAX || !application_network_q2_resource(owner, 2, item->icon, &image, error) || image > INT16_MAX) return false;
-            value.stats[12] = (int16_t)(i + 1); value.stats[6] = (int16_t)image;
-        }
-        if (view.timer_item && item->item == view.timer_item) {
-            if (!application_network_q2_resource(owner, 2, item->icon, &image, error) || image > INT16_MAX) return false;
-            value.stats[9] = (int16_t)image;
-        }
-    }
-    if (owner->host.source.edition == QA_Q2_RERELEASE)
-        integer_statistic(view.hit_marker_damage, &value.stats[50]);
+    if (!qa_q2_wire_stats(game, &view, &(qa_q2_wire_stat_resources){
+        .context = owner, .items_base = owner->item_base, .image = hud_image}, value.stats, error)) return false;
     player_profile(owner, &value);
     *out = value;
     return true;

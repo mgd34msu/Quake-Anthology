@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../entities/internal.h"
 
 static qa_q2_blend blend_add(qa_q2_blend b, qa_vec3 color, float alpha) {
     if (alpha <= 0)
@@ -203,6 +204,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                     const qa_q2_powerups *powers, const qa_combat_state *combat,
                     const qa_q2_character_weapon *weapon, qa_error *e) {
     q2_client_state *s = a->client;
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
     s->visual.effects = 0;
     s->visual.render_flags = g->options.edition == QA_Q2_RERELEASE ? 32768 : 0;
     if (combat->health > 0) {
@@ -226,6 +228,22 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
     if (s->tracker_ns > g->now_ns) {
         s->visual.effects |= 0x8000000;
         s->visual.render_flags |= 0x800;
+    }
+    if (!rr && s->mission_primary != g->entity_runtime->primary_changes) {
+        s->mission_primary = g->entity_runtime->primary_changes;
+        s->mission_changed = 1;
+    }
+    if (s->mission_changed && s->mission_changed <= 3 &&
+        (rr ? s->mission_time_ns < g->now_ns : (g->wire_frame & 63) == 0)) {
+        bool beep = !rr || s->mission_changed == 1;
+        if (!rr) ++s->mission_changed;
+        if (beep && !q2_entity_sound(g, a, "misc/pc_up.wav", rr ? 0 : 2, 1, 3, 0, e))
+            return false;
+        if (!q2_actor_live(g, a->id)) return true;
+        if (rr) {
+            ++s->mission_changed;
+            s->mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
+        }
     }
     qa_string_id loop = weapon->loop_sound;
     const char *path = m->water_level && (m->water_type & 24) ? "player/fry.wav"
@@ -433,6 +451,45 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         }
     }
     if (!q2_actor_live(g, a->id)) return true;
+    if (g->now_ns <= a->pickup_until_ns) {
+        view.pickup_icon = a->pickup_icon;
+        view.pickup_text = a->pickup_text;
+    }
+    if (rr && view.selected_item && g->now_ns <= a->selected_item_name_until_ns)
+        view.selected_item_name = a->selected_item_name;
+    const char *help_icon = NULL;
+    if (s->mission_changed &&
+        (rr ? s->mission_changed <= 2 && g->now_ns % Q2_NS < 500 * Q2_MS
+            : (g->wire_frame & 8) != 0))
+        help_icon = "i_help";
+    else if ((s->hand == QA_Q2_CENTER_HAND || (!rr && view.fov > 91)) &&
+             weapon.q2_weapon != QA_Q2_WEAPON_NONE) {
+        const qa_q2_item_definition *definition = q2_item_by_id(g, g->items[weapon.q2_weapon]);
+        if (definition) help_icon = definition->icon;
+    }
+    if (help_icon && !qa_builtin_resource(&g->services, help_icon, &view.help_icon, e))
+        return false;
+    if (!q2_actor_live(g, a->id)) return true;
+    if (rr && !g->options.deathmatch) {
+        /* The built-in catalogs contain 15 keys across all Q2 products. */
+        const qa_q2_item_definition *keys[15];
+        size_t keys_held = 0;
+        for (size_t i = 0; i < qa_q2_item_count(g); ++i) {
+            const qa_q2_item_definition *definition = qa_q2_item_at(g, i);
+            if (definition->kind != QA_Q2_ITEM_KEY) continue;
+            int owned;
+            if (!q2_count(g, a->id, definition->item, &owned, e)) return false;
+            if (!q2_actor_live(g, a->id)) return true;
+            if (owned) keys[keys_held++] = definition;
+        }
+        size_t offset = keys_held > 3 ? (size_t)((g->now_ns / (5 * Q2_NS)) % keys_held) : 0;
+        for (size_t i = 0; i < keys_held && i < 3; ++i) {
+            const qa_q2_item_definition *definition = keys[(i + offset) % keys_held];
+            if (!qa_builtin_resource(&g->services, definition->icon, &view.key_icons[i], e))
+                return false;
+            if (!q2_actor_live(g, a->id)) return true;
+        }
+    }
     view.layouts = (s->show_scores || s->show_help || combat.health <= 0 || intermission ? 1 : 0) |
                    (s->show_inventory && combat.health > 0 ? 2 : 0);
     if (intermission) {
