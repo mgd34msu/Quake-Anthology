@@ -8,6 +8,7 @@
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
 #include <stdio.h>
+#include <math.h>
 
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     const frontend_equipment_media *row)
@@ -496,24 +497,81 @@ bool frontend_equipment_media_native_icon_read(qa_frontend *f,
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Native HUD icon has not completed its actual media preparation");
 }
 
-bool frontend_q1_faces_prepare(qa_vfs *files, qa_scene_resources *images,
-    qa_material_library *materials, bool rogue, qa_error *error)
+qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *product)
 {
-    static const char *const faces[] = {"face1","face_p1","face2","face_p2","face3","face_p3",
-        "face4","face_p4","face5","face_p5","face_invis","face_invul2","face_inv2","face_quad","r_teambord"};
-    size_t count=sizeof(faces)/sizeof(*faces)-(rogue?0u:1u);
-    for (size_t i=0;i<count;++i) {
-        char key[64], declaration[128];
-        if (!frontend_equipment_icon_key("gfx.wad",faces[i],key,sizeof(key),error)) return false;
-        if (qa_material_find(materials,key)) continue;
-        snprintf(declaration,sizeof(declaration),
-            "{\"kind\":\"wad-picture\",\"path\":\"gfx.wad\",\"lump\":\"%s\"}",faces[i]);
-        const qa_material *material=NULL; qa_resource *resource=NULL;
-        bool okay=frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration,strlen(declaration)},
-            QA_SCENE_Q1,files,images,materials,&material,&resource,error);
-        qa_resource_release(resource);
-        if (!okay) return false;
+    return product && !strcmp(product->campaign, "rogue") ? QA_HUD_Q1_ROGUE :
+        product && !strcmp(product->campaign, "hipnotic") ? QA_HUD_Q1_HIPNOTIC : QA_HUD_Q1_BASE;
+}
+static bool q1_hud_lump_prepare(qa_vfs *files, qa_scene_resources *images,
+    qa_material_library *materials, const char *lump, qa_error *error)
+{
+    char key[64], declaration[128];
+    if (!frontend_equipment_icon_key("gfx.wad", lump, key, sizeof(key), error)) return false;
+    if (qa_material_find(materials, key)) return true;
+    snprintf(declaration, sizeof(declaration),
+        "{\"kind\":\"wad-picture\",\"path\":\"gfx.wad\",\"lump\":\"%s\"}", lump);
+    const qa_material *material = NULL; qa_resource *resource = NULL;
+    bool okay = frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration, strlen(declaration)},
+        QA_SCENE_Q1, files, images, materials, &material, &resource, error);
+    qa_resource_release(resource); return okay;
+}
+bool frontend_q1_hud_prepare(qa_vfs *files, qa_scene_resources *images,
+    qa_material_library *materials, qa_hud_q1_variant variant, qa_error *error)
+{
+    static const char *const common[] = {"face1", "face_p1", "face2", "face_p2", "face3", "face_p3",
+        "face4", "face_p4", "face5", "face_p5", "face_invis", "face_invul2", "face_inv2", "face_quad",
+        "sbar", "ibar", "scorebar", "disc", "num_minus", "anum_minus", "num_colon", "num_slash",
+        "sb_shells", "sb_nails", "sb_rocket", "sb_cells", "sb_armor1", "sb_armor2", "sb_armor3",
+        "sb_key1", "sb_key2", "sb_invis", "sb_invuln", "sb_suit", "sb_quad",
+        "sb_sigil1", "sb_sigil2", "sb_sigil3", "sb_sigil4"};
+    if ((unsigned)variant > QA_HUD_Q1_ROGUE)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Unknown actual Q1 HUD variant");
+    for (size_t i = 0; i < sizeof(common) / sizeof(*common); ++i)
+        if (!q1_hud_lump_prepare(files, images, materials, common[i], error)) return false;
+    for (unsigned i = 0; i < 10; ++i) for (unsigned alternate = 0; alternate < 2; ++alternate) {
+        char name[32]; snprintf(name, sizeof(name), "%s_%u", alternate ? "anum" : "num", i);
+        if (!q1_hud_lump_prepare(files, images, materials, name, error)) return false;
     }
+    static const char *const weapons[] = {"shotgun", "sshotgun", "nailgun", "snailgun", "rlaunch", "srlaunch", "lightng"};
+    static const char *const hipnotic[] = {"laser", "mjolnir", "gren_prox", "prox_gren", "prox"};
+    for (unsigned variant_row = 0; variant_row < (variant == QA_HUD_Q1_HIPNOTIC ? 2u : 1u); ++variant_row)
+        for (unsigned i = 0; i < (variant_row ? 5u : 7u); ++i) for (unsigned animation = 0; animation < 7; ++animation) {
+            char name[48]; const char *weapon = variant_row ? hipnotic[i] : weapons[i];
+            if (animation < 2) snprintf(name, sizeof(name), "%s_%s", animation ? "inv2" : "inv", weapon);
+            else snprintf(name, sizeof(name), "inva%u_%s", animation - 1, weapon);
+            if (!q1_hud_lump_prepare(files, images, materials, name, error)) return false;
+        }
+    static const char *const extra_hipnotic[] = {"sb_wsuit", "sb_eshld"};
+    static const char *const extra_rogue[] = {"r_invbar1", "r_invbar2", "r_lava", "r_superlava", "r_gren",
+        "r_multirock", "r_plasma", "r_ammolava", "r_ammomulti", "r_ammoplasma", "r_teambord", "r_shield1", "r_agrav1"};
+    const char *const *extra = variant == QA_HUD_Q1_ROGUE ? extra_rogue : extra_hipnotic;
+    size_t count = variant == QA_HUD_Q1_BASE ? 0 : variant == QA_HUD_Q1_ROGUE ?
+        sizeof(extra_rogue) / sizeof(*extra_rogue) : sizeof(extra_hipnotic) / sizeof(*extra_hipnotic);
+    for (size_t i = 0; i < count; ++i)
+        if (!q1_hud_lump_prepare(files, images, materials, extra[i], error)) return false;
+    return true;
+}
+static const qa_scene_image *q1_hud_picture_read(void *context, const char *lump, qa_error *error)
+{
+    const qa_scene_image *image = NULL;
+    return frontend_q1_face_read(context, lump, &image, error) ? image : NULL;
+}
+bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata *client,
+    const qa_product *product, const qa_cvars *registry, bool quakeworld, double seconds,
+    const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
+{
+    const qa_cvar_view *view = qa_cvars_find(registry, "viewsize"), *bar = qa_cvars_find(registry, "cl_sbar"),
+        *deathmatch = qa_cvars_find(registry, "deathmatch"), *swap = qa_cvars_find(registry, "cl_hudswap");
+    if (!materials || !client || !product || product->family != QA_GAME_Q1 || !out || !face ||
+        !view || !bar || !isfinite(view->number) || !isfinite(bar->number) || !isfinite(seconds))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
+    *out = (qa_hud_q1_status){.picture_context = materials, .picture = q1_hud_picture_read, .face = face,
+        .health = client->health, .armor = client->armor, .items = client->items,
+        .active_weapon = client->weapon, .ammo_count = client->ammo,
+        .ammunition = {client->shells, client->nails, client->rockets, client->cells},
+        .seconds = seconds, .view_size = fmax(30, fmin(120, view->number)), .variant = frontend_q1_hud_variant(product),
+        .present = true, .deathmatch = deathmatch && deathmatch->number != 0, .quakeworld = quakeworld,
+        .overlay_status = quakeworld && bar->number == 0, .hud_swap = swap && swap->number != 0};
     return true;
 }
 bool frontend_q1_face_read(const qa_material_library *materials, const char *lump,
@@ -527,12 +585,20 @@ bool frontend_q1_face_read(const qa_material_library *materials, const char *lum
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 face has not completed its actual media preparation");
     *out=material->stages[0].images[0]; return true;
 }
-bool frontend_equipment_media_q1_faces_prepare(qa_frontend *f, qa_actor_owner provider,
-    bool rogue, qa_error *error)
+bool frontend_equipment_media_q1_hud_prepare(qa_frontend *f, qa_actor_owner provider,
+    qa_hud_q1_variant variant, qa_error *error)
 {
     frontend_visual_owner_view media;
     return frontend_visual_media_acquire(f,provider,QA_GAME_Q1,&media,error) &&
-        frontend_q1_faces_prepare(media.mounts,media.images,media.materials,rogue,error);
+        frontend_q1_hud_prepare(media.mounts,media.images,media.materials,variant,error);
+}
+bool frontend_equipment_media_q1_hud_read(qa_frontend *f, qa_actor_owner provider,
+    const qa_q1_clientdata *client, const qa_product *product, const qa_cvars *registry,
+    bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
+{
+    frontend_visual_owner_view media;
+    return frontend_visual_media_read(f, provider, QA_GAME_Q1, &media, error) &&
+        frontend_q1_hud_read(media.materials, client, product, registry, quakeworld, seconds, face, out, error);
 }
 bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provider,
     const char *lump, const qa_scene_image **out, qa_error *error)

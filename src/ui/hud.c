@@ -576,9 +576,254 @@ bool qa_ui_captions_draw(qa_ui *ui,qa_scene_frame *scene,qa_scene_rect target,qa
     bool ok=caption_draw(ui,values,count,target,area,fit,scene,error);
     ui->handling=ui->drawing=false; return ok;
 }
+static float hud_scale(qa_scene_rect seat, float scale)
+{ return fminf((float)seat.width / 640, (float)seat.height / 480) * scale; }
+qa_hud_q1_placement qa_hud_q1_place(qa_scene_rect seat, float scale, double view_size,
+    bool overlay_status, bool intermission, bool deathmatch)
+{
+    double size = intermission ? 120 : view_size > 0 ? view_size : 100;
+    scale = hud_scale(seat, scale);
+    uint32_t lines = size >= 120 ? 0u : size >= 110 ? 24u : 48u;
+    uint32_t reserved = overlay_status && size >= 100 ? 0u : (uint32_t)ceilf((float)lines * scale);
+    if (reserved >= seat.height) reserved = seat.height ? seat.height - 1 : 0;
+    return (qa_hud_q1_placement){.x = (float)seat.x + (deathmatch ? 0 : ((float)seat.width - 320 * scale) * .5f),
+        .y = (float)seat.y + (float)seat.height - 24 * scale, .scale = scale, .lines = lines, .reserved = reserved};
+}
+static bool q1_picture(const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, const char *name, float x, float y, qa_scene_frame *scene, qa_error *error)
+{
+    const qa_scene_image *image = status->picture(status->picture_context, name, error);
+    if (!image) return false;
+    float width = (float)image->logical_width, height = (float)image->logical_height;
+    return qa_scene_frame_picture_f(scene, image, frame->safe_area,
+        (qa_scene_rect_f){place.x + x * place.scale, place.y + y * place.scale, width * place.scale, height * place.scale},
+        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1}, error);
+}
+static bool q1_character(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_placement place,
+    unsigned character, float x, float y, qa_scene_frame *scene, qa_error *error)
+{
+    qa_font_glyph glyph;
+    if (!qa_font_find_glyph(hud->options.ui->options.fonts.classic, character, &glyph))
+        return ui_fail(error, "Q1 inventory lost its source conchars glyph");
+    return !glyph.visible || qa_scene_frame_picture_f(scene, glyph.image, frame->safe_area,
+        (qa_scene_rect_f){place.x + (x + 4) * place.scale, place.y + y * place.scale, 8 * place.scale, 8 * place.scale},
+        glyph.uv, (qa_scene_vec4){1, 1, 1, 1}, error);
+}
+static bool q1_number(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, float x, int32_t value, bool alternate, qa_scene_frame *scene, qa_error *error)
+{
+    char number[16]; snprintf(number, sizeof(number), "%ld", (long)value);
+    size_t length = strlen(number); const char *digits = number + (length > 3 ? length - 3 : 0);
+    length = strlen(digits); x += (float)(3 - length) * 24;
+    qa_ui *ui = hud->options.ui;
+    if (ui->options.fonts.primary || ui->text_scale != 1 || ui->high_contrast || ui->color_mode != QA_UI_COLOR_STANDARD) {
+        qa_scene_vec4 color = alternate ? ui->color_mode == QA_UI_COLOR_BLUE_YELLOW ?
+            (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+        if (ui->color_mode == QA_UI_COLOR_MONOCHROME) color = (qa_scene_vec4){1, 1, 1, 1};
+        float left = place.x + x * place.scale, width = (float)length * 24 * place.scale;
+        if (ui->high_contrast && !qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area,
+            (qa_scene_rect_f){left, place.y, width, 24 * place.scale}, (qa_scene_vec4){0, 0, 1, 1},
+            (qa_scene_vec4){0, 0, 0, 1}, error)) return false;
+        qa_font_layout layout;
+        if (!weapon_layout(hud, scene, digits, 3 * place.scale * ui->text_scale, width, color, &layout, error)) return false;
+        return qa_font_draw_layout(scene, &layout, &(qa_font_draw_options){.seat = frame->seat,
+            .target = frame->safe_area, .space = QA_FONT_PIXELS,
+            .origin = {left - (float)frame->safe_area.x, place.y - (float)frame->safe_area.y}, .shadow_offset = place.scale}, error);
+    }
+    for (const char *digit = digits; *digit; ++digit, x += 24) {
+        char name[32];
+        if (*digit == '-') snprintf(name, sizeof(name), "%s_minus", alternate ? "anum" : "num");
+        else snprintf(name, sizeof(name), "%s_%c", alternate ? "anum" : "num", *digit);
+        if (!q1_picture(status, frame, place, name, x, 0, scene, error)) return false;
+    }
+    return true;
+}
+static unsigned q1_weapon_frame(const qa_hud_q1_status *status, unsigned bit)
+{
+    if (status->item_gettime && !status->reduced_flashes) {
+        double elapsed = (status->seconds - status->item_gettime[bit]) * 10;
+        if (isfinite(elapsed) && elapsed < 10) return (unsigned)fmax(0, elapsed) % 5 + 2;
+    }
+    return status->active_weapon == (UINT32_C(1) << bit) ? 1u : 0u;
+}
+static bool q1_weapon_picture(const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, const char *weapon, unsigned animation, float x, float y,
+    qa_scene_frame *scene, qa_error *error)
+{
+    char name[48];
+    if (animation < 2) snprintf(name, sizeof(name), "%s_%s", animation ? "inv2" : "inv", weapon);
+    else snprintf(name, sizeof(name), "inva%u_%s", animation - 1, weapon);
+    return q1_picture(status, frame, place, name, x, y, scene, error);
+}
+static bool q1_inventory(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, qa_scene_frame *scene, qa_error *error)
+{
+    const char *bar = status->variant == QA_HUD_Q1_ROGUE ?
+        status->active_weapon >= 4096 ? "r_invbar1" : "r_invbar2" : "ibar";
+    bool heads_up = status->overlay_status && status->view_size >= 100;
+    qa_hud_q1_placement side = place; side.x = (float)frame->safe_area.x;
+    float logical_width = (float)frame->safe_area.width / place.scale;
+    if (!heads_up && !q1_picture(status, frame, place, bar, 0, -24, scene, error)) return false;
+    static const char *const weapons[] = {"shotgun", "sshotgun", "nailgun", "snailgun", "rlaunch", "srlaunch", "lightng"};
+    for (unsigned i = 0; i < 7; ++i) {
+        if (!(status->items & (UINT32_C(1) << i)) ||
+            (heads_up && !i && (float)frame->safe_area.height / place.scale <= 200)) continue;
+        float x = heads_up ? status->hud_swap ? 0 : logical_width - 24 : (float)i * 24;
+        float y = heads_up ? -68 - (float)(7 - i) * 16 : -16;
+        if (!q1_weapon_picture(status, frame, heads_up ? side : place, weapons[i],
+            q1_weapon_frame(status, i), x, y, scene, error)) return false;
+    }
+    if (status->variant == QA_HUD_Q1_HIPNOTIC) {
+        static const unsigned bits[] = {23, 7, 4, 16};
+        bool grenade = false;
+        for (unsigned i = 0; i < 4; ++i) {
+            if (!(status->items & (UINT32_C(1) << bits[i]))) continue;
+            unsigned animation = q1_weapon_frame(status, bits[i]);
+            if (i < 2) {
+                if (!q1_weapon_picture(status, frame, place, i ? "mjolnir" : "laser", animation,
+                    176 + (float)i * 24, -16, scene, error)) return false;
+            } else if (i == 2 && (status->items & 65536u) && animation) {
+                grenade = true;
+                if (!q1_weapon_picture(status, frame, place, "gren_prox", animation, 96, -16, scene, error)) return false;
+            } else if (i == 3 && !grenade) {
+                if (!q1_weapon_picture(status, frame, place, status->items & 16u ? "prox_gren" : "prox",
+                    animation, 96, -16, scene, error)) return false;
+            }
+        }
+    } else if (status->variant == QA_HUD_Q1_ROGUE) {
+        static const char *const powered[] = {"r_lava", "r_superlava", "r_gren", "r_multirock", "r_plasma"};
+        for (unsigned i = 0; i < 5; ++i)
+            if (status->active_weapon == (4096u << i) && !q1_picture(status, frame, place,
+                powered[i], (float)(i + 2) * 24, -16, scene, error)) return false;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        char number[16]; snprintf(number, sizeof(number), "%3lu", (unsigned long)status->ammunition[i]);
+        float y = heads_up ? -24 - (float)(4 - i) * 11 : -24;
+        if (heads_up) {
+            const qa_scene_image *image = status->picture(status->picture_context, "ibar", error);
+            if (!image) return false;
+            float x = status->hud_swap ? 0 : logical_width - 42;
+            if (!qa_scene_frame_picture_f(scene, image, frame->safe_area,
+                (qa_scene_rect_f){side.x + x * place.scale, place.y + y * place.scale, 42 * place.scale, 11 * place.scale},
+                (qa_scene_vec4){(float)(3 + i * 48) / (float)image->logical_width, 0,
+                    (float)(45 + i * 48) / (float)image->logical_width, 11.0f / (float)image->logical_height},
+                (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+        }
+        for (unsigned j = 0; j < 3; ++j) {
+            float x = heads_up ? (status->hud_swap ? 3 : logical_width - 39) + (float)j * 8 :
+                (float)((6 * i + j + 1) * 8) - 2;
+            if (number[j] >= '0' && number[j] <= '9' && !q1_character(hud, frame, heads_up ? side : place,
+                18u + (unsigned)(number[j] - '0'), x, y, scene, error)) return false;
+        }
+    }
+    static const char *const items[] = {"sb_key1", "sb_key2", "sb_invis", "sb_invuln", "sb_suit", "sb_quad"};
+    for (unsigned i = 0; i < 6; ++i)
+        if ((status->items & (UINT32_C(1) << (17 + i))) &&
+            (status->variant != QA_HUD_Q1_HIPNOTIC || i > 1) &&
+            !q1_picture(status, frame, place, items[i], 192 + (float)i * 16, -16, scene, error)) return false;
+    if (status->variant != QA_HUD_Q1_BASE) {
+        const char *const extra[2] = {status->variant == QA_HUD_Q1_ROGUE ? "r_shield1" : "sb_wsuit",
+            status->variant == QA_HUD_Q1_ROGUE ? "r_agrav1" : "sb_eshld"};
+        unsigned bit = status->variant == QA_HUD_Q1_ROGUE ? 29u : 24u;
+        for (unsigned i = 0; i < 2; ++i)
+            if ((status->items & (UINT32_C(1) << (bit + i))) &&
+                !q1_picture(status, frame, place, extra[i], 288 + (float)i * 16, -16, scene, error)) return false;
+    }
+    if (status->variant != QA_HUD_Q1_ROGUE) {
+        for (unsigned i = 0; i < 4; ++i) {
+            char name[16]; snprintf(name, sizeof(name), "sb_sigil%u", i + 1);
+            if ((status->items & (UINT32_C(1) << (28 + i))) &&
+                !q1_picture(status, frame, place, name, 288 + (float)i * 8, -16, scene, error)) return false;
+        }
+    }
+    return true;
+}
+static bool q1_string(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_placement place,
+    const char *value, float x, float y, qa_scene_frame *scene, qa_error *error)
+{
+    qa_ui *ui = hud->options.ui;
+    if (ui->options.fonts.primary || ui->text_scale != 1) {
+        qa_font_layout layout;
+        if (!weapon_layout(hud, scene, value, place.scale * ui->text_scale, 320 * place.scale,
+            (qa_scene_vec4){1, 1, 1, 1}, &layout, error)) return false;
+        return qa_font_draw_layout(scene, &layout, &(qa_font_draw_options){.seat = frame->seat,
+            .target = frame->safe_area, .space = QA_FONT_PIXELS,
+            .origin = {place.x + x * place.scale - (float)frame->safe_area.x,
+                place.y + y * place.scale - (float)frame->safe_area.y}, .shadow_offset = place.scale}, error);
+    }
+    for (const unsigned char *c = (const unsigned char *)value; *c; ++c, x += 8)
+        if (!q1_character(hud, frame, place, *c, x - 4, y, scene, error)) return false;
+    return true;
+}
+static bool q1_scorebar(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_frame *frame,
+    qa_hud_q1_placement place, qa_scene_frame *scene, qa_error *error)
+{
+    if (!q1_picture(status, frame, place, "scorebar", 0, 0, scene, error)) return false;
+    char text[80];
+    if (!status->quakeworld) {
+        snprintf(text, sizeof(text), "Monsters:%3ld /%3ld", (long)status->killed_monsters, (long)status->total_monsters);
+        if (!q1_string(hud, frame, place, text, 8, 4, scene, error)) return false;
+        snprintf(text, sizeof(text), "Secrets :%3ld /%3ld", (long)status->found_secrets, (long)status->total_secrets);
+        if (!q1_string(hud, frame, place, text, 8, 12, scene, error)) return false;
+        const char *level = status->level ? status->level : "";
+        if (!q1_string(hud, frame, place, level, 232 - (float)strlen(level) * 4, 12, scene, error)) return false;
+    }
+    int32_t seconds = (int32_t)fmax(0, fmin(INT32_MAX, status->seconds));
+    snprintf(text, sizeof(text), "Time :%3ld:%02ld", (long)(seconds / 60), (long)(seconds % 60));
+    return q1_string(hud, frame, place, text, 184, 4, scene, error);
+}
+static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
+    qa_scene_frame *scene, qa_error *error)
+{
+    const qa_hud_q1_status *status = &data->q1;
+    if (!status->picture || !isfinite(status->view_size) || !isfinite(status->seconds) ||
+        (unsigned)status->variant > QA_HUD_Q1_ROGUE) return ui_fail(error, "Q1 HUD lost its actual Source status and prepared pictures");
+    qa_hud_q1_placement place = qa_hud_q1_place(frame->safe_area, frame->scale, status->view_size,
+        status->overlay_status, status->intermission, status->deathmatch || status->quakeworld);
+    if (!place.lines) return true;
+    if (place.lines > 24 && !q1_inventory(hud, status, frame, place, scene, error)) return false;
+    if (frame->show_scores || status->health <= 0)
+        return q1_scorebar(hud, status, frame, place, scene, error);
+    if (!(status->overlay_status && status->view_size >= 100) &&
+        !q1_picture(status, frame, place, "sbar", 0, 0, scene, error)) return false;
+    if (status->variant == QA_HUD_Q1_HIPNOTIC) {
+        if ((status->items & 131072u) && !q1_picture(status, frame, place, "sb_key1", 209, 3, scene, error)) return false;
+        if ((status->items & 262144u) && !q1_picture(status, frame, place, "sb_key2", 209, 12, scene, error)) return false;
+    }
+    bool invulnerable = (status->items & 1048576u) != 0;
+    if (!q1_number(hud, status, frame, place, 24, invulnerable ? 666 : (int32_t)status->armor,
+        invulnerable || status->armor <= 25, scene, error)) return false;
+    if (invulnerable) {
+        if (!q1_picture(status, frame, place, "disc", 0, 0, scene, error)) return false;
+    } else {
+        unsigned bit = status->variant == QA_HUD_Q1_ROGUE ? 23u : 13u;
+        for (unsigned i = 3; i > 0; --i) if (status->items & (UINT32_C(1) << (bit + i - 1))) {
+            char name[16]; snprintf(name, sizeof(name), "sb_armor%u", i);
+            if (!q1_picture(status, frame, place, name, 0, 0, scene, error)) return false;
+            break;
+        }
+    }
+    qa_scene_rect_f face = {place.x + 112 * place.scale, place.y, 24 * place.scale, 24 * place.scale};
+    if (data->health_team_face.border) {
+        if (!team_face_draw(hud, frame, &data->health_team_face, face, scene, error)) return false;
+    } else if (status->face && !qa_scene_frame_picture_f(scene, status->face, frame->safe_area, face,
+        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+    if (!q1_number(hud, status, frame, place, 136, status->health, status->health <= 25, scene, error)) return false;
+    static const char *const ammunition[] = {"sb_shells", "sb_nails", "sb_rocket", "sb_cells",
+        "r_ammolava", "r_ammoplasma", "r_ammomulti"};
+    unsigned first = status->variant == QA_HUD_Q1_ROGUE ? 7u : 8u;
+    for (unsigned i = 0; i < (status->variant == QA_HUD_Q1_ROGUE ? 7u : 4u); ++i) {
+        unsigned bit = i < 4 ? first + i : 22u + i;
+        if (!(status->items & (UINT32_C(1) << bit))) continue;
+        if (!q1_picture(status, frame, place, ammunition[i], 224, 0, scene, error)) return false;
+        break;
+    }
+    return q1_number(hud, status, frame, place, 248, (int32_t)status->ammo_count,
+        status->ammo_count <= 10, scene, error);
+}
 static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
     qa_ui *ui = hud->options.ui;
-    ui->scale = fminf((float)frame->safe_area.width / 640, (float)frame->safe_area.height / 480) * frame->scale;
+    ui->scale = hud_scale(frame->safe_area, frame->scale);
     if (!isfinite(ui->scale) || ui->scale <= 0) return ui_fail(error, "HUD scale overflow");
     ui->bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * ui->scale) * .5f;
     ui->bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * ui->scale) * .5f;
@@ -593,10 +838,10 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
         frame, scene, error)) return false;
     qa_combat_state combat;
-    if (frame->actor.registry && !data.source_vitals && !qa_combat_read(qa_application_combat(hud->options.application),
+    if (frame->actor.registry && !data.source_vitals && !data.q1.present && !qa_combat_read(qa_application_combat(hud->options.application),
         frame->actor, &combat, error)) return false;
     qa_hud_value canonical[2];
-    if (frame->actor.registry && !data.source_vitals) {
+    if (frame->actor.registry && !data.source_vitals && !data.q1.present) {
         canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = data.health_icon};
         canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
         data.vitals = canonical; data.vital_count = 2;
@@ -633,9 +878,11 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             break;
         }
     }
-    if (!weapon_draw(hud, frame, &data, scene, error)) return false;
+    if (data.q1.present && !frame->source_status_native) {
+        if (!q1_status_draw(hud, frame, &data, scene, error)) return false;
+    } else if (!weapon_draw(hud, frame, &data, scene, error)) return false;
     size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
-    for (size_t i = 0; i < data.vital_count; ++i)
+    for (size_t i = 0; !data.q1.present && i < data.vital_count; ++i)
         if (!status_vital(hud, frame, data.vitals + i,i==0?&data.health_team_face:NULL,
             status_count, i, scene, error)) return false;
     for (size_t i = 0; i < data.bar_count; ++i) {

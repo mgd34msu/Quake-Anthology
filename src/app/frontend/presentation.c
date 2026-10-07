@@ -84,11 +84,12 @@ bool frontend_view_background(qa_frontend *frontend, qa_scene_rect output,
     return qa_scene_frame_emit(&frontend->frame, &clear, error);
 }
 static qa_scene_rect q1_view_rectangle(qa_scene_rect viewport,
-    const frontend_q1_view_settings *settings, bool intermission)
+    const frontend_q1_view_settings *settings, bool intermission, float hud_scale)
 {
     double size = intermission ? 120 : settings->size;
-    uint32_t lines = size >= 120 ? 0 : size >= 110 ? 24 : 48;
-    uint32_t reserved = settings->overlay_status && size >= 100 ? 0 : lines;
+    qa_hud_q1_placement status=qa_hud_q1_place(viewport,hud_scale,size,
+        settings->overlay_status,intermission,false);
+    uint32_t reserved=status.reserved;
     uint32_t available = viewport.height > reserved ? viewport.height - reserved : 1;
     double fraction = fmin(size, 100) / 100;
     uint32_t width = (uint32_t)fmax(96, trunc(viewport.width * fraction));
@@ -149,7 +150,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
         !frontend_remote_q1_chase_camera(selected,&settings,view.origin,player.angles,
             &view.origin,&angles,error)) return false;
     frontend_camera_axes(angles,view.axis);
-    view.viewport = q1_view_rectangle(view.viewport, &settings, player.intermission);
+    view.viewport = q1_view_rectangle(view.viewport, &settings, player.intermission, preferences->hud_scale);
     if (!q1_view_projection(f, &view, fov, error)) return false;
     if (!frontend_view_background(f, fallback->viewport, &view, error)) return false;
     if (!frontend_remote_q1_draw(selected,&view,listener,rendered,error)) return false;
@@ -257,7 +258,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view changed its retained CLIENT settings");
     qa_actor_owner provider;
     if (!qa_application_provider_owner(f->application,source.descriptor->selection.instance,&provider) ||
-        !frontend_equipment_media_q1_faces_prepare(f,provider,!strcmp(source.product->campaign,"rogue"),error)) return false;
+        !frontend_equipment_media_q1_hud_prepare(f,provider,frontend_q1_hud_variant(source.product),error)) return false;
     seat->q1_view_ready = true;
     scene->origin = seat->q1_view_pose.origin; angles = seat->q1_view_pose.angles;
     seat->q1_chase = !qw && view->chase && !camera->cutscene;
@@ -427,7 +428,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 local_product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
                 &settings, error)) return false;
             if (!local_q1_view(frontend, i, actor, &camera, &settings, &view, error)) return false;
-            view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene);
+            view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene, preferences.hud_scale);
             if (!q1_view_projection(frontend, &view, ordinary_fov, error)) return false;
         }
         if (!frontend_tools_camera(frontend, i, false, &view, error)) return false;

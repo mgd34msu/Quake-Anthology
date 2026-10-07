@@ -6,7 +6,11 @@
 #include "remote_unified_material_movies_bridge.h"
 #include "material_movies.h"
 #include "equipment_media.h"
+#include "menu_fonts.h"
 #include "qa/game_q2.h"
+#include "qa/game_q1.h"
+#include "qa/ui_preferences.h"
+#include "qa/text.h"
 #include "qa/scene_world_save.h"
 #include "qa/unified_frame_visuals.h"
 #include "qa/unified_frame_components.h"
@@ -46,6 +50,8 @@ struct frontend_unified_render {
     qa_hud *hud;
     qa_hud_value vitals[3];
     qa_hud_team_face team_face;
+    qa_hud_q1_status q1;
+    qa_ui_preferences preferences;
     char *ammo_label;
     qa_vec3 origin, angles, kick;
     qa_scene_vec4 blend,damage_blend;
@@ -115,11 +121,18 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     if (!r->busy || !d || frame->seat!=d->physical_seat)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified HUD changed its received physical seat");
     *out=(qa_hud_data){.vitals=r->vitals,.vital_count=frame->source_status_native?0:r->ammo_label?3:2,.source_vitals=true,
-        .health_team_face=r->team_face,.crosshair_visible=true,.crosshair_color={1,1,1,1}};
+        .health_team_face=r->team_face,.q1=r->q1,.crosshair_visible=r->preferences.crosshair,
+        .crosshair_size=r->preferences.crosshair_size,.crosshair_color={1,1,1,1}};
     qa_application_camera_view camera;bool has_view=false,has_vitals=false;
     if(!frontend_unified_render_client_presentation_read(r,frame->actor,&camera,out->source_values,
         &has_view,&has_vitals,error))return false;
-    if(has_vitals && !frame->source_status_native) {out->vitals=out->source_values;out->vital_count=2;}
+    if(has_vitals && !frame->source_status_native) {
+        out->vitals=out->source_values;out->vital_count=2;
+        out->q1.health=qa_source_float_to_i32((float)out->source_values[0].value);
+        out->q1.armor=(uint32_t)qa_source_float_to_i32((float)out->source_values[1].value);
+    }
+    if (frame->source_status_native) out->q1.present=false;
+    if (out->q1.present) { out->vital_count=0; out->crosshair_visible=out->crosshair_visible && out->q1.health>0; }
     return true;
 }
 static bool model_source_read(const qa_unified_model_state *source,unified_render_model *m,qa_error *e)
@@ -217,8 +230,86 @@ static bool q1_team_face_prepare(frontend_unified_render *r,const qa_unified_pla
     qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;
     return frontend_unified_media_files(r->media,product->identity,&files,&admitted,e) && admitted==product &&
         frontend_unified_media_bank(r->media,product->identity,&images,&materials,&fonts,&sounds,e) &&
-        frontend_q1_faces_prepare(files,images,materials,true,e) &&
+        frontend_q1_hud_prepare(files,images,materials,QA_HUD_Q1_ROGUE,e) &&
         frontend_q1_team_face_read(images,materials,value->colors,(int32_t)value->frags,&r->team_face,e);
+}
+static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_player_ui *ui, qa_error *e)
+{
+    const qa_recipe_provider *source = frontend_remote_unified_provider(r->replica, QA_ROLE_ENTITIES, "");
+    const qa_product *product = source ? qa_catalog_product(qa_executable_recipe_catalog(
+        frontend_remote_unified_recipe(r->replica)), source->selection.product) : NULL;
+    if (!product || product->family != QA_GAME_Q1) return true;
+    const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(r->replica);
+    qa_vfs *files; const qa_product *admitted;
+    qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;
+    qa_hud_q1_variant variant = frontend_q1_hud_variant(product);
+    if (!domain || !frontend_unified_media_files(r->media, product->identity, &files, &admitted, e) ||
+        admitted != product || !frontend_unified_media_bank(r->media, product->identity,
+            &images, &materials, &fonts, &sounds, e) ||
+        !frontend_q1_hud_prepare(files, images, materials, variant, e)) return false;
+    qa_q1_program program = variant == QA_HUD_Q1_ROGUE ? QA_Q1_ROGUE :
+        variant == QA_HUD_Q1_HIPNOTIC ? QA_Q1_HIPNOTIC : QA_Q1_ID1;
+    qa_q1_clientdata client = {.health = qa_source_float_to_i32((float)ui->health),
+        .armor = (uint32_t)qa_source_float_to_i32((float)ui->armor.points),
+        .ammo = ui->has_ammo ? (uint32_t)qa_source_float_to_i32((float)ui->ammo_count) : 0};
+    for (unsigned bit = 0; bit < 32; ++bit) {
+        qa_q1_weapon weapon; qa_q1_weapon_profile profile;
+        if (!qa_q1_weapon_source(program, UINT32_C(1) << bit, &weapon) ||
+            !qa_q1_weapon_profile_identity(program, weapon, &profile)) continue;
+        for (size_t i = 0; i < ui->item_count; ++i)
+            if (ui->items[i].owned && !strcmp(ui->items[i].id, profile.item)) client.items |= UINT32_C(1) << bit;
+        if (ui->active_weapon && !strcmp(ui->active_weapon, profile.item)) client.weapon = UINT32_C(1) << bit;
+    }
+    uint32_t *counts[] = {&client.shells, &client.nails, &client.rockets, &client.cells};
+    for (unsigned i = 0; i < 7; ++i) {
+        const char *identity = qa_q1_ammo_identity((qa_q1_ammo)i);
+        if (i < 4) for (size_t j = 0; j < ui->inventory_count; ++j)
+            if (!strcmp(ui->inventory[j].item, identity)) *counts[i] =
+                (uint32_t)qa_source_float_to_i32((float)ui->inventory[j].count);
+        if (ui->ammo_item && !strcmp(ui->ammo_item, identity)) {
+            unsigned bit = i < 4 ? (variant == QA_HUD_Q1_ROGUE ? 7u : 8u) + i :
+                i == QA_Q1_LAVA_NAILS ? 26u : i == QA_Q1_MULTI_ROCKETS ? 28u : 27u;
+            client.items |= UINT32_C(1) << bit;
+        }
+    }
+    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    for (size_t j = 0; j < ui->inventory_count; ++j) for (unsigned i = 0; i < 2; ++i)
+        if (ui->inventory[j].count > 0 && !strcmp(ui->inventory[j].item, keys[i])) client.items |= 131072u << i;
+    static const struct { const char *id; unsigned bit; } powers[] = {
+        {"q1:item_artifact_invisibility", 19}, {"q1:item_artifact_invulnerability", 20},
+        {"q1:item_artifact_envirosuit", 21}, {"q1:item_artifact_super_damage", 22},
+        {"q1:item_artifact_wetsuit", 24}, {"q1:item_artifact_empathy_shields", 25},
+        {"q1:item_powerup_shield", 29}, {"q1:item_powerup_belt", 30}};
+    for (size_t j = 0; j < ui->powerup_count; ++j) for (size_t i = 0; i < sizeof(powers) / sizeof(*powers); ++i)
+        if (ui->powerups[j].seconds > 0 && !strcmp(ui->powerups[j].id, powers[i].id))
+            client.items |= UINT32_C(1) << powers[i].bit;
+    if (ui->armor.kind == QA_UNIFIED_ARMOR_Q1 && ui->armor.points > 0) {
+        unsigned grade = ui->armor.absorption >= .8f ? 2u : ui->armor.absorption >= .6f ? 1u : 0u;
+        client.items |= UINT32_C(1) << ((variant == QA_HUD_Q1_ROGUE ? 23u : 13u) + grade);
+    }
+    const qa_scene_image *face = NULL;
+    frontend_q1_view_motion motion = {0};
+    if (!frontend_q1_face_read(materials, frontend_view_q1_face(client.health, client.items, r->seconds, &motion),
+            &face, e) || !frontend_q1_hud_read(materials, &client, product, domain->cvars,
+            product->edition == QA_EDITION_QUAKEWORLD, r->seconds, face, &r->q1, e)) return false;
+    const qa_unified_frame_metadata *metadata = frontend_remote_unified_metadata(r->replica);
+    if (metadata && metadata->q1) {
+        r->q1.level = metadata->q1->level; r->q1.total_secrets = metadata->q1->total_secrets;
+        r->q1.total_monsters = metadata->q1->total_monsters; r->q1.found_secrets = metadata->q1->found_secrets;
+        r->q1.killed_monsters = metadata->q1->killed_monsters;
+    }
+    r->q1.reduced_flashes = r->preferences.reduced_flashes;
+    return true;
+}
+static bool hud_presentation(void *context, qa_ui_presentation *out, qa_error *e)
+{
+    frontend_unified_render *r = context;
+    const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(r->replica);
+    if (!domain || !frontend_menu_font_selection(r->frontend, domain->physical_seat,
+        r->preferences.typeface == QA_UI_TYPEFACE_BOLD, &out->fonts, e)) return false;
+    if (r->preferences.typeface != QA_UI_TYPEFACE_BOLD) out->fonts.primary = NULL;
+    out->text_scale = r->preferences.text_scale; out->color_mode = r->preferences.color_mode;
+    return true;
 }
 bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *replica,
     frontend_unified_media *media,const qa_unified_document *frame,frontend_unified_render **out,qa_error *e)
@@ -242,7 +333,9 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     }
     const qa_unified_player_view *view=&received->player->view;
     const qa_unified_player_ui *ui=&received->player->ui;
-    if (okay) okay=q1_team_face_prepare(r,ui,e);
+    const frontend_remote_unified_domain *hud_domain=frontend_remote_unified_domain_read(replica);
+    if (okay) okay=hud_domain && qa_ui_preferences_read(qa_application_cvars(f->application),
+        hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,e);
     r->origin=view->origin; r->angles=view->angles; r->height=view->view_height;
     r->source_view_offset=view->has_client_view_offset_delta; r->kick=view->kick_angles;
     r->explicit_fov=view->has_field_of_view; r->field_of_view=view->field_of_view;
@@ -266,7 +359,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     for (size_t i=0;okay && i<count;++i) { r->model_count=i+1; okay=model_read(r,received->visuals->models+i,r->models+i,e); }
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
     if (okay) okay=domain && qa_hud_create(&(qa_hud_options){.ui=f->seats[domain->physical_seat].ui,
-        .application=domain->application,.seat=domain->physical_seat,.context=r,.read=hud_read},&r->hud,e);
+        .application=domain->application,.seat=domain->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&r->hud,e);
     if (!okay) { (void)frontend_unified_render_destroy(&r,NULL); return false; }
     *out=r; return true;
 }
@@ -438,6 +531,22 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified camera lost its real published FOV preference");
     qa_scene_view view={.viewport=frontend_viewport(r->frontend,d->physical_seat),.origin=r->origin,
         .clear_depth=true,.depth=1,.seat=d->physical_seat};
+    bool source_status=false;
+    if (children && children->status_replacement &&
+        !children->status_replacement(children->context,&source_status,e)) return false;
+    if (r->q1.present && !source_status) {
+        qa_hud_q1_placement status=qa_hud_q1_place(view.viewport,r->preferences.hud_scale,r->q1.view_size,
+            r->q1.overlay_status,r->q1.intermission,r->q1.deathmatch);
+        uint32_t available=view.viewport.height-status.reserved;
+        double fraction=fmin(r->q1.view_size,100)/100;
+        uint32_t width=(uint32_t)fmax(96,trunc(view.viewport.width*fraction));
+        if (width>view.viewport.width) width=view.viewport.width;
+        uint32_t height=(uint32_t)fmax(1,trunc(view.viewport.height*fraction));
+        if (height>available) height=available;
+        view.viewport.x+=(int32_t)((view.viewport.width-width)/2);
+        if (r->q1.view_size<100) view.viewport.y+=(int32_t)((available-height)/2);
+        view.viewport.width=width;view.viewport.height=height;
+    }
     qa_vec3 angles=r->angles; float height=r->height;
     qa_application_camera_view declared;qa_hud_value vitals[2];bool has_view=false,has_vitals=false;
     if(!frontend_unified_render_client_presentation_read(r,player,&declared,vitals,&has_view,&has_vitals,e))return false;
@@ -554,11 +663,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
             r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&
             unified_scene_current(&context);
-    bool source_status=false;
-    if(okay && children && children->status_replacement)
-        okay=children->status_replacement(children->context,&source_status,e);
     if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=1,.visible=true,
+        .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
         .source_status_native=source_status},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);

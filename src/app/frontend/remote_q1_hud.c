@@ -4,6 +4,7 @@
 #include "equipment_media.h"
 #include "view_settings.h"
 #include "qa/game_q1_ui.h"
+#include "qa/ui_preferences.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -72,5 +73,21 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
         if (!frontend_q1_team_face_read(row->images,row->materials,viewer_row->colors,viewer_row->frags,
             &out->health_team_face,error)) return false;
     }
+    qa_ui_preferences preferences;
+    if (!qa_ui_preferences_read(qa_application_cvars(row->options.domain.application), frame->seat,
+        &preferences, error)) return false;
+    if (!frame->source_status_native &&
+        !frontend_q1_hud_read(row->materials, data, product, row->options.domain.cvars,
+            qa_q1_is_qw(row->options.domain.protocol), row->view_motion.seconds, face, &out->q1, error)) return false;
+    out->q1.intermission = row->intermission;
+    out->q1.level = row->level_name;
+    out->q1.total_secrets = row->stats[11]; out->q1.total_monsters = row->stats[12];
+    out->q1.found_secrets = row->stats[13]; out->q1.killed_monsters = row->stats[14];
+    out->q1.reduced_flashes = preferences.reduced_flashes;
+    out->crosshair_visible = data->health > 0 && preferences.crosshair;
+    out->crosshair_size = preferences.crosshair_size;
+    out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
+        (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+    if (out->q1.present || frame->source_status_native) { out->vital_count = 0; out->bar_count = 0; }
     return remote_q1_live(row,error);
 }

@@ -27,6 +27,29 @@ typedef struct qa_hud_team_face {
     int32_t score;
     bool alternate_digits;
 } qa_hud_team_face;
+typedef enum qa_hud_q1_variant {
+    QA_HUD_Q1_BASE, QA_HUD_Q1_HIPNOTIC, QA_HUD_Q1_ROGUE
+} qa_hud_q1_variant;
+typedef struct qa_hud_q1_status {
+    void *picture_context;
+    const qa_scene_image *(*picture)(void *, const char *, qa_error *);
+    const qa_scene_image *face;
+    /* Optional 32-entry Source item-acquisition clock array, in original bit order. */
+    const double *item_gettime;
+    double seconds, view_size;
+    uint32_t items, active_weapon, armor, ammo_count, ammunition[4];
+    int32_t health, total_secrets, total_monsters, found_secrets, killed_monsters;
+    const char *level;
+    qa_hud_q1_variant variant;
+    bool present, deathmatch, quakeworld, overlay_status, hud_swap, intermission, reduced_flashes;
+} qa_hud_q1_status;
+typedef struct qa_hud_q1_placement {
+    float x, y, scale;
+    uint32_t lines, reserved;
+} qa_hud_q1_placement;
+/* One source-pixel transform for stock pictures and world-view reservation. */
+qa_hud_q1_placement qa_hud_q1_place(qa_scene_rect, float scale, double view_size,
+    bool overlay_status, bool intermission, bool deathmatch);
 typedef struct qa_hud_frame {
     uint32_t seat;
     qa_actor_id actor;
@@ -57,6 +80,7 @@ typedef struct qa_hud_data {
     size_t score_count;
     const qa_scene_image *crosshair, *health_icon;
     qa_hud_team_face health_team_face;
+    qa_hud_q1_status q1;
     qa_scene_vec4 crosshair_color;
     float crosshair_size; /* Zero retains the source default. */
     bool crosshair_visible, source_vitals;

@@ -255,6 +255,19 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
                 }
             }
         }
+        if (!source.source_hud && !frame->source_status_native) {
+            if (!frontend_equipment_media_q1_hud_read(seat->frontend,provider,&client,legacy.product,
+                legacy.registry,legacy.product->edition==QA_EDITION_QUAKEWORLD,seat->q1_view_motion.seconds,
+                out->health_icon,&out->q1,error)) return false;
+            qa_application_network_q1_world world;
+            if (!qa_application_network_q1_world_read(seat->frontend->application,provider,&world,error)) return false;
+            out->q1.deathmatch=world.deathmatch; out->q1.level=world.level;
+            out->q1.total_secrets=world.total_secrets; out->q1.total_monsters=world.total_monsters;
+            out->q1.found_secrets=world.found_secrets; out->q1.killed_monsters=world.killed_monsters;
+            out->q1.reduced_flashes=preferences.reduced_flashes;
+            out->source_vitals=true; out->vital_count=0; out->bar_count=0;
+            out->crosshair_visible=preferences.crosshair && client.health>0;
+        }
     }
     bool source_slot = false;
     if (!hud_weapon_data(seat,frame,out,source.source_hud,

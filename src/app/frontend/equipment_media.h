@@ -4,6 +4,7 @@
 #include "visual_access.h"
 #include "equipment_held.h"
 #include "qa/application_equipment.h"
+#include "qa/network_q1.h"
 #include "material_movies.h"
 
 typedef struct frontend_equipment_media frontend_equipment_media;
@@ -46,10 +47,15 @@ bool frontend_equipment_media_native_icon_prepare(qa_frontend *,const qa_applica
     const qa_material **,qa_error *);
 bool frontend_equipment_media_native_icon_read(qa_frontend *,const qa_application_equipment_view *,
     const qa_material **,qa_error *);
-bool frontend_q1_faces_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,bool rogue,qa_error *);
+qa_hud_q1_variant frontend_q1_hud_variant(const qa_product *);
+bool frontend_q1_hud_prepare(qa_vfs *,qa_scene_resources *,qa_material_library *,qa_hud_q1_variant,qa_error *);
+bool frontend_q1_hud_read(qa_material_library *,const qa_q1_clientdata *,const qa_product *,
+    const qa_cvars *,bool quakeworld,double seconds,const qa_scene_image *,qa_hud_q1_status *,qa_error *);
 bool frontend_q1_face_read(const qa_material_library *,const char *lump,
     const qa_scene_image **,qa_error *);
-bool frontend_equipment_media_q1_faces_prepare(qa_frontend *,qa_actor_owner,bool rogue,qa_error *);
+bool frontend_equipment_media_q1_hud_prepare(qa_frontend *,qa_actor_owner,qa_hud_q1_variant,qa_error *);
+bool frontend_equipment_media_q1_hud_read(qa_frontend *,qa_actor_owner,const qa_q1_clientdata *,
+    const qa_product *,const qa_cvars *,bool quakeworld,double seconds,const qa_scene_image *,qa_hud_q1_status *,qa_error *);
 bool frontend_equipment_media_q1_face_read(qa_frontend *,qa_actor_owner,const char *lump,
     const qa_scene_image **,qa_error *);
 bool frontend_q1_team_face_read(qa_scene_resources *,const qa_material_library *,uint8_t colors,
