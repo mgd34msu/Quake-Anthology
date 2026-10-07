@@ -892,7 +892,9 @@ bool qa_application_clients_drain(qa_application *application, qa_error *error)
         (application->equipment && !qa_equipment_idle(application->equipment)))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "client drop drain requires returned application callbacks");
-    return application_native_q3_clients_drain(application, error);
+    return application_native_q3_clients_drain(application, error) &&
+        (application->state != QA_APPLICATION_RUNNING ||
+         application_q3_publish_local_snapshots(application, error));
 }
 
 bool application_q1_pause_set(qa_application *application, application_provider *provider,
@@ -961,8 +963,6 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         ok = application_native_q1_wire_observe(application, error);
     if (ok)
         ok = application_native_q3_clients_drain(application, error);
-    if (ok)
-        ok = application_q3_publish_local_snapshots(application, error);
     application->operation = APPLICATION_IDLE;
     qa_error close_error = {0};
     if (!application_drain_provider_closes(application, &close_error)) {

@@ -91,20 +91,59 @@ static bool client_ready(q3g_role *role)
            client->gamestate(client->context) != NULL;
 }
 
-static bool native_local_snapshots(application_provider *provider,
+static bool local_snapshots(application_provider *provider,
     qa_application_network_q3_frame **owned_frame, qa_error *error)
 {
-    uint32_t maximum;
+    qa_application *app = provider->application;
+    bool native = provider->kind == APPLICATION_PROVIDER_Q3;
+    struct application_q3_guest *engine = native ? NULL : q3g_engine(provider);
+    uint32_t maximum = 64;
     int32_t time;
-    if (!qa_q3_source_max_clients(provider->state.q3, &maximum, error) ||
+    if ((native && !qa_q3_source_max_clients(provider->state.q3, &maximum, error)) ||
         !application_q3_wire_time(provider, &time, error)) return false;
+    uint8_t snapshot_bit = 0;
+    bool local[64] = {0};
+    if (!native) {
+        if (!application_q3_guest_snapshot_bit(provider, &snapshot_bit, error)) return false;
+        for (application_provider *receiver = app->live_providers; receiver; receiver = receiver->next_live) {
+            struct application_q3_guest *owner = q3g_engine(receiver);
+            if (!receiver->attached || !receiver->constructed || receiver->close_pending || !owner) continue;
+            for (q3g_role *role = owner->roles; role; role = role->next)
+                if (role->engine == owner && role->kind == QA_QVM_CGAME && role->host && role->ready &&
+                    !role->retired && !role->source_cleared && role->local_client && !role->native_client &&
+                    role->client_engine == engine && role->client_source == provider &&
+                    role->source_owner == provider->owner && role->client < 64 &&
+                    engine->seats[role->client] == role->seat) local[role->client] = true;
+        }
+    }
     for (uint32_t slot = 0; slot < maximum; ++slot) {
-        application_native_q3_wire_publication publication;
-        bool wanted;
-        if (!application_native_q3_wire_local_publication(provider, slot,
-            &publication, &wanted, error)) return false;
-        if (!wanted || (publication.has_snapshot && publication.previous_time == time)) continue;
-        if (publication.gamestate_needed) {
+        application_native_q3_wire_publication publication = {0};
+        q3g_client *client = native ? NULL : &engine->clients[slot];
+        uint32_t parse_cursor = 0;
+        if (native) {
+            bool wanted;
+            if (!application_native_q3_wire_local_publication(provider, slot,
+                &publication, &wanted, error)) return false;
+            if (!wanted) continue;
+        } else {
+            if (!local[slot] || !client->connected || !client->begun || client->pending_retirement) continue;
+            publication = (application_native_q3_wire_publication){
+                .reliable_sequence = client->reliable.sequence,
+                .snapshot_bit = snapshot_bit, .snapshot_needed = true, .has_snapshot = client->has_snapshot};
+            if (client->has_snapshot) {
+                const qa_q3_snapshot *latest = &client->snapshots[
+                    (uint32_t)client->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value;
+                if (!latest->valid || latest->message_number != client->snapshot_sequence)
+                    return application_fail(error, QA_ERROR_FORMAT, "Local Q3 latest snapshot owner is invalid");
+                publication.previous_time = latest->server_time;
+                parse_cursor = (uint32_t)latest->parse_entities_number + (uint32_t)latest->entity_count;
+            }
+        }
+        if (publication.has_snapshot && publication.previous_time == time) continue;
+        if (!native && client->snapshot_sequence == INT32_MAX)
+            return application_fail(error, QA_ERROR_FORMAT, "Local Q3 snapshot message sequence is exhausted");
+        if (!native) publication.next_message = client->snapshot_sequence + 1;
+        if (native && publication.gamestate_needed) {
             qa_q3_gamestate *gamestate = malloc(sizeof(*gamestate));
             if (!gamestate)
                 return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 local gamestate");
@@ -126,15 +165,20 @@ static bool native_local_snapshots(application_provider *provider,
         if (!*owned_frame) {
             *owned_frame = malloc(sizeof(**owned_frame));
             if (!*owned_frame)
-                return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 local snapshot");
+                return application_fail(error, QA_ERROR_MEMORY, "Allocating local Q3 snapshot observation");
         }
-        qa_q3_native_client source;
-        if (!qa_q3_client_slot_read(provider->state.q3, slot, &source, error) ||
+        qa_q3_native_client source = {0};
+        if ((native && !qa_q3_client_slot_read(provider->state.q3, slot, &source, error)) ||
             !application_q3_wire_host_snapshot(provider, slot, publication.next_message,
                 publication.reliable_sequence, publication.snapshot_bit, *owned_frame, error)) return false;
-        (*owned_frame)->snapshot.delta_number = publication.has_snapshot ? publication.next_message - 1 : -1;
-        if (!application_native_q3_wire_snapshot(provider, slot, &(*owned_frame)->snapshot,
-                                                  source.ping, error)) return false;
+        if (native) {
+            (*owned_frame)->snapshot.delta_number = publication.has_snapshot ? publication.next_message - 1 : -1;
+            if (!application_native_q3_wire_snapshot(provider, slot, &(*owned_frame)->snapshot,
+                                                      source.ping, error)) return false;
+        } else {
+            (*owned_frame)->snapshot.parse_entities_number = parse_cursor;
+            if (!application_q3_guest_publish_snapshot(provider, slot, &(*owned_frame)->snapshot, 0, error)) return false;
+        }
     }
     return true;
 }
@@ -154,66 +198,13 @@ bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error
          provider && ok; provider = provider->next_live) {
         if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3 &&
             provider->attached && provider->constructed && !provider->close_pending) {
-            ok = native_local_snapshots(provider, &frame, error);
+            ok = local_snapshots(provider, &frame, error);
             continue;
         }
         struct application_q3_guest *engine = q3g_engine(provider);
         if (!provider->attached || !provider->constructed || !engine ||
             !engine->map_ready || !engine->game || !engine->game->initialized) continue;
-        uint8_t snapshot_bit;
-        if (!application_q3_guest_snapshot_bit(provider, &snapshot_bit, error)) {
-            ok = false;
-            break;
-        }
-        bool local[64] = {0};
-        for (application_provider *receiver = app->live_providers; receiver; receiver = receiver->next_live) {
-            struct application_q3_guest *owner = q3g_engine(receiver);
-            if (!receiver->attached || !receiver->constructed || receiver->close_pending || !owner) continue;
-            for (q3g_role *role = owner->roles; role; role = role->next)
-                if (role->engine == owner && role->kind == QA_QVM_CGAME && role->host && role->ready &&
-                    !role->retired && !role->source_cleared && role->local_client && !role->native_client &&
-                    role->client_engine == engine && role->client_source == provider &&
-                    role->source_owner == provider->owner && role->client < 64 &&
-                    engine->seats[role->client] == role->seat) local[role->client] = true;
-        }
-        for (uint32_t slot = 0; ok && slot < 64; ++slot) {
-            q3g_client *client = &engine->clients[slot];
-            if (!local[slot] || !client->connected || !client->begun ||
-                client->pending_retirement) continue;
-            if (client->snapshot_sequence == INT32_MAX) {
-                ok = application_fail(error, QA_ERROR_FORMAT,
-                                      "Local Q3 snapshot message sequence is exhausted");
-                break;
-            }
-            uint32_t parse_cursor = 0;
-            if (client->has_snapshot) {
-                const qa_q3_snapshot *latest = &client->snapshots[
-                    (uint32_t)client->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value;
-                if (!latest->valid || latest->message_number != client->snapshot_sequence) {
-                    ok = application_fail(error, QA_ERROR_FORMAT,
-                                          "Local Q3 latest snapshot owner is invalid");
-                    break;
-                }
-                parse_cursor = (uint32_t)latest->parse_entities_number +
-                               (uint32_t)latest->entity_count;
-            }
-            if (!frame) {
-                frame = malloc(sizeof(*frame));
-                if (!frame) {
-                    ok = application_fail(error, QA_ERROR_MEMORY,
-                                          "Allocating local Q3 snapshot observation");
-                    break;
-                }
-            }
-            ok = application_q3_wire_host_snapshot(provider, slot,
-                client->snapshot_sequence + 1, client->reliable.sequence,
-                snapshot_bit, frame, error);
-            if (ok) {
-                frame->snapshot.parse_entities_number = parse_cursor;
-                ok = application_q3_guest_publish_snapshot(provider, slot,
-                    &frame->snapshot, 0, error);
-            }
-        }
+        ok = local_snapshots(provider, &frame, error);
     }
     free(frame);
     return ok;
