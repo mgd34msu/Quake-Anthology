@@ -1,5 +1,49 @@
 # CPU fog spans and remaining Q2 rerelease frame cost
 
+## Rejected sampler register-return change
+
+A candidate kept SSE2 sampled colors in registers through mip blending and
+packing, removing temporary color stores and reloads. The existing actual
+production-kernel comparison passed 13,800 cases on both SSE2 and the
+forced portable branch with exact old/new RGBA, depth and fog recurrence.
+That numerical result did not translate into a reliable retail speedup.
+The candidate was removed; the installed `41861a12` is unchanged.
+
+Four sequential native Q2 rerelease `base1` CPU cases used fresh copies of
+the same 34 owner settings, affinity `0-7,12-19`, exact drawables, caps,
+swap interval and timedemo zero, FOV 120, `r_smp` zero and `sv_fps` 40.
+No Source clock setting was written. Each case measured 600 actual present
+intervals after at least 832 warm presents, without a debugger, profiler,
+compiler or another game in the runtime lane.
+
+| Resolution | Median ms, installed → candidate | p99 ms, installed → candidate | Warm presents |
+|---|---:|---:|---:|
+| 640×400 | 6.993359 → 7.668928 | 60.214933 → 64.916463 | 840 / 840 |
+| 320×200 | 5.008772 → 4.869014 | 9.619575 → 9.533473 | 841 / 832 |
+
+Separate warmed timer intervals put mean CPU rendering at
+6.097882 → 6.378267 ms for 640×400 and 4.094585 → 4.019728 ms for 320×200.
+Scene build was 0.826511 → 1.022493 ms and 0.753104 → 0.719667 ms.
+Span counts match exactly within each pair; live triangle/skin work varies,
+and 320×200 worker posts/joins vary too. Private presentation, observer and
+timer overhead are included. The smaller 320×200 median does not offset
+the slower 640×400 result or establish a reliable gain.
+
+All cases quit normally with code 0. All 36 recorded owned process tokens
+were independently absent afterward. Artifact packages, helper pins and
+the original profile stayed unchanged during measurement. Before timing,
+the exact candidate also reached Original Q3 gameplay and quit normally
+with a private copy of the owner's profile. Its known THE-585 save/recovery
+text was outside that qualification.
+
+After rejecting the change, rebuilding the restored SDK source produced
+an executable byte for byte equal to the installed `41861a12`. The rejected
+source and numeric evidence remain privately reproducible. Receipts:
+`qa-the196-vector-return-plan-1twtnq1y/paired-result.json`,
+`pair-comparison.json`, `the196-result.md`, and the four referenced raw
+case receipts. The candidate qualification is `qa-private-av-uprnf4k1`.
+THE-196 and both CPU targets remain open.
+
 ## Zero-density fog follow-up, THE-566
 
 Classic Q1's zero-density fog still selected fog fitting and generic fragment
