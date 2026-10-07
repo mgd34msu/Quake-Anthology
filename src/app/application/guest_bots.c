@@ -1,4 +1,5 @@
 #include "guest_projection_private.h"
+#include "bots_private.h"
 
 bool application_guest_bot_allocate(application_provider *provider, int32_t *out,
                                      qa_error *error)
@@ -65,6 +66,7 @@ static bool bots_admit(application_provider *provider, qa_error *error)
         }
         if (client->pending_retirement ||
             !qa_actors_get(qa_session_actors(provider->application->session), actor)) continue;
+        if (!application_bots_guest_admit(provider->application, actor, error)) return false;
         client->pending_bot = false;
     }
     return true;
