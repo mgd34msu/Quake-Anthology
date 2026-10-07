@@ -94,7 +94,10 @@ static bool print(void *context,qa_script_severity severity,const char *text,qa_
 {
     (void)severity;application_bots *bots=context;
     if(!bots || !text) return application_fail(error,QA_ERROR_ARGUMENT,"Bot log diagnostic has no actual application owner");
-    application_console_print(bots->application,NULL,text);return true;
+    size_t length=strlen(text);
+    application_console_print(bots->application,NULL,text);
+    if(length && text[length-1]!='\n') application_console_print(bots->application,NULL,"\n");
+    return true;
 }
 
 qa_bot_log_services application_bots_log_services(application_bots *bots)
