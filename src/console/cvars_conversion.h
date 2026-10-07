@@ -10,6 +10,7 @@ typedef struct qac_cvar_conversion_input {
     const char *value, *current, *detail;
     void *user;
     const char *(*operand)(void *, uint16_t row);
+    bool (*video)(void *, const qa_cvar_video_query *, qa_cvar_video_mode *, qa_error *);
 } qac_cvar_conversion_input;
 typedef struct qac_cvar_change {
     uint16_t row;

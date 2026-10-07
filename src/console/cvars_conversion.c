@@ -91,6 +91,119 @@ static bool composite_write(const qac_cvar_conversion_input *in,
     return true;
 }
 
+static uint16_t video_row(const char *name)
+{
+    for (size_t i=0;i<qa_cvar_catalog_row_count;++i)
+        if (qac_equal(qa_cvar_catalog_string(qa_cvar_catalog_rows[i].name),name)) return (uint16_t)i;
+    return QA_CVAR_CATALOG_NO_ROW;
+}
+static const char *video_operand(const qac_cvar_conversion_input *in,const char *name)
+{
+    uint16_t row=video_row(name);
+    return row!=QA_CVAR_CATALOG_NO_ROW && in->operand?in->operand(in->user,row):"";
+}
+static bool video_change(qac_cvar_conversion_output *out,const char *name,
+    double value,qa_error *error)
+{
+    uint16_t row=video_row(name);
+    if (row==QA_CVAR_CATALOG_NO_ROW)
+        return qac_fail(error,QA_ERROR_FORMAT,"video conversion lost its canonical catalog operand");
+    return change(out,row,value,error);
+}
+static bool video_integer(double value,int32_t *out,qa_error *error)
+{
+    if (!isfinite(value) || value<INT32_MIN || value>INT32_MAX || trunc(value)!=value)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"video mode requires a representable integer index");
+    *out=(int32_t)value;
+    return true;
+}
+static bool video_dimensions(const qac_cvar_conversion_input *in,
+    qa_cvar_video_query *query,qa_error *error)
+{
+    double width=number(in,video_operand(in,"r_customwidth"));
+    double height=number(in,video_operand(in,"r_customheight"));
+    if (!isfinite(width) || !isfinite(height) || width<0 || height<0 ||
+        width>UINT32_MAX || height>UINT32_MAX || trunc(width)!=width || trunc(height)!=height)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"custom video dimensions require nonnegative integer pixels");
+    query->width=(uint32_t)width; query->height=(uint32_t)height;
+    return true;
+}
+static qa_cvar_video_query video_query(const qac_cvar_conversion_input *in,bool canonical)
+{
+    const qa_cvar_options *options=in->options;
+    return (qa_cvar_video_query){.member=canonical?"r_mode":qa_cvar_catalog_string(in->binding->name),
+        .dialect=canonical?QA_CONSOLE_Q3:options->dialect,.side=options->side,
+        .role=options->role,.seat=options->seat,.modelist=video_operand(in,"vid_modelist")};
+}
+static bool video_lookup(const qac_cvar_conversion_input *in,
+    const qa_cvar_video_query *query,qa_cvar_video_mode *mode,qa_error *error)
+{
+    *mode=(qa_cvar_video_mode){0};
+    if (!in->video)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar conversion requires its Source-owned video policy");
+    return in->video(in->user,query,mode,error);
+}
+static bool video_canonical_read(const qac_cvar_conversion_input *in,const char *text,
+    qa_cvar_video_mode *mode,qa_error *error)
+{
+    qa_cvar_video_query query=video_query(in,true);
+    if (!video_integer(number(in,text),&query.index,error)) return false;
+    if (query.index==-1 && !video_dimensions(in,&query,error)) return false;
+    return video_lookup(in,&query,mode,error);
+}
+static bool video_canonical_write(const qac_cvar_conversion_input *in,
+    const qa_cvar_video_mode *source,qac_cvar_conversion_output *out,
+    bool fullscreen,qa_error *error)
+{
+    qa_cvar_video_query query=video_query(in,true);
+    query.dimensions_to_index=true; query.width=source->width; query.height=source->height;
+    qa_cvar_video_mode mode;
+    if (!video_lookup(in,&query,&mode,error)) return false;
+    if (mode.index<-1 || mode.desktop)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"video resolver returned an unsupported canonical mode");
+    if (mode.index==-1 &&
+        (!video_change(out,"r_customwidth",source->width,error) ||
+         !video_change(out,"r_customheight",source->height,error))) return false;
+    return fullscreen?video_change(out,"r_mode",mode.index,error):result_number(out,mode.index,error);
+}
+static bool video_read(const qac_cvar_conversion_input *in,
+    qac_cvar_conversion_output *out,bool fullscreen,qa_error *error)
+{
+    if (fullscreen && number(in,in->value)==0) return result_number(out,0,error);
+    qa_cvar_video_query query=video_query(in,false);
+    qa_cvar_video_mode retained;
+    bool detail=fullscreen && in->detail;
+    if (detail) {
+        if (!video_integer(number(in,in->detail),&query.index,error) ||
+            !video_lookup(in,&query,&retained,error)) return false;
+        if (retained.desktop) return result_number(out,query.index,error);
+    }
+    qa_cvar_video_mode canonical;
+    if (!video_canonical_read(in,fullscreen?video_operand(in,"r_mode"):in->value,&canonical,error)) return false;
+    if (detail && retained.width==canonical.width && retained.height==canonical.height)
+        return result_number(out,query.index,error);
+    query.dimensions_to_index=true; query.width=canonical.width; query.height=canonical.height;
+    qa_cvar_video_mode source;
+    if (!video_lookup(in,&query,&source,error)) return false;
+    return result_number(out,source.index,error);
+}
+static bool video_write(const qac_cvar_conversion_input *in,
+    qac_cvar_conversion_output *out,bool fullscreen,qa_error *error)
+{
+    qa_cvar_video_query query=video_query(in,false);
+    if (!video_integer(number(in,in->value),&query.index,error)) return false;
+    if (fullscreen && query.index==0) return result_number(out,0,error);
+    if (fullscreen && query.index<0)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"fullscreen requires zero or a positive Source mode index");
+    qa_cvar_video_mode source;
+    if (!video_lookup(in,&query,&source,error)) return false;
+    if (!source.desktop && !video_canonical_write(in,&source,out,fullscreen,error)) return false;
+    if (!fullscreen && source.desktop)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Source desktop mode has no canonical fixed-mode index");
+    if (fullscreen) { out->detail=true; return result_number(out,1,error); }
+    return true;
+}
+
 bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
     qac_cvar_conversion_output *out, qa_error *error)
 {
@@ -168,9 +281,8 @@ bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
         else return qac_fail(error, QA_ERROR_ARGUMENT, "cvar conversion requires its Source-owned policy");
         break;
     case QA_CATALOG_OP_CLEAR_COLOR: return true;
-    case QA_CATALOG_OP_FULLSCREEN:
-    case QA_CATALOG_OP_VIDEO_MODE:
-        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar conversion requires its Source-owned video policy");
+    case QA_CATALOG_OP_FULLSCREEN: return video_read(in,out,true,error);
+    case QA_CATALOG_OP_VIDEO_MODE: return video_read(in,out,false,error);
     default:
         if (c->kind == QA_CATALOG_BOOL_INVERT) value = value == 0;
         else if (c->kind == QA_CATALOG_LINEAR) value = value * c->scale + c->offset;
@@ -274,9 +386,8 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
 #endif
         break;
     case QA_CATALOG_OP_CLEAR_COLOR: return true;
-    case QA_CATALOG_OP_FULLSCREEN:
-    case QA_CATALOG_OP_VIDEO_MODE:
-        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar conversion requires its Source-owned video policy");
+    case QA_CATALOG_OP_FULLSCREEN: return video_write(in,out,true,error);
+    case QA_CATALOG_OP_VIDEO_MODE: return video_write(in,out,false,error);
     default:
         if (c->operand_count && c->kind == QA_CATALOG_COMPOSITE) return composite_write(in, out, error);
         if (c->kind == QA_CATALOG_IDENTITY || c->kind == QA_CATALOG_SIDE_SCOPE || c->kind == QA_CATALOG_ENUM_DETAIL || c->kind == QA_CATALOG_BIT_VIEW)

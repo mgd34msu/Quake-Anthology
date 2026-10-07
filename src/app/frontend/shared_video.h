@@ -4,6 +4,9 @@
 #include "qa/console_cvars_prepare.h"
 
 typedef struct frontend_shared_video frontend_shared_video;
+bool frontend_shared_video_resolve(void *,const qa_cvar_video_query *,qa_cvar_video_mode *,qa_error *);
+bool frontend_shared_video_dimensions(const qa_cvars_edit *,uint32_t fallback_width,
+    uint32_t fallback_height,uint32_t *width,uint32_t *height,qa_error *);
 /* Project the actual canonical display rows against the returned native
  * window before any resource preparation. This checked read may query SDL. */
 bool frontend_shared_video_settings(qa_frontend *,const qa_cvars_edit *,

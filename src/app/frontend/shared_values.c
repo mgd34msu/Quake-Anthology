@@ -339,6 +339,7 @@ bool frontend_shared_values_native_initialize(frontend_shared_values *owner,qa_e
         return fail(error,"Native initialization requires its actual ENGINE bootstrap context");
     const qa_frontend_options *options=&owner->frontend->options;
     const struct { const char *name; double value; bool specified; } settings[]={
+        {"r_mode",-1,options->width_specified || options->height_specified},
         {"r_customwidth",options->display.width,options->width_specified},
         {"r_customheight",options->display.height,options->height_specified},
         {"r_gamma",options->gamma,options->gamma_specified}};

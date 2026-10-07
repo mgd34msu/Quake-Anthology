@@ -79,7 +79,34 @@ const char *qac_cvars_operand(void *user, uint16_t row)
     const char *name = qa_cvar_catalog_string(qa_cvar_catalog_rows[row].name);
     cvar *entry = qac_cvars_find_values(registry, context->values, name);
     cvar *canonical = qac_cvars_canonical(entry);
-    return canonical ? (context->reset?canonical->view.reset_value:canonical->view.value) : "";
+    return canonical ? (context->reset?canonical->view.reset_value:
+        context->latched && canonical->view.latched_value?canonical->view.latched_value:canonical->view.value) : "";
+}
+
+bool qac_cvars_video(void *user, const qa_cvar_video_query *query,
+    qa_cvar_video_mode *mode, qa_error *error)
+{
+    const cvar_projection_context *context=user;
+    cvar_store *store=context->registry->store;
+    if (!store->video_resolver)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar conversion requires its Source-owned video policy");
+    qa_cvars *owner=store->video_owner;
+    ++owner->notifying;
+    bool okay=store->video_resolver(store->video_user,query,mode,error);
+    --owner->notifying;
+    return okay;
+}
+
+bool qa_cvars_set_video_resolver(qa_cvars *registry, qa_cvar_video_resolver resolver,
+    void *user, qa_error *error)
+{
+    if (!registry || registry->options.role!=QA_CVAR_ROLE_ENGINE)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"video mode policy requires its ENGINE view");
+    if (!qac_cvars_touch(registry,error)) return false;
+    registry->store->video_owner=resolver?registry:NULL;
+    registry->store->video_resolver=resolver;
+    registry->store->video_user=resolver?user:NULL;
+    return true;
 }
 
 qa_cvar_options qac_cvars_view_options(const qa_cvars *registry,const cvar_values *values)
@@ -120,15 +147,15 @@ void qac_cvars_refresh(qa_cvars *registry, cvar *entry)
 }
 
 static const char *project_text(const qa_cvars *registry, cvar *entry,
-    cvar_values *values, const char *value, const char *detail, char buffer[64],bool reset)
+    cvar_values *values, const char *value, const char *detail, char buffer[64],bool reset,bool latched)
 {
     if (!value) return NULL;
-    cvar_projection_context context = {.registry=registry,.values=values,.reset=reset};
+    cvar_projection_context context = {.registry=registry,.values=values,.reset=reset,.latched=latched};
     qa_cvar_options options=qac_cvars_view_options(registry,values);
     qac_cvar_conversion_input input = {.options = &options,
         .conversion = qac_cvars_conversion(registry, values, entry->catalog_binding), .binding=entry->catalog_binding,
         .value = value, .current = value, .detail = detail,
-        .user = &context, .operand = qac_cvars_operand};
+        .user = &context, .operand = qac_cvars_operand, .video=qac_cvars_video};
     qac_cvar_conversion_output output;
     if (!qac_cvar_read_conversion(&input, &output, NULL)) return NULL;
     if (output.value != output.text) return output.value;
@@ -149,11 +176,11 @@ const qa_cvar_view *qac_cvars_project(const qa_cvars *registry, cvar_values *val
     const cvar_detail *detail=canonical->details;
     while (detail && (detail->binding!=entry->catalog_binding || detail->dialect!=qac_cvars_view_options(registry,values).dialect)) detail=detail->next;
     entry->projection.value = project_text(registry, entry, values, entry->view.value,
-        detail?detail->value:NULL, entry->projected_value,false);
+        detail?detail->value:NULL, entry->projected_value,false,false);
     entry->projection.reset_value = project_text(registry, entry, values,
-        entry->view.reset_value, NULL, entry->projected_reset,true);
+        entry->view.reset_value, NULL, entry->projected_reset,true,false);
     entry->projection.latched_value = project_text(registry, entry, values,
-        entry->view.latched_value, detail?detail->latched_value:NULL, entry->projected_latch,false);
+        entry->view.latched_value, detail?detail->latched_value:NULL, entry->projected_latch,false,true);
     if (entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW && qa_cvar_catalog_rows[entry->catalog_row].not_stored) {
         const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,entry->catalog_binding);
         for (size_t i=0;conversion && i<conversion->operand_count;++i) {
@@ -294,7 +321,7 @@ static char *catalog_default(const qa_cvars *registry,const cvar *canonical,
         bool joined_default=conversion && (conversion->operation==QA_CATALOG_OP_DEATHMATCH ||
             conversion->operation==QA_CATALOG_OP_COOP || conversion->operation==QA_CATALOG_OP_TEAMPLAY);
         qac_cvar_conversion_input input={.options=&options,.conversion=conversion,.binding=binding,
-            .value=value,.current=joined_default && selected?selected:value,.user=&context,.operand=qac_cvars_operand};
+            .value=value,.current=joined_default && selected?selected:value,.user=&context,.operand=qac_cvars_operand,.video=qac_cvars_video};
         qac_cvar_conversion_output output; qa_error reason={0};
         if (!qac_cvar_write_conversion(&input,&output,&reason)) continue;
         if (selected && strcmp(selected,output.value)) {
@@ -648,7 +675,7 @@ static bool catalog_composite_defaults(qa_cvars *registry,qa_error *error)
                 cvar_projection_context context={.registry=registry,.values=values};
                 const char *value=qa_cvar_catalog_string(clause->value);
                 qac_cvar_conversion_input input={.options=&options,.conversion=conversion,.binding=binding,
-                    .value=value,.current=value,.user=&context,.operand=qac_cvars_operand};
+                    .value=value,.current=value,.user=&context,.operand=qac_cvars_operand,.video=qac_cvars_video};
                 qac_cvar_conversion_output output;
                 if (!qac_cvar_write_conversion(&input,&output,error)) return false;
                 for (size_t change=0;change<output.change_count;++change) {

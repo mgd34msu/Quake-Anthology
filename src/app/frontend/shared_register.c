@@ -1,6 +1,7 @@
 #include "shared_register.h"
 #include "legacy_render_policy.h"
 #include "shared_settings.h"
+#include "shared_video.h"
 #include "view_settings.h"
 #include "qa/cvars_alias.h"
 #include "qa/console_cvar_observer.h"
@@ -404,6 +405,7 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
         output.sample_rate<8000 || output.sample_rate>192000 ||
         (output.channels!=1 && output.channels!=2) || (output.sample_bits!=8 && output.sample_bits!=16))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Shared settings require actual factory defaults");
+    if (!qa_cvars_set_video_resolver(cvars,frontend_shared_video_resolve,NULL,error)) return false;
     for (size_t i=0;i<sizeof(declarations)/sizeof(*declarations);++i) {
         const shared_declaration *row=declarations+i; const char *initial=row->initial; char text[32];
         if (!strcmp(row->name,"r_gamma")) { if (!qa_format_number(gamma,text,error)) return false; initial=text; }

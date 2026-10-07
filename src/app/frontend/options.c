@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "install_locations.h"
+#include "qa/text.h"
 #include <errno.h>
 #include <stdio.h>
 
@@ -86,6 +87,31 @@ static bool startup(int argc, char *const argv[], int *index, qa_frontend_option
     command[at] = 0;
     if (!push(&options->startup, &options->startup_count, command, error)) { free(command); return false; }
     *index = end - 1;
+    return true;
+}
+static bool native_startup(qa_frontend_options *options,qa_error *error)
+{
+    const struct { const char *name; double value; bool specified; } settings[]={
+        {"r_mode",-1,options->width_specified || options->height_specified},
+        {"r_customwidth",options->display.width,options->width_specified},
+        {"r_customheight",options->display.height,options->height_specified},
+        {"r_gamma",options->gamma,options->gamma_specified}};
+    size_t original=options->startup_count;
+    for (size_t i=0;i<sizeof(settings)/sizeof(*settings);++i) {
+        if (!settings[i].specified) continue;
+        char value[64];
+        if (!qa_format_number(settings[i].value,value,error)) return false;
+        char *arguments[]={"quake-anthology","+set",(char *)settings[i].name,value};
+        int at=1;
+        if (!startup(4,arguments,&at,options,error)) return false;
+    }
+    size_t added=options->startup_count-original;
+    if (added) {
+        const char *first[4];
+        memcpy(first,options->startup+original,added*sizeof(*first));
+        memmove(options->startup+added,options->startup,original*sizeof(*first));
+        memcpy(options->startup,first,added*sizeof(*first));
+    }
     return true;
 }
 bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options *options, qa_error *error)
@@ -207,6 +233,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         (policy->backend == QA_NATIVE_GUEST_EMULATED ? !policy->instruction_budget : policy->instruction_budget != 0)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "native stack/trap extents require page multiples and execution requires its matching budget"); goto fail;
     }
+    if (!native_startup(options,error)) goto fail;
     options->menu |= !options->game;
     return true;
 fail:

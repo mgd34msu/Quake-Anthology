@@ -203,7 +203,7 @@ static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values
             .current=target->view.value,.value=target->view.value,.detail=detail?detail->value:NULL};
         qac_cvar_conversion_output output;
         cvar_projection_context context={.registry=registry,.values=values};
-        input.user=&context; input.operand=qac_cvars_operand;
+        input.user=&context; input.operand=qac_cvars_operand; input.video=qac_cvars_video;
         if (!qac_cvar_read_conversion(&input,&output,NULL)) return NULL;
         if (output.value==output.text) { memcpy(alias->value,output.text,strlen(output.text)+1); alias->projection.value=alias->value; }
         else alias->projection.value=output.value;
@@ -213,6 +213,7 @@ static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values
         else alias->projection.reset_value=output.value;
         context.reset=false;
         if (target->view.latched_value) {
+            context.latched=true;
             input.value=target->view.latched_value; input.detail=detail?detail->latched_value:NULL;
             if (!qac_cvar_read_conversion(&input,&output,NULL)) return NULL;
             if (output.value==output.text) { memcpy(alias->latched,output.text,strlen(output.text)+1); alias->projection.latched_value=alias->latched; }
@@ -659,6 +660,13 @@ static bool alias_affected(const qa_cvars *registry,const cvar_values *values,co
     if (canonical->view.player_scoped && canonical->player != registry->options.seat) return false;
     if (qac_cvars_name_equal(registry,alias->target,canonical->view.name)) return true;
     const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,alias->catalog_binding);
+    if (conversion && (conversion->operation==QA_CATALOG_OP_VIDEO_MODE ||
+        conversion->operation==QA_CATALOG_OP_FULLSCREEN)) {
+        if (qac_equal(canonical->view.name,"r_customwidth") ||
+            qac_equal(canonical->view.name,"r_customheight")) return true;
+        if (conversion->operation==QA_CATALOG_OP_FULLSCREEN &&
+            (qac_equal(canonical->view.name,"r_mode") || qac_equal(canonical->view.name,"vid_modelist"))) return true;
+    }
     for (size_t i=0;conversion && i<conversion->operand_count;++i)
         if (qa_cvar_catalog_operands[conversion->operand_first+i].row_index==canonical->catalog_row) return true;
     return false;
@@ -956,6 +964,11 @@ static void retire_player_defaults(qa_cvars *registry)
 void qa_cvars_detach_callbacks(qa_cvars *registry)
 {
     if (!registry || registry->notifying) return;
+    if (registry->store->video_owner==registry) {
+        registry->store->video_owner=NULL;
+        registry->store->video_resolver=NULL;
+        registry->store->video_user=NULL;
+    }
     registry->options.user=NULL; registry->options.print=NULL;
     registry->options.command_exists=NULL; registry->options.cheats_allowed=NULL;
     registry->options.effect=NULL; registry->options.declaration_save_policy=NULL;
@@ -987,6 +1000,9 @@ void qa_cvars_destroy(qa_cvars *registry)
     cvar_store *store=registry->store;
     qa_cvars_edit *edit=store->edit;
     if (edit && edit->registry==registry) return;
+    if (store->video_owner==registry) {
+        store->video_owner=NULL; store->video_resolver=NULL; store->video_user=NULL;
+    }
     retire_view_events(registry);
     retire_player_defaults(registry);
     if (store->active_default_source==registry) store->active_default_source=NULL;
@@ -1032,52 +1048,54 @@ qa_console_dialect qa_cvars_dialect(const qa_cvars *registry)
     return edit?edit->active_dialect:registry->store->active_dialect;
 }
 
-const qa_cvar_view *qa_cvars_find(const qa_cvars *registry,const char *name)
+const qa_cvar_view *qac_cvars_values_find(const qa_cvars *registry,cvar_values *values,const char *name)
 {
-    cvar_values *values=qac_cvars_current_values(registry);
     const cvar_name_node *node=find_name(registry,values,name);
     if (!node) return NULL;
     return node->alias?alias_view(registry,values,node->owner.alias):qac_cvars_project(registry,values,node->owner.entry);
 }
-static bool source_visible(const qa_cvars *registry,const cvar *entry)
+const qa_cvar_view *qa_cvars_find(const qa_cvars *registry,const char *name)
+{ return qac_cvars_values_find(registry,qac_cvars_current_values(registry),name); }
+static bool source_visible(const qa_cvars *registry,const cvar *entry,bool whole_store)
 {
     const cvar *canonical=qac_cvars_canonical((cvar *)entry);
     if (canonical->view.player_scoped && canonical->player != registry->options.seat) return false;
-    return registry->options.role==QA_CVAR_ROLE_ENGINE || entry->view.declared || entry->view.console_created;
+    return whole_store || registry->options.role==QA_CVAR_ROLE_ENGINE || entry->view.declared || entry->view.console_created;
 }
-static const qa_cvar_view *values_at(const qa_cvars *registry,cvar_values *values,size_t ordinal,bool aliases)
+const qa_cvar_view *qac_cvars_values_at(const qa_cvars *registry,cvar_values *values,size_t ordinal,bool aliases,bool whole_store)
 {
     if (!registry || !values) return NULL;
     bool engine=registry->options.role==QA_CVAR_ROLE_ENGINE;
-    const cvar_values *entries=engine?values->canonical_values:values;
+    bool common=engine || whole_store;
+    const cvar_values *entries=common && values->canonical_values?values->canonical_values:values;
     for (cvar *entry=entries?entries->first:NULL;entry;entry=entry->next) {
-        if (!source_visible(registry,entry) || ordinal--) continue;
-        cvar *projection=engine?qac_cvars_source_row((qa_cvars *)registry,values,entry,NULL):entry;
+        if (!source_visible(registry,entry,whole_store) || ordinal--) continue;
+        cvar *projection=common?qac_cvars_source_row((qa_cvars *)registry,values,entry,NULL):entry;
         return projection?qac_cvars_project(registry,values,projection):NULL;
     }
     for (cvar_alias *alias=entries?entries->aliases:NULL;alias;alias=alias->next) {
-        if (!(aliases || (!engine && (alias->declared || alias->console_created))) || ordinal--) continue;
-        cvar_alias *projection=engine?qac_cvars_source_alias((qa_cvars *)registry,values,alias,NULL):alias;
+        if (!(aliases || (!common && (alias->declared || alias->console_created))) || ordinal--) continue;
+        cvar_alias *projection=common?qac_cvars_source_alias((qa_cvars *)registry,values,alias,NULL):alias;
         return projection?alias_view(registry,values,projection):NULL;
     }
     return NULL;
 }
-static size_t values_count(const qa_cvars *registry,const cvar_values *values,bool aliases)
+size_t qac_cvars_values_count(const qa_cvars *registry,const cvar_values *values,bool aliases,bool whole_store)
 {
     if (!registry || !values) return 0;
-    if (registry->options.role==QA_CVAR_ROLE_ENGINE) {
+    if (registry->options.role==QA_CVAR_ROLE_ENGINE || whole_store) {
         const cvar_values *canonical=values->canonical_values?values->canonical_values:values;
         size_t count=aliases?canonical->alias_count:0;
-        for (const cvar *entry=canonical->first;entry;entry=entry->next) count+=source_visible(registry,entry);
+        for (const cvar *entry=canonical->first;entry;entry=entry->next) count+=source_visible(registry,entry,whole_store);
         return count;
     }
     size_t count=0;
-    for (cvar *entry=values->first;entry;entry=entry->next) count+=source_visible(registry,entry);
+    for (cvar *entry=values->first;entry;entry=entry->next) count+=source_visible(registry,entry,false);
     for (cvar_alias *alias=values->aliases;alias;alias=alias->next) count+=alias->declared || alias->console_created;
     return count;
 }
 const qa_cvar_view *qa_cvars_at(const qa_cvars *registry,size_t ordinal)
-{ return values_at(registry,qac_cvars_current_values(registry),ordinal,false); }
+{ return qac_cvars_values_at(registry,qac_cvars_current_values(registry),ordinal,false,false); }
 const qa_cvar_view *qa_cvars_next(const qa_cvars *registry,const qa_cvar_view *previous)
 {
     if (!registry) return NULL;
@@ -1099,7 +1117,7 @@ const qa_cvar_view *qa_cvars_next(const qa_cvars *registry,const qa_cvar_view *p
         }
     }
     for (;entry;entry=entry->next) {
-        if (!source_visible(registry,entry)) continue;
+        if (!source_visible(registry,entry,false)) continue;
         cvar *projection=engine?qac_cvars_source_row((qa_cvars *)registry,values,entry,NULL):entry;
         return projection?qac_cvars_project(registry,values,projection):NULL;
     }
@@ -1107,22 +1125,22 @@ const qa_cvar_view *qa_cvars_next(const qa_cvars *registry,const qa_cvar_view *p
         if (!engine && (alias->declared || alias->console_created)) return alias_view(registry,values,alias);
     return NULL;
 }
-static const qa_cvar_view *values_handle(const qa_cvars *registry,cvar_values *values,size_t handle)
+const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *registry,cvar_values *values,size_t handle)
 {
     const cvar_name_node *node=values && handle<values->next_handle?values->handles[handle]:NULL;
     return !node?NULL:node->alias?alias_view(registry,values,node->owner.alias):qac_cvars_project(registry,values,node->owner.entry);
 }
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry,size_t handle)
-{ return values_handle(registry,qac_cvars_current_values(registry),handle); }
+{ return qac_cvars_values_handle(registry,qac_cvars_current_values(registry),handle); }
 
 size_t qa_cvars_count(const qa_cvars *registry)
-{ return values_count(registry,qac_cvars_current_values(registry),false); }
+{ return qac_cvars_values_count(registry,qac_cvars_current_values(registry),false,false); }
 size_t qa_cvars_handle_count(const qa_cvars *registry)
 { cvar_values *values=qac_cvars_current_values(registry); return values?values->next_handle:0; }
 size_t qa_cvars_visible_count(const qa_cvars *registry)
-{ return values_count(registry,qac_cvars_current_values(registry),registry && registry->options.role==QA_CVAR_ROLE_ENGINE); }
+{ return qac_cvars_values_count(registry,qac_cvars_current_values(registry),registry && registry->options.role==QA_CVAR_ROLE_ENGINE,false); }
 const qa_cvar_view *qa_cvars_visible_at(const qa_cvars *registry,size_t ordinal)
-{ return values_at(registry,qac_cvars_current_values(registry),ordinal,registry && registry->options.role==QA_CVAR_ROLE_ENGINE); }
+{ return qac_cvars_values_at(registry,qac_cvars_current_values(registry),ordinal,registry && registry->options.role==QA_CVAR_ROLE_ENGINE,false); }
 
 bool qa_cvars_bind(qa_cvars *registry,const char *name,const qa_cvar_binding *binding,qa_error *error)
 {
@@ -1169,7 +1187,7 @@ static bool convert_input_as(cvar_target target,const qa_cvar_catalog_binding *b
         : qac_cvars_conversion(target.registry,target.values,binding);
     qac_cvar_conversion_input input={.options=&options,
         .conversion=conversion,.binding=binding,.value=value,.current=current,
-        .operand=qac_cvars_operand,.user=&context};
+        .operand=qac_cvars_operand,.video=qac_cvars_video,.user=&context};
     if (binding) {
         cvar *entry=qac_cvars_find_values(target.registry,target.values,
             qa_cvar_catalog_string(qa_cvar_catalog_rows[binding->row_index].name));
@@ -1603,7 +1621,7 @@ static bool restart_variables(cvar_target target,qa_error *error)
     if (!target_touch(target,error)) return false;
     for (cvar *entry=target.values->first;entry;entry=entry->next) {
         const qa_cvar_view *projection=qac_cvars_project(target.registry,target.values,entry);
-        if (!source_visible(target.registry,entry) || !projection ||
+        if (!source_visible(target.registry,entry,false) || !projection ||
             (qac_cvars_flags(projection->flags,qac_cvars_view_options(target.registry,target.values).dialect,QA_CONSOLE_Q3)&
              (QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART))) continue;
         if (!reset_variable(target,entry->view.name,true,error)) return false;
@@ -1834,24 +1852,20 @@ bool qa_cvars_edit_leave(qa_cvars_edit *edit,qa_cvars *registry,qa_error *error)
 static cvar_values *edit_source_values(const qa_cvars_edit *edit)
 { cvar_edit_view *view=qac_cvars_edit_view((qa_cvars_edit *)edit,edit?edit->registry:NULL); return view?&view->values:NULL; }
 const qa_cvar_view *qa_cvars_edit_find(const qa_cvars_edit *edit,const char *name)
-{
-    cvar_values *values=edit_source_values(edit);
-    const cvar_name_node *node=edit?find_name(edit->registry,values,name):NULL;
-    return !node?NULL:node->alias?alias_view(edit->registry,values,node->owner.alias):qac_cvars_project(edit->registry,values,node->owner.entry);
-}
+{ return qac_cvars_values_find(edit?edit->registry:NULL,edit_source_values(edit),name); }
 const qa_cvar_view *qa_cvars_edit_at(const qa_cvars_edit *edit,size_t ordinal)
-{ return values_at(edit?edit->registry:NULL,edit_source_values(edit),ordinal,false); }
+{ return qac_cvars_values_at(edit?edit->registry:NULL,edit_source_values(edit),ordinal,false,false); }
 const qa_cvar_view *qa_cvars_edit_handle(const qa_cvars_edit *edit,size_t handle)
-{ return values_handle(edit?edit->registry:NULL,edit_source_values(edit),handle); }
+{ return qac_cvars_values_handle(edit?edit->registry:NULL,edit_source_values(edit),handle); }
 
 size_t qa_cvars_edit_count(const qa_cvars_edit *edit)
-{ return values_count(edit?edit->registry:NULL,edit_source_values(edit),false); }
+{ return qac_cvars_values_count(edit?edit->registry:NULL,edit_source_values(edit),false,false); }
 size_t qa_cvars_edit_handle_count(const qa_cvars_edit *edit)
 { cvar_values *values=edit_source_values(edit); return values?values->next_handle:0; }
 size_t qa_cvars_edit_visible_count(const qa_cvars_edit *edit)
-{ return values_count(edit?edit->registry:NULL,edit_source_values(edit),edit && edit->registry->options.role==QA_CVAR_ROLE_ENGINE); }
+{ return qac_cvars_values_count(edit?edit->registry:NULL,edit_source_values(edit),edit && edit->registry->options.role==QA_CVAR_ROLE_ENGINE,false); }
 const qa_cvar_view *qa_cvars_edit_visible_at(const qa_cvars_edit *edit,size_t ordinal)
-{ return values_at(edit?edit->registry:NULL,edit_source_values(edit),ordinal,edit && edit->registry->options.role==QA_CVAR_ROLE_ENGINE); }
+{ return qac_cvars_values_at(edit?edit->registry:NULL,edit_source_values(edit),ordinal,edit && edit->registry->options.role==QA_CVAR_ROLE_ENGINE,false); }
 static bool apply_operation(cvar_target target,const qa_cvars_edit_command *command,qa_error *error)
 {
     switch (command->kind) {

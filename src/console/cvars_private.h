@@ -106,6 +106,9 @@ struct cvar_store {
     cvar_values values;
     qa_console_dialect active_dialect;
     qa_cvars *active_default_source;
+    qa_cvars *video_owner;
+    qa_cvar_video_resolver video_resolver;
+    void *video_user;
     qa_cvars *views, *last_view;
     uint64_t revision, next_binding;
     struct qa_cvars_edit *edit;
@@ -148,6 +151,7 @@ typedef struct cvar_projection_context {
     const qa_cvars *registry;
     const cvar_values *values;
     bool reset;
+    bool latched;
 } cvar_projection_context;
 struct qa_cvars {
     qa_cvar_options options;
@@ -187,6 +191,10 @@ cvar_values *qac_cvars_current_values(const qa_cvars *);
 cvar *qac_cvars_canonical(cvar *);
 void qac_cvars_refresh(qa_cvars *, cvar *);
 const qa_cvar_view *qac_cvars_project(const qa_cvars *, cvar_values *, cvar *);
+const qa_cvar_view *qac_cvars_values_find(const qa_cvars *, cvar_values *, const char *);
+const qa_cvar_view *qac_cvars_values_at(const qa_cvars *, cvar_values *, size_t, bool aliases, bool whole_store);
+const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *, cvar_values *, size_t);
+size_t qac_cvars_values_count(const qa_cvars *, const cvar_values *, bool aliases, bool whole_store);
 const qa_cvar_catalog_conversion *qac_cvars_conversion(const qa_cvars *,
     const cvar_values *, const qa_cvar_catalog_binding *);
 qa_cvar_options qac_cvars_view_options(const qa_cvars *, const cvar_values *);
@@ -205,4 +213,5 @@ bool qac_cvars_rows_reserve(cvar_values *, size_t, size_t, qa_error *);
 uint32_t qac_cvars_flags(uint32_t, qa_console_dialect, qa_console_dialect);
 uint32_t qac_cvars_catalog_flags(const qa_cvars *, const cvar_values *, uint16_t, const char *);
 const char *qac_cvars_operand(void *, uint16_t);
+bool qac_cvars_video(void *, const qa_cvar_video_query *, qa_cvar_video_mode *, qa_error *);
 #endif

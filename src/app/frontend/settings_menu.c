@@ -158,7 +158,8 @@ static bool set_size(frontend_seat *seat, uint32_t width, uint32_t height, qa_er
 {
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     char w[12],h[12]; snprintf(w,sizeof(w),"%u",width); snprintf(h,sizeof(h),"%u",height);
-    if (!qa_cvars_set_console(cvars,"r_customwidth",w,error) ||
+    if (!qa_cvars_set_console(cvars,"r_mode","-1",error) ||
+        !qa_cvars_set_console(cvars,"r_customwidth",w,error) ||
         !qa_cvars_set_console(cvars,"r_customheight",h,error) ||
         !queue_restart(seat,"vid_restart\n",error)) return false;
     snprintf(seat->menu_width,sizeof(seat->menu_width),"%.4s",w);

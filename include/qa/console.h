@@ -125,6 +125,25 @@ typedef enum qa_cvar_role {
     QA_CVAR_ROLE_ENGINE, QA_CVAR_ROLE_GAME, QA_CVAR_ROLE_CGAME, QA_CVAR_ROLE_UI
 } qa_cvar_role;
 
+typedef struct qa_cvar_video_query {
+    const char *member;
+    qa_console_dialect dialect;
+    qa_cvar_side side;
+    qa_cvar_role role;
+    uint32_t seat;
+    bool dimensions_to_index;
+    int32_t index;
+    uint32_t width, height;
+    const char *modelist;
+} qa_cvar_video_query;
+typedef struct qa_cvar_video_mode {
+    int32_t index;
+    uint32_t width, height;
+    bool desktop;
+} qa_cvar_video_mode;
+typedef bool (*qa_cvar_video_resolver)(void *, const qa_cvar_video_query *,
+    qa_cvar_video_mode *, qa_error *);
+
 typedef struct qa_cvar_options {
     qa_console_dialect dialect;
     qa_cvar_side side;
@@ -147,6 +166,9 @@ typedef struct qa_cvar_binding {
 } qa_cvar_binding;
 
 qa_cvars *qa_cvars_create(const qa_cvar_options *options, qa_error *error);
+/* Pure Source mode lookup shared by the canonical store. The installing
+ * ENGINE view owns callback retirement; lookup must not mutate cvars. */
+bool qa_cvars_set_video_resolver(qa_cvars *, qa_cvar_video_resolver, void *, qa_error *);
 /* A view retains the shared canonical owner and only its own Source
  * declarations, handles, callbacks and bindings. Creating or releasing it
  * does not choose the active default dialect or duplicate scalar values. */
