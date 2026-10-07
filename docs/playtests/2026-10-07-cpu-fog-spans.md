@@ -53,9 +53,9 @@ inactive-fog cases also matched their actual NONE reference. Preserved
 OVERLAY, positive/negative EXP2 and active CONSTANT cases differed from NONE
 and matched between versions. The cases include cached brush spans, generic
 triangles, blending, overbright vertices, dynamic-lit models, alpha tests and
-valid unlit preblend gamma. Q2 packets matched between versions; their chosen
-small densities did not visibly alter output, so this is not active Q2 fog
-proof. This is measured CPU output preservation, not GL pixel qualification
+valid unlit preblend gamma. Q2 global, height-only and combined fog also
+remained visibly active and matched exactly between versions. This is
+measured CPU output preservation, not GL pixel qualification
 or a universal numerical bound. Evidence:
 `qa-the566-zero-fog-20261007/pixels/result.json`.
 

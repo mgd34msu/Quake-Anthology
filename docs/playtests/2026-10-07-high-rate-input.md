@@ -152,6 +152,41 @@ the CPU fog shader; this record identifies the precise earlier test artifact.
 The compact aggregate is
 `qa-the420-frame-clock-20261007/1c0ab5dc-original-fixed-frame-summary.json`.
 
+## Independent replay of the current Original 2 ms reversals
+
+The four actual Original GAME before/after cuts at rows 405, 677, 1221 and
+1493 were replayed through both the unchanged native mover and complete
+unmodified retail Pmove, using independent retail collision on q3dm1. These
+cuts directly retain the landing timer; there is no inferred timer seed.
+
+| Row | Command time before/after | Upmove | Vertical velocity before/after | Landing timer after |
+| --- | --- | ---: | --- | ---: |
+| 405 | 1353/1355 | 127 | -270/+270 | 248 |
+| 677 | 1895/1897 | 4 | -270/+270 | 248 |
+| 1221 | 2979/2981 | 0 | -270/+270 | 248 |
+| 1493 | 3521/3523 | 0 | -270/+270 | 248 |
+
+Native and retail outputs match the actual GAME cuts exactly for captured
+origin, velocity, flags, timer, command time, view height, ground entity and
+event sequence. Maximum binary32 difference is zero. Each case compares four
+collision and four contents queries without mismatches. Event rings stay
+unchanged; no new event or jump is emitted. Replayed ground normals are
+`[0,0,1]`. The retail clip, normalize and restore-speed order therefore
+reproduces these physical reversals, including two with released input.
+
+This strengthens the stock-movement explanation; it does not close THE-420.
+Standing bounds are source-derived. Full GAME state, dynamic actors, live
+trace normals and Original QVM lowering remain outside the fixture. No engine
+command replay, timer or static collision discrepancy was found in these
+captured fields, and no production movement rule was changed. Mike's physical
+bounce report and retest remain open.
+
+Evidence: `the420-original-2ms-replay-20261007/current-original-cuts-report.json`.
+The existing comparison command is `compare_current_cuts.py` in that evidence
+directory. Temporary objects, extracted map and executable were removed;
+the 72 KB source/result directory, prior 17 ms proof and captured cuts remain.
+No game was launched and no source or SDK file was changed.
+
 ## Current installed Q3 client and render caps
 
 Two additional cases used installed `3765bb6b`, a fresh copy of the same owner
