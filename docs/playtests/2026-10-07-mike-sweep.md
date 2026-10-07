@@ -25,7 +25,7 @@ separately and are not counted as new installed-build evidence.
 
 | Issue | Defect | Current sweep evidence |
 |---|---|---|
-| THE-139 / MIKE-01 | Q1 movement and jump | Classic CPU grounded Space/W/release checks pass; exact qsrc dynamics, cadence and other paths pending. |
+| THE-139 / MIKE-01 | Q1 movement and jump | Four edition/renderer routes retain grounded input; RR GL observes impulse270 and actual steps; numerical qsrc comparison/cadence pending. |
 | THE-140 / MIKE-02 | Q2 spawn facing | Classic/RR CPU source and completed world camera match authored yaw 135; GL review pending. |
 | THE-146 / MIKE-03 | Q2 barrel crash | Classic/RR CPU damage/removal and continued play pass; GL and late cleared-world images pending. |
 | THE-151 / MIKE-04 | Q2 rerelease video/crash | RR CPU plays/combat/quits 0; GL fire/effects quit 0, matched world/HUD review pending. |
@@ -34,32 +34,32 @@ separately and are not counted as new installed-build evidence.
 | THE-163 / MIKE-07 | Q3 weapon pickup/keys | Original CPU: natural shotgun grant/hide pass; keys/firing and other paths pending. |
 | THE-167 / MIKE-08 | Shareware menu option | CPU/GL actual catalog-backed product menus contain no shareware option. |
 | THE-171 / MIKE-09 | Custom monsters unavailable | CPU/GL list 396 available creatures in 16 rosters; actual Q2RR whole-roster mixed launch succeeds. Per-class/combat coverage excluded. |
-| THE-172 / MIKE-10 | Custom Start crash | Exact reported mix starts/plays/quits on CPU/GL; additional combinations are being checked. |
+| THE-172 / MIKE-10 | Custom Start crash | Three mixed world/arsenal combinations start/play/quit on CPU/GL; two additional arsenals fire and consume ammo. |
 | THE-180 / MIKE-11 | Split-screen views/control | Pending. |
-| THE-185 / MIKE-12 | Ported menus | Ten CPU pages visually compared: authored design matches; Sound choice formatting differs. GL/Custom pending. |
+| THE-185 / MIKE-12 | Ported menus | Ten CPU/GL pages visually compared: design matches; Sound formatting differs and Custom references are not matched. |
 | THE-190 / MIKE-13 | Q2 smoothness/aim/sounds | Classic/RR actual weapon/pickup/door voices and output retained; aim comparison and quiet cadence pending. |
 | THE-201 / MIKE-15 | Q2 dark video | Pending. |
 | THE-208 / MIKE-16 | Q3 menu startup | FAIL: native CPU and NVIDIA GL Start exit 1 before gameplay; reopened In Progress. |
 | THE-213 / MIKE-17 | Transparency | Pending Q1/Q2 CPU/GL. |
-| THE-217 / MIKE-18 | Visible Q1 trigger brushes | Pending. |
+| THE-217 / MIKE-18 | Visible Q1 trigger brushes | Classic/RR CPU/GL entry-corridor images clear; full end-slipgate/submission check pending. |
 | THE-225 / MIKE-19 | Q3 black text/HUD | Pending. |
 | THE-233 / MIKE-20 | Missing particles | Pending. |
 | THE-251 / MIKE-21 | Q1 slipgate crash | Classic CPU/GL Normal slipgate, fog expiry and episode entry survive; game quit 0. |
 | THE-261 / MIKE-22 | Vanilla Q1 autosave format | Classic CPU/GL autosave and public save/load/resave use v5; RR uses its native text v6. |
-| THE-280 / MIKE-23 | Teleporter facing | Pending. |
-| THE-295 / MIKE-24 | Q1 jump sound | Pending. |
+| THE-280 / MIKE-23 | Teleporter facing | Classic GL and exact mixed CPU/GL differing angles become authored90; RR differing-angle check pending. |
+| THE-295 / MIKE-24 | Q1 jump sound | Actual dry-jump cue/positive retail voices/private output retained across cores; swim pending. |
 | THE-305 / MIKE-25 | Q1 rocket explosion sound | Pending. |
-| THE-316 / MIKE-26 | Q1 menu effects | Pending. |
+| THE-316 / MIKE-26 | Q1 menu effects | Open/close menu2 and navigation menu1 reach private output; select/change menu3 pending. |
 | THE-333 / MIKE-27 | Rerelease SP/layout/load filtering | RR GL all-four-skill physical gates, retail exclusions and native save/load pass; CPU fourth gate pending. |
 | THE-345 / MIKE-28 | Difficulty gate persistence | Classic GL Easy/Normal/Hard and RR GL all four pass with exact retail counts/save-load; classic Nightmare pending. |
-| THE-358 / MIKE-29 | Correct Q1 music | Pending exact opened tracks, transitions and looping. |
+| THE-358 / MIKE-29 | Correct Q1 music | RR GL actual committed start4/e1m1=6/e1m2=8 retail streams/output; classic08 and EOF loop pending. |
 | THE-380 / MIKE-30 | Q2 jump/crouch/floor/sound | Classic/RR CPU jump/repress, duck/stand and jump output pass; low ceiling, complete GL and cadence pending. |
 | THE-395 / MIKE-31 | Item rotation and Q1 disappearance | Pending all four editions. |
-| THE-410 / MIKE-32 | Console cvars/FOV | Pending. |
+| THE-410 / MIKE-32 | Console cvars/FOV | RR GL actual typed aliases and completed-world FOV agree; required other paths pending. |
 | THE-416 / MIKE-33 | Broken Q3 sky | Pending. |
 | THE-423 / MIKE-35 | Q3 death/respawn crash | Pending genuine bot deaths/respawns. |
 | THE-431 / MIKE-36 | Exact mixed-game startup | CPU/GL exact configuration starts, traverses Normal gate and quits 0; actual common camera takes forced angle. |
-| THE-438 / MIKE-37 | Q1 status bar | Pending. |
+| THE-438 / MIKE-37 | Q1 status bar | Four basic stock-bar/HUD captures retained; keys/powerups/armor/split and THE587 backtile remain open. |
 
 THE-196 / MIKE-14 and THE-420 / MIKE-34 are already In Progress and are
 outside the 35-issue In Review sweep. The supervisor, rather than this
@@ -211,3 +211,25 @@ the two session types overwrite the same slot. Its format is appropriate
 for combined state; its slot must be distinct from vanilla product slots.
 The supervisor's issue records the 236,264-byte shared save and matching
 in-game checkpoint PNG. No hashing is needed to separate those names.
+
+The final ten-page menu review now includes successful CPU and GL
+receipts in `THE-185/UI/review-gl`. Complete side-by-side pairs preserve
+layout/art/fonts with saved-state and conditional differences stated.
+Custom's current summary is visibly denser than older references; their
+version/state mismatch leaves exact Custom parity unqualified.
+
+Additional Custom bundles under `THE-172/mixed` retain Q1 classic maps
+with Q2 weapons/monsters and Q1 rerelease maps with Q1 classic weapons
+and Q2 rerelease monsters, all retaining Q3 movement/Ranger. Both CPU/GL
+pairs accept Mouse1, consume shells 25 to 24, move with W and quit 0.
+Those results do not claim viewmodel rendering, campaigns or audio.
+Earlier helper rejections of valid Q2 names/render cuts are preserved
+separately with their observer corrections.
+
+The RR GL movement packet directly observes the 270-unit jump impulse
+before gravity and retains 90 entry/return pairs plus 14 friction-edge
+traces. Recorded dt is 0.10000000149 under a functional debugger; it is
+not normal-play cadence. Numerical comparison to qsrc is separate. Its
+74 accepted aligned nonzero audio segments were independently compared
+byte for byte with private output, with zero failures. These mixed
+segments do not isolate a last-cue label's later contribution.
