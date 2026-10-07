@@ -479,19 +479,19 @@ static bool record_bot_choice(application_player_record *record,
 }
 
 static bool q3_initial_userinfo(qa_application *application,qa_catalog *catalog,const qa_launch_choices *choices,
-    application_player_record *record, const qa_launch_seat *seat, qa_error *error)
+    application_player_record *record, const qa_launch_seat *seat, bool refresh, qa_error *error)
 {
-    if (record->userinfo != NULL)
+    if (record->userinfo != NULL && !refresh)
         return true;
     char userinfo[1024];
     if (!application_character_userinfo(application,catalog,choices,seat,QA_GAME_Q3,
             true, userinfo, sizeof(userinfo), error)) return false;
-    size_t length = strlen(userinfo);
-    record->userinfo = malloc((size_t)length + 1);
-    if (record->userinfo == NULL)
+    char *copy = player_text(userinfo);
+    if (copy == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot retain initial Q3 client userinfo");
-    memcpy(record->userinfo, userinfo, (size_t)length + 1);
+    free(record->userinfo);
+    record->userinfo = copy;
     return true;
 }
 
@@ -890,7 +890,7 @@ bool application_players_prepare(qa_application *application,
         if ((character->launch->selection.clock.kind == QA_CLOCK_Q3 ||
              publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3) &&
             !q3_initial_userinfo(application,qa_launch_snapshot_catalog(publication->candidate),choices,
-                &travel->roster->records[i], seat, error)) {
+                &travel->roster->records[i], seat, false, error)) {
             application_players_dispose(travel);
             return false;
         }
@@ -2573,6 +2573,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         application_actor_routes_bind(application, source_actor);
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
+        if (initial_local_userinfo && !seat->bot &&
+            (character->component.clock.kind == QA_CLOCK_Q3 || map_source->component.clock.kind == QA_CLOCK_Q3) &&
+            !q3_initial_userinfo(application,application->catalog,choices,record,seat,true,error))
+            return false;
         bool qw_spectator = application_player_qw_spectator(map_source, record);
         for (size_t i = 0; i < application->provider_count; ++i) {
             application_provider *provider = application->providers[i];
@@ -2912,7 +2916,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     continue;
                 }
                 char userinfo[1024];
-                if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q3,
+                if (!record->userinfo && !application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q3,
                         false, userinfo, sizeof(userinfo), error)) return false;
                 bool accepted = false;
                 application_q3_world_startup startup;

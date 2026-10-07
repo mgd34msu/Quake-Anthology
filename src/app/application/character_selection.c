@@ -1,6 +1,7 @@
 #include "character_selection.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/game_q2_preferences.h"
+#include "qa/network_q3.h"
 #include "qa/text.h"
 #include <inttypes.h>
 #include <stdlib.h>
@@ -164,18 +165,7 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
         return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo requires its actual CHARACTER declaration");
     if (!qa_application_character_declaration_read(catalog, choices, seat, &declaration, &found, error)) return false;
     const char *name = strchr(seat->name, '\\') ? "badinfo" : seat->name;
-    int length;
-    if (protocol == QA_GAME_Q3) {
-        const char *team = seat->spectator ? "s" : seat->team && *seat->team ? seat->team : "free";
-        const char *ip = local_ip ? "\\ip\\localhost" : "";
-        if (found) {
-            const qa_native_q3_character_declaration *appearance = &declaration.appearance;
-            const char *head = *appearance->head_model ? appearance->head_model : appearance->model;
-            length = snprintf(out, capacity,
-                "\\name\\%.900s\\model\\%s/%s\\headmodel\\%s/%s\\team\\%s%s",
-                name, appearance->model, appearance->skin, head, appearance->head_skin, team, ip);
-        } else length = snprintf(out, capacity, "\\name\\%.900s\\team\\%s%s", name, team, ip);
-    } else if (protocol == QA_GAME_Q2) {
+    if (protocol == QA_GAME_Q2 || protocol == QA_GAME_Q3) {
         qa_cvars *prepared=NULL;
         const qa_cvar_view *field_of_view=NULL;
         bool configured=false;
@@ -184,13 +174,14 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
             !hooks->local_userinfo(hooks->context,app,choices,seat,&prepared,&field_of_view,
                 &configured,error)) return false;
         const qa_product *product=found?qa_catalog_product(catalog,declaration.product):NULL;
-        qa_console_dialect dialect=configured && prepared &&
+        qa_console_dialect dialect=protocol==QA_GAME_Q3?QA_CONSOLE_Q3:configured && prepared &&
             (qa_cvars_dialect(prepared)==QA_CONSOLE_Q2 || qa_cvars_dialect(prepared)==QA_CONSOLE_Q2_RERELEASE)?
             qa_cvars_dialect(prepared):product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_RERELEASE?
             QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2;
-        const char *model=found && declaration.family==QA_GAME_Q2?declaration.appearance.model:"male";
+        const char *model=found && (protocol==QA_GAME_Q3 || declaration.family==QA_GAME_Q2)?
+            declaration.appearance.model:protocol==QA_GAME_Q3?"sarge":"male";
         char *fov = NULL;
-        if (field_of_view) {
+        if (protocol==QA_GAME_Q2 && field_of_view) {
             size_t size = strlen(field_of_view->value) + 1;
             fov = malloc(size);
             if (!fov) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual player FOV");
@@ -206,7 +197,8 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
         bool ok=qa_application_player_userinfo_register(protocol_cvars,seat->id,model,error);
         if (ok && !configured && !qa_cvars_is_set(protocol_cvars,"name"))
             ok=qa_cvars_set(protocol_cvars,"name",name,true,error);
-        if (ok) ok=qa_cvars_set(protocol_cvars,"spectator",seat->spectator?"1":"0",true,error);
+        if (ok && protocol==QA_GAME_Q2)
+            ok=qa_cvars_set(protocol_cvars,"spectator",seat->spectator?"1":"0",true,error);
         qa_buffer info={0};
         if (ok) ok=qa_cvars_info(protocol_cvars,QA_CVAR_USERINFO,capacity,&info,error);
         if (ok && fov) {
@@ -220,10 +212,31 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
             qa_buffer_free(&projected);
         }
         if (ok) memcpy(out,info.data,info.size+1);
+        if (ok && protocol==QA_GAME_Q3) {
+            const char *team=seat->spectator?"s":seat->team && *seat->team?seat->team:"free";
+            char q3_name[901]; snprintf(q3_name,sizeof(q3_name),"%.900s",name);
+            ok=qa_q3_info_set(out,capacity,"name",q3_name,error) &&
+                qa_q3_info_set(out,capacity,"team",team,error) &&
+                qa_q3_info_set(out,capacity,"ip",local_ip?"localhost":"",error);
+            if (ok && found) {
+                const qa_native_q3_character_declaration *appearance=&declaration.appearance;
+                const char *head=*appearance->head_model?appearance->head_model:appearance->model;
+                const char *keys[]={"model","headmodel"};
+                const char *models[]={appearance->model,head};
+                const char *skins[]={appearance->skin,appearance->head_skin};
+                char *body=malloc(capacity);
+                if (!body) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining actual Q3 character identity");
+                for (size_t i=0;ok && i<2;++i) {
+                    int length=snprintf(body,capacity,"%s/%s",models[i],skins[i]);
+                    ok=(length>=0 && (size_t)length<capacity) ||
+                        application_fail(error,QA_ERROR_ARGUMENT,"Initial CHARACTER userinfo exceeds its source extent");
+                    if (ok) ok=qa_q3_info_set(out,capacity,keys[i],body,error);
+                }
+                free(body);
+            }
+        }
         free(fov); qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
     } else return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo has no declared protocol constructor");
-    return (length >= 0 && (size_t)length < capacity) ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Initial CHARACTER userinfo exceeds its source extent");
 }
 
 bool application_character_q2_initial_userinfo(const char *source,const char *defaults,

@@ -2898,18 +2898,11 @@ static bool local_userinfo(void *context,qa_application *application,const qa_la
     if (!seat->local || seat->bot || manager->frontend->options.dedicated) return true;
     const qa_launch_snapshot *candidate=qa_application_startup_candidate(application);
     const qa_launch_snapshot *snapshot=candidate?candidate:qa_application_launch(application);
-    if (!snapshot || qa_launch_snapshot_choices(snapshot)!=choices)
-        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo differs from its actual admission choices");
-    const qa_launch_seat *authored=NULL;
-    for (size_t i=0;i<choices->seat_count;++i) if (choices->seats[i].id==seat->id) {
-        if (authored) return fail(error,QA_ERROR_FORMAT,"Local userinfo repeats its authored seat identity");
-        authored=choices->seats+i;
-    }
+    if (!snapshot) return true;
     const qa_launch_binding *binding=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
-    if (!authored || !authored->local || authored->bot || !selected)
-        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo has no actual authored seat and GAME");
+    if (!selected) return true;
     frontend_config_source *source=NULL;
     for (frontend_config_source *row=manager->sources;row;row=row->next) {
         const qa_launch_instance *held=instance(row);
@@ -2922,7 +2915,7 @@ static bool local_userinfo(void *context,qa_application *application,const qa_la
     size_t index=source?seat_index(source,seat->id):0;
     if (!source || !source->configured || !source->released || source->running || source->phase ||
         !qa_console_idle(source->console) || index>=source->seat_count || !source->seats[index].cvars)
-        return fail(error,QA_ERROR_ARGUMENT,"Local userinfo lacks its completed physical seat settings");
+        return true;
     *out=source->seats[index].cvars;
     *field_of_view=frontend_config_store_engine_value(manager,application,source->console,"fov");
     *found=true; return true;
