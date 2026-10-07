@@ -39,7 +39,7 @@ const char *qa_q2_wire_statusbar(const qa_q2_game *g)
         "if 9 yb -76 endif if 51 yb -58 if 9 yb -84 endif endif "
         "if 44 xv 296 pic 44 endif if 45 xv 272 pic 45 endif if 46 xv 248 pic 46 endif "
         "if 48 xv 0 yt 0 loc_stat_cstring2 48 endif "
-        "if 49 xr -16 yt 2 lives_num 49 xr 0 yt 28 loc_rstring \"$g_lives\" endif "
+        "if 49 xr -16 yt 2 lives_num 49 xr 0 yt 28 loc_rstring 0 \"$g_lives\" endif "
         "if 52 yt 24 health_bars endif story ";
     static const char rerelease_deathmatch[] = Q2_STATUS_VITALS Q2_RERELEASE_PICKUP Q2_STATUS_TIMER
         "yb -50 if 11 xv 150 pic 11 endif " Q2_STATUS_SCORE
