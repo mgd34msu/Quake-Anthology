@@ -27,8 +27,9 @@ held-input result does not establish that high-rate condition. The first two
 cases did not capture actual drawable dimensions. The Native 85 case directly
 observed a 1920×1080 window and drawable on the private virtual screen. The
 250 and 333 cases used the same directly observed dimensions. These installed
-measurements establish the configured cap's effect in Native Q3; other games,
-combined mode and Original cap behavior remain separate qualifications.
+measurements establish the configured cap's effect in Native Q3. The additional
+Native game and alias checks below extend that result. Original cap behavior
+remains unqualified.
 
 Native uncapped retained 3,953 completed command sequence advances across
 8.351 seconds. Typical interior 50 ms server-frame groups contained 20–25
@@ -64,6 +65,37 @@ and the direct Original GAME observation.
 THE-420 remains open for the unresolved physical symptom and owner's retest.
 The configured-cap implementation is committed as `e6fe850b` under THE-583.
 This record makes no new movement-fix or performance-speedup claim.
+
+## Installed cap and alias checks across worlds
+
+Four more Native cases used the same installed artifact and private RTX 5060 Ti
+display. Each directly observed a 640×400 window and drawable, warmed for two
+seconds and sampled six seconds of completed swaps per setting. No debugger
+was attached. `r_maxfps`, `r_swapInterval` and `timedemo` were read back as zero.
+The alias case first set `com_maxfps` to zero and read both names as zero,
+then set `cl_maxfps` to 85 and read both names as 85.
+
+| Native session | `com_maxfps 85` swaps/s | `cl_maxfps 85` swaps/s | Uncapped swaps/s |
+| --- | ---: | ---: | ---: |
+| Q1 classic, start | 84.994 | 85.016 | 758.941 |
+| Q2 classic, base1 | 85.010 | 84.997 | 919.530 |
+| Q2 rerelease, base1 | 84.978 | 84.981 | 706.395 |
+| Q1 start with Q3 movement/character/weapons and Q2 rerelease monsters | 84.997 | 84.998 | 679.145 |
+
+Root inspected the captured gameplay screenshots for these cases. Each quit
+normally with exit status zero. All 66 recorded process IDs, including two
+excluded helper setup attempts, were absent after cleanup. The owner profile,
+installed files and swap observer were unchanged. These measurements prove
+the public cap and alias affect the installed Native frame loop. They do not
+qualify Original modules, complete combined-mode behavior, or the 1080p frame
+time target. The uncapped column describes this small-window workload; it is
+not a measured speedup.
+
+The aggregate receipt is `qa-the583-gpu0-matrix-20261007/native-cap-result.json`.
+Runtime evidence identifiers are `qa-private-av-mneiws4e`,
+`qa-private-av-jdepf6_0`, `qa-private-av-n5iu9_c2` and
+`qa-private-av-6r438m24`. Their `user/evidence` folders contain gameplay
+screenshots for all three settings.
 
 Evidence identifiers: `qa-private-av-ms3l1grc`, `qa-private-av-iw9ijnvg`,
 `qa-private-av-4lfutnd7`, `qa-private-av-6y5xnevi`, `qa-private-av-uwcbcr0e`
