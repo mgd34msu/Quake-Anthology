@@ -79,6 +79,7 @@ extern const qa_unified_record_layout qa_unified_frame_layout;
 extern const qa_unified_record_layout qa_unified_inputs_layout;
 extern const qa_unified_record_layout qa_unified_handshake_layout;
 extern const qa_unified_record_layout qa_unified_control_layout;
+bool qa_unified_resource_serial(const char *, uint64_t *);
 bool qa_unified_control_check(const qa_unified_control *, size_t *, qa_error *);
 extern const qa_unified_record_layout qa_unified_events_layout;
 extern const qa_unified_record_layout qa_unified_metadata_layout;

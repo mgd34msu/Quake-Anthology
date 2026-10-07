@@ -1213,9 +1213,11 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         return event_fail(io, QA_ERROR_FORMAT, "Source continuation omits its latest emitted sequence");
     const qa_application_content_graph *graph = store->application ?
         qa_application_content_graph_read(store->application) : NULL;
+    uint64_t previous_serial = 0;
     for (size_t i = 0; i < store->resource_count; ++i) {
         application_unified_event_resource *row = store->resources + i;
         uint64_t pool = row->saved_pool, resource = row->saved_resource, view = row->saved_view;
+        uint64_t serial;
         if (io->direction == QA_SOURCE_SAVE_WRITE) {
             view = qa_application_content_view_id(graph, row->view);
             if (!view || !qa_application_content_resource_id(graph, row->resource, &pool, &resource))
@@ -1226,8 +1228,9 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_source_save_u64(io, &resource) || !qa_source_save_u64(io, &view) ||
             !pool || !resource || !view || !row->content || !row->path ||
             !resource_key_field(io, row->id) || row->id[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
-            strncmp(row->id, "resource:unified:", sizeof("resource:unified:") - 1))
+            !qa_unified_resource_serial(row->id, &serial) || serial <= previous_serial)
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
+        previous_serial = serial;
         const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
             qa_application_content_view(graph, view) : row->view;
         const qa_resource *actual=io->direction==QA_SOURCE_SAVE_READ?
@@ -1238,9 +1241,6 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         if (io->direction == QA_SOURCE_SAVE_READ) {
             row->saved_pool = pool; row->saved_resource = resource; row->saved_view = view;
         }
-        for (size_t j = 0; j < i; ++j)
-            if (!strcmp(row->id, store->resources[j].id))
-                return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary identity is duplicated");
         if (!queue_extent(io, &row->custody_count, &row->custody_capacity, sizeof(*row->custodies))) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
             if (row->custody_count > (io->input.size - io->offset) / 34)
@@ -1326,11 +1326,9 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
         const qa_resource *actual = qa_application_content_resource(app->content_graph, row->saved_pool, row->saved_resource);
         qa_unified_document *key = NULL;
         char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-        if (!application_unified_resource_key((uint64_t)i + 1, &product, path, actual, &key, id, error)) return false;
-        if (strcmp(row->id, id)) {
-            qa_unified_document_destroy(key);
-            return application_fail(error, QA_ERROR_FORMAT, "Saved Source resource dictionary changes its serial order");
-        }
+        uint64_t serial = 0;
+        (void)qa_unified_resource_serial(row->id, &serial);
+        if (!application_unified_resource_key(serial, &product, path, actual, &key, id, error)) return false;
         qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
         row->key.data = malloc(bytes.size); row->key.size = bytes.size;
         if (row->key.data) memcpy(row->key.data, bytes.data, bytes.size);

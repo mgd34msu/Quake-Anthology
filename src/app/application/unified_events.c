@@ -407,11 +407,15 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
             return ok;
         }
     }
-    if (app->unified_event_resource_count == UINT64_MAX)
+    uint64_t serial = 0;
+    if (app->unified_event_resource_count)
+        (void)qa_unified_resource_serial(
+            app->unified_event_resources[app->unified_event_resource_count - 1].id, &serial);
+    if (serial == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "Source resource dictionary serial exhausted");
     qa_unified_document *key = NULL;
     char actual_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
-    if (!application_unified_resource_key((uint64_t)app->unified_event_resource_count + 1,
+    if (!application_unified_resource_key(serial + 1,
         source.product, registration_path, resource, &key, actual_id, error)) return false;
     application_unified_event_resource row = {.provider = owner, .resource = (qa_resource *)resource, .pool = pool};
     qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));

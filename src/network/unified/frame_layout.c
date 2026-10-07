@@ -2339,6 +2339,22 @@ static bool control_components_check(const qa_unified_components_control *update
     }
     return true;
 }
+bool qa_unified_resource_serial(const char *identity, uint64_t *out)
+{
+    static const char prefix[]="resource:unified:";
+    if (!identity || !out || strncmp(identity,prefix,sizeof(prefix)-1)) return false;
+    const unsigned char *text=(const unsigned char *)identity+sizeof(prefix)-1;
+    if (*text<'1' || *text>'9') return false;
+    uint64_t serial=0;
+    for (;*text;++text) {
+        if (*text<'0' || *text>'9' || serial>(UINT64_MAX-(uint64_t)(*text-'0'))/10)
+            return false;
+        serial=serial*10+(uint64_t)(*text-'0');
+    }
+    *out=serial;
+    return true;
+}
+
 bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_error *error)
 {
     if (!v || !bytes || ((unsigned)v->kind>QA_UNIFIED_CONTROL_DISCONNECT && v->kind!=QA_UNIFIED_CONTROL_COMPONENT_COMMAND && v->kind!=QA_UNIFIED_CONTROL_COMPONENTS) ||
@@ -2355,19 +2371,10 @@ bool qa_unified_control_check(const qa_unified_control *v, size_t *bytes, qa_err
         for (size_t i=0;i<v->value.resources.count;++i) {
             const qa_unified_resource_declaration *row=v->value.resources.values+i;
             const char *path=row->resource.path;
-            static const char prefix[]="resource:unified:";
-            if (!row->identity || strncmp(row->identity,prefix,sizeof(prefix)-1) ||
+            uint64_t serial;
+            if (!qa_unified_resource_serial(row->identity,&serial) ||
                 !row->resource.content || !*row->resource.content || !path || !*path || *path=='/' || strchr(path,'\\'))
                 return frame_bad(error,"Unified declaration has an invalid actual resource identity or path");
-            const unsigned char *serial_text=(const unsigned char *)row->identity+sizeof(prefix)-1;
-            if (*serial_text<'1' || *serial_text>'9')
-                return frame_bad(error,"Unified resource identity has no canonical nonzero Source serial");
-            uint64_t serial=0;
-            for (;*serial_text;++serial_text) {
-                if (*serial_text<'0' || *serial_text>'9' || serial>(UINT64_MAX-(uint64_t)(*serial_text-'0'))/10)
-                    return frame_bad(error,"Unified resource identity is outside its Source serial range");
-                serial=serial*10+(uint64_t)(*serial_text-'0');
-            }
             for (const char *at=path;*at;) {
                 const char *end=strchr(at,'/'); size_t size=end?(size_t)(end-at):strlen(at);
                 if (!size || (size==1 && *at=='.') || (size==2 && at[0]=='.' && at[1]=='.') || (end && !end[1]))
