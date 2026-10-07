@@ -164,7 +164,8 @@ bool frontend_shared_values_root_definition_access(const frontend_shared_values 
         !qa_actor_id_equal(command->actor,actual.actor) ||
         ((!command->script)!=(!actual.script)) ||
         (command->script && strcmp(command->script,actual.script)) ||
-        !qa_cvars_edit_returned_is(owner->edit,owner->registry))
+        qa_cvars_prepared_edit(owner->registry)!=owner->edit ||
+        qa_cvars_edit_registry(owner->edit)!=owner->registry)
         return fail(error,"Shared root declarations require their entered provider definition and exact ENGINE command");
     *registry=owner->registry; *edit=owner->edit; return true;
 }
