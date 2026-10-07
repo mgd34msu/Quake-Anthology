@@ -560,10 +560,11 @@ bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata
     const qa_product *product, const qa_cvars *registry, bool quakeworld, double seconds,
     const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
-    const qa_cvar_view *view = qa_cvars_find(registry, "viewsize"), *bar = qa_cvars_find(registry, "cl_sbar"),
+    const qa_cvar_view *view = qa_cvars_find(registry, "viewsize"),
+        *bar = quakeworld ? qa_cvars_find(registry, "cl_sbar") : NULL,
         *deathmatch = qa_cvars_find(registry, "deathmatch"), *swap = qa_cvars_find(registry, "cl_hudswap");
     if (!materials || !client || !product || product->family != QA_GAME_Q1 || !out || !face ||
-        !view || !bar || !isfinite(view->number) || !isfinite(bar->number) || !isfinite(seconds))
+        !view || !isfinite(view->number) || (quakeworld && (!bar || !isfinite(bar->number))) || !isfinite(seconds))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
     *out = (qa_hud_q1_status){.picture_context = materials, .picture = q1_hud_picture_read, .face = face,
         .health = client->health, .armor = client->armor, .items = client->items,
