@@ -947,7 +947,8 @@ static bool q1_campaign_source_options(
     qa_string_id current_map, qa_q1_campaign_source_options *out, qa_error *error)
 {
     qa_q1_options source;
-    if (provider->application->operation == APPLICATION_PERSISTING) {
+    if (provider->application->operation == APPLICATION_PERSISTING &&
+        !provider->native_q1_restore_game.data) {
         if (!qa_q1_source_respawn_options_prepared(provider->state.q1, &source, error))
             return false;
     } else {
@@ -1092,9 +1093,11 @@ failed:
 
 static bool q1_begin_map(application_provider *provider,
                          const qa_product *product,
-                         qa_string_id current_map, qa_error *error)
+                         qa_string_id current_map, bool restoring,
+                         qa_error *error)
 {
-    if (!qa_q1_source_map_rules_refresh(provider->state.q1, error)) return false;
+    if (!restoring &&
+        !qa_q1_source_map_rules_refresh(provider->state.q1, error)) return false;
     qa_q1_campaign_source *source;
     qa_q1_level *level;
     qa_q1_map_options options;
@@ -2861,7 +2864,7 @@ bool application_map_restore_bind(qa_application *application,
                                     "restored map binding requires fresh attached providers");
         if (provider->kind == APPLICATION_PROVIDER_Q1) {
             if (!q1_begin_map(provider, provider->product,
-                               application->current_map, error))
+                               application->current_map, true, error))
                 return false;
         } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
             qa_q2_entity_services services = q2_entity_services(provider, choices);
@@ -3083,7 +3086,7 @@ bool application_map_publish(qa_application *application,
                 return application_fail(error, QA_ERROR_NOT_FOUND,
                                         "provider product disappeared during map publication");
             if (provider->kind == APPLICATION_PROVIDER_Q1) {
-                if (!q1_begin_map(provider, product, current_map, error))
+                if (!q1_begin_map(provider, product, current_map, false, error))
                     return false;
             } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
                 if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
