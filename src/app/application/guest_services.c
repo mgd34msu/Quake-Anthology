@@ -53,47 +53,6 @@ static void release_script(void *context, void *lease)
     qa_resource_release(lease);
 }
 
-static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
-{
-    qa_application *application = context;
-    const qa_application_startup_hooks *hooks = application->startup_hooks;
-    qa_cvars *selected = hooks && hooks->cvar_owner
-        ? hooks->cvar_owner(hooks->context, application, application->console, command, name) : NULL;
-    if (selected) return selected;
-    for (application_provider *p = application->live_providers; command && p; p = p->next_live) {
-        if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q1)
-            return p->constructed && p->attached && !p->close_pending
-                ? application_native_q1_console_registry(p) : NULL;
-        if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q3)
-            return p->constructed && p->attached && !p->close_pending
-                ? application_native_q3_cvar_owner(p, name) : NULL;
-        if (p->owner == command->owner && application_guest_q3_console_registry(p))
-            return p->constructed && p->attached && !p->close_pending
-                ? application_guest_q3_cvar_owner(p, name) : NULL;
-    }
-    return application->cvars;
-}
-
-static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
-{
-    qa_application *application = context;
-    const qa_application_startup_hooks *hooks = application->startup_hooks;
-    qa_cvars *selected = NULL;
-    if (hooks && hooks->visible_cvars && hooks->visible_cvars(hooks->context, application,
-            application->console, command, index, &selected)) return selected;
-    qa_cvars *source = cvar_owner(context, command, "");
-    return index == 0 ? source : index == 1 && source != application->cvars
-        ? application->cvars : NULL;
-}
-
-static bool cvar_edit(void *context, const qa_command_context *command,
-    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    qa_application *application = context;
-    return application_startup_console_cvar_edit(application, application->console,
-        command, registry, out, error);
-}
-
 static qa_command_result forward(void *context,const qa_command_invocation *command,qa_error *error)
 {
     qa_application *application=context;
@@ -112,7 +71,6 @@ bool application_console_create(qa_application *application, qa_error *error)
     qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,
         .user = application, .print = application_console_print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .read_script = read_script, .release_script = release_script,
         .capture_context = application_command_capture,
         .context_active = application_command_active,

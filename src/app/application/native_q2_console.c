@@ -197,23 +197,6 @@ static bool allow_command(void *opaque, const qa_command_invocation *invocation)
     struct application_native_q2_console *owner = opaque;
     return application_startup_command_allowed(owner->provider, invocation);
 }
-static qa_cvars *cvar_owner(void *opaque, const qa_command_context *context, const char *name) {
-    struct application_native_q2_console *owner = opaque;
-    qa_cvars *registry = application_startup_cvar_owner(owner->provider, owner->console, context, name);
-    return registry ? registry : owner->cvars;
-}
-static bool cvar_edit(void *opaque, const qa_command_context *context, qa_cvars *registry,
-                      qa_cvars_edit **out, qa_error *error) {
-    struct application_native_q2_console *owner = opaque;
-    return application_startup_cvar_edit(owner->provider, owner->console, context, registry, out, error);
-}
-static qa_cvars *visible_cvars(void *opaque, const qa_command_context *context, size_t index) {
-    struct application_native_q2_console *owner = opaque;
-    qa_cvars *registry = NULL;
-    if (application_startup_visible_cvars(owner->provider, owner->console, context, index, &registry))
-        return registry;
-    return index == 0 ? owner->cvars : NULL;
-}
 typedef struct q2_operator_player {
     qa_q2_player_info info;
     char *userinfo;
@@ -352,7 +335,6 @@ bool application_native_q2_console_create_restored(application_provider *provide
     owner->cvars = qa_cvars_create_view(provider->application->cvars, &variables, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};

@@ -50,7 +50,7 @@ typedef struct config_seat {
     frontend_authored_bindings *authored;
     qa_seat_settings settings;
     qa_cvar_archive client_archive,mouse_archive;
-    bool found,cvars_transferred,registry_bound;
+    bool found,cvars_transferred,registry_bound,mouse_owned;
 } config_seat;
 struct frontend_config_source {
     frontend_config_source *next;
@@ -199,9 +199,16 @@ static qa_cvars *seat_registry(frontend_config_source *source,qa_console_dialect
 static bool source_context(const frontend_config_source *source,const qa_command_context *command)
 {
     if (!source || !command || command->origin==QA_COMMAND_REMOTE) return false;
-    if (command->owner==source->command.owner && command->session==source->command.session &&
-        command->dialect==source->command.dialect && command->cvar_view==source->command.cvar_view)
-        return source->manager->parked==source?parked_active(source->manager,command):
+    size_t seat=seat_index(source,command->seat);
+    bool seat_view=command->origin==QA_COMMAND_SEAT && seat<source->seat_count &&
+        (command->cvar_view==qa_cvars_view_identity(source->seats[seat].cvars) ||
+         command->cvar_view==qa_cvars_view_identity(source->seats[seat].mouse));
+    if (command->origin==QA_COMMAND_SEAT && source->manager->input_source==source)
+        for (size_t i=0;i<source->manager->input_count;++i)
+            seat_view|=source->manager->input_seats[i].logical==command->seat &&
+                command->cvar_view==qa_cvars_view_identity(source->manager->input_seats[i].mouse);
+    if (command->cvar_view==source->command.cvar_view || seat_view)
+        return qa_console_context_bound(source->console,command) &&
             qa_application_command_context_active(source->application,command);
     return !command->owner && source->published && source->configured && source->released &&
         !source->imported && !source->phase &&
@@ -211,22 +218,6 @@ static bool source_context(const frontend_config_source *source,const qa_command
             0,source->command.owner) ||
          qa_console_context_delivered_view(source->console,command,source->command.cvar_view,
             source->command.owner,source->command.owner));
-}
-static bool source_cvar_context(const frontend_config_source *source,const qa_command_context *command)
-{
-    if (source_context(source,command)) return true;
-    size_t seat=source && command?seat_index(source,command->seat):0;
-    if (source && command && command->origin==QA_COMMAND_SEAT && seat<source->seat_count &&
-        command->owner==source->command.owner && command->session==source->command.session &&
-        (command->cvar_view==qa_cvars_view_identity(source->seats[seat].cvars) ||
-         command->cvar_view==qa_cvars_view_identity(source->seats[seat].mouse)) &&
-        qa_application_command_context_active(source->application,command)) return true;
-    return source && command && !source->imported && source->configured && source->released &&
-        instance(source) && source->console && source->cvars &&
-        qa_cvars_same_store(qa_console_cvars(source->console),source->cvars) &&
-        command->cvar_view==source->command.cvar_view && command->origin!=QA_COMMAND_REMOTE &&
-        command->owner==source->command.owner && command->session==source->command.session &&
-        command->dialect==source->command.dialect && qa_console_cvar_entered(source->console,command);
 }
 static bool binding_context(void *context,const qa_command_context *command)
 { return source_context(context,command); }
@@ -238,13 +229,16 @@ static bool current_command(const frontend_config_source *source,qa_command_cont
         qa_application_capture_command_context(source->application,command,command,error)) &&
         source_context(source,command);
 }
-static bool capture_seat_command(qa_application *application,const qa_command_context *parent,
+static bool capture_seat_command(frontend_config_source *source,const qa_command_context *parent,
     uint32_t logical,qa_command_context *out,qa_error *error)
 {
     qa_command_context command=*parent;
     command.origin=QA_COMMAND_SEAT; command.seat=logical; command.actor=(qa_actor_id){0};
-    (void)qa_application_player_actor(application,logical,&command.actor);
-    return qa_application_capture_command_context(application,&command,out,error);
+    size_t index=seat_index(source,logical);
+    if (index<source->seat_count && source->seats[index].cvars)
+        command.cvar_view=qa_cvars_view_identity(source->seats[index].cvars);
+    (void)qa_application_player_actor(source->application,logical,&command.actor);
+    return qa_application_capture_command_context(source->application,&command,out,error);
 }
 static size_t seat_index(const frontend_config_source *source,uint32_t logical)
 {
@@ -270,37 +264,36 @@ static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
 static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
+    (void)ordinal;
     frontend_config_source *source=context;
     size_t index=source && command?seat_index(source,command->seat):0;
     if (!source || !command || index>=source->seat_count || command->origin!=QA_COMMAND_SEAT)
         return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
-    if (source_context(source,command)) return true;
     const config_seat *seat=source->seats+index;
-    qa_input_seat *input=seat->input;
-    qa_console_dialect movement=seat->movement_dialect;
     frontend_config_store *manager=source->manager;
     if (manager->input_source==source)
         for (size_t i=0;i<manager->input_count;++i)
-            if (manager->input_seats[i].logical==command->seat && manager->input_seats[i].input &&
-                qa_input_seat_ordinal(manager->input_seats[i].input)==ordinal) {
-                input=manager->input_seats[i].input; movement=manager->input_seats[i].movement_dialect;
-            }
-    if (input && qa_input_seat_ordinal(input)==ordinal &&
-        command->dialect==movement && command->owner==source->command.owner &&
-        command->session==source->command.session && command->client==source->command.client &&
-        command->direct==source->command.direct && !command->script && !command->console_text &&
-        qa_application_command_context_active(source->application,command)) {
-        qa_command_context actual=qa_input_seat_context(input);
-        if (same_command(command,&actual)) return true;
-    }
+            if (manager->input_seats[i].logical==command->seat &&
+                command->cvar_view==qa_cvars_view_identity(manager->input_seats[i].mouse))
+                seat=manager->input_seats+i;
+    if (command->cvar_view==qa_cvars_view_identity(seat->mouse) &&
+        qa_console_context_bound(source->console,command) &&
+        qa_application_command_context_active(source->application,command)) return true;
     return fail(error,QA_ERROR_ARGUMENT,"Prepared input context leaves its actual source and authored seat");
 }
+
 static bool seat_input_create(frontend_config_source *source,config_seat *seat,
     const qa_input_seat *active,unsigned physical,qa_error *error)
 {
     qa_command_context command;
     if (!current_command(source,&command,error) ||
-        !capture_seat_command(source->application,&command,seat->logical,&command,error)) return false;
+        !capture_seat_command(source,&command,seat->logical,&command,error)) return false;
+    if (seat->cvars && !qa_console_context_bound(source->console,&command) &&
+        !qa_console_bind_view(source->console,seat->cvars,&command,error)) return false;
+    command.cvar_view=qa_cvars_view_identity(seat->mouse);
+    command.dialect=seat->movement_dialect;
+    if (!qa_console_context_bound(source->console,&command) &&
+        !qa_console_bind_view(source->console,seat->mouse,&command,error)) return false;
     qa_input_seat_options options={.context=command,.console=source->console,.cvars=seat->mouse,
         .gamepad=active?*qa_input_seat_gamepad_tuning((qa_input_seat *)active):qa_gamepad_defaults(),
         .seat=physical,.context_ready=input_context,.context_user=source};
@@ -337,6 +330,10 @@ frontend_config_source *frontend_config_store_source_context(const frontend_conf
         if (command->origin==QA_COMMAND_SEAT && seat<source->seat_count &&
             (command->cvar_view==qa_cvars_view_identity(source->seats[seat].cvars) ||
              command->cvar_view==qa_cvars_view_identity(source->seats[seat].mouse))) return source;
+        if (command->origin==QA_COMMAND_SEAT && owner->input_source==source)
+            for (size_t i=0;i<owner->input_count;++i)
+                if (owner->input_seats[i].logical==command->seat &&
+                    command->cvar_view==qa_cvars_view_identity(owner->input_seats[i].mouse)) return source;
     }
     return NULL;
 }
@@ -407,8 +404,6 @@ bool frontend_config_store_images_command_current(const frontend_config_store *m
     return manager && console && console==manager->root_console && command &&
         application==manager->shared_application && candidate==manager->shared_candidate &&
         frontend_config_store_shared(manager,application,candidate) &&
-        root_current(manager) && images_phase(manager) &&
-        qa_application_command_context_active(manager->shared_application,command) &&
         frontend_startup_images_command_current(manager->images_program,console,command);
 }
 bool frontend_config_store_images_pending(const frontend_config_store *manager)
@@ -462,39 +457,11 @@ static bool images_prepare(frontend_config_store *manager,const qa_application_s
     if (!root_current(manager)) return fail(error,QA_ERROR_ARGUMENT,"Images require the actual common ENGINE root");
     return true;
 }
-static bool images_context(void *context,const qa_command_context *command)
-{
-    frontend_config_store *manager=context;
-    const qa_command_context *basis=images_basis(manager);
-    return command && frontend_config_store_shared(manager,manager->shared_application,manager->shared_candidate) &&
-        images_phase(manager) &&
-        command->session==basis->session && command->owner==basis->owner && command->client==basis->client &&
-        command->seat==basis->seat && command->origin==basis->origin && command->dialect==basis->dialect &&
-        command->cvar_view==basis->cvar_view &&
-        command->registry==basis->registry && command->generation==basis->generation &&
-        command->console_text==basis->console_text && qa_actor_id_equal(command->actor,basis->actor) &&
-        qa_application_command_context_active(manager->shared_application,command);
-}
 static bool images_access(frontend_config_store *manager,const qa_command_context *command,
     qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
 {
     return manager->shared && frontend_shared_values_programme_access(
         frontend_shared_settings_values(manager->shared),manager->root_console,command,registry,edit,error);
-}
-static qa_cvars *images_owner(void *context,const qa_command_context *command,const char *name)
-{
-    (void)name;
-    qa_cvars *registry=NULL; qa_cvars_edit *edit=NULL; qa_error error={0};
-    return images_access(context,command,&registry,&edit,&error)?registry:NULL;
-}
-static qa_cvars *images_visible(void *context,const qa_command_context *command,size_t index)
-{ return index?NULL:images_owner(context,command,NULL); }
-static bool images_edit(void *context,const qa_command_context *command,qa_cvars *registry,
-    qa_cvars_edit **out,qa_error *error)
-{
-    qa_cvars *actual=NULL;
-    if (!images_access(context,command,&actual,out,error)) return false;
-    return actual==registry || fail(error,QA_ERROR_ARGUMENT,"Image command lost its canonical prepared registry");
 }
 static void images_print(void *context,const qa_command_context *command,const char *text)
 { frontend_console_print(((frontend_config_store *)context)->frontend,command,text); }
@@ -593,8 +560,7 @@ static bool advance_images(void *context,qa_application *application,const qa_la
             manager->images_command=manager->root_command;
             manager->images_command.cvar_view=qa_cvars_view_identity(manager->images_cvars);
             qa_console_options options={.context=manager->images_command,.cvars=manager->images_cvars,.user=manager,
-                .print=images_print,.cvar_owner=images_owner,.visible_cvars=images_visible,.cvar_edit=images_edit,
-                .context_active=images_context,.post_dispatch=images_observe};
+                .print=images_print,.post_dispatch=images_observe};
             if (!qa_console_bind_source(manager->root_console,&options,error)) return false;
             manager->images_bound=true;
         }
@@ -1446,41 +1412,28 @@ static qa_input_seat *binding_seat(void *context,const qa_command_context *comma
 {
     frontend_config_source *source=context;
     if (!source_context(source,command)) return NULL;
+    if (source->manager->input_source==source)
+        for (size_t i=0;i<source->manager->input_count;++i) {
+            config_seat *seat=source->manager->input_seats+i;
+            if (seat->logical==command->seat && command->cvar_view==qa_cvars_view_identity(seat->mouse))
+                return seat->input;
+        }
     size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
     if (!source->primary || seat>=source->seat_count) return NULL;
     return frontend_config_source_input(source,source->seats[seat].logical);
 }
-static frontend_config_source *cvar_source(const frontend_config_store *manager,
-    const qa_console *console,const qa_command_context *command)
-{
-    if (!manager || !command || console!=qa_application_console(manager->frontend->application)) return NULL;
-    frontend_config_source *source=frontend_config_store_source_context(manager,command);
-    if (source) return source_cvar_context(source,command)?source:NULL;
-    if (command->owner || command->origin!=QA_COMMAND_SEAT ||
-        !qa_application_command_context_active(manager->frontend->application,command)) return NULL;
-    source=published_primary(manager,manager->frontend->application);
-    size_t seat=source?seat_index(source,command->seat):0;
-    return source && source->configured && source->released && !source->running && !source->phase &&
-        seat<source->seat_count?source:NULL;
-}
 qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,const qa_console *console,
     const qa_command_context *command,const char *name)
 {
-    if (!manager || !command || console!=qa_application_console(manager->frontend->application)) return NULL;
-    frontend_remote_config *client=frontend_config_store_client_context(manager,command);
-    if (client) return frontend_remote_config_cvar_owner(client,command,name);
-    frontend_config_source *source=cvar_source(manager,console,command);
-    if (!source) return NULL;
-    if (command->origin==QA_COMMAND_SEAT) {
-        size_t seat=seat_index(source,command->seat);
-        if (seat>=source->seat_count) return NULL;
-        return source->seats[seat].cvars;
-    }
-    return source->cvars;
+    (void)manager; (void)name;
+    return qa_console_visible_cvars((qa_console *)console,command,0);
 }
 qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manager,const qa_console *console,
     const qa_command_context *command,size_t ordinal)
-{ return ordinal?NULL:frontend_config_store_cvar_owner(manager,console,command,NULL); }
+{
+    (void)manager;
+    return qa_console_visible_cvars((qa_console *)console,command,ordinal);
+}
 static frontend_config_source *namespace_game(const frontend_config_store *manager,qa_application *application,
     const qa_application_startup_source *authority,qa_error *error)
 {
@@ -1786,7 +1739,7 @@ static bool replay(void *context,qa_error *error)
     if (source->seat_index) return true;
     qa_command_context command;
     bool captured=source->seat_count?
-        capture_seat_command(source->application,&source->command,source->seats[0].logical,&command,error):
+        capture_seat_command(source,&source->command,source->seats[0].logical,&command,error):
         qa_application_capture_command_context(source->application,&source->command,&command,error);
     return captured && qa_application_startup_replay_variables(source->application,source->console,&command,error);
 }
@@ -1794,7 +1747,7 @@ static bool phase_create(frontend_config_source *source,qa_error *error)
 {
     qa_command_context command;
     bool captured=source->seat_count?
-        capture_seat_command(source->application,&source->command,source->seats[source->seat_index].logical,&command,error):
+        capture_seat_command(source,&source->command,source->seats[source->seat_index].logical,&command,error):
         qa_application_capture_command_context(source->application,&source->command,&command,error);
     if (!captured) return false;
     bool safe=false;
@@ -1893,13 +1846,19 @@ static void seat_values_destroy(config_seat *seat)
     free(seat->registry_instance);
     *seat=(config_seat){0};
 }
-static bool seat_retire(config_seat *seat,qa_error *error)
+static bool seat_console_unbind(frontend_config_source *source,config_seat *seat,qa_error *error)
+{
+    return (!seat->cvars || qa_console_unbind_source(source->console,qa_cvars_view_identity(seat->cvars),error)) &&
+        (!seat->mouse || qa_console_unbind_source(source->console,qa_cvars_view_identity(seat->mouse),error));
+}
+static bool seat_retire(frontend_config_source *source,config_seat *seat,qa_error *error)
 {
     if ((seat->input && (qa_input_seat_has_held(seat->input) || qa_input_seat_release_read(seat->input))) ||
         (seat->mouse && !qa_cvars_observer_idle(seat->mouse)) ||
         (seat->cvars && !qa_cvars_observer_idle(seat->cvars)) ||
         (seat->registry && !frontend_client_registry_release_ready(seat->registry,error)))
         return fail(error,QA_ERROR_ARGUMENT,"Local input profile retains its actual release, registry or client borrower");
+    if (!seat_console_unbind(source,seat,error)) return false;
     if (seat->registry) {
         if (!frontend_client_registry_retire(&seat->registry,error)) {
             seat->cvars=frontend_client_registry_cvars(seat->registry); return false;
@@ -1926,6 +1885,8 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     source->phase=NULL;
     if (!frontend_config_bindings_destroy(source->dedicated_bindings,error)) return false;
     source->dedicated_bindings=NULL;
+    for (size_t i=0;i<source->seat_count;++i)
+        if (!seat_console_unbind(source,source->seats+i,error)) return false;
     for (size_t i=0;i<source->seat_count;++i) if (source->seats[i].registry) {
         config_seat *seat=source->seats+i;
         if (!frontend_client_registry_retire(&seat->registry,error)) {
@@ -2323,6 +2284,13 @@ static void discard_retained_input(frontend_config_store *manager)
 {
     for (size_t i=0;i<manager->input_count;++i) {
         config_seat *seat=manager->input_seats+i;
+        if (seat->mouse_owned) {
+            qa_error error={0};
+            if (!qa_console_unbind_source(manager->input_source->console,qa_cvars_view_identity(seat->mouse),&error)) {
+                manager->input_source->observation_failure=error; return;
+            }
+            qa_cvars_detach_callbacks(seat->mouse); qa_cvars_destroy(seat->mouse);
+        }
         qa_input_seat_destroy(seat->input);
         frontend_authored_bindings_destroy(seat->authored);
         *seat=(config_seat){0};
@@ -2392,8 +2360,13 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
         if (!active || qa_input_seat_has_held(active) || qa_input_seat_release_read(active))
             return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its returned actual logical dictionary");
         seat->logical=old->logical; seat->mouse=old->mouse;
-        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error) ||
-            !seat_input_create(source,seat,active,(unsigned)i,error) ||
+        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) return false;
+        if (qa_cvars_dialect(old->mouse)!=seat->movement_dialect) {
+            seat->mouse=seat_registry(source,seat->movement_dialect,seat->logical,error);
+            if (!seat->mouse) return false;
+            seat->mouse_owned=true;
+        }
+        if (!seat_input_create(source,seat,active,(unsigned)i,error) ||
             !frontend_authored_bindings_clone(old->authored,&seat->authored,error)) return false;
         frontend_config_weapon_catalog catalog;
         qa_strings *strings=qa_session_strings(qa_application_session(application));
@@ -2433,7 +2406,7 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     }
     qa_command_context seat_command;
     ok=ok && current_command(source,&seat_command,error) &&
-        capture_seat_command(application,&seat_command,seat->logical,&seat_command,error);
+        capture_seat_command(source,&seat_command,seat->logical,&seat_command,error);
     if (ok && seat->cvars && seat->mouse) ok=seat_input_create(source,seat,NULL,physical,error);
     char index[16],path[64]; snprintf(index,sizeof(index),"%" PRIu32,seat->logical);
     snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)seat->logical+1);
@@ -2539,7 +2512,7 @@ bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_
             }
             ++i; continue;
         }
-        if (!seat_retire(seat,error)) return false;
+        if (!seat_retire(source,seat,error)) return false;
         for (size_t next=i+1;next<source->seat_count;++next) source->seats[next-1]=source->seats[next];
         source->seats[--source->seat_count]=(config_seat){0};
     }
@@ -2763,8 +2736,9 @@ static bool prepare_input_publication(frontend_config_source *source,config_seat
         return fail(error,QA_ERROR_ARGUMENT,"Configuration candidate requires an isolated staged input seat");
     qa_command_context current;
     if (!current_command(source,&current,error) ||
-        !capture_seat_command(source->application,&current,seat->logical,&current,error) ||
-        !qa_input_seat_context_ready(seat->input,&current,error)) return false;
+        !capture_seat_command(source,&current,seat->logical,&current,error)) return false;
+    current.cvar_view=qa_cvars_view_identity(seat->mouse); current.dialect=seat->movement_dialect;
+    if (!qa_input_seat_context_ready(seat->input,&current,error)) return false;
     qa_input_seat_context_publish(seat->input,&current);
     if (!qa_input_seat_profile(seat->input,seat->movement_dialect,error)) return false;
     int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)ordinal):-1;
@@ -2913,13 +2887,6 @@ static bool begin_retire(void *context,qa_application *application,
     return !frontend_native_q3_count(manager->frontend) ||
         frontend_native_q3_retire_source(manager->frontend,owner,selected,error);
 }
-static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console *console,
-    const qa_command_context *command,const char *name)
-{
-    frontend_config_store *manager=context;
-    return application==manager->frontend->application?
-        frontend_config_store_cvar_owner(manager,console,command,name):NULL;
-}
 static bool local_userinfo(void *context,qa_application *application,const qa_launch_choices *choices,
     const qa_launch_seat *seat,qa_cvars **out,const qa_cvar_view **field_of_view,bool *found,qa_error *error)
 {
@@ -2960,18 +2927,6 @@ static bool local_userinfo(void *context,qa_application *application,const qa_la
     *field_of_view=frontend_config_store_engine_value(manager,application,source->console,"fov");
     *found=true; return true;
 }
-static bool cvar_edit(void *context,qa_application *application,qa_console *console,
-    const qa_command_context *command,qa_cvars *registry,qa_cvars_edit **out,qa_error *error)
-{ return frontend_config_store_cvar_edit(context,application,console,command,registry,out,error); }
-static bool visible_cvars(void *context,qa_application *application,qa_console *console,
-    const qa_command_context *command,size_t index,qa_cvars **out)
-{
-    frontend_config_store *manager=context;
-    if (!out || application!=manager->frontend->application) return false;
-    qa_cvars *owner=frontend_config_store_cvar_owner(manager,console,command,NULL);
-    if (!owner) return false;
-    *out=index?NULL:owner; return true;
-}
 static bool source_read(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,const char *name,qa_bytes *bytes,void **lease,qa_error *error)
 {
@@ -3010,6 +2965,10 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
                 frontend_authored_bindings *authored=stable->authored;
                 stable->authored=seat->authored; seat->authored=authored;
                 stable->movement_dialect=seat->movement_dialect;
+                if (seat->mouse_owned) {
+                    qa_cvars *previous=stable->mouse;
+                    stable->mouse=seat->mouse; seat->mouse=previous;
+                }
                 qa_input_seat_destroy(stable->input); stable->input=NULL;
             }
         }
@@ -3308,7 +3267,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
     manager->hooks=(qa_application_startup_hooks){.context=manager,.prepare_source=prepare,.advance_source=advance,
         .read_script=phase_read,.release_script=phase_release,.script_complete=phase_complete,
         .allow_command=allow,.prepare_candidate=prepare_candidate,.release_source=phase_destroy,.finish_candidate=finish,
-        .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,.cvar_owner=cvar_owner,.visible_cvars=visible_cvars,
+        .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,
         .local_userinfo=local_userinfo,
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
         .configuration_store=configuration_store,.program_source=program_source,
@@ -3316,7 +3275,7 @@ frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_err
         .bind_hosted_configuration=bind_hosted,.publish_hosted_configuration=publish_hosted,
         .candidate_values=candidate_values,.prepare_root=prepare_root,.advance_images=advance_images,.advance_candidate=advance_candidate,
         .advance_validated_candidate=advance_validated_candidate,.refresh_source=refresh_source,
-        .abort_candidate=abort_candidate,.cvar_edit=cvar_edit,.candidate_retirement_ready=candidate_retirement_ready,
+        .abort_candidate=abort_candidate,.candidate_retirement_ready=candidate_retirement_ready,
         .candidate_languages=candidate_languages,.prepare_publication=prepare_publication,
         .ready_publication=ready_publication,.owned_publication_ready=owned_publication_ready,
         .consume_publication=consume_publication,.finish_publication=finish_publication,

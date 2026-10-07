@@ -319,13 +319,6 @@ typedef struct qa_console_options {
      * fallback callbacks may queue work, dispatch nested commands, or retire an
      * owner. Destroy the console only after its active invocation has returned. */
     void (*print)(void *user, const qa_command_context *context, const char *text);
-    qa_cvars *(*cvar_owner)(void *user, const qa_command_context *context, const char *name);
-    qa_cvars *(*visible_cvars)(void *user, const qa_command_context *context, size_t index);
-    /* Resolves a prepared scalar view of this exact canonical registry for
-     * the actual command context. A successful NULL result uses live values;
-     * rejection must not fall back to an unrelated or live owner. */
-    bool (*cvar_edit)(void *user, const qa_command_context *context, qa_cvars *registry,
-                      struct qa_cvars_edit **out, qa_error *error);
     /* Supply immutable script bytes through the content service. The release
      * callback, when present, runs once after the console has copied them. */
     bool (*read_script)(void *user, const qa_command_context *context, const char *path,
@@ -364,6 +357,8 @@ typedef struct qa_console_entry {
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
 /* Bind Source callbacks to the shared console without another command queue. */
 bool qa_console_bind_source(qa_console *, const qa_console_options *, qa_error *);
+/* Bind a seat projection to the existing common application services. */
+bool qa_console_bind_view(qa_console *, qa_cvars *, const qa_command_context *, qa_error *);
 bool qa_console_unbind_source(qa_console *, uint64_t cvar_view, qa_error *);
 /* Call an exact bound Source forwarder inside the original entered invocation. */
 qa_command_result qa_console_forward_source(qa_console *, const qa_command_invocation *,

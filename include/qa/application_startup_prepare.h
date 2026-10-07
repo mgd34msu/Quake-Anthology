@@ -44,15 +44,11 @@ typedef struct qa_application_startup_hooks {
     bool (*restore_source)(void *, qa_application *, const qa_launch_snapshot *,
         const qa_application_startup_source *, qa_error *);
     bool (*retire_source)(void *, qa_application *, const qa_application_startup_source *, qa_error *);
-    qa_cvars *(*cvar_owner)(void *, qa_application *, qa_console *,
-        const qa_command_context *, const char *);
     /* Pure initial local admission borrows the completed physical seat view
      * and canonical view preference; no command context is synthesized. */
     bool (*local_userinfo)(void *,qa_application *,const qa_launch_choices *,
         const qa_launch_seat *,qa_cvars **,const qa_cvar_view **field_of_view,
         bool *found,qa_error *);
-    bool (*visible_cvars)(void *, qa_application *, qa_console *,
-        const qa_command_context *, size_t, qa_cvars **);
     bool (*read_source_script)(void *, qa_application *, qa_console *,
         const qa_command_context *, const char *, qa_bytes *, void **lease, qa_error *);
     void (*release_source_script)(void *, qa_application *, const qa_cvars *, void *lease);
@@ -112,11 +108,6 @@ typedef struct qa_application_startup_hooks {
      * captured rows become shutdown metadata only under the ENGINE loan. */
     bool (*candidate_retirement_ready)(void *, const qa_application *, const qa_launch_snapshot *,
         const qa_cvars_edit *, qa_error *);
-    /* Resolve the real retained scalar ticket for a captured command or an
-     * exact lexical entered cvar operation. Neither admits handler dispatch;
-     * a rejected view must not fall back to live values. */
-    bool (*cvar_edit)(void *, qa_application *, qa_console *, const qa_command_context *,
-        qa_cvars *, qa_cvars_edit **, qa_error *);
     /* Advance the real isolated image-settings programme and touched archive
      * before any source configuration or initial startup-variable replay. */
     bool (*advance_images)(void *, qa_application *, const qa_launch_snapshot *,

@@ -887,8 +887,7 @@ bool frontend_neutral_config_options(frontend_neutral_configs *owner,uint32_t ph
     *out=(frontend_client_source_options){.physical_seat=physical,.context=row,
         .initialize=initialize,.configure=configure,.install=install,.print=print,
         .configuration_advance=configuration_advance,
-        .allow_command=allow,.cvar_owner=route,.visible_cvars=visible,.cvar_edit=edit,
-        .read_script=read_script,.release_script=script_release,.script_complete=script_complete,
+        .allow_command=allow,.read_script=read_script,.release_script=script_release,.script_complete=script_complete,
         .retire=retire,.released=released};
     return true;
 }

@@ -252,26 +252,6 @@ static bool allow_command(void *opaque, const qa_command_invocation *command)
     struct application_native_q2 *engine = opaque;
     return application_startup_command_allowed(engine->provider, command);
 }
-static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, const char *name)
-{
-    struct application_native_q2 *engine = opaque;
-    qa_cvars *owner = application_startup_cvar_owner(engine->provider, engine->console, command, name);
-    return owner ? owner : engine->cvars;
-}
-static bool cvar_edit(void *opaque, const qa_command_context *command, qa_cvars *registry,
-    qa_cvars_edit **out, qa_error *error)
-{
-    struct application_native_q2 *engine = opaque;
-    return application_startup_cvar_edit(engine->provider, engine->console, command, registry, out, error);
-}
-static qa_cvars *visible_cvars(void *opaque, const qa_command_context *command, size_t index)
-{
-    struct application_native_q2 *engine = opaque;
-    qa_cvars *owner = NULL;
-    if (application_startup_visible_cvars(engine->provider, engine->console, command, index, &owner))
-        return owner;
-    return index == 0 ? engine->cvars : NULL;
-}
 static qa_command_result console_command(void *opaque, const qa_command_invocation *command,
                                             qa_error *error)
 {
@@ -333,7 +313,6 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     qa_console_options console = {.context = engine->command_context, .cvars = engine->cvars,
         .user = engine, .print = console_print, .read_script = read_script, .release_script = release_script,
         .script_complete = script_complete, .allow_command = allow_command,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .source_command = console_command, .capture_context = capture_context, .context_active = context_active};
     engine->command_context.cvar_view = qa_cvars_view_identity(engine->cvars);
     console.context = engine->command_context;

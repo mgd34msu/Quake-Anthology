@@ -44,14 +44,6 @@ static bool command_capture(void *context, const qa_command_context *command,
     *out = *command; return true;
 }
 
-static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
-{
-    application_q3_gear *gear = context;
-    if (!command_active(context, command)) return NULL;
-    return !strcmp(name, "sv_cheats") && gear->options.host.engine_cvars ?
-        gear->options.host.engine_cvars : gear->cvars;
-}
-
 static bool read_script(void *context, const qa_command_context *command,
     const char *path, qa_bytes *out, void **lease, qa_error *error)
 {
@@ -163,8 +155,7 @@ bool q3gear_services(application_q3_gear *gear, qa_error *error)
     gear->cvars = qa_cvars_create_view(gear->options.host.engine_cvars, &cvars, error);
     if (!gear->cvars) return false;
     qa_console_options console = {.context = gear->options.host.command_context,
-        .cvars = gear->cvars, .user = gear, .print = console_print, .cvar_owner = cvar_owner,
-        .read_script = read_script, .release_script = release_script, .source_command = source_command,
+        .cvars = gear->cvars, .user = gear, .print = console_print, .read_script = read_script, .release_script = release_script, .source_command = source_command,
         .capture_context = command_capture, .context_active = command_active};
     gear->options.host.command_context.cvar_view = qa_cvars_view_identity(gear->cvars);
     console.context = gear->options.host.command_context;

@@ -98,8 +98,6 @@ static bool command_current(void *context,const qa_command_context *command)
 }
 static bool command_capture(void *context,const qa_command_context *command,qa_command_context *out,qa_error *e)
 { if(!command_current(context,command)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component command left its private source namespace"); *out=*command; return true; }
-static qa_cvars *cvar_owner(void *context,const qa_command_context *command,const char *name)
-{ (void)name; application_q3_component *c=context; return command_current(c,command)?c->cvars:NULL; }
 static bool cheats(void *context)
 { application_q3_component *c=context; const qa_cvar_view *v=qa_cvars_find(c->cvars,"sv_cheats"); return v&&v->integer!=0; }
 static bool read_script(void *context,const qa_command_context *command,const char *path,qa_bytes *out,void **lease,qa_error *e)
@@ -136,8 +134,7 @@ bool q3component_services(application_q3_component *c,qa_error *e)
             qa_cvars_set(c->cvars,"mapname",name,true,e);
         free(name); if(!registered) return false;
     }
-    qa_console_options console={.context=c->options.host.command_context,.cvars=c->cvars,.user=c,.print=console_print,.cvar_owner=cvar_owner,
-        .read_script=read_script,.release_script=release_script,.source_command=console_command,.capture_context=command_capture,.context_active=command_current};
+    qa_console_options console={.context=c->options.host.command_context,.cvars=c->cvars,.user=c,.print=console_print,.read_script=read_script,.release_script=release_script,.source_command=console_command,.capture_context=command_capture,.context_active=command_current};
     c->options.host.command_context.cvar_view=qa_cvars_view_identity(c->cvars);
     console.context=c->options.host.command_context;
     c->console=qa_application_console(c->options.application);

@@ -69,33 +69,6 @@ bool application_guest_q3_console_startup(application_provider *provider, qa_err
     return application_publication_source_capacity(provider, (uint32_t)requested, error);
 }
 
-static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
-{
-    struct application_guest_q3_console *owner = context;
-    qa_cvars *routed = application_startup_cvar_owner(owner->engine->provider,
-        owner->console, command, name);
-    if (routed) return routed;
-    return application_guest_q3_cvar_owner(owner->engine->provider, name);
-}
-
-static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
-{
-    struct application_guest_q3_console *owner = context;
-    qa_cvars *routed = NULL;
-    if (application_startup_visible_cvars(owner->engine->provider, owner->console,
-        command, index, &routed)) return routed;
-    return index == 0 ? owner->cvars : index == 1 ?
-        application_engine_shutdown_cvars(owner->engine->provider) : NULL;
-}
-
-static bool cvar_edit(void *context, const qa_command_context *command,
-    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    struct application_guest_q3_console *owner = context;
-    return application_startup_cvar_edit(owner->engine->provider, owner->console,
-        command, registry, out, error);
-}
-
 static bool cheats_allowed(void *context)
 {
     struct application_guest_q3_console *owner = context;
@@ -264,9 +237,7 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
     owner->cvars = qa_cvars_create_view(engine->provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
-        .user = owner, .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
-        .cvar_edit = cvar_edit,
-        .capture_context = capture, .context_active = active, .read_script = read_script,
+        .user = owner, .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};
     options.context.cvar_view = qa_cvars_view_identity(owner->cvars);

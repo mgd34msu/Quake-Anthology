@@ -160,21 +160,6 @@ static bool allow(void *context,const qa_command_invocation *call)
     return parent(o) && (!o->options.configuration.allow_command ||
         o->options.configuration.allow_command(o->options.configuration.context,call));
 }
-static qa_cvars *route(void *context,const qa_command_context *origin,const char *name)
-{
-    frontend_network_unified_client_service *o=context;
-    return o->options.configuration.cvar_owner(o->options.configuration.context,origin,name);
-}
-static qa_cvars *visible(void *context,const qa_command_context *origin,size_t index)
-{
-    frontend_network_unified_client_service *o=context;
-    return o->options.configuration.visible_cvars(o->options.configuration.context,origin,index);
-}
-static bool edit(void *context,const qa_command_context *origin,qa_cvars *variables,struct qa_cvars_edit **out,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return o->options.configuration.cvar_edit(o->options.configuration.context,origin,variables,out,e);
-}
 static bool script(void *context,const qa_command_context *origin,const char *path,qa_bytes *out,void **lease,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
@@ -210,9 +195,6 @@ static frontend_client_source_options physical_options(frontend_network_unified_
     c.connection_current=connection;c.retirement_current=frontend_network_unified_client_retirement_current;
     c.entity_current=NULL; c.command=command; c.forward=forward;
     c.allow_command=allow;
-    if (c.cvar_owner) c.cvar_owner=route;
-    if (c.visible_cvars) c.visible_cvars=visible;
-    if (c.cvar_edit) c.cvar_edit=edit;
     if (c.read_script) { c.read_script=script; c.release_script=script_release; }
     if (c.script_complete) c.script_complete=script_complete;
     c.retire=retire; c.released=released;

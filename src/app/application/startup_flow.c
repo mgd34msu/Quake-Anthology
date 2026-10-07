@@ -144,17 +144,13 @@ bool application_startup_root_register(application_provider *provider, const cha
     if (flow->root_definition_provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Shared definition already has an entered source owner");
     flow->root_definition_provider = provider;
-    qa_cvars_edit *edit = NULL;
+    qa_cvars_edit *edit = qa_cvars_prepared_edit(flow->cvars);
     bool ok = qa_application_startup_root_definition_phase(app, flow->candidate);
     if (!ok)
         application_fail(error, QA_ERROR_ARGUMENT, "Shared definition lost its actual preparing source and ENGINE root");
-    if (ok) ok = application_startup_console_cvar_edit(app, flow->console,
-        &flow->root_command, flow->cvars, &edit, error);
     if (ok) {
         if (edit) {
-            if (qa_cvars_edit_registry(edit) != flow->cvars)
-                ok = application_fail(error, QA_ERROR_ARGUMENT, "Shared definition received another canonical edit");
-            else ok = qa_cvars_edit_apply(edit,
+            ok = qa_cvars_edit_apply(edit,
                 &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_REGISTER,
                     .name = name, .value = value, .flags = flags, .owner = owner, .save_policy = policy}, error);
         } else ok = qa_cvars_register(flow->cvars, name, value, flags, owner, NULL, error) &&
@@ -309,23 +305,12 @@ bool qa_application_startup_replay_variables(qa_application *app, qa_console *co
     app->routing_snapshot = flow->candidate;
     app->routing_providers = flow->publication ? flow->publication->next : NULL;
     app->routing_provider_count = flow->publication ? flow->publication->next_count : 0;
-    bool ok = false, found = false;
-    for (size_t i = 0; i < flow->count; ++i)
-        if (flow->sources[i].owner.console == console &&
-            flow->sources[i].owner.command.cvar_view == command->cvar_view) {
-            found = true;
-            ok = qa_application_command_context_active(app, command) &&
-                command->owner == flow->sources[i].owner.command.owner &&
-                application_startup_seed_console(flow->sources[i].provider, &flow->sources[i].owner, command, error);
-            if (!ok && error && error->code == QA_OK)
-                application_fail(error, QA_ERROR_ARGUMENT, "Variable replay lost its physical source command qualification");
-            break;
-        }
+    startup_source *source = flow->sources + flow->index;
+    bool ok = application_startup_seed_console(source->provider, &source->owner, command, error);
     app->routing_snapshot = routing;
     app->routing_providers = providers;
     app->routing_provider_count = count;
-    return found ? ok : application_fail(error, QA_ERROR_ARGUMENT,
-        "Variable replay has another physical source console");
+    return ok;
 }
 
 static bool q2_read(void *context, const qa_command_context *command, const char *name,

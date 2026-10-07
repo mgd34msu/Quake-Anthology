@@ -27,27 +27,6 @@ bool application_native_q3_remote_client_only(const application_provider *provid
     return native_receiver(provider) && (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
         !(provider->launch->roles & ~client_roles);
 }
-static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
-{
-    struct application_native_q3_remote_role *row = context;
-    if (row->retiring) return NULL;
-    qa_cvars *routed = application_startup_cvar_owner(row->provider, row->console, command, name);
-    return routed ? routed : row->cvars;
-}
-static bool cvar_edit(void *context, const qa_command_context *command, qa_cvars *registry,
-    qa_cvars_edit **out, qa_error *error)
-{
-    struct application_native_q3_remote_role *row = context;
-    return application_startup_cvar_edit(row->provider, row->console, command, registry, out, error);
-}
-static qa_cvars *visible(void *context, const qa_command_context *command, size_t index)
-{
-    struct application_native_q3_remote_role *row = context;
-    if (row->retiring) return NULL;
-    qa_cvars *routed = NULL;
-    if (application_startup_visible_cvars(row->provider, row->console, command, index, &routed)) return routed;
-    return index == 0 ? row->cvars : index == 1 ? application_engine_shutdown_cvars(row->provider) : NULL;
-}
 static bool capture(void *context, const qa_command_context *source, qa_command_context *out, qa_error *error)
 {
     struct application_native_q3_remote_role *row = context;
@@ -262,8 +241,7 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     row->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .seat = seat->id,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars, .user = row,
-        .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible, .cvar_edit = cvar_edit,
-        .capture_context = capture, .context_active = active, .read_script = read_script,
+        .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allowed,
         .source_command = dispatch, .forward = forward};
     options.context.cvar_view = qa_cvars_view_identity(row->cvars);

@@ -71,8 +71,6 @@ static bool capture(void *context,const qa_command_context *command,qa_command_c
     if(!active(context,command)) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene console left its actual namespace");
     *out=*command; return true;
 }
-static qa_cvars *cvar_owner(void *context,const qa_command_context *command,const char *name)
-{ (void)name; component_scene_row *row=context; return active(row,command)?row->cvars:NULL; }
 static qa_command_result console_command(void *context,const qa_command_invocation *invocation,qa_error *e)
 {
     component_scene_row *row=context;
@@ -120,7 +118,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     if(!row->cvars) row->cvars=qa_cvars_create_view(options->application->cvars,&cvars,e);
     if(!row->cvars) return false;
     qa_console_options console={.context={.owner=row->services,.seat=row->seat,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_LOCAL},
-        .cvars=row->cvars,.user=row,.print=console_print,.cvar_owner=cvar_owner,.source_command=console_command,
+        .cvars=row->cvars,.user=row,.print=console_print,.source_command=console_command,
         .capture_context=capture,.context_active=active};
     console.context.cvar_view=qa_cvars_view_identity(row->cvars);
     if(!row->console&&qa_console_bind_source(options->application->console,&console,e))

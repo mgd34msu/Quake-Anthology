@@ -30,9 +30,6 @@ typedef struct frontend_client_source_options {
     bool (*entity_current)(void *, const qa_application_client_source *, uint32_t, uint64_t *);
     qa_command_fallback command, forward;
     bool (*allow_command)(void *, const qa_command_invocation *);
-    qa_cvars *(*cvar_owner)(void *, const qa_command_context *, const char *);
-    qa_cvars *(*visible_cvars)(void *, const qa_command_context *, size_t);
-    bool (*cvar_edit)(void *, const qa_command_context *, qa_cvars *, struct qa_cvars_edit **, qa_error *);
     bool (*read_script)(void *, const qa_command_context *, const char *, qa_bytes *, void **, qa_error *);
     void (*release_script)(void *, void *);
     void (*script_complete)(void *, const qa_command_context *, const char *, bool);

@@ -300,22 +300,17 @@ typedef struct cvar_access {
     qa_cvars_edit *edit;
     cvar_values *values;
 } cvar_access;
-static bool cvar_access_read(qa_console *console,const qa_command_context *context,
-    qa_cvars *registry,cvar_access *out,qa_error *error)
+static cvar_access cvar_access_read(qa_cvars *registry)
 {
-    *out=(cvar_access){.registry=registry,.values=qac_cvars_current_values(registry)};
-    const qa_console_options *options=options_for(console,context);
-    if (!options) return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar view has retired");
-    if (!registry || !options->cvar_edit) return true;
-    if (!options->cvar_edit(options->user,context,registry,&out->edit,error)) return false;
-    if (out->edit && !qa_cvars_same_store(qa_cvars_edit_registry(out->edit),registry))
-        return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar view belongs to another registry");
-    if (out->edit) {
-        cvar_edit_view *view=qac_cvars_edit_view(out->edit,registry);
-        out->values=view?&view->values:NULL;
+    cvar_access access={.registry=registry,.edit=qa_cvars_prepared_edit(registry),
+        .values=qac_cvars_current_values(registry)};
+    if (access.edit) {
+        cvar_edit_view *view=qac_cvars_edit_view(access.edit,registry);
+        access.values=view?&view->values:NULL;
     }
-    return true;
+    return access;
 }
+
 static bool cvar_enter(cvar_access access,qa_error *error)
 { return !access.edit || qa_cvars_edit_enter(access.edit,access.registry,error); }
 static bool cvar_leave(cvar_access access,qa_error *error)
@@ -342,8 +337,7 @@ bool qa_console_cvar_read(qa_console *console,const qa_command_context *context,
         return qac_fail(error,QA_ERROR_ARGUMENT,"routed cvar read requires its console, name and output");
     context=context_for(console,context);
     if (!valid_cvar_context(console,context,error)) return false;
-    cvar_access access;
-    if (!cvar_access_read(console,context,cvars_for(console,context),&access,error)) return false;
+    cvar_access access=cvar_access_read(cvars_for(console,context));
     *out=cvar_find(access,name); return true;
 }
 bool qa_console_cvar_context(qa_console *console,const qa_command_context *source,
@@ -409,8 +403,7 @@ bool qa_console_cvar_access(qa_console *console,const qa_command_context *contex
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar access requires its actual routed name and outputs");
     context=context_for(console,context);
     if (!valid_cvar_context(console,context,error)) return false;
-    cvar_access access;
-    if (!cvar_access_read(console,context,cvars_for(console,context),&access,error)) return false;
+    cvar_access access=cvar_access_read(cvars_for(console,context));
     if (!access.registry) return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar access has no actual name owner");
     *registry=access.registry; *edit=access.edit; return true;
 }
@@ -423,7 +416,7 @@ static bool cvar_snapshot_access(qa_console *console,const qa_command_context *c
     if (!valid_cvar_context(console,context,error)) return false;
     if (cvars_for(console,context)!=registry)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot registry is not its bound view");
-    return cvar_access_read(console,context,registry,out,error);
+    *out=cvar_access_read(registry); return true;
 }
 bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *context,
     qa_cvars *registry,size_t ordinal,const qa_cvar_view **out,qa_error *error)
@@ -449,8 +442,7 @@ bool qa_console_cvar_apply(qa_console *console,const qa_command_context *context
         return qac_fail(error,QA_ERROR_ARGUMENT,"routed cvar mutation requires its console and operation");
     context=context_for(console,context);
     if (!valid_cvar_context(console,context,error)) return false;
-    cvar_access access;
-    if (!cvar_access_read(console,context,cvars_for(console,context),&access,error)) return false;
+    cvar_access access=cvar_access_read(cvars_for(console,context));
     return cvar_apply(access,command,error);
 }
 bool qa_console_cvar_startup_set(qa_console *console,const qa_command_context *context,
@@ -460,9 +452,8 @@ bool qa_console_cvar_startup_set(qa_console *console,const qa_command_context *c
         return qac_fail(error,QA_ERROR_ARGUMENT,"startup cvar publication requires its console and scalar");
     context=context_for(console,context);
     if (!valid_cvar_context(console,context,error)) return false;
-    cvar_access access;
-    if (!cvar_access_read(console,context,cvars_for(console,context),&access,error) ||
-        !cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true},error)) return false;
+    cvar_access access=cvar_access_read(cvars_for(console,context));
+    if (!cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true},error)) return false;
     if (qa_cvars_dialect(access.registry)!=QA_CONSOLE_Q3) return true;
     const qa_cvar_view *actual=cvar_find(access,name);
     if (!actual) return qac_fail(error,QA_ERROR_NOT_FOUND,"startup value has no admitted physical cvar");
@@ -602,6 +593,15 @@ bool qa_console_bind_source(qa_console *console,const qa_console_options *option
     return true;
 }
 
+bool qa_console_bind_view(qa_console *console,qa_cvars *view,
+    const qa_command_context *constructor,qa_error *error)
+{
+    if (!console || !constructor) return qa_console_bind_source(console,NULL,error);
+    qa_console_options options=console->options;
+    options.cvars=view; options.context=*constructor; options.startup_commands=NULL;
+    return qa_console_bind_source(console,&options,error);
+}
+
 static void free_contribution(command_contribution *part)
 {
     free((char *)part->view.description);
@@ -642,9 +642,10 @@ static bool contribution_visible(const qa_console *console,const command_contrib
     if (!part->view.owner && part->view.engine_command &&
         (!part->cvar_view || part->cvar_view==console->options.context.cvar_view)) return true;
     if (!part->cvar_view || part->cvar_view==context->cvar_view) return true;
-    if (context->owner) return false;
     const qa_console_options *options=options_for(console,&(qa_command_context){.cvar_view=part->cvar_view});
     if (!options) return false;
+    if (context->owner) return part->view.engine_command &&
+        options->context.owner==context->owner && options->context.origin==QA_COMMAND_SERVER;
     qa_command_context receiver;
     qa_error error={0};
     return source_context_current(console,&options->context,&receiver,&error);
@@ -656,6 +657,10 @@ static command_contribution *select_contribution(const qa_console *console,const
     if (context->cvar_view && context->cvar_view!=console->options.context.cvar_view)
         for (command_contribution *part=entry ? entry->contributions : NULL; part; part=part->next)
             if (part->ordinary && part->view.engine_command && part->cvar_view==context->cvar_view &&
+                contribution_visible(console,part,context)) return part;
+    if (context->owner)
+        for (command_contribution *part=entry ? entry->contributions : NULL; part; part=part->next)
+            if (part->ordinary && part->view.engine_command && part->lifetime_owner==context->owner &&
                 contribution_visible(console,part,context)) return part;
     for (command_contribution *part=entry ? entry->contributions : NULL; part; part=part->next)
         if (part->ordinary && !part->view.owner && part->view.engine_command &&
@@ -809,8 +814,7 @@ static bool register_command(qa_console *console,const qa_command_context *const
         if (!part->retired && part->ordinary && part->view.owner==receiver && part->cvar_view==context.cvar_view)
             return qac_fail(error,QA_ERROR_ARGUMENT,"command is already registered by this Source view");
     qa_cvars *registry = cvars_for(console,&context);
-    cvar_access access;
-    if (!cvar_access_read(console,&context,registry,&access,error)) return false;
+    cvar_access access=cvar_access_read(registry);
     const qa_cvar_view *variable=cvar_find(access,name);
     if (context.dialect != QA_CONSOLE_Q3 && variable && *variable->value)
         return qac_fail(error, QA_ERROR_ARGUMENT, "command name is already a cvar");
@@ -1066,8 +1070,7 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
         char *name = qac_copy_n(text + token.start, token.size, error);
         if (name == NULL) { free(text); return false; }
         qa_cvars *registry = cvars_for(console,context);
-        cvar_access access;
-        if (!cvar_access_read(console,context,registry,&access,error)) { free(name); free(text); return false; }
+        cvar_access access=cvar_access_read(registry);
         const qa_cvar_view *variable=cvar_find(access,name);
         free(name);
         const char *value = variable == NULL || (qac_q2(qa_cvars_dialect(registry)) &&
@@ -1132,8 +1135,7 @@ static bool cvar_command(qa_console *console, const qa_command_invocation *comma
 {
     *handled = false;
     qa_cvars *registry = cvars_for(console,&command->context);
-    cvar_access access;
-    if (!cvar_access_read(console,&command->context,registry,&access,error)) return false;
+    cvar_access access=cvar_access_read(registry);
     const qa_cvar_view *variable=cvar_find(access,command->argv[0]);
     if (variable != NULL) {
         *handled = true;
@@ -1772,8 +1774,7 @@ static bool decimal_text(const char *text)
 
 static bool reset_all(qa_console *console,const qa_command_context *context,qa_error *error)
 {
-    cvar_access access;
-    if (!cvar_access_read(console,context,cvars_for(console,context),&access,error)) return false;
+    cvar_access access=cvar_access_read(cvars_for(console,context));
     size_t count=cvar_count(access);
     qa_console_dialect dialect=qa_cvars_dialect(access.registry);
     uint32_t protected=qac_q2(dialect)?QA_Q2_CVAR_NOSET|QA_Q2_CVAR_READONLY:
@@ -1842,9 +1843,8 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     }
     if (qac_equal(name, "resetall")) return reset_all(console, context, error);
     if (qac_equal(name, "cvar_restart") && context->dialect == QA_CONSOLE_Q3) {
-        cvar_access access;
-        return cvar_access_read(console,context,cvars_for(console,context),&access,error) &&
-            cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESTART},error);
+        cvar_access access=cvar_access_read(cvars_for(console,context));
+        return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESTART},error);
     }
     if (qac_equal(name, "cmdlist")) {
         const char *pattern = context->dialect == QA_CONSOLE_Q3 && command->argc > 1 ? command->argv[1] : NULL;
@@ -1870,8 +1870,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     if (qac_equal(name, "cvarlist")) {
         const char *pattern = context->dialect == QA_CONSOLE_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
-        cvar_access access;
-        if (!cvar_access_read(console,context,cvars_for(console,context),&access,error)) return false;
+        cvar_access access=cvar_access_read(cvars_for(console,context));
         size_t visible_count=cvar_count(access);
         size_t handles=cvar_handles(access);
         for (size_t n=0;n<visible_count;++n) {
@@ -1918,8 +1917,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     const char *variable_name = command->argv[1];
     qa_cvars *registry = cvars_for(console,context);
     if (registry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "command has no cvar owner");
-    cvar_access access;
-    if (!cvar_access_read(console,context,registry,&access,error)) return false;
+    cvar_access access=cvar_access_read(registry);
     if (set || flagged) {
         if (command->argc < 3 || (set && qac_q2(context->dialect) && command->argc > 4) ||
             (flagged && context->dialect == QA_CONSOLE_Q3 && command->argc != 3)) {

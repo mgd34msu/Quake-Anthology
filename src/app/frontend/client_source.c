@@ -166,33 +166,6 @@ static void print(void *context, const qa_command_context *command, const char *
 }
 static void cvar_print(void *context, const char *text)
 { frontend_client_source *s = context; print(s, &s->command, text); }
-static bool cvar_current(frontend_client_source *s, const qa_command_context *command)
-{ return active(s, command) || (s && qa_console_cvar_entered(s->console, command)); }
-static qa_cvars *cvars(void *context, const qa_command_context *command, const char *name)
-{
-    frontend_client_source *s = context;
-    if (!cvar_current(s, command)) return NULL;
-    if (!s->options.cvar_owner) return registry(s);
-    ++s->calls; qa_cvars *out = s->options.cvar_owner(s->options.context, command, name); --s->calls;
-    return out;
-}
-static qa_cvars *visible(void *context, const qa_command_context *command, size_t ordinal)
-{
-    frontend_client_source *s = context;
-    if (!cvar_current(s, command)) return NULL;
-    if (!s->options.visible_cvars) return ordinal ? NULL : registry(s);
-    ++s->calls; qa_cvars *out = s->options.visible_cvars(s->options.context, command, ordinal); --s->calls;
-    return out;
-}
-static bool edit(void *context, const qa_command_context *command, qa_cvars *variables,
-    struct qa_cvars_edit **out, qa_error *error)
-{
-    frontend_client_source *s = context;
-    if (!out || !cvar_current(s, command)) return false;
-    ++s->calls;
-    bool ok = s->options.cvar_edit(s->options.context, command, variables, out, error);
-    --s->calls; return ok;
-}
 static bool script(void *context, const qa_command_context *command, const char *path,
     qa_bytes *out, void **lease, qa_error *error)
 {
@@ -270,11 +243,14 @@ static uint32_t capabilities(const frontend_client_source_options *o)
     return (o->initialize ? 1u : 0u) | (o->configure ? 2u : 0u) | (o->print ? 4u : 0u) |
         (o->connection_current ? 8u : 0u) | (o->entity_current ? 16u : 0u) |
         (o->command ? 32u : 0u) | (o->forward ? 64u : 0u) | (o->allow_command ? 128u : 0u) |
-        (o->cvar_owner ? 256u : 0u) | (o->visible_cvars ? 512u : 0u) | (o->cvar_edit ? 1024u : 0u) |
         (o->install ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
         (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u) |
         (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u) |
         (o->configuration_advance ? 131072u : 0u) | (o->retirement_current ? 262144u : 0u);
+}
+static bool capabilities_match(const frontend_client_source_options *options, uint32_t saved)
+{
+    return (saved & ~(256u | 512u | 1024u)) == capabilities(options);
 }
 static bool install_current(void *context, const qa_console *console,
     const qa_command_context *command, qa_error *error)
@@ -308,7 +284,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         !options->print || !options->connection_current ||
         (!state && (!options->initialize || !options->configure)) ||
         ((options->read_script != NULL) != (options->release_script != NULL)) ||
-        (state && (!metadata || !resolvers || state->capabilities != capabilities(options))) ||
+        (state && (!metadata || !resolvers || !capabilities_match(options, state->capabilities))) ||
         options->input_origin.script || options->input_origin.actor.registry ||
         options->input_origin.actor.generation || options->input_origin.actor.slot)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source requires its actual metadata, input and transport owners");
@@ -349,8 +325,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     if (!frontend_client_registry_create(f, descriptor(s), options->metadata.seat,
         &s->pending_cvars, &callback, &s->registry, error)) goto done;
     qa_console_options console = {.context = s->command, .cvars = registry(s), .user = s,
-        .print = print, .cvar_owner = cvars, .visible_cvars = visible,
-        .cvar_edit = options->cvar_edit ? edit : NULL, .read_script = script, .release_script = script_release,
+        .print = print, .read_script = script, .release_script = script_release,
         .script_complete = options->script_complete ? script_complete : NULL,
         .allow_command = options->allow_command ? allow : NULL, .source_command = command, .forward = forward,
         .capture_context = capture, .context_active = active};
@@ -805,7 +780,7 @@ bool frontend_client_source_restore_prefix(qa_frontend *f, const frontend_client
         !strcmp(p.selection.instance, options->metadata.instance) &&
         p.state.application.seat == options->metadata.seat &&
         p.state.application.physical_seat == options->physical_seat &&
-        p.state.capabilities == capabilities(options);
+        capabilities_match(options, p.state.capabilities);
     qa_vfs *claimed = NULL;
     if (ok) ok = qa_application_content_claim_view(graph, p.content, &claimed, error);
     if (ok) {

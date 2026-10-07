@@ -184,16 +184,6 @@ static qa_command_result command(void *context,const qa_command_invocation *invo
 static bool allow(void *context,const qa_command_invocation *invocation)
 { frontend_network_q1_client *o=context; return !o->options.configuration.allow_command ||
     o->options.configuration.allow_command(o->options.configuration.context,invocation); }
-static qa_cvars *cvar_owner(void *context,const qa_command_context *origin,const char *name)
-{ frontend_network_q1_client *o=context; return o->options.configuration.cvar_owner(
-    o->options.configuration.context,origin,name); }
-static qa_cvars *visible(void *context,const qa_command_context *origin,size_t index)
-{ frontend_network_q1_client *o=context; return o->options.configuration.visible_cvars(
-    o->options.configuration.context,origin,index); }
-static bool edit(void *context,const qa_command_context *origin,qa_cvars *variables,
-    struct qa_cvars_edit **out,qa_error *error)
-{ frontend_network_q1_client *o=context; return o->options.configuration.cvar_edit(
-    o->options.configuration.context,origin,variables,out,error); }
 static bool script(void *context,const qa_command_context *origin,const char *path,
     qa_bytes *out,void **lease,qa_error *error)
 { frontend_network_q1_client *o=context; return o->options.configuration.read_script(
@@ -374,9 +364,6 @@ static frontend_client_source_options physical_options(frontend_network_q1_clien
     c.connection_current=connection; c.retirement_current=retirement;
     c.entity_current=entity; c.command=command; c.forward=forward;
     c.allow_command=allow;
-    if(c.cvar_owner) c.cvar_owner=cvar_owner;
-    if(c.visible_cvars) c.visible_cvars=visible;
-    if(c.cvar_edit) c.cvar_edit=edit;
     if(c.read_script) { c.read_script=script; c.release_script=script_release; }
     if(c.script_complete) c.script_complete=script_complete;
     if(c.retire) c.retire=programme_retire;

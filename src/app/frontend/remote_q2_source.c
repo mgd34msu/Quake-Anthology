@@ -190,29 +190,6 @@ static void print(void *context, const qa_command_context *command, const char *
 }
 static void cvar_print(void *context, const char *text)
 { frontend_remote_q2_source *source = context; print(source, &source->domain.command_context, text); }
-static qa_cvars *cvars(void *context, const qa_command_context *command, const char *name)
-{
-    frontend_remote_q2_source *source = context;
-    if (!active(source, command)) return NULL;
-    if (!source->options.cvar_owner) return source->domain.cvars;
-    ++source->calls; qa_cvars *owner = source->options.cvar_owner(source->options.client.context, command, name); --source->calls;
-    return owner;
-}
-static qa_cvars *visible(void *context, const qa_command_context *command, size_t ordinal)
-{
-    frontend_remote_q2_source *source = context;
-    if (!active(source, command)) return NULL;
-    if (!source->options.visible_cvars) return ordinal ? NULL : source->domain.cvars;
-    ++source->calls; qa_cvars *owner = source->options.visible_cvars(source->options.client.context, command, ordinal); --source->calls;
-    return owner;
-}
-static bool edit(void *context, const qa_command_context *command, qa_cvars *heap, struct qa_cvars_edit **out, qa_error *error)
-{
-    frontend_remote_q2_source *source = context;
-    if (!active(source, command) || !source->options.cvar_edit) return false;
-    ++source->calls; bool ok = source->options.cvar_edit(source->options.client.context, command, heap, out, error); --source->calls;
-    return ok;
-}
 static bool script(void *context, const qa_command_context *command, const char *path,
     qa_bytes *out, void **lease, qa_error *error)
 {
@@ -437,8 +414,8 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
         &source->pending_cvars, &callback, &source->registry, error)) return false;
     source->domain.cvars = frontend_client_registry_cvars(source->registry);
     qa_console_options console = {.context = source->domain.command_context, .cvars = source->domain.cvars, .user = source,
-        .print = print, .cvar_owner = cvars, .visible_cvars = visible, .capture_context = capture, .context_active = active,
-        .cvar_edit = options->cvar_edit ? edit : NULL, .script_complete = options->script_complete ? script_complete : NULL,
+        .print = print, .capture_context = capture, .context_active = active,
+        .script_complete = options->script_complete ? script_complete : NULL,
         .allow_command = options->allow_command ? allow : NULL,
         .read_script = script, .release_script = script_release, .source_command = command, .forward = forward};
     source->console = qa_application_console(f->application); source->domain.console = source->console;

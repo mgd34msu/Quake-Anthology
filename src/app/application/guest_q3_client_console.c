@@ -46,32 +46,6 @@ static struct application_guest_q3_client_console *find(struct application_q3_gu
         row; row = row->next) if (row->kind == kind && row->seat == seat) return row;
     return NULL;
 }
-static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
-{
-    struct application_guest_q3_client_console *row = context;
-    if (!available(row)) return NULL;
-    qa_cvars *routed = application_startup_cvar_owner(row->engine->provider, row->console, command, name);
-    return routed ? routed : row->cvars;
-}
-static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
-{
-    struct application_guest_q3_client_console *row = context;
-    if (!available(row)) return NULL;
-    qa_cvars *routed = NULL;
-    if (application_startup_visible_cvars(row->engine->provider, row->console, command, index, &routed))
-        return routed;
-    return index == 0 ? row->cvars : index == 1 ?
-        application_engine_shutdown_cvars(row->engine->provider) : NULL;
-}
-static bool cvar_edit(void *context, const qa_command_context *command,
-    qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    struct application_guest_q3_client_console *row = context;
-    if (!available(row))
-        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT prepared cvars lost their actual receiver");
-    return application_startup_cvar_edit(row->engine->provider, row->console,
-        command, registry, out, error);
-}
 static bool capture(void *context, const qa_command_context *source, qa_command_context *out, qa_error *error)
 {
     struct application_guest_q3_client_console *row = context;
@@ -212,9 +186,7 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
     row->cvars = qa_cvars_create_view(engine->provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner, .seat = seat,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars,
-        .user = row, .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
-        .cvar_edit = cvar_edit,
-        .capture_context = capture, .context_active = active, .read_script = read_script,
+        .user = row, .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = complete, .allow_command = allowed,
         .source_command = dispatch, .forward = forward};
     options.context.cvar_view = qa_cvars_view_identity(row->cvars);

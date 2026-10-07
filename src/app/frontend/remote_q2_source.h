@@ -26,9 +26,6 @@ typedef struct frontend_remote_q2_source_options {
     /* Actual retained disconnect receipt; never a live connection grant. */
     bool (*retirement_current)(void *, const qa_application_client_source *);
     void (*released)(void *);
-    qa_cvars *(*cvar_owner)(void *, const qa_command_context *, const char *);
-    qa_cvars *(*visible_cvars)(void *, const qa_command_context *, size_t);
-    bool (*cvar_edit)(void *, const qa_command_context *, qa_cvars *, struct qa_cvars_edit **, qa_error *);
     bool (*read_script)(void *, const qa_command_context *, const char *, qa_bytes *, void **, qa_error *);
     void (*release_script)(void *, void *);
     void (*script_complete)(void *, const qa_command_context *, const char *, bool);

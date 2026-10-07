@@ -190,13 +190,6 @@ static void configuration_released(void *context)
         owner->configuration.released(owner->configuration.context);
     owner->configuration_owned=false;
 }
-static qa_cvars *configuration_cvars(void *context,const qa_command_context *command,const char *name)
-{ frontend_network_q2_client *o=context; return o->configuration.cvar_owner(o->configuration.context,command,name); }
-static qa_cvars *configuration_visible(void *context,const qa_command_context *command,size_t ordinal)
-{ frontend_network_q2_client *o=context; return o->configuration.visible_cvars(o->configuration.context,command,ordinal); }
-static bool configuration_edit(void *context,const qa_command_context *command,qa_cvars *cvars,
-    struct qa_cvars_edit **edit,qa_error *error)
-{ frontend_network_q2_client *o=context; return o->configuration.cvar_edit(o->configuration.context,command,cvars,edit,error); }
 static bool configuration_script(void *context,const qa_command_context *command,const char *path,
     qa_bytes *bytes,void **claim,qa_error *error)
 { frontend_network_q2_client *o=context; return o->configuration.read_script(o->configuration.context,command,path,bytes,claim,error); }
@@ -414,9 +407,6 @@ static frontend_remote_q2_source_options source_options(frontend_network_q2_clie
         .configure_step=configure_step,.retire=configuration_retire,.retirement_current=retirement_custody,
         .released=configuration_released,
         .configuration_advance=configuration_advance,
-        .cvar_owner=owner->configuration.cvar_owner?configuration_cvars:NULL,
-        .visible_cvars=owner->configuration.visible_cvars?configuration_visible:NULL,
-        .cvar_edit=owner->configuration.cvar_edit?configuration_edit:NULL,
         .read_script=owner->configuration.read_script?configuration_script:NULL,
         .release_script=owner->configuration.release_script?configuration_script_release:NULL,
         .script_complete=owner->configuration.script_complete?configuration_script_complete:NULL,

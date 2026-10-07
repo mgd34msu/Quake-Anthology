@@ -158,10 +158,6 @@ static bool startup_variable_pending(const application_startup_row *row)
 bool application_startup_seed_root(qa_application *app, qa_console *console,
     const qa_command_context *command, qa_error *error)
 {
-    if (!app || !console || console != app->console || !command || command->owner ||
-        command->cvar_view != qa_cvars_view_identity(app->cvars) ||
-        !qa_application_command_context_active(app, command))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup variables lost their actual ENGINE constructor");
     for (size_t i = 0; app->startup && i < app->startup->count; ++i) {
         const application_startup_row *row = app->startup->rows + i;
         if (startup_variable_pending(row) &&
@@ -241,8 +237,7 @@ bool application_startup_seed_console(application_provider *provider,const qa_ap
     qa_console *console=source?source->console:NULL;
     if (!app || !provider->product || !console || !command || command->owner!=provider->owner ||
         !source->descriptor || source->scope.provider!=provider->owner ||
-        !qa_cvars_same_store(qa_console_cvars(console),source->cvars) ||
-        command->cvar_view!=qa_cvars_view_identity(source->cvars) || !qa_application_command_context_active(app,command))
+        !qa_application_command_context_active(app,command))
         return application_fail(error,QA_ERROR_ARGUMENT,"Startup replay requires its actual routed source console");
     bool client=source->scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME || source->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI;
     bool game=source->scope.kind==QA_APPLICATION_CONSOLE_QC || source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2 ||

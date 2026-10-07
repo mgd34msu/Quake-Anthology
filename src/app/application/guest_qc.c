@@ -243,25 +243,6 @@ static bool allow_command(void *opaque, const qa_command_invocation *command)
     struct application_qc_state *engine = opaque;
     return application_startup_command_allowed(engine->provider, command);
 }
-static qa_cvars *cvar_owner(void *opaque, const qa_command_context *context, const char *name)
-{
-    struct application_qc_state *engine = opaque;
-    qa_cvars *routed = application_startup_cvar_owner(engine->provider, engine->console, context, name);
-    return routed ? routed : engine->cvars;
-}
-static qa_cvars *visible_cvars(void *opaque, const qa_command_context *context, size_t index)
-{
-    struct application_qc_state *engine = opaque; qa_cvars *routed = NULL;
-    if (application_startup_visible_cvars(engine->provider, engine->console, context, index, &routed)) return routed;
-    return index == 0 ? engine->cvars : NULL;
-}
-static bool cvar_edit(void *opaque, const qa_command_context *context,
-                        qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    struct application_qc_state *engine = opaque;
-    return application_startup_cvar_edit(engine->provider, engine->console,
-        context, registry, out, error);
-}
 static bool capture_context(void *opaque, const qa_command_context *source,
                               qa_command_context *out, qa_error *error)
 {
@@ -288,7 +269,6 @@ bool application_qc_create_console(struct application_qc_state *engine, qa_cvars
     qa_console_options options = {.context = engine->command_context, .cvars = cvars,
         .user = engine, .print = console_print, .source_command = server_command, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
-        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars, .cvar_edit = cvar_edit,
         .capture_context = capture_context, .context_active = context_active};
     engine->command_context.cvar_view = qa_cvars_view_identity(cvars);
     options.context = engine->command_context;

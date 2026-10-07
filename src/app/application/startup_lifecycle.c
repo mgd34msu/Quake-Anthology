@@ -439,38 +439,6 @@ bool qa_application_startup_source_retiring(const qa_application *app, const qa_
     }
 }
 
-qa_cvars *application_startup_cvar_owner(application_provider *provider, qa_console *console,
-    const qa_command_context *command, const char *name)
-{
-    const qa_application_startup_hooks *hooks = hooks_for(provider);
-    return hooks && hooks->cvar_owner
-        ? hooks->cvar_owner(hooks->context, provider->application, console, command, name) : NULL;
-}
-
-bool application_startup_console_cvar_edit(qa_application *app, qa_console *console,
-    const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    (void)app; (void)console; (void)command;
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Cvar edit lookup requires its output");
-    *out = qa_cvars_prepared_edit(registry);
-    return true;
-}
-
-bool application_startup_cvar_edit(application_provider *provider, qa_console *console,
-    const qa_command_context *command, qa_cvars *registry, qa_cvars_edit **out, qa_error *error)
-{
-    (void)provider;
-    return application_startup_console_cvar_edit(NULL, console, command, registry, out, error);
-}
-
-bool application_startup_visible_cvars(application_provider *provider, qa_console *console,
-    const qa_command_context *command, size_t index, qa_cvars **out)
-{
-    const qa_application_startup_hooks *hooks = hooks_for(provider);
-    return hooks && hooks->visible_cvars &&
-        hooks->visible_cvars(hooks->context, provider->application, console, command, index, out);
-}
-
 bool application_startup_source_scripts(const application_provider *provider)
 {
     const qa_application_startup_hooks *hooks = hooks_for(provider);

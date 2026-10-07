@@ -148,8 +148,6 @@ static bool capture(void *context,const qa_command_context *command,qa_command_c
     if(!active(context,command)) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote CG console lost its admitted component namespace");
     *out=*command; return true;
 }
-static qa_cvars *cvar_owner(void *context,const qa_command_context *command,const char *name)
-{ (void)name; remote_component *r=context; return active(r,command)?r->cvars:NULL; }
 static bool cheats(void *context)
 { remote_component *r=context; const qa_cvar_view *view=qa_cvars_find(r->cvars,"sv_cheats"); return view&&view->integer!=0; }
 static void print(void *context,const char *text)
@@ -199,7 +197,7 @@ static bool console_prepare(remote_component *r,const frontend_remote_unified_do
     command.direct=false; command.console_text=false; command.script=NULL;
     r->host.command_context=command;
     qa_console_options console={.context=command,.cvars=r->cvars,.user=r,.print=console_print,
-        .cvar_owner=cvar_owner,.source_command=console_command,.capture_context=capture,.context_active=active};
+        .source_command=console_command,.capture_context=capture,.context_active=active};
     if(!r->console&&qa_console_bind_source(common,&console,e)) r->console=common;
     return r->console==common||q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Received CG callbacks lost their exact common console");
 }
