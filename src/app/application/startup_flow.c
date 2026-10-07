@@ -286,6 +286,23 @@ bool qa_application_startup_replay_variables(qa_application *app, qa_console *co
     if (!flow || !console || !command) return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay needs its retained source console and command");
     if (!flow->images_completed)
         return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay precedes the actual completed image-settings programme");
+    if (flow->engine_only) {
+        qa_console *actual_console = NULL;
+        qa_cvars *registry = NULL;
+        qa_command_context actual;
+        if (!qa_application_startup_bootstrap_images_ready(app) ||
+            !qa_application_startup_root_read(app, NULL, &actual_console, &registry, &actual, error) ||
+            console != actual_console || command->session != actual.session ||
+            command->owner != actual.owner || command->client != actual.client ||
+            command->seat != actual.seat || command->origin != actual.origin ||
+            command->dialect != actual.dialect || command->cvar_view != actual.cvar_view ||
+            command->registry != actual.registry || command->generation != actual.generation ||
+            command->console_text != actual.console_text || command->direct != actual.direct ||
+            command->script || !qa_actor_id_equal(command->actor, actual.actor) ||
+            !qa_cvars_edit_returned_is(qa_cvars_prepared_edit(registry), registry))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Variable replay lost its returned ENGINE bootstrap context");
+        return application_startup_seed_root(app, console, &actual, error);
+    }
     const qa_launch_snapshot *routing = app->routing_snapshot;
     application_provider **providers = app->routing_providers;
     size_t count = app->routing_provider_count;

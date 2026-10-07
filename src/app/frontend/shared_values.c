@@ -328,9 +328,28 @@ bool frontend_shared_values_source_color_initialize(frontend_shared_values *owne
 bool frontend_shared_values_native_initialize(frontend_shared_values *owner,qa_error *error)
 {
     if (!current(owner,error) || owner->published || owner->terminal ||
+        owner->candidate || owner->client || !owner->root_console ||
+        !qa_application_startup_bootstrap_images_ready(owner->application) ||
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Native initialization requires its owned returned canonical edit");
-    return qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
+    qa_console *console=NULL; qa_cvars *registry=NULL; qa_command_context command={0};
+    if (!qa_application_startup_root_read(owner->application,NULL,&console,&registry,&command,error) ||
+        console!=owner->root_console || registry!=owner->registry || command.owner)
+        return fail(error,"Native initialization requires its actual ENGINE bootstrap context");
+    const qa_frontend_options *options=&owner->frontend->options;
+    const struct { const char *name; double value; bool specified; } settings[]={
+        {"r_customwidth",options->display.width,options->width_specified},
+        {"r_customheight",options->display.height,options->height_specified},
+        {"r_gamma",options->gamma,options->gamma_specified}};
+    for (size_t i=0;i<sizeof(settings)/sizeof(*settings);++i) {
+        if (!settings[i].specified) continue;
+        char value[64];
+        if (!qa_format_number(settings[i].value,value,error) ||
+            !qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
+                .kind=QA_CVARS_EDIT_SET,.name=settings[i].name,.value=value,.force=true},error)) return false;
+    }
+    return qa_application_startup_replay_variables(owner->application,console,&command,error) &&
+        qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
         .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name="in_joystick"},error) &&
         qa_cvars_edit_apply(owner->edit,&(qa_cvars_edit_command){
         .kind=QA_CVARS_EDIT_APPLY_LATCHED,.name="in_joystickProfile"},error);

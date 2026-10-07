@@ -500,8 +500,12 @@ bool qa_console_cvar_startup_set(qa_console *console,const qa_command_context *c
     if (!cvar_find(access,name,&actual,error)) return false;
     if (!actual) return qac_fail(error,QA_ERROR_NOT_FOUND,"startup value has no admitted physical cvar");
     uint64_t owner=actual->owner;
+    if (!cvar_enter(access,error)) return false;
+    const char *canonical=qa_cvars_canonical_name(access.registry,name);
+    const char *initial=canonical && strcmp(canonical,name)?actual->reset_value:"";
+    if (!cvar_leave(access,error)) return false;
     return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_REGISTER,
-            .name=name,.value="",.owner=owner},error) &&
+            .name=name,.value=initial,.owner=owner},error) &&
         cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_ADD_FLAGS,
             .name=name,.flags=QA_CVAR_USER_CREATED},error);
 }

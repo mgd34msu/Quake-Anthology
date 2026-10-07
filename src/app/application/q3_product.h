@@ -27,6 +27,7 @@ bool application_startup_create(qa_application *, const char *const *, size_t, q
 bool application_startup_clone(qa_application *, const qa_application *, qa_error *);
 void application_startup_dispose(qa_application *);
 bool application_startup_seed_engine(qa_application *, qa_product_id, qa_error *);
+bool application_startup_seed_root(qa_application *, qa_console *, const qa_command_context *, qa_error *);
 bool application_startup_seed_source(struct application_provider *, qa_cvars *, qa_error *);
 bool application_provider_seed_cvars(struct application_provider *, qa_cvars *, const qa_launch_choices *, qa_error *);
 struct qa_application_startup_source;

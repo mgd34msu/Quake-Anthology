@@ -179,6 +179,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             if (!*value || *end || errno || !isfinite(options->gamma) || options->gamma < .5f || options->gamma > 3) {
                 frontend_fail(error, QA_ERROR_ARGUMENT, "gamma must be between 0.5 and 3"); goto fail;
             }
+            options->gamma_specified = true;
         } else {
             uint64_t number;
             uint64_t high = !strcmp(arg, "--seats") ? 4 : !strcmp(arg, "--frames") ? UINT64_MAX : 16384;
@@ -187,8 +188,8 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "unknown startup option: %s", arg); goto fail;
             }
             if (!integer(value, low, high, &number, error)) goto fail;
-            if (!strcmp(arg, "--width")) options->display.width = (uint32_t)number;
-            else if (!strcmp(arg, "--height")) options->display.height = (uint32_t)number;
+            if (!strcmp(arg, "--width")) { options->display.width = (uint32_t)number; options->width_specified = true; }
+            else if (!strcmp(arg, "--height")) { options->display.height = (uint32_t)number; options->height_specified = true; }
             else if (!strcmp(arg, "--seats")) options->seats = (unsigned)number;
             else options->frame_limit = number;
         }

@@ -152,6 +152,24 @@ static bool startup_set(qa_cvars *actual, const char *name, const char *value, q
         qa_cvars_add_flags(actual,name,QA_CVAR_USER_CREATED,error);
 }
 
+static bool startup_variable_pending(const application_startup_row *row)
+{ return row->name && !row->consumed && !row->completed && !row->pending; }
+
+bool application_startup_seed_root(qa_application *app, qa_console *console,
+    const qa_command_context *command, qa_error *error)
+{
+    if (!app || !console || console != app->console || !command || command->owner ||
+        command->cvar_view != qa_cvars_view_identity(app->cvars) ||
+        !qa_application_command_context_active(app, command))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup variables lost their actual ENGINE constructor");
+    for (size_t i = 0; app->startup && i < app->startup->count; ++i) {
+        const application_startup_row *row = app->startup->rows + i;
+        if (startup_variable_pending(row) &&
+            !qa_console_cvar_startup_set(console, command, row->name, row->value, error)) return false;
+    }
+    return true;
+}
+
 bool application_startup_seed_engine(qa_application *app, qa_product_id selected, qa_error *error)
 {
     const qa_product *product = app ? qa_catalog_product(app->catalog, selected) : NULL;
@@ -206,7 +224,7 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
     if (!app->startup || app->startup_hooks || provider->product->family == QA_GAME_Q1) return true;
     for (size_t i = 0; i < app->startup->count; ++i) {
         application_startup_row *row = &app->startup->rows[i];
-        if (!row->name || row->consumed || row->completed || row->pending) continue;
+        if (!startup_variable_pending(row)) continue;
         if (!startup_set(actual, row->name, row->value, error)) return false;
         if (!app->startup_hooks) {
             if (app->q3_product_preparing) row->pending = true;
@@ -248,7 +266,7 @@ bool application_startup_seed_console(application_provider *provider,const qa_ap
     }
     for (size_t i=0;i<app->startup->count;++i) {
         application_startup_row *row=app->startup->rows+i;
-        if (!row->name || row->consumed || row->completed || row->pending) continue;
+        if (!startup_variable_pending(row)) continue;
         bool shared=(client || provider->product->family==QA_GAME_Q3) && ascii_equal(row->name,"sv_cheats");
         if (!shared) {
             const qa_command_context *recipient=command;
