@@ -632,16 +632,16 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     row->movement=(qa_movement_kind)selected->selection.clock.kind;
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *game=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
-    qa_console *game_console=NULL; qa_cvars *game_cvars=NULL; qa_command_context game_command;
-    if (game && !qa_application_startup_source_read(application,candidate,game,&game_console,&game_cvars,&game_command,error)) return false;
-    frontend_config_source *hosted=game_console?frontend_config_store_source(owner->manager,game_console):NULL;
-    row->hosted=!frontend_network_remote(f) && hosted && frontend_config_source_cvars(hosted)==game_cvars &&
+    qa_application_startup_source game_source={0};
+    if (game && !qa_application_startup_source_read(application,candidate,game,&game_source,error)) return false;
+    frontend_config_source *hosted=game_source.console?frontend_config_store_source(owner->manager,game_source.console):NULL;
+    row->hosted=!frontend_network_remote(f) && hosted && frontend_config_source_cvars(hosted)==game_source.cvars &&
         frontend_config_source_scope(hosted).kind==QA_APPLICATION_CONSOLE_Q3_GAME;
     frontend_remote_config *old=previous(owner,application,candidate,source);
     if (old && old->hosted!=row->hosted) old=NULL;
     row->input_fresh=!row->hosted && !old;
     if (row->hosted) {
-        row->hosted_console=game_console;
+        row->hosted_console=game_source.console;
         if (!frontend_config_source_acquire_seat_registry(hosted,row->scope.seat,&row->registry,error)) return false;
         row->cvars=frontend_client_registry_cvars(row->registry);
         row->keys=frontend_config_source_keys(hosted);

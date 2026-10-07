@@ -44,10 +44,11 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
         const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
         if (!source)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat lost its current GAME command recipient");
-        qa_command_context command;
-        qa_cvars *variables;
+        qa_application_startup_source game;
         if (!qa_application_startup_source_read(frontend->application,publication,
-            source,&source_console,&variables,&command,error)) return false;
+            source,&game,error)) return false;
+        source_console=game.console;
+        qa_command_context command=game.command;
         command.seat=context.seat; command.actor=context.actor;
         command.origin=QA_COMMAND_SEAT; command.direct=true;
         context=command; dialect=context.dialect;

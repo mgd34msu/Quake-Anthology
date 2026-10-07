@@ -148,13 +148,11 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
             (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
         const qa_launch_instance *source=entities?qa_launch_snapshot_find(publication,entities->instance):NULL;
         if (source) {
-            qa_console *console; qa_cvars *actual; qa_command_context command;
+            qa_application_startup_source actual;
             if (!qa_application_startup_source_read(frontend->application,publication,source,
-                &console,&actual,&command,error)) return false;
-            cvars=actual;
-            bool accepted; uint64_t frame; qa_actor_owner provider;
-            if (!qa_application_provider_owner(frontend->application, source->selection.instance, &provider))
-                return frontend_fail(error, QA_ERROR_ARGUMENT, "Source time lost its actual registered provider");
+                &actual,error)) return false;
+            cvars=actual.cvars;
+            bool accepted; uint64_t frame; qa_actor_owner provider=actual.scope.provider;
             if (!qa_session_pending_frame(qa_application_session(frontend->application), provider,
                 supplied, &accepted, &frame, out, error)) return false;
             *owner=cvars; *application_ns=supplied;

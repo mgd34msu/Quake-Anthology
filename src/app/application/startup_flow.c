@@ -223,11 +223,11 @@ static startup_source *source_at(application_provider *provider, const qa_consol
 }
 
 bool qa_application_startup_source_read(qa_application *app, const qa_launch_snapshot *snapshot,
-    const qa_launch_instance *instance, qa_console **console, qa_cvars **cvars,
-    qa_command_context *command, qa_error *error)
+    const qa_launch_instance *instance, qa_application_startup_source *out,
+    qa_error *error)
 {
     struct application_startup_flow *flow = app ? app->startup_flow : NULL;
-    if (!app || !snapshot || !instance || !console || !cvars || !command ||
+    if (!app || !snapshot || !instance || !out ||
         (snapshot != qa_configuration_current(app->configuration) &&
          snapshot != app->routing_snapshot && (!flow || snapshot != flow->candidate)) ||
         qa_launch_snapshot_find(snapshot, instance->selection.instance) != instance)
@@ -237,7 +237,8 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup source read lost its actual provider");
     startup_source *source = source_at(provider, NULL);
     if (source) {
-        *console = source->owner.console; *cvars = source->owner.cvars; *command = source->owner.command;
+        *out = source->owner;
+        out->descriptor = instance;
         return true;
     }
     application_publication *publication = app->startup_publication;
@@ -247,26 +248,24 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
             if (publication->next[i] == provider) { prepared = true; break; }
     if (!provider->constructed || (!provider->attached && !prepared))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup source has no prepared or installed physical console");
-    bool found = provider->kind == APPLICATION_PROVIDER_Q1
-        ? application_native_q1_console_at(provider, console, cvars, command)
-        : provider->kind == APPLICATION_PROVIDER_Q2
-            ? application_native_q2_console_at(provider, console, cvars, command)
-            : provider->kind == APPLICATION_PROVIDER_Q3
-                ? application_native_q3_console_at(provider, console, cvars, command) : false;
-    if (!found)
-        for (size_t i = 0; application_guest_console_at(provider, i, console, cvars, command); ++i) {
-            qa_application_console_scope scope;
-            if (application_guest_console_scope(provider, *console, &scope) &&
-                (scope.kind == QA_APPLICATION_CONSOLE_Q3_GAME ||
-                 scope.kind == QA_APPLICATION_CONSOLE_QC ||
-                 scope.kind == QA_APPLICATION_CONSOLE_NATIVE_Q2)) { found = true; break; }
-        }
+    qa_application_startup_source physical;
+    bool found = false;
+    for (size_t i = 0;; ++i) {
+        bool present;
+        if (!application_provider_startup_source_at(provider, i, &physical, &present, error)) return false;
+        if (!present) break;
+        if (game_scope(physical.scope.kind)) { found = true; break; }
+    }
     if (!found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected physical source has no genuine GAME console");
     application_provider *prior = app->startup_preinit_provider;
     if (!provider->attached) app->startup_preinit_provider = provider;
-    bool captured = qa_application_capture_command_context(app, command, command, error);
+    bool captured = qa_application_capture_command_context(app, &physical.command, &physical.command, error);
     app->startup_preinit_provider = prior;
+    if (captured) {
+        physical.descriptor = instance;
+        *out = physical;
+    }
     return captured;
 }
 

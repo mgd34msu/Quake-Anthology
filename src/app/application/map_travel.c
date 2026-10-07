@@ -95,14 +95,14 @@ static bool campaign_q2_policy(qa_application *application, bool *retain,
     if (!qa_application_native_q2_source_profile_read(application,source->owner,&edition,&found,error)) return false;
     if (!found) return application_fail(error,QA_ERROR_UNSUPPORTED,
         "Campaign travel requires its selected Q2 GAME profile");
-    qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
+    qa_application_startup_source physical;
     const qa_launch_snapshot *snapshot=qa_application_launch(application);
     const qa_launch_instance *selected=qa_launch_snapshot_find(snapshot,
         source->launch->selection.instance);
     if (!qa_application_startup_source_read(application,snapshot,
-        selected,&console,&cvars,&command,error)) return false;
-    const qa_cvar_view *deathmatch=qa_cvars_find(cvars,"deathmatch");
-    const qa_cvar_view *noreload=qa_cvars_find(cvars,"sv_noreload");
+        selected,&physical,error)) return false;
+    const qa_cvar_view *deathmatch=qa_cvars_find(physical.cvars,"deathmatch");
+    const qa_cvar_view *noreload=qa_cvars_find(physical.cvars,"sv_noreload");
     if (!deathmatch) return application_fail(error,QA_ERROR_FORMAT,
         "Campaign travel lost its selected Q2 deathmatch setting");
     bool competitive=edition==QA_Q2_CLASSIC ? deathmatch->number!=0 : deathmatch->integer!=0;

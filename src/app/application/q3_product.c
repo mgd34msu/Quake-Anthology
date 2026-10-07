@@ -339,7 +339,7 @@ bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_ins
     const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_product *product=selected?qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product):NULL;
-    qa_console *actual_console=NULL; qa_cvars *actual_cvars=NULL; qa_command_context command;
+    qa_application_startup_source game;
     bool qualified=false;
     if (app && selected && console && safe && product && product->family==QA_GAME_Q3) {
         const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
@@ -356,8 +356,8 @@ bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_ins
                 qa_cvars_dialect(client.cvars)==QA_CONSOLE_Q3) qualified=true;
         }
         if (!qualified && entities && !strcmp(entities->instance,selected->selection.instance))
-            qualified=qa_application_startup_source_read(app,snapshot,selected,&actual_console,&actual_cvars,&command,error) &&
-                actual_console==console && qa_cvars_dialect(actual_cvars)==QA_CONSOLE_Q3;
+            qualified=qa_application_startup_source_read(app,snapshot,selected,&game,error) &&
+                game.console==console && qa_cvars_dialect(game.cvars)==QA_CONSOLE_Q3;
     }
     if (!qualified)
         return application_fail(error,QA_ERROR_ARGUMENT,"Safe mode requires its actual selected Q3 source console");

@@ -210,8 +210,10 @@ bool qa_application_startup_release_cleanup_phase(const qa_application *, const 
  * and canonical edit. This receipt names its actual linked physical source. */
 bool qa_application_startup_images_phase(const qa_application *, const qa_launch_snapshot *,
     const qa_application_startup_source *);
+/* Borrow the actual GAME producer for this retained descriptor. Its scope
+ * identifies the producer independently of the common console/table. */
 bool qa_application_startup_source_read(qa_application *, const qa_launch_snapshot *,
-    const qa_launch_instance *, qa_console **, qa_cvars **, qa_command_context *, qa_error *);
+    const qa_launch_instance *, qa_application_startup_source *, qa_error *);
 bool qa_application_startup_replay_variables(qa_application *, qa_console *,
     const qa_command_context *, qa_error *);
 bool qa_application_startup_console_primary(qa_application *, qa_console *, bool *primary, qa_error *);

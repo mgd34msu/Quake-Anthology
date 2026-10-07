@@ -3084,12 +3084,12 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
         manager->prepared=candidate; manager->prepared_primary=NULL; manager->prepared_application=application;
         return true;
     }
-    qa_console *primary_console=NULL; qa_cvars *primary_cvars=NULL; qa_command_context primary_command;
+    qa_application_startup_source primary_source;
     if (!selected || !qa_application_startup_source_read(application,candidate,selected,
-        &primary_console,&primary_cvars,&primary_command,error)) return false;
-    frontend_config_source *primary=frontend_config_store_source(manager,primary_console);
-    if (!primary || primary->application!=application || primary->cvars!=primary_cvars ||
-        !source_context(primary,&primary_command))
+        &primary_source,error)) return false;
+    frontend_config_source *primary=frontend_config_store_source(manager,primary_source.console);
+    if (!primary || primary->application!=application || primary->cvars!=primary_source.cvars ||
+        !source_context(primary,&primary_source.command))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication lost its exact physical primary source");
     for (size_t i=0;!primary->published && i<primary->seat_count;++i)
         if (!prepare_input_publication(primary,primary->seats+i,i,error)) return false;
