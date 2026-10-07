@@ -25,7 +25,7 @@ static qa_q3_host *role_host(qa_application *app,
         }
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
-        provider->close_pending || !engine || engine->provider != provider || engine->calls ||
+        provider->close_pending || !engine || engine->provider != provider ||
         engine->world != app->world || engine->round.phase != Q3G_ROUND_NONE) {
         application_fail(error, QA_ERROR_NOT_FOUND, "Q3 scene receiver is not an installed idle source");
         return NULL;
