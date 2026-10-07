@@ -490,3 +490,48 @@ The first capture helper stalled inside its broad synchronous census
 before the PNG call; its uninstrumented log cannot narrow that helper
 stage further. The replacement uses scalar scene metadata and performs
 no debugger pixel scan. That failed helper run is not an engine defect.
+
+## Q2 local status bar on the installed build
+
+THE-593 is implemented by 388df05f and a40b8010. Local native Q2 now feeds
+the existing original layout interpreter with the same typed stats and
+installed picture resources used by network presentation. Generic vitals
+and inventory tiles are suppressed when that source HUD is active.
+The candidate was built at 15:39 CDT and qualified against a fresh copy
+of the owner's 34 settings files before installation at 15:55 CDT.
+The installer receipt is `installed-m0-q2-hud-20261007.json` under the
+recovery cache; the installed source revision is a40b8010.
+
+Four subsequent installed-binary base1 checks passed:
+
+| Game | Renderer | Evidence bundle |
+| --- | --- | --- |
+| Q2 classic | CPU | `/tmp/qa-private-av-v128lln8` |
+| Q2 classic | NVIDIA GPU0 GL | `/tmp/qa-private-av-2p9xycad` |
+| Q2 rerelease | CPU | `/tmp/qa-private-av-a9gd2v7l` |
+| Q2 rerelease | NVIDIA GPU0 GL | `/tmp/qa-private-av-4yw2eead` |
+
+Root opened the relevant PNGs. They show original status-bar numbers and
+icons, with no generic Health/Armor/weapon tiles. Each matching completed
+scene executed the source layout and resolved its installed pictures;
+health was 100 in both the player view and HUD stats. Zero ammo, armor
+and timer values correctly leave those conditional displays absent.
+Real W input moved the player and advanced the world. These captures do
+not exercise an active powerup timer, full inventory, or every pickup.
+
+Classic owner-profile captures have actual FOV 120, cl_gun 1 and hand 2.
+The original client hides its view weapon for FOV above 90
+(`quake-2/client/cl_ents.c:1298-1304`). Public commands in the private copy
+set FOV 90, hand 0 and cl_gun 1; subsequent CPU and GL images show the
+blaster. No view-weapon code was changed. The rerelease retains the owner's
+FOV 120 and shows its blaster. Original renderer hand-2 handling is distinct
+from the server's centered projectile source; these checks make no claim
+that changing hand has updated every client userinfo consumer.
+
+All four runs reached advancing retail gameplay and quit publicly with
+exit zero. Owner files, installed package and helper pins stayed unchanged,
+and recorded owned processes were cleaned up. Audio was contained and
+captured privately, but no isolated sound-fidelity claim is made. Attached
+functional observers provide no performance measurements. Original Q2
+modules, mixed-mode HUDs and full campaign behavior remain outside this
+four-case proof.
