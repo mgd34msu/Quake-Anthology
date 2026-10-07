@@ -896,11 +896,15 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
             ok=frontend_fail(&local,QA_ERROR_ARGUMENT,"Autosave requires its actual GAME profile");
         size_t length=ok?strlen(product->key):0;
         if (ok) {
-            autosave=length<=SIZE_MAX-sizeof("autosave-.sav")?malloc(length+sizeof("autosave-.sav")):NULL;
+            const char *prefix=qa_application_save_original_product(f->application)?
+                "autosave-":"autosave-custom-";
+            size_t prefix_length=strlen(prefix);
+            autosave=length<=SIZE_MAX-prefix_length-sizeof(".sav")?
+                malloc(prefix_length+length+sizeof(".sav")):NULL;
             if (!autosave) ok=frontend_fail(&local,QA_ERROR_MEMORY,"Retaining actual GAME autosave slot");
             else {
-                memcpy(autosave,"autosave-",9);memcpy(autosave+9,product->key,length);
-                memcpy(autosave+9+length,".sav",5);
+                memcpy(autosave,prefix,prefix_length);memcpy(autosave+prefix_length,product->key,length);
+                memcpy(autosave+prefix_length+length,".sav",sizeof(".sav"));
                 ok=qa_save_slot_name(autosave,&local);
             }
         }
