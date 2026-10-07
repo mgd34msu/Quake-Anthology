@@ -748,6 +748,40 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
     return !live(app, actor) || application_control_frames_q1_complete(app, actor, map->owner, error);
 }
 
+static void resume_forced_view(application_move_call *move)
+{
+    application_control_record *record = move->control;
+    qa_movement_input *input = move->input;
+    if (record->command_angle_revision == move->command_angle_revision)
+        return;
+    switch (input->state.kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        input->state.data.nq.angles = record->state.data.nq.angles;
+        input->state.data.nq.view_angles = record->state.data.nq.view_angles;
+        input->state.data.nq.fix_angle = record->state.data.nq.fix_angle;
+        input->state.data.nq.teleport_time_seconds = record->state.data.nq.teleport_time_seconds;
+        break;
+    case QA_MOVEMENT_QUAKEWORLD:
+        input->state.data.qw.angles = record->state.data.qw.angles;
+        break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        memcpy(input->state.data.q2.delta_angle_shorts, record->state.data.q2.delta_angle_shorts,
+               sizeof(input->state.data.q2.delta_angle_shorts));
+        break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        input->state.data.q2r.delta_angles = record->state.data.q2r.delta_angles;
+        break;
+    case QA_MOVEMENT_Q3:
+        memcpy(input->state.data.q3.delta_angle_words, record->state.data.q3.delta_angle_words,
+               sizeof(input->state.data.q3.delta_angle_words));
+        input->state.data.q3.view_angles = record->state.data.q3.view_angles;
+        break;
+    }
+    input->command.angles = record->command_angles;
+    float angles[] = {record->command_angles.x, record->command_angles.y, record->command_angles.z};
+    for (size_t i = 0; i < 3; ++i) input->command.angle_words[i] = qa_angle_to_word(angles[i]);
+}
+
 static void command_angle_feedback(const application_move_call *move,
                                    const qa_movement_command *command)
 {
@@ -2703,6 +2737,7 @@ static bool control_move(qa_application *application,
     if (ok && physics) {
         qa_movement_call call = input_call(&move);
         ok = refresh_source_call(&move, &call, error);
+        if (ok) resume_forced_view(&move);
         if (input.state.kind != QA_MOVEMENT_Q3) input.current_bounds = input.shape.bounds;
     }
     if (ok && preparing && (!original_stage || record->state.kind == QA_MOVEMENT_NETQUAKE) && live(application, actor)) {
@@ -4045,10 +4080,26 @@ bool application_control_motion_changed(
         if (active && active != &record->state)
             force_state_view(active, change->view_angles, command_view, command);
         record->view_angles = change->view_angles;
-        if (!change->preserve_command_angles) {
+        if (!change->preserve_command_angles)
             record->command_angles = change->view_angles;
-            ++record->command_angle_revision;
+        ++record->command_angle_revision;
+    }
+    if (change->reason == QA_BUILTIN_MOTION_TELEPORT && change->hold_ns &&
+        record->state.kind == QA_MOVEMENT_NETQUAKE) {
+        const application_control_context *context = application_control_frame_current(application, actor);
+        uint64_t time;
+        if (context) time = application_control_time(context);
+        else {
+            application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+            qa_clock_state clock;
+            if (!source || !qa_session_clock(application->session, source->owner, &clock))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Teleport hold lost its actual Source clock");
+            time = clock.frame.time_ns;
         }
+        double until = (double)time / 1000000000.0 + (double)change->hold_ns / 1000000000.0;
+        record->state.data.nq.teleport_time_seconds = until;
+        qa_movement_state *active = application_control_frames_state_current(application, actor);
+        if (active) active->data.nq.teleport_time_seconds = until;
     }
     return true;
 }
