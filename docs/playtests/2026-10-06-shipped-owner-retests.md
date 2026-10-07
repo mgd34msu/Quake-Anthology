@@ -1,5 +1,24 @@
 # Shipped owner checks, 2026-10-06
 
+## Copied-profile checks, installed `ab78171b` on 2026-10-07
+
+The 03:51:48 CDT installation passed private copied-owner-profile startup before replacement. The installed executable then passed the following bounded checks with fresh copies of the same 34 settings files. Original profile bytes and installed file identity remained unchanged; public quits returned zero and all recorded owned processes were removed.
+
+| Item | Installed check | Result and scope |
+|---|---|---|
+| THE-163 / MIKE-07 | Native Q3 `q3dm0`, CPU and GL; real movement onto the shotgun, then physical keys 1 and 3 | Weapon ownership 0→1, shells 0→10, autoswitch 3; selected/usercmd/actor weapon all followed 3→1→3. [Detailed pickup/audio bounds](2026-10-07-q3-pickup.md). |
+| THE-153 / MIKE-05 | Native Q3 `q3dm1`, CPU and GL; stationary and moving left/right/up/down mouse input | All cases matched authored sensitivity and angle-word rounding, with no recentering through at least 1,000 ms of settled Source time. Source and completed camera agreed, allowing the actual authored movement bob. Startup debugger detached before input. Original mouse behavior and Mike's retest remain unproved. |
+| THE-420 / MIKE-34 | Native and Original Q3 `q3dm1`, CPU and GL; Space hold through landing, release/repress, C hold/release, two public kill/Mouse1 respawns | Exactly one jump event per press; held flag persisted until release; world camera stood/crouched/stood at offsets 26→12→26. Respawn samples had zero velocity. These deaths started from grounded idle and do not independently exercise inherited nonzero corpse momentum. No new input replay fault was reproduced. |
+| THE-431 / MIKE-36 | Exact Custom combination, GL: classic Q1 `start`, Q3 movement/Ranger/weapons, Q2 rerelease monsters, single player; real walk/jump/mouse/fire and Normal teleporter | Gameplay rendered, ammo 25→24, teleporter yaw 88.939819→90 persisted in body/completed motion/retained view/returned camera. Actual ENGINE input ownership was recorded; CLIENT/CGAME receivers were not exercised. Prior CPU proof remains separately dated. Repeated Normal centerprint also enters console notifications; the shared routing defect is tracked separately under THE-285. |
+
+Evidence identifiers: `qa-the153-mouse-20261006/qualification.json`, `qa-the420-contained-20261007/ab78171b-consolidated-proof.json`, and `qa-private-av-mnoe1g9d/user/evidence/m0-reviewed-evidence.json`. Earlier missing-window-manager and camera-target observer failures are retained as helper failures, not gameplay defects. Original world-camera proof filters out later no-world HUD icon scenes. Input-state and combined-mode checks use bounded read-only debugger observations; none establish frame time. All displays and audio servers were private. Except for the separately recorded pickup output capture, audio was disabled. Owner retests remain pending.
+
+THE-420 remains In Progress. These checks did not explicitly configure OS autorepeat or the owner's 85-fps setting. The next acceptance cases hold Space and C with X autorepeat enabled at `com_maxfps` 85, uncapped, 250 and 333, with `r_swapInterval 0`, recording actual SDL repeat events and jump counts. Frame rate is a test condition, not an established cause. Original Q3 ignores a repeated button source in `cl_input.c:83–84`; `cl_keys.c:1031–1036` counts key repeats. `PMF_JUMP_HELD` is checked, cleared and carried across substeps in `bg_pmove.c:370–378`, `1916–1918` and `2061–2062`.
+
+An additional detached native GL check (`qa-private-av-69ycntmw/result.json`) recorded three jump events for three presses and 103 grounded-held samples without retriggering. An airborne public kill preserved nonzero corpse momentum; the first live post-respawn sample had zero horizontal velocity and vertical velocity from the subsequent gravity step. It does not measure velocity at the spawn function return.
+
+## Earlier installed `685cab51`
+
 Artifact: `qfiles/qa-c`, commit `685cab51`, 138,906,552 bytes. GCC and Clang full builds and the six registered checks passed. The executable and its twelve sibling native-runtime files matched the installation receipts.
 
 | Item | Actual check | Result |
