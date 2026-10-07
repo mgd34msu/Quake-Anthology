@@ -1247,7 +1247,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     if (!skill || !deathmatch || !maximum || !isfinite(skill->number) || !isfinite(deathmatch->number) ||
         !isfinite(maximum->number) || maximum->number != (float)engine->max_clients)
         return application_fail(error, QA_ERROR_FORMAT, "QC initialization lost its actual finite source rules");
-    float difficulty = fmaxf(0, fminf(3, floorf(skill->number)));
+    int32_t difficulty = (int32_t)(fmaxf(0, fminf(3, skill->number)) + 0.5);
     static const qa_qc_builtin imports[] = {
         QA_QC_BUILTIN_CHECKCLIENT, QA_QC_BUILTIN_AIM, QA_QC_BUILTIN_STUFFCMD,
         QA_QC_BUILTIN_COREDUMP, QA_QC_BUILTIN_EPRINT, QA_QC_BUILTIN_LIGHTSTYLE,
@@ -1295,7 +1295,9 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         .map_exclusion_flags = deathmatch->number != 0 ? 2048u : difficulty <= 0 ? 256u : difficulty == 1 ? 512u : 1024u,
         .context = engine, .resource = application_qc_resource_lookup,
         .checkpoint = application_qc_capture_engine, .restore = application_qc_restore_engine};
-    bool created=qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
+    bool created=(engine->profile==QA_QC_QUAKEWORLD || app->operation==APPLICATION_PERSISTING ||
+        qa_cvars_set_number(cvars,"skill",(float)difficulty,error)) &&
+        qa_qc_game_create(provider->state.qc.program,&options,&provider->state.qc.game,error);
     free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
     if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error) ||

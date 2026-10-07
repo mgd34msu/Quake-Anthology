@@ -499,7 +499,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             if (*end || isnan(value))
                 return true;
         }
-        int32_t skill = value <= 0 ? 0 : value >= 3 ? 3 : (int32_t)floor(value);
+        int32_t skill = value <= 0 ? 0 : value >= 3 ? 3 : (int32_t)((float)value + 0.5);
         return g->maps->options.set_skill(g->maps->options.context, skill, error);
     }
     case Q1_MAP_REGISTERED:

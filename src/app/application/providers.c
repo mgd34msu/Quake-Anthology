@@ -438,20 +438,22 @@ static bool q1_final_options(application_provider *provider, const qa_launch_cho
             (value[i]->owner && value[i]->owner != provider->owner))
             return application_fail(error, QA_ERROR_FORMAT, "Q1 configuration lost a finite actual source value");
     }
-    options->skill = (uint8_t)fmaxf(0, fminf(3, floorf(value[0]->number)));
+    options->skill = (uint8_t)(int32_t)(fmaxf(0, fminf(3, value[0]->number)) + 0.5);
     options->deathmatch = value[1]->integer;
     options->coop = value[2]->number != 0;
     options->teamplay = value[3]->integer;
     options->gamecfg = (uint32_t)value[4]->integer;
     options->gravity = value[5]->number;
     options->aim_threshold = value[6]->number;
+    float capacity = truncf(value[7]->number);
+    if (!options->quakeworld && provider->application->operation != APPLICATION_PERSISTING &&
+        !qa_cvars_set_number(cvars, "skill", (float)options->skill, error)) return false;
     if (options->quakeworld) {
         if (choices->seat_count > 32)
             return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld has 32 physical client rows");
         options->max_clients = 32;
         return true;
     }
-    float capacity = truncf(value[7]->number);
     float minimum = (float)(choices->seat_count ? choices->seat_count : 1);
     if (capacity < minimum) capacity = minimum;
     if (capacity < 1 || capacity > 64)
