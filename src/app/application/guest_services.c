@@ -56,6 +56,10 @@ static void release_script(void *context, void *lease)
 static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
 {
     qa_application *application = context;
+    const qa_application_startup_hooks *hooks = application->startup_hooks;
+    qa_cvars *selected = hooks && hooks->cvar_owner
+        ? hooks->cvar_owner(hooks->context, application, application->console, command, name) : NULL;
+    if (selected) return selected;
     for (application_provider *p = application->live_providers; command && p; p = p->next_live) {
         if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q1)
             return p->constructed && p->attached && !p->close_pending
@@ -73,6 +77,10 @@ static qa_cvars *cvar_owner(void *context, const qa_command_context *command, co
 static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
 {
     qa_application *application = context;
+    const qa_application_startup_hooks *hooks = application->startup_hooks;
+    qa_cvars *selected = NULL;
+    if (hooks && hooks->visible_cvars && hooks->visible_cvars(hooks->context, application,
+            application->console, command, index, &selected)) return selected;
     qa_cvars *source = cvar_owner(context, command, "");
     return index == 0 ? source : index == 1 && source != application->cvars
         ? application->cvars : NULL;

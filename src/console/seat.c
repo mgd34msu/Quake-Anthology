@@ -223,45 +223,27 @@ static bool submit_inner(qa_seat_console *seat, qa_error *error) {
     if (!*text)
         return true;
     qac_text echo = {0}, command = {0};
-    qa_command_tokens tokens = {0};
     if (!qac_text_string(&echo, "]", error) || !qac_text_string(&echo, text, error) ||
         !qac_text_string(&echo, "\n", error))
         goto fail;
     if (!qa_seat_console_print(seat, echo.data, error))
         goto fail;
     const char *trimmed = trim_start(text);
-    bool explicit_command = *trimmed == '/' || *trimmed == '\\';
-    if (explicit_command)
+    if (*trimmed == '/' || *trimmed == '\\')
         ++trimmed;
-    if (!qa_command_tokenize(trimmed, seat->options.command.dialect, true, &tokens, error))
+    if (!qac_text_string(&command, trimmed, error) || !qac_text_string(&command, "\n", error) ||
+        !qa_console_append(seat->options.commands, &seat->options.command, command.data, error))
         goto fail;
-    qa_console_discovery_entry entry;
-    bool known =
-        tokens.count && qa_console_discovery_find(seat->options.commands, &seat->options.command,
-                                                  tokens.values[0], &entry);
-    bool chat = (seat->options.command.dialect == QA_CONSOLE_QW ||
-                 seat->options.command.dialect == QA_CONSOLE_Q3) &&
-                seat->options.connected(seat->options.context);
-    if (!explicit_command && !known && chat) {
-        if (!seat->options.chat(seat->options.context, text, false, false, 0, error))
-            goto fail;
-    } else {
-        if (!qac_text_string(&command, trimmed, error) || !qac_text_string(&command, "\n", error) ||
-            !qa_console_append(seat->options.commands, &seat->options.command, command.data, error))
-            goto fail;
-    }
     if (!qa_console_history_add(seat->history, text, error))
         goto fail;
     qa_text_field_clear(seat->field);
     qa_console_buffer_bottom(seat->buffer);
     free(echo.data);
     free(command.data);
-    qa_command_tokens_free(&tokens);
     return true;
 fail:
     free(echo.data);
     free(command.data);
-    qa_command_tokens_free(&tokens);
     return false;
 }
 static bool complete(qa_seat_console *seat, qa_error *error) {

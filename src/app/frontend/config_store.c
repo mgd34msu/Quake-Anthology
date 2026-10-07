@@ -1453,12 +1453,28 @@ static qa_input_seat *binding_seat(void *context,const qa_command_context *comma
     if (!source->primary || seat>=source->seat_count) return NULL;
     return frontend_config_source_input(source,source->seats[seat].logical);
 }
+static frontend_config_source *cvar_source(const frontend_config_store *manager,
+    const qa_console *console,const qa_command_context *command)
+{
+    if (!manager || !command) return NULL;
+    qa_application *application=manager->frontend->application;
+    if (console==qa_application_console(application)) {
+        if (command->owner || command->origin!=QA_COMMAND_SEAT ||
+            !qa_application_command_context_active(application,command)) return NULL;
+        frontend_config_source *source=published_primary(manager,application);
+        size_t seat=source?seat_index(source,command->seat):0;
+        return source && source->configured && source->released && !source->running && !source->phase &&
+            seat<source->seat_count?source:NULL;
+    }
+    frontend_config_source *source=frontend_config_store_source(manager,console);
+    return source_cvar_context(source,command)?source:NULL;
+}
 qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,const qa_console *console,
     const qa_command_context *command,const char *name)
 {
-    frontend_config_source *source=frontend_config_store_source(manager,console);
+    frontend_config_source *source=cvar_source(manager,console,command);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
-    if (client?!frontend_remote_config_cvar_active(client,command):!source_cvar_context(source,command)) return NULL;
+    if (client?!frontend_remote_config_cvar_active(client,command):!source) return NULL;
     qa_application *application=manager->frontend->application;
     qa_cvars *engine=qa_application_cvars(application);
     qa_cvars *private=NULL;
@@ -1476,7 +1492,7 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
         if (owner) return owner;
     } else if (name && engine && qa_cvars_find(engine,name)) return engine;
     if (client) return frontend_remote_config_cvar_owner(client,command,name);
-    if (!source_cvar_context(source,command) || !name) return NULL;
+    if (!name) return NULL;
     if (command->dialect==QA_CONSOLE_Q3 && equal(name,"sv_cheats")) return NULL;
     if (qa_cvars_find(source->cvars,name)) return source->cvars;
     size_t ordinal=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
@@ -1493,9 +1509,9 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
 qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manager,const qa_console *console,
     const qa_command_context *command,size_t ordinal)
 {
-    frontend_config_source *source=frontend_config_store_source(manager,console);
+    frontend_config_source *source=cvar_source(manager,console,command);
     frontend_remote_config *client=frontend_config_store_client(manager,console);
-    if (client?!frontend_remote_config_cvar_active(client,command):!source_cvar_context(source,command)) return NULL;
+    if (client?!frontend_remote_config_cvar_active(client,command):!source) return NULL;
     qa_application *application=manager->frontend->application;
     qa_cvars *engine=qa_application_cvars(application);
     if (engine) {
@@ -1509,7 +1525,6 @@ qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manag
         --ordinal;
     }
     if (client) return frontend_remote_config_visible(client,command,ordinal);
-    if (!source_cvar_context(source,command)) return NULL;
     qa_cvars *rows[5]={0}; size_t count=0;
     size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
     if (command->origin!=QA_COMMAND_SERVER && seat<source->seat_count) rows[count++]=source->seats[seat].mouse;
@@ -3165,7 +3180,8 @@ static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console
     const qa_command_context *command,const char *name)
 {
     frontend_config_store *manager=context;
-    if (frontend_config_store_client(manager,console))
+    if (frontend_config_store_client(manager,console) ||
+        (application==manager->frontend->application && console==qa_application_console(application)))
         return frontend_config_store_cvar_owner(manager,console,command,name);
     frontend_config_source *source=frontend_config_store_source(context,console);
     return source && source->application==application?
@@ -3220,6 +3236,10 @@ static bool visible_cvars(void *context,qa_application *application,qa_console *
     frontend_config_store *manager=context;
     frontend_remote_config *client=frontend_config_store_client(manager,console);
     if (client && out) { *out=frontend_config_store_visible_cvars(manager,console,command,index); return true; }
+    if (out && application==manager->frontend->application && console==qa_application_console(application) &&
+        cvar_source(manager,console,command)) {
+        *out=frontend_config_store_visible_cvars(manager,console,command,index); return true;
+    }
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!out || !source || source->application!=application || !source_cvar_context(source,command)) return false;
     *out=frontend_config_store_visible_cvars(context,console,command,index); return true;

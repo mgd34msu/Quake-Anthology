@@ -983,11 +983,14 @@ static bool fallback(qa_console *console, const qa_command_invocation *command, 
             if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
         }
     }
+    bool local = command->context.direct &&
+        (command->context.origin == QA_COMMAND_LOCAL || command->context.origin == QA_COMMAND_SEAT);
     if (!qac_q1(command->context.dialect)) {
         qa_command_result result = fallback_call(console, console->options.forward, command, error);
-        return result != QA_COMMAND_FAILED;
+        if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
+        if (!local) return true;
     }
-    bool warn = command->context.dialect != QA_CONSOLE_QW;
+    bool warn = local || command->context.dialect != QA_CONSOLE_QW;
     if (!warn) {
         const qa_cvar_view *warncmd=NULL,*developer=NULL;
         if (!qa_console_cvar_read(console,&command->context,"cl_warncmd",&warncmd,error) ||

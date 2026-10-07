@@ -53,6 +53,9 @@ void qa_console_discovery_free(qa_console_discovery *view) {
 }
 bool qa_console_discovery_find(qa_console *console, const qa_command_context *context,
                                const char *name, qa_console_discovery_entry *out) {
+    qa_command_context captured;
+    if (!context || !qa_console_cvar_context(console, context, &captured, NULL)) return false;
+    context = &captured;
     const qa_console_entry *command = qa_console_find(console, context, name);
     if (command) {
         *out = (qa_console_discovery_entry){.kind = QA_CONSOLE_COMMAND,
@@ -105,6 +108,9 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
                          qa_console_discovery *out, qa_error *error) {
     if (!console || !context || !out)
         return qac_fail(error, QA_ERROR_ARGUMENT, "missing console discovery context");
+    qa_command_context captured;
+    if (!qa_console_cvar_context(console, context, &captured, error)) return false;
+    context = &captured;
     entry_list list = {0};
     const qa_console_entry *entry;
     for (size_t i = 0; (entry = qa_console_context_entry_at(console, context, i)); ++i) {
