@@ -152,7 +152,7 @@ q3_service_result q3_bot_movement(q3_call *call, int32_t *result, qa_error *erro
         qa_bot_move_goal_source source = goal_source(&goal);
         qa_bot_vector_target target = {.context = &destination, .admit = q3_bot_vector_admit,
             .write = q3_bot_vector_write};
-        ok = qa_bot_moves_visible_position_from(moves, -1, &start, (uint32_t)q3_integer(call, 1),
+        ok = qa_bot_moves_visible_position_from(moves, &start, (uint32_t)q3_integer(call, 1),
             &source, (uint32_t)q3_integer(call, 3), &target, &found, error);
         if (ok) *result = found;
     } else {

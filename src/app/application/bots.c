@@ -503,7 +503,8 @@ static qa_actor_id bot_source_actor(void *opaque,int32_t client) {
 }
 static qa_bot_navigation *bot_source_navigation(void *opaque,int32_t client) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
-    if(client<0 || !source || !source->constructed || !source->attached || source->close_pending)
+    if(client<0) return bots->map_navigation;
+    if(!source || !source->constructed || !source->attached || source->close_pending)
         return NULL;
     qa_actor_id actor=bot_source_actor(bots,client);
     if(!actor.registry || !qa_actors_get(qa_session_actors(bots->application->session),actor) ||

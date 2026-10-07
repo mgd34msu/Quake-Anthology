@@ -65,7 +65,7 @@ bool qa_bot_moves_goal_from(qa_bot_moves *, uint32_t, const qa_bot_move_goal_sou
 bool qa_bot_moves_view_target_from(qa_bot_moves *, uint32_t, const qa_bot_move_goal_source *,
                                    uint32_t travel_flags, float look_ahead,
                                    const qa_bot_vector_target *, bool *, qa_error *);
-bool qa_bot_moves_visible_position_from(qa_bot_moves *, int32_t client,
+bool qa_bot_moves_visible_position_from(qa_bot_moves *,
                                         const qa_bot_vector_source *, uint32_t area,
                                         const qa_bot_move_goal_source *, uint32_t travel_flags,
                                         const qa_bot_vector_target *, bool *, qa_error *);

@@ -1105,7 +1105,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
                 .area=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_AREA),.origin=bot_ai_eye(s),
                 .mins={-8,-8,-8},.maxs={8,8,8}};
             qa_vec3 target;bool found;
-            SOURCE_ATTACK_CALL(qa_bot_moves_visible_position(qa_bot_runtime_moves(b->runtime),(int32_t)s->view.client,
+            SOURCE_ATTACK_CALL(qa_bot_moves_visible_position(qa_bot_runtime_moves(b->runtime),
                 bot_ai_last_enemy_origin(s),bot_ai_last_enemy_area(s),&goal,0x011c0fbe,&target,&found,e));
             if(found) {
                 qa_vec3 direction=qa_vec_sub(target,bot_ai_eye(s));

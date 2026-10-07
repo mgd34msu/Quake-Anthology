@@ -66,7 +66,7 @@ done:
     m->busy = false;
     return ok;
 }
-bool qa_bot_moves_visible_position(qa_bot_moves *m, int32_t client, qa_vec3 origin, uint32_t area,
+bool qa_bot_moves_visible_position(qa_bot_moves *m, qa_vec3 origin, uint32_t area,
                                    const qa_bot_goal *goal, uint32_t flags, qa_vec3 *out,
                                    bool *found, qa_error *e) {
     if (!goal || !out || !qa_vec_finite(origin) || !qa_vec_finite(goal->origin))
@@ -74,10 +74,10 @@ bool qa_bot_moves_visible_position(qa_bot_moves *m, int32_t client, qa_vec3 orig
     qa_bot_vector_source start = {.value = &origin};
     qa_bot_move_goal_source source = {.value = goal};
     qa_bot_vector_target target = {.value = out};
-    return qa_bot_moves_visible_position_from(m, client, &start, area, &source, flags,
+    return qa_bot_moves_visible_position_from(m, &start, area, &source, flags,
                                                &target, found, e);
 }
-bool qa_bot_moves_visible_position_from(qa_bot_moves *m, int32_t client,
+bool qa_bot_moves_visible_position_from(qa_bot_moves *m,
                                         const qa_bot_vector_source *origin, uint32_t area,
                                         const qa_bot_move_goal_source *goal, uint32_t flags,
                                         const qa_bot_vector_target *out, bool *found, qa_error *e) {
@@ -89,7 +89,7 @@ bool qa_bot_moves_visible_position_from(qa_bot_moves *m, int32_t client,
     bot_travel t;
     uint32_t goal_area;
     bool route;
-    bool ok = bot_goal_area(goal, &goal_area, e) && bot_travel_begin_client(m,client,&t,e) &&
+    bool ok = bot_goal_area(goal, &goal_area, e) && bot_travel_begin_client(m,-1,&t,e) &&
               bot_travel_points(&t, origin, area, goal_area, flags, &route, e);
     if (ok && route) {
         qa_bot_vector_source end = bot_goal_origin(goal);

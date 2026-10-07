@@ -136,7 +136,7 @@ bool qa_bot_moves_goal(qa_bot_moves *, uint32_t, const qa_bot_goal *, uint32_t t
                        qa_bot_move_result *in_out, qa_error *);
 bool qa_bot_moves_view_target(qa_bot_moves *, uint32_t, const qa_bot_goal *, uint32_t travel_flags,
                               float look_ahead, qa_vec3 *, bool *, qa_error *);
-bool qa_bot_moves_visible_position(qa_bot_moves *, int32_t client, qa_vec3 origin, uint32_t area,
+bool qa_bot_moves_visible_position(qa_bot_moves *, qa_vec3 origin, uint32_t area,
                                    const qa_bot_goal *, uint32_t travel_flags, qa_vec3 *, bool *,
                                    qa_error *);
 #endif
