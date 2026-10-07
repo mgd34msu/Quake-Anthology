@@ -23,62 +23,21 @@ typedef struct cpu_fog_rows {
   bool q2, global, height, sky, height_colors_normalized, height_byte_bound;
 } cpu_fog_rows;
 
-typedef struct cpu_fog_distance_span {
-  float length, first, second, third, z, z_step;
-  int64_t count;
-} cpu_fog_distance_span;
+typedef struct cpu_fog_ray { float z, length; } cpu_fog_ray;
 
-static cpu_fog_distance_span fog_distance_span(const cpu_fog_rows *rows,
-    int64_t x, int64_t y, int64_t count) {
+static cpu_fog_ray fog_view_ray(const cpu_fog_rows *rows, int64_t x, float ndc_y) {
   const qa_scene_view *view = rows->view;
   float ndc_x = ((float)x + .5f - (float)view->viewport.x) * 2 /
       (float)view->viewport.width - 1;
-  float ndc_y = 1 - ((float)y + .5f - (float)view->viewport.y) * 2 /
-      (float)view->viewport.height;
-  float ray[3], step[3];
+  float ray[3];
   const float forward[3] = {view->axis[0].x, view->axis[0].y, view->axis[0].z};
   const float right[3] = {view->axis[1].x, view->axis[1].y, view->axis[1].z};
   const float up[3] = {view->axis[2].x, view->axis[2].y, view->axis[2].z};
-  for (size_t c = 0; c < 3; ++c) {
+  for (size_t c = 0; c < 3; ++c)
     ray[c] = forward[c] - right[c] * ndc_x * rows->tan_x +
              up[c] * ndc_y * rows->tan_y;
-    step[c] = -right[c] * (2.0f / (float)view->viewport.width) * rows->tan_x;
-  }
-  float start = sqrtf(ray[0] * ray[0] + ray[1] * ray[1] + ray[2] * ray[2]);
-  float c1, c2, c3;
-  for (;;) {
-    float end_ray[3], n = (float)count;
-    for (size_t c = 0; c < 3; ++c) end_ray[c] = ray[c] + step[c] * n;
-    float end = sqrtf(end_ray[0] * end_ray[0] + end_ray[1] * end_ray[1] + end_ray[2] * end_ray[2]);
-    float start_slope = 0, end_slope = 0;
-    for (size_t c = 0; c < 3; ++c) {
-      if (start != 0) start_slope += ray[c] / start * step[c];
-      if (end != 0) end_slope += end_ray[c] / end * step[c];
-    }
-    c1 = n * start_slope;
-    c2 = 3 * (end - start) - 2 * c1 - n * end_slope;
-    c3 = 2 * (start - end) + c1 + n * end_slope;
-    if (count <= 1) break;
-    float mid_ray[3];
-    for (size_t c = 0; c < 3; ++c) mid_ray[c] = ray[c] + step[c] * (n * .5f);
-    float middle = sqrtf(mid_ray[0] * mid_ray[0] + mid_ray[1] * mid_ray[1] + mid_ray[2] * mid_ray[2]);
-    float estimate = start + .5f * (c1 + .5f * (c2 + .5f * c3));
-    if (fabsf(estimate - middle) <= middle * (2 * FLT_EPSILON)) break;
-    count = (count + 1) / 2;
-  }
-  float inverse = 1.0f / (float)count;
-  float square = inverse * inverse, cube = square * inverse;
-  return (cpu_fog_distance_span){start,
-      c1 * inverse + c2 * square + c3 * cube,
-      2 * c2 * square + 6 * c3 * cube, 6 * c3 * cube,
-      ray[2], step[2], count};
-}
-
-static void fog_distance_step(cpu_fog_distance_span *span) {
-  span->length += span->first;
-  span->first += span->second;
-  span->second += span->third;
-  span->z += span->z_step;
+  return (cpu_fog_ray){ray[2],
+      sqrtf(ray[0] * ray[0] + ray[1] * ray[1] + ray[2] * ray[2])};
 }
 
 #if defined(__SSE2__)
@@ -211,7 +170,7 @@ static void fog_blend_four(__m128 color[4], const __m128 fog_color[3],
 /* Four adjacent pixels retain the scalar operation order and both byte
  * rounding boundaries when global and height fog are applied together. */
 static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
-                        cpu_fog_distance_span *span) {
+                        int64_t x, float ndc_y) {
   const qa_scene_fog *fog = rows->fog;
   cpu_framebuffer *buffer = rows->buffer;
   const float *depths = buffer->depth + index;
@@ -242,15 +201,26 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
           _mm_sub_ps(one, fog_attenuation_four(_mm_mul_ps(scaled, scaled))), geometry, buffer->alpha);
     }
     if (rows->height) {
-      float ray_z[4], ray_length[4];
-      for (size_t i = 0; i < 4; ++i) {
-        ray_z[i] = span->z;
-        ray_length[i] = span->length;
-        fog_distance_step(span);
-      }
-      __m128 z = _mm_loadu_ps(ray_z);
+      const qa_scene_view *view = rows->view;
+      __m128 pixel_x = _mm_set_ps((float)(x + 3), (float)(x + 2),
+                                  (float)(x + 1), (float)x);
+      __m128 ndc_x = _mm_sub_ps(_mm_div_ps(_mm_mul_ps(_mm_sub_ps(
+          _mm_add_ps(pixel_x, _mm_set1_ps(.5f)), _mm_set1_ps((float)view->viewport.x)),
+          _mm_set1_ps(2)), _mm_set1_ps((float)view->viewport.width)), one);
+      __m128 ray[3];
+      const float forward[3] = {view->axis[0].x, view->axis[0].y, view->axis[0].z};
+      const float right[3] = {view->axis[1].x, view->axis[1].y, view->axis[1].z};
+      const float up[3] = {view->axis[2].x, view->axis[2].y, view->axis[2].z};
+      for (size_t c = 0; c < 3; ++c)
+        ray[c] = _mm_add_ps(_mm_sub_ps(_mm_set1_ps(forward[c]),
+            _mm_mul_ps(_mm_mul_ps(_mm_set1_ps(right[c]), ndc_x), _mm_set1_ps(rows->tan_x))),
+            _mm_mul_ps(_mm_mul_ps(_mm_set1_ps(up[c]), _mm_set1_ps(ndc_y)), _mm_set1_ps(rows->tan_y)));
+      __m128 ray_length = _mm_sqrt_ps(_mm_add_ps(_mm_add_ps(
+          _mm_mul_ps(ray[0], ray[0]), _mm_mul_ps(ray[1], ray[1])),
+          _mm_mul_ps(ray[2], ray[2])));
+      __m128 z = ray[2];
       __m128 world_z = _mm_add_ps(_mm_set1_ps(rows->view->origin.z), _mm_mul_ps(z, eye));
-      __m128 direction = _mm_div_ps(z, _mm_loadu_ps(ray_length));
+      __m128 direction = _mm_div_ps(z, ray_length);
       direction = fog_select_four(_mm_cmplt_ps(eye, zero), _mm_sub_ps(zero, direction), direction);
       direction = fog_select_four(_mm_cmpeq_ps(direction, zero), _mm_set1_ps(.00001f), direction);
       __m128 extinction_density = _mm_div_ps(
@@ -295,8 +265,6 @@ static void q2_fog_four(const cpu_fog_rows *rows, size_t index,
       __m128 amount = _mm_mul_ps(_mm_sub_ps(one, height_attenuation), extinction);
       fog_blend_four(color, height_color, amount, geometry, buffer->alpha);
     }
-  } else if (rows->height) {
-    for (size_t i = 0; i < 4; ++i) fog_distance_step(span);
   }
 pack_pixels:
   packed = fog_bytes_four(color[3]);
@@ -315,66 +283,57 @@ static void depth_fog_rows(qa_cpu_renderer *renderer, void *context,
   const qa_scene_view *view = rows->view;
   const float *p = view->projection.m;
   for (int64_t y = first; y <= last; ++y) {
-    for (int64_t start = rows->x0; start < rows->x1;) {
-      int64_t count = rows->x1 - start < 16 ? rows->x1 - start : 16;
-      cpu_fog_distance_span span = {0};
-      if (rows->height) {
-        span = fog_distance_span(rows, start, y, count);
-        count = span.count;
-      }
-      int64_t x = start;
+    float ndc_y = rows->height ? 1 - ((float)y + .5f - (float)view->viewport.y) * 2 /
+        (float)view->viewport.height : 0;
+    int64_t x = rows->x0;
 #if defined(__SSE2__)
-      if (rows->q2)
-        for (; x + 4 <= start + count; x += 4)
-          q2_fog_four(rows, (size_t)y * buffer->width + (size_t)x, &span);
+    if (rows->q2)
+      for (; x + 4 <= rows->x1; x += 4)
+        q2_fog_four(rows, (size_t)y * buffer->width + (size_t)x, x, ndc_y);
 #endif
-      for (; x < start + count; ++x) {
-        size_t index = (size_t)y * buffer->width + (size_t)x;
-        uint8_t *pixel = buffer->color + index * 4;
-        float depth = (float)buffer->depth[index];
-        if (!rows->q2) {
-          float normalized = depth * 2 - 1;
-          float eye = fabsf((p[14] - normalized * p[15]) /
-                            (normalized * p[11] - p[10]));
-          float scaled = rows->density * eye;
-          float amount = buffer->depth[index] == view->depth ? cpu_fog_clamp(fog->sky_factor)
-                                                : 1 - cpu_fog_exp(scaled * scaled);
-          pixel[0] = cpu_fog_byte((float)pixel[0] + (fog->color.x * 255 - (float)pixel[0]) * amount);
-          pixel[1] = cpu_fog_byte((float)pixel[1] + (fog->color.y * 255 - (float)pixel[1]) * amount);
-          pixel[2] = cpu_fog_byte((float)pixel[2] + (fog->color.z * 255 - (float)pixel[2]) * amount);
-        } else if (depth >= fog->far_depth) {
-          if (rows->sky) blend_fog(pixel, rows->color, fog->sky_factor, buffer->alpha);
-        } else {
-          float eye = rows->b / (rows->a - (2 * depth - 1));
-          float fragment_depth = depth * eye;
-          if (rows->global) {
-            float scaled = rows->density * fragment_depth;
-            blend_fog(pixel, rows->color, 1 - cpu_fog_exp(scaled * scaled), buffer->alpha);
-          }
-          if (rows->height) {
-            float world_z = view->origin.z + span.z * eye;
-            float direction = span.z / span.length;
-            if (eye < 0) direction = -direction;
-            if (direction == 0) direction = .00001f;
-            float extinction_density = (rows->origin_extinction -
-                cpu_fog_exp(fog->height_falloff * (world_z - fog->height_start))) /
-                (fog->height_falloff * direction);
-            float extinction = 1 - cpu_fog_clamp(cpu_fog_exp(extinction_density));
-            /* The rerelease shader applies the authored start twice. */
-            float fraction = cpu_fog_clamp((world_z - 2 * fog->height_start) * rows->height_inverse);
-            float color[3] = {
-                cpu_fog_clamp((fog->height_color.x + (fog->height_end_color.x - fog->height_color.x) * fraction) * extinction) * 255,
-                cpu_fog_clamp((fog->height_color.y + (fog->height_end_color.y - fog->height_color.y) * fraction) * extinction) * 255,
-                cpu_fog_clamp((fog->height_color.z + (fog->height_end_color.z - fog->height_color.z) * fraction) * extinction) * 255};
-            float amount = (1 - cpu_fog_exp(fog->height_density * fragment_depth)) * extinction;
-            blend_fog(pixel, color, amount, buffer->alpha);
-          }
+    for (; x < rows->x1; ++x) {
+      size_t index = (size_t)y * buffer->width + (size_t)x;
+      uint8_t *pixel = buffer->color + index * 4;
+      float depth = (float)buffer->depth[index];
+      if (!rows->q2) {
+        float normalized = depth * 2 - 1;
+        float eye = fabsf((p[14] - normalized * p[15]) /
+                          (normalized * p[11] - p[10]));
+        float scaled = rows->density * eye;
+        float amount = buffer->depth[index] == view->depth ? cpu_fog_clamp(fog->sky_factor)
+                                              : 1 - cpu_fog_exp(scaled * scaled);
+        pixel[0] = cpu_fog_byte((float)pixel[0] + (fog->color.x * 255 - (float)pixel[0]) * amount);
+        pixel[1] = cpu_fog_byte((float)pixel[1] + (fog->color.y * 255 - (float)pixel[1]) * amount);
+        pixel[2] = cpu_fog_byte((float)pixel[2] + (fog->color.z * 255 - (float)pixel[2]) * amount);
+      } else if (depth >= fog->far_depth) {
+        if (rows->sky) blend_fog(pixel, rows->color, fog->sky_factor, buffer->alpha);
+      } else {
+        float eye = rows->b / (rows->a - (2 * depth - 1));
+        float fragment_depth = depth * eye;
+        if (rows->global) {
+          float scaled = rows->density * fragment_depth;
+          blend_fog(pixel, rows->color, 1 - cpu_fog_exp(scaled * scaled), buffer->alpha);
         }
         if (rows->height) {
-          fog_distance_step(&span);
+          cpu_fog_ray ray = fog_view_ray(rows, x, ndc_y);
+          float world_z = view->origin.z + ray.z * eye;
+          float direction = ray.z / ray.length;
+          if (eye < 0) direction = -direction;
+          if (direction == 0) direction = .00001f;
+          float extinction_density = (rows->origin_extinction -
+              cpu_fog_exp(fog->height_falloff * (world_z - fog->height_start))) /
+              (fog->height_falloff * direction);
+          float extinction = 1 - cpu_fog_clamp(cpu_fog_exp(extinction_density));
+          /* The rerelease shader applies the authored start twice. */
+          float fraction = cpu_fog_clamp((world_z - 2 * fog->height_start) * rows->height_inverse);
+          float color[3] = {
+              cpu_fog_clamp((fog->height_color.x + (fog->height_end_color.x - fog->height_color.x) * fraction) * extinction) * 255,
+              cpu_fog_clamp((fog->height_color.y + (fog->height_end_color.y - fog->height_color.y) * fraction) * extinction) * 255,
+              cpu_fog_clamp((fog->height_color.z + (fog->height_end_color.z - fog->height_color.z) * fraction) * extinction) * 255};
+          float amount = (1 - cpu_fog_exp(fog->height_density * fragment_depth)) * extinction;
+          blend_fog(pixel, color, amount, buffer->alpha);
         }
       }
-      start += count;
     }
   }
 }

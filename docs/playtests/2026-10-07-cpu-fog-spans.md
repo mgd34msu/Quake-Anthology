@@ -365,3 +365,54 @@ alone does not prove Source gameplay sampling. The Source-specific policy
 still precedes ordinary image handling in code; live Source policy proof
 remains a separate gap. These checks do not establish every game's,
 remote play's or combined mode's complete filtering behavior.
+
+## Direct Q2 height-fog rays
+
+The recovered `fog.c` work replaces cubic fitting of view-ray lengths with
+direct four-lane norms. Its scalar tail and portable path use the same
+point-ray calculation only for geometry needing height fog. Q2's original
+shader normalizes `world_pos - vieworg` at each fragment; see
+`q2repro/src/refresh/shader.c:543`. Global and height fog still blend in
+their original order, with the existing CPU byte conversion at each stage.
+Other fog kinds, sky classification, target-alpha behavior and exponent
+helpers retain their previous semantics.
+
+A reused bounded component comparison checks the candidate against a
+scalar direct-ray reference derived from the original shader equations.
+Both SSE2 and portable builds ran 576 queued cases covering 49,206,144
+pixels, four rounding modes, scalar tails, geometry and sky. Scalar RGBA
+matched exactly. SSE2 changed 46 channels by one byte each, with maximum
+RGB and alpha delta one and no alpha-zero changes. Depth and stencil bits
+matched; warmed fog allocated nothing. This is bounded component evidence,
+not a universal GPU error bound. The old cubic approximation is not an
+exact reference for the original ray normalization.
+
+The candidate built with the production strict flags and passed the six
+configured CTests. A fresh copied-owner retail base1 CPU launch reached
+gameplay, exercised and restored the common texture policy, captured
+completed frames and quit normally with zero. Original settings and build
+pins remained unchanged, and owned processes were absent.
+
+The quiet paired method held `31b55a7a` and the candidate's requested
+texture filtering identical. Only `fog.c` differs in production sources.
+
+| Drawable | Baseline median ms | Candidate median ms | Baseline p99 ms | Candidate p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 6.069082 | 6.140548 | 16.125733 | 16.215796 |
+| 320×200 | 4.364568 | 4.186719 | 6.357198 | 5.784937 |
+
+Separate warmed renderer means were 4.974889 → 4.947368 ms and
+3.412933 → 3.260665 ms. Span and worker counts match at both sizes;
+animated triangle work and scene-build time vary. Every case sampled
+600 presentation intervals after 832 or more warm intervals, preserved
+the owner settings and artifact pins, quit with zero and cleaned up its
+owned processes. There was no debugger, profiler, compiler, other game
+or audio during these pinned runs.
+
+The 640×400 pair shows no improvement in total median. The 320×200 pair
+is modestly lower, but still misses 2 ms. Both CPU targets remain open;
+this result does not establish a general frame-time speedup.
+
+Evidence: `qa-the196-direct-fog-rays-20261007/root-results.json`,
+`qa-private-av-_7xifk75/installer-shaped-qualification.json` and
+`qa-the196-vector-return-plan-etpe2uwf/paired-result.json`.
