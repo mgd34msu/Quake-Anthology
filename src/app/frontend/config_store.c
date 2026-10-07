@@ -2661,6 +2661,11 @@ static bool prepare_source_row(void *context,qa_application *application,const q
         config_seat *seat=source->seats+source->seat_count++;
         ok=seat_create(source,candidate,seat,logical,i,error);
     }
+    if (ok && !restored) {
+        source->next=manager->sources; manager->sources=source;
+        *phase=source;
+        ok=frontend_config_store_shared_begin(manager,application,candidate,authority,error);
+    }
     if (ok) ok=install_commands(source,error);
     if (ok && source->primary && !restored) ok=phase_create(source,error);
     if (ok && restored) {
@@ -2677,10 +2682,15 @@ static bool prepare_source_row(void *context,qa_application *application,const q
         }
         source->configured=source->released=source->initial_variables=ok;
     }
-    if (!ok) { qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false; }
-    source->next=manager->sources; manager->sources=source;
-    *phase=source;
-    return restored || frontend_config_store_shared_begin(manager,application,candidate,authority,error);
+    if (!ok) {
+        if (*phase==source) return false;
+        qa_error cleanup={0}; if (!source_destroy(source,&cleanup) && error) *error=cleanup; return false;
+    }
+    if (restored) {
+        source->next=manager->sources; manager->sources=source;
+        *phase=source;
+    }
+    return true;
 }
 static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *authority,void **phase,qa_error *error)
