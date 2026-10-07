@@ -395,9 +395,6 @@ class Catalog:
             conflict = re.search(r'`([^`]+)` is a password string in QW and a 0/1 bool in Q2/Q2R', self.policy)
             if conflict and target == conflict[1] and dialect in (2, 3):
                 return self.add_conversion('ENUM_DETAIL', detail=1, **options)
-            mouse = re.search(r'`([^`]+)`\s*/\s*`([^`]+)`.*?factor 400/127', self.policy)
-            if mouse and target in mouse.groups() and dialect != 4:
-                return self.add_conversion('CONSUMER_UNITS', scale=400 / 127, **options)
             if raw.startswith('Bit view of dmflags:'):
                 return self.add_conversion('BIT_VIEW', operands=self.rule_operand(row_index), **options)
             if operation != 'NONE':
