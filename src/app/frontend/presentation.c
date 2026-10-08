@@ -450,8 +450,6 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (!frontend_view_background(frontend, rect, &view, error)) return false;
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
-        if (!frontend_source_frame(frontend, i, rect, error) ||
-            !frontend_native_q2_frame(frontend, i, rect, error)) return false;
         bool remote_rendered=false,remote_listener_present=false,native_rendered=false,common_hud_drawn=false;
         qa_audio_listener remote_listener;
         if (!frontend_network_client_draw(frontend,i,0,&remote_rendered,&remote_listener,
@@ -469,7 +467,11 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
         }
         if (remote_rendered) native_rendered=true;
-        else if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
+        else {
+            if (!frontend_source_frame(frontend, i, rect, error) ||
+                !frontend_native_q2_frame(frontend, i, rect, error)) return false;
+            if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
+        }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
             bool changed;
             if (!local_q3_damage(frontend,seat,actor,&camera,&view,&changed,error)) return false;

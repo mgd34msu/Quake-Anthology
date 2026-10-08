@@ -3682,18 +3682,19 @@ bool frontend_config_store_neutral_options_cancel(frontend_config_store *manager
 {
     return manager && frontend_neutral_config_options_cancel(manager->neutral,options,error);
 }
-bool frontend_config_store_client_profile(const frontend_config_store *manager,qa_game_family family,
+bool frontend_config_store_client_profile(const frontend_config_store *manager,qa_product_id selected,
     qa_product_id *out,qa_error *error)
 {
     if (!manager || !out || !manager->frontend || !manager->frontend->application)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT profile needs its retained frontend selection");
-    if (family!=QA_GAME_Q1 && family!=QA_GAME_Q2 && family!=QA_GAME_Q3)
-        return fail(error,QA_ERROR_UNSUPPORTED,"Neutral CLIENT configuration requires a genuine Quake profile");
     qa_frontend *f=manager->frontend;
-    const qa_product *product=frontend_product_current(f);
-    if (!product || product->family!=family || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
+    const qa_catalog *catalog=qa_application_catalog(f->application);
+    const qa_product *product=qa_catalog_product(catalog,selected);
+    while (product && !product->builtin && product->base)
+        product=qa_catalog_product(catalog,product->base);
+    if (!product || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
         product->availability!=QA_CONTENT_INSTALLED)
-        return fail(error,QA_ERROR_ARGUMENT,"Remote CLIENT needs an explicitly selected installed compiled profile");
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT selection has no installed compiled input profile");
     *out=product->id; return true;
 }
 bool frontend_config_store_neutral_adopt_store(frontend_config_store *manager,const qa_launch_instance *selected,

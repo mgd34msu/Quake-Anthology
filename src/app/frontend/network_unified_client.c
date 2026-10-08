@@ -352,17 +352,18 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     frontend_network_unified_client_service *o=calloc(1,sizeof(*o));
     if (!o) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified CLIENT services");
     *out=o; o->options=*options;
+    if (!o->options.selected) o->options.selected=profile->id;
     qa_clock_kind clock=profile->family==QA_GAME_Q1?
         (profile->edition==QA_EDITION_QUAKEWORLD?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE):
         profile->family==QA_GAME_Q2?(profile->edition==QA_EDITION_RERELEASE?QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC):QA_CLOCK_Q3;
     qa_vfs *prepared=NULL;
-    if (!parent(o) || !qa_catalog_open(catalog,profile->id,&prepared,e)) return false;
+    if (!parent(o) || !qa_catalog_open(catalog,o->options.selected,&prepared,e)) return false;
     frontend_client_source_options source=physical_options(o);
     source.input_origin=qa_input_seat_context(f->seats[options->physical_seat].input);
     source.input_origin.owner=0; source.input_origin.actor=(qa_actor_id){0}; source.input_origin.client=0;
     source.input_origin.registry=source.input_origin.generation=0; source.input_origin.script=false;
     source.input_origin.dialect=(qa_console_dialect)clock;
-    source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=profile->id,
+    source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=o->options.selected,
         .prepared=prepared,.instance="remote-unified-client",.seat=source.input_origin.seat,.clock=clock};
     bool ok=frontend_client_source_create(f,&source,&o->physical,e);
     qa_vfs_destroy(prepared); return ok;

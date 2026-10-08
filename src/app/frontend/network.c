@@ -116,8 +116,20 @@ typedef struct frontend_network_server_lease {
     qa_actor_owner owner;
     struct frontend_network_server_lease *next;
 } server_lease;
+typedef struct frontend_local_client {
+    qa_frontend_network *network;
+    qa_network_runtime *runtime;
+    frontend_network_unified *unified;
+    frontend_network_unified_client_service *service;
+    qa_net_address endpoint;
+    qa_net_seat_id seat, client_seat;
+    uint32_t physical, authored;
+} frontend_local_client;
 struct qa_frontend_network {
     qa_frontend *frontend;
+    qa_net_loopback *loopback;
+    qa_net_address loopback_server;
+    frontend_local_client local_clients[QA_NETWORK_MAX_SEATS];
     qa_network_runtime *runtime;
     qa_server_browser *browser;
     qa_net_interfaces *interfaces;
@@ -277,9 +289,33 @@ static bool q2_host_current(void *context,const frontend_network_q2_host *host)
     return n && n->frontend && n->frontend->network==n && n->q2_host==host &&
         (!n->detached_transport || frontend_network_q2_host_importing(host) || frontend_network_q2_host_imported(host));
 }
+static bool local_clients_prepare(qa_frontend_network *, qa_error *);
+static bool local_clients_tick(qa_frontend_network *, qa_error *);
+static bool local_clients_destroy(qa_frontend_network *, qa_error *);
+static bool local_clients_idle(const qa_frontend_network *);
+bool frontend_network_local_seat(const qa_frontend *f, const qa_net_address *endpoint,
+    qa_net_seat_id *seat, uint32_t *authored)
+{
+    const qa_frontend_network *n = f ? f->network : NULL;
+    if (!n) return false;
+    for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
+        const frontend_local_client *local = n->local_clients + i;
+        if (!local->runtime || !qa_net_address_equal(endpoint, &local->endpoint, true)) continue;
+        *seat = local->seat; *authored = local->authored; return true;
+    }
+    return false;
+}
+static bool local_server_seat(void *context, const qa_net_address *endpoint,
+    qa_net_seat_id *seat, uint32_t *authored)
+{
+    const qa_frontend_network *n = context;
+    return frontend_network_local_seat(n->frontend, endpoint, seat, authored);
+}
 static bool q2_local_groups_prepare(qa_frontend_network *n,qa_error *error)
 {
     qa_frontend *f=n->frontend;
+    if (f->options.network_protocol.kind == QA_NET_UNIFIED_1 && !f->options.network_connect)
+        return local_clients_prepare(n, error);
     if(n->q2_host || n->detached_transport || f->options.network_host || f->options.network_connect) return true;
     qa_application_map_view map;
     if(qa_application_get_state(f->application)!=QA_APPLICATION_RUNNING ||
@@ -355,6 +391,158 @@ static bool unified_tick(qa_frontend_network *n,qa_error *error)
     return !n->unified_client_service || !n->unified ||
         frontend_network_unified_client_drain(n->unified_client_service,1024,&executed,error);
 }
+static bool local_unified_current(void *context, const frontend_network_unified *owner)
+{
+    const frontend_local_client *local = context;
+    return local->network->frontend->network == local->network && local->unified == owner;
+}
+static bool local_service_current(void *context, const frontend_network_unified_client_service *service)
+{
+    const frontend_local_client *local = context;
+    return local->network->frontend->network == local->network && local->service == service;
+}
+static bool local_service_disconnected(void *context, const qa_application_client_source *source,
+    const char *reason, qa_error *error)
+{
+    frontend_local_client *local = context;
+    (void)error;
+    frontend_console_print(local->network->frontend, &source->context.command, reason);
+    return true;
+}
+static bool local_admit(void *context, const qa_net_connect *request, qa_error *error)
+{
+    frontend_local_client *local = context;
+    bool recognized = false;
+    return frontend_network_unified_admit(local->unified, request, &recognized, error) && recognized;
+}
+static bool local_connectionless(void *context, qa_network_runtime *runtime,
+    const qa_net_datagram *packet, qa_error *error)
+{
+    frontend_local_client *local = context;
+    bool recognized = false;
+    (void)runtime;
+    return frontend_network_unified_receive(local->unified, packet, &recognized, error);
+}
+static qa_product_id local_client_selection(qa_frontend *f, uint32_t authored, qa_actor_id actor)
+{
+    const qa_launch_snapshot *snapshot = qa_application_launch(f->application);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    static const qa_launch_role roles[] = {QA_ROLE_HUD, QA_ROLE_CHARACTER};
+    for (size_t role = 0; role < sizeof(roles) / sizeof(roles[0]); ++role) {
+        const qa_launch_binding *binding = NULL;
+        for (size_t i = 0; i < choices->binding_count; ++i) {
+            const qa_launch_binding *candidate = choices->bindings + i;
+            if (candidate->role == roles[role] && candidate->scope.kind == QA_SCOPE_ACTOR &&
+                qa_actor_id_equal(candidate->scope.actor, actor) && !*candidate->selector) {
+                binding = candidate; break;
+            }
+        }
+        if (!binding) binding = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = authored}, roles[role], "");
+        if (!binding) binding = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_WORLD}, roles[role], "");
+        const qa_launch_instance *selected = binding ? qa_launch_snapshot_find(snapshot, binding->instance) : NULL;
+        if (selected) return selected->selection.product;
+    }
+    return QA_PRODUCT_NONE;
+}
+static bool local_clients_prepare(qa_frontend_network *n, qa_error *error)
+{
+    qa_frontend *f = n->frontend;
+    qa_application_map_view map;
+    if (!n->loopback || n->detached_transport || f->options.network_connect || f->options.dedicated ||
+        f->options.network_protocol.kind != QA_NET_UNIFIED_1 ||
+        qa_application_get_state(f->application) != QA_APPLICATION_RUNNING ||
+        !qa_application_map_read(f->application, &map)) return true;
+    if (!n->unified) {
+        application_unified_source source;
+        if (!application_unified_source_read(f->application, &source, error)) return false;
+        n->composition = qa_application_configuration_generation(f->application);
+        n->unified_map_revision = source.map_revision;
+        frontend_network_unified_options server = {.frontend = f, .runtime = n->runtime, .server = true,
+            .seat_owner = NETWORK_OWNER, .remote_seat_base = 256, .context = n,
+            .current = unified_current, .local_seat = local_server_seat};
+        if (!frontend_network_unified_create(&server, &n->unified, error)) return false;
+    }
+    for (uint32_t i = 0; i < f->options.seats; ++i) {
+        frontend_local_client *local = n->local_clients + i;
+        if (local->runtime) continue;
+        uint32_t authored;
+        qa_actor_id actor;
+        if (!frontend_seat_launch_id_read(f, i, &authored) ||
+            !qa_application_player_actor(f->application, authored, &actor)) continue;
+        *local = (frontend_local_client){.network = n, .physical = i, .authored = authored,
+            .seat = {NETWORK_OWNER, authored}, .client_seat = {NETWORK_OWNER + i + 1, authored}};
+        qa_net_transport *transport = NULL;
+        char name[48];
+        snprintf(name, sizeof(name), "client-%u", i);
+        if (!qa_net_loopback_bind(n->loopback, name, &transport, error)) return false;
+        local->endpoint = *qa_net_transport_address(transport);
+        qa_network_options options = {.owner = NETWORK_OWNER + i + 1, .clients = 1, .packets_per_pump = 256,
+            .hooks = {.context = local, .admit = local_admit, .connectionless = local_connectionless}};
+        if (!qa_network_create(transport, &options, &local->runtime, error)) {
+            qa_net_transport_close(transport); return false;
+        }
+        frontend_network_unified_client_options client = {.frontend = f, .runtime = local->runtime,
+            .remote = n->loopback_server, .physical_seat = i, .seat = local->client_seat,
+            .selected = local_client_selection(f, authored, actor), .context = local,
+            .current = local_service_current, .disconnected = local_service_disconnected};
+        if (!frontend_config_store_client_profile(f->config_store, client.selected, &client.profile, error) ||
+            !frontend_config_store_neutral_pending_options(f->config_store, i, &client.configuration, error)) return false;
+        if (!frontend_network_unified_client_create(&client, &local->service, error)) {
+            if (!local->service) (void)frontend_config_store_neutral_options_cancel(f->config_store,
+                &client.configuration, NULL);
+            return false;
+        }
+    }
+    return local_clients_tick(n, error);
+}
+static bool local_clients_tick(qa_frontend_network *n, qa_error *error)
+{
+    for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
+        frontend_local_client *local = n->local_clients + i;
+        if (!local->runtime || !local->service) continue;
+        if (!local->unified && !frontend_network_unified_client_retired(local->service)) {
+            bool ready = false;
+            if (!frontend_network_unified_client_advance(local->service, &ready, error)) return false;
+            if (!ready) continue;
+            frontend_remote_unified_options consumer;
+            if (!frontend_network_unified_client_options_read(local->service, &consumer, error)) return false;
+            frontend_network_unified_options client = {.frontend = n->frontend, .runtime = local->runtime,
+                .seat_owner = local->client_seat.owner, .remote = n->loopback_server, .context = local,
+                .current = local_unified_current, .client = consumer, .client_service = local->service};
+            if (!frontend_network_unified_create(&client, &local->unified, error)) return false;
+        }
+        bool waiting = false;
+        if (local->unified && !frontend_network_unified_tick(local->unified,
+            n->frontend->wall_time_ns, &waiting, error)) return false;
+        size_t executed = 0;
+        if (local->unified && !frontend_network_unified_client_retired(local->service) &&
+            !frontend_network_unified_client_drain(local->service, 1024, &executed, error)) return false;
+        if (!qa_network_tick(local->runtime, n->frontend->wall_time_ns, error)) return false;
+    }
+    return true;
+}
+static bool local_clients_idle(const qa_frontend_network *n)
+{
+    for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
+        const frontend_local_client *local = n->local_clients + i;
+        if (!qa_network_callbacks_idle(local->runtime) || !frontend_network_unified_idle(local->unified) ||
+            !frontend_network_unified_client_idle(local->service)) return false;
+    }
+    return true;
+}
+static bool local_clients_destroy(qa_frontend_network *n, qa_error *error)
+{
+    for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
+        frontend_local_client *local = n->local_clients + i;
+        if (!frontend_network_unified_destroy(&local->unified, error) ||
+            !frontend_network_unified_client_destroy(&local->service, error)) return false;
+        qa_network_destroy(local->runtime); *local = (frontend_local_client){0};
+    }
+    return true;
+}
+
 static bool q2_client_current(void *context,const frontend_network_q2_client *client)
 {
     const qa_frontend_network *n=context;
@@ -466,11 +654,19 @@ static bool q2_restore_stage(void *context,qa_fs_root *root,const char *path,uin
 bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa_application_client_source *source)
 {
     const qa_frontend_network *n=f?f->network:NULL;
-    if(!n || !source || n->frontend!=f || !f->options.network_connect || n->busy ||
-        (source->runtime!=n->runtime && (!n->detached_transport || !f->source_restoring))) return false;
+    if(!n || !source || n->frontend!=f || n->busy) return false;
+    uint32_t physical = source->context.physical_seat;
+    const frontend_local_client *local = physical < f->options.seats ? n->local_clients + physical : NULL;
+    bool local_source = local && local->service && source->runtime == local->runtime;
+    if (!local_source && (!f->options.network_connect ||
+        (source->runtime!=n->runtime && (!n->detached_transport || !f->source_restoring)))) return false;
     if(n->q2_client_owner) return frontend_network_q2_client_configuration_primary(n->q2_client_owner,source);
     frontend_client_source_view held;
-    if(n->q1_client_owner) {
+    if (local_source) {
+        frontend_network_unified_client_view view;
+        if (!frontend_network_unified_client_metadata_read(local->service, &view, NULL)) return false;
+        held = view.physical;
+    } else if(n->q1_client_owner) {
         frontend_network_q1_client_view view;
         if(!frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,NULL)) return false;
         held=view.physical;
@@ -507,10 +703,12 @@ bool frontend_network_client_recipient_read(const qa_frontend *f,uint32_t physic
             frontend_network_q1_client_view view;
             if(!frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error)) return false;
             held=view.physical;
-        } else if(n->unified_client_service) {
-            if(frontend_network_unified_client_retired(n->unified_client_service)) return true;
+        } else if(n->unified_client_service || n->local_clients[physical].service) {
+            frontend_network_unified_client_service *service = n->unified_client_service ?
+                n->unified_client_service : n->local_clients[physical].service;
+            if(frontend_network_unified_client_retired(service)) return true;
             frontend_network_unified_client_view view;
-            if(!frontend_network_unified_client_metadata_read(n->unified_client_service,&view,error)) return false;
+            if(!frontend_network_unified_client_metadata_read(service,&view,error)) return false;
             held=view.physical;
         } else return true;
         if(held.source.context.physical_seat!=physical) return true;
@@ -540,10 +738,12 @@ bool frontend_network_client_retired_recipient_read(const qa_frontend *f,uint32_
             frontend_network_q1_client_view view;
             if(!frontend_network_q1_client_metadata_read(n->q1_client_owner,&view,error)) return false;
             held=view.physical;
-        } else if(n->unified_client_service) {
-            if(!frontend_network_unified_client_retired(n->unified_client_service)) return true;
+        } else if(n->unified_client_service || n->local_clients[physical].service) {
+            frontend_network_unified_client_service *service = n->unified_client_service ?
+                n->unified_client_service : n->local_clients[physical].service;
+            if(!frontend_network_unified_client_retired(service)) return true;
             frontend_network_unified_client_view view;
-            if(!frontend_network_unified_client_metadata_read(n->unified_client_service,&view,error)) return false;
+            if(!frontend_network_unified_client_metadata_read(service,&view,error)) return false;
             held=view.physical;
         } else return true;
         if(held.source.context.physical_seat!=physical) return true;
@@ -2279,7 +2479,7 @@ static bool q1_client_construct(qa_frontend_network *n,const qa_net_address *rem
     client.policy=(qa_network_q1_client_policy){.message_bytes=qw?1450u:64000u,.fragment_bytes=1024,
         .queued_bytes=1024u*1024u,.service_limit=qw?1450u:64000u,.pending_commands=64,
         .bytes_per_second=2500,.nq_options={.standard_quake=true},.nq_identity={.name="",.spawn_parameters=""}};
-    if (!frontend_config_store_client_profile(f->config_store,QA_GAME_Q1,&client.profile,error) ||
+    if (!frontend_config_store_client_profile(f->config_store,frontend_product_current(f)->id,&client.profile,error) ||
         !frontend_config_store_neutral_pending_options(f->config_store,physical,&client.configuration,error)) return false;
     if (frontend_network_q1_client_create(&client,&n->q1_client_owner,error)) return true;
     if (!n->q1_client_owner)
@@ -3953,6 +4153,21 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         }
         transport=wrapped;
     }
+    if (!f->options.network_connect && !f->options.dedicated) {
+        qa_net_transport *local = NULL, *host = NULL;
+        qa_net_limits loopback_limits = udp.limits;
+        if (f->options.network_protocol.kind == QA_NET_UNIFIED_1)
+            loopback_limits.datagram_bytes = qa_unified_limits_default().datagram_bytes;
+        if (!qa_net_loopback_create(loopback_limits, &n->loopback, error) ||
+            !qa_net_loopback_bind(n->loopback, "server", &local, error)) {
+            qa_net_transport_close(transport); goto failed;
+        }
+        n->loopback_server = *qa_net_transport_address(local);
+        if (!qa_net_host_transport_create(transport, local, &host, error)) {
+            qa_net_transport_close(local); qa_net_transport_close(transport); goto failed;
+        }
+        transport = host;
+    }
     if (!qa_network_create(transport, &options, &n->runtime, error)) { qa_net_transport_close(transport); goto failed; }
     if (!qa_net_interfaces_capture(&n->interfaces,error)) goto failed;
     if (f->options.network_host && nq_host_protocol(f->options.network_protocol) &&
@@ -3999,12 +4214,13 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         if(!frontend_network_q2_host_create(&host,&n->q2_host,error)) goto failed;
         if(!q2_timeout_sync(n,error)) goto failed;
     }
-    if(!q2_local_groups_prepare(n,error)) goto failed;
     if(f->options.network_host && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
         frontend_network_unified_options unified={.frontend=f,.runtime=n->runtime,.server=true,
-            .seat_owner=QA_NETWORK_COMMAND_OWNER,.remote_seat_base=256,.context=n,.current=unified_current};
+            .seat_owner=QA_NETWORK_COMMAND_OWNER,.remote_seat_base=256,.context=n,.current=unified_current,
+            .local_seat=local_server_seat};
         if(!frontend_network_unified_create(&unified,&n->unified,error)) goto failed;
     }
+    if(!q2_local_groups_prepare(n,error)) goto failed;
     if(f->options.network_connect && q2_host_protocol(f->options.network_protocol)) {
         frontend_network_q2_client_options client={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
             .protocol=f->options.network_protocol,.qport=(uint16_t)n->rotation_random,.physical_seat=0,
@@ -4022,9 +4238,10 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
             goto failed;
         }
         frontend_network_unified_client_options client_options={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
-            .physical_seat=0,.seat={QA_NETWORK_COMMAND_OWNER,0},.context=n,.current=unified_client_current,
+            .physical_seat=0,.seat={QA_NETWORK_COMMAND_OWNER,0},.selected=selected->id,
+            .context=n,.current=unified_client_current,
             .disconnected=unified_client_disconnected};
-        if(!frontend_config_store_client_profile(f->config_store,selected->family,&client_options.profile,error) ||
+        if(!frontend_config_store_client_profile(f->config_store,selected->id,&client_options.profile,error) ||
             !frontend_config_store_neutral_pending_options(f->config_store,0,&client_options.configuration,error)) goto failed;
         if(!frontend_network_unified_client_create(&client_options,&n->unified_client_service,error)) {
             if(!n->unified_client_service)
@@ -4449,7 +4666,7 @@ bool frontend_network_world_change_ready(qa_frontend *f, qa_error *error)
         (frontend_network_q2_host_idle(n->q2_host) ||
             (n->detached_transport && frontend_network_q2_host_import_retirement_idle(n->q2_host))) &&
         frontend_network_unified_idle(n->unified) &&
-        frontend_network_unified_client_idle(n->unified_client_service) &&
+        frontend_network_unified_client_idle(n->unified_client_service) && local_clients_idle(n) &&
         (!n->kex_transport || qa_kex_transport_idle(n->kex_transport)) &&
         (!n->kex_browser || frontend_kex_browser_idle(n->kex_browser)) &&
         frontend_nq_idle(n->nq_host) && frontend_qw_idle(n->qw_host) && qa_network_callbacks_idle(n->runtime)) ||
@@ -4459,7 +4676,12 @@ bool frontend_network_local_groups_retire(qa_frontend *f,qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
     if(!f) return frontend_fail(error,QA_ERROR_ARGUMENT,"Local group retirement requires its physical frontend");
-    if(!n || !frontend_network_q2_host_local_only(n->q2_host)) return true;
+    if (!n) return true;
+    if (n->loopback && !f->options.network_host) {
+        if (!frontend_network_unified_destroy(&n->unified, error) ||
+            !local_clients_destroy(n, error)) return false;
+    }
+    if(!frontend_network_q2_host_local_only(n->q2_host)) return true;
     bool importing=n->detached_transport && frontend_network_q2_host_importing(n->q2_host);
     if(n->busy || (n->detached_transport && !importing) || !qa_network_callbacks_idle(n->runtime) ||
         (importing ? !frontend_network_q2_host_import_retirement_idle(n->q2_host) :
@@ -5327,7 +5549,7 @@ bool frontend_network_retire_clients(qa_frontend *f,qa_error *error)
         !qa_http_callbacks_idle(frontend_tools_http(f)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement requires its returned frontend and Network callbacks");
     if(!n) return true;
-    if(!frontend_network_close_client(f,error) ||
+    if(!local_clients_destroy(n,error) || !frontend_network_close_client(f,error) ||
         !frontend_network_q2_client_destroy(&n->q2_client_owner,error) ||
         !frontend_network_q1_client_destroy(&n->q1_client_owner,error)) return false;
     if(n->unified_client_service && !frontend_network_unified_destroy(&n->unified,error)) return false;
@@ -5375,7 +5597,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo receivers must detach before Network retirement");
     if (!frontend_network_world_change_ready(f, error) || !qa_http_callbacks_idle(frontend_tools_http(f)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "network/HTTP callbacks must return before teardown");
-    if (!frontend_network_close_client(f, error)) return false;
+    if (!local_clients_destroy(n, error) || !frontend_network_close_client(f, error)) return false;
     if (!frontend_network_q2_client_destroy(&n->q2_client_owner, error)) return false;
     if (!frontend_network_q1_client_destroy(&n->q1_client_owner,error)) return false;
     if(n->detached_transport && frontend_network_q2_host_importing(n->q2_host))
@@ -5416,7 +5638,8 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_buffer_free(&n->q3_download_pending);
     qa_buffer_free(&n->q3_connections_prefix);
     qa_buffer_free(&n->menu_connections_prefix);
-    qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
+    qa_network_destroy(n->runtime); qa_net_loopback_close(n->loopback);
+    qa_q3_server_admission_destroy(n->q3_admission);
     qa_q3_server_authorization_destroy(n->q3_authorization);
     qa_q3_client_authorization_destroy(n->q3_client_authorization);
     frontend_nq_destroy(n->nq_host);
@@ -5517,6 +5740,16 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
         source.destination=1; source.context=n->kex_browser; source.collect=browser_collect;
         ok=qa_network_events_collect(&source,events,now,256,error);
     }
+    if (ok) for (uint32_t i = 0; i < f->options.seats; ++i) {
+        frontend_local_client *local = n->local_clients + i;
+        if (!local->runtime) continue;
+        qa_net_transport *endpoint = qa_network_transport(local->runtime);
+        source = (qa_network_event_source){.id = n->input_serial, .destination = (int32_t)i + 2,
+            .context = endpoint, .collect = transport_collect};
+        if (!qa_net_transport_maintenance(endpoint, now, error) ||
+            (qa_network_receive_ready(local->runtime) &&
+                !qa_network_events_collect(&source, events, now, 256, error))) { ok = false; break; }
+    }
     --n->busy;
     return ok;
 }
@@ -5524,6 +5757,22 @@ bool frontend_network_receive_ready(const qa_frontend *f)
 {
     const qa_frontend_network *n=f?f->network:NULL;
     return !n || qa_network_receive_ready(n->runtime);
+}
+bool frontend_network_event_ready(const qa_frontend *f, const qa_platform_event *event)
+{
+    const qa_frontend_network *n = f ? f->network : NULL;
+    if (!n || event->value2 == 1) return true;
+    if (event->value2 >= 2) {
+        uint32_t physical = (uint32_t)(event->value2 - 2);
+        return physical >= f->options.seats || !n->local_clients[physical].runtime ||
+            qa_network_receive_ready(n->local_clients[physical].runtime);
+    }
+    return qa_network_receive_ready(n->runtime);
+}
+bool frontend_network_local_input_owned(const qa_frontend *f, uint32_t physical)
+{
+    return f && f->network && physical < f->options.seats &&
+        f->network->local_clients[physical].runtime != NULL;
 }
 bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_bytes bytes,
     bool *consumed,qa_error *error)
@@ -5541,10 +5790,16 @@ bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_b
     if(event->value2==1) {
         if(n->kex_browser) ok=frontend_kex_browser_dispatch(n->kex_browser,physical,error);
     } else {
+        qa_network_runtime *runtime = n->runtime;
+        if (event->value2 >= 2) {
+            uint32_t seat = (uint32_t)(event->value2 - 2);
+            runtime = seat < f->options.seats ? n->local_clients[seat].runtime : NULL;
+        }
+        if (!runtime) { --n->busy; return true; }
         qa_net_datagram packet; bool present;
-        ok=qa_net_transport_dispatch(qa_network_transport(n->runtime),physical,&packet,&present,error);
+        ok=qa_net_transport_dispatch(qa_network_transport(runtime),physical,&packet,&present,error);
         if(ok && present) {
-            ok=qa_network_receive(n->runtime,&packet,error);
+            ok=qa_network_receive(runtime,&packet,error);
             /* Keep the boundary until all saved logical deliveries have run. */
             if(!physical) *consumed=false;
         }
@@ -5562,7 +5817,7 @@ bool frontend_network_maintenance(qa_frontend *f,qa_error *error)
     --n->busy;
     return ok && q2_client_tick_returned(n,error) &&
         q1_client_tick_returned(n,error) &&
-        unified_tick(n,error) &&
+        unified_tick(n,error) && local_clients_tick(n,error) &&
         (!n->q2_host || frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) &&
         (!n->q3_admission || q3_drain(n, error)) && client_drain(n, false, error) &&
         frontend_nq_pump(n->nq_host, error) && frontend_qw_pump(n->qw_host, error);
@@ -5779,18 +6034,6 @@ bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_ma
         if(!frontend_network_unified_pre_frame(f->network->unified,error)) return false;
     }
     return frontend_nq_tick(f->network->nq_host,elapsed_ns,retiring_map,error);
-}
-bool frontend_network_command(qa_frontend *f, uint32_t seat, qa_actor_id actor,
-    const qa_movement_command *movement, qa_error *error)
-{
-    qa_actor_id current; uint32_t launch_seat;
-    bool present = frontend_network_remote(f) ? seat == 0 && remote_player(f->application, &current, error) :
-        frontend_seat_launch_id_read(f, seat, &launch_seat) && qa_application_player_actor(f->application, launch_seat, &current);
-    if (!present || !qa_actor_id_equal(actor, current))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "local network command actor no longer owns its roster seat");
-    if (frontend_network_remote(f))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote physical input requires its paired source command producer");
-    return qa_application_control_move(f->application, actor, movement, error);
 }
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {

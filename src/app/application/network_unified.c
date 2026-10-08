@@ -74,15 +74,36 @@ static bool capacity(application_provider *source, uint32_t *out, bool checkpoin
     return true;
 }
 
-static bool bytes_copy(qa_bytes value, qa_buffer *out, qa_error *error)
+static bool bytes_retain(qa_bytes value, qa_buffer *out, size_t *capacity, qa_error *error)
 {
     if (value.size && !value.data)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified intent has no owned source bytes");
-    uint8_t *copy = value.size ? malloc(value.size) : NULL;
-    if (value.size && !copy)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining unified Source intent");
-    if (value.size) memcpy(copy, value.data, value.size);
-    *out = (qa_buffer){copy, value.size};
+    if (value.size > *capacity) {
+        uint8_t *copy = realloc(out->data, value.size);
+        if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining unified Source intent");
+        out->data = copy;
+        *capacity = value.size;
+    }
+    if (value.size && (value.size != out->size || memcmp(out->data, value.data, value.size)))
+        memcpy(out->data, value.data, value.size);
+    out->size = value.size;
+    return true;
+}
+
+static bool inputs_reserve(application_unified_inputs *owner, size_t count, qa_error *error)
+{
+    if (count <= owner->capacity) return true;
+    size_t maximum = SIZE_MAX / sizeof(*owner->commands);
+    size_t next_capacity = owner->capacity ? owner->capacity : 64;
+    while (next_capacity < count) {
+        if (next_capacity > maximum / 2) { next_capacity = count; break; }
+        next_capacity *= 2;
+    }
+    retained_input *next = realloc(owner->commands, next_capacity * sizeof(*next));
+    if (!next) return application_fail(error, QA_ERROR_MEMORY, "Growing retained unified Source input programme");
+    memset(next + owner->capacity, 0, (next_capacity - owner->capacity) * sizeof(*next));
+    owner->commands = next;
+    owner->capacity = next_capacity;
     return true;
 }
 
@@ -122,6 +143,7 @@ bool application_unified_inputs_create(qa_application *app, qa_network_runtime *
         .epoch = epoch, .runtime_epoch = qa_network_epoch(runtime, client),
         .publication = source.publication, .map_revision = source.map_revision,
         .queued = -1, .submitted = -1};
+    if (!inputs_reserve(owner, 64, error)) { free(owner); return false; }
     *out = owner;
     return true;
 }
@@ -135,7 +157,7 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input batch belongs to a retired Source peer");
     size_t added = 0;
     int64_t sequence = owner->queued;
-    retained_input candidates[64] = {0};
+    const qa_unified_input *accepted[64];
     for (size_t i = 0; i < batch->count; ++i) {
         const qa_unified_input *input = batch->commands + i;
         if (input->sequence > INT64_MAX) goto invalid;
@@ -144,38 +166,33 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
         if (input->has_arsenal && (input->arsenal.provider.size != player.arsenal.size ||
             !input->arsenal.provider.data || memcmp(input->arsenal.provider.data,
                 player.arsenal.data, player.arsenal.size))) goto invalid;
-        retained_input *candidate = candidates + added;
-        candidate->value = *input;
-        if (input->has_arsenal) {
-            if (!bytes_copy(input->arsenal.provider, &candidate->provider, error) ||
-                !bytes_copy(input->arsenal.weapon, &candidate->weapon, error)) goto failed;
-            candidate->value.arsenal.provider = (qa_bytes){candidate->provider.data, candidate->provider.size};
-            candidate->value.arsenal.weapon = (qa_bytes){candidate->weapon.data, candidate->weapon.size};
-        }
-        ++added;
+        accepted[added++] = input;
         sequence = (int64_t)input->sequence;
     }
     if (added > SIZE_MAX / sizeof(*owner->commands) - owner->count) {
         application_fail(error, QA_ERROR_MEMORY, "Unified input programme exceeds its actual extent");
-        goto failed;
+        return false;
     }
-    if (added) {
-        retained_input *next = realloc(owner->commands, (owner->count + added) * sizeof(*next));
-        if (!next) {
-            application_fail(error, QA_ERROR_MEMORY, "Growing retained unified Source input programme");
-            goto failed;
+    if (!inputs_reserve(owner, owner->count + added, error)) return false;
+    for (size_t i = 0; i < added; ++i) {
+        const qa_unified_input *input = accepted[i];
+        retained_input *candidate = owner->commands + owner->count + i;
+        candidate->value = *input;
+        if (input->has_arsenal) {
+            if (!bytes_retain(input->arsenal.provider, &candidate->provider, &candidate->provider_capacity, error) ||
+                !bytes_retain(input->arsenal.weapon, &candidate->weapon, &candidate->weapon_capacity, error)) {
+                for (size_t j = 0; j <= i; ++j) owner->commands[owner->count + j].value = (qa_unified_input){0};
+                return false;
+            }
+            candidate->value.arsenal.provider = (qa_bytes){candidate->provider.data, candidate->provider.size};
+            candidate->value.arsenal.weapon = (qa_bytes){candidate->weapon.data, candidate->weapon.size};
         }
-        owner->commands = next;
-        memcpy(next + owner->count, candidates, added * sizeof(*next));
-        owner->count += added;
     }
+    owner->count += added;
     owner->queued = sequence;
     return true;
 invalid:
-    application_fail(error, QA_ERROR_ARGUMENT, "Unified command differs from its admitted movement or arsenal");
-failed:
-    for (size_t i = 0; i < 64; ++i) input_free(candidates + i);
-    return false;
+    return application_fail(error, QA_ERROR_ARGUMENT, "Unified command differs from its admitted movement or arsenal");
 }
 
 static bool same_bytes(qa_bytes a, qa_bytes b)
@@ -225,8 +242,8 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
     }
     owner->advancing = false;
     if (okay) {
-        for (size_t i = 0; i < owner->count; ++i) input_free(owner->commands + i);
-        free(owner->commands); owner->commands = NULL; owner->cursor = owner->count = 0;
+        for (size_t i = 0; i < owner->count; ++i) owner->commands[i].value = (qa_unified_input){0};
+        owner->cursor = owner->count = 0;
     }
     return okay;
 }
@@ -241,7 +258,7 @@ bool application_unified_inputs_destroy(application_unified_inputs *owner, qa_er
     if (!owner) return true;
     if (owner->advancing)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source input is still entered");
-    for (size_t i = 0; i < owner->count; ++i) input_free(owner->commands + i);
+    for (size_t i = 0; i < owner->capacity; ++i) input_free(owner->commands + i);
     free(owner->commands); free(owner);
     return true;
 }
@@ -547,7 +564,7 @@ static char *info_canonical(const char *text, const char *address, bool q1_langu
 bool application_unified_player_bind_local(qa_application *app, const qa_net_client *peer,
     qa_net_seat_id seat, uint32_t application_seat, qa_unified_session_player *out, qa_error *error)
 {
-    if (!application_players_local_connection_bind(app, peer, seat, application_seat, error)) return false;
+    if (!qa_application_network_local_bind(app, peer, seat, application_seat, error)) return false;
     char address[256];
     if (peer->endpoint.kind == QA_NET_LOOPBACK) memcpy(address, "localhost", sizeof("localhost"));
     else if (!qa_net_address_format(&peer->endpoint, address, sizeof(address), error)) return false;

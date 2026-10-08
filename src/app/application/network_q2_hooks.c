@@ -195,7 +195,7 @@ static bool userinfo(void *context, qa_net_client_id id, qa_net_seat_id seat,
     application_player_record *row = NULL;
     for (size_t i = 0; owner->app->players && i < owner->app->players->count; ++i) {
         application_player_record *candidate = &owner->app->players->records[i];
-        if (!candidate->retiring && candidate->remote && qa_actor_id_equal(candidate->actor, actor) &&
+        if (!candidate->retiring && qa_actor_id_equal(candidate->actor, actor) &&
             qa_net_client_id_equal(candidate->remote_client, id) &&
             candidate->remote_seat.owner == seat.owner && candidate->remote_seat.index == seat.index) {
             if (row) return application_fail(error, QA_ERROR_FORMAT, "Q2 userinfo aliases two canonical roster rows");

@@ -157,14 +157,17 @@ static bool attach(void *context, qa_network_runtime *runtime, const qa_net_addr
     *peer = (unified_peer){.occupied = true, .staging = true};
     peer->binding = (qa_net_seat_binding){.seat = {owner->options.seat_owner,
         server ? owner->options.remote_seat_base + (uint32_t)index : owner->options.client.domain.seat.index}};
-    peer->request = (qa_net_connect){.attachment = QA_NET_REMOTE, .endpoint = *address,
+    uint32_t application_seat = peer->binding.seat.index;
+    bool local = server && owner->options.local_seat && owner->options.local_seat(
+        owner->options.context, address, &peer->binding.seat, &application_seat);
+    peer->request = (qa_net_connect){.attachment = local ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE, .endpoint = *address,
         .protocol = {.kind = QA_NET_UNIFIED_1}, .seats = &peer->binding, .seat_count = 1};
     qa_unified_document *offer = NULL;
     qa_unified_session_hooks hooks = {0};
     bool okay;
     if (server) {
         okay = application_unified_server_create(owner->options.frontend->application, runtime,
-            peer->binding.seat, peer->binding.seat.index, owner->epoch, owner->options.sidecars,
+            peer->binding.seat, application_seat, owner->epoch, owner->options.sidecars,
             owner->options.sidecar_count, &peer->server, &offer, error);
         if (okay) { peer->request.composition = *application_unified_server_composition(peer->server);
             hooks = application_unified_server_hooks(peer->server); }

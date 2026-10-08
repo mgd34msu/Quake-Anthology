@@ -43,7 +43,7 @@ bool qa_application_network_player_next(const qa_application *application, size_
     const struct application_player_roster *roster = application->players;
     while (*cursor < roster->count) {
         const application_player_record *record = &roster->records[(*cursor)++];
-        if (!record->remote) continue;
+        if (!record->remote && !record->remote_client.owner) continue;
         *out = (qa_application_network_player){.client = record->remote_client,
             .seat = record->remote_seat, .actor = record->actor,
             .application_seat = record->seat, .client_slot = record->client_slot,

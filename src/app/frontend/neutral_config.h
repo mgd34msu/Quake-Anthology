@@ -64,7 +64,7 @@ bool frontend_config_store_neutral_pending_options(frontend_config_store *,uint3
 bool frontend_config_store_neutral_options_cancel(frontend_config_store *,frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_movement_adopt(frontend_config_store *,const qa_cvars *,
     qa_movement_kind actual_movement,qa_error *);
-bool frontend_config_store_client_profile(const frontend_config_store *,qa_game_family,
+bool frontend_config_store_client_profile(const frontend_config_store *,qa_product_id,
     qa_product_id *,qa_error *);
 bool frontend_config_store_neutral_adopt_store(frontend_config_store *,const qa_launch_instance *,
     frontend_config_files *,qa_error *);

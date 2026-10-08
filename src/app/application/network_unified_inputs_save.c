@@ -60,6 +60,10 @@ static bool input(qa_source_save_io *io, retained_input *row, uint32_t epoch,
             !qa_source_save_u8(io, &value->arsenal.impulse) ||
             row->provider.size != player->arsenal.size ||
             (row->provider.size && memcmp(row->provider.data, player->arsenal.data, row->provider.size))) return false;
+        if (!writing) {
+            row->provider_capacity = row->provider.size;
+            row->weapon_capacity = row->weapon.size;
+        }
         value->arsenal.provider = (qa_bytes){row->provider.data, row->provider.size};
         value->arsenal.weapon = (qa_bytes){row->weapon.data, row->weapon.size};
     }
@@ -104,9 +108,11 @@ bool application_unified_inputs_save(qa_source_save_io *io, application_unified_
         !qa_source_save_count(io, &owner->cursor, owner->count)) return false;
     if (!writing) {
         if (owner->count > (io->input.size - io->offset) / 13) return false;
-        owner->commands = owner->count ? calloc(owner->count, sizeof(*owner->commands)) : NULL;
-        if (owner->count && !owner->commands)
+        size_t capacity = owner->count > 64 ? owner->count : 64;
+        owner->commands = calloc(capacity, sizeof(*owner->commands));
+        if (!owner->commands)
             return application_fail(io->error, QA_ERROR_MEMORY, "Restoring ordered binary64 Source commands");
+        owner->capacity = capacity;
     }
     if (owner->count && !owner->commands) return false;
     int64_t previous = -1;

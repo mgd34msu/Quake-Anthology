@@ -27,8 +27,8 @@ bool qa_network_admission(void *context, const qa_net_connect *request, qa_error
 bool qa_network_create(qa_net_transport *transport, const qa_network_options *options,
                         qa_network_runtime **out, qa_error *error) {
     if (!transport || !options || !out || !options->owner || !options->clients ||
-        !options->packets_per_pump || !options->hooks.admit || !options->hooks.controlled ||
-        !options->hooks.command || SIZE_MAX / options->clients < sizeof(qa_network_peer))
+        !options->packets_per_pump || !options->hooks.admit ||
+        SIZE_MAX / options->clients < sizeof(qa_network_peer))
         return qa_network_fail(error, "Invalid network runtime options");
     qa_network_runtime *runtime = calloc(1, sizeof(*runtime));
     if (!runtime) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating network runtime"); return false; }

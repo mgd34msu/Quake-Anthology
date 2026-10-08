@@ -17,6 +17,7 @@ typedef struct frontend_network_unified_options {
     qa_net_address remote;
     void *context;
     bool (*current)(void *, const frontend_network_unified *);
+    bool (*local_seat)(void *, const qa_net_address *, qa_net_seat_id *, uint32_t *application_seat);
     /* These are the actual CLIENT factory's owners and callbacks. The remote
      * bridge consumes them only after the genuine challenge is received. */
     frontend_remote_unified_options client;

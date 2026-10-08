@@ -255,7 +255,6 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     double default_duration=(double)elapsed_ns/1000000.0;
     double default_wall_duration=(double)wall_elapsed_ns/1000000.0;
     bool remote=frontend_network_remote(frontend);
-    bool client_only=frontend_network_client_only(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
         seat->client_frame_ns=0;
@@ -333,7 +332,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             seat->sequence=sequence;
             continue;
         }
-        if (client_only && !remote) continue;
+        if (frontend_network_local_input_owned(frontend,i) || !remote) continue;
         qa_actor_id actor; uint32_t launch_seat;
         if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
             !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
@@ -341,71 +340,22 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
-        uint64_t source_duration=elapsed_ns;
-        bool admitted_client=false;
-        if (!remote) {
-            qa_actor_owner source_owner; const qa_cvars *source_cvars;
-            qa_clock_config recipe; uint64_t order;
-            qa_session *session=qa_application_session(frontend->application);
-            if (!qa_application_control_source_read(frontend->application,actor,&source_owner,&source_cvars,error) ||
-                !qa_session_component_recipe(session,source_owner,&recipe,&order)) return false;
-            uint64_t pending=frontend->wall_time_ns-seat->client_clock_ns;
-            if(!recipe.interval_ns) {
-                bool accepted;
-                if(!qa_source_frame_time_admit(source_cvars,pending,false,&accepted,&source_duration,error)) return false;
-                if(!accepted) continue;
-            } else {
-                uint64_t client_delta=qa_source_frame_time_host_delta(frontend->wall_time_ns,pending);
-                double milliseconds=(double)client_delta/1000000.0;
-                qa_source_frame_time_controls clock_controls;
-                if(!qa_source_frame_time_controls_read(source_cvars,&clock_controls,error) ||
-                    !qa_source_frame_time_transform(dialect(state.profile.kind),milliseconds,&clock_controls,
-                        false,true,&milliseconds,error)) return false;
-                source_duration=(uint64_t)(milliseconds*1000000.0);
-            }
-            wall_duration=(double)pending/1000000.0;
-            admitted_client=true;
-            duration=(double)source_duration/1000000.0;
-        }
-        seat->client_frame_ns=source_duration;
+        seat->client_frame_ns=elapsed_ns;
         qa_movement_kind kind = state.profile.kind;
-        if (!remote && ((kind!=QA_MOVEMENT_Q3 && kind!=QA_MOVEMENT_Q2_CLASSIC &&
-                kind!=QA_MOVEMENT_Q2_RERELEASE) || state.cutscene ||
-                seat->command_angle_revision!=state.command_angle_revision)) {
-            if (!qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
-            seat->command_angle_revision=state.command_angle_revision;
-        }
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
         qa_movement_kind configured_kind;
         qa_cvars *input_settings, *view_settings;
-        if (remote) {
-            frontend_remote_config_view configuration;
-            if (!frontend_network_client_configuration(frontend,launch_seat,&configuration,error)) return false;
-            input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
-            configured_kind=configuration.movement;
-        } else {
-            input_settings=frontend_config_store_primary_mouse_cvars(frontend->config_store,launch_seat,&configured_kind);
-            view_settings=input_settings;
-        }
+        frontend_remote_config_view configuration;
+        if (!frontend_network_client_configuration(frontend,launch_seat,&configuration,error)) return false;
+        input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
+        configured_kind=configuration.movement;
         if (!input_settings || !view_settings || configured_kind!=kind)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player input lacks its actual published source settings and movement profile");
         if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
             !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
-        if (!remote && qa_application_q1_paused(frontend->application)) {
-            seat->client_clock_ns=frontend->wall_time_ns;
-            continue;
-        }
         if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
         uint64_t command_time=frontend->time_ns;
-        if (!remote && kind==QA_MOVEMENT_Q3) {
-            qa_application_startup_source source; bool present=false; qa_clock_state clock;
-            if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
-            if (!present || !qa_session_clock(qa_application_session(frontend->application),source.scope.provider,&clock))
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 input has no actual GAME clock");
-            command_time=clock.frame.time_ns;
-            command_time+=clock.debt_ns;
-        }
         uint32_t server_time_word=(uint32_t)(command_time / UINT64_C(1000000));
         int32_t server_time_ms;
         memcpy(&server_time_ms,&server_time_word,sizeof(server_time_ms));
@@ -418,18 +368,10 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 (float)delta[1]*(360.f/65536.f),(float)delta[2]*(360.f/65536.f));
         } else if (kind==QA_MOVEMENT_Q2_RERELEASE)
             frame.delta_angles=state.state.data.q2r.delta_angles;
-        if (!remote && kind==QA_MOVEMENT_Q3) {
-            bool present;
-            if (!qa_application_q3_input_values_read(frontend->application,launch_seat,actor,
-                &frame.weapon,&frame.sensitivity,&present,error)) return false;
-        }
         qa_movement_command command;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error)) return false;
-        if (remote) {
-            if (!frontend_network_client_sample(frontend,i,actor,&command,
-                FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
-        } else if (!frontend_network_command(frontend,i,actor,&command,error)) return false;
-        if (admitted_client) seat->client_clock_ns=frontend->wall_time_ns;
+        if (!frontend_network_client_sample(frontend,i,actor,&command,
+            FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
         uint32_t source_slot;
         if (!qa_ui_rankings_set_slot(seat->rankings,
             qa_application_rankings_client_slot(frontend->application, actor, &source_slot) && source_slot <= INT32_MAX ?
@@ -465,7 +407,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             qa_application_request_stop(frontend->application);
             break;
         case QA_PLATFORM_EVENT_PACKET:
-            if (!frontend_network_receive_ready(frontend)) return true;
+            if (!frontend_network_event_ready(frontend,&event)) return true;
             ok=frontend_network_receive(frontend,&event,payload,&consumed,error);
             break;
         case QA_PLATFORM_EVENT_CONSOLE_LINE:

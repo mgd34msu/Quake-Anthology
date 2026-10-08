@@ -6,8 +6,6 @@
 struct application_player_record;
 const struct application_player_record *application_players_connection_read(
     const qa_application *, qa_net_client_id, qa_net_seat_id);
-bool application_players_local_connection_bind(qa_application *, const qa_net_client *,
-    qa_net_seat_id, uint32_t application_seat, qa_error *);
 bool application_players_connection_disconnect(qa_application *, qa_net_client_id,
     qa_net_seat_id, qa_error *);
 bool application_unified_player_bind_local(qa_application *, const qa_net_client *,
@@ -16,6 +14,7 @@ bool application_unified_player_bind_local(qa_application *, const qa_net_client
 typedef struct retained_input {
     qa_unified_input value;
     qa_buffer provider, weapon;
+    size_t provider_capacity, weapon_capacity;
 } retained_input;
 struct application_unified_inputs {
     qa_application *application;
@@ -27,7 +26,7 @@ struct application_unified_inputs {
     uint32_t epoch, source_slot;
     uint64_t publication, map_revision, runtime_epoch;
     retained_input *commands;
-    size_t count, cursor;
+    size_t count, cursor, capacity;
     int64_t queued, submitted;
     bool advancing;
 };

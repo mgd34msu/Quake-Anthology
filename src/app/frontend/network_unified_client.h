@@ -8,7 +8,7 @@ typedef struct frontend_network_unified_client_options {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
     qa_net_address remote;
-    qa_product_id profile;
+    qa_product_id profile, selected;
     uint32_t physical_seat;
     qa_net_seat_id seat;
     frontend_client_source_options configuration;

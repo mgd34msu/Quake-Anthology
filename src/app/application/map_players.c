@@ -3778,7 +3778,7 @@ const application_player_record *application_players_connection_read(
     return NULL;
 }
 
-bool application_players_local_connection_bind(qa_application *application,
+bool qa_application_network_local_bind(qa_application *application,
     const qa_net_client *peer, qa_net_seat_id seat, uint32_t application_seat, qa_error *error)
 {
     if (!application || !application->players || !application->session || !peer ||
@@ -5128,7 +5128,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     application_player_record *record = NULL;
     for (size_t i = 0; i < application->players->count; ++i) {
         application_player_record *candidate = &application->players->records[i];
-        if (candidate->remote && !candidate->retiring && qa_net_client_id_equal(candidate->remote_client, client) &&
+        if (!candidate->retiring && qa_net_client_id_equal(candidate->remote_client, client) &&
             candidate->remote_seat.owner == seat.owner && candidate->remote_seat.index == seat.index) {
             record = candidate; break;
         }

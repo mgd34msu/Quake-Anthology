@@ -7,6 +7,8 @@
 
 #define QA_NETWORK_COMMAND_OWNER UINT64_C(0x71616e6574770001)
 bool qa_application_network_command_owner_bound(const qa_application *);
+bool qa_application_network_local_bind(qa_application *, const qa_net_client *,
+    qa_net_seat_id, uint32_t application_seat, qa_error *);
 
 /* These adapters borrow the application. Seat authority is always the
  * canonical roster, and travel resolves its freshly published actor IDs. */
