@@ -178,8 +178,9 @@ typedef struct qa_input_command_frame {
     uint64_t sequence;
     double acknowledged_server_seconds;
     qa_vec3 delta_angles;
-    int32_t server_frame, server_time_ms;
-    uint8_t light_level, weapon;
+    double server_frame, server_time_ms;
+    double light_level, weapon;
+    int32_t delta_angle_words[3];
     float sensitivity;
     bool attack_allowed, has_pitch_drift, grounded, drift_disabled;
     float ideal_pitch;
@@ -197,6 +198,36 @@ typedef struct qa_input_command_tuning {
     qa_mouse_tuning mouse;
     float drift_speed, drift_delay;
 } qa_input_command_tuning;
+/* Physical moves use power-of-two units so normalization loses no source
+ * bits. Directional sources supply a local unit direction and source speed. */
+typedef struct qa_input_move_intent { double x, y, z; } qa_input_move_intent;
+typedef struct qa_input_command_intent {
+    qa_vec3 angles, direction;
+    qa_input_move_intent move;
+    float speed;
+    uint64_t actions;
+    bool directional, walking, game_focus, any_key_down;
+    uint8_t impulse;
+} qa_input_command_intent;
+typedef enum qa_input_command_encoding {
+    QA_INPUT_COMMAND_NATIVE, QA_INPUT_COMMAND_UNIFIED, QA_INPUT_COMMAND_SOURCE_Q3
+} qa_input_command_encoding;
+typedef struct qa_input_usercmd {
+    qa_movement_kind kind;
+    uint64_t sequence;
+    qa_vec3 angles, move;
+    int32_t angle_words[3];
+    uint32_t buttons;
+    double milliseconds, server_time_ms, server_frame, acknowledged_server_seconds;
+    double light_level, weapon;
+    uint8_t impulse;
+} qa_input_usercmd;
+bool qa_input_command_sample(qa_input_command_builder *, const qa_input_command_tuning *,
+    const qa_seat_input_sample *, const qa_input_command_frame *, double source_frame_ms,
+    qa_input_command_intent *, qa_error *);
+void qa_input_usercmd_build(const qa_input_command_intent *, const qa_input_command_frame *,
+    double source_frame_ms, qa_input_command_encoding, qa_input_usercmd *);
+void qa_input_usercmd_project(const qa_input_usercmd *, qa_movement_command *);
 qa_input_command_tuning qa_input_command_defaults(qa_movement_kind);
 void qa_input_command_clear(qa_input_command_builder *);
 bool qa_input_command_angles(qa_input_command_builder *, qa_vec3, qa_error *);

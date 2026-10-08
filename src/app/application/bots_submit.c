@@ -61,30 +61,27 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     if(!application_control_frames_sequence(application,actor,&seen,&sequence))
         return application_fail(error,QA_ERROR_ARGUMENT,"bot movement has no actual command admission owner");
     if(seen && sequence==UINT64_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot command sequence exhausted");
-    qa_movement_command command=*source;
-    command.kind=view.state.kind;command.sequence=seen?sequence+1:0;
-    uint64_t milliseconds=admitted.elapsed_ns/1000000;
-    command.milliseconds=(uint32_t)(milliseconds>UINT32_MAX?UINT32_MAX:milliseconds);
-    command.server_time_ms=source->server_time_ms;
-    command.weapon=source->weapon;
-    if(view.state.kind!=QA_MOVEMENT_Q3) {
-        float scale=view.state.kind==QA_MOVEMENT_NETQUAKE || view.state.kind==QA_MOVEMENT_QUAKEWORLD?320.0f:400.0f;
-        command.forward_move=(float)((double)source->forward_move*(double)scale/127.0);
-        command.side_move=(float)((double)source->side_move*(double)scale/127.0);
-        command.up_move=(float)((double)source->up_move*(double)scale/127.0);
-        command.angles=qa_v3((float)((double)source->angle_words[0]*360.0/65536.0),
-                            (float)((double)source->angle_words[1]*360.0/65536.0),
-                            (float)((double)source->angle_words[2]*360.0/65536.0));
-        command.buttons=source->buttons&1;command.impulse=0;command.light_level=0;
-        if(view.state.kind==QA_MOVEMENT_Q2_CLASSIC) {
-            for(size_t i=0;i<3;++i) command.angle_words[i]=source->angle_words[i];
-        } else if(view.state.kind==QA_MOVEMENT_Q2_RERELEASE) {
-            command.buttons|=source->up_move>0?8:source->up_move<0?16:0;
-            command.up_move=0;command.server_frame=0;
-        } else if(view.state.kind==QA_MOVEMENT_NETQUAKE) {
-            command.acknowledged_server_seconds=(double)source->server_time_ms/1000.0;
-            if(source->up_move>0) command.buttons|=2;
-        }
+    qa_movement_command command;
+    if (view.state.kind == QA_MOVEMENT_Q3) {
+        /* Already built by the common path, including stock paused angles. */
+        command = *source;
+        command.sequence = seen ? sequence + 1 : 0;
+        uint64_t milliseconds = admitted.elapsed_ns / 1000000;
+        command.milliseconds = (uint32_t)(milliseconds > UINT32_MAX ? UINT32_MAX : milliseconds);
+    } else {
+        qa_input_command_intent intent;
+        qa_bot_input_intent(input, &intent);
+        qa_input_command_frame frame = {.kind = view.state.kind, .sequence = seen ? sequence + 1 : 0,
+            .acknowledged_server_seconds = (double)source->server_time_ms / 1000.0,
+            .attack_allowed = true};
+        if (view.state.kind == QA_MOVEMENT_Q2_CLASSIC)
+            for (unsigned i = 0; i < 3; ++i) frame.delta_angle_words[i] = view.state.data.q2.delta_angle_shorts[i];
+        else if (view.state.kind == QA_MOVEMENT_Q2_RERELEASE)
+            frame.delta_angles = view.state.data.q2r.delta_angles;
+        qa_input_usercmd built;
+        qa_input_usercmd_build(&intent, &frame, (double)admitted.elapsed_ns / 1000000.0,
+            QA_INPUT_COMMAND_NATIVE, &built);
+        qa_input_usercmd_project(&built, &command);
     }
     if(!application_control_frames_receive_bot(application,actor,&command,requested_owner,requested_item,error)) return false;
     return true;

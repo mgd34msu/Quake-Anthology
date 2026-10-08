@@ -100,8 +100,18 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
         input.action_flags &= ~(uint32_t)(QA_BOT_RESPAWN | QA_BOT_ATTACK);
-    if (ok) ok = delta_angles(b,s,delta,e) && qa_bot_input_q3_command(&input, delta, time, &command, e) &&
-        bot_ai_source_command_write(b, s, &command, e);
+    if (ok) ok = delta_angles(b,s,delta,e);
+    if (ok) {
+        qa_input_command_intent intent;
+        qa_bot_input_intent(&input, &intent);
+        qa_input_command_frame frame = {.kind = QA_MOVEMENT_Q3, .server_time_ms = time,
+            .weapon = input.weapon, .attack_allowed = true};
+        memcpy(frame.delta_angle_words, delta, sizeof(delta));
+        qa_input_usercmd built;
+        qa_input_usercmd_build(&intent, &frame, 0, QA_INPUT_COMMAND_SOURCE_Q3, &built);
+        qa_input_usercmd_project(&built, &command);
+        ok = bot_ai_source_command_write(b, s, &command, e);
+    }
     if(!ok) return false;
     if(!delta_angles(b,s,delta,e)) return false;
     bot_ai_view_delta(s,delta,false);

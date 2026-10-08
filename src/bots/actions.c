@@ -2,6 +2,7 @@
 #include "qa/builtin.h"
 #include "checkpoint_internal.h"
 #include "qa/binary.h"
+#include "qa/text.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -395,52 +396,29 @@ void qa_bot_view_delta(qa_bot_view_state *state, const int32_t delta[3], bool ad
     state->angles.y = angle_mod(state->angles.y + sign * (float)delta[1] * (360.0f / 65536.0f));
     state->angles.z = angle_mod(state->angles.z + sign * (float)delta[2] * (360.0f / 65536.0f));
 }
-static int32_t command_angle(float angle, int32_t delta) {
-    uint32_t word = ((uint32_t)source_integer(angle * 65536.0f / 360.0f) - (uint32_t)delta) & 65535;
-    return word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
-}
-static int32_t command_byte(int32_t value) {
-    uint32_t byte = (uint32_t)value & 255;
-    return byte >= 128 ? (int32_t)byte - 256 : (int32_t)byte;
-}
-bool qa_bot_input_q3_command(const qa_bot_input *input, const int32_t delta[3], int32_t time,
-                             qa_movement_command *out, qa_error *e) {
-    if (!input || !delta || !out)
-        return action_fail(e, "invalid bot command conversion");
+void qa_bot_input_intent(const qa_bot_input *input, qa_input_command_intent *out) {
     uint32_t flags = input->action_flags;
-    if (flags & QA_BOT_DELAYED_JUMP)
-        flags = (flags | QA_BOT_JUMP) & ~(uint32_t)QA_BOT_DELAYED_JUMP;
-    qa_movement_command command = {.kind = QA_MOVEMENT_Q3, .server_time_ms = time,
-        .angles = input->view_angles, .weapon = (uint8_t)input->weapon};
-    static const struct { uint32_t action, button; } buttons[] = {
-        {QA_BOT_RESPAWN | QA_BOT_ATTACK, 1}, {QA_BOT_TALK, 2}, {QA_BOT_GESTURE, 8},
-        {QA_BOT_USE, 4}, {QA_BOT_WALK, 16}, {QA_BOT_AFFIRMATIVE, 32}, {QA_BOT_NEGATIVE, 64},
-        {QA_BOT_GET_FLAG, 128}, {QA_BOT_GUARD_BASE, 256}, {QA_BOT_PATROL, 512}, {QA_BOT_FOLLOW_ME, 1024}
+    if (flags & QA_BOT_DELAYED_JUMP) flags = (flags | QA_BOT_JUMP) & ~(uint32_t)QA_BOT_DELAYED_JUMP;
+    qa_input_command_intent intent = {.angles = input->view_angles, .speed = input->speed,
+        .directional = true, .walking = (flags & QA_BOT_WALK) != 0, .game_focus = true};
+    static const struct { uint32_t source; qa_input_action action; } actions[] = {
+        {QA_BOT_RESPAWN | QA_BOT_ATTACK, QA_INPUT_ATTACK}, {QA_BOT_TALK, QA_INPUT_BUTTON1},
+        {QA_BOT_GESTURE, QA_INPUT_BUTTON3}, {QA_BOT_USE, QA_INPUT_USE},
+        {QA_BOT_AFFIRMATIVE, QA_INPUT_BUTTON5}, {QA_BOT_NEGATIVE, QA_INPUT_BUTTON6},
+        {QA_BOT_GET_FLAG, QA_INPUT_BUTTON7}, {QA_BOT_GUARD_BASE, QA_INPUT_BUTTON8},
+        {QA_BOT_PATROL, QA_INPUT_BUTTON9}, {QA_BOT_FOLLOW_ME, QA_INPUT_BUTTON10},
+        {QA_BOT_MOVE_FORWARD, QA_INPUT_FORWARD}, {QA_BOT_MOVE_BACK, QA_INPUT_BACK},
+        {QA_BOT_MOVE_LEFT, QA_INPUT_MOVE_LEFT}, {QA_BOT_MOVE_RIGHT, QA_INPUT_MOVE_RIGHT},
+        {QA_BOT_JUMP, QA_INPUT_JUMP}, {QA_BOT_CROUCH, QA_INPUT_CROUCH}
     };
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(*buttons); ++i)
-        if (flags & buttons[i].action)
-            command.buttons |= buttons[i].button;
-    command.angle_words[0] = command_angle(input->view_angles.x, delta[0]);
-    command.angle_words[1] = command_angle(input->view_angles.y, delta[1]);
-    command.angle_words[2] = command_angle(input->view_angles.z, delta[2]);
+    for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
+        if (flags & actions[i].source) intent.actions |= UINT64_C(1) << actions[i].action;
     qa_vec3 forward, right;
     qa_builtin_angle_vectors(qa_v3(input->direction.z != 0 ? input->view_angles.x : 0,
                                   input->view_angles.y, 0), &forward, &right, NULL);
-    float speed = input->speed * 127.0f / 400.0f;
-    int32_t f = command_byte(source_integer(qa_vec_dot(forward, input->direction) * speed));
-    int32_t r = command_byte(source_integer(qa_vec_dot(right, input->direction) * speed));
-    int32_t z = source_integer(forward.z);
-    float vertical = z == INT32_MIN ? (float)INT32_MIN : (float)abs(z);
-    int32_t u = command_byte(source_integer(vertical * input->direction.z * speed));
-    if (flags & QA_BOT_MOVE_FORWARD) f += 127;
-    if (flags & QA_BOT_MOVE_BACK) f -= 127;
-    if (flags & QA_BOT_MOVE_LEFT) r -= 127;
-    if (flags & QA_BOT_MOVE_RIGHT) r += 127;
-    if (flags & QA_BOT_JUMP) u += 127;
-    if (flags & QA_BOT_CROUCH) u -= 127;
-    command.forward_move = (float)command_byte(f);
-    command.side_move = (float)command_byte(r);
-    command.up_move = (float)command_byte(u);
-    *out = command;
-    return true;
+    int32_t vertical = qa_source_float_to_i32(forward.z);
+    float up = vertical == INT32_MIN ? (float)INT32_MIN : (float)abs(vertical);
+    intent.direction = qa_v3(qa_vec_dot(forward, input->direction), qa_vec_dot(right, input->direction),
+                             up * input->direction.z);
+    *out = intent;
 }

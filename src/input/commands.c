@@ -1,4 +1,11 @@
 #include "qa/input.h"
+#include "qa/text.h"
+
+static const struct { float move, walk, source_speed; } stock[] = {
+    {320, 320, 400}, {320, 320, 400}, {400, 400, 400},
+    {400, 400, 400}, {127, 64, 400}
+};
+#define PHYSICAL_MOVE_UNIT 512.0f
 
 static float clamp(float value, float low, float high) { return fmaxf(low, fminf(high, value)); }
 static float fraction(const qa_seat_input_sample *s, qa_input_action action) {
@@ -84,9 +91,9 @@ static bool valid(const qa_input_command_builder *builder, const qa_input_comman
     return true;
 }
 
-bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_command_tuning *t,
+bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_command_tuning *t,
                             const qa_seat_input_sample *s, const qa_input_command_frame *f,
-                            double source_ms, qa_movement_command *out, qa_error *error) {
+                            double source_ms, qa_input_command_intent *out, qa_error *error) {
     if (!out || !valid(builder, t, s, f, source_ms)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input command frame or settings");
         return false;
@@ -121,7 +128,7 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
         roll = clamp(roll, -50, 50);
     }
     bool running = speed != v->always_run;
-    float move_speed = q3 ? (running ? 127 : 64) : 1;
+    float move_speed = q3 ? (running ? stock[f->kind].move : stock[f->kind].walk) : 1;
     float forward = 0, side = 0, up = 0;
     if (strafe) {
         side = add(side, (q3 ? move_speed : v->side_speed) * fraction(s, QA_INPUT_TURN_RIGHT), q3);
@@ -176,38 +183,10 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
         pitch = qa_pitch_drift_sample(&next.drift, pitch, seconds, &drift);
     }
     next.previous_mouse_look = mlook;
-    uint32_t buttons = 0;
-    if (q3) {
-        for (unsigned i = 0; i < 15; ++i)
-            if (pressed(s, (qa_input_action)((unsigned)QA_INPUT_BUTTON0 + i)))
-                buttons |= UINT32_C(1) << i;
-        if (pressed(s, QA_INPUT_ATTACK))
-            buttons |= 1;
-        if (pressed(s, QA_INPUT_USE))
-            buttons |= 4;
-        if (!running)
-            buttons |= 16;
-        if (!s->game_focus)
-            buttons |= 2;
-        else if (s->any_key_down)
-            buttons |= 2048;
-        pitch = clamp(pitch, previous_pitch - 90, previous_pitch + 90);
-    } else {
-        if (pressed(s, QA_INPUT_ATTACK) && (q1 || f->attack_allowed))
-            buttons |= 1;
-        if ((q1 && pressed(s, QA_INPUT_JUMP)) || (!q1 && pressed(s, QA_INPUT_USE)))
-            buttons |= 2;
-        if (!q1 && s->any_key_down && s->game_focus)
-            buttons |= 128;
-        if (f->kind == QA_MOVEMENT_Q2_RERELEASE) {
-            if (pressed(s, QA_INPUT_HOLSTER))
-                buttons |= 4;
-            if (pressed(s, QA_INPUT_JUMP) || pressed(s, QA_INPUT_MOVE_UP))
-                buttons |= 8;
-            if (pressed(s, QA_INPUT_CROUCH) || pressed(s, QA_INPUT_MOVE_DOWN))
-                buttons |= 16;
-        }
-    }
+    uint64_t actions = 0;
+    for (unsigned i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
+        if (pressed(s, (qa_input_action)i)) actions |= UINT64_C(1) << i;
+    if (q3) pitch = clamp(pitch, previous_pitch - 90, previous_pitch + 90);
     if (q1)
         pitch = clamp(pitch, -70, 80);
     if (f->kind == QA_MOVEMENT_Q2_CLASSIC || f->kind == QA_MOVEMENT_Q2_RERELEASE) {
@@ -219,48 +198,144 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
         if (pitch + delta > 360)
             pitch -= 360;
         pitch = clamp(pitch, -89 - delta, 89 - delta);
-        forward = clamp(forward, -400, 400);
-        side = clamp(side, -400, 400);
     }
     next.angles = qa_v3(pitch, yaw, roll);
     if (!qa_vec_finite(next.angles) || !isfinite(forward) || !isfinite(side) || !isfinite(up)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input command overflow");
         return false;
     }
-    qa_movement_command command = {.kind = f->kind,
-                                   .sequence = f->sequence,
-                                   .angles = next.angles,
-                                   .milliseconds = (uint32_t)(source_ms > 250 ? 100 : source_ms),
-                                   .buttons = buttons};
-    if (q3) {
-        command.server_time_ms = f->server_time_ms;
-        command.weapon = f->weapon;
-        forward = clamp(forward, -127, 127);
-        side = clamp(side, -127, 127);
-        up = clamp(up, -127, 127);
-    } else if (f->kind == QA_MOVEMENT_Q2_RERELEASE) {
-        command.server_frame = f->server_frame;
-        up = 0;
-    } else {
-        command.impulse = q1 && next.pending_impulse ? next.pending_impulse : s->impulse;
-        if (q1) next.pending_impulse = 0;
-        if (f->kind == QA_MOVEMENT_Q2_CLASSIC)
-            command.light_level = f->light_level;
-        if (f->kind == QA_MOVEMENT_NETQUAKE)
-            command.acknowledged_server_seconds = f->acknowledged_server_seconds;
+    qa_input_command_intent intent = {.angles = next.angles,
+        .move = {(double)forward / PHYSICAL_MOVE_UNIT, (double)side / PHYSICAL_MOVE_UNIT,
+                 (double)up / PHYSICAL_MOVE_UNIT},
+        .actions = actions, .walking = !running, .game_focus = s->game_focus,
+        .any_key_down = s->any_key_down,
+        .impulse = q1 && next.pending_impulse ? next.pending_impulse : s->impulse};
+    if (q1) next.pending_impulse = 0;
+    *builder = next;
+    *out = intent;
+    return true;
+}
+
+static bool action(const qa_input_command_intent *intent, qa_input_action value) {
+    return (intent->actions & (UINT64_C(1) << value)) != 0;
+}
+static int32_t signed_byte(int32_t value) {
+    uint32_t byte = (uint32_t)value & 255;
+    return byte >= 128 ? (int32_t)byte - 256 : (int32_t)byte;
+}
+static int32_t signed_word(uint32_t value) {
+    uint32_t word = value & 65535;
+    return word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
+}
+void qa_input_usercmd_build(const qa_input_command_intent *intent,
+    const qa_input_command_frame *frame, double elapsed, qa_input_command_encoding encoding,
+    qa_input_usercmd *out) {
+    qa_movement_kind kind = frame->kind;
+    bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
+    bool q3 = kind == QA_MOVEMENT_Q3;
+    const float scale = stock[kind].move;
+    qa_vec3 move = qa_v3((float)(intent->move.x * PHYSICAL_MOVE_UNIT),
+                        (float)(intent->move.y * PHYSICAL_MOVE_UNIT),
+                        (float)(intent->move.z * PHYSICAL_MOVE_UNIT));
+    if (intent->directional) {
+        float speed = intent->speed * scale / stock[kind].source_speed;
+        move = qa_vec_scale(intent->direction, speed);
+        bool byte = q3 && encoding == QA_INPUT_COMMAND_SOURCE_Q3;
+        if (byte) move = qa_v3((float)signed_byte(qa_source_float_to_i32(move.x)),
+                              (float)signed_byte(qa_source_float_to_i32(move.y)),
+                              (float)signed_byte(qa_source_float_to_i32(move.z)));
+        if (action(intent, QA_INPUT_FORWARD)) move.x += scale;
+        if (action(intent, QA_INPUT_BACK)) move.x -= scale;
+        if (action(intent, QA_INPUT_MOVE_RIGHT)) move.y += scale;
+        if (action(intent, QA_INPUT_MOVE_LEFT)) move.y -= scale;
+        if (action(intent, QA_INPUT_JUMP) || action(intent, QA_INPUT_MOVE_UP)) move.z += scale;
+        if (action(intent, QA_INPUT_CROUCH) || action(intent, QA_INPUT_MOVE_DOWN)) move.z -= scale;
+        if (byte) move = qa_v3((float)signed_byte(qa_source_float_to_i32(move.x)),
+                              (float)signed_byte(qa_source_float_to_i32(move.y)),
+                              (float)signed_byte(qa_source_float_to_i32(move.z)));
     }
-    if (q3 || f->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        const float angles[] = {pitch, yaw, roll};
-        for (unsigned axis = 0; axis < 3; ++axis) {
-            uint16_t word = qa_angle_to_word(angles[axis]);
-            command.angle_words[axis] = !q3 && word > INT16_MAX ? (int32_t)word - 65536 : word;
+    uint32_t buttons = 0;
+    if (q3) {
+        for (unsigned i = 0; i < 15; ++i)
+            if (action(intent, (qa_input_action)((unsigned)QA_INPUT_BUTTON0 + i))) buttons |= UINT32_C(1) << i;
+        if (action(intent, QA_INPUT_ATTACK)) buttons |= 1;
+        if (action(intent, QA_INPUT_USE)) buttons |= 4;
+        if (intent->walking) buttons |= 16;
+        if (!intent->game_focus) buttons |= 2;
+        else if (intent->any_key_down) buttons |= 2048;
+    } else {
+        if (action(intent, QA_INPUT_ATTACK) && (q1 || frame->attack_allowed)) buttons |= 1;
+        if ((q1 && action(intent, QA_INPUT_JUMP)) || (!q1 && action(intent, QA_INPUT_USE))) buttons |= 2;
+        if (!q1 && intent->any_key_down && intent->game_focus) buttons |= 128;
+        if (kind == QA_MOVEMENT_Q2_RERELEASE) {
+            if (action(intent, QA_INPUT_HOLSTER)) buttons |= 4;
+            if (action(intent, QA_INPUT_JUMP) || action(intent, QA_INPUT_MOVE_UP)) buttons |= 8;
+            if (action(intent, QA_INPUT_CROUCH) || action(intent, QA_INPUT_MOVE_DOWN)) buttons |= 16;
         }
     }
-    bool integral = f->kind != QA_MOVEMENT_Q2_RERELEASE;
-    command.forward_move = integral ? truncf(forward) : forward;
-    command.side_move = integral ? truncf(side) : side;
-    command.up_move = integral ? truncf(up) : up;
-    *builder = next;
+    qa_input_usercmd command = {.kind = kind, .sequence = frame->sequence,
+        .angles = intent->angles, .milliseconds = trunc(elapsed > 250 ? 100 : elapsed),
+        .buttons = buttons, .server_time_ms = q3 ? frame->server_time_ms : 0,
+        .server_frame = kind == QA_MOVEMENT_Q2_RERELEASE ? frame->server_frame : 0,
+        .acknowledged_server_seconds = kind == QA_MOVEMENT_NETQUAKE ? frame->acknowledged_server_seconds : 0,
+        .weapon = q3 ? frame->weapon : 0, .light_level = kind == QA_MOVEMENT_Q2_CLASSIC ? frame->light_level : 0,
+        .impulse = kind == QA_MOVEMENT_Q2_RERELEASE || q3 ? 0 : intent->impulse};
+    if (intent->directional && !q3) {
+        const float angles[] = {intent->angles.x, intent->angles.y, intent->angles.z};
+        float *relative[] = {&command.angles.x, &command.angles.y, &command.angles.z};
+        for (unsigned i = 0; i < 3; ++i) {
+            if (kind == QA_MOVEMENT_Q2_RERELEASE) {
+                const float delta[] = {frame->delta_angles.x, frame->delta_angles.y, frame->delta_angles.z};
+                *relative[i] = angles[i] - delta[i];
+            } else if (kind == QA_MOVEMENT_Q2_CLASSIC) {
+                *relative[i] = (float)signed_word((uint32_t)qa_angle_to_word(angles[i]) -
+                    (uint32_t)frame->delta_angle_words[i]) * (360.0f / 65536.0f);
+            }
+        }
+    }
+    if (q3 || kind == QA_MOVEMENT_Q2_CLASSIC) {
+        const float angles[] = {intent->angles.x, intent->angles.y, intent->angles.z};
+        for (unsigned i = 0; i < 3; ++i) {
+            uint32_t word = qa_angle_to_word(angles[i]);
+            if (intent->directional) word -= (uint32_t)frame->delta_angle_words[i];
+            command.angle_words[i] = encoding == QA_INPUT_COMMAND_SOURCE_Q3 ||
+                (kind == QA_MOVEMENT_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
+                ? signed_word(word) : (int32_t)(word & 65535);
+        }
+    }
+    if (q3 && encoding != QA_INPUT_COMMAND_SOURCE_Q3) {
+        move.x = clamp(move.x, -scale, scale); move.y = clamp(move.y, -scale, scale);
+        move.z = clamp(move.z, -scale, scale);
+    } else if (kind == QA_MOVEMENT_Q2_CLASSIC || kind == QA_MOVEMENT_Q2_RERELEASE) {
+        move.x = clamp(move.x, -scale, scale); move.y = clamp(move.y, -scale, scale);
+    }
+    if (kind == QA_MOVEMENT_Q2_RERELEASE) move.z = 0;
+    else move = qa_v3(truncf(move.x), truncf(move.y), truncf(move.z));
+    command.move = move;
     *out = command;
+}
+void qa_input_usercmd_project(const qa_input_usercmd *source, qa_movement_command *out) {
+    *out = (qa_movement_command){.kind = source->kind, .sequence = source->sequence,
+        .milliseconds = (uint32_t)source->milliseconds, .server_time_ms = (int32_t)source->server_time_ms,
+        .server_frame = (int32_t)source->server_frame, .acknowledged_server_seconds = source->acknowledged_server_seconds,
+        .angles = source->angles, .forward_move = source->move.x, .side_move = source->move.y,
+        .up_move = source->move.z, .buttons = source->buttons, .impulse = source->impulse,
+        .weapon = (uint8_t)(int32_t)source->weapon, .light_level = (uint8_t)(int32_t)source->light_level};
+    for (unsigned i = 0; i < 3; ++i) out->angle_words[i] = source->angle_words[i];
+}
+bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_command_tuning *tuning,
+    const qa_seat_input_sample *sample, const qa_input_command_frame *frame, double elapsed,
+    qa_movement_command *out, qa_error *error) {
+    if (!out || !builder) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input command frame or settings");
+        return false;
+    }
+    qa_input_command_builder next = *builder;
+    qa_input_command_intent intent;
+    if (!qa_input_command_sample(&next, tuning, sample, frame, elapsed, &intent, error)) return false;
+    qa_input_usercmd command;
+    qa_input_usercmd_build(&intent, frame, elapsed, QA_INPUT_COMMAND_NATIVE, &command);
+    qa_input_usercmd_project(&command, out);
+    *builder = next;
     return true;
 }

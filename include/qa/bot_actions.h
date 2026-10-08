@@ -3,6 +3,7 @@
 
 #include "qa/common.h"
 #include "qa/movement.h"
+#include "qa/input.h"
 #include "qa/bots_allocator.h"
 
 typedef enum qa_bot_action_flag {
@@ -77,9 +78,7 @@ float qa_bot_change_angle(float angle, float ideal, float speed);
 void qa_bot_change_view(qa_bot_view_state *, float factor, float maximum_degrees_per_second,
                         float elapsed, bool challenge);
 void qa_bot_view_delta(qa_bot_view_state *, const int32_t delta[3], bool add);
-/* Produces the source Q3 user-command values in the common movement command.
- * The native controller adapts these values to its selected movement provider. */
-bool qa_bot_input_q3_command(const qa_bot_input *, const int32_t delta_angles[3],
-                             int32_t server_time_ms, qa_movement_command *, qa_error *);
+/* Projects the bot's world direction and action names into common intent. */
+void qa_bot_input_intent(const qa_bot_input *, qa_input_command_intent *);
 
 #endif

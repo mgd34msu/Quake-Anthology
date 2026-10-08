@@ -741,7 +741,7 @@ add_library(qa_bots STATIC
     src/bots/library/items_source.c
     src/bots/library/source_assets_history.c
 )
-target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence)
+target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence qa_input)
 
 add_library(qa_catalog STATIC
     src/content/catalog/behaviors.c

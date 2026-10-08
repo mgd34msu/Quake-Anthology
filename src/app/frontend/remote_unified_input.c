@@ -89,7 +89,7 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
     p->configuration=configuration;p->recipe=frontend_remote_unified_recipe(replica);
     p->movement=movement;p->arsenal=arsenal;p->epoch=frontend_remote_unified_epoch(replica);
     p->builder=(frontend_unified_command_builder){.kind=snapshot.state.kind,
-        .angles={snapshot.view_angles.x,snapshot.view_angles.y,snapshot.view_angles.z}};
+        .angles={(float)snapshot.view_angles.x,(float)snapshot.view_angles.y,(float)snapshot.view_angles.z}};
     p->command_time=snapshot.command_time_ms;
     *out=p;return true;
 }
@@ -110,7 +110,7 @@ static bool frame_read(frontend_unified_input *p,double time,
         return fail(e,"Unified input lost its actual received frame");
     const qa_unified_player_view *view=&received->player->view;
     frontend_unified_command_frame frame={.kind=snapshot->state.kind,
-        .acknowledged_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
+        .acknowledged_server_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
         .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
     if(frame.kind==QA_MOVEMENT_Q2_RERELEASE)
         frame.server_frame=(double)received->world->source.number;
@@ -118,7 +118,7 @@ static bool frame_read(frontend_unified_input *p,double time,
         frame.has_pitch_drift=true;
         frame.grounded=view->grounded;
         frame.drift_disabled=view->pitch_drift_disabled;
-        frame.ideal_pitch=view->ideal_pitch;
+        frame.ideal_pitch=(float)view->ideal_pitch;
     }
     if(frame.kind==QA_MOVEMENT_Q3) {
         const qa_unified_weapon_state *weapon=&predicted->prediction->weapon;
