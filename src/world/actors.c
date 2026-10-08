@@ -34,8 +34,6 @@ struct qa_actor_registry {
     source_entry *sources;
     restored_slot *history;
     size_t source_capacity;
-    size_t source_count;
-    size_t source_tombs;
     uint64_t identity;
     uint64_t revision;
     uint32_t capacity;
@@ -63,20 +61,6 @@ static qa_actor_record *record_at(const qa_actor_registry *registry, uint32_t in
 {
     actor_page *page = registry->pages[index >> PAGE_SHIFT];
     return page == NULL ? NULL : &page->records[index & (PAGE_SIZE - 1u)];
-}
-
-static actor_page *ensure_page(qa_actor_registry *registry, uint32_t index,
-                              qa_error *error)
-{
-    uint32_t page = index >> PAGE_SHIFT;
-    if (registry->pages[page] == NULL) {
-        registry->pages[page] = calloc(1, sizeof(actor_page));
-        if (registry->pages[page] == NULL) {
-            fail(error, QA_ERROR_MEMORY, "Cannot allocate actor page");
-            return NULL;
-        }
-    }
-    return registry->pages[page];
 }
 
 static unsigned first_bit(uint64_t bits)
@@ -170,6 +154,27 @@ bool qa_actors_create(uint32_t capacity, qa_actor_release_fn release,
         free_storage(registry);
         return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor slot index");
     }
+    for (uint32_t i = 0; i < registry->page_count; ++i) {
+        registry->pages[i] = calloc(1, sizeof(actor_page));
+        if (registry->pages[i] == NULL) {
+            free_storage(registry);
+            return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor page");
+        }
+    }
+    size_t source_capacity = 16u;
+    while (source_capacity / 2u < capacity) {
+        if (source_capacity > SIZE_MAX / 2u) {
+            free_storage(registry);
+            return fail(error, QA_ERROR_MEMORY, "Actor source index exhausted");
+        }
+        source_capacity *= 2u;
+    }
+    registry->sources = calloc(source_capacity, sizeof(*registry->sources));
+    if (registry->sources == NULL) {
+        free_storage(registry);
+        return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor source index");
+    }
+    registry->source_capacity = source_capacity;
     uint_fast64_t identity = atomic_load_explicit(&next_identity, memory_order_relaxed);
     do {
         if (identity == UINT64_MAX) {
@@ -216,33 +221,24 @@ static void source_insert(qa_actor_registry *registry, qa_actor_owner owner,
     size_t mask = registry->source_capacity - 1u;
     size_t index = source_hash(owner, source_slot) & mask;
     while (registry->sources[index].state == 1) index = (index + 1u) & mask;
-    if (registry->sources[index].state == 2) --registry->source_tombs;
     registry->sources[index] = (source_entry){owner, source_slot, host_slot, 1};
-    ++registry->source_count;
 }
 
-static bool source_reserve(qa_actor_registry *registry, qa_error *error)
+static void source_remove(qa_actor_registry *registry, qa_actor_owner owner,
+                          uint32_t slot)
 {
-    size_t capacity = registry->source_capacity;
-    if (capacity != 0 && registry->source_count + registry->source_tombs + 1u <= capacity - capacity / 4u)
-        return true;
-    size_t next = capacity == 0 ? 16u : capacity;
-    if (registry->source_count + 1u > next - next / 4u) {
-        if (next > SIZE_MAX / 2u) return fail(error, QA_ERROR_MEMORY, "Actor source index exhausted");
-        next *= 2u;
+    size_t mask = registry->source_capacity - 1u;
+    size_t gap = (size_t)(source_find(registry, owner, slot) - registry->sources);
+    for (size_t index = (gap + 1u) & mask; registry->sources[index].state != 0;
+         index = (index + 1u) & mask) {
+        source_entry entry = registry->sources[index];
+        size_t home = source_hash(entry.owner, entry.source_slot) & mask;
+        if (((gap - home) & mask) < ((index - home) & mask)) {
+            registry->sources[gap] = entry;
+            gap = index;
+        }
     }
-    source_entry *entries = calloc(next, sizeof(*entries));
-    if (entries == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor source index");
-    source_entry *old = registry->sources;
-    registry->sources = entries;
-    registry->source_capacity = next;
-    registry->source_count = 0;
-    registry->source_tombs = 0;
-    for (size_t i = 0; i < capacity; ++i) {
-        if (old[i].state == 1) source_insert(registry, old[i].owner, old[i].source_slot, old[i].host_slot);
-    }
-    free(old);
-    return true;
+    registry->sources[gap] = (source_entry){0};
 }
 
 static bool allocate(qa_actor_registry *registry, qa_actor_owner owner,
@@ -259,8 +255,7 @@ static bool allocate(qa_actor_registry *registry, qa_actor_owner owner,
     if (word == registry->free_words) return fail(error, QA_ERROR_MEMORY, "Actor registry is full");
     unsigned bit = first_bit(registry->free_bits[word]);
     uint32_t index = word * 64u + bit;
-    actor_page *page = ensure_page(registry, index, error);
-    if (page == NULL || (has_source && !source_reserve(registry, error))) return false;
+    actor_page *page = registry->pages[index >> PAGE_SHIFT];
     uint32_t offset = index & (PAGE_SIZE - 1u);
     qa_actor_id id = {registry->identity, page->generations[offset], index};
     page->records[offset] = (qa_actor_record){id, owner, definition, source_slot, has_source};
@@ -333,7 +328,6 @@ bool qa_actors_bind_source(qa_actor_registry *registry, qa_actor_id actor,
         return fail(error, QA_ERROR_ARGUMENT, "Actor source slot is occupied");
     if (registry->revision == UINT64_MAX)
         return fail(error, QA_ERROR_MEMORY, "Actor metadata revision exhausted");
-    if (!source_reserve(registry, error)) return false;
     qa_actor_record *mutable = record_at(registry, actor.slot);
     source_insert(registry, record->owner, source_slot, actor.slot);
     mutable->source_slot = source_slot;
@@ -350,9 +344,7 @@ bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error 
     uint32_t offset = actor.slot & (PAGE_SIZE - 1u);
     qa_actor_record released = page->records[offset];
     if (released.has_source) {
-        source_find(registry, released.owner, released.source_slot)->state = 2;
-        --registry->source_count;
-        ++registry->source_tombs;
+        source_remove(registry, released.owner, released.source_slot);
     }
     if (page->saved_slots[offset] != NO_SAVED_SLOT) registry->history[page->saved_slots[offset]].live = (qa_actor_id){0};
     page->saved_slots[offset] = NO_SAVED_SLOT;
@@ -383,7 +375,6 @@ bool qa_actors_clear(qa_actor_registry *registry, qa_error *error)
     while (qa_actors_next(registry, &cursor, &record))
         (void)qa_actors_release(registry, record->id, NULL);
     if (registry->sources != NULL) memset(registry->sources, 0, registry->source_capacity * sizeof(*registry->sources));
-    registry->source_tombs = 0;
     free(registry->history);
     registry->history = NULL;
     registry->history_count = 0;
@@ -487,8 +478,7 @@ bool qa_actors_restore(const qa_actor_checkpoint *checkpoint,
             free_storage(registry);
             return fail(error, QA_ERROR_FORMAT, "Invalid actor checkpoint lifetime");
         }
-        actor_page *page = ensure_page(registry, i, error);
-        if (page == NULL) { free_storage(registry); return false; }
+        actor_page *page = registry->pages[i >> PAGE_SHIFT];
         uint32_t offset = i & (PAGE_SIZE - 1u);
         page->generations[offset] = saved.generation;
         page->saved_slots[offset] = NO_SAVED_SLOT;
@@ -509,7 +499,6 @@ bool qa_actors_restore(const qa_actor_checkpoint *checkpoint,
                 free_storage(registry);
                 return fail(error, QA_ERROR_FORMAT, "Duplicate actor source checkpoint");
             }
-            if (!source_reserve(registry, error)) { free_storage(registry); return false; }
             source_insert(registry, saved.owner, saved.source_slot, i);
         }
     }
