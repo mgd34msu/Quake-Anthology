@@ -2,6 +2,43 @@
 
 Each shared capability has one implementation. Native, guest and network adapters translate their original data into that implementation. Game code retains original rules, including movement constants, spawn filters and QuakeC behavior.
 
+## Common component ownership
+
+THE-344 uses the existing native components below. A game module's edict,
+playerstate, item number or string offset is an ABI record translated at the
+module boundary. It does not create another engine owner. This table records
+source ownership; live and installation evidence remains separate.
+
+| Capability | Common type and implementation | Adapter or remaining work |
+|---|---|---|
+| Entities | [qa_actor_id](../include/qa/actors.h) and the paged registry in [actors.c](../src/world/actors.c); [qa_session_create](../src/session/session.c) creates one registry for the session | Native and guest source slots map into generation handles. Allocate all pages at load so spawning cannot allocate; THE-344. |
+| Names | [qa_strings](../include/qa/strings.h), [qa_strings_intern](../src/core/strings.c); the session owns one table | Guest string offsets retain their original VM meaning. Persistence stores text, never process-local intern IDs. Table bucket hashes are lookup machinery, not content fingerprints. |
+| Traces | [qa_trace_query and qa_trace_result](../include/qa/collision.h), [qa_world_trace](../src/world/collision/world.c) | BSP formats provide collision data. Original hull, contents and capsule behavior remains query policy; it does not require a separate world trace owner. |
+| Area queries | [qa_world](../include/qa/world.h), [qa_spatial_initialize](../src/world/spatial.c) and the common spatial tree | Link insertion order retains original query order where observable. Spare-link exhaustion can still allocate; zero-allocation work is not yet complete. |
+| Player state | [qa_movement_state](../include/qa/movement.h), application actor rows in [internal.h](../src/app/application/internal.h), [qa_movement_move](../src/movement/common.c) | Each actor selects its movement rules. QC fields and Q2/Q3 playerstate layouts are boundary records, not alternate authoritative player tables. Original movement kernels retain their constants and ordering. |
+| User commands | [qa_input_command_intent and qa_input_usercmd](../include/qa/input.h), [qa_input_usercmd_build](../src/input/commands.c) | Human and bot inputs feed the common builder; transport projection retains the selected protocol's fields and widths. THE-869 qualification remains work. |
+| Items and weapons | [qa_item_definition and qa_inventory](../include/qa/inventory.h), [inventory.c](../src/gameplay/inventory.c), [equipment.c](../src/gameplay/modes/equipment.c) | Module item tables declare original names, quantities and actions into the shared actor inventory. Protocol item indices remain original indices. |
+| Damage | [qa_damage_request](../include/qa/gameplay.h), [qa_combat_apply](../src/gameplay/combat.c) | Target-selected combat policies retain original armor, resistance and damage rules. Modes call the same combat operation through [mode_damage](../src/gameplay/modes/damage.c). |
+| Output events | [application_unified_event_emit](../src/app/application/unified_events.c), [unified event records](../src/app/application/unified_events.h) | THE-870 must replace per-kind storage and retire payload pages by consumer cursors. The common entry point alone does not prove that storage migration is complete. |
+| HUD state | [qa_hud_frame and qa_hud_data](../include/qa/hud.h), one seat-owned [qa_hud](../src/ui/hud.c), with state supplied by [seats.c](../src/app/frontend/seats.c) | Layout and media are game data; standalone games retain their original status bars. Guest HUD draws contribute to the same scene. |
+| Cvars | [qa_cvars_handle](../src/console/cvars.c) over the shared canonical table; definitions come from [unified-cvars.csv](../data/unified-cvars.csv) | Aliases, declaration views and original per-player values retain their meaning. The cold decoder and preview stores listed below remain separate work. |
+
+[game_domains.h](../include/qa/game_domains.h) defines the movement, clock and
+console conversions. Configuration, neutral settings and received settings use
+these named conversions rather than assuming that enum ordinals match. Casts
+from decoded numeric values to that same enum, after range checks, remain valid
+boundary parsing. Original guest enum values likewise remain ABI translation.
+`tools/check_single_engine.sh` reports newly added enum casts for source-type
+review; its output is an inventory, not an automatic rejection of input parsing.
+
+Every common component must still project to the exact original network data:
+NetQuake 15 and negotiated 666/999, QuakeWorld 28, Quake II 34 and rerelease,
+and Quake III 68 and Team Arena. Adapters preserve entity and item indices,
+field presence, signedness, numeric widths and negotiated extensions. Host
+generation handles and canonical enum ordinals never replace wire values.
+Changes to names, registry ownership and enum conversions do not alter protocol
+codecs. End-to-end interoperability still requires protocol-specific proof.
+
 The locations below were checked during the MIKE-23–36 work. “Merged” describes Source integration; shipped playtest proof is recorded separately. Open rows remain implementation work, not review gates.
 
 | Capability | Existing copies or divergent paths | Single implementation | State |

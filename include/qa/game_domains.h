@@ -41,4 +41,9 @@ static inline qa_movement_kind qa_clock_movement_kind(qa_clock_kind kind)
     return QA_MOVEMENT_NETQUAKE;
 }
 
+static inline qa_console_dialect qa_clock_console_dialect(qa_clock_kind kind)
+{
+    return qa_movement_console_dialect(qa_clock_movement_kind(kind));
+}
+
 #endif

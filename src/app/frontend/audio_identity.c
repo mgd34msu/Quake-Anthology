@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "round.h"
 #include "native_q3_client_internal.h"
+#include "qa/game_domains.h"
 static uint64_t append_actor(qa_frontend *frontend, qa_actor_id actor, bool retired,
     qa_error *error);
 void frontend_audio_retire_round_aliases(qa_frontend *frontend)
@@ -86,17 +87,11 @@ static bool retained_event_source(qa_frontend *frontend, qa_actor_owner owner, q
         frontend_fail(error, QA_ERROR_ARGUMENT, "Retained sound lost its actual Source clock");
         return false;
     }
-    qa_console_dialect dialect;
-    switch (clock.frame.kind) {
-    case QA_CLOCK_NETQUAKE: dialect = QA_CONSOLE_Q1; break;
-    case QA_CLOCK_QUAKEWORLD: dialect = QA_CONSOLE_QW; break;
-    case QA_CLOCK_Q2_CLASSIC: dialect = QA_CONSOLE_Q2; break;
-    case QA_CLOCK_Q2_RERELEASE: dialect = QA_CONSOLE_Q2_RERELEASE; break;
-    case QA_CLOCK_Q3: dialect = QA_CONSOLE_Q3; break;
-    default:
+    if ((unsigned)clock.frame.kind > QA_CLOCK_Q3) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "Retained sound has no gameplay Source clock");
         return false;
     }
+    qa_console_dialect dialect=qa_clock_console_dialect(clock.frame.kind);
     bool matches = family == QA_GAME_Q1 ? dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW :
         family == QA_GAME_Q2 ? dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE :
         family == QA_GAME_Q3 && dialect == QA_CONSOLE_Q3;

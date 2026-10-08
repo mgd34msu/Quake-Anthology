@@ -3,6 +3,7 @@
 #include "remote_unified_save.h"
 #include "internal.h"
 #include "qa/source_frame_time.h"
+#include "qa/game_domains.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_native_q3_cvars.h"
 #include <inttypes.h>
@@ -362,7 +363,7 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     source.input_origin=qa_input_seat_context(f->seats[options->physical_seat].input);
     source.input_origin.owner=0; source.input_origin.actor=(qa_actor_id){0}; source.input_origin.client=0;
     source.input_origin.registry=source.input_origin.generation=0; source.input_origin.script=false;
-    source.input_origin.dialect=(qa_console_dialect)clock;
+    source.input_origin.dialect=qa_clock_console_dialect(clock);
     source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=o->options.selected,
         .prepared=prepared,.instance="remote-unified-client",.seat=source.input_origin.seat,.clock=clock};
     bool ok=frontend_client_source_create(f,&source,&o->physical,e);

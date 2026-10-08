@@ -5,6 +5,7 @@
 #include "qa/unified_frame_prediction.h"
 #include "qa/unified_frame_player.h"
 #include "qa/unified_frame_events.h"
+#include "qa/game_domains.h"
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_metadata.h"
@@ -547,15 +548,9 @@ static bool transport_player(void *context, qa_net_client_id client,
     if (!movement || !movement->source_owner || !arsenal || !arsenal->selection.instance ||
         !qa_actors_get(owner->actors, owner->player))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified player lacks its received selected providers");
-    qa_movement_kind kind;
-    switch (movement->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE: kind = QA_MOVEMENT_NETQUAKE; break;
-    case QA_CLOCK_QUAKEWORLD: kind = QA_MOVEMENT_QUAKEWORLD; break;
-    case QA_CLOCK_Q2_CLASSIC: kind = QA_MOVEMENT_Q2_CLASSIC; break;
-    case QA_CLOCK_Q2_RERELEASE: kind = QA_MOVEMENT_Q2_RERELEASE; break;
-    case QA_CLOCK_Q3: kind = QA_MOVEMENT_Q3; break;
-    default: return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified player has an unknown movement clock");
-    }
+    if ((unsigned)movement->selection.clock.kind > QA_CLOCK_Q3)
+        return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified player has an unknown movement clock");
+    qa_movement_kind kind=qa_clock_movement_kind(movement->selection.clock.kind);
     *out = (qa_unified_session_player){.actor = owner->player, .seat = owner->options.domain.seat,
         .movement = kind, .arsenal = {(const uint8_t *)arsenal->selection.instance, strlen(arsenal->selection.instance)},
         .source_owner = movement->source_owner, .source_slot = owner->source_entity};

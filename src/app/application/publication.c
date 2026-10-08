@@ -20,6 +20,7 @@
 #include "native_q1_console.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/launch_identity_fields.h"
+#include "qa/game_domains.h"
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
@@ -717,15 +718,9 @@ static bool publication_select_values(qa_application *application,
         ? qa_launch_snapshot_find(candidate, binding->instance) : NULL;
     if (!source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Canonical defaults require the actual WORLD GAME source");
-    qa_console_dialect dialect;
-    switch (source->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE: dialect = QA_CONSOLE_Q1; break;
-    case QA_CLOCK_QUAKEWORLD: dialect = QA_CONSOLE_QW; break;
-    case QA_CLOCK_Q2_CLASSIC: dialect = QA_CONSOLE_Q2; break;
-    case QA_CLOCK_Q2_RERELEASE: dialect = QA_CONSOLE_Q2_RERELEASE; break;
-    case QA_CLOCK_Q3: dialect = QA_CONSOLE_Q3; break;
-    default: return application_fail(error, QA_ERROR_ARGUMENT, "WORLD GAME source has no cvar dialect");
-    }
+    if ((unsigned)source->selection.clock.kind > QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "WORLD GAME source has no cvar dialect");
+    qa_console_dialect dialect=qa_clock_console_dialect(source->selection.clock.kind);
     return qa_cvars_select_dialect(application->cvars, dialect, error);
 }
 

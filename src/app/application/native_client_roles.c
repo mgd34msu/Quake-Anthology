@@ -2,6 +2,7 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/application_client_save.h"
 #include "qa/application_client_prepare.h"
+#include "qa/game_domains.h"
 #include "startup_flow.h"
 #include <limits.h>
 #include <stdio.h>
@@ -88,15 +89,9 @@ bool qa_application_client_provider_command(qa_application *app, qa_actor_owner 
         input->actor.generation || input->actor.slot ||
         (input->origin != QA_COMMAND_SEAT && input->origin != QA_COMMAND_LOCAL))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT command requires its real local input origin");
-    qa_console_dialect dialect;
-    switch (p->launch->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE: dialect = QA_CONSOLE_Q1; break;
-    case QA_CLOCK_QUAKEWORLD: dialect = QA_CONSOLE_QW; break;
-    case QA_CLOCK_Q2_CLASSIC: dialect = QA_CONSOLE_Q2; break;
-    case QA_CLOCK_Q2_RERELEASE: dialect = QA_CONSOLE_Q2_RERELEASE; break;
-    case QA_CLOCK_Q3: dialect = QA_CONSOLE_Q3; break;
-    default: return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT descriptor has no nonQ3 console dialect");
-    }
+    if ((unsigned)p->launch->selection.clock.kind > QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT descriptor has no nonQ3 console dialect");
+    qa_console_dialect dialect=qa_clock_console_dialect(p->launch->selection.clock.kind);
     if (input->dialect != dialect)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT input dialect differs from its selected descriptor");
     uint64_t registry = qa_actors_identity(qa_session_actors(app->session));

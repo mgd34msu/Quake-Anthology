@@ -11,6 +11,7 @@
 #include "startup_menus.h"
 #include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
+#include "qa/game_domains.h"
 #include "qa/application_players.h"
 #include "network_config.h"
 #include "network_recipient.h"
@@ -259,7 +260,7 @@ static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
     const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
     if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lacks its actual selected seat movement source");
-    *dialect=(qa_console_dialect)selected->selection.clock.kind; return true;
+    *dialect=qa_clock_console_dialect(selected->selection.clock.kind); return true;
 }
 static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
@@ -299,7 +300,7 @@ static bool seat_input_create(frontend_config_source *source,config_seat *seat,
         .seat=physical,.context_ready=input_context,.context_user=source};
     seat->input=qa_input_seat_create(&options,error);
     if (!seat->input || !qa_input_seat_profile(seat->input,seat->movement_dialect,error) ||
-        !qa_input_settings_register(seat->mouse,(qa_movement_kind)seat->movement_dialect,error)) return false;
+        !qa_input_settings_register(seat->mouse,qa_console_movement_kind(seat->movement_dialect),error)) return false;
     if (!active) return true;
     size_t count=qa_input_seat_binding_count(active);
     if (count>SIZE_MAX/sizeof(qa_input_binding))
@@ -867,7 +868,8 @@ bool frontend_config_store_draft_archive(frontend_config_store *manager,const qa
         frontend_global_settings_storage_user_store(f->global_settings_storage),
         frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     if (!files) return false;
-    bool ok=source_archive_load(files,product,selected,(qa_console_dialect)selected->clock.kind,out,error);
+    bool ok=source_archive_load(files,product,selected,
+        qa_clock_console_dialect(selected->clock.kind),out,error);
     qa_error first=error?*error:(qa_error){0},cleanup={0};
     if (!frontend_config_files_destroy(files,&cleanup)) { if (ok && error) *error=cleanup; ok=false; }
     else if (!ok && error) *error=first;
@@ -983,7 +985,7 @@ qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store 
             strcmp(retained->selection.instance,selected->selection.instance)) continue;
         size_t index=seat_index(source,logical);
         if (index>=source->seat_count) return NULL;
-        if (movement) *movement=(qa_movement_kind)source->seats[index].movement_dialect;
+        if (movement) *movement=qa_console_movement_kind(source->seats[index].movement_dialect);
         return source->seats[index].mouse;
     }
     return NULL;
@@ -1371,7 +1373,7 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
         unchanged=present && view.ready && view.published && view.physical_seat==ordinal &&
             view.scope.seat==logical && selected && selected->state==view.receiver->state &&
             selected->storage==view.receiver->storage && seat_movement(candidate,logical,&movement,error) &&
-            movement==(qa_console_dialect)view.movement;
+            movement==qa_movement_console_dialect(view.movement);
     } else {
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
@@ -2058,7 +2060,8 @@ static frontend_config_source *previous_source(frontend_config_store *manager,qa
         const qa_launch_binding *movement=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
-        if (!movement_source || (qa_console_dialect)movement_source->selection.clock.kind!=source->movement_dialect)
+        if (!movement_source || qa_clock_console_dialect(
+            movement_source->selection.clock.kind)!=source->movement_dialect)
             return NULL;
         for (size_t i=0;source->seat_count && choices && i<choices->seat_count;++i) {
             if (!choices->seats[i].local || choices->seats[i].bot) continue;
@@ -2555,7 +2558,8 @@ static bool prepare_source_row(void *context,qa_application *application,const q
     }
     const qa_launch_binding *movement=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
-    source->movement_dialect=(qa_console_dialect)(movement_source?movement_source->selection.clock.kind:selected->selection.clock.kind);
+    source->movement_dialect=qa_clock_console_dialect(
+        movement_source?movement_source->selection.clock.kind:selected->selection.clock.kind);
     if (ok) source->movement=registry(source,source->movement_dialect,error);
     if (ok) source->fallback=source->movement_dialect==command->dialect?source->movement:registry(source,command->dialect,error);
     ok=ok && source->movement && source->fallback;

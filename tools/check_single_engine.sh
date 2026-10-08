@@ -8,11 +8,12 @@ import sys
 
 base = sys.argv[1]
 diff = subprocess.run(
-    ["git", "diff", "--no-ext-diff", "--unified=0", base, "--", "src", "include"],
+    ["git", "diff", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/",
+     "--unified=0", base, "--", "src", "include"],
     check=True, text=True, capture_output=True,
 ).stdout
 rules = [
-    ("enum cast", re.compile(r"\(\s*qa_(?:console_dialect|movement_kind|clock_kind)\s*\)")),
+    ("enum boundary", re.compile(r"\(\s*qa_(?:console_dialect|movement_kind|clock_kind|game_family)\s*\)")),
     ("collision family", re.compile(r"\bQA_COLLISION_Q[23]\b")),
     ("capability owner", re.compile(r"\b(?:qa_hud_create|qa_audio_engine_play|qa_audio_bank_create|qa_[A-Za-z0-9_]*particle[A-Za-z0-9_]*pool[A-Za-z0-9_]*)\s*\(")),
     ("family dispatch", re.compile(r"(?:->family\s*==\s*QA_GAME_Q|\bkind\s*==\s*APPLICATION_PROVIDER_Q)")),
@@ -53,4 +54,5 @@ for record in diff.splitlines():
     elif record.startswith(" "):
         line += 1
 print(f"{hits} new occurrences to compare with docs/unification-inventory.md")
+print("Enum boundaries require source-type review: serialized values and original ABI values are not cross-domain conversions.")
 PY
