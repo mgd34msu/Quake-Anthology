@@ -388,6 +388,7 @@ bool frontend_client_source_advance(frontend_client_source *s, bool *ready, qa_e
         s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration requires its returned physical constructor");
     if (!s->ready) {
+        if (s->frontend->stepping) { *ready = false; return true; }
         if (!s->options.configure) return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT programme has no retained configuration owner");
         bool complete = false;
         ++s->calls; bool ok = s->options.configure(s->options.context, &s->application, &complete, error); --s->calls;
