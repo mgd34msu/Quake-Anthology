@@ -198,38 +198,54 @@ static bool validate_visibility(const qa_bsp_view *map, qa_error *error)
     return true;
 }
 
-bool qa_bsp_open(qa_bytes source, qa_bsp_view *out, qa_error *error)
+bool qa_bsp_probe(qa_bytes source, qa_bsp_format *out, qa_error *error)
 {
-    if (out == NULL || (source.size > 0 && source.data == NULL))
-        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid BSP input or output");
+    if (source.size > 0 && source.data == NULL)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid BSP input");
     if (source.size < 4) return fail(error, QA_ERROR_FORMAT, 0, "truncated BSP identifier");
-    qa_bsp_view map = {.source = source};
+    qa_bsp_format format;
     uint32_t magic = qa_load_u32le(source.data);
-    const lump_layout *layout = NULL;
-    size_t count = 0, directory = 4;
     switch (magic) {
-    case 29: map.format = QA_BSP_29; break;
-    case UINT32_C(0x32505342): map.format = QA_BSP_2; break;
-    case UINT32_C(0x42535032): map.format = QA_BSP_2PSB; break;
-    case UINT32_C(0x51363420): map.format = QA_BSP_QUAKE64; break;
+    case 29: format = QA_BSP_29; break;
+    case UINT32_C(0x32505342): format = QA_BSP_2; break;
+    case UINT32_C(0x42535032): format = QA_BSP_2PSB; break;
+    case UINT32_C(0x51363420): format = QA_BSP_QUAKE64; break;
     case UINT32_C(0x50534249): case UINT32_C(0x50534251): {
         if (source.size < 8) return fail(error, QA_ERROR_FORMAT, 4, "truncated BSP version");
         uint32_t version = qa_load_u32le(source.data + 4);
-        directory = 8;
         if (version == 38) {
-            map.format = magic == UINT32_C(0x50534249) ? QA_BSP_IBSP38 : QA_BSP_QBSP;
-            map.family = QA_BSP_Q2; layout = q2_layout; count = 19;
+            format = magic == UINT32_C(0x50534249) ? QA_BSP_IBSP38 : QA_BSP_QBSP;
         } else if (magic == UINT32_C(0x50534249) && (version == 44 || version == 46)) {
-            map.format = version == 44 ? QA_BSP_IBSP44 : QA_BSP_IBSP46;
-            map.family = QA_BSP_Q3;
-            layout = version == 44 ? q3_44_layout : q3_layout;
-            count = version == 44 ? 15 : 17;
+            format = version == 44 ? QA_BSP_IBSP44 : QA_BSP_IBSP46;
         } else return fail(error, QA_ERROR_UNSUPPORTED, 4, "unsupported BSP version");
         break;
     }
     default: return fail(error, QA_ERROR_UNSUPPORTED, 0, "unsupported BSP identifier");
     }
-    if (layout == NULL) { map.family = QA_BSP_Q1; layout = q1_layout; count = 15; }
+    if (out) *out = format;
+    return true;
+}
+
+bool qa_bsp_open(qa_bytes source, qa_bsp_view *out, qa_error *error)
+{
+    if (out == NULL)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid BSP output");
+    qa_bsp_view map = {.source = source, .family = QA_BSP_Q1};
+    if (!qa_bsp_probe(source, &map.format, error)) return false;
+    const lump_layout *layout = q1_layout;
+    size_t count = 15, directory = 4;
+    switch (map.format) {
+    case QA_BSP_IBSP38: case QA_BSP_QBSP:
+        map.family = QA_BSP_Q2; layout = q2_layout; count = 19; directory = 8;
+        break;
+    case QA_BSP_IBSP44:
+        map.family = QA_BSP_Q3; layout = q3_44_layout; directory = 8;
+        break;
+    case QA_BSP_IBSP46:
+        map.family = QA_BSP_Q3; layout = q3_layout; count = 17; directory = 8;
+        break;
+    default: break;
+    }
     size_t header = directory + count * 8;
     if (source.size < header) return fail(error, QA_ERROR_FORMAT, directory, "truncated BSP directory");
     size_t end = header;

@@ -48,6 +48,8 @@ typedef struct qa_bsp_view {
     uint32_t diagnostics;
 } qa_bsp_view;
 
+/* Probes only the identifier/version. Either output may be NULL. */
+bool qa_bsp_probe(qa_bytes source, qa_bsp_format *out, qa_error *error);
 bool qa_bsp_open(qa_bytes source, qa_bsp_view *out, qa_error *error);
 const char *qa_bsp_format_name(qa_bsp_format format);
 const char *qa_bsp_lump_name(qa_bsp_lump_kind kind);

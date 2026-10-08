@@ -52,6 +52,40 @@ static bool equal_text(qa_bytes bytes, const char *text)
     return bytes.size == strlen(text) && memcmp(bytes.data, text, bytes.size) == 0;
 }
 
+static void probes(void)
+{
+    qa_error error = {0};
+    for (int format = QA_BSP_29; format <= QA_BSP_IBSP46; ++format) {
+        fixture file = make_fixture((qa_bsp_format)format);
+        qa_bsp_format detected;
+        CHECK(qa_bsp_probe((qa_bytes){file.data, file.directory}, &detected, &error));
+        CHECK(detected == (qa_bsp_format)format);
+        CHECK(qa_bsp_probe((qa_bytes){file.data, file.directory}, NULL, NULL));
+        for (size_t size = 0; size < file.directory; ++size)
+            CHECK(!qa_bsp_probe((qa_bytes){file.data, size}, NULL, NULL));
+
+        /* A probe identifies the container; opening owns directory checks. */
+        qa_store_u32le(file.data + file.directory, UINT32_MAX);
+        CHECK(qa_bsp_probe((qa_bytes){file.data, file.size}, &detected, &error));
+        qa_bsp_view map;
+        CHECK(!qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    }
+    CHECK(!qa_bsp_probe((qa_bytes){NULL, 4}, NULL, NULL));
+    uint8_t other[8] = {0};
+    const uint32_t not_bsp[] = {6, UINT32_C(0x1d4c4449), UINT32_C(0x12721444)};
+    for (size_t i = 0; i < sizeof(not_bsp) / sizeof(not_bsp[0]); ++i) {
+        qa_store_u32le(other, not_bsp[i]);
+        CHECK(!qa_bsp_probe((qa_bytes){other, sizeof(other)}, NULL, NULL));
+    }
+    fixture file = make_fixture(QA_BSP_IBSP46);
+    qa_store_u32le(file.data + 4, 999);
+    CHECK(!qa_bsp_probe((qa_bytes){file.data, 8}, NULL, &error));
+    CHECK(error.code == QA_ERROR_UNSUPPORTED);
+    file = make_fixture(QA_BSP_QBSP);
+    qa_store_u32le(file.data + 4, 46);
+    CHECK(!qa_bsp_probe((qa_bytes){file.data, 8}, NULL, NULL));
+}
+
 static void headers(void)
 {
     qa_error error = {0};
@@ -499,7 +533,7 @@ static void bspx(void)
 
 int main(void)
 {
-    headers(); geometry(); unsigned_q1_children(); faces_and_models();
+    probes(); headers(); geometry(); unsigned_q1_children(); faces_and_models();
     q3_surfaces(); remaining_records(); entities(); visibility(); bspx();
     printf("BSP foundation: %u checks passed\n", checks);
     return 0;

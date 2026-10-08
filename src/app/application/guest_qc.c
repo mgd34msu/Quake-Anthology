@@ -96,10 +96,7 @@ bool application_qc_resource_resolve_model(application_qc_resource *entry, qa_er
     if (entry->kind != QA_QC_RESOURCE_MODEL) return true;
     if (entry->source) {
         qa_bytes bytes = qa_resource_bytes(entry->source);
-        if (bytes.size < 4 || (qa_load_u32le(bytes.data) != 29 &&
-            qa_load_u32le(bytes.data) != UINT32_C(0x32505342) &&
-            qa_load_u32le(bytes.data) != UINT32_C(0x42535032) &&
-            qa_load_u32le(bytes.data) != UINT32_C(0x50534249))) return true;
+        if (!qa_bsp_probe(bytes, NULL, NULL)) return true;
         if (!entry->geometry) {
             qa_bsp_view map;
             if (!qa_bsp_open(bytes, &map, error) ||
