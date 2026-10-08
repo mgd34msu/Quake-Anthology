@@ -225,10 +225,8 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
         qa_bsp_model model;
         if (!qa_bsp_read_model(bsp, i, &model, error)) return false;
         qa_bounds bounds = qa_bsp_to_bounds(model.bounds);
-        if (geometry->family != QA_COLLISION_Q1) {
-            bounds.mins = qa_vec_sub(bounds.mins, qa_v3(1, 1, 1));
-            bounds.maxs = qa_vec_add(bounds.maxs, qa_v3(1, 1, 1));
-        }
+        bounds.mins = qa_vec_sub(bounds.mins, qa_v3(1, 1, 1));
+        bounds.maxs = qa_vec_add(bounds.maxs, qa_v3(1, 1, 1));
         if (!qa_bounds_valid(bounds))
             return geometry_fail(error, QA_ERROR_FORMAT, "Invalid collision model bounds");
         geometry->model_bounds[i] = bounds;

@@ -246,6 +246,24 @@ static void fixture_bind_maps(q1_fixture *fixture)
         .secret_found = unexpected_secret}, &error));
 }
 
+static void thin_brush_bounds(void)
+{
+    qa_error error = {0};
+    gameplay_map map;
+    gameplay_map_create(&map);
+    qa_collision_destroy(map.geometry);
+    uint32_t model = qa_load_u32le(map.bytes + 4 + 14 * 8);
+    gameplay_float(map.bytes + model + 4, 409);
+    gameplay_float(map.bytes + model + 16, 408);
+    qa_bsp_view bsp;
+    GAME_CHECK(qa_bsp_open((qa_bytes){map.bytes, sizeof(map.bytes)}, &bsp, &error));
+    GAME_CHECK(qa_collision_create(&bsp, &map.geometry, &error));
+    qa_bounds bounds;
+    GAME_CHECK(qa_collision_model_bounds(map.geometry, 0, &bounds, &error));
+    GAME_CHECK(bounds.mins.y == 408 && bounds.maxs.y == 409);
+    qa_collision_destroy(map.geometry);
+}
+
 static void dormant_trigger_activation(void)
 {
     qa_error error = {0};
@@ -270,7 +288,7 @@ static void dormant_trigger_activation(void)
     GAME_CHECK(error.code == QA_OK);
     GAME_CHECK(qa_world_body_read(fixture.world, trigger, &body, &error));
     GAME_CHECK(body.angles.y == 90);
-    GAME_CHECK(body.bounds.mins.x == -1024 && body.bounds.maxs.x == 1024);
+    GAME_CHECK(body.bounds.mins.x == -1025 && body.bounds.maxs.x == 1025);
     GAME_CHECK(qa_q1_game_use(fixture.game, trigger, (qa_actor_id){0}, &error));
     GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
     GAME_CHECK(visible.model == QA_STRING_NONE);
@@ -281,7 +299,7 @@ static void dormant_trigger_activation(void)
     GAME_CHECK(collision.role == QA_COLLISION_TRIGGER);
     GAME_CHECK(qa_world_body_read(fixture.world, trigger, &body, &error));
     GAME_CHECK(body.angles.y == 0);
-    GAME_CHECK(body.bounds.mins.x == -1024 && body.bounds.maxs.x == 1024);
+    GAME_CHECK(body.bounds.mins.x == -1025 && body.bounds.maxs.x == 1025);
     fixture_destroy(&fixture);
 }
 
@@ -655,6 +673,7 @@ static void retained_external_brush(void)
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    thin_brush_bounds();
     dormant_trigger_activation();
     nonsolid_inline_appearance();
     relay_template_unpublished();
