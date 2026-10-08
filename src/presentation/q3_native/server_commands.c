@@ -815,7 +815,6 @@ static bool receipt(q3n_server_commands *o, const q3n_frame *f, const q3n_server
 {
     if(o->options.compiled_source)return f && f->compiled && r && !r->wire.reader && !r->remote.tokens &&
         r->compiled_source==o->options.compiled_source && r->sequence==sequence &&
-        r->publication_generation==o->options.publication_generation && r->map_revision==o->options.map_revision &&
         compiled_identity(&r->compiled_context,&o->options.compiled_context) && (!r->present || r->arguments) &&
         f->compiled->source.basis.reached_command==sequence &&
         o->options.receipt_current(o->options.context,f,r) && q3nc_current(o,f,e);
