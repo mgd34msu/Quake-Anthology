@@ -1,6 +1,7 @@
 # Loopback startup and control checks
 
-THE-913 is in review; THE-907 and THE-868 remain in progress. The candidate is
+THE-913 is in review; THE-907 and THE-868 remain in progress. The first
+qualified build recorded here is
 `dee3546e270afe4d04236027ef61f76281b791c1`, built October 8 at
 10:58:39 CDT. These checks used private displays and copied owner settings.
 They do not establish release readiness or frame-time performance.
@@ -105,4 +106,13 @@ THE-907 remains open: Mouse1 was held about 3.2 seconds, but no distinct flash
 was captured and visible ammo stayed at 25. Individual jump/mouse responses
 and per-key acknowledgments are not established. Final source/ack endpoints
 were CPU 4209/29 and GL 3801/25. These are single observations, not advancement
-proof. This candidate has not yet replaced the qualified installed build.
+proof.
+
+The same candidate was installed at 12:35:34 CDT through the qualified
+installer. Its copied-profile CPU/GL gameplay receipt and sixteen private
+Wayland menu/gameplay scopes passed; the coordinator viewed every final
+Wayland image. All five installed files directly byte-match the candidate.
+The install receipt is `installed-m0-selected-view-weapon-20261008.json`, and
+a Slack retest note was posted. Standalone `q3dm0` GL retained one stock gun,
+world and original HUD; actual mouse turning and ammo 100 to 94 were observed,
+with a normal quit and no debugger. Mixed firing remains under investigation.
