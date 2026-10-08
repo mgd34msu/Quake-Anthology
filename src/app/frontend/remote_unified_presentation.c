@@ -893,8 +893,12 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
         frame_abort(p); return false;
     }
     if (!q3_clients_prepare(p,error)) { frame_abort(p); return false; }
-    if (!p->prediction && !frontend_remote_unified_prediction_create(replica,&p->prediction,error)) return false;
-    if (!p->candidate_render && !frontend_unified_render_create(p->frontend,replica,p->media,doc,&p->candidate_render,error)) return false;
+    if (!p->prediction && !frontend_remote_unified_prediction_create(replica,&p->prediction,error)) {
+        frame_abort(p); return false;
+    }
+    if (!p->candidate_render && !frontend_unified_render_create(p->frontend,replica,p->media,doc,&p->candidate_render,error)) {
+        frame_abort(p); return false;
+    }
     bool okay = frontend_unified_events_frame_prepare(p->events,doc,error) &&
         frontend_unified_q1_frame_prepare(p->q1,doc,error) && frontend_unified_q2_frame_prepare(p->q2,doc,error) &&
         frontend_unified_q3_frame_prepare(p->q3,doc,error);

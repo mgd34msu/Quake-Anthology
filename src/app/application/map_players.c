@@ -2897,10 +2897,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                      !application_supplies_spawn(application->supplies, map_source, actor, error))) return false;
                 selected_spawn = true;
             }
-            if (map_source->kind == APPLICATION_PROVIDER_Q1) {
-                if (!configure_borrowed_q2_character(application, choices, seat,
-                        character, actor, error)) return false;
-            } else if (!original_restored &&
+            if (map_source != character &&
+                !configure_borrowed_q2_character(application, choices, seat,
+                    character, actor, error)) return false;
+            if (map_source->kind != APPLICATION_PROVIDER_Q1 && !original_restored &&
                 !qa_q2_player_spawn(character->state.q2, actor, false, landmark, error))
                 return false;
             found = !record->deferred;
@@ -3102,14 +3102,14 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q1 && found) {
             if (!q1_source_control_spawn(application, actor, &body, error) ||
-                !q1_selected_q3_respawn(application, map_source, actor, error) ||
-                (character->kind == APPLICATION_PROVIDER_Q2 &&
-                 !qa_q2_character_respawned(character->state.q2, actor, error))) return false;
+                !q1_selected_q3_respawn(application, map_source, actor, error)) return false;
         } else {
             qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,
                                                  .reason = QA_BUILTIN_MOTION_RESET};
             if (!application_control_motion_changed(application, actor, &change, error)) return false;
         }
+        if (found && map_source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
+            !qa_q2_character_respawned(character->state.q2, actor, error)) return false;
         qa_combat_state traits;
         if (!qa_combat_read_traits(application->combat, actor, &traits, error)) return false;
         struct application_q3_guest *original_character = q3g_engine(character);
@@ -3524,13 +3524,13 @@ bool application_players_advance(qa_application *application, qa_error *error)
         if (source->kind == APPLICATION_PROVIDER_Q1) {
             if (!q1_source_control_spawn(application, actor, &body, error) ||
                 !q1_selected_q3_respawn(application, source, actor, error) ||
-                (character->kind == APPLICATION_PROVIDER_Q2 &&
-                 !qa_q2_character_respawned(character->state.q2, actor, error)) ||
                 !q1_player_current(application, source, character, arsenal, actor,
                     true, &ordinal, error)) return false;
             record = application->players->records + ordinal;
         } else if (!application_control_motion_changed(application, actor, &change, error) ||
             !application_record_motion_change(application, actor, &change, error)) return false;
+        if (source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
+            !qa_q2_character_respawned(character->state.q2, actor, error)) return false;
         application_provider *movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
         if (!movement)
             return application_fail(error, QA_ERROR_ARGUMENT, "Deferred spawn lost its selected movement owner");

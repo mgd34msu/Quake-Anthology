@@ -15,6 +15,9 @@ static bool declare(qa_cvars *cvars,const char *name,const char *value,uint32_t 
         return (previous->flags&flags)==flags || qa_cvars_add_flags(cvars,name,flags,error);
     return qa_cvars_register(cvars,name,value,flags,0,"Prepared client identity",error);
 }
+static const char *q2_default_skin(const char *model)
+{ return !strcmp(model,"female")?"athena":!strcmp(model,"cyborg")?"oni911":"grunt"; }
+
 bool qa_application_player_userinfo_register(qa_cvars *cvars,uint32_t seat,const char *model,qa_error *error)
 {
     if (!cvars || !model || !*model) {
@@ -67,7 +70,7 @@ bool qa_application_player_userinfo_register(qa_cvars *cvars,uint32_t seat,const
     }
     if (!declare(cvars,"name",name,identity,error) || !declare(cvars,"spectator","0",QA_CVAR_USERINFO,error) ||
         !declare(cvars,"password","",QA_CVAR_USERINFO,error)) return false;
-    const char *skin=!strcmp(model,"female")?"athena":!strcmp(model,"cyborg")?"oni911":"grunt";
+    const char *skin=q2_default_skin(model);
     size_t a=strlen(model),b=strlen(skin);
     char *body=a<=SIZE_MAX-b-2?malloc(a+b+2):NULL;
     if (!body) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual prepared client skin"); return false; }
@@ -218,22 +221,35 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
             ok=qa_q3_info_set(out,capacity,"name",q3_name,error) &&
                 qa_q3_info_set(out,capacity,"team",team,error) &&
                 qa_q3_info_set(out,capacity,"ip",local_ip?"localhost":"",error);
-            if (ok && found) {
-                const qa_native_q3_character_declaration *appearance=&declaration.appearance;
-                const char *head=*appearance->head_model?appearance->head_model:appearance->model;
-                const char *keys[]={"model","headmodel"};
-                const char *models[]={appearance->model,head};
-                const char *skins[]={appearance->skin,appearance->head_skin};
-                char *body=malloc(capacity);
-                if (!body) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining actual Q3 character identity");
-                for (size_t i=0;ok && i<2;++i) {
-                    int length=snprintf(body,capacity,"%s/%s",models[i],skins[i]);
-                    ok=(length>=0 && (size_t)length<capacity) ||
-                        application_fail(error,QA_ERROR_ARGUMENT,"Initial CHARACTER userinfo exceeds its source extent");
-                    if (ok) ok=qa_q3_info_set(out,capacity,keys[i],body,error);
+        }
+        if (ok && (protocol==QA_GAME_Q2 || found)) {
+            qa_native_q3_character_declaration fallback={"male","grunt","male","grunt"};
+            const qa_native_q3_character_declaration *appearance=found &&
+                (protocol==QA_GAME_Q3 || declaration.family==QA_GAME_Q2)?&declaration.appearance:&fallback;
+            const char *head=*appearance->head_model?appearance->head_model:appearance->model;
+            const char *keys[]={protocol==QA_GAME_Q2?"skin":"model","headmodel"};
+            const char *models[]={appearance->model,head};
+            const char *skin=protocol==QA_GAME_Q2 && !strcmp(appearance->skin,"default")?
+                q2_default_skin(appearance->model):appearance->skin;
+            const char *skins[]={skin,appearance->head_skin};
+            size_t count=protocol==QA_GAME_Q2?1:2;
+            char *body=malloc(capacity);
+            if (!body) ok=application_fail(error,QA_ERROR_MEMORY,"Retaining actual character identity");
+            for (size_t i=0;ok && i<count;++i) {
+                if (protocol==QA_GAME_Q2 && !strcmp(appearance->skin,"default")) {
+                    ok=qa_q3_info_value(out,"skin",body,capacity,error);
+                    if (!ok) break;
+                    const char *separator=strchr(body,'/');
+                    size_t model_length=strlen(models[i]);
+                    if (separator && (size_t)(separator-body)==model_length && separator[1] &&
+                        !memcmp(body,models[i],model_length)) continue;
                 }
-                free(body);
+                int length=snprintf(body,capacity,"%s/%s",models[i],skins[i]);
+                ok=(length>=0 && (size_t)length<capacity) ||
+                    application_fail(error,QA_ERROR_ARGUMENT,"Initial CHARACTER userinfo exceeds its source extent");
+                if (ok) ok=qa_q3_info_set(out,capacity,keys[i],body,error);
             }
+            free(body);
         }
         free(fov); qa_buffer_free(&info); qa_cvars_destroy(protocol_cvars); return ok;
     } else return application_fail(error, QA_ERROR_ARGUMENT, "Initial userinfo has no declared protocol constructor");
