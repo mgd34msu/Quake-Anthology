@@ -339,34 +339,32 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         qa_application_control_view state;
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
+        if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
         uint64_t source_duration=elapsed_ns;
-        bool qw_client=false;
+        bool admitted_client=false;
         if (!remote) {
             qa_actor_owner source_owner; const qa_cvars *source_cvars;
-            qa_clock_state clock; qa_clock_config recipe; uint64_t order, frame;
-            bool accepted;
+            qa_clock_config recipe; uint64_t order;
             qa_session *session=qa_application_session(frontend->application);
             if (!qa_application_control_source_read(frontend->application,actor,&source_owner,&source_cvars,error) ||
-                !qa_session_clock(session,source_owner,&clock) ||
-                !qa_session_component_recipe(session,source_owner,&recipe,&order) ||
-                !qa_session_pending_frame(session,source_owner,wall_elapsed_ns,&accepted,&frame,&source_duration,error)) return false;
-            if (recipe.kind==QA_CLOCK_QUAKEWORLD && !recipe.interval_ns) {
-                if (frontend->wall_time_ns<seat->client_clock_ns)
-                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Local QW CLIENT clock moved backwards");
-                uint64_t pending=frontend->wall_time_ns-seat->client_clock_ns;
-                if (!qa_source_frame_time_admit(source_cvars,pending,false,&accepted,&source_duration,error)) return false;
-                if (!accepted) continue;
-                wall_duration=(double)pending/1000000.0;
-                qw_client=true;
-            } else if (!recipe.interval_ns) {
-                if (!accepted) continue;
-                wall_duration=(double)(clock.debt_ns+wall_elapsed_ns)/1000000.0;
+                !qa_session_component_recipe(session,source_owner,&recipe,&order)) return false;
+            uint64_t pending=frontend->wall_time_ns-seat->client_clock_ns;
+            if(!recipe.interval_ns) {
+                bool accepted;
+                if(!qa_source_frame_time_admit(source_cvars,pending,false,&accepted,&source_duration,error)) return false;
+                if(!accepted) continue;
+            } else {
+                uint64_t client_delta=qa_source_frame_time_host_delta(frontend->wall_time_ns,pending);
+                double milliseconds=(double)client_delta/1000000.0;
+                if(!qa_source_frame_time_sample(source_cvars,milliseconds,false,true,&milliseconds,error)) return false;
+                source_duration=(uint64_t)(milliseconds*1000000.0);
             }
+            wall_duration=(double)pending/1000000.0;
+            admitted_client=true;
             duration=(double)source_duration/1000000.0;
         }
         seat->client_frame_ns=source_duration;
         qa_movement_kind kind = state.profile.kind;
-        if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
         if (!remote && ((kind!=QA_MOVEMENT_Q3 && kind!=QA_MOVEMENT_Q2_CLASSIC &&
                 kind!=QA_MOVEMENT_Q2_RERELEASE) || state.cutscene ||
                 seat->command_angle_revision!=state.command_angle_revision)) {
@@ -399,9 +397,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             if (!present || !qa_session_clock(qa_application_session(frontend->application),source.scope.provider,&clock))
                 return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 input has no actual GAME clock");
             command_time=clock.frame.time_ns;
-            if (clock.debt_ns>UINT64_MAX-command_time || source_duration>UINT64_MAX-command_time-clock.debt_ns)
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 command clock exhausted");
-            command_time+=clock.debt_ns+source_duration;
+            command_time+=clock.debt_ns;
         }
         uint32_t server_time_word=(uint32_t)(command_time / UINT64_C(1000000));
         int32_t server_time_ms;
@@ -426,7 +422,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             if (!frontend_network_client_sample(frontend,i,actor,&command,
                 FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
         } else if (!frontend_network_command(frontend,i,actor,&command,error)) return false;
-        if (qw_client) seat->client_clock_ns=frontend->wall_time_ns;
+        if (admitted_client) seat->client_clock_ns=frontend->wall_time_ns;
         uint32_t source_slot;
         if (!qa_ui_rankings_set_slot(seat->rankings,
             qa_application_rankings_client_slot(frontend->application, actor, &source_slot) && source_slot <= INT32_MAX ?
@@ -705,6 +701,17 @@ static bool drain_runtime_console(qa_frontend *frontend, qa_console *console,
     return true;
 }
 
+static bool commands(qa_frontend *frontend,bool playing,qa_error *error)
+{
+    qa_console *engine=qa_application_console(frontend->application),*source;
+    qa_command_context context;
+    if(!runtime_console(frontend,&source,&context,error)) return false;
+    if(source!=engine && !qa_application_startup_console_queued(frontend->application,source) &&
+        !drain_runtime_console(frontend,source,playing,"source console command",error)) return false;
+    return qa_application_startup_console_queued(frontend->application,engine) ||
+        drain_runtime_console(frontend,engine,playing,"ENGINE console command",error);
+}
+
 static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *playing, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
@@ -817,15 +824,7 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
         frontend->stepping=false;
         return true;
     }
-    qa_console *console = qa_application_console(frontend->application);
-    qa_console *source_console=console;
-    qa_command_context source_context;
-    if (ok) ok=runtime_console(frontend,&source_console,&source_context,error);
-    if (ok && source_console!=console &&
-        !qa_application_startup_console_queued(frontend->application,source_console))
-        ok=drain_runtime_console(frontend, source_console, *playing, "source console command", error);
-    if (ok) ok = qa_application_startup_console_queued(frontend->application,console) ||
-        drain_runtime_console(frontend, console, *playing, "ENGINE console command", error);
+    if(ok) ok=commands(frontend,*playing,error);
     if (ok && !qa_application_should_stop(frontend->application) &&
         frontend->server_stop_owner && !frontend->server_stopped) {
         bool complete=false;
@@ -895,13 +894,8 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
         ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
     }
     if (ok) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
-    if (ok) ok=frontend_network_client_frame(frontend,error);
     retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
     if (ok && !qa_application_should_stop(frontend->application)) {
-        if (!retiring_map && !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
-            ok = qa_profiler_push(profiler, "controls", error);
-            if (ok) ok = frontend_profiler_end(profiler, controls(frontend,elapsed_ns,raw_elapsed,error), error);
-        }
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
             (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
             bool source_ready=false;
@@ -918,6 +912,15 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
                 frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
                 frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) &&
                 frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
+        }
+        if(ok) ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,error);
+        if(ok && !qa_application_should_stop(frontend->application))
+            ok=frontend_network_client_frame(frontend,error);
+        retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
+        if(ok && !qa_application_should_stop(frontend->application) && !retiring_map &&
+            !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
+            ok=qa_profiler_push(profiler,"controls",error);
+            if(ok) ok=frontend_profiler_end(profiler,controls(frontend,elapsed_ns,raw_elapsed,error),error);
         }
         if (ok) {
             ok = qa_profiler_push(profiler, "scene_updates", error);
