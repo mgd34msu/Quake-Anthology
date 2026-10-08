@@ -202,7 +202,7 @@ static bool unified_movement_valid(const qa_unified_movement *raw)
     case QA_MOVEMENT_Q3:
         buttons=raw->data.q3.buttons; words=raw->data.q3.angle_words;
         axes[0]=raw->data.q3.forward; axes[1]=raw->data.q3.right; axes[2]=raw->data.q3.up;
-        if (!command_integer(raw->data.q3.server_time_ms,0,INT32_MAX) ||
+        if (!command_integer(raw->data.q3.server_time_ms,INT32_MIN,INT32_MAX) ||
             !command_integer(raw->data.q3.weapon,0,UINT8_MAX)) return false;
         break;
     default: return false;
