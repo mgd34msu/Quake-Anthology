@@ -408,12 +408,8 @@ static bool emit_text(qa_q3_game *game, qa_q3_map_event_kind kind, int32_t index
 
 static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_error *error) {
     qa_bytes value;
-    qa_string_id version, start, music = 0, message = 0, empty, zero, gravity_text, dust, breath;
-    char number[32];
-    snprintf(number, sizeof(number), "%d", game->map->options.start_time_ms);
-    if (!q3_map_intern_cstr(game, "baseq3-1", &version, error) ||
-        !q3_map_intern_cstr(game, number, &start, error) ||
-        !q3_map_intern_cstr(game, "", &empty, error) ||
+    qa_string_id music = 0, message = 0, empty, zero, gravity_text, dust, breath;
+    if (!q3_map_intern_cstr(game, "", &empty, error) ||
         !q3_map_intern_cstr(game, "0", &zero, error))
         return false;
     if (q3_map_property(fields, "music", &value) &&
@@ -444,9 +440,7 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
     game->map->world_spawned = true;
     game->physics.gravity = (float)gravity;
     game->team_state.warmup_time_ms = 0;
-    if (!emit_text(game, QA_Q3_MAP_CONFIGSTRING, 20, NULL, version, error) ||
-        !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 21, NULL, start, error) ||
-        !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 2, NULL, music, error) ||
+    if (!emit_text(game, QA_Q3_MAP_CONFIGSTRING, 2, NULL, music, error) ||
         !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 3, NULL, message, error) ||
         !emit_text(game, QA_Q3_MAP_CONFIGSTRING, 4, NULL, game->map->options.motd, error) ||
         (game->map->options.world_gravity &&

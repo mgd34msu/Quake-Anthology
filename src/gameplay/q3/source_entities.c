@@ -359,7 +359,11 @@ void q3_source_actor_released(qa_q3_game *game, qa_actor_id actor) {
 
 bool q3_source_level_init(qa_q3_game *game, qa_error *error) {
     qa_string_id world_name, body_name;
-    if (!qa_builtin_resource(&game->options.services, "worldspawn", &world_name, error) ||
+    char start[32];
+    snprintf(start, sizeof(start), "%d", game->map->options.start_time_ms);
+    if (!qa_q3_configstring_write(game, 20, "baseq3-1", error) ||
+        !qa_q3_configstring_write(game, 21, start, error) ||
+        !qa_builtin_resource(&game->options.services, "worldspawn", &world_name, error) ||
         !qa_builtin_resource(&game->options.services, "bodyque", &body_name, error)) return false;
     qa_actor_id world;
     if (!qa_session_allocate(game->options.services.session, game->options.owner,
