@@ -38,7 +38,9 @@ static bool key(qa_frontend *f,SDL_Keycode symbol,SDL_Scancode scan,bool down,qa
     SDL_Event event;SDL_zero(event);event.type=down?SDL_KEYDOWN:SDL_KEYUP;
     event.key.windowID=info.window_id;event.key.state=down?SDL_PRESSED:SDL_RELEASED;
     event.key.keysym.sym=symbol;event.key.keysym.scancode=scan;
-    return qa_input_platform_event(f->input,&event,(double)f->wall_time_ns/1000000.0,NULL,error);
+    qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_KEY,f->wall_time_ns,
+        symbol,down,(qa_bytes){(const uint8_t *)&event,sizeof(event)});
+    return frontend_platform_drain(f,error);
 }
 static bool command(qa_frontend *f,const char *text,qa_error *error)
 {

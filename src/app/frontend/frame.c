@@ -434,26 +434,71 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     }
     return true;
 }
-static bool input_events(qa_frontend *frontend, qa_error *error)
+static bool runtime_console(qa_frontend *frontend, qa_console **console,
+    qa_command_context *context, qa_error *error)
+{
+    *console=qa_application_console(frontend->application);
+    *context=(qa_command_context){.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
+    qa_application_startup_source source; bool present=false;
+    if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
+    if (present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
+        source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+        source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME ||
+        frontend_config_store_parked_current(frontend->config_store,&source))) {
+        *console=source.console; *context=source.command;
+    }
+    return true;
+}
+bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
+{
+    qa_platform_event event; qa_bytes payload;
+    while (qa_platform_events_peek(frontend->platform_events,&event,&payload)) {
+        bool ok=true;
+        switch (event.kind) {
+        case QA_PLATFORM_EVENT_TIME:
+            if (event.time_ns>frontend->wall_time_ns) frontend->wall_time_ns=event.time_ns;
+            break;
+        case QA_PLATFORM_EVENT_QUIT:
+            qa_application_request_stop(frontend->application);
+            break;
+        case QA_PLATFORM_EVENT_PACKET:
+            if (!frontend_network_receive_ready(frontend)) return true;
+            ok=frontend_network_receive(frontend,&event,payload,error);
+            break;
+        case QA_PLATFORM_EVENT_CONSOLE_LINE:
+            if (!qa_application_should_stop(frontend->application)) {
+                qa_console *console; qa_command_context context;
+                ok=runtime_console(frontend,&console,&context,error) &&
+                    qa_console_append(console,&context,(const char *)payload.data,error);
+            }
+            break;
+        default:
+            if (!frontend->options.dedicated && !qa_application_should_stop(frontend->application)) {
+                if (event.kind==QA_PLATFORM_EVENT_WINDOW && event.value2 &&
+                    (uint32_t)event.value==frontend->observed_display.window_id)
+                    ok=qa_display_info_get(frontend->display,&frontend->observed_display,error);
+                if (ok) ok=qa_input_platform_dispatch(frontend->input,&event,payload,NULL,error) &&
+                    (qa_application_should_stop(frontend->application) || frontend_ui_features_sync(frontend,error));
+            }
+            break;
+        }
+        qa_platform_events_consume(frontend->platform_events);
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool platform_events(qa_frontend *frontend, qa_error *error)
 {
     if (qa_application_should_stop(frontend->application)) return true;
     if (!frontend_ui_features_sync(frontend,error)) return false;
-    SDL_Event event;
-    double now = (double)frontend->wall_time_ns / 1000000.0;
-    while (!qa_application_should_stop(frontend->application) && SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); return true; }
-        if (frontend->options.dedicated) continue;
-        if (event.type==SDL_WINDOWEVENT && event.window.event==SDL_WINDOWEVENT_SIZE_CHANGED &&
-            event.window.windowID==frontend->observed_display.window_id &&
-            !qa_display_info_get(frontend->display,&frontend->observed_display,error)) return false;
-        bool handled;
-        if (!qa_input_platform_event(frontend->input, &event, now, &handled, error)) return false;
-        if (qa_application_should_stop(frontend->application)) return true;
-        if (!frontend_ui_features_sync(frontend,error)) return false;
-    }
+    qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
+    qa_input_platform_collect(frontend->input,frontend->platform_events,frontend->wall_time_ns);
+    if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
+        0,65536,frontend->wall_time_ns,error)) return false;
+    if (!frontend_platform_drain(frontend,error)) return false;
     if (qa_application_should_stop(frontend->application) || frontend->options.dedicated) return true;
-    if (!qa_input_platform_frame(frontend->input, now, error)) return false;
-    return qa_application_should_stop(frontend->application) || frontend_ui_features_sync(frontend,error);
+    return qa_input_platform_sample(frontend->input,frontend->platform_events,frontend->wall_time_ns,error) &&
+        frontend_platform_drain(frontend,error);
 }
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
@@ -767,29 +812,15 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
     uint64_t raw_elapsed=elapsed_ns;
     if (!wall_advanced) frontend->wall_time_ns+=raw_elapsed;
     bool ok = frontend_tools_pump(frontend, error) &&
-        frontend_startup_menus_pump(frontend,error) && input_events(frontend, error);
+        frontend_startup_menus_pump(frontend,error) && platform_events(frontend, error);
     if (ok && qa_application_should_stop(frontend->application)) {
         frontend->stepping=false;
         return true;
     }
     qa_console *console = qa_application_console(frontend->application);
     qa_console *source_console=console;
-    qa_command_context source_context={.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
-    if (ok) {
-        qa_application_startup_source source; bool present=false;
-        ok=frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error);
-        if (ok && present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
-            source.scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
-            source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME ||
-            frontend_config_store_parked_current(frontend->config_store,&source))) {
-            source_console=source.console; source_context=source.command;
-        }
-    }
-    if (ok && frontend->terminal) {
-        size_t lines;
-        if (ok) ok = qa_dedicated_console_poll(frontend->terminal, 0, 65536, error) &&
-             qa_dedicated_console_drain(frontend->terminal, source_console, &source_context, &lines, error);
-    }
+    qa_command_context source_context;
+    if (ok) ok=runtime_console(frontend,&source_console,&source_context,error);
     if (ok && source_console!=console &&
         !qa_application_startup_console_queued(frontend->application,source_console))
         ok=drain_runtime_console(frontend, source_console, *playing, "source console command", error);
@@ -810,7 +841,9 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
     if (ok) {
         ok=qa_profiler_push(profiler,"network_pump",error);
         if (ok) ok=frontend_profiler_end(profiler,
-            frontend_tools_sync(frontend,error) && frontend_network_pump(frontend,error),error);
+            frontend_tools_sync(frontend,error) &&
+                frontend_network_collect(frontend,frontend->platform_events,error) &&
+                frontend_platform_drain(frontend,error) && frontend_network_maintenance(frontend,error),error);
     }
     if (ok) ok=frontend_cinematic_drain(frontend,error);
     if (ok) {

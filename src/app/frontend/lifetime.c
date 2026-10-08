@@ -670,6 +670,8 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     for (unsigned i=0;i<options->seats;++i) {
         frontend->seats[i].frontend=frontend; frontend->seats[i].id=i;
     }
+    frontend->platform_events=qa_platform_events_create(error);
+    if (!frontend->platform_events) goto fail;
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     if (!frontend_input_profile_default_options(frontend,error)) goto fail;
     if (native_runtime) {
@@ -912,6 +914,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!qa_display_restore_cleanup(frontend->display,error)) return false;
     qa_display_destroy(frontend->display); frontend->display=NULL;
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
+    qa_platform_events_destroy(frontend->platform_events);
     free(frontend->network_connect_text);
     free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
     return true;
@@ -920,7 +923,7 @@ bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)
 {
     if(!slot) return frontend_fail(error,QA_ERROR_ARGUMENT,"Final shutdown requires its actual frontend slot");
     qa_error original={0};
-    uint64_t frequency=0,last=0;
+    uint64_t last=qa_platform_time_ns();
     while(*slot) {
         qa_frontend *frontend=*slot;
         qa_error fault={0};
@@ -938,34 +941,15 @@ bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)
             if(original.code==QA_OK) original=fault;
             continue;
         }
-        if(!frequency) {
-            frequency=SDL_GetPerformanceFrequency(); last=SDL_GetPerformanceCounter();
-            if(!frequency) return frontend_fail(error,QA_ERROR_IO,"Final shutdown has no monotonic timer");
-        }
-        SDL_Delay(1);
-        uint64_t now=SDL_GetPerformanceCounter(),ticks=now-last;
+        qa_platform_sleep_ns(UINT64_C(1000000));
+        uint64_t now=qa_platform_time_ns(),elapsed=now-last;
         last=now;
-        uint64_t seconds=ticks/frequency;
-        if(seconds>UINT64_MAX/UINT64_C(1000000000))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Final shutdown wall duration overflow");
-        uint64_t elapsed=seconds*UINT64_C(1000000000)+
-            (uint64_t)((long double)(ticks%frequency)*1000000000.0L/(long double)frequency);
         if(elapsed>UINT64_MAX-frontend->wall_time_ns)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Final shutdown wall clock overflow");
         frontend->wall_time_ns+=elapsed;
     }
     return true;
 }
-static bool run_elapsed(uint64_t ticks, uint64_t frequency, uint64_t *out, qa_error *error)
-{
-    uint64_t seconds = ticks / frequency;
-    if (seconds > UINT64_MAX / UINT64_C(1000000000))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "monotonic duration overflow");
-    *out = seconds * UINT64_C(1000000000) +
-        (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
-    return true;
-}
-
 static bool run_source_deadline(qa_frontend *frontend, uint64_t elapsed, uint64_t *out, qa_error *error)
 {
     *out = 0;
@@ -1024,15 +1008,12 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
     interrupted = 0;
     void (*previous_int)(int) = signal(SIGINT, stop_signal);
     void (*previous_term)(int) = signal(SIGTERM, stop_signal);
-    uint64_t frequency = SDL_GetPerformanceFrequency(), last = SDL_GetPerformanceCounter();
-    bool ok = frequency != 0;
-    if (!ok) frontend_fail(error, QA_ERROR_IO, "monotonic timer unavailable");
+    uint64_t last=qa_platform_time_ns();
+    bool ok=true;
     while (ok && !interrupted && !qa_application_should_stop((*slot)->application)) {
         qa_frontend *frontend=*slot;
-        uint64_t now = SDL_GetPerformanceCounter(), ticks = now - last;
-        last = now;
-        uint64_t elapsed = 0;
-        if (!run_elapsed(ticks, frequency, &elapsed, error)) { ok = false; break; }
+        uint64_t now=qa_platform_time_ns(),elapsed=now-last;
+        last=now;
         if (!frontend_save_commands_restoring(frontend))
             ok = qa_frontend_step(frontend, elapsed, error);
         if (ok) ok=frontend_save_commands_drain(slot,error);
@@ -1041,14 +1022,12 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
             frontend->frame_number >= frontend->options.frame_limit) break;
         if (!ok || qa_application_should_stop(frontend->application)) break;
         uint64_t deadline = 0;
-        if (ok) ok = run_elapsed(SDL_GetPerformanceCounter() - last, frequency, &elapsed, error) &&
-            run_source_deadline(frontend, elapsed, &deadline, error);
+        if (ok) ok=run_source_deadline(frontend,qa_platform_time_ns()-last,&deadline,error);
         while (ok && !interrupted && deadline) {
-            if (!run_elapsed(SDL_GetPerformanceCounter() - last, frequency, &elapsed, error)) { ok = false; break; }
+            elapsed=qa_platform_time_ns()-last;
             if (elapsed >= deadline) break;
             uint64_t milliseconds = (deadline - elapsed) / UINT64_C(1000000);
-            if (milliseconds > 1) SDL_Delay((uint32_t)(milliseconds - 1 > UINT32_MAX ?
-                UINT32_MAX : milliseconds - 1));
+            if (milliseconds>1) qa_platform_sleep_ns((milliseconds-1)*UINT64_C(1000000));
         }
     }
     if (previous_int != SIG_ERR) signal(SIGINT, previous_int);

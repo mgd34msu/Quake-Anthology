@@ -5,6 +5,7 @@
 #include "qa/input.h"
 #include "qa/input_release.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/platform_events.h"
 #include <SDL2/SDL.h>
 
 #define QA_INPUT_LOCAL_SEATS 4
@@ -43,9 +44,9 @@ typedef struct qa_input_platform_options {
     void (*device_changed)(void *, int32_t instance, bool connected);
     void (*assignment_changed)(void *, unsigned slot, int32_t previous, int32_t instance);
 } qa_input_platform_options;
-/* App owns SDL global subsystems and the single event pump. This owner retains
- * native device handles, never calls SDL_PollEvent/Init/Quit, and survives
- * window replacement. It must be destroyed before SDL shuts down. */
+/* App owns SDL global subsystems. This owner pumps input into the common
+ * platform event queue and retains native devices across window replacement.
+ * It must be destroyed before SDL shuts down. */
 qa_input_platform *qa_input_platform_create(const qa_input_platform_options *, qa_error *);
 /* Complete checked settings abort/publication or entered retirement before destruction. A retained
  * nonterminal settings ticket keeps its native owner alive. */
@@ -67,9 +68,17 @@ bool qa_input_platform_keyboard_read(const qa_input_platform *, int *slot);
 /* Pass NULL before destroying a window. The new display can then be attached.
  */
 bool qa_input_platform_window(qa_input_platform *, const qa_display *, double time_ms, qa_error *);
-bool qa_input_platform_event(qa_input_platform *, const SDL_Event *, double now_ms, bool *handled,
-                             qa_error *);
-bool qa_input_platform_frame(qa_input_platform *, double now_ms, qa_error *);
+/* Collection copies SDL records and timestamps them before deferred dispatch.
+ * A NULL input owner collects shutdown/window events for a dedicated host.
+ * Drain collection before sampling so device changes precede physical reads. */
+void qa_input_platform_collect(qa_input_platform *, qa_platform_events *, uint64_t now_ns);
+/* Queues physical state and MIDI bytes without delivering input. Drain this
+ * snapshot to apply routes and derived joystick/haptic/capture maintenance. */
+bool qa_input_platform_sample(qa_input_platform *, qa_platform_events *, uint64_t now_ns, qa_error *);
+/* Only the platform decoder sees SDL. Dispatch reads the retained timestamp
+ * and copied payload; it does not sample input or read a timestamp again. */
+bool qa_input_platform_dispatch(qa_input_platform *, const qa_platform_event *, qa_bytes,
+    bool *handled, qa_error *);
 bool qa_input_platform_restart(qa_input_platform *, double now_ms, qa_error *);
 typedef struct qa_input_platform_settings {
     bool mouse_available, no_grab, joystick_enabled, windows_joystick, midi_enabled, restart_requested;

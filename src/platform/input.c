@@ -404,8 +404,8 @@ static bool capture(qa_input_platform *p, qa_error *error) {
     if (!window)
         return true;
     qa_input_seat *s = p->keyboard >= 0 ? p->seats[p->keyboard].seat : NULL;
-    bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    bool game = focused && s && qa_input_seat_focused(s) && qa_input_seat_focus(s) == QA_INPUT_GAME;
+    bool focused = s && qa_input_seat_focused(s);
+    bool game = focused && qa_input_seat_focus(s) == QA_INPUT_GAME;
     bool desired = game && p->mouse_available && integer(p, "in_nograb", 0) == 0;
     if (desired != p->capture) {
         if (SDL_SetRelativeMouseMode(desired ? SDL_TRUE : SDL_FALSE) < 0)
@@ -917,19 +917,9 @@ static bool window_focus(qa_input_platform *p, bool focused, double time, qa_err
         }
     return capture(p, error) && finish_calibration(p, error) && ok;
 }
-bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, double now,
-                             bool *handled, qa_error *error) {
-    if (!native_owner(p, error)) return false;
-    if (!p || !event || !isfinite(now) || now < 0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid platform event");
-        return false;
-    }
-    if (!initialize_native(p, now, error)) return false;
-    p->now = now;
-    if (handled)
-        *handled = true;
-    double time = qa_input_event_time(event->common.timestamp, SDL_GetTicks(), now,
-                                      integer(p, "in_subframe", 1) != 0);
+static bool native_event(qa_input_platform *p, const SDL_Event *event, double time,
+    bool *handled, qa_error *error) {
+    if (handled) *handled = true;
     switch (event->type) {
     case SDL_CONTROLLERDEVICEADDED:
         return discover(p, event->cdevice.which, error) && resolve(p, time, NULL, error);
@@ -2576,53 +2566,165 @@ static bool initialize_native(qa_input_platform *p, double time, qa_error *error
     if (success) p->native_startup = INPUT_NATIVE_READY;
     return success;
 }
-static bool midi_frame(qa_input_platform *p, double time, qa_error *error) {
-    int channel = integer(p, "in_midichannel", 1);
-    if (channel != p->midi_channel) {
-        if (!midi_release(p, time, error))
-            return false;
-        p->midi_channel = channel;
+typedef struct input_frame_sample {
+    bool window, focused, joystick_attached, joystick_hat, midi_stopped;
+    struct {
+        bool present;
+        int32_t instance;
+        int16_t axes[QA_AXIS_COUNT];
+    } controllers[QA_INPUT_LOCAL_SEATS];
+    unsigned joystick_axes, joystick_buttons;
+    int16_t source_axes[16];
+    uint8_t source_buttons[256], source_hat;
+    int midi_error;
+    uint32_t midi_bytes;
+} input_frame_sample;
+
+enum { INPUT_FRAME_INITIALIZE, INPUT_FRAME_SAMPLE };
+
+void qa_input_platform_collect(qa_input_platform *p, qa_platform_events *events, uint64_t now_ns) {
+    if (p && p->native_startup != INPUT_NATIVE_READY)
+        qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME,
+        now_ns, INPUT_FRAME_INITIALIZE, 0, (qa_bytes){0});
+    double now = (double)now_ns / 1000000.0;
+    bool subframe = p && integer(p, "in_subframe", 1) != 0;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        qa_platform_event_kind kind;
+        int32_t value = 0, value2 = 0;
+        switch (event.type) {
+        case SDL_QUIT:
+            qa_platform_events_push(events, QA_PLATFORM_EVENT_QUIT, now_ns, 0, 0, (qa_bytes){0});
+            return;
+        case SDL_KEYDOWN:
+        case SDL_KEYUP:
+            kind = QA_PLATFORM_EVENT_KEY;
+            value = event.key.keysym.sym; value2 = event.type == SDL_KEYDOWN;
+            break;
+        case SDL_TEXTINPUT:
+            kind = QA_PLATFORM_EVENT_CHAR;
+            break;
+        case SDL_MOUSEMOTION:
+        case SDL_MOUSEBUTTONDOWN:
+        case SDL_MOUSEBUTTONUP:
+        case SDL_MOUSEWHEEL:
+            kind = QA_PLATFORM_EVENT_MOUSE;
+            break;
+        case SDL_CONTROLLERAXISMOTION:
+        case SDL_CONTROLLERSENSORUPDATE:
+        case SDL_JOYAXISMOTION:
+        case SDL_JOYHATMOTION:
+            kind = QA_PLATFORM_EVENT_CONTROLLER_AXIS;
+            break;
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP:
+        case SDL_CONTROLLERTOUCHPADDOWN:
+        case SDL_CONTROLLERTOUCHPADMOTION:
+        case SDL_CONTROLLERTOUCHPADUP:
+        case SDL_JOYBUTTONDOWN:
+        case SDL_JOYBUTTONUP:
+            kind = QA_PLATFORM_EVENT_CONTROLLER_BUTTON;
+            break;
+        case SDL_WINDOWEVENT:
+            kind = QA_PLATFORM_EVENT_WINDOW;
+            value = (int32_t)event.window.windowID;
+            value2 = event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED;
+            break;
+        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_CONTROLLERDEVICEREMOVED:
+        case SDL_CONTROLLERDEVICEREMAPPED:
+        case SDL_JOYDEVICEADDED:
+        case SDL_JOYDEVICEREMOVED:
+            kind = QA_PLATFORM_EVENT_DEVICE;
+            break;
+        case SDL_DROPFILE:
+        case SDL_DROPTEXT:
+            SDL_free(event.drop.file);
+            continue;
+#if SDL_VERSION_ATLEAST(2, 0, 22)
+        case SDL_TEXTEDITING_EXT:
+            SDL_free(event.editExt.text);
+            continue;
+#endif
+        default:
+            continue;
+        }
+        double time = qa_input_event_time(event.common.timestamp, SDL_GetTicks(), now, subframe);
+        qa_platform_events_push(events, kind, (uint64_t)(time * 1000000.0), value, value2,
+            (qa_bytes){(const uint8_t *)&event, sizeof(event)});
     }
-    uint8_t bytes[4096];
+}
+
+bool qa_input_platform_sample(qa_input_platform *p, qa_platform_events *events,
+    uint64_t now_ns, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    struct {
+        input_frame_sample state;
+        uint8_t midi[16 * 4096];
+    } sampled;
+    sampled.state = (input_frame_sample){0};
+    input_frame_sample *sample = &sampled.state;
+    SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
+    sample->window = window != NULL;
+    sample->focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    SDL_GameControllerUpdate();
+    for (unsigned slot = 0; slot < QA_INPUT_LOCAL_SEATS; ++slot) {
+        struct seat_route *route = &p->seats[slot];
+        struct device *d = device(p, route->instance);
+        bool focused = sample->window ? sample->focused :
+            route->seat && qa_input_seat_focused(route->seat);
+        if (!d || !route->seat || d->info.instance == p->joystick_instance ||
+            !focused || qa_input_seat_focus(route->seat) != QA_INPUT_GAME) continue;
+        sample->controllers[slot].present = true;
+        sample->controllers[slot].instance = d->info.instance;
+        for (unsigned axis = 0; axis < QA_AXIS_COUNT; ++axis)
+            sample->controllers[slot].axes[axis] =
+                SDL_GameControllerGetAxis(d->handle, (SDL_GameControllerAxis)axis);
+    }
+    sample->joystick_attached = p->joystick && SDL_JoystickGetAttached(p->joystick);
+    if (sample->joystick_attached) {
+        int axes = SDL_JoystickNumAxes(p->joystick);
+        sample->joystick_axes = axes > 0 ? (unsigned)axes : 0;
+        if (p->windows_joystick) {
+            for (unsigned axis = 0; axis < sample->joystick_axes && axis < 16; ++axis)
+                sample->source_axes[axis] = SDL_JoystickGetAxis(p->joystick, (int)axis);
+            int buttons = SDL_JoystickNumButtons(p->joystick);
+            sample->joystick_buttons = buttons > 0 ? (unsigned)buttons : 0;
+            if (sample->joystick_buttons > 256) sample->joystick_buttons = 256;
+            for (unsigned button = 0; button < sample->joystick_buttons; ++button)
+                sample->source_buttons[button] = SDL_JoystickGetButton(p->joystick, (int)button);
+            sample->joystick_hat = SDL_JoystickNumHats(p->joystick) > 0;
+            if (sample->joystick_hat) sample->source_hat = SDL_JoystickGetHat(p->joystick, 0);
+        }
+    }
     for (unsigned reads = 0; reads < 16 && p->midi_fd >= 0; ++reads) {
-        ssize_t n;
+        uint8_t *bytes = sampled.midi + sample->midi_bytes;
+        ssize_t count;
         if (p->midi_pending) {
-            bytes[0] = p->midi_byte; n = 1;
+            bytes[0] = p->midi_byte; count = 1;
             p->midi_pending = false; p->midi_byte = 0;
         } else {
             ++p->midi_reads;
-            n = read(p->midi_fd, bytes, sizeof(bytes));
+            count = read(p->midi_fd, bytes, 4096);
         }
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
-            return true;
-        if (n <= 0) {
-            char message[320];
-            (void)snprintf(message, sizeof(message), "WARNING: MIDI input stopped: %s\n",
-                           n == 0 ? "end of stream" : strerror(errno));
-            report(p, message);
-            close(p->midi_fd);
-            p->midi_fd = -1;
-            p->midi_pending = false; p->midi_byte = 0;
-            p->midi_reads = 0;
-            return midi_release(p, time, error);
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) break;
+        if (count <= 0) {
+            sample->midi_stopped = true;
+            sample->midi_error = count < 0 ? errno : 0;
+            break;
         }
-        if (!qa_midi_feed(&p->midi, (qa_bytes){bytes, (size_t)n}, channel, time, midi_key, p,
-                          error))
-            return false;
+        sample->midi_bytes += (uint32_t)count;
     }
+    qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME, now_ns, INPUT_FRAME_SAMPLE, 0,
+        (qa_bytes){(const uint8_t *)&sampled, sizeof(*sample) + sample->midi_bytes});
     return true;
 }
-bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) {
-    if (!native_owner(p, error)) return false;
-    if (!p || !isfinite(now) || now < 0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input frame clock");
-        return false;
-    }
-    if (!initialize_native(p, now, error)) return false;
+
+static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample,
+    qa_bytes midi_bytes, double now, qa_error *error) {
     p->now = now;
-    SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
-    bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    for (unsigned slot = 0; window && slot < 4; ++slot)
+    bool focused = sample->focused;
+    for (unsigned slot = 0; sample->window && slot < 4; ++slot)
         if (p->seats[slot].seat && qa_input_seat_focused(p->seats[slot].seat) != focused) {
             if (!window_focus(p, focused, now, error)) return false;
             break;
@@ -2642,18 +2744,19 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
             return false;
         p->midi_slot = midi;
     }
-    SDL_GameControllerUpdate();
     for (unsigned slot = 0; slot < 4; ++slot) {
         struct seat_route *r = &p->seats[slot];
         struct device *d = device(p, r->instance);
-        if (d && r->seat && d->info.instance != p->joystick_instance &&
+        if (sample->controllers[slot].present && d && r->seat &&
+            sample->controllers[slot].instance == d->info.instance &&
+            d->info.instance != p->joystick_instance &&
             qa_input_seat_focused(r->seat) && qa_input_seat_focus(r->seat) == QA_INPUT_GAME) {
             for (unsigned axis = 0; axis < QA_AXIS_COUNT; ++axis)
                 if (!qa_gamepad_axis(
                         qa_input_seat_gamepad(r->seat), (qa_controller_axis)axis,
                         qa_controller_axis_normalize(
                             (qa_controller_axis)axis,
-                            SDL_GameControllerGetAxis(d->handle, (SDL_GameControllerAxis)axis)),
+                            sample->controllers[slot].axes[axis]),
                         true, error))
                     return false;
         }
@@ -2665,7 +2768,7 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
             !qa_haptic_update(&r->haptic, now, error))
             return false;
     }
-    if (p->joystick && !SDL_JoystickGetAttached(p->joystick)) {
+    if (p->joystick && !sample->joystick_attached) {
         if (!source_device_release(p, now, error))
             return false;
         SDL_JoystickClose(p->joystick);
@@ -2673,21 +2776,18 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
         p->joystick_instance = -1;
         p->joystick_rumble = (input_motor_output){0};
     }
-    unsigned axes = 0;
+    unsigned axes = sample->joystick_axes;
     if (p->joystick) {
-        int count = SDL_JoystickNumAxes(p->joystick);
-        axes = count > 0 ? (unsigned)count : 0;
         if (p->windows_joystick) {
             for (unsigned i = 0; i < axes && i < 16; ++i)
-                p->source.axes[i] = SDL_JoystickGetAxis(p->joystick, (int)i);
-            int count_buttons = SDL_JoystickNumButtons(p->joystick);
-            for (int i = 0; i < count_buttons && i < 256; ++i)
+                p->source.axes[i] = sample->source_axes[i];
+            for (unsigned i = 0; i < sample->joystick_buttons; ++i)
                 if (!qa_source_joystick_button(&p->source, (unsigned)i,
-                                               SDL_JoystickGetButton(p->joystick, i) != 0, true,
+                                               sample->source_buttons[i] != 0, true,
                                                source_key, p, error))
                     return false;
-            if (SDL_JoystickNumHats(p->joystick) > 0)
-                p->source.hat = SDL_JoystickGetHat(p->joystick, 0);
+            if (sample->joystick_hat)
+                p->source.hat = sample->source_hat;
             if (integer(p, "in_debugjoystick", 0) != 0) {
                 uint32_t buttons = 0;
                 for (unsigned i = 0; i < 32; ++i)
@@ -2737,7 +2837,44 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
                                   variable(p, "in_joyBallScale", 0.02f), source_key, source_mouse,
                                   p, error))
         return false;
-    return midi_frame(p, now, error) && finish_calibration(p, error) && capture(p, error);
+    int channel = integer(p, "in_midichannel", 1);
+    if (channel != p->midi_channel) {
+        if (!midi_release(p, now, error)) return false;
+        p->midi_channel = channel;
+    }
+    if (midi_bytes.size && !qa_midi_feed(&p->midi, midi_bytes, channel, now, midi_key, p, error))
+        return false;
+    if (sample->midi_stopped) {
+        char message[320];
+        (void)snprintf(message, sizeof(message), "WARNING: MIDI input stopped: %s\n",
+            sample->midi_error ? strerror(sample->midi_error) : "end of stream");
+        report(p, message);
+        close(p->midi_fd);
+        p->midi_fd = -1;
+        p->midi_pending = false; p->midi_byte = 0;
+        p->midi_reads = 0;
+        if (!midi_release(p, now, error)) return false;
+    }
+    return finish_calibration(p, error) && capture(p, error);
+}
+
+bool qa_input_platform_dispatch(qa_input_platform *p, const qa_platform_event *event,
+    qa_bytes payload, bool *handled, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    double time = (double)event->time_ns / 1000000.0;
+    if (!initialize_native(p, time, error)) return false;
+    p->now = time;
+    if (event->kind == QA_PLATFORM_EVENT_INPUT_FRAME) {
+        if (handled) *handled = true;
+        if (event->value == INPUT_FRAME_INITIALIZE) return true;
+        input_frame_sample sample;
+        memcpy(&sample, payload.data, sizeof(sample));
+        qa_bytes midi = {payload.data + sizeof(sample), sample.midi_bytes};
+        return sampled_frame(p, &sample, midi, time, error);
+    }
+    SDL_Event native;
+    memcpy(&native, payload.data, sizeof(native));
+    return native_event(p, &native, time, handled, error);
 }
 void qa_input_platform_midi_info(qa_input_platform *p) {
     if (!p || !p->native_owned) return;

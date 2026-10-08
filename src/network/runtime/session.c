@@ -64,6 +64,9 @@ void qa_network_destroy(qa_network_runtime *runtime) {
 const qa_net_connections *qa_network_connections(const qa_network_runtime *runtime) {
     return runtime ? runtime->connections : NULL;
 }
+qa_net_transport *qa_network_transport(const qa_network_runtime *runtime) {
+    return runtime ? runtime->transport : NULL;
+}
 bool qa_network_udp_policy_read(const qa_network_runtime *runtime, qa_net_udp_policy *out,
     bool *present, qa_error *error)
 {
@@ -157,43 +160,50 @@ static bool retirement_pending(const qa_network_peer *peer)
     return qa_network_nq_retirement_pending(peer) || qa_network_qw_retirement_pending(peer) ||
         qa_network_q2_retirement_pending(peer) || qa_network_q1_client_retirement_pending(peer);
 }
-bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error) {
-    if (!runtime || runtime->pumping || runtime->callback || now < runtime->now_ns)
-        return qa_network_fail(error, "Invalid or recursive network pump");
-    runtime->pumping = true; runtime->now_ns = now;
+bool qa_network_receive_ready(const qa_network_runtime *runtime) {
+    return runtime && !runtime->pumping && !runtime->callback && !receive_pending(runtime);
+}
+bool qa_network_receive(qa_network_runtime *runtime, const qa_net_datagram *packet, qa_error *error) {
+    if (!runtime || !packet || runtime->pumping || runtime->callback)
+        return qa_network_fail(error, "Invalid or recursive network receive");
+    runtime->pumping = true;
+    /* Queued packets can outlive a decoder hold without rewinding host time. */
+    if (packet->received_ns > runtime->now_ns) runtime->now_ns = packet->received_ns;
     bool ok = true;
-    for (uint32_t n = 0; n < runtime->options.packets_per_pump; ++n) {
-        if (receive_pending(runtime)) break;
-        qa_net_datagram packet;
-        if (!qa_net_transport_receive(runtime->transport, now, &packet, error)) { ok = false; break; }
-        if (packet.kind == QA_NET_POLL_EMPTY) break;
-        if (packet.kind != QA_NET_POLL_PACKET) continue;
+    if (packet->kind == QA_NET_POLL_PACKET) {
         qa_network_peer *target = NULL;
-        bool connectionless = packet.payload.size >= 4 && qa_load_u32le(packet.payload.data) == UINT32_MAX;
+        bool connectionless = packet->payload.size >= 4 && qa_load_u32le(packet->payload.data) == UINT32_MAX;
         for (uint32_t i = 0; !connectionless && i < runtime->options.clients; ++i) {
             qa_network_peer *peer = &runtime->peers[i];
             const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
-            if (client && (client->protocol.kind==QA_NET_UNIFIED_1 ? qa_unified_session_peer_matches(peer,&packet) :
-                qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, &packet) :
-                qa_network_q2_peer(peer) ? qa_network_q2_peer_matches(peer,&packet) :
-                qa_net_address_equal(&client->endpoint, &packet.from, true))) { target = peer; break; }
+            if (client && (client->protocol.kind==QA_NET_UNIFIED_1 ? qa_unified_session_peer_matches(peer,packet) :
+                qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, packet) :
+                qa_network_q2_peer(peer) ? qa_network_q2_peer_matches(peer,packet) :
+                qa_net_address_equal(&client->endpoint, &packet->from, true))) { target = peer; break; }
         }
         runtime->callback = true;
         if (target) {
             qa_error issue={0};
-            if (!target->ops.receive(target->state, runtime, target->id, &packet, &issue)) {
+            if (!target->ops.receive(target->state, runtime, target->id, packet, &issue)) {
                 runtime->callback = false;
                 bool pending=retirement_pending(target);
-                if(pending && issue.code==QA_OK) continue;
-                if(!pending && !qa_network_q2_delivery_pending(target)) retire(runtime, target, "receive failed");
-                if(error) *error=issue;
-                ok = false; break;
+                if(!pending || issue.code!=QA_OK) {
+                    if(!pending && !qa_network_q2_delivery_pending(target)) retire(runtime, target, "receive failed");
+                    if(error) *error=issue;
+                    ok = false;
+                }
             }
         } else if (runtime->options.hooks.connectionless &&
-            !runtime->options.hooks.connectionless(runtime->options.hooks.context, runtime, &packet, error)) ok = false;
+            !runtime->options.hooks.connectionless(runtime->options.hooks.context, runtime, packet, error)) ok = false;
         runtime->callback = false;
-        if (!ok) break;
     }
+    runtime->pumping = false; return ok;
+}
+bool qa_network_tick(qa_network_runtime *runtime, uint64_t now, qa_error *error) {
+    if (!runtime || runtime->pumping || runtime->callback || now < runtime->now_ns)
+        return qa_network_fail(error, "Invalid or recursive network tick");
+    runtime->pumping = true; runtime->now_ns = now;
+    bool ok = true;
     bool held = receive_pending(runtime);
     for (uint32_t i = 0; ok && !held && i < runtime->options.clients; ++i) {
         qa_network_peer *peer = &runtime->peers[i];

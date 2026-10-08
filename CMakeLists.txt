@@ -57,6 +57,9 @@ target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
+add_library(qa_platform_events STATIC src/platform/events.c)
+target_link_libraries(qa_platform_events PUBLIC qa_core PRIVATE SDL2::SDL2)
+
 add_library(qa_script STATIC
     src/core/script/checkpoint.c
     src/core/script/codec.c
@@ -158,7 +161,7 @@ add_library(qa_console STATIC
     src/console/seat_save.c
     src/console/dedicated.c
     src/platform/console.c)
-target_link_libraries(qa_console PUBLIC qa_core)
+target_link_libraries(qa_console PUBLIC qa_core qa_platform_events)
 
 add_library(qa_text STATIC
     src/text/q1_text.c
@@ -888,7 +891,7 @@ add_library(qa_input STATIC
     src/input/source_devices.c
     src/platform/input.c
     src/platform/input_save.c)
-target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display qa_persistence SDL2::SDL2)
+target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display qa_persistence qa_platform_events SDL2::SDL2)
 
 add_library(qa_settings STATIC
     src/settings/server_profile.c
@@ -899,6 +902,7 @@ add_library(qa_settings STATIC
 target_link_libraries(qa_settings PUBLIC qa_input)
 
 add_library(qa_network STATIC
+    src/platform/network_events.c
     src/network/admin/owner.c
     src/network/browser/owner.c
     src/network/browser/kex.c
@@ -1035,7 +1039,7 @@ add_library(qa_network STATIC
     src/network/q2/unicast.c
     src/network/unified/session_close.c
 )
-target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http PRIVATE ZLIB::ZLIB)
+target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http qa_platform_events PRIVATE ZLIB::ZLIB)
 if(WIN32)
     target_link_libraries(qa_network PRIVATE iphlpapi ws2_32 bcrypt)
 endif()

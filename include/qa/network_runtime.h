@@ -88,7 +88,7 @@ typedef struct qa_network_hooks {
 /* One adapter per connection. Source adapters own dialect histories, not
  * seats/world/clocks. receive must authenticate packets before invoking runtime
  * command/snapshot/received. All callbacks run on the runtime owner thread.
- * No callback may attach/detach/travel/pump/destroy the runtime. */
+ * No callback may attach/detach/travel/receive/tick/destroy the runtime. */
 typedef struct qa_network_peer_ops {
     bool (*receive)(void *, qa_network_runtime *, qa_net_client_id,
                     const qa_net_datagram *, qa_error *);
@@ -99,8 +99,8 @@ typedef struct qa_network_peer_ops {
     bool (*restart)(void *, uint64_t epoch, const uint64_t *, qa_error *);
     bool (*rebind)(void *, const qa_net_address *, qa_error *);
     void (*close)(void *);
-    /* Pure held-decoder predicate. The sole receiver stops polling and
-     * flushing until its owner resumes the source at an idle safe point. */
+    /* Pure held-decoder predicate. Event dispatch and flushing stop until
+     * its owner resumes the source at an idle safe point. */
     bool (*receive_pending)(const void *);
 } qa_network_peer_ops;
 typedef struct qa_network_options {
@@ -109,10 +109,12 @@ typedef struct qa_network_options {
     qa_network_hooks hooks;
 } qa_network_options;
 /* Transport transfers on successful create; peers transfer on successful
- * attach. The runtime is the sole receiver and closes all owned resources. */
+ * attach. The platform collector borrows the transport; the runtime closes
+ * all owned resources. */
 bool qa_network_create(qa_net_transport *, const qa_network_options *, qa_network_runtime **, qa_error *);
 void qa_network_destroy(qa_network_runtime *);
 const qa_net_connections *qa_network_connections(const qa_network_runtime *);
+qa_net_transport *qa_network_transport(const qa_network_runtime *);
 bool qa_network_callbacks_idle(const qa_network_runtime *);
 bool qa_network_attach(qa_network_runtime *, const qa_net_connect *,
                         const qa_network_peer_ops *, void *peer, uint64_t now_ns,
@@ -121,7 +123,13 @@ bool qa_network_detach(qa_network_runtime *, qa_net_client_id, const char *, qa_
 /* Removes an actual cold canonical row whose protocol peer never transferred. */
 bool qa_network_discard_incomplete(qa_network_runtime *,qa_net_client_id,qa_error *);
 bool qa_network_connection_incomplete(const qa_network_runtime *,qa_net_client_id);
-bool qa_network_pump(qa_network_runtime *, uint64_t now_ns, qa_error *);
+/* Retain the queued event while receive_ready is false. Dispatch one event
+ * only when ready; its borrowed packet bytes remain valid through this call. */
+bool qa_network_receive_ready(const qa_network_runtime *);
+bool qa_network_receive(qa_network_runtime *, const qa_net_datagram *, qa_error *);
+/* Timeout and flush maintenance uses the host time, independently of the
+ * captured receive timestamp. Held decoders defer both operations. */
+bool qa_network_tick(qa_network_runtime *, uint64_t now_ns, qa_error *);
 bool qa_network_send(qa_network_runtime *, qa_net_client_id, qa_bytes, qa_error *);
 /* Connectionless services share this transport; they never open a second
  * receive owner. The address is not a connection admission. */

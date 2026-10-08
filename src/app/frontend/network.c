@@ -8,6 +8,7 @@
 #include "qa/server_browser.h"
 #include "qa/server_browser_favorites.h"
 #include "qa/network_interfaces.h"
+#include "qa/network_events.h"
 #include "qa/network_kex_transport.h"
 #include "qa/server_admin.h"
 #include "qa/tokenizer.h"
@@ -5468,12 +5469,12 @@ bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
     }
     return frontend_network_create(f,error);
 }
-bool frontend_network_pump(qa_frontend *f, qa_error *error)
+bool frontend_network_collect(qa_frontend *f, qa_platform_events *events, qa_error *error)
 {
     if(!frontend_network_admin_resume(f,error)) return false;
     qa_frontend_network *n = f->network; if (!n) return true;
     /* Console connection transitions retire their old wire owner before the
-     * sole receiver can poll or flush another packet from that attempt. */
+     * collector can poll or maintenance can flush that attempt. */
     if (!client_attempts_drain(n, error)) return false;
     if(!q2_local_groups_prepare(n,error) || !q2_timeout_sync(n,error)) return false;
     if(!q2_client_tick_returned(n,error)) return false;
@@ -5493,7 +5494,33 @@ bool frontend_network_pump(qa_frontend *f, qa_error *error)
     ++n->busy;
     if(n->kex_browser && !frontend_kex_browser_pump(n->kex_browser,f->wall_time_ns,error)) { --n->busy; return false; }
     qa_server_browser_expire(n->browser, f->wall_time_ns);
-    bool ok = qa_network_pump(n->runtime, f->wall_time_ns, error) && qa_server_browser_q3_pump(n->browser, f->wall_time_ns, error) &&
+    bool ok = !qa_network_receive_ready(n->runtime) ||
+        qa_network_events_collect(qa_network_transport(n->runtime),events,f->wall_time_ns,256,error);
+    --n->busy;
+    return ok;
+}
+bool frontend_network_receive_ready(const qa_frontend *f)
+{
+    const qa_frontend_network *n=f?f->network:NULL;
+    return !n || qa_network_receive_ready(n->runtime);
+}
+bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_bytes bytes,qa_error *error)
+{
+    qa_frontend_network *n=f->network;
+    if(!n) return true;
+    qa_net_datagram packet;
+    qa_network_event_packet(event,bytes,&packet);
+    ++n->busy;
+    bool ok=qa_network_receive(n->runtime,&packet,error);
+    --n->busy;
+    return ok;
+}
+bool frontend_network_maintenance(qa_frontend *f,qa_error *error)
+{
+    qa_frontend_network *n=f->network;
+    if(!n) return true;
+    ++n->busy;
+    bool ok = qa_network_tick(n->runtime, f->wall_time_ns, error) && qa_server_browser_q3_pump(n->browser, f->wall_time_ns, error) &&
         frontend_q3_browser_poll(n->q3_browser, error) && qa_server_admin_tick(n->admin, f->wall_time_ns, false, error);
     --n->busy;
     return ok && q2_client_tick_returned(n,error) &&

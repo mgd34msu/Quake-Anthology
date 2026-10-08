@@ -4,12 +4,24 @@
 #include <string.h>
 #include <unistd.h>
 
-bool qa_dedicated_console_poll(qa_dedicated_console *console, int descriptor, size_t budget,
-                               qa_error *error) {
+static bool publish_lines(qa_dedicated_console *console, qa_platform_events *events,
+    uint64_t time_ns, qa_error *error) {
+    for (;;) {
+        qa_bytes line;
+        bool present;
+        if (!qa_dedicated_console_line_next(console, &line, &present, error)) return false;
+        if (!present) return true;
+        qa_platform_events_push(events, QA_PLATFORM_EVENT_CONSOLE_LINE, time_ns, 0, 0, line);
+    }
+}
+
+bool qa_platform_console_pump(qa_dedicated_console *console, qa_platform_events *events,
+    int descriptor, size_t budget, uint64_t time_ns, qa_error *error) {
     if (descriptor < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid dedicated input descriptor");
         return false;
     }
+    if (!publish_lines(console, events, time_ns, error)) return false;
     if (qa_dedicated_console_ended(console))
         return true;
     if (!budget)
@@ -38,7 +50,7 @@ bool qa_dedicated_console_poll(qa_dedicated_console *console, int descriptor, si
             return false;
         }
         if (!qa_dedicated_console_feed(console, (qa_bytes){bytes, (size_t)read_count}, !read_count,
-                                       error))
+                                       error) || !publish_lines(console, events, time_ns, error))
             return false;
         if (!read_count)
             return true;

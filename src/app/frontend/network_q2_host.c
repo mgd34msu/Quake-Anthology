@@ -2,6 +2,7 @@
 #include "qa/application_network.h"
 #include "qa/network_q3.h"
 #include "qa/network_local.h"
+#include "qa/network_events.h"
 #include "remote_q2_source.h"
 #include "network_q2_events.h"
 #include "qa/launch_identity.h"
@@ -837,7 +838,12 @@ bool frontend_network_q2_host_stop(frontend_network_q2_host *host,uint64_t now,
     /* The retiring channels consume their actual acknowledgements without
      * dispatching new gameplay input. Their Source publisher stays retained
      * until both the final delivery and its drop callback have returned. */
-    if(remote && !qa_network_pump(host->options.runtime,now,error)) return false;
+    if(remote) {
+        qa_frontend *f=host->options.frontend;
+        if(qa_network_receive_ready(host->options.runtime) &&
+            !qa_network_events_collect(qa_network_transport(host->options.runtime),f->platform_events,now,256,error)) return false;
+        if(!frontend_platform_drain(f,error) || !qa_network_tick(host->options.runtime,now,error)) return false;
+    }
     for(size_t i=0;i<host->capacity;++i) {
         q2_host_peer *peer=&host->peers[i];
         if(!peer->committed || !qa_net_connections_get(qa_network_connections(host->options.runtime),peer->client)) continue;
