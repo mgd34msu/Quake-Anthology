@@ -1033,11 +1033,12 @@ bool frontend_remote_prediction_submit(frontend_remote_prediction *owner,
         state->discarded_sequence = state->commands[0].source_sequence; state->has_discarded = true;
         memmove(state->commands, state->commands + 1, 63 * sizeof(*state->commands)); --state->count;
     }
-    state->commands[state->count++] = (prediction_command){.selected = *selected, .angle_space = angle_space,
+    prediction_command command = {.selected = *selected, .angle_space = angle_space,
         .source = *source_command,
         .source_sequence = source_command->sequence, .receipt_time_ns = source.receipt_time_ns,
         .source_time = source_command->server_time_ms,
         .source_buttons = source_command->buttons, .source_weapon = source_command->weapon};
+    memcpy(state->commands + state->count++, &command, sizeof(command));
     return true;
 }
 

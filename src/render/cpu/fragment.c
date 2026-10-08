@@ -588,7 +588,7 @@ static void fragment_row(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
           }
         }
       }
-      if (statistics) for (unsigned lane = 0; lane < count; ++lane) fragments += (packet.active >> lane) & 1u;
+      if (statistics) for (unsigned lane = 0; lane < count; ++lane) fragments += ((uint32_t)packet.active >> lane) & 1u;
     }
     x += count;
   }

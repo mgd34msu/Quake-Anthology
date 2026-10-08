@@ -1038,7 +1038,7 @@ static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physic
         uint8_t bytes[6]; qa_net_writer stat; qa_net_writer_init(&stat, bytes, sizeof(bytes), error);
         if (!qa_qw_source_write_stat(&stat, i, viewer->stats[i]) ||
             !peer_reliable(peer, (qa_bytes){bytes, qa_net_writer_size(&stat)}, error)) return false;
-        peer->stats[i] = viewer->stats[i]; peer->stat_mask |= UINT16_C(1) << i;
+        peer->stats[i] = viewer->stats[i]; peer->stat_mask = (uint16_t)(peer->stat_mask | (UINT32_C(1) << i));
     }
     qa_vec3 eye = qa_v3(viewer->entity.origin[0] + viewer->view_offset[0],
         viewer->entity.origin[1] + viewer->view_offset[1], viewer->entity.origin[2] + viewer->view_offset[2]);

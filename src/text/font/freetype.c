@@ -93,11 +93,11 @@ static uint8_t bitmap_sample(const FT_Bitmap *bitmap, uint32_t x, uint32_t y,
         return row[x >> 3] & (0x80u >> (x & 7u)) ? 255 : 0;
     case FT_PIXEL_MODE_GRAY2: {
         unsigned shift = 6u - (x & 3u) * 2u;
-        return (uint8_t)(((row[x >> 2] >> shift) & 3u) * 85u);
+        return (uint8_t)((((uint32_t)row[x >> 2] >> shift) & 3u) * 85u);
     }
     case FT_PIXEL_MODE_GRAY4: {
         unsigned shift = (x & 1u) ? 0u : 4u;
-        return (uint8_t)(((row[x >> 1] >> shift) & 15u) * 17u);
+        return (uint8_t)((((uint32_t)row[x >> 1] >> shift) & 15u) * 17u);
     }
     case FT_PIXEL_MODE_BGRA:
         *bgra = row + (size_t)x * 4u;

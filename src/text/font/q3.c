@@ -265,7 +265,7 @@ static bool q3_page(qa_font *font, int32_t point_size, uint32_t page, uint32_t f
         rgba[i * 4 + 0] = 255;
         rgba[i * 4 + 1] = 255;
         rgba[i * 4 + 2] = 255;
-        rgba[i * 4 + 3] = maximum ? (uint8_t)((uint32_t)gray[i] * 255u / maximum) : 0;
+        rgba[i * 4 + 3] = (uint8_t)(maximum ? (uint32_t)gray[i] * 255u / maximum : 0);
     }
     char name[64];
     int written = snprintf(name, sizeof(name), "fonts/fontImage_%u_%d.tga", page, point_size);

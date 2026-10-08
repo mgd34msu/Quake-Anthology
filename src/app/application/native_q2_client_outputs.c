@@ -101,7 +101,7 @@ bool application_native_q2_client_outputs_create(struct application_native_q2 *n
     for(size_t i=0;i<qa_json_size(d,rows);++i){qa_json_id r=qa_json_at(d,rows,i);size_t kind=0;
         while(kind<APPLICATION_CLIENT_OUTPUT_COUNT&&!qa_json_string_equal(d,qa_json_get(d,r,"kind"),names[kind]))++kind;
         if(kind==APPLICATION_CLIENT_OUTPUT_COUNT||(o->channels&(1u<<kind)))return fail(e,"Native client output channels are unknown or duplicated");
-        native_output_declaration *f=&o->fields[o->count++];f->channel=(application_client_output_channel)kind;o->channels|=1u<<kind;
+        native_output_declaration *f=&o->fields[o->count++];f->channel=(application_client_output_channel)kind;o->channels=(uint8_t)(o->channels|(1u<<kind));
         f->height=kind==APPLICATION_CLIENT_VIEW_OFFSET&&qa_json_get(d,r,"height")!=QA_JSON_NONE;
         bool vector=kind==APPLICATION_CLIENT_BODY_SHAPE||(kind==APPLICATION_CLIENT_VIEW_OFFSET&&!f->height);
         if(f->height&&qa_json_get(d,r,"field")!=QA_JSON_NONE)return fail(e,"Native view offset names both a height and a vector");
@@ -222,7 +222,7 @@ bool application_native_q2_client_outputs_capture(struct application_native_q2 *
     uint8_t *data=calloc(1,38);if(!data)return application_fail(e,QA_ERROR_MEMORY,"Retaining native output publication receipt");
     qa_store_u32le(data,UINT32_C(0x31504f4e));data[4]=o->channels;data[5]=o->claimed;
     for(uint32_t i=1;i<257;++i)if(o->clients[i].published){uint32_t slot;
-        if(!publication_slot(o,o->clients[i].actor,&slot,e)||slot!=i){free(data);return false;}data[6+(i-1)/8]|=1u<<((i-1)%8);}
+        if(!publication_slot(o,o->clients[i].actor,&slot,e)||slot!=i){free(data);return false;}data[6+(i-1)/8]=(uint8_t)(data[6+(i-1)/8]|(1u<<((i-1)%8)));}
     *out=(qa_buffer){data,38};return true;
 }
 bool application_native_q2_client_outputs_restore(struct application_native_q2 *n,qa_bytes bytes,qa_error *e)

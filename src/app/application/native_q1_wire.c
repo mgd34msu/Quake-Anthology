@@ -1574,7 +1574,7 @@ bool application_native_q1_wire_pause(qa_application *app, qa_actor_id actor,
     if (okay) {
         result = (qa_buffer){.data = malloc(length + 1), .size = length};
         if (!result.data) okay = application_fail(error, QA_ERROR_MEMORY, "Retaining native Q1 pause announcement");
-        else if (denial) memcpy(result.data, denial, length + 1);
+        else if (denial) memcpy(result.data, denial, strlen(denial) + 1);
         else {
             size_t prefix = strlen(view.name);
             memcpy(result.data, view.name, prefix); memcpy(result.data + prefix, suffix, length - prefix + 1);

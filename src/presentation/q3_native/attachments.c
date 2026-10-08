@@ -5,7 +5,7 @@
 static float dot(qa_vec3 a, qa_vec3 b) {
     return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
 }
-static void multiply(const qa_vec3 left[3], const qa_vec3 right[3], qa_vec3 out[3]) {
+static void multiply(const qa_vec3 *left, const qa_vec3 *right, qa_vec3 *out) {
     qa_vec3 columns[3] = {{right[0].x, right[1].x, right[2].x},
         {right[0].y, right[1].y, right[2].y}, {right[0].z, right[1].z, right[2].z}};
     qa_vec3 result[3];

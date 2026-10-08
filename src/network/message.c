@@ -94,7 +94,7 @@ uint32_t qa_net_read_bits(qa_net_reader *reader, unsigned count)
     }
     uint32_t value = 0;
     for (unsigned bit = 0; bit < count; ++bit, ++reader->bit)
-        value |= (uint32_t)((reader->bytes.data[reader->bit / 8] >> (reader->bit % 8)) & 1u) << bit;
+        value |= (((uint32_t)reader->bytes.data[reader->bit / 8] >> (reader->bit % 8)) & UINT32_C(1)) << bit;
     return value;
 }
 
