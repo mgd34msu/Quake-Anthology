@@ -277,6 +277,30 @@ bool frontend_local_lobby_init(qa_frontend *frontend, qa_error *error)
         &(qa_lobby_transitions){.context=owner,.host=host,.host_ready=host_ready,.join=join,
             .leave=leave,.completed=completed},&owner->session,error);
 }
+void frontend_local_lobby_exchange(qa_frontend *active, qa_frontend *candidate)
+{
+    qa_lobbies *service = active->lobbies;
+    bool owned = active->lobbies_owned;
+    frontend_local_lobby *active_owner = active->local_lobby;
+    frontend_local_lobby *candidate_owner = candidate->local_lobby;
+    active->lobbies = candidate->lobbies;
+    active->lobbies_owned = candidate->lobbies_owned;
+    candidate->lobbies = service;
+    candidate->lobbies_owned = owned;
+    active->local_lobby = candidate_owner;
+    candidate->local_lobby = active_owner;
+    active_owner->frontend = candidate;
+    candidate_owner->frontend = active;
+    /* Session callbacks keep their owner address; UI registrations keep their
+     * menu, seat and UI handles on the frontend that prepared them. */
+    for (uint32_t i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
+        lobby_menu *menu = active_owner->menus[i];
+        active_owner->menus[i] = candidate_owner->menus[i];
+        candidate_owner->menus[i] = menu;
+        if (active_owner->menus[i]) active_owner->menus[i]->owner = active_owner;
+        if (candidate_owner->menus[i]) candidate_owner->menus[i]->owner = candidate_owner;
+    }
+}
 void frontend_local_lobby_hosting(frontend_local_lobby *owner, uint32_t physical,
     const frontend_host_settings *settings)
 { owner->physical = physical; owner->hosting = *settings; }
