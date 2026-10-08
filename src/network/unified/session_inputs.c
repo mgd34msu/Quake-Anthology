@@ -26,7 +26,7 @@ bool qa_unified_inputs_check(qa_unified_input_batch *batch, size_t *bytes, qa_er
         qa_buffer provider = batch->providers[i], weapon = batch->weapons[i];
         if ((!input->has_arsenal && (provider.size || weapon.size)) ||
             (input->has_arsenal && (!provider.size || memchr(provider.data, 0, provider.size) ||
-                memchr(weapon.data, 0, weapon.size) || !qa_utf8_valid((qa_bytes){provider.data, provider.size}) ||
+                (weapon.size && memchr(weapon.data, 0, weapon.size)) || !qa_utf8_valid((qa_bytes){provider.data, provider.size}) ||
                 !qa_utf8_valid((qa_bytes){weapon.data, weapon.size})))) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Unified arsenal input lost its actual UTF-8 provider selection"); return false;
         }
