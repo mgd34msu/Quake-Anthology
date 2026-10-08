@@ -112,4 +112,37 @@ Each uses 600 intervals after warm-up, public quit 0, unchanged original
 profile and installed files, and no remaining owned game. Results vary in
 opposite directions between resolutions; no speedup or isolated overhead claim
 is justified. CPU targets remain open. Installed per-game and combined checks
-are recorded separately when their captures finish.
+are recorded below.
+
+## Installed transport split checks
+
+The fixed `2f6c2f46` installation passed six console/input scopes: Q1 classic
+CPU, Q1 rerelease CPU, Q2 classic CPU, Q2 rerelease software GL, native Q3 CPU
+and original-module Q3 CPU. The final index is
+`/tmp/qa-u1-common-console-lower-20261007/U1-six-scope-combined-index.json`.
+All 72 plain/slash FOV commands were accepted, including canonical/alias
+reads and writes with same-pose 90/120 world captures. Literal editable chat
+containing a semicolon did not change FOV. Unknown commands stayed commands.
+Real W presses reached the movement command and release cleared it; source
+clocks advanced and completed queue observations were empty with zero drops.
+
+A separate NVIDIA RTX 5060 Ti Custom run used the public menu to select a Q1
+classic `start` world, Q3 movement, Ranger character and weapons, Q2 rerelease
+monsters and single player. Actual mouse and W input crossed the Normal skill
+teleporter, its forced angle survived settling, and public quit returned 0.
+The coordinator inspected the spawned world and post-teleport images. This
+run deliberately disabled audio; it does not prove mixed combat or sound.
+
+Each console scope captured actual nonzero output on its private audio server.
+That is delivery evidence, not attribution of individual cues. All seven runs
+quit normally, kept the owner profile and three installed files unchanged,
+and left no recorded owned processes running. The helper's raw SDL logger
+records Space/C, so W evidence is from real input actions and consumed state.
+The original/native Q3 console cases launched through the CLI, not menu Play.
+Functional observers were attached; these runs make no performance claim.
+
+The index preserves two visual limitations: an immediate combined spawn
+capture was black before subsequent world captures, and Q2 classic CPU HUD
+glyphs were clipped. No first-frame or complete renderer fidelity claim is
+made. Native IPX and real multicast discovery remain unqualified by these
+local transport fixtures and game runs.
