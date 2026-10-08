@@ -2999,7 +2999,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (map_source->kind == APPLICATION_PROVIDER_Q3 && !defer_source_begin) {
             const qa_q3_usercmd *source_command = round ? round->command
                 : carry->q3_client ? &carry->q3_command : NULL;
-            if (!application_native_q3_client_begin(map_source, actor, &body, source_command, error))
+            if (!qa_world_body_read(application->world, actor, &body, error) ||
+                !application_native_q3_client_begin(map_source, actor, &body, source_command, error))
                 return false;
         }
         if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
