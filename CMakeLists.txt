@@ -1606,6 +1606,12 @@ add_library(qa_persistence STATIC
     src/persistence/world.c)
 target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console qa_navigation qa_native)
 
+# Engine data uses the same VFS as installed game resources on every platform.
+foreach(name DejaVuSans.ttf LICENSE-DejaVu.txt)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/${name}"
+        "${CMAKE_CURRENT_BINARY_DIR}/engine-data/fonts/${name}" COPYONLY)
+endforeach()
+
 set(QA_MENU_ASSET_NAMES menu-background main-menu-background menu-panel menu-focus)
 set(QA_MENU_ASSET_SYMBOLS qa_menu_background qa_menu_main_background qa_menu_panel qa_menu_focus)
 set(QA_MENU_ASSET_SOURCES)
@@ -1933,6 +1939,8 @@ endif()
 
 install(TARGETS quake-anthology RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(FILES assets/fonts/DejaVuSans.ttf assets/fonts/LICENSE-DejaVu.txt
+    DESTINATION "${CMAKE_INSTALL_BINDIR}/engine-data/fonts")
 
 set(CPACK_PACKAGE_NAME "quake-anthology")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

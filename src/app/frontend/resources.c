@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 /* The empty-content launcher has no source charset yet. Its bootstrap grid
- * comes from the configured host font until an installed source is selected. */
+ * comes from the engine font until an installed source is selected. */
 static bool bootstrap_charset(qa_frontend *frontend, qa_error *error)
 {
     uint8_t pixels[128 * 128 * 4] = {0};
@@ -41,12 +41,32 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
 {
     const qa_product *selected = NULL, *typography = NULL;
     if (!frontend_menu_font_view(frontend, &selected, &typography, error)) return false;
-    if (!selected) {
+    if (!frontend->ui_mounts)
         frontend->ui_mounts = qa_vfs_create(qa_application_resources(frontend->application), error);
-        qa_mount_id mount;
-        if (!frontend->ui_mounts || !qa_vfs_mount_directory(frontend->ui_mounts,
-            frontend->options.font_directory, QA_ARCHIVE_EXACT, false, &mount, error)) return false;
+    if (!frontend->ui_mounts) return false;
+    const char *font_directory = frontend->options.font_directory;
+    char *bundled_directory = NULL;
+    if (!font_directory) {
+        char *base = SDL_GetBasePath();
+        if (!base) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Reading engine font directory: %s", SDL_GetError());
+            return false;
+        }
+        size_t bytes = strlen(base) + sizeof("engine-data/fonts");
+        bundled_directory = malloc(bytes);
+        if (!bundled_directory) {
+            SDL_free(base);
+            return frontend_fail(error, QA_ERROR_MEMORY, "Retaining engine font directory");
+        }
+        snprintf(bundled_directory, bytes, "%sengine-data/fonts", base);
+        SDL_free(base);
+        font_directory = bundled_directory;
     }
+    qa_mount_id mount;
+    bool mounted = qa_vfs_mount_directory(frontend->ui_mounts, font_directory,
+        QA_ARCHIVE_EXACT, false, &mount, error);
+    free(bundled_directory);
+    if (!mounted) return false;
     frontend->ui_images = qa_scene_resources_create(frontend->ui_mounts, error);
     if (!frontend->ui_images || !frontend_image_policy_initialize(frontend,frontend->ui_images,error)) return false;
     if (!frontend_menu_art_create(frontend, error)) return false;

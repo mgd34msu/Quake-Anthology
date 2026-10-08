@@ -14,7 +14,7 @@ void qa_frontend_options_default(qa_frontend_options *options)
     if (!options) return;
     *options = (qa_frontend_options){.seats = 1, .gamma = 1, .audio = true,
         .network_protocol = {QA_NET_UNIFIED_1, 0, 0}, .network_port = 27960,
-        .font_directory = "/usr/share/fonts/truetype/dejavu", .font_file = "DejaVuSans.ttf"};
+        .font_directory = NULL, .font_file = "DejaVuSans.ttf"};
     qa_application_options_default(&options->application);
     options->application.content_root = NULL;
     qa_display_options_default(&options->display);
