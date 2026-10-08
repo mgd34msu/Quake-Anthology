@@ -62,12 +62,11 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
     *handled=false;
     if (!client_name(name,"map") && !client_name(name,"gamemap") &&
         !client_name(name,"changelevel") && !client_name(name,"killserver")) return true;
-    bool engine=call->console==qa_application_console(f->application) && !call->context.owner;
+    if (call->context.origin==QA_COMMAND_REMOTE) {
+        *handled=true;
+        return true;
+    }
     bool parked=frontend_config_store_parked_current(f->config_store,source);
-    if (!source->descriptor || !source->scope.provider ||
-        (!parked && source->command.owner!=source->scope.provider) ||
-        (!engine && (call->console!=source->console || call->context.owner!=source->scope.provider)))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"World command lost its actual Source provider");
     bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
         source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
     bool map=client_name(name,"map"),gamemap=client_name(name,"gamemap");
