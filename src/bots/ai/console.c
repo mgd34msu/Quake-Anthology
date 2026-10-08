@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_timers.h"
 
 static bool word(const char *text, const char *expected) {
@@ -99,7 +100,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                 bool allowed=false;
                 if(s->view.decision!=QA_BOT_STANDING &&
                    !bot_ai_source_valid_chat_position(b,s,&allowed,e)) return false;
-                allowed=allowed && b->source_goals.game_type<3;
+                allowed=allowed && !qa_game_type_is_team(b->source_goals.game_type);
                 if(!allowed) {if(!remove_console(chat,message.handle,e)) return false;continue;}
                 float chance;
                 if(!bot_ai_character_float(b,s,BOT_C_CHAT_REPLY,0,1,&chance,e)) return false;

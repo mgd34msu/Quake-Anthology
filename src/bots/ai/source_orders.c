@@ -1,5 +1,6 @@
 /* Source ai_cmd.c text orders over the actual botlib and GAME services. */
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_selectors.h"
 #include "source_goal_record.h"
 #include "source_team_state.h"
@@ -128,7 +129,7 @@ bool bot_ai_source_team(qa_bots *b,int32_t client,int32_t *out,qa_error *e) {
 bool bot_ai_source_same_team(qa_bots *b,bot_ai_state *s,int32_t client,bool *out,qa_error *e) {
     int32_t self,own,other;*out=false;
     if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_CLIENT,&self,false,e)) return false;
-    if(self<0 || self>=64 || client<0 || client>=64 || b->source_goals.game_type<3) return true;
+    if(self<0 || self>=64 || client<0 || client>=64 || !qa_game_type_has_allies(b->source_goals.game_type)) return true;
     if(!bot_ai_source_team(b,self,&own,e) || !bot_ai_source_team(b,client,&other,e)) return false;
     *out=own==other;return true;
 }
@@ -410,7 +411,7 @@ static bool requester_chat(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m
     return !alive(b,s) || qa_bot_chat_enter(qa_bot_runtime_chat(b->runtime,s->chat),client,destination,e);
 }
 static bool order_allowed(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,bool *out,qa_error *e) {
-    *out=false;if(b->source_goals.game_type<3) return true;
+    *out=false;if(!qa_game_type_is_team(b->source_goals.game_type)) return true;
     return addressed(b,s,m,out,e);
 }
 static bool finish_order(qa_bots *b,bot_ai_state *s,bool remember,qa_error *e) {
@@ -577,7 +578,7 @@ static bool patrol(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_erro
     return finish_order(b,s,true,e);
 }
 static bool checkpoint(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
-    if(b->source_goals.game_type<3) return true;
+    if(!qa_game_type_is_team(b->source_goals.game_type)) return true;
     char text[256],name[256];int32_t client;
     if(!variable(m,VAR_AREA,text,e) || !requester(b,m,false,&client,e)) return false;
     source_number input={.text=text,.length=strlen(text)};qa_vec3 position;
@@ -902,7 +903,7 @@ static bool flag_message(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,q
     return true;
 }
 static bool leader_command(qa_bots *b,bot_ai_state *s,const qa_bot_chat_match *m,qa_error *e) {
-    if(b->source_goals.game_type<3) return true;
+    if(!qa_game_type_is_team(b->source_goals.game_type)) return true;
     if(m->type==MSG_START_LEADER) {
         if(m->subtype&MATCH_I) {
             char name[256];if(!variable(m,VAR_NAME,name,e)) return false;

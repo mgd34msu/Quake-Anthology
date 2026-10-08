@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 
 static bool clock_read(qa_bot_catalog *c,qa_bot_catalog_clock *clock,qa_error *e) {
     if(!c->services.clock(c->services.context,clock,e)) return false;
@@ -94,7 +95,7 @@ static bool add_bot(qa_bot_catalog *c,const char *name,float skill,const char *r
     if(!*team) {
         qa_bot_catalog_clock clock;int32_t chosen;
         if(!clock_read(c,&clock,e)) return false;
-        if(clock.game_type>=3) {
+        if(qa_game_type_is_team(clock.game_type)) {
             if(!c->services.choose_team(c->services.context,client,&chosen,e)) return false;
             strcpy(team,chosen==1?"red":"blue");
         } else strcpy(team,"red");
@@ -276,7 +277,7 @@ bool bot_catalog_minimum_check(qa_bot_catalog *c,qa_error *e) {
     if(!c->minimum_registered) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"G_CheckMinimumPlayers requires G_InitBots");
     if(!bot_catalog_minimum_update(c,e)) return false;
     int32_t minimum=c->minimum_integer;if(minimum<=0) return true;
-    if(clock.game_type>=3) {
+    if(qa_game_type_is_team(clock.game_type)) {
         int32_t half=clock.max_clients/2;if(minimum>=half) minimum=half-1;
         return check_team(c,&clock,minimum,1,1,1,false,e) && check_team(c,&clock,minimum,2,2,2,false,e);
     }

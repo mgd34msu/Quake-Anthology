@@ -473,27 +473,6 @@ bool application_native_q3_settings_remap_teams(application_provider *provider, 
     return okay;
 }
 
-bool application_native_q3_settings_clamp_game_type(application_provider *provider, qa_error *error)
-{
-    struct application_native_q3_settings *owner = owner_at(provider);
-    int32_t type;
-    if (!owner || !application_native_q3_settings_integer(provider, "g_gametype", &type, error)) return false;
-    if (type >= 0 && type < 8) return true;
-    if (owner->operation != SETTINGS_IDLE || !owner->options.print ||
-        !application_native_q3_console_borrow(provider, error))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 game-type clamp lacks its actual source print owner");
-    owner->operation = SETTINGS_EFFECT;
-    char text[96];
-    snprintf(text, sizeof(text), "g_gametype %d is out of range, defaulting to 0\n", type);
-    bool okay = owner->options.print(owner->options.context, text, error);
-    if (okay && !owner_live(owner))
-        okay = application_fail(error, QA_ERROR_ARGUMENT, "native Q3 settings source retired during game-type clamp");
-    if (okay) okay = application_native_q3_settings_force_set(provider, "g_gametype", "0", error);
-    owner->operation = SETTINGS_IDLE;
-    application_native_q3_console_release(provider);
-    return okay;
-}
-
 bool application_native_q3_settings_check_cvars(application_provider *provider, qa_error *error)
 {
     struct application_native_q3_settings *owner = owner_at(provider);

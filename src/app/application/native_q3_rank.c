@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/text.h"
+#include "qa/game_type.h"
 #include "native_q3_rank.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -255,7 +256,7 @@ static bool score_configstring(rank_scope *scope, uint32_t index, qa_error *erro
     qa_q3_source_client_counts counts;
     int32_t score = -9999;
     if (!live(scope, error)) return false;
-    if (scope->game_type >= 3) {
+    if (qa_game_type_is_team(scope->game_type)) {
         if (!qa_q3_source_team_state_read(scope->game, &team, error)) return false;
         score = team.team_scores[index + 1u];
     } else {
@@ -303,7 +304,7 @@ static bool calculate(rank_scope *scope, qa_error *error)
         if (!client_current(scope, slot, &clients[slot], error)) return false;
     sort(counts.sorted_clients, clients, 0, counts.num_connected);
     if (!qa_q3_source_client_counts_write(scope->game, &counts, error)) return false;
-    if (scope->game_type >= 3) {
+    if (qa_game_type_is_team(scope->game_type)) {
         qa_q3_source_team_state team;
         if (!qa_q3_source_team_state_read(scope->game, &team, error)) return false;
         int32_t rank = team.team_scores[1] == team.team_scores[2] ? 2 :

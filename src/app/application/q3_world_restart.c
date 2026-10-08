@@ -1,4 +1,5 @@
 #include "q3_world_restart.h"
+#include "qa/game_type.h"
 #include "control_frame.h"
 #include "guest_q3_restart.h"
 #include "map_players_private.h"
@@ -333,7 +334,7 @@ static bool source_startup_values(application_q3_world_restart_state *state, qa_
     state->startup.game_type = game_type.integer;
     state->startup.warmup = warmup.integer != 0;
     state->startup.restarted = restarted.integer;
-    if (state->startup.game_type < 0 || state->startup.game_type > 7)
+    if (state->startup.game_type < 0 || state->startup.game_type > QA_GAME_TYPE_COOPERATIVE)
         state->startup.game_type = 0;
     return true;
 }

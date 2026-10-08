@@ -1,5 +1,6 @@
 /* Q3 ai_team.c and ai_dmq3.c policy over the retained GAME and botlib owners. */
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_selectors.h"
 #include "source_goal_record.h"
 #include "source_team_state.h"
@@ -452,7 +453,7 @@ static bool picked(const bot_ai_state *s, const int32_t *before, uint32_t index)
 }
 bool bot_ai_source_task_preference(qa_bots *b, bot_ai_state *s,
                                    const int32_t *old_inventory, qa_error *e) {
-    if(!alive(b,s) || !s->team_arena || b->source_goals.game_type<=3) return true;
+    if(!alive(b,s) || !s->team_arena || !qa_game_type_is_objective(b->source_goals.game_type)) return true;
     int offense=-1;
     if(picked(s,old_inventory,QA_BOT_INV_KAMIKAZE) || picked(s,old_inventory,QA_BOT_INV_INVULNERABILITY)) offense=1;
     if(!bot_ai_inventory_value(s,QA_BOT_INV_KAMIKAZE) && !bot_ai_inventory_value(s,QA_BOT_INV_INVULNERABILITY)) {
@@ -641,7 +642,7 @@ static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, uint32_t of
     return true;
 }
 bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    if(!alive(b,s) || b->source_goals.game_type<3) return true;
+    if(!alive(b,s) || !qa_game_type_is_team(b->source_goals.game_type)) return true;
     const char *leader;int32_t client=-1;
     if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
     if(*leader && !bot_ai_source_client_from_name(b,leader,&client,e)) return false;
@@ -709,7 +710,7 @@ bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
     bool ok=type==3?orders_team(b,s,e):type==4?orders_ctf(b,s,e):type==5?orders_one_flag(b,s,e):
         type==6?orders_bases(b,s,"cmd_attackenemybase",e):type==7?orders_bases(b,s,"cmd_harvest",e):true;
     if(!ok) return false;
-    if(alive(b,s) && type>=3 && type<=7) bot_ai_give_orders_time_set(s,flags?0:b->time+(type==3?120.0f:30.0f));
+    if(alive(b,s) && qa_game_type_is_team(type)) bot_ai_give_orders_time_set(s,flags?0:b->time+(type==3?120.0f:30.0f));
     return true;
 }
 static bool carries(qa_bots *b, bot_ai_state *s, const qa_bot_entity_info *info,

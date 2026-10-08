@@ -1,4 +1,5 @@
 #include "q3_campaign_result.h"
+#include "qa/game_type.h"
 #include "qa/application_native_q3_presentation.h"
 
 static bool current(qa_application *app, const qa_application_q3_campaign *campaign,
@@ -36,7 +37,7 @@ bool qa_application_q3_campaign_result_read(qa_application *app,
         !qa_q3_source_client_counts_read(source.source_game, &counts, error)) return false;
     value.team = session.team;
     value.leading_client = counts.sorted_clients[0];
-    if (source.game_type >= 4) {
+    if (qa_game_type_is_objective(source.game_type)) {
         qa_q3_source_team_state teams;
         if (value.team < 0 || value.team >= 4 ||
             !qa_q3_source_team_state_read(source.source_game, &teams, error))

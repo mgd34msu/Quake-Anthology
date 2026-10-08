@@ -44,10 +44,6 @@ bool application_native_q3_settings_force_set(application_provider *, const char
  * product-qualified copied table. It does not refresh cached settings. */
 bool application_native_q3_settings_source_set(application_provider *, const char *,
     const char *, qa_error *);
-/* The original SDK Init clamp follows registration and precedes map setup;
- * copied g_gametype stays unchanged until the source update. The TypeScript
- * registration producer does not call this separate SDK policy. */
-bool application_native_q3_settings_clamp_game_type(application_provider *, qa_error *);
 bool application_native_q3_settings_remap_teams(application_provider *, qa_error *);
 /* Source CheckCvars runs once at the END tail after the match/team vote work.
  * It commits the last observed password count before writing live g_needpass;

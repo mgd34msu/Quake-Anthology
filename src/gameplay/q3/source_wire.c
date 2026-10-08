@@ -1,4 +1,5 @@
 #include "map/internal.h"
+#include "qa/game_type.h"
 #include "source_wire.h"
 #include "qa/game_q3_clients.h"
 
@@ -1402,7 +1403,7 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
     }
     bool target_client = qa_q3_native_client_slot(game, target, &target_slot, &ignored);
     bool same_team = false;
-    if (target_client && game->options.rules.game_type >= 3) {
+    if (target_client && qa_game_type_has_allies(game->options.rules.game_type)) {
         int32_t target_team = q3_source_team(game, target);
         int32_t attacker_team = q3_source_team(game, attacker);
         same_team = target_team == attacker_team;

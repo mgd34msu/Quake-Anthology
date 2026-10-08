@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 
 static bool enabled(const qa_q3_game *game) {
     return game && game->options.hooks.ranking_report &&
@@ -192,7 +193,7 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
              !pair(game, attacker, 1111020007, 1111020007 + 100 * group, damage, error)))
             return false;
     }
-    if (attacker != self && attacker_player && game->options.rules.game_type >= 3 &&
+    if (attacker != self && attacker_player && qa_game_type_has_allies(game->options.rules.game_type) &&
         game->options.hooks.source_team &&
         game->options.hooks.source_team(game->options.hooks.context, request->target) ==
             game->options.hooks.source_team(game->options.hooks.context, request->attack.attacker)) {

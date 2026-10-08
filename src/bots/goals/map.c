@@ -1,8 +1,9 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include <stdio.h>
 
 bool bot_goal_allowed(const qa_bot_goals *g, uint32_t flags) {
-    return !(flags & (g->options.game_type == 2 ? 4u : g->options.game_type >= 3 ? 2u : 1u));
+    return !(flags & (g->options.game_type == 2 ? 4u : qa_game_type_is_team(g->options.game_type) ? 2u : 1u));
 }
 bool bot_goal_equal_name(const char *a, const char *b) {
     for (size_t i = 0; i < 99999; ++i) {

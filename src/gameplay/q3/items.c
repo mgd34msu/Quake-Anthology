@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include "map/internal.h"
 #include "source_objectives.h"
 #include "qa/game_q3_save.h"
@@ -285,7 +286,7 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         int32_t candidate_team = qa_q3_native_client_slot(game, actor, &candidate_slot, NULL)
             ? game->clients[candidate_slot].session.team : (int32_t)combat.team;
         if (combat.health <= 0 ||
-            (game->options.rules.game_type >= 3 && receiver_team == candidate_team))
+            (qa_game_type_has_allies(game->options.rules.game_type) && receiver_team == candidate_team))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))

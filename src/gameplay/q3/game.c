@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_postgame.h"
 
 bool qa_q3_source_memory_allocate(qa_q3_game *game, uint32_t size, uint32_t *out,
@@ -521,7 +522,7 @@ bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
     if (!tc.can_take_damage || tc.health <= 0 ||
         !qa_actors_get(qa_session_actors(game->options.services.session), attacker) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), target)) return false;
-    if (game->options.rules.game_type < 3) return true;
+    if (!qa_game_type_has_allies(game->options.rules.game_type)) return true;
     uint32_t attacker_client, target_client;
     bool native_attacker = q3_source_client_pointer(game, attacker, &attacker_client);
     bool native_target = q3_source_client_pointer(game, target, &target_client);
@@ -597,11 +598,11 @@ bool q3_combat_describe(void *context, const qa_damage_request *request,
             .noclip = tp && tp->noclip,
             .missionpack_invulnerability = tp && tp->invulnerability_until > game->now_ms,
             .no_knockback = target->no_knockback,
-            .friendly_fire = game->options.rules.game_type < 3 || game->options.rules.friendly_fire,
+            .friendly_fire = !qa_game_type_has_allies(game->options.rules.game_type) || game->options.rules.friendly_fire,
             .battlesuit = tp && tp->powerups[QA_Q3_P_BATTLESUIT] != 0,
             .falling = method == 19,
             .juiced = method == 27,
-            .proximity_protected = game->options.rules.game_type >= 3 && method == 25 && attacker &&
+            .proximity_protected = qa_game_type_has_allies(game->options.rules.game_type) && method == 25 && attacker &&
                                    target->team && target->team == attacker->team,
             .missionpack = game->options.product == QA_Q3_TEAM_ARENA,
             .knockback_scale = game->options.rules.knockback}};

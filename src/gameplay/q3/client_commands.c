@@ -1,4 +1,5 @@
 #include "client_private.h"
+#include "qa/game_type.h"
 
 static unsigned char upper(unsigned char value) {
     return value >= 'a' && value <= 'z' ? (unsigned char)(value - ('a' - 'A')) : value;
@@ -104,8 +105,8 @@ bool qa_q3_client_selected_presentation(qa_q3_game *game, qa_actor_id actor,
         return q3_fail(error, "Selected Q3 presentation has no actual source client");
     char name[1024], model[64], head[64], red[1024], blue[1024], color1[1024], color2[1024], task[1024];
     qa_q3_client_info_value(source, "name", name, sizeof(name));
-    qa_q3_client_info_value(source, game_type >= 3 ? "team_model" : "model", model, sizeof(model));
-    qa_q3_client_info_value(source, game_type >= 3 ? "team_headmodel" : "headmodel", head, sizeof(head));
+    qa_q3_client_info_value(source, qa_game_type_is_team(game_type) ? "team_model" : "model", model, sizeof(model));
+    qa_q3_client_info_value(source, qa_game_type_is_team(game_type) ? "team_headmodel" : "headmodel", head, sizeof(head));
     qa_q3_client_info_value(source, "g_redteam", red, sizeof(red));
     qa_q3_client_info_value(source, "g_blueteam", blue, sizeof(blue));
     qa_q3_client_info_value(source, "color1", color1, sizeof(color1));
@@ -159,6 +160,6 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
     client->max_health = entry->state.player.max_health = health;
     qa_q3_client_info_value(info, "teamoverlay", value, sizeof(value));
     client->team_info = (game->options.product == QA_Q3_TEAM_ARENA &&
-        game->options.rules.game_type >= 3) || !*value || source_integer(value) != 0;
+        qa_game_type_has_allies(game->options.rules.game_type)) || !*value || source_integer(value) != 0;
     return true;
 }

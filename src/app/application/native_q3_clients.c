@@ -1,4 +1,5 @@
 #include "native_q3_clients.h"
+#include "qa/game_type.h"
 #include "qa/text.h"
 #include "native_q3_console.h"
 #include "native_q3_chat.h"
@@ -435,8 +436,8 @@ static bool userinfo_changed(application_provider *provider,
         !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error)) return false;
     char model[64], head[64], color1[1024], color2[1024], red[1024], blue[1024];
     char task[1024], skill[1024], config[8192], log[8256];
-    qa_q3_client_info_value(info, game_type >= 3 ? "team_model" : "model", model, sizeof(model));
-    qa_q3_client_info_value(info, game_type >= 3 ? "team_headmodel" : "headmodel", head, sizeof(head));
+    qa_q3_client_info_value(info, qa_game_type_is_team(game_type) ? "team_model" : "model", model, sizeof(model));
+    qa_q3_client_info_value(info, qa_game_type_is_team(game_type) ? "team_headmodel" : "headmodel", head, sizeof(head));
     qa_q3_client_info_value(info, "color1", color1, sizeof(color1));
     qa_q3_client_info_value(info, "color2", color2, sizeof(color2));
     qa_q3_client_info_value(info, "g_redteam", red, sizeof(red));
@@ -445,7 +446,7 @@ static bool userinfo_changed(application_provider *provider,
     qa_q3_client_info_value(info, "skill", skill, sizeof(skill));
     int32_t team_task = integer(task);
     int32_t team = sess.team;
-    if (game_type >= 3 && (flags & 8u)) {
+    if (qa_game_type_is_team(game_type) && (flags & 8u)) {
         char requested[1024];
         qa_q3_client_info_value(info, "team", requested, sizeof(requested));
         if (named(requested, "red") || named(requested, "r")) team = 1;
@@ -1007,7 +1008,7 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         client = named(request, "follow1") ? -1 : -2;
     } else if (named(request, "spectator") || named(request, "s")) {
         team = 3; state = QA_Q3_SPECTATOR_FREE;
-    } else if (game_type >= 3) {
+    } else if (qa_game_type_is_team(game_type)) {
         if (named(request, "red") || named(request, "r")) team = 1;
         else if (named(request, "blue") || named(request, "b")) team = 2;
         else if (!application_native_q3_client_pick_team(provider, (int32_t)slot, &team, error)) return false;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 
 #include <ctype.h>
 
@@ -737,7 +738,7 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     if (!q3_map_mover_post_spawn(game, error))
         return false;
     game->map->post_spawned = true;
-    if (game->options.rules.game_type >= 3 && game->options.hooks.source_team_items &&
+    if (qa_game_type_is_team(game->options.rules.game_type) && game->options.hooks.source_team_items &&
         !game->options.hooks.source_team_items(game->options.hooks.context, error))
         return false;
     size_t item_count;

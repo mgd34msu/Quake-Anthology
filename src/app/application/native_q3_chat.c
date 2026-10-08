@@ -1,4 +1,5 @@
 #include "native_q3_chat.h"
+#include "qa/game_type.h"
 #include "native_q3_console.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_log.h"
@@ -212,7 +213,7 @@ static bool say_to(const chat_scope *scope, uint32_t slot, chat_mode mode,
         int32_t sender_team, target_team;
         if (!client_team(scope, scope->slot, &sender_team, error) ||
             !client_team(scope, slot, &target_team, error)) return false;
-        if (mode == CHAT_TEAM && (scope->game_type < 3 || sender_team != target_team))
+        if (mode == CHAT_TEAM && (!qa_game_type_has_allies(scope->game_type) || sender_team != target_team))
             return true;
         if (scope->game_type == 1 && target_team == 0 && sender_team != 0) return true;
     }
@@ -227,7 +228,7 @@ static bool say(const chat_scope *scope, int32_t target_slot, chat_mode mode,
 {
     chat_client sender;
     if (!client_read(scope, scope->slot, &sender, error)) return false;
-    if (scope->game_type < 3 && mode == CHAT_TEAM) mode = CHAT_ALL;
+    if (!qa_game_type_has_allies(scope->game_type) && mode == CHAT_TEAM) mode = CHAT_ALL;
     char name[CHAT_NAME_BYTES], output[CHAT_FORMAT_BYTES];
     char color;
     if (mode == CHAT_ALL) {
@@ -245,7 +246,7 @@ static bool say(const chat_scope *scope, int32_t target_slot, chat_mode mode,
                      sender.persistent.netname, chat_text);
             if (!source_log(scope, output, error) ||
                 !location_message(scope, location, &found, error)) return false;
-        } else if (target_slot >= 0 && scope->game_type >= 3) {
+        } else if (target_slot >= 0 && qa_game_type_has_allies(scope->game_type)) {
             int32_t sender_team, target_team;
             if (!client_team(scope, scope->slot, &sender_team, error) ||
                 !client_team(scope, (uint32_t)target_slot, &target_team, error)) return false;
@@ -318,7 +319,7 @@ static bool voice_to(const chat_scope *scope, uint32_t slot, chat_mode mode,
         int32_t sender_team, target_team;
         if (!client_team(scope, scope->slot, &sender_team, error) ||
             !client_team(scope, slot, &target_team, error)) return false;
-        if (scope->game_type < 3 || sender_team != target_team) return true;
+        if (!qa_game_type_has_allies(scope->game_type) || sender_team != target_team) return true;
     }
     if (scope->game_type == 1) return true;
     const char *name = mode == CHAT_TEAM ? "vtchat" : mode == CHAT_TELL ? "vtell" : "vchat";
@@ -332,7 +333,7 @@ static bool voice_to(const chat_scope *scope, uint32_t slot, chat_mode mode,
 static bool voice(const chat_scope *scope, int32_t target_slot, chat_mode mode,
     const char *id, bool voice_only, qa_error *error)
 {
-    if (scope->game_type < 3 && mode == CHAT_TEAM) mode = CHAT_ALL;
+    if (!qa_game_type_has_allies(scope->game_type) && mode == CHAT_TEAM) mode = CHAT_ALL;
     if (target_slot >= 0)
         return voice_to(scope, (uint32_t)target_slot, mode, id, voice_only, error);
     if (scope->dedicated) {
@@ -419,7 +420,7 @@ static bool voice_taunt(const chat_scope *scope, qa_error *error)
                    qa_q3_client_taunt_kill_clear(game, scope->actor, error);
         }
     }
-    if (scope->game_type >= 3) {
+    if (qa_game_type_has_allies(scope->game_type)) {
         int32_t sender_team, now;
         if (!client_team(scope, scope->slot, &sender_team, error) ||
             !qa_q3_source_clock(game, &now, error)) return false;

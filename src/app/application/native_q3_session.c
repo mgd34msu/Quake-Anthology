@@ -1,4 +1,5 @@
 #include "native_q3_session.h"
+#include "qa/game_type.h"
 #include "qa/text.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
@@ -197,7 +198,7 @@ static bool initialize_client(const session_source *source, qa_actor_id actor,
     qa_q3_client_session row = {0};
     if (!application_native_q3_settings_integer(source->provider, "g_gametype", &game_type, error))
         return false;
-    if (game_type >= 3) {
+    if (qa_game_type_is_team(game_type)) {
         if (!application_native_q3_settings_integer(source->provider, "g_teamAutoJoin", &auto_join, error))
             return false;
         if (auto_join) {
@@ -221,7 +222,7 @@ static bool initialize_client(const session_source *source, qa_actor_id actor,
         }
     }
     if (!session_commit(source, actor, slot, QA_Q3_CLIENT_SESSION_TEAM, &row, error)) return false;
-    if (game_type >= 3 && auto_join) {
+    if (qa_game_type_is_team(game_type) && auto_join) {
         qa_q3_native_client client;
         char text[128];
         if (!qa_q3_client_read(source->game, actor, &client, error)) return false;

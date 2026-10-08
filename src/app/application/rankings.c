@@ -1,4 +1,5 @@
 #include "rankings.h"
+#include "qa/game_type.h"
 #include "map_players_private.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -431,7 +432,7 @@ static bool frame_players(qa_application *app, application_rankings *owner,
             const qa_cvar_view *game_type=qa_cvars_find(cvars,"g_gametype");
             if (!game_type || game_type->owner!=provider->owner)
                 return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source lacks its actual game type");
-            if (member.state.spectator && game_type->number<3 &&
+            if (member.state.spectator && !qa_game_type_is_team(game_type->integer) &&
                 !application_rankings_source_effect(app,provider,actor,APPLICATION_RANKING_ACTIVATE,error)) return false;
             if (changed) for (uint32_t other=0; other<max_clients; ++other) {
                 application_player_record *peer=player(app,provider,other,(qa_actor_id){0});

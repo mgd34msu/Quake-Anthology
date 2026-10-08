@@ -1,4 +1,5 @@
 #include "native_q3_team_combat.h"
+#include "qa/game_type.h"
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
 #include "native_q3_match.h"
@@ -288,7 +289,7 @@ bool application_native_q3_source_death_score(void *opaque, qa_actor_id target,
         qa_actor_id recipient = killer_present ? attacker : target;
         uint32_t slot = killer_present ? killer_slot : victim_slot;
         int32_t amount = !killer_present || qa_actor_id_equal(target, attacker) ||
-            (scope.game_type >= 3 && victim.session.team == killer.session.team) ? -1 : 1;
+            (qa_game_type_has_allies(scope.game_type) && victim.session.team == killer.session.team) ? -1 : 1;
         qa_vec3 origin;
         okay = qa_q3_source_current_origin_read(scope.game, target, &origin, error) &&
             score(&scope, recipient, slot, origin, amount, true, error) &&
@@ -307,7 +308,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     if (!client(scope, target, &target_slot, &victim, &target_ps, &target_present, error) ||
         !client(scope, attacker, &attacker_slot, &killer, &attacker_ps, &attacker_present, error)) return false;
     if (!target_present || !attacker_present || qa_actor_id_equal(target, attacker) ||
-        (scope->game_type >= 3 && victim.session.team == killer.session.team)) return true;
+        (qa_game_type_has_allies(scope->game_type) && victim.session.team == killer.session.team)) return true;
     int32_t team = victim.session.team, opposing = team == 1 ? 2 : team == 2 ? 1 : team;
     int32_t flag = team == 1 ? 7 : 8;
     int32_t enemy_flag = scope->game_type == 5 ? 9 : team == 1 ? 8 : 7;

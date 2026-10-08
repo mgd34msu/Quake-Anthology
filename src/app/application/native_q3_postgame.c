@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/text.h"
+#include "qa/game_type.h"
 #include "native_q3_postgame.h"
 #include "native_q3_console.h"
 #include "native_q3_rank.h"
@@ -142,7 +143,7 @@ static bool tournament_info(postgame_scope *scope, qa_error *error)
         if (scope->product == QA_Q3_TEAM_ARENA) {
             bool won = false;
             int32_t score1, score2;
-            if (scope->game_type >= 4) {
+            if (qa_game_type_is_objective(scope->game_type)) {
                 qa_q3_source_team_state team;
                 if (!qa_q3_source_team_state_read(scope->game, &team, error) || !live(scope, error)) return false;
                 score1 = team.team_scores[1]; score2 = team.team_scores[2];

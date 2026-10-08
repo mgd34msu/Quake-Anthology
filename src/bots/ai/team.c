@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_goal_record.h"
 #include "source_team_state.h"
 #include "source_timers.h"
@@ -235,7 +236,7 @@ static bool locate_requester(qa_bots *b,bot_ai_state *s,int32_t client,bool *fou
         initial_chat(b,s,"whereareyou",name,client,QA_BOT_CHAT_TELL,e);
 }
 bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text, qa_error *e) {
-    if(!text || !channel || b->source_goals.game_type<3) return true;
+    if(!text || !channel || !qa_game_type_is_team(b->source_goals.game_type)) return true;
     char source[256];size_t size=strlen(text);if(size>=sizeof(source)) size=sizeof(source)-1;
     memcpy(source,text,size);source[size]=0;text=source;
     token_number(&text);int32_t client=token_number(&text);token_number(&text);

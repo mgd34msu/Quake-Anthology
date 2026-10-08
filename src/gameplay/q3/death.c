@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 
 bool q3_cancel_kamikaze_timers(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     for (uint32_t i = 0; i < game->capacity; ++i) {
@@ -177,7 +178,7 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
         ? game->clients[receiver_slot].session.team : (int32_t)vc.team;
     int32_t killer_team = qa_q3_native_client_slot(game, attacker, &attacker_slot, NULL)
         ? game->clients[attacker_slot].session.team : (int32_t)kc.team;
-    if (game->options.rules.game_type >= 3 && victim_team == killer_team)
+    if (qa_game_type_has_allies(game->options.rules.game_type) && victim_team == killer_team)
         return true;
     qa_q3_player_state *player = &killer->state.player;
     if (method == 2) {

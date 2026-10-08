@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 
 typedef struct radius_context {
     qa_q3_game *game;
@@ -780,7 +781,7 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
         entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
         return true;
     if (qa_vec_length(qa_vec_sub(body.origin, origin)) > entry->state.missile.radius ||
-        (game->options.rules.game_type >= 3 && entry->state.missile.team == (qa_team_id)team))
+        (qa_game_type_has_allies(game->options.rules.game_type) && entry->state.missile.team == (qa_team_id)team))
         return true;
     qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q3);
     policy.contents_mask = 1;

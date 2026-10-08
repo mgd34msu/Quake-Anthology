@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_type.h"
 #include "source_event_state.h"
 #include "source_inventory.h"
 #include "source_player.h"
@@ -292,7 +293,7 @@ bool bot_ai_source_enemy_dead(qa_bots *b,bot_ai_state *s,const qa_bot_entity_inf
 static bool source_enemy_same_team(qa_bots *b,bot_ai_state *s,int32_t client,bool *same,qa_error *e) {
     int32_t self=bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT);
     *same=false;
-    if(self<0 || self>=64 || client<0 || client>=64 || b->source_goals.game_type<3) return true;
+    if(self<0 || self>=64 || client<0 || client>=64 || !qa_game_type_has_allies(b->source_goals.game_type)) return true;
     int32_t own,other;
     if(!bot_ai_source_team(b,self,&own,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
