@@ -16,10 +16,12 @@
 #include "../../presentation/q3_native/particles.h"
 #include "../../presentation/q3_native/events_internal.h"
 #include "../../presentation/q3_native/trajectory.h"
+#include "../../presentation/q3_native/selected_media.h"
 #include "../../presentation/q3/internal.h"
 #include "qa/hud.h"
 #include "qa/vfs_view_save.h"
 #include "qa/scene_marks.h"
+#include "qa/scene_world_save.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/unified_frame_visuals.h"
@@ -41,6 +43,7 @@ typedef struct unified_q3_bank {
     q3n_media *media;
     q3n_events *effects;
     q3n_weapons *weapons;
+    q3n_selected_media *selected_media;
     q3n_clients *clients;
     uint64_t character_publication, character_map_revision;
     q3n_particles *particles;
@@ -72,6 +75,9 @@ typedef struct unified_q3_ballistic {
     qa_q3_trajectory trajectory;
     int32_t bolt_weapon;
     bool projectile, flash, bolt, last_fire;
+    q3n_selected_weapon_state view_state;
+    q3n_selected_weapon_attachment *attachments;
+    size_t attachment_capacity;
 } unified_q3_ballistic;
 struct frontend_unified_q3 {
     qa_frontend *frontend;
@@ -416,6 +422,101 @@ static const q3n_weapon_settings weapon_settings={.rail_trail_time=400,.tracer_l
     .tracer_width=1,.tracer_chance=.4f,.draw_gun=true};
 static unified_q3_ballistic *ballistic_find(frontend_unified_q3 *o,unified_q3_bank *b,qa_actor_id id)
 { for(unified_q3_ballistic *v=o->ballistics;v;v=v->next)if(v->bank==b && qa_actor_id_equal(v->actor,id))return v;return NULL; }
+typedef struct selected_weapon_call {
+    frontend_unified_q3 *owner;
+    unified_q3_bank *bank;
+    qa_q3_scene_options options;
+    qa_scene_frame *frame;
+    int32_t time;
+    uint32_t order;
+} selected_weapon_call;
+static bool selected_weapon_current(void *context)
+{ return frontend_unified_q3_current(((selected_weapon_call *)context)->owner); }
+static bool selected_weapon_submit(void *context,qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *ref,qa_error *e)
+{
+    selected_weapon_call *call=context;
+    return qa_q3_presentation_completed_entity(call->bank->backend,assets,
+        frontend_unified_media_world(call->owner->media),ref,call->time,&call->options,
+        call->order++,call->frame,e);
+}
+bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified_model_state *model,
+    const qa_scene_world_input *world,qa_scene_frame *scene,bool *submitted,qa_error *e)
+{
+    *submitted=false;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    const qa_cvar_view *draw_gun=qa_cvars_find(qa_application_cvars(o->frontend->application),"cg_drawGun");
+    if ((draw_gun && !draw_gun->integer) || world->view.clip_enabled ||
+        o->frontend->seats[domain->physical_seat].q1_chase) return true;
+    qa_actor_id id;
+    if (!actor(o,model->actor,&id,e) || !enter(o,id,e)) return false;
+    unified_q3_bank *b=NULL;
+    bool okay=bank_read(o,model->content,model->render_equipment->instance,0,&b,e);
+    qa_q3_product product=okay?b->source.product:QA_Q3_ARENA;
+    if (okay && !b->selected_media) {
+        q3n_selected_media_options options={.content=b->files,.assets=b->assets,.product=product};
+        okay=q3n_selected_media_create(&options,&b->selected_media,e);
+    }
+    unified_q3_ballistic *state=okay?ballistic_find(o,b,id):NULL;
+    if (okay && !state) {
+        state=calloc(1,sizeof(*state));
+        if (!state) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected weapon animation");
+        else {state->actor=id;state->bank=b;state->next=o->ballistics;o->ballistics=state;}
+    }
+    const qa_unified_q3_weapon_view *wire=model->q3_weapon;
+    selected_weapon_call call={.owner=o,.bank=b,.frame=scene,.time=wire->time_ms};
+    qa_scene_world_options recipient;
+    if (okay) okay=qa_scene_world_options_read(frontend_unified_media_world(o->media),&recipient) &&
+        backend_read(b,world->view.viewport,e) && qa_q3_presentation_frame(b->backend,scene,world->view.viewport,e);
+    if (okay) {
+        call.options=(qa_q3_scene_options){.world=*world,.world_family=recipient.images.family,
+            .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.lod_scale=5,
+            .split_screen=o->frontend->options.seats>1};
+        qa_scene_state_default(&call.options.state);
+        qa_q3_player player={.product=product,.weapon=wire->weapon,.torsoAnim=wire->torso_animation};
+        q3n_selected_weapon_draw request={.player=&player,.time=wire->time_ms,
+            .presentation_weapon=wire->weapon,.has_last_fire=wire->has_last_fire_ms,
+            .last_fire=wire->last_fire_ms,.firing=wire->firing,
+            .reduced_flashes=o->preferences.reduced_flashes,.context=&call,
+            .current=selected_weapon_current,.submit=selected_weapon_submit};
+        q3n_selected_weapon_view camera={.origin=world->view.origin,
+            .angles=qa_axes_angles(world->view.axis),.horizontal_speed=wire->horizontal_speed,
+            .bob_cycle=wire->bob_cycle,.draw_gun=true};
+        q3n_selected_weapon_media media;
+        if (!model->anchor) {
+            q3n_selected_media_request load={.weapon=wire->weapon,.view_required=true,
+                .context=&call,.current=selected_weapon_current};
+            q3n_selected_animation animation;bool character;
+            okay=q3n_selected_media_prepare(b->selected_media,&load,&media,e) &&
+                q3n_selected_media_animation(b->selected_media,&animation,&character,e);
+            if (okay) {camera.animations=animation.config;
+                okay=q3n_weapons_selected_view(b->weapons,&media,&state->view_state,&request,&camera,submitted,e);}
+        } else {
+            media=(q3n_selected_weapon_media){.assets=b->assets};
+            okay=qa_q3_register_model(b->assets,model->path,&media.gun,e) &&
+                qa_q3_register_model(b->assets,model->anchor->path,&media.hands,e);
+            if (okay && model->attachment_count>state->attachment_capacity) {
+                q3n_selected_weapon_attachment *attachments=realloc(state->attachments,
+                    model->attachment_count*sizeof(*attachments));
+                if (!attachments) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected weapon attachments");
+                else {state->attachments=attachments;state->attachment_capacity=model->attachment_count;}
+            }
+            for (size_t i=0;okay && i<model->attachment_count;++i) {
+                state->attachments[i].tag=model->attachments[i].tag;
+                okay=qa_q3_register_model(b->assets,model->attachments[i].path,&state->attachments[i].model,e);
+            }
+            q3n_selected_weapon_authored_view authored={.camera=camera,.anchor_tag=model->anchor->tag,
+                .anchor_offset=model->anchor->offset,
+                .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
+                .fov_above=model->anchor->fov_above,.fov_scale=model->anchor->fov_scale,
+                .frame=(int32_t)model->frame,.old_frame=(int32_t)model->old_frame,.back_lerp=model->back_lerp,
+                .attachments=state->attachments,.attachment_count=model->attachment_count};
+            if (okay) okay=q3n_weapons_selected_authored_view(b->weapons,&media,&state->view_state,
+                &request,&authored,submitted,e);
+        }
+    }
+    return leave(o,okay,e);
+}
 static bool ballistic_sound(frontend_unified_q3 *o,unified_q3_bank *b,int32_t handle,qa_actor_id id,
     qa_vec3 origin,int32_t time,int32_t channel,float volume,qa_error *e)
 {
@@ -1022,6 +1123,7 @@ static bool q3_returned(const frontend_unified_q3 *o)
     for (unified_q3_bank *b=o->banks; b; b=b->next)
         if ((b->effects && !q3n_events_idle(b->effects)) || (b->media && !q3n_media_idle(b->media)) ||
             (b->weapons && !q3n_weapons_idle(b->weapons)) || (b->particles && !q3n_particles_idle(b->particles)) ||
+            (b->selected_media && !q3n_selected_media_idle(b->selected_media)) ||
             (b->backend && !qa_q3_presentation_idle(b->backend))) return false;
     return true;
 }
@@ -1041,12 +1143,13 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         unified_q3_bank *b=o->banks;
         if (b->backend && !qa_q3_presentation_destroy(b->backend,e)) return false;
         q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
+        q3n_selected_media_destroy(b->selected_media);
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); q3n_clients_destroy(b->clients);
         o->banks=b->next; free(b->content);free(b->activation); free(b);
     }
     while (o->characters) { unified_q3_character *c=o->characters; o->characters=c->next;
         free(c); }
-    while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
+    while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v->attachments);free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o->character_order); free(o->lights); free(o); *address=NULL; return true;
 }

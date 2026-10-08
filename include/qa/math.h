@@ -38,6 +38,13 @@ static inline qa_vec3 qa_vec_normalize(qa_vec3 v) {
     float length = qa_vec_length(v);
     return length > 0.0f ? qa_vec_scale(v, 1.0f/length) : qa_v3(0, 0, 0);
 }
+static inline qa_vec3 qa_axes_angles(const qa_vec3 axis[3]) {
+    const float degrees = 57.29577951308232f;
+    float horizontal = sqrtf(axis[0].x*axis[0].x + axis[0].y*axis[0].y);
+    return qa_v3(atan2f(-axis[0].z, horizontal)*degrees,
+                 atan2f(axis[0].y, axis[0].x)*degrees,
+                 atan2f(axis[1].z, axis[2].z)*degrees);
+}
 static inline qa_vec3 qa_vec_lerp(qa_vec3 a, qa_vec3 b, float t) {
     return qa_vec_add(a, qa_vec_scale(qa_vec_sub(b, a), t));
 }

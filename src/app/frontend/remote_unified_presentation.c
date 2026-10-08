@@ -1208,6 +1208,12 @@ static bool model_after(void *context,qa_actor_id actor,const char *content,cons
     return frontend_unified_q2_model_after(((unified_presentation *)context)->q2,actor,content,path,
         input_value,frame_value,error);
 }
+static bool selected_weapon(void *context,const qa_unified_model_state *model_value,
+    const qa_scene_world_input *world_value,qa_scene_frame *frame_value,bool *submitted,qa_error *error)
+{
+    return frontend_unified_q3_selected_weapon(((unified_presentation *)context)->q3,
+        model_value,world_value,frame_value,submitted,error);
+}
 static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_scene_vec4 *value,
     bool damage_present,const qa_scene_vec4 *damage,qa_scene_rect viewport,qa_scene_frame *frame_value,qa_error *error)
 {
@@ -1223,7 +1229,7 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
     bool source_listener=false;
     frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=render_status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.entity_beam=entity_beam,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
         .world=world,.reflected_world=reflected_world,.world_models=world_models,.particles=particles,.dlights=dlights,.blend=blend,
-        .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after};
+        .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after,.selected_weapon=selected_weapon};
     bool okay=frontend_remote_unified_prediction_read(p->prediction,&prediction,error) &&
         events_enter(p,error) && q3_factories_ensure(p,error) && q3_factories_prediction_prepare(p,error) &&
         frontend_unified_render_draw(p->render,&prediction,&children,stereo,listener,error);

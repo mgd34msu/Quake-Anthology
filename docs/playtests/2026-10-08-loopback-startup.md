@@ -78,3 +78,14 @@ A Slack retest note was posted after installation. The receipt is
 by `the913-dee3546e-wayland-20261008/qualification-reviewed.json`.
 The mixed view-weapon fix is a subsequent change and is not included in this
 installation.
+
+The subsequent mixed diagnostic found native character weapon 2 and selected
+arsenal weapon 3 in the same received frame. The selected shotgun row had
+visibility enabled, with 25 shells in inventory; draw-gun was enabled. The receiving model renderer had
+no consumer for its serialized Q3 animation, hands and attachment continuation.
+It submitted the bare gun at the camera instead. The existing selected-weapon
+renderer now consumes that continuation with the common camera, keeping its
+animation and asset cache in the persistent received owner. Character state is
+left intact. Both strict compilers, the full build and core checks pass; live
+qualification of this change is pending. The diagnostic index is
+`qa-the907-mixed-1a6291ca-q3-view-state.json`.

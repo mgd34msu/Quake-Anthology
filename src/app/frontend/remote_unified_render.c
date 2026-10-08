@@ -21,6 +21,7 @@
 #include <string.h>
 
 typedef struct unified_render_model {
+    const qa_unified_model_state *source;
     frontend_unified_model media;
     qa_scene_model_input input;
     const qa_product *product;
@@ -180,6 +181,7 @@ static bool model_beam_read(unified_render_model *m, qa_error *e)
 static bool model_read(frontend_unified_render *r,const qa_unified_model_state *source,
     unified_render_model *m,qa_error *e)
 {
+    m->source=source;
     m->flat_beam=source->family==QA_GAME_Q2 && (source->render_flags&128u) && source->path && !*source->path;
     qa_scene_family kind=source->family==QA_GAME_Q1?QA_SCENE_Q1:source->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
     bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
@@ -410,6 +412,12 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             if (!unified_scene_current(c))
                 return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified view model lost its completed EQUIPMENT receipt");
             if (owned) continue;
+        }
+        if (m->input.view_model && m->source->q3_weapon && children && children->selected_weapon) {
+            bool submitted=false;
+            if (!children->selected_weapon(children->context,m->source,world,frame,&submitted,e)) return false;
+            m->submitted=submitted;m->submitted_cycle=frame->sequence;
+            continue;
         }
         qa_scene_model_input input=m->input; input.view=world->view;
         qa_vec3 position=m->origin,previous=m->has_previous_origin?m->previous_origin:position;

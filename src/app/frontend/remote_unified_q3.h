@@ -4,6 +4,7 @@
 #include "qa/persistence_content.h"
 #include "qa/q3_source_scene_bank.h"
 #include "qa/unified_frame_events.h"
+#include "qa/unified_frame_visuals.h"
 #include "../../presentation/q3_native/player_fx.h"
 typedef struct frontend_unified_q3 frontend_unified_q3;
 struct frontend_unified_events;
@@ -22,6 +23,8 @@ bool frontend_unified_q3_frame_ready(frontend_unified_q3 *, const qa_unified_doc
 void frontend_unified_q3_frame_commit(frontend_unified_q3 *);
 void frontend_unified_q3_frame_abort(frontend_unified_q3 *);
 bool frontend_unified_q3_world(frontend_unified_q3 *, const qa_scene_view *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
+bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *,const qa_unified_model_state *,
+    const qa_scene_world_input *,qa_scene_frame *,bool *submitted,qa_error *);
 bool frontend_unified_q3_reflected_world(frontend_unified_q3 *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_q3_lights(frontend_unified_q3 *, const qa_scene_view *, const qa_scene_world_input *, const qa_scene_light **, size_t *, qa_error *);
 /* The pre-WORLD sampler owns this actual shared Source bank. Component lights
