@@ -369,9 +369,6 @@ struct qa_application {
     application_protocol_record *protocol_events;
     size_t protocol_event_count, protocol_event_capacity;
     uint64_t protocol_events_generation;
-    application_event_journal_record *event_journal;
-    size_t event_journal_count, event_journal_capacity;
-    uint64_t event_sequence;
     uint64_t simulation_event_sequence;
     application_unified_event_record *unified_events;
     size_t unified_event_count, unified_event_capacity;

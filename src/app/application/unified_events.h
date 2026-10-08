@@ -4,22 +4,6 @@
 #include "network_unified.h"
 #include "qa/unified_frame_events.h"
 
-typedef enum application_event_queue {
-    APPLICATION_EVENT_BUILTIN, APPLICATION_EVENT_Q2_MAP,
-    APPLICATION_EVENT_Q3_MAP, APPLICATION_EVENT_Q2_PLAYER,
-    APPLICATION_EVENT_PROTOCOL
-} application_event_queue;
-
-/* References the actual payload owner. Sequence is allocated by emit, before
- * any consumer groups events by family or receiver. */
-typedef struct application_event_journal_record {
-    uint64_t sequence;
-    application_event_queue queue;
-    size_t index;
-    qa_source_frame frame;
-    bool has_frame;
-} application_event_journal_record;
-
 typedef struct application_unified_event_record {
     qa_unified_presentation_payload *presentation;
     qa_unified_simulation_payload *simulation;
@@ -72,13 +56,23 @@ typedef struct application_unified_event_source {
 bool application_unified_event_source_read(qa_application *, qa_actor_owner,
     application_unified_event_source *, qa_error *);
 
+typedef struct application_persistent_key {
+    uint64_t generation, selector, actor_registry, actor_generation;
+    uint64_t recipient_registry, recipient_generation;
+    uint32_t provider, domain, actor_slot, recipient_slot;
+    int32_t channel;
+    qa_string_id resource;
+} application_persistent_key;
+
 typedef struct application_unified_persistent_event {
     application_unified_event_record event;
-    qa_buffer key;
+    application_persistent_key key;
 } application_unified_persistent_event;
 
 bool application_unified_persistent_key(qa_application *,
-    const application_unified_event_record *, qa_buffer *, bool *remove, qa_error *);
+    const application_unified_event_record *, application_persistent_key *, bool *remove, qa_error *);
+bool application_unified_persistent_key_equal(const application_persistent_key *,
+    const application_persistent_key *);
 void application_unified_persistent_dispose(qa_application *);
 bool application_unified_persistent_retire(qa_application *, qa_actor_owner,
     qa_actor_id recipient, qa_error *);
@@ -168,10 +162,6 @@ bool application_unified_event_actors_valid(qa_application *, const application_
 bool application_unified_event_recipient(qa_application *, const application_unified_event_record *,
     bool simulation, qa_actor_id *, qa_error *);
 bool application_unified_damage_emit(qa_application *, const qa_damage_outcome *, qa_error *);
-
-bool application_event_journal_reserve(qa_application *, qa_error *);
-void application_event_journal_append(qa_application *, application_event_queue,
-    size_t index, qa_actor_owner);
 
 typedef struct application_unified_events {
     qa_unified_document **controls;

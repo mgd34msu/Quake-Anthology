@@ -291,7 +291,6 @@ bool application_emit_q2_map(application_provider *provider,
                 (qa_vec3){0},&audience,error)) return false;
     }
     bool ready=reserve_q2_map_event(application,error) &&
-        application_event_journal_reserve(application,error) &&
         application_native_q2_delivery_retain(application,&audience,&retained,error);
     application_native_q2_delivery_dispose(&audience);
     if (!ready) return false;
@@ -322,8 +321,7 @@ bool application_emit_q2_map(application_provider *provider,
     }};
     record->source.event.arguments = arguments;
     record->source.event.levels = levels;
-    application_event_journal_append(application, APPLICATION_EVENT_Q2_MAP,
-        application->q2_map_event_count++, provider->owner);
+    ++application->q2_map_event_count;
     return true;
 }
 
@@ -342,8 +340,7 @@ bool application_emit_q3_map(application_provider *provider,
         !qa_vec_finite(event->destination) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid Q3 map event");
-    if (!reserve_q3_map_event(application, error) ||
-        !application_event_journal_reserve(application, error))
+    if (!reserve_q3_map_event(application, error))
         return false;
     application->q3_map_events[application->q3_map_event_count] =
         (qa_application_q3_map_event){
@@ -351,8 +348,7 @@ bool application_emit_q3_map(application_provider *provider,
             .time_ns = qa_session_elapsed(application->session),
             .event = *event,
         };
-    application_event_journal_append(application, APPLICATION_EVENT_Q3_MAP,
-        application->q3_map_event_count++, provider->owner);
+    ++application->q3_map_event_count;
     return true;
 }
 
@@ -468,8 +464,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error) ||
-        !reserve_event(application, error) ||
-        !application_event_journal_reserve(application, error))
+        !reserve_event(application, error))
         return false;
 
     qa_builtin_message_arg *arguments = NULL;
@@ -495,8 +490,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
     record->event = *event;
     record->event.arguments = arguments;
     record->event.prompt_choices = choices;
-    application_event_journal_append(application, APPLICATION_EVENT_BUILTIN,
-        application->event_count++, event->provider);
+    ++application->event_count;
     return true;
 }
 
@@ -591,7 +585,6 @@ bool application_emit_q2_player(application_provider *provider,
         sizeof(*storage), 32, error);
     if (!storage) return false;
     application->q2_player_events = storage;
-    if (!application_event_journal_reserve(application,error)) return false;
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
@@ -624,8 +617,7 @@ bool application_emit_q2_player(application_provider *provider,
     storage[application->q2_player_event_count] = (qa_application_q2_player_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied, .recipients = recipients, .recipient_count = recipient_count};
-    application_event_journal_append(application, APPLICATION_EVENT_Q2_PLAYER,
-        application->q2_player_event_count++, provider->owner);
+    ++application->q2_player_event_count;
     return true;
 }
 
@@ -661,7 +653,6 @@ static bool emit_protocol(application_provider *provider,
         sizeof(*storage), 32, error);
     if (!storage) return false;
     application->protocol_events = storage;
-    if (!application_event_journal_reserve(application,error)) return false;
     uint8_t *payload = event->payload.size ? qa_arena_alloc(&application->event_arena,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) return false;
@@ -720,8 +711,7 @@ static bool emit_protocol(application_provider *provider,
     if (!application_unified_q2_protocol_event(provider, &record.event,
             delivery ? &record.q2 : NULL, error)) return false;
     storage[application->protocol_event_count] = record;
-    application_event_journal_append(application, APPLICATION_EVENT_PROTOCOL,
-        application->protocol_event_count++, provider->owner);
+    ++application->protocol_event_count;
     return true;
 }
 
@@ -858,7 +848,6 @@ static bool clear_events(qa_application *application, qa_error *error)
     application->q3_map_event_count = 0;
     application->q2_player_event_count = 0;
     application->protocol_event_count = 0;
-    application->event_journal_count = 0;
     qa_arena_reset(&application->event_arena);
     application_equipment_events_clear(gear);
     return true;

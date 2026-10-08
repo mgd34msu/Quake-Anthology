@@ -364,7 +364,6 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->q3_map_events);
     free(application->q2_player_events);
     free(application->protocol_events);
-    free(application->event_journal);
     application_unified_events_clear(application);
     free(application->unified_events);
     application_unified_persistent_dispose(application);

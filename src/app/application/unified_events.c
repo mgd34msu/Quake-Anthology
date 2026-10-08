@@ -590,18 +590,12 @@ static bool record_clone(const application_unified_event_record *source,
 }
 
 typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE } persistent_domain;
-typedef struct persistent_key {
-    uint64_t generation, selector, actor_registry, actor_generation, recipient_registry, recipient_generation;
-    uint32_t provider, domain, actor_slot, recipient_slot;
-    int32_t channel;
-} persistent_key;
-
 bool application_unified_persistent_key(qa_application *app, const application_unified_event_record *row,
-    qa_buffer *out, bool *remove, qa_error *e)
+    application_persistent_key *out, bool *remove, qa_error *e)
 {
-    (void)app; *remove = false;
+    *out = (application_persistent_key){0}; *remove = false;
     if (!row->presentation) return true;
-    persistent_key key; memset(&key, 0, sizeof(key)); const char *path = NULL;
+    application_persistent_key key = {0}; const char *path = NULL;
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
         const qa_unified_builtin_event *v = &p->value.builtin;
@@ -632,18 +626,21 @@ bool application_unified_persistent_key(qa_application *app, const application_u
     key.provider = row->owner_generation ? row->provider : 0; key.generation = row->owner_generation;
     key.recipient_registry = row->recipient.registry; key.recipient_generation = row->recipient.generation;
     key.recipient_slot = row->recipient.slot;
-    size_t path_size = path ? strlen(path) + 1 : 0;
-    if (path_size > SIZE_MAX - sizeof(key)) return application_fail(e, QA_ERROR_MEMORY, "Persistent Source key extent overflows");
-    out->data = malloc(sizeof(key) + path_size);
-    if (!out->data) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual Source persistent domain");
-    memcpy(out->data, &key, sizeof(key));
-    if (path_size) memcpy(out->data + sizeof(key), path, path_size);
-    out->size = sizeof(key) + path_size; return true;
+    if (path && !qa_strings_intern_cstr(qa_session_strings(app->session), path, &key.resource, e)) return false;
+    *out = key; return true;
+}
+bool application_unified_persistent_key_equal(const application_persistent_key *a,
+    const application_persistent_key *b)
+{
+    return a->generation == b->generation && a->selector == b->selector &&
+        a->actor_registry == b->actor_registry && a->actor_generation == b->actor_generation &&
+        a->recipient_registry == b->recipient_registry && a->recipient_generation == b->recipient_generation &&
+        a->provider == b->provider && a->domain == b->domain && a->actor_slot == b->actor_slot &&
+        a->recipient_slot == b->recipient_slot && a->channel == b->channel && a->resource == b->resource;
 }
 void application_unified_persistent_dispose(qa_application *app)
 {
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
-        qa_buffer_free(&app->unified_persistent[i].key);
         application_unified_event_record_dispose(&app->unified_persistent[i].event);
     }
     free(app->unified_persistent); app->unified_persistent = NULL;
@@ -665,7 +662,7 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
         application_unified_persistent_event row = app->unified_persistent[i];
         if (owner ? row.event.provider == owner : qa_actor_id_equal(row.event.recipient, recipient)) {
-            qa_buffer_free(&row.key); application_unified_event_record_dispose(&row.event);
+            application_unified_event_record_dispose(&row.event);
         } else app->unified_persistent[kept++] = row;
     }
     app->unified_persistent_count = kept;
@@ -674,49 +671,45 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
 }
 static bool persistent_record(qa_application *app, const application_unified_event_record *event, qa_error *e)
 {
-    qa_buffer key = {0}; bool remove;
+    application_persistent_key key = {0}; bool remove;
     if (!application_unified_persistent_key(app, event, &key, &remove, e)) return false;
-    if (!key.size) return true;
+    if (!key.domain) return true;
     size_t index = 0;
     while (index < app->unified_persistent_count) {
-        const qa_buffer *candidate = &app->unified_persistent[index].key;
-        if (key.size == candidate->size && !memcmp(key.data, candidate->data, key.size)) break;
+        const application_persistent_key *candidate = &app->unified_persistent[index].key;
+        if (application_unified_persistent_key_equal(&key, candidate)) break;
         ++index;
     }
-    if (remove && index == app->unified_persistent_count) { qa_buffer_free(&key); return true; }
-    if (app->unified_persistent_revision == UINT64_MAX) { qa_buffer_free(&key); return application_fail(e, QA_ERROR_FORMAT, "Presentation revision exhausted"); }
+    if (remove && index == app->unified_persistent_count) return true;
+    if (app->unified_persistent_revision == UINT64_MAX) return application_fail(e, QA_ERROR_FORMAT, "Presentation revision exhausted");
     application_unified_event_record retained = {0};
     if (!remove) {
         application_unified_event_record presentation = *event;
         presentation.simulation = NULL; presentation.simulation_sequence = 0; presentation.link_presentation = false;
-        if (!record_clone(&presentation, &retained, e)) { qa_buffer_free(&key); return false; }
+        if (!record_clone(&presentation, &retained, e)) return false;
         if (index == app->unified_persistent_capacity) {
             size_t capacity = index ? index * 2 : 32;
             if (capacity < index || capacity > SIZE_MAX / sizeof(*app->unified_persistent)) {
-                application_unified_event_record_dispose(&retained); qa_buffer_free(&key);
+                application_unified_event_record_dispose(&retained);
                 return application_fail(e, QA_ERROR_MEMORY, "Persistent presentation extent exhausted");
             }
             void *rows = realloc(app->unified_persistent, capacity * sizeof(*app->unified_persistent));
-            if (!rows) { application_unified_event_record_dispose(&retained); qa_buffer_free(&key); return application_fail(e, QA_ERROR_MEMORY, "Retaining persistent presentation slots"); }
+            if (!rows) { application_unified_event_record_dispose(&retained); return application_fail(e, QA_ERROR_MEMORY, "Retaining persistent presentation slots"); }
             app->unified_persistent = rows; app->unified_persistent_capacity = capacity;
         }
     }
     if (index < app->unified_persistent_count) {
-        qa_buffer_free(&app->unified_persistent[index].key);
         application_unified_event_record_dispose(&app->unified_persistent[index].event);
         memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
             (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
     }
-    if (remove) qa_buffer_free(&key);
-    else app->unified_persistent[app->unified_persistent_count++] = (application_unified_persistent_event){.event = retained, .key = key};
+    if (!remove) app->unified_persistent[app->unified_persistent_count++] = (application_unified_persistent_event){.event = retained, .key = key};
     ++app->unified_persistent_revision; return true;
 }
-static bool persistent_domain_equal(const qa_buffer *a, const qa_buffer *b, bool slot)
+static bool persistent_domain_equal(const application_persistent_key *a, const application_persistent_key *b, bool slot)
 {
-    persistent_key x, y;
-    memcpy(&x, a->data, sizeof(x)); memcpy(&y, b->data, sizeof(y));
-    if (x.domain == PERSIST_UNIQUE || x.domain == PERSIST_SOUND || x.domain != y.domain || x.selector != y.selector) return false;
-    return !slot || (x.recipient_registry == y.recipient_registry && x.recipient_generation == y.recipient_generation && x.recipient_slot == y.recipient_slot);
+    if (a->domain == PERSIST_UNIQUE || a->domain == PERSIST_SOUND || a->domain != b->domain || a->selector != b->selector) return false;
+    return !slot || (a->recipient_registry == b->recipient_registry && a->recipient_generation == b->recipient_generation && a->recipient_slot == b->recipient_slot);
 }
 static bool journal_capacity(qa_application *app, size_t additions, qa_error *e)
 {
@@ -948,7 +941,7 @@ bool application_unified_events_restore_finish(qa_application *app, qa_error *e)
     size_t count = app->unified_event_count + app->unified_persistent_count;
     if (!count) return true;
     application_unified_event_record *staged = calloc(count, sizeof(*staged));
-    qa_buffer *keys = app->unified_persistent_count ? calloc(app->unified_persistent_count, sizeof(*keys)) : NULL;
+    application_persistent_key *keys = app->unified_persistent_count ? calloc(app->unified_persistent_count, sizeof(*keys)) : NULL;
     if (!staged || (app->unified_persistent_count && !keys)) { free(staged); free(keys); return application_fail(e, QA_ERROR_MEMORY, "Rebinding imported Source event actors"); }
     actor_check check = {.app = app, .checkpoint = true, .rebind = true}; bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
@@ -962,7 +955,7 @@ bool application_unified_events_restore_finish(qa_application *app, qa_error *e)
         r->payload_checkpoint = false; r->recipient_saved = r->simulation_recipient_saved = (qa_saved_actor_id){0};
         if (ok && i >= app->unified_event_count) {
             bool remove;
-            ok = application_unified_persistent_key(app, r, keys + i - app->unified_event_count, &remove, e) && keys[i - app->unified_event_count].size && !remove;
+            ok = application_unified_persistent_key(app, r, keys + i - app->unified_event_count, &remove, e) && keys[i - app->unified_event_count].domain && !remove;
         }
     }
     if (ok) for (size_t i = 0; i < count; ++i) {
@@ -970,12 +963,10 @@ bool application_unified_events_restore_finish(qa_application *app, qa_error *e)
         if (!row->payload_checkpoint) continue;
         application_unified_event_record_dispose(row); *row = staged[i]; staged[i] = (application_unified_event_record){0};
         if (i >= app->unified_event_count) {
-            qa_buffer *key = &app->unified_persistent[i - app->unified_event_count].key;
-            qa_buffer_free(key); *key = keys[i - app->unified_event_count]; keys[i - app->unified_event_count] = (qa_buffer){0};
+            app->unified_persistent[i - app->unified_event_count].key = keys[i - app->unified_event_count];
         }
     }
     for (size_t i = 0; i < count; ++i) application_unified_event_record_dispose(staged + i);
-    for (size_t i = 0; i < app->unified_persistent_count; ++i) qa_buffer_free(keys + i);
     free(staged); free(keys); return ok;
 }
 
@@ -1147,37 +1138,4 @@ void application_unified_events_dispose(application_unified_events *events)
     if (!events) return;
     for (size_t i = 0; i < events->control_count; ++i) qa_unified_document_destroy(events->controls[i]);
     free(events->controls); *events = (application_unified_events){0};
-}
-
-bool application_event_journal_reserve(qa_application *app, qa_error *error)
-{
-    if (!app || app->event_sequence >= UINT64_MAX)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source event sequence is exhausted");
-    if (app->event_journal_count < app->event_journal_capacity) return true;
-    size_t capacity = app->event_journal_capacity ? app->event_journal_capacity : 64;
-    if (app->event_journal_capacity) {
-        if (capacity > SIZE_MAX / 2)
-            return application_fail(error, QA_ERROR_MEMORY, "Source event journal capacity is exhausted");
-        capacity *= 2;
-    }
-    if (capacity > SIZE_MAX / sizeof(*app->event_journal))
-        return application_fail(error, QA_ERROR_MEMORY, "Source event journal extent overflows");
-    void *rows = realloc(app->event_journal, capacity * sizeof(*app->event_journal));
-    if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining Source event order");
-    app->event_journal = rows;
-    app->event_journal_capacity = capacity;
-    return true;
-}
-
-void application_event_journal_append(qa_application *app, application_event_queue queue,
-    size_t index, qa_actor_owner owner)
-{
-    application_event_journal_record record = {.sequence = app->event_sequence++,
-        .queue = queue, .index = index};
-    qa_clock_state clock;
-    if (owner && qa_session_clock(app->session, owner, &clock)) {
-        record.frame = clock.frame;
-        record.has_frame = true;
-    }
-    app->event_journal[app->event_journal_count++] = record;
 }
