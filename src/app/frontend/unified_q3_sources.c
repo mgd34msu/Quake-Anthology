@@ -122,7 +122,8 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
     }
     if (ok) ok = v->provider && v->provider->registered && v->provider->selection.runtime == QA_PROGRAM_BUILTIN &&
         v->provider->selection.clock.kind == QA_CLOCK_Q3 &&
-        qa_executable_recipe_content_read(o->recipe,r->content,&v->files,&v->content_product) &&
+        (restoring ? qa_executable_recipe_content_read(o->recipe,r->content,&v->files,&v->content_product) :
+            qa_executable_recipe_content(o->recipe,r->content,&v->files,&v->content_product,e)) &&
         qa_vfs_lookup_equal(v->files,v->provider->content) && v->content_product->family == QA_GAME_Q3 &&
         v->content_product->id == v->provider->selection.product;
     qa_actor_id viewer; uint32_t source_entity;
