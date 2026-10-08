@@ -976,19 +976,17 @@ bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_w
 static bool source_command_event(frontend_unified_q3 *o,const qa_unified_presentation_event *row,bool command,qa_error *e)
 {
     const qa_unified_q3_event *v=&row->payload.value.q3;
-    bool okay=true,matched=false;
+    bool okay=true;
     size_t count=frontend_remote_unified_presentation_q3_client_count(o->replica);
     for(size_t i=0;okay&&i<count;++i){
         frontend_unified_q3_client *client=frontend_remote_unified_presentation_q3_client(o->replica,i);
         if(!frontend_unified_q3_client_event_matches(client,row->provider,row->content,o->epoch))continue;
-        matched=true;
         if(command)okay=frontend_unified_q3_client_server_command(client,row->sequence,v->client,v->text,e);
         /* Configstring notifications can be intermediate writes. The CLIENT
          * compares the committed Source dictionary and reaches its own cs. */
         if(okay)okay=current(o,e);
     }
-    return okay&&(matched||frontend_unified_fail(e,QA_ERROR_ARGUMENT,
-        "Q3 Source event has no matching retained CLIENT activation"));
+    return okay;
 }
 bool frontend_unified_q3_presentation(frontend_unified_q3 *o,const qa_unified_presentation_event *row,
     bool *mirrored,qa_error *e)
