@@ -397,7 +397,7 @@ static bool haptic_device(struct seat_route *r, qa_error *error) {
     r->haptic_instance = instance;
     return ok;
 }
-static bool capture(qa_input_platform *p, qa_error *error) {
+bool qa_input_platform_sync_focus(qa_input_platform *p, qa_error *error) {
     if (!p->window)
         return true;
     SDL_Window *window = SDL_GetWindowFromID(p->window);
@@ -683,7 +683,7 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
     if (!resolve(p, time, retained, error))
         ok = false;
     p->source_slot = source_route(p->seats, source, p->joystick_instance);
-    if (!capture(p, error))
+    if (!qa_input_platform_sync_focus(p, error))
         ok = false;
     return ok;
 }
@@ -724,7 +724,7 @@ bool qa_input_platform_routes_reindex(qa_input_platform *p,const int old_slots[4
         if (!(retained & (1u<<i))) free((void *)selections[i].serial);
     memset(p->keys,0,sizeof(p->keys)); p->keyboard=keyboard;
     p->source_slot=-1; p->midi_slot=-1;
-    return capture(p,error);
+    return qa_input_platform_sync_focus(p,error);
 }
 bool qa_input_platform_retain(qa_input_platform *p, unsigned mask, int keyboard, double time,
                               qa_error *error) {
@@ -765,7 +765,7 @@ bool qa_input_platform_keyboard(qa_input_platform *p, int slot, double time, qa_
         memset(p->keys, 0, sizeof(p->keys));
         p->keyboard = slot;
     }
-    return capture(p, error) && ok;
+    return qa_input_platform_sync_focus(p, error) && ok;
 }
 bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, double time,
                               qa_error *error) {
@@ -774,7 +774,7 @@ bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, d
     if (display && !qa_display_info_get(display, &info, error))
         return false;
     if (p->window == info.window_id)
-        return capture(p, error);
+        return qa_input_platform_sync_focus(p, error);
     bool ok = release_all(p, time, error);
     if (p->window) {
         SDL_Window *old = SDL_GetWindowFromID(p->window);
@@ -803,7 +803,7 @@ bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, d
                     ok = false;
             }
     }
-    return capture(p, error) && ok;
+    return qa_input_platform_sync_focus(p, error) && ok;
 }
 bool qa_input_platform_routes_prepared(qa_input_platform *p,qa_input_seat *const seats[4],
     const qa_controller_selection selections[4],int keyboard,double time,
@@ -915,7 +915,7 @@ static bool window_focus(qa_input_platform *p, bool focused, double time, qa_err
                 .kind = QA_INPUT_EVENT_FOCUS, .time_ms = time, .down = focused};
             if (!qa_input_seat_event(p->seats[i].seat, &translated, NULL, error)) ok = false;
         }
-    return capture(p, error) && finish_calibration(p, error) && ok;
+    return qa_input_platform_sync_focus(p, error) && finish_calibration(p, error) && ok;
 }
 static bool native_event(qa_input_platform *p, const SDL_Event *event, double time,
     bool *handled, qa_error *error) {
@@ -1145,7 +1145,7 @@ static bool native_event(qa_input_platform *p, const SDL_Event *event, double ti
     default:
         return true;
     }
-    return qa_input_seat_event(seat, &translated, NULL, error) && capture(p, error);
+    return qa_input_seat_event(seat, &translated, NULL, error) && qa_input_platform_sync_focus(p, error);
 }
 static int midi_compare(const void *left, const void *right) {
     const qa_midi_device *a = left, *b = right;
@@ -2529,7 +2529,7 @@ bool qa_input_platform_restart(qa_input_platform *p, double time, qa_error *erro
     }
     if (p->native_startup != INPUT_NATIVE_READY && !p->native_initializing)
         return initialize_native(p, time, error);
-    return restart_devices(p, time, error) && capture(p, error);
+    return restart_devices(p, time, error) && qa_input_platform_sync_focus(p, error);
 }
 static bool initialize_native(qa_input_platform *p, double time, qa_error *error) {
     if (p->native_startup == INPUT_NATIVE_READY) return true;
@@ -2559,7 +2559,7 @@ static bool initialize_native(qa_input_platform *p, double time, qa_error *error
             success = qa_input_seat_event(p->seats[i].seat, &event, NULL, error);
         }
     if (success) {
-        success = capture(p, error);
+        success = qa_input_platform_sync_focus(p, error);
         if (success && window) SDL_SetWindowGrab(window, p->capture ? SDL_TRUE : SDL_FALSE);
     }
     p->native_initializing = false;
@@ -2855,7 +2855,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
         p->midi_reads = 0;
         if (!midi_release(p, now, error)) return false;
     }
-    return finish_calibration(p, error) && capture(p, error);
+    return finish_calibration(p, error) && qa_input_platform_sync_focus(p, error);
 }
 
 bool qa_input_platform_dispatch(qa_input_platform *p, const qa_platform_event *event,

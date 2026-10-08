@@ -71,6 +71,8 @@ bool qa_input_platform_window(qa_input_platform *, const qa_display *, double ti
 /* Collection copies SDL records and timestamps them before deferred dispatch.
  * A NULL input owner collects shutdown/window events for a dedicated host.
  * Drain collection before sampling so device changes precede physical reads. */
+/* Apply logical focus changes before the next physical text event. */
+bool qa_input_platform_sync_focus(qa_input_platform *,qa_error *);
 void qa_input_platform_collect(qa_input_platform *, qa_platform_events *, uint64_t now_ns);
 /* Queues physical state and MIDI bytes without delivering input. Drain this
  * snapshot to apply routes and derived joystick/haptic/capture maintenance. */

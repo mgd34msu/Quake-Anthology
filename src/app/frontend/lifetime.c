@@ -600,17 +600,15 @@ bool frontend_outputs_create_detached(qa_frontend *f,qa_frontend *active,
 { return outputs_create(f,NULL,active,native,error); }
 bool frontend_constructor_pending(const qa_frontend *f)
 { return f && f->constructor; }
-bool frontend_constructor_advance(qa_frontend *f,uint64_t elapsed_ns,bool *complete,qa_error *error)
+bool frontend_constructor_advance(qa_frontend *f,bool *complete,qa_error *error)
 {
-    if (!f || !f->constructor || !complete || f->stepping || f->preparing ||
-        elapsed_ns>UINT64_MAX-f->wall_time_ns)
+    if (!f || !f->constructor || !complete || f->stepping || f->preparing)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction lost its retained frontend owner");
     *complete=false;
     struct frontend_constructor *owner=f->constructor;
     if (owner->failure.code!=QA_OK) { if (error) *error=owner->failure; return false; }
     if (owner->outputs_entered && !owner->outputs_completed)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"First native output construction cannot replay an entered factory");
-    f->wall_time_ns+=elapsed_ns;
     if (!owner->outputs_completed) {
         f->preparing=true;
         bool images=false;
@@ -762,7 +760,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->constructor->launch_game=launch_game;
     if (!qa_application_startup_bootstrap(frontend->application,error)) goto fail;
     bool complete=false;
-    if (!frontend_constructor_advance(frontend,0,&complete,error)) goto fail;
+    if (!frontend_constructor_advance(frontend,&complete,error)) goto fail;
     *out = frontend;
     return true;
 fail: {
@@ -1014,8 +1012,7 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         qa_frontend *frontend=*slot;
         uint64_t now=qa_platform_time_ns(),elapsed=now-last;
         last=now;
-        if (!frontend_save_commands_restoring(frontend))
-            ok = qa_frontend_step(frontend, elapsed, error);
+        ok = qa_frontend_step(frontend, elapsed, error);
         if (ok) ok=frontend_save_commands_drain(slot,error);
         frontend=*slot;
         if (!frontend_save_commands_restoring(frontend) && frontend->options.frame_limit &&

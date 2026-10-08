@@ -13,6 +13,7 @@ struct qa_platform_events {
     uint8_t bytes[QA_PLATFORM_EVENT_BYTE_CAPACITY];
     uint32_t head, count, byte_head, byte_tail, byte_count;
     uint64_t dropped;
+    bool quit_requested;
 };
 
 qa_platform_events *qa_platform_events_create(qa_error *error)
@@ -32,6 +33,7 @@ void qa_platform_events_reset(qa_platform_events *events)
     events->head = events->count = 0;
     events->byte_head = events->byte_tail = events->byte_count = 0;
     events->dropped = 0;
+    events->quit_requested = false;
 }
 
 static void remove_oldest(qa_platform_events *events)
@@ -54,6 +56,7 @@ static uint32_t reservation(qa_platform_events *events, uint32_t length)
 void qa_platform_events_push(qa_platform_events *events, qa_platform_event_kind kind,
     uint64_t time_ns, int32_t value, int32_t value2, qa_bytes payload)
 {
+    if (kind == QA_PLATFORM_EVENT_QUIT) events->quit_requested = true;
     if (payload.size > QA_PLATFORM_EVENT_BYTE_CAPACITY) {
         ++events->dropped;
         return;
@@ -99,6 +102,11 @@ void qa_platform_events_frame(qa_platform_events *events, uint64_t time_ns)
 uint64_t qa_platform_events_dropped(const qa_platform_events *events)
 {
     return events->dropped;
+}
+
+bool qa_platform_events_quit_requested(const qa_platform_events *events)
+{
+    return events->quit_requested;
 }
 
 uint64_t qa_platform_time_ns(void)

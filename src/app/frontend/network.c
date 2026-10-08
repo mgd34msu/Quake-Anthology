@@ -5473,7 +5473,7 @@ bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
     }
     return frontend_network_create(f,error);
 }
-bool frontend_network_collect(qa_frontend *f, qa_platform_events *events, qa_error *error)
+bool frontend_network_prepare(qa_frontend *f, qa_error *error)
 {
     if(!frontend_network_admin_resume(f,error)) return false;
     qa_frontend_network *n = f->network; if (!n) return true;
@@ -5496,7 +5496,7 @@ bool frontend_network_collect(qa_frontend *f, qa_platform_events *events, qa_err
             !qa_server_admin_refresh_masters(n->admin,source.cvars,error)) return false;
     }
     qa_server_browser_expire(n->browser, f->wall_time_ns);
-    return frontend_network_intake(f,events,f->wall_time_ns,error);
+    return true;
 }
 static bool transport_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)
 { return qa_net_transport_collect(context,now,out,error); }

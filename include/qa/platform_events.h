@@ -20,7 +20,9 @@ typedef enum qa_platform_event_kind {
     QA_PLATFORM_EVENT_WINDOW,
     QA_PLATFORM_EVENT_QUIT,
     QA_PLATFORM_EVENT_DEVICE,
-    QA_PLATFORM_EVENT_INPUT_FRAME
+    QA_PLATFORM_EVENT_INPUT_FRAME,
+    QA_PLATFORM_EVENT_USERCMD,
+    QA_PLATFORM_EVENT_CONSOLE_COMMAND
 } qa_platform_event_kind;
 
 typedef struct qa_platform_event {
@@ -49,6 +51,9 @@ void qa_platform_events_push(qa_platform_events *, qa_platform_event_kind,
 bool qa_platform_events_peek(const qa_platform_events *, qa_platform_event *, qa_bytes *);
 void qa_platform_events_consume(qa_platform_events *);
 uint64_t qa_platform_events_dropped(const qa_platform_events *);
+/* Quit remains observable while a consumer waits for a retained packet or
+ * native settings. Reset clears the request. */
+bool qa_platform_events_quit_requested(const qa_platform_events *);
 void qa_platform_events_frame(qa_platform_events *, uint64_t time_ns);
 
 /* SDL's monotonic performance clock, expressed in nanoseconds. Sleep retains

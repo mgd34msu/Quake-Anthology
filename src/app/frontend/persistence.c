@@ -362,6 +362,10 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
         }
     }
     if (ok) {
+        operation.candidate->platform_events=qa_platform_events_create(error);
+        ok=operation.candidate->platform_events!=NULL;
+    }
+    if (ok) {
         ok=frontend_global_settings_storage_create(operation.candidate->options.application.user_root,
             &operation.candidate->global_settings_storage,error);
         if (ok) operation.candidate->keys=frontend_keys_create(error);

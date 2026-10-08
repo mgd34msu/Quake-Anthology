@@ -50,10 +50,6 @@ typedef struct recovery_command {
     char *instance,*text;
     bool direct,console_text;
 } recovery_command;
-typedef struct recovery_frame {
-    uint64_t wall_ns,time_ns,duration_ns,frame_before,frame_after;
-    bool advanced,completed;
-} recovery_frame;
 static bool recovery_inspect(qa_frontend *,qa_error *);
 static bool recovery_start(qa_frontend *,qa_error *);
 static bool recovery_drain(qa_frontend **,qa_error *);
@@ -80,7 +76,7 @@ static bool command_fields(qa_source_save_io *io,recovery_command *command)
         qa_source_save_owned_text(io,&command->text) && command->text && *command->text &&
         qa_source_save_bool(io,&command->direct) && qa_source_save_bool(io,&command->console_text);
 }
-static bool frame_fields(qa_source_save_io *io,recovery_frame *frame)
+static bool frame_fields(qa_source_save_io *io,frontend_replay_timing *frame)
 {
     return qa_source_save_u64(io,&frame->wall_ns) && qa_source_save_u64(io,&frame->time_ns) &&
         qa_source_save_u64(io,&frame->duration_ns) && qa_source_save_u64(io,&frame->frame_before) &&
@@ -484,22 +480,26 @@ static bool recovery_console(qa_frontend *f,const recovery_command *saved,qa_con
 }
 static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
 {
-    recovery_candidate *candidate=context;recovery_frame frame={0};bool frame_pending=false;
-    for (size_t i=0;i<candidate->count;++i) {
+    recovery_candidate *candidate=context;frontend_replay_timing frame={0};bool frame_pending=false;
+    bool ok=true;
+    for (size_t i=0;ok && i<candidate->count;++i) {
         const qa_demo_record *record=candidate->records+i;
-        if (frame_pending && record->kind!=QA_DEMO_ADVANCE)
-            return frontend_fail(error,QA_ERROR_FORMAT,"Recovery frame lacks its completion record");
+        if (frame_pending && record->kind!=QA_DEMO_ADVANCE) {
+            ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery frame lacks its completion record");
+            break;
+        }
         if (record->kind==QA_DEMO_INPUT) {
-            qa_recovery_input input;qa_actor_id actor;uint32_t ordinal;
-            if (!qa_recovery_input_decode(record->payload,&input,error)) return false;
-            if (!qa_application_player_actor(f->application,input.seat,&actor) ||
-                !frontend_seat_ordinal_read(f,input.seat,&ordinal))
-                return frontend_fail(error,QA_ERROR_FORMAT,"Recovery input lost its actual local player");
-            if (!qa_application_control_move(f->application,actor,&input.command,error)) return false;
-            f->seats[ordinal].sequence=input.command.sequence;
+            qa_recovery_input input;
+            ok=qa_recovery_input_decode(record->payload,&input,error);
+            if (ok) {
+                qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_USERCMD,
+                    f->wall_time_ns,(int32_t)input.seat,0,
+                    (qa_bytes){(const uint8_t *)&input.command,sizeof(input.command)});
+                ok=frontend_platform_drain(f,error);
+            }
         } else if (record->kind==QA_DEMO_JOURNAL) {
             qa_source_save_io io={0};uint32_t kind=UINT32_MAX;recovery_command command={0};
-            bool ok=qa_source_save_reader(&io,NULL,record->payload,error) && qa_source_save_u32(&io,&kind);
+            ok=qa_source_save_reader(&io,NULL,record->payload,error) && qa_source_save_u32(&io,&kind);
             if (ok && kind==RECOVERY_FRAME) {
                 ok=frame_fields(&io,&frame) && qa_source_save_finish(&io,NULL);
                 frame_pending=ok;
@@ -507,37 +507,34 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 ok=command_fields(&io,&command) && qa_source_save_finish(&io,NULL);
                 qa_console *console=NULL;qa_command_context actual;
                 if (ok) ok=recovery_console(f,&command,&console,&actual,error);
+                if (ok) ok=qa_console_append(console,&actual,command.text,error);
                 if (ok) {
-                    f->wall_time_ns=command.wall_ns;f->time_ns=command.time_ns;f->frame_number=command.frame_number;
-                    ok=qa_console_execute_now(console,&actual,command.text,error);
+                    frontend_replay_command queued={.console=console,
+                        .wall_ns=command.wall_ns,.time_ns=command.time_ns,.frame_number=command.frame_number};
+                    qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_CONSOLE_COMMAND,
+                        command.wall_ns,0,0,(qa_bytes){(const uint8_t *)&queued,sizeof(queued)});
+                    ok=frontend_platform_drain(f,error);
                 }
             } else if (ok) ok=frontend_fail(error,QA_ERROR_FORMAT,"Unknown recovery journal operation");
             free(command.instance);free(command.text);qa_source_save_dispose(&io);
-            if (!ok) {
-                if (error && error->code==QA_OK) frontend_fail(error,QA_ERROR_FORMAT,"Invalid recovery journal fields");
-                return false;
-            }
+            if (!ok && error && error->code==QA_OK)
+                frontend_fail(error,QA_ERROR_FORMAT,"Invalid recovery journal fields");
         } else if (record->kind==QA_DEMO_ADVANCE) {
-            if (!frame_pending) return frontend_fail(error,QA_ERROR_FORMAT,"Recovery advance lacks its actual frame clocks");
-            f->wall_time_ns=frame.wall_ns;f->time_ns=frame.time_ns;f->frame_number=frame.frame_before;
-            qa_application_startup_source source;bool present=false;size_t executed;
-            if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
-            qa_console *engine=qa_application_console(f->application);
-            if ((present && source.console!=engine && !qa_console_drain(source.console,4096,&executed,error)) ||
-                !qa_console_drain(engine,4096,&executed,error)) return false;
-            if (frame.advanced && !qa_application_advance(f->application,frame.duration_ns,error)) return false;
-            if (qa_session_elapsed(qa_application_session(f->application))!=record->time_ns)
-                return frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay reached another simulation time");
-            if ((frame.completed && !qa_application_complete_frame(f->application,error)) ||
-                !frontend_events(f,error) || !frontend_source_drain(f,error)) return false;
-            f->frame_number=frame.frame_after;frame_pending=false;
+            if (!frame_pending) {
+                ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery advance lacks its actual frame clocks");
+                break;
+            }
+            ok=frontend_replay_frame(f,&frame,error);
+            if (ok && qa_session_elapsed(qa_application_session(f->application))!=record->time_ns)
+                ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay reached another simulation time");
+            frame_pending=false;
         }
     }
     qa_application_travel_view travel;
-    if (qa_application_should_stop(f->application) || qa_application_startup_pending(f->application) ||
-        qa_application_travel_read(f->application,&travel))
-        return frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay did not return its completed offline world");
-    return true;
+    if (ok && (qa_application_should_stop(f->application) || qa_application_startup_pending(f->application) ||
+        qa_application_travel_read(f->application,&travel)))
+        ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay did not return its completed offline world");
+    return ok;
 }
 static bool recovery_publish(void *context,void *value,qa_error *error)
 {

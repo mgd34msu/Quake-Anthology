@@ -186,6 +186,7 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
         if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
         if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
         qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
+        seat->client_clock_ns=frontend->wall_time_ns;
         if (!remote && seat->sequence < state->command_sequence)
             seat->sequence = state->command_sequence;
         if (!qa_input_command_angles(&seat->builder,
@@ -356,7 +357,10 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             } else {
                 uint64_t client_delta=qa_source_frame_time_host_delta(frontend->wall_time_ns,pending);
                 double milliseconds=(double)client_delta/1000000.0;
-                if(!qa_source_frame_time_sample(source_cvars,milliseconds,false,true,&milliseconds,error)) return false;
+                qa_source_frame_time_controls clock_controls;
+                if(!qa_source_frame_time_controls_read(source_cvars,&clock_controls,error) ||
+                    !qa_source_frame_time_transform(dialect(state.profile.kind),milliseconds,&clock_controls,
+                        false,true,&milliseconds,error)) return false;
                 source_duration=(uint64_t)(milliseconds*1000000.0);
             }
             wall_duration=(double)pending/1000000.0;
@@ -388,7 +392,10 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player input lacks its actual published source settings and movement profile");
         if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
             !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
-        if (!remote && qa_application_q1_paused(frontend->application)) continue;
+        if (!remote && qa_application_q1_paused(frontend->application)) {
+            seat->client_clock_ns=frontend->wall_time_ns;
+            continue;
+        }
         if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
         uint64_t command_time=frontend->time_ns;
         if (!remote && kind==QA_MOVEMENT_Q3) {
@@ -468,6 +475,30 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
                     qa_console_append(console,&context,(const char *)payload.data,error);
             }
             break;
+        case QA_PLATFORM_EVENT_USERCMD: {
+            qa_movement_command command;
+            memcpy(&command,payload.data,sizeof(command));
+            qa_actor_id actor; uint32_t ordinal;
+            uint32_t seat=(uint32_t)event.value;
+            if(!qa_application_player_actor(frontend->application,seat,&actor) ||
+                !frontend_seat_ordinal_read(frontend,seat,&ordinal))
+                ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery input has no local player");
+            else {
+                ok=qa_application_control_move(frontend->application,actor,&command,error);
+                if(ok) frontend->seats[ordinal].sequence=command.sequence;
+            }
+            break;
+        }
+        case QA_PLATFORM_EVENT_CONSOLE_COMMAND: {
+            frontend_replay_command command;
+            memcpy(&command,payload.data,sizeof(command));
+            frontend->wall_time_ns=command.wall_ns;
+            frontend->time_ns=command.time_ns;
+            frontend->frame_number=command.frame_number;
+            size_t executed;
+            ok=qa_console_drain(command.console,4096,&executed,error);
+            break;
+        }
         default:
             if (!frontend->options.dedicated && !qa_application_should_stop(frontend->application)) {
                 if (event.kind==QA_PLATFORM_EVENT_WINDOW && event.value2 &&
@@ -483,14 +514,17 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
+static bool platform_collect(qa_frontend *frontend, qa_error *error)
+{
+    qa_input_platform_collect(frontend->input,frontend->platform_events,frontend->wall_time_ns);
+    if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
+        0,65536,frontend->wall_time_ns,error)) return false;
+    return frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,error);
+}
 static bool platform_events(qa_frontend *frontend, qa_error *error)
 {
     if (qa_application_should_stop(frontend->application)) return true;
     if (!frontend_ui_features_sync(frontend,error)) return false;
-    qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
-    qa_input_platform_collect(frontend->input,frontend->platform_events,frontend->wall_time_ns);
-    if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
-        0,65536,frontend->wall_time_ns,error)) return false;
     if (!frontend_platform_drain(frontend,error)) return false;
     if (qa_application_should_stop(frontend->application) || frontend->options.dedicated) return true;
     return qa_input_platform_sample(frontend->input,frontend->platform_events,frontend->wall_time_ns,error) &&
@@ -690,38 +724,35 @@ static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
 }
 
 static bool drain_runtime_console(qa_frontend *frontend, qa_console *console,
-    bool playing, const char *site, qa_error *error)
+    bool playing,bool native_focus,const char *site,qa_error *error)
 {
     size_t executed;
-    if (qa_console_drain(console, 4096, &executed, error)) return true;
+    if (qa_console_drain(console, 4096, &executed, error))
+        return !executed || !native_focus || !frontend->input ||
+            qa_input_platform_sync_focus(frontend->input,error);
     if (!playing || qa_application_should_stop(frontend->application) ||
         qa_application_startup_pending(frontend->application) || !qa_console_idle(console)) return false;
     qa_application_feature_report(frontend->application, site, error);
     if (error) *error = (qa_error){0};
-    return true;
+    return !executed || !native_focus || !frontend->input ||
+        qa_input_platform_sync_focus(frontend->input,error);
 }
 
-static bool commands(qa_frontend *frontend,bool playing,qa_error *error)
+static bool commands(qa_frontend *frontend,bool playing,bool native_focus,qa_error *error)
 {
     qa_console *engine=qa_application_console(frontend->application),*source;
     qa_command_context context;
     if(!runtime_console(frontend,&source,&context,error)) return false;
     if(source!=engine && !qa_application_startup_console_queued(frontend->application,source) &&
-        !drain_runtime_console(frontend,source,playing,"source console command",error)) return false;
+        !drain_runtime_console(frontend,source,playing,native_focus,"source console command",error)) return false;
     return qa_application_startup_console_queued(frontend->application,engine) ||
-        drain_runtime_console(frontend,engine,playing,"ENGINE console command",error);
+        drain_runtime_console(frontend,engine,playing,native_focus,"ENGINE console command",error);
 }
 
-static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *playing, qa_error *error)
+static bool continue_mode(qa_frontend *frontend,uint64_t elapsed_ns,bool *ready,qa_error *error)
 {
-    if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
-        frontend_save_commands_restoring(frontend) ||
-        frontend->frame_number == UINT64_MAX ||
-        elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
-    if (!frontend->capture && !frontend->resource_inventory && !frontend->source_restoring &&
-        !frontend->frame.source_pending)
-        qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
+    *ready=false;
+    if(!frontend_save_commands_idle(frontend) || frontend_save_commands_restoring(frontend)) return true;
     if (!frontend_shared_resource_policy_live_retire(frontend,error) ||
         !frontend_player_sources_drain(frontend,error)) return false;
     if (frontend->server_stopped) {
@@ -730,18 +761,16 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
     }
     if (frontend_constructor_pending(frontend)) {
         bool complete=false;
-        return frontend_constructor_advance(frontend,elapsed_ns,&complete,error);
+        return frontend_constructor_advance(frontend,&complete,error);
     }
     if (frontend->startup_launch) {
         if (!frontend_startup_launch_drain(frontend,error)) return false;
         if (frontend->startup_launch && !qa_application_startup_pending(frontend->application)) {
-            frontend->wall_time_ns += elapsed_ns;
             return true;
         }
     }
     if (frontend_settings_devices_pending(frontend)) {
         bool complete = false;
-        frontend->wall_time_ns += elapsed_ns;
         return frontend_settings_devices_drain(frontend, &complete, error);
     }
     if (!frontend_demo_dispatch_execute(frontend->demos,error) ||
@@ -753,7 +782,6 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
             !qa_application_client_prepare_current(client) || frontend->capture || frontend->resource_inventory ||
             frontend->source_restoring || !frontend_seat_callbacks_returned(frontend))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT settings lost their returned physical preparation");
-        frontend->wall_time_ns+=elapsed_ns;
         bool complete=false;
         return frontend_network_client_configuration_advance(frontend,client,&complete,error);
     }
@@ -761,16 +789,14 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
         if (frontend->capture || frontend->resource_inventory || frontend->source_restoring ||
             !frontend_seat_callbacks_returned(frontend))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Video continuation retains an entered frontend callback");
-        frontend->wall_time_ns+=elapsed_ns;
         return frontend_restart_drain(frontend->restart,error);
     }
-    bool waiting=resource_wait(frontend),wall_advanced=false;
+    bool waiting=resource_wait(frontend);
     if (waiting) {
         if (!resource_returned(frontend,error)) return false;
     } else if (!frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend frame owners have not returned idle");
     if (qa_application_startup_pending(frontend->application)) {
-        frontend->wall_time_ns+=elapsed_ns; wall_advanced=true;
         bool complete=false;
         if (!frontend_startup_advance(frontend,&complete,error)) return false;
         if (!complete && resource_wait(frontend)) return resource_returned(frontend,error);
@@ -778,212 +804,245 @@ static bool frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, bool *play
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Candidate settings have not completed their physical release");
         if (!complete) return true;
     }
-    qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
-    if (!qa_profiler_push(profiler,"source_maintenance",error)) return false;
-    bool maintained = true;
-    if (maintained) maintained = qa_profiler_push(profiler,"source_color_retirement",error);
-    if (maintained) maintained = frontend_profiler_end(profiler,frontend_q3_source_color_publication_finish(frontend,error),error);
-    if (maintained) maintained = qa_profiler_push(profiler,"source_music_publication",error);
-    if (maintained) maintained = frontend_profiler_end(profiler,frontend_source_publish_music(frontend,error),error);
-    if (maintained) maintained = qa_profiler_push(profiler,"view_restore_publication",error);
-    if (maintained) maintained = frontend_profiler_end(profiler,frontend_view_bindings_finish_restore(frontend,error),error);
-    if (maintained) maintained = qa_profiler_push(profiler,"startup_replay",error);
-    if (maintained) maintained = frontend_profiler_end(profiler,frontend_startup_replay(frontend,error),error);
-    if (maintained) maintained = qa_profiler_push(profiler,"resource_policy",error);
-    if (maintained) maintained = frontend_profiler_end(profiler,frontend_shared_resource_policy_live_sync(frontend,error),error);
-    if (!frontend_profiler_end(profiler,maintained,error)) return false;
-    bool client_only=frontend_network_client_only(frontend);
-    *playing = !frontend_startup_queued(frontend) &&
-        !qa_application_startup_pending(frontend->application) &&
-        (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING);
-    qa_application_travel_view pending;
-    bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
-        pending.target.kind==QA_TRAVEL_MAP;
-    if (!client_only && !qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
-        !retiring_map && !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
-        qa_application_world(frontend->application)) {
-        frontend->preparing = true;
-        bool prepared = qa_profiler_push(profiler,"frame_preparation",error);
-        if (prepared) prepared = frontend_profiler_end(profiler,
-            qa_application_prepare_frame(frontend->application, error),error);
-        frontend->preparing = false;
-        if (!prepared) return false;
+    *ready=true;
+    return true;
+}
+
+static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
+    const frontend_replay_timing *replay,bool *playing,qa_error *error)
+{
+    if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round ||
+        frontend->frame_number == UINT64_MAX ||
+        (!replay && elapsed_ns > UINT64_MAX - frontend->wall_time_ns))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
+    if (!frontend->capture && !frontend->resource_inventory && !frontend->source_restoring &&
+        !frontend->frame.source_pending)
+        qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
+    if(replay) {
+        frontend->wall_time_ns=replay->wall_ns;
+        frontend->time_ns=replay->time_ns;
+        frontend->frame_number=replay->frame_before;
+    } else frontend->wall_time_ns+=elapsed_ns;
+    qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
+    bool ok=true,ready=false;
+    if(replay) ok=frontend_platform_drain(frontend,error);
+    else {
+        ok=platform_collect(frontend,error);
+        if(qa_platform_events_quit_requested(frontend->platform_events))
+            qa_application_request_stop(frontend->application);
     }
-    if (!frontend->options.dedicated && !client_only &&
-        !qa_application_should_stop(frontend->application) && !retiring_map &&
-        !qa_application_startup_pending(frontend->application)) {
-        if (!qa_profiler_push(profiler,"selected_bindings",error) ||
-            !frontend_profiler_end(profiler,selected_bindings(frontend,error),error)) return false;
-    }
-    frontend->stepping = true;
-    uint64_t raw_elapsed=elapsed_ns;
-    if (!wall_advanced) frontend->wall_time_ns+=raw_elapsed;
-    bool ok = frontend_tools_pump(frontend, error) &&
-        frontend_startup_menus_pump(frontend,error) && platform_events(frontend, error);
-    if (ok && qa_application_should_stop(frontend->application)) {
-        frontend->stepping=false;
-        return true;
-    }
-    if(ok) ok=commands(frontend,*playing,error);
-    if (ok && !qa_application_should_stop(frontend->application) &&
-        frontend->server_stop_owner && !frontend->server_stopped) {
-        bool complete=false;
-        frontend->stepping=false;
-        if (!stop_server(frontend,&complete,error)) return false;
-        ++frontend->frame_number;
-        return !complete || frontend_travel(frontend,error);
-    }
-    if (ok && qa_application_should_stop(frontend->application)) {
-        frontend->stepping=false;
-        return true;
-    }
-    if (ok) {
-        ok=qa_profiler_push(profiler,"network_pump",error);
-        if (ok) ok=frontend_profiler_end(profiler,
-            frontend_tools_sync(frontend,error) &&
-                frontend_network_collect(frontend,frontend->platform_events,error) &&
-                frontend_platform_drain(frontend,error) && frontend_network_maintenance(frontend,error),error);
-    }
-    if (ok) ok=frontend_cinematic_drain(frontend,error);
-    if (ok) {
-        ok=frontend_restart_drain_frame(frontend->restart,error);
-        if (!ok) *playing=false;
-    }
-    if (ok && frontend->restart && !frontend_restart_idle(frontend->restart)) {
-        frontend->stepping=false;
-        return true;
-    }
-    if (ok && !qa_application_startup_pending(frontend->application))
-        ok=qa_application_clients_drain(frontend->application,error);
-    if (ok && !qa_application_should_stop(frontend->application) && frontend_cinematic_running(frontend)) {
-        bool rendered=false;
-        /* Playback owns its separate media clock. A console fallback may
-         * still draw the frozen GAME scene under this actual host frame. */
-        ok=frontend_particle_source_begin(frontend,0,error) &&
-            frontend_particle_source_complete(frontend,error) &&
-            frontend_cinematic_frame(frontend,elapsed_ns,&rendered,error);
-        if (ok && !rendered) {
-            bool console_open=false;
-            for (uint32_t i=0;i<frontend->options.seats;++i)
-                console_open|=qa_input_seat_focus(frontend->seats[i].input)==QA_INPUT_CONSOLE;
-            if (console_open) {
-                ok=frontend_present(frontend,error);
-                if (!ok) *playing=false;
+    if(replay) ready=true;
+    else if(ok && !qa_application_should_stop(frontend->application))
+        ok=continue_mode(frontend,elapsed_ns,&ready,error);
+    if(ok && ready && !qa_application_should_stop(frontend->application)) {
+        qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
+        if(!replay) {
+            if (!qa_profiler_push(profiler,"source_maintenance",error)) return false;
+            bool maintained = true;
+            if (maintained) maintained = qa_profiler_push(profiler,"source_color_retirement",error);
+            if (maintained) maintained = frontend_profiler_end(profiler,frontend_q3_source_color_publication_finish(frontend,error),error);
+            if (maintained) maintained = qa_profiler_push(profiler,"source_music_publication",error);
+            if (maintained) maintained = frontend_profiler_end(profiler,frontend_source_publish_music(frontend,error),error);
+            if (maintained) maintained = qa_profiler_push(profiler,"view_restore_publication",error);
+            if (maintained) maintained = frontend_profiler_end(profiler,frontend_view_bindings_finish_restore(frontend,error),error);
+            if (maintained) maintained = qa_profiler_push(profiler,"startup_replay",error);
+            if (maintained) maintained = frontend_profiler_end(profiler,frontend_startup_replay(frontend,error),error);
+            if (maintained) maintained = qa_profiler_push(profiler,"resource_policy",error);
+            if (maintained) maintained = frontend_profiler_end(profiler,frontend_shared_resource_policy_live_sync(frontend,error),error);
+            if (!frontend_profiler_end(profiler,maintained,error)) return false;
+        }
+        bool client_only=frontend_network_client_only(frontend);
+        *playing = !frontend_startup_queued(frontend) &&
+            !qa_application_startup_pending(frontend->application) &&
+            (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING);
+        qa_application_travel_view pending;
+        bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
+            pending.target.kind==QA_TRAVEL_MAP;
+        if (!replay && !client_only && !qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
+            !retiring_map && !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
+            qa_application_world(frontend->application)) {
+            frontend->preparing = true;
+            bool prepared = qa_profiler_push(profiler,"frame_preparation",error);
+            if (prepared) prepared = frontend_profiler_end(profiler,
+                qa_application_prepare_frame(frontend->application, error),error);
+            frontend->preparing = false;
+            if (!prepared) return false;
+        }
+        if (!replay && !frontend->options.dedicated && !client_only &&
+            !qa_application_should_stop(frontend->application) && !retiring_map &&
+            !qa_application_startup_pending(frontend->application)) {
+            if (!qa_profiler_push(profiler,"selected_bindings",error) ||
+                !frontend_profiler_end(profiler,selected_bindings(frontend,error),error)) return false;
+        }
+        frontend->stepping = true;
+        uint64_t raw_elapsed=elapsed_ns;
+        ok = ok && (replay || (frontend_tools_pump(frontend, error) &&
+            frontend_startup_menus_pump(frontend,error) && platform_events(frontend, error)));
+        if(ok && !qa_application_should_stop(frontend->application)) ok=commands(frontend,*playing,!replay,error);
+        if (ok && !replay && !qa_application_should_stop(frontend->application) &&
+            frontend->server_stop_owner && !frontend->server_stopped) {
+            bool complete=false;
+            frontend->stepping=false;
+            if (!stop_server(frontend,&complete,error)) return false;
+            ready=false;
+        }
+        if (ok && !replay && ready && !qa_application_should_stop(frontend->application)) {
+            ok=qa_profiler_push(profiler,"network_pump",error);
+            if (ok) ok=frontend_profiler_end(profiler,
+                frontend_tools_sync(frontend,error) &&
+                    frontend_network_prepare(frontend,error) && frontend_network_maintenance(frontend,error),error);
+        }
+        if (ok && ready && !replay) ok=frontend_cinematic_drain(frontend,error);
+        if (ok && ready && !replay) {
+            ok=frontend_restart_drain_frame(frontend->restart,error);
+            if (!ok) *playing=false;
+        }
+        if (ok && frontend->restart && !frontend_restart_idle(frontend->restart)) ready=false;
+        if (ok && !replay && ready && !qa_application_startup_pending(frontend->application))
+            ok=qa_application_clients_drain(frontend->application,error);
+        bool cinematic=!replay && frontend_cinematic_running(frontend);
+        if (ok && ready && !qa_application_should_stop(frontend->application) && cinematic) {
+            ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,!replay,error);
+            bool rendered=false;
+            /* Playback owns its separate media clock. A console fallback may
+             * still draw the frozen GAME scene under this actual host frame. */
+            ok=ok && frontend_particle_source_begin(frontend,0,error) &&
+                frontend_particle_source_complete(frontend,error) &&
+                frontend_cinematic_frame(frontend,elapsed_ns,&rendered,error);
+            if (ok && !rendered) {
+                bool console_open=false;
+                for (uint32_t i=0;i<frontend->options.seats;++i)
+                    console_open|=qa_input_seat_focus(frontend->seats[i].input)==QA_INPUT_CONSOLE;
+                if (console_open) {
+                    ok=frontend_present(frontend,error);
+                    if (!ok) *playing=false;
+                }
             }
+            if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
+            frontend->stepping=false;
+            if (ok) ok=frontend_cinematic_drain(frontend,error);
         }
-        if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
-        frontend->stepping=false;
-        if (ok) ok=frontend_cinematic_drain(frontend,error);
-        if (ok) ++frontend->frame_number;
-        return ok;
-    }
-    uint64_t source_duration=raw_elapsed,adjusted=raw_elapsed,application_duration=raw_elapsed;
-    const qa_cvars *time_owner=NULL;
-    if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,&application_duration,error) &&
-        frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
-    bool menu_pause=false;
-    if (ok) ok=menu_paused(frontend,&menu_pause,error);
-    bool paused=!client_only && (qa_application_q1_paused(frontend->application) || menu_pause);
-    if (ok && !paused && adjusted>UINT64_MAX-frontend->time_ns)
-        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
-    if (ok) { elapsed_ns=paused?0:adjusted; frontend->time_ns+=elapsed_ns; }
-    if (ok && frontend->recipient_begin_generation==UINT64_MAX)
-        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
-    if (ok) {
-        ++frontend->recipient_begin_generation;
-        ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
-    }
-    if (ok) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
-    retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
-    if (ok && !qa_application_should_stop(frontend->application)) {
-        if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
-            (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)) {
-            bool source_ready=false;
-            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
-            if (ok && source_ready && !client_only && !paused) {
-                ok=qa_profiler_push(profiler, "application", error);
-                if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, application_duration, error), error);
-            }
-        }
-        if (ok) {
-            ok = qa_profiler_push(profiler, "publication", error);
-            if (ok) ok = frontend_profiler_end(profiler,
-                frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
-                frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
-                frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) &&
-                frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
-        }
-        if(ok) ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,error);
-        if(ok && !qa_application_should_stop(frontend->application))
-            ok=frontend_network_client_frame(frontend,error);
-        retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
-        if(ok && !qa_application_should_stop(frontend->application) && !retiring_map &&
-            !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
-            ok=qa_profiler_push(profiler,"controls",error);
-            if(ok) ok=frontend_profiler_end(profiler,controls(frontend,elapsed_ns,raw_elapsed,error),error);
-        }
-        if (ok) {
-            ok = qa_profiler_push(profiler, "scene_updates", error);
-            if (ok) ok = frontend_profiler_end(profiler,
-                (frontend->options.dedicated || (frontend_scene_sync(frontend, error) &&
-                    frontend_particle_source_complete(frontend, error) && frontend_map_events(frontend, error))) &&
-                (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages, error)) &&
-                (frontend->options.dedicated || (frontend_particle_events(frontend, error) &&
-                    frontend_player_events(frontend, error))), error);
-        }
-        if (ok && !frontend->options.dedicated) {
-            ok = qa_profiler_push(profiler, "presentation", error);
+        if (ready && !cinematic && !qa_application_should_stop(frontend->application)) {
+            uint64_t source_duration=raw_elapsed,adjusted=raw_elapsed,application_duration=raw_elapsed;
+            const qa_cvars *time_owner=NULL;
+            if (ok && !replay) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,&application_duration,error) &&
+                frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
+            bool menu_pause=false;
+            if (ok && !replay) ok=menu_paused(frontend,&menu_pause,error);
+            bool paused=!replay && !client_only && (qa_application_q1_paused(frontend->application) || menu_pause);
+            if (ok && !replay && !paused && adjusted>UINT64_MAX-frontend->time_ns)
+                ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
             if (ok) {
-                bool presented=frontend_present(frontend,error);
-                ok=frontend_profiler_end(profiler,presented,error);
-                if (!presented) *playing=false;
+                elapsed_ns=paused?0:adjusted;
+                if(!replay) frontend->time_ns+=elapsed_ns;
             }
-            if (ok) {
-                ok=qa_profiler_push(profiler,"client_pose_publication",error);
-                if (ok) ok=frontend_profiler_end(profiler,
-                    frontend_network_client_pose_publish(frontend,error),error);
+            if (ok && !replay && frontend->recipient_begin_generation==UINT64_MAX)
+                ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
+            if (ok && !replay) {
+                ++frontend->recipient_begin_generation;
+                ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
+            }
+            if (ok && !replay) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
+            retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
+            if (ok && !qa_application_should_stop(frontend->application)) {
+                if (ok && (replay || (!retiring_map && !qa_application_startup_pending(frontend->application) &&
+                    (client_only || qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING)))) {
+                    bool source_ready=replay && replay->advanced;
+                    if(!replay) ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, &source_ready, error);
+                    if (ok && source_ready && !client_only && !paused) {
+                        ok=qa_profiler_push(profiler, "application", error);
+                        if (ok) ok=frontend_profiler_end(profiler, qa_application_advance(frontend->application, application_duration, error), error);
+                    }
+                }
+                if (ok && !replay) {
+                    ok = qa_profiler_push(profiler, "publication", error);
+                    if (ok) ok = frontend_profiler_end(profiler,
+                        frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
+                        frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
+                        frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) &&
+                        frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
+                }
+                if(ok && !replay)
+                    ok=frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,error);
+                if(ok) ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,!replay,error);
+                if(ok && !replay && !qa_application_should_stop(frontend->application))
+                    ok=frontend_network_client_frame(frontend,error);
+                retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
+                if(ok && !replay && !qa_application_should_stop(frontend->application) && !retiring_map &&
+                    !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
+                    ok=qa_profiler_push(profiler,"controls",error);
+                    if(ok) ok=frontend_profiler_end(profiler,controls(frontend,elapsed_ns,raw_elapsed,error),error);
+                }
+                if (ok && !replay) {
+                    ok = qa_profiler_push(profiler, "scene_updates", error);
+                    if (ok) ok = frontend_profiler_end(profiler,
+                        (frontend->options.dedicated || (frontend_scene_sync(frontend, error) &&
+                            frontend_particle_source_complete(frontend, error) && frontend_map_events(frontend, error))) &&
+                        (!frontend->qc_messages || frontend_qc_messages_drain(frontend->qc_messages, error)) &&
+                        (frontend->options.dedicated || (frontend_particle_events(frontend, error) &&
+                            frontend_player_events(frontend, error))), error);
+                }
+                if (ok && !replay && !frontend->options.dedicated) {
+                    ok = qa_profiler_push(profiler, "presentation", error);
+                    if (ok) {
+                        bool presented=frontend_present(frontend,error);
+                        ok=frontend_profiler_end(profiler,presented,error);
+                        if (!presented) *playing=false;
+                    }
+                    if (ok) {
+                        ok=qa_profiler_push(profiler,"client_pose_publication",error);
+                        if (ok) ok=frontend_profiler_end(profiler,
+                            frontend_network_client_pose_publish(frontend,error),error);
+                    }
+                }
+                if (ok && !replay && !frontend->options.dedicated) {
+                    qa_error capture_error = {0};
+                    if (!frontend_tools_after_present(frontend, &capture_error)) {
+                        frontend_print(frontend, capture_error.message);
+                        frontend_print(frontend, "\n");
+                    }
+                }
+                if (ok) {
+                    ok = qa_profiler_push(profiler, "events", error);
+                    if (ok) ok = frontend_profiler_end(profiler,
+                        (replay || frontend_particle_advance(frontend, error)) && frontend_events(frontend, error), error);
+                }
+                if (ok && !replay && frontend->audio) {
+                    ok = qa_profiler_push(profiler, "audio", error);
+                    if (ok) {
+                        const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
+                        qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
+                        ok=frontend_acoustics_source_sync(frontend,error);
+                        if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
+                        if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
+                        if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
+                             qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                             audio_output(frontend, adjusted, error);
+                        ok = frontend_profiler_end(profiler, ok, error);
+                    }
+                }
             }
         }
-        if (ok && !frontend->options.dedicated) {
-            qa_error capture_error = {0};
-            if (!frontend_tools_after_present(frontend, &capture_error)) {
-                frontend_print(frontend, capture_error.message);
-                frontend_print(frontend, "\n");
-            }
+        frontend->stepping = false;
+        if (ok && ready && !cinematic && !qa_application_should_stop(frontend->application) &&
+            (!replay || replay->completed)) {
+            ok=qa_profiler_push(profiler,"frame_completion",error);
+            if (ok) ok=frontend_profiler_end(profiler,
+                qa_application_complete_frame(frontend->application, error),error);
         }
-        if (ok) {
-            ok = qa_profiler_push(profiler, "events", error);
-            if (ok) ok = frontend_profiler_end(profiler,
-                frontend_particle_advance(frontend, error) && frontend_events(frontend, error), error);
-        }
-        if (ok && frontend->audio) {
-            ok = qa_profiler_push(profiler, "audio", error);
-            if (ok) {
-                const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
-                qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
-                ok=frontend_acoustics_source_sync(frontend,error);
-                if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
-                if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
-                if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
-                     qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
-                     audio_output(frontend, adjusted, error);
-                ok = frontend_profiler_end(profiler, ok, error);
-            }
+        if (ok && ready) {
+            ok=qa_profiler_push(profiler,"source_events",error);
+            if (ok) ok=frontend_profiler_end(profiler,
+                frontend_source_drain(frontend, error) && (replay || frontend_campaign_ui_drain(frontend,error)),error);
         }
     }
-    frontend->stepping = false;
-    if (ok && !qa_application_should_stop(frontend->application)) {
-        ok=qa_profiler_push(profiler,"frame_completion",error);
-        if (ok) ok=frontend_profiler_end(profiler,
-            qa_application_complete_frame(frontend->application, error),error);
+    frontend->stepping=false;
+    if(ok) {
+        if(replay) frontend->frame_number=replay->frame_after;
+        else ++frontend->frame_number;
     }
-    if (ok) {
-        ok=qa_profiler_push(profiler,"source_events",error);
-        if (ok) ok=frontend_profiler_end(profiler,
-            frontend_source_drain(frontend, error) && frontend_campaign_ui_drain(frontend,error),error);
-    }
-    if (ok) ++frontend->frame_number;
-    if (!ok) return false;
+    if(!ok) return false;
+    if(replay || !ready || qa_application_should_stop(frontend->application)) return true;
     qa_application_map_view previous, current;
     bool mapped=qa_application_map_read(frontend->application,&previous);
     if (!frontend_travel(frontend,error)) return false;
@@ -996,7 +1055,7 @@ bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
     qa_error *fault = error ? error : &local;
     bool playing = false;
     uint64_t frame = frontend ? frontend->frame_number : 0;
-    bool ok=frontend_step(frontend,elapsed_ns,&playing,fault);
+    bool ok=frontend_step(frontend,elapsed_ns,NULL,&playing,fault);
     if (ok) return true;
     frontend_save_commands_recovery_abandon(frontend);
     if (!playing || qa_application_should_stop(frontend->application) ||
@@ -1011,4 +1070,10 @@ bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
     if (frontend->frame_number == frame) ++frontend->frame_number;
     *fault = (qa_error){0};
     return true;
+}
+
+bool frontend_replay_frame(qa_frontend *frontend,const frontend_replay_timing *timing,qa_error *error)
+{
+    bool playing=false;
+    return frontend_step(frontend,timing->duration_ns,timing,&playing,error);
 }

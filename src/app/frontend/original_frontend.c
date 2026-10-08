@@ -155,13 +155,15 @@ bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operatio
     qa_frontend *source=operation->source;
     uint64_t elapsed=operation->active->wall_time_ns-operation->wall_time_ns;
     operation->wall_time_ns=operation->active->wall_time_ns;
+    if (elapsed>UINT64_MAX-source->wall_time_ns) {
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Original candidate clock exceeds its native extent"); goto failed;
+    }
+    source->wall_time_ns+=elapsed;
     if (frontend_constructor_pending(source)) {
         bool constructed=false;
-        if (!frontend_constructor_advance(source,elapsed,&constructed,error)) goto failed;
+        if (!frontend_constructor_advance(source,&constructed,error)) goto failed;
         if (!constructed) return true;
-    } else if (elapsed>UINT64_MAX-source->wall_time_ns) {
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Original candidate clock exceeds its native extent"); goto failed;
-    } else source->wall_time_ns+=elapsed;
+    }
     if (!operation->import_begun) {
         source->options.game=NULL;
         bool begun=operation->save.family==QA_GAME_Q1?
