@@ -602,6 +602,52 @@ static void movement_output_owner(void)
     qa_collision_destroy(map.geometry);
 }
 
+static bool linked_box_collision(void *context, qa_actor_collision *out, qa_error *error)
+{
+    (void)error;
+    *out = *(qa_actor_collision *)context;
+    return true;
+}
+
+static void exiting_body_over_world_hit(void)
+{
+    qa_error error = {0};
+    gameplay_map map;
+    gameplay_map_create(&map);
+    qa_actor_registry *actors;
+    qa_world *world;
+    qa_actor_id actor;
+    GAME_CHECK(qa_actors_create(8, NULL, NULL, &actors, &error));
+    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, &world, &error));
+    GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
+    qa_body_state body = {.origin = {0, 0, 24}, .bounds = {{-16, -16, -8}, {16, 16, 8}}};
+    GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
+    qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+        .contents = 1, .role = QA_COLLISION_SOLID};
+    qa_collision_binding binding = {.context = &collision, .read = linked_box_collision};
+    GAME_CHECK(qa_world_collision_bind(world, actor, &binding, &error));
+    GAME_CHECK(qa_world_link(world, actor, NULL, &error));
+    for (unsigned caller = 0; caller < 4; ++caller) {
+        qa_collision_family family = caller == 0 ? QA_COLLISION_Q1 :
+            caller == 3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
+        qa_trace_query query = {.start = {0, 0, 24}, .end = {0, 0, -24},
+            .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(family)};
+        query.policy.q2_merged_contents = caller == 2;
+        qa_trace_result hit;
+        GAME_CHECK(qa_world_trace(world, &query, &hit, &error));
+        GAME_CHECK(hit.start_solid && !hit.all_solid);
+        if (family == QA_COLLISION_Q3) {
+            GAME_CHECK(hit.hit == QA_TRACE_HIT_WORLD && hit.fraction < .5f);
+        } else {
+            GAME_CHECK(hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(hit.actor, actor));
+            GAME_CHECK(hit.fraction == 1 && hit.end.z == -24);
+        }
+    }
+    GAME_CHECK(qa_world_destroy(world, &error));
+    GAME_CHECK(qa_actors_destroy(actors, &error));
+    qa_collision_destroy(map.geometry);
+}
+
 static bool external_brush_collision(void *context, qa_actor_collision *out, qa_error *error)
 {
     (void)error;
@@ -681,6 +727,7 @@ void test_q1_gameplay(void)
     nonsolid_inline_appearance();
     relay_template_unpublished();
     retained_external_brush();
+    exiting_body_over_world_hit();
     movement_output_owner();
     donor_check_client();
     armor_and_protection();

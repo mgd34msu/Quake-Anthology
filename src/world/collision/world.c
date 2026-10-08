@@ -217,6 +217,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE) broad.shape=missile;
     qa_world_actor_snapshot candidates;
     if(!qa_world_snapshot_capture(world,swept_bounds(&broad),QA_COLLISION_BOTH,&candidates,error)) return false;
+    const bool occupancy_replaces=query->policy.family!=QA_COLLISION_Q3;
     bool ok=true;
     for(size_t i=0;i<candidates.count;++i) {
         qa_actor_id id=candidates.actors[i];
@@ -247,10 +248,10 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         } else ok=qa_collision_trace_body(&moving,collision.family,collision.shape,state.bounds,state.origin,contents,&hit,error);
         if(!ok) break;
         if(hit.hit!=QA_TRACE_HIT_NONE) { hit.hit=QA_TRACE_HIT_ACTOR; hit.actor=id; }
-        if(query->policy.family==QA_COLLISION_Q3) {
+        if(!occupancy_replaces) {
             if(hit.fraction<result.fraction) { hit.start_solid=hit.start_solid||result.start_solid; result=hit; }
             else { result.all_solid=result.all_solid||hit.all_solid; result.start_solid=result.start_solid||(!hit.all_solid&&hit.start_solid); }
-        } else if(hit.all_solid || hit.fraction<result.fraction || (query->policy.family==QA_COLLISION_Q1 && hit.start_solid)) {
+        } else if(hit.all_solid || hit.fraction<result.fraction || hit.start_solid) {
             hit.start_solid=hit.start_solid||result.start_solid; result=hit;
         } else if(hit.start_solid) result.start_solid=true;
         if(result.all_solid) break;
