@@ -507,9 +507,9 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 ok=command_fields(&io,&command) && qa_source_save_finish(&io,NULL);
                 qa_console *console=NULL;qa_command_context actual;
                 if (ok) ok=recovery_console(f,&command,&console,&actual,error);
-                if (ok) ok=qa_console_append(console,&actual,command.text,error);
                 if (ok) {
                     frontend_replay_command queued={.console=console,
+                        .context=actual,.text=command.text,
                         .wall_ns=command.wall_ns,.time_ns=command.time_ns,.frame_number=command.frame_number};
                     qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_CONSOLE_COMMAND,
                         command.wall_ns,0,0,(qa_bytes){(const uint8_t *)&queued,sizeof(queued)});

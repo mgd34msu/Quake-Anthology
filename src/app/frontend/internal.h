@@ -431,6 +431,8 @@ typedef struct frontend_replay_timing {
 } frontend_replay_timing;
 typedef struct frontend_replay_command {
     qa_console *console;
+    qa_command_context context;
+    const char *text;
     uint64_t wall_ns,time_ns,frame_number;
 } frontend_replay_command;
 bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error *);

@@ -495,8 +495,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             frontend->wall_time_ns=command.wall_ns;
             frontend->time_ns=command.time_ns;
             frontend->frame_number=command.frame_number;
-            size_t executed;
-            ok=qa_console_drain(command.console,4096,&executed,error);
+            ok=qa_console_execute_now(command.console,&command.context,command.text,error);
             break;
         }
         default:
@@ -966,7 +965,10 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
                 }
                 if(ok && !replay)
                     ok=frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,error);
-                if(ok) ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,!replay,error);
+                if(ok) ok=frontend_platform_drain(frontend,error);
+                /* Existing journal tails recorded one command-buffer drain per
+                 * frame. Their saved wait counts retain that cadence. */
+                if(ok && !replay) ok=commands(frontend,*playing,true,error);
                 if(ok && !replay && !qa_application_should_stop(frontend->application))
                     ok=frontend_network_client_frame(frontend,error);
                 retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
