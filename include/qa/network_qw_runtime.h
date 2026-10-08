@@ -37,6 +37,9 @@ typedef struct qa_network_qw_server_state {
     uint16_t qport;
     size_t queued_messages, queued_bytes;
     bool active, retiring, reply;
+    /* Peer-lifetime FIFO batch serials; appends share the queued batch serial.
+     * Only the native reliable-toggle ACK advances acknowledged. */
+    uint64_t reliable_queued, reliable_inflight, reliable_acknowledged;
 } qa_network_qw_server_state;
 
 /* Original QW28 owns one source seat per connection and uses the runtime's

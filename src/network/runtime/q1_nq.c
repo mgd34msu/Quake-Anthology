@@ -11,6 +11,7 @@
 typedef struct nq_pending {
     struct nq_pending *next;
     qa_buffer bytes;
+    uint64_t serial;
 } nq_pending;
 typedef struct nq_server {
     qa_network_runtime *runtime;
@@ -21,6 +22,7 @@ typedef struct nq_server {
     nq_pending *first, *last;
     size_t queued_bytes, queued_messages;
     uint64_t input_sequence;
+    uint64_t reliable_queued, reliable_inflight, reliable_acknowledged;
     uint8_t stage;
     bool started, retiring, signon_active;
     q1_retirement retirement;
@@ -38,6 +40,7 @@ static bool queue(void *context, qa_bytes bytes, qa_error *error)
         free(pending); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining original NetQuake reliable message"); return false;
     }
     memcpy(pending->bytes.data, bytes.data, bytes.size); pending->bytes.size = bytes.size;
+    pending->serial = ++peer->reliable_queued;
     if (peer->last) peer->last->next = pending; else peer->first = pending;
     peer->last = pending; peer->queued_bytes += bytes.size; ++peer->queued_messages; return true;
 }
@@ -118,8 +121,13 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
             runtime->options.hooks.connectionless(runtime->options.hooks.context, runtime, packet, error);
     }
     qa_q1_delivery delivery;
-    if (!qa_q1_peer_receive(&peer->native, &packet->from, packet->payload, packet->received_ns, &delivery, error) ||
-        !qa_network_received(runtime, id, packet->received_ns, error)) return false;
+    bool pending = !qa_nq_channel_ready(peer->native.channel.nq);
+    bool received = qa_q1_peer_receive(&peer->native, &packet->from, packet->payload, packet->received_ns, &delivery, error);
+    if (received && pending && qa_nq_channel_ready(peer->native.channel.nq)) {
+        peer->reliable_acknowledged = peer->reliable_inflight;
+        peer->reliable_inflight = 0;
+    }
+    if (!received || !qa_network_received(runtime, id, packet->received_ns, error)) return false;
     if (!delivery.present || peer->retiring) return true;
     const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
     qa_net_reader reader; qa_net_reader_init(&reader, delivery.payload, error); bool moved = false;
@@ -154,6 +162,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     if (peer->first && qa_nq_channel_ready(peer->native.channel.nq)) {
         nq_pending *pending = peer->first;
         if (!qa_nq_channel_queue(peer->native.channel.nq, (qa_bytes){pending->bytes.data, pending->bytes.size}, error)) return false;
+        peer->reliable_inflight = pending->serial;
         peer->first = pending->next; if (!peer->first) peer->last = NULL;
         peer->queued_bytes -= pending->bytes.size; --peer->queued_messages;
         qa_buffer_free(&pending->bytes); free(pending);
@@ -237,8 +246,11 @@ bool qa_network_nq_server_state_read(qa_network_runtime *runtime, qa_net_client_
 {
     nq_server *peer = get(runtime, id, error);
     if (!peer || !out) return qa_network_fail(error, "Missing original NetQuake peer state output");
-    *out = (qa_network_nq_server_state){peer->input_sequence, peer->queued_bytes, peer->queued_messages,
-        peer->stage, peer->started, peer->retiring}; return true;
+    *out = (qa_network_nq_server_state){.input_sequence=peer->input_sequence,
+        .queued_bytes=peer->queued_bytes, .queued_messages=peer->queued_messages,
+        .stage=peer->stage, .started=peer->started, .retiring=peer->retiring,
+        .reliable_queued=peer->reliable_queued, .reliable_inflight=peer->reliable_inflight,
+        .reliable_acknowledged=peer->reliable_acknowledged}; return true;
 }
 
 bool qa_network_nq_peer(const qa_network_peer *peer)
@@ -383,5 +395,10 @@ bool qa_network_nq_restore_peer(qa_network_runtime *runtime, const qa_net_client
         if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Unqualified NetQuake runtime continuation");
         return false;
     }
+    peer->reliable_queued = 0;
+    if (!qa_nq_channel_ready(peer->native.channel.nq))
+        peer->reliable_inflight = ++peer->reliable_queued;
+    for (nq_pending *pending = peer->first; pending; pending = pending->next)
+        pending->serial = ++peer->reliable_queued;
     owner->ops = ops; owner->state = peer; return true;
 }

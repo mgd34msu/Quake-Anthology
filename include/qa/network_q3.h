@@ -387,6 +387,8 @@ const qa_q3_identity *qa_q3_server_peer_identity(const qa_q3_server_peer *);
 qa_q3_product qa_q3_server_peer_product(const qa_q3_server_peer *);
 uint16_t qa_q3_server_peer_qport(const qa_q3_server_peer *);
 const qa_q3_gamestate *qa_q3_server_peer_gamestate_view(const qa_q3_server_peer *);
+int32_t qa_q3_server_peer_reliable_sequence(const qa_q3_server_peer *);
+int32_t qa_q3_server_peer_reliable_acknowledged(const qa_q3_server_peer *);
 bool qa_q3_server_peer_rebind(qa_q3_server_peer *, const qa_net_address *, qa_error *);
 bool qa_q3_server_peer_command(qa_q3_server_peer *, const char *, qa_error *);
 bool qa_q3_server_peer_receive(qa_q3_server_peer *, qa_bytes, qa_q3_receive_kind *, qa_error *);

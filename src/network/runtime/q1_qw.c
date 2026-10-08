@@ -11,6 +11,7 @@
 typedef struct qw_pending {
     struct qw_pending *next;
     qa_buffer bytes;
+    uint64_t serial;
 } qw_pending;
 typedef struct qw_server {
     qa_network_runtime *runtime;
@@ -23,6 +24,7 @@ typedef struct qw_server {
     qa_qw_command last_command;
     qw_pending *first, *last;
     size_t queued_bytes, queued_messages, reliable_bytes;
+    uint64_t reliable_queued, reliable_inflight, reliable_acknowledged;
     uint32_t input_sequence, choked;
     uint8_t delta, loss;
     bool has_delta, reply, retiring, signon_active, primed;
@@ -54,6 +56,7 @@ static bool queue(void *context, qa_bytes bytes, qa_error *error)
         free(pending); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining QuakeWorld reliable FIFO"); return false;
     }
     memcpy(pending->bytes.data, bytes.data, bytes.size); pending->bytes.size = bytes.size;
+    pending->serial = ++peer->reliable_queued;
     if (peer->last) peer->last->next = pending; else peer->first = pending;
     peer->last = pending; ++peer->queued_messages; peer->queued_bytes += bytes.size; return true;
 }
@@ -151,8 +154,13 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
     qw_server *peer = context; qa_q1_delivery delivery;
     if (peer->hooks.blocked(peer->hooks.context, &packet->from)) return true;
     qa_qw_channel_stats before = qa_qw_channel_get_stats(peer->native.channel.qw);
+    bool pending = qa_qw_channel_pending(peer->native.channel.qw);
     if (!qa_q1_peer_receive(&peer->native, &packet->from, packet->payload,
         packet->received_ns, &delivery, error)) return false;
+    if (pending && !qa_qw_channel_pending(peer->native.channel.qw)) {
+        peer->reliable_acknowledged = peer->reliable_inflight;
+        peer->reliable_inflight = 0;
+    }
     if (!delivery.present || peer->retiring) return true;
     const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
     if (!client || (!qa_net_address_equal(&client->endpoint, &packet->from, true) &&
@@ -206,6 +214,7 @@ static bool send(qw_server *peer, qa_bytes services, const qa_qw_source_frame *f
         qw_pending *pending = peer->first;
         if (!qa_qw_channel_queue(peer->native.channel.qw,
             (qa_bytes){pending->bytes.data, pending->bytes.size}, error)) return false;
+        peer->reliable_inflight = pending->serial;
         peer->reliable_bytes = pending->bytes.size;
         peer->first = pending->next; if (!peer->first) peer->last = NULL;
         peer->queued_bytes -= pending->bytes.size; --peer->queued_messages;
@@ -368,7 +377,9 @@ bool qa_network_qw_server_state_read(qa_network_runtime *runtime, qa_net_client_
         .outgoing_sequence = qa_qw_channel_get_stats(peer->native.channel.qw).outgoing_sequence,
         .choked = peer->choked, .loss = peer->loss, .qport = peer->policy.qport,
         .queued_messages = peer->queued_messages, .queued_bytes = peer->queued_bytes,
-        .active = qa_qw_signon_spawned(peer->signon), .retiring = peer->retiring, .reply = peer->reply};
+        .active = qa_qw_signon_spawned(peer->signon), .retiring = peer->retiring, .reply = peer->reply,
+        .reliable_queued=peer->reliable_queued, .reliable_inflight=peer->reliable_inflight,
+        .reliable_acknowledged=peer->reliable_acknowledged};
     return true;
 }
 bool qa_network_qw_server_rate(qa_network_runtime *runtime, qa_net_client_id id, uint32_t rate, qa_error *error)
@@ -567,5 +578,9 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
         if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Unqualified QuakeWorld source continuation");
         return false;
     }
+    if (qa_qw_channel_pending(peer->native.channel.qw))
+        peer->reliable_inflight = ++peer->reliable_queued;
+    for (qw_pending *pending = peer->first; pending; pending = pending->next)
+        pending->serial = ++peer->reliable_queued;
     owner->ops = ops; owner->state = peer; return true;
 }

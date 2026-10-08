@@ -45,6 +45,8 @@ const qa_q3_identity *qa_q3_server_peer_identity(const qa_q3_server_peer *p) { r
 qa_q3_product qa_q3_server_peer_product(const qa_q3_server_peer *p) { return p->product; }
 uint16_t qa_q3_server_peer_qport(const qa_q3_server_peer *p) { return qa_q3_channel_qport(p->channel); }
 const qa_q3_gamestate *qa_q3_server_peer_gamestate_view(const qa_q3_server_peer *p) { return &p->gamestate; }
+int32_t qa_q3_server_peer_reliable_sequence(const qa_q3_server_peer *p) { return p ? p->reliable.sequence : 0; }
+int32_t qa_q3_server_peer_reliable_acknowledged(const qa_q3_server_peer *p) { return p ? p->reliable.acknowledged : 0; }
 bool qa_q3_server_peer_rebind(qa_q3_server_peer *p, const qa_net_address *remote, qa_error *e) {
     if (!p || !remote || !qa_net_address_equal(&p->remote, remote, false)) return fail(e, QA_ERROR_ARGUMENT, "Q3 NAT rebind changes host");
     p->remote = *remote; return true;

@@ -26,6 +26,9 @@ typedef struct qa_network_nq_server_state {
     size_t queued_bytes, queued_messages;
     uint8_t stage;
     bool started, retiring;
+    /* Peer-lifetime FIFO batch serials, never native wire sequences. Queue
+     * removal/restart is not ACK; only final channel ACK advances acknowledged. */
+    uint64_t reliable_queued, reliable_inflight, reliable_acknowledged;
 } qa_network_nq_server_state;
 /* Single-seat NetQuake server for protocols 15, 666 and 999. The original
  * source remains canonical; native channel and FIFO transfer into the

@@ -14,6 +14,8 @@ static bool actual_ops(const qa_network_peer_ops *ops)
         ops->receive_pending == actual.receive_pending;
 }
 uint32_t qa_unified_session_required(const qa_unified_session *s) { return s ? s->required : 0; }
+uint32_t qa_unified_session_reliable_acknowledged(const qa_unified_session *s)
+{ return qa_unified_channel_acknowledged(s ? s->channel : NULL); }
 bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_network_runtime *runtime,
     const qa_net_connect *request, const qa_unified_document *offer, qa_error *e)
 {

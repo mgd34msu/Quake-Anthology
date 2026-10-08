@@ -32,6 +32,7 @@ bool qa_unified_session_source_retired(const qa_unified_session *);
  * runs. GAME-drop cleanup may persist only against this exact continuation. */
 bool qa_unified_session_source_close_pending(const qa_unified_session *);
 uint32_t qa_unified_session_required(const qa_unified_session *);
+uint32_t qa_unified_session_reliable_acknowledged(const qa_unified_session *);
 /* Qualifies one genuinely queued control against the retained unacked bytes
  * or the actual cumulative acknowledgement. It never queues or sends. */
 bool qa_unified_session_control_receipt(const qa_unified_session *, uint32_t,
