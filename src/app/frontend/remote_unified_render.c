@@ -220,24 +220,19 @@ static bool q1_team_face_prepare(frontend_unified_render *r,const qa_unified_pla
 {
     const qa_unified_q1_team_face *value=ui->q1_team_face;
     if (!value) return true;
-    const qa_recipe_provider *source=frontend_remote_unified_provider(r->replica,QA_ROLE_ENTITIES,"");
-    const qa_product *product=source?qa_catalog_product(qa_executable_recipe_catalog(
-        frontend_remote_unified_recipe(r->replica)),source->selection.product):NULL;
-    if (!product || product->family!=QA_GAME_Q1 || strcmp(product->campaign,"rogue") || strcmp(value->content,product->identity) ||
+    qa_vfs *files;const qa_product *product;
+    if (!frontend_unified_media_files(r->media,value->content,&files,&product,e)) return false;
+    if (product->family!=QA_GAME_Q1 || strcmp(product->campaign,"rogue") ||
         trunc(value->frags)!=value->frags || value->frags<INT32_MIN || value->frags>INT32_MAX)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Rogue team face differs from its received Source player");
-    qa_vfs *files;const qa_product *admitted;
     qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;
-    return frontend_unified_media_files(r->media,product->identity,&files,&admitted,e) && admitted==product &&
-        frontend_unified_media_bank(r->media,product->identity,&images,&materials,&fonts,&sounds,e) &&
+    return frontend_unified_media_bank(r->media,product->identity,&images,&materials,&fonts,&sounds,e) &&
         frontend_q1_hud_prepare(files,images,materials,QA_HUD_Q1_ROGUE,e) &&
         frontend_q1_team_face_read(images,materials,value->colors,(int32_t)value->frags,&r->team_face,e);
 }
-static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_player_ui *ui, qa_error *e)
+static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_player_ui *ui,
+    const qa_product *product, qa_error *e)
 {
-    const qa_recipe_provider *source = frontend_remote_unified_provider(r->replica, QA_ROLE_ENTITIES, "");
-    const qa_product *product = source ? qa_catalog_product(qa_executable_recipe_catalog(
-        frontend_remote_unified_recipe(r->replica)), source->selection.product) : NULL;
     if (!product || product->family != QA_GAME_Q1) return true;
     const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(r->replica);
     qa_vfs *files; const qa_product *admitted;
@@ -335,8 +330,13 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     const qa_unified_player_view *view=&received->player->view;
     const qa_unified_player_ui *ui=&received->player->ui;
     const frontend_remote_unified_domain *hud_domain=frontend_remote_unified_domain_read(replica);
-    if (okay) okay=hud_domain && qa_ui_preferences_read(qa_application_cvars(f->application),
-        hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,e);
+    qa_application_client_source hud_source;
+    if (okay) okay=hud_domain && qa_application_client_physical_read(hud_domain->application,
+        (qa_actor_owner)hud_domain->command_context.owner,hud_domain->command_context.seat,&hud_source,e);
+    const qa_product *hud_product=okay?qa_catalog_product(qa_launch_instance_catalog(hud_source.descriptor),
+        hud_source.descriptor->selection.product):NULL;
+    if (okay) okay=qa_ui_preferences_read(qa_application_cvars(f->application),
+        hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,hud_product,e);
     r->origin=view->origin; r->angles=view->angles; r->height=view->view_height;
     r->source_view_offset=view->has_client_view_offset_delta; r->kick=view->kick_angles;
     r->explicit_fov=view->has_field_of_view; r->field_of_view=view->field_of_view;
