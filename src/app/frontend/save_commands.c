@@ -16,6 +16,7 @@
 #include "qa/q1_save_product.h"
 #include "qa/recovery.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_client_prepare.h"
 #include <stdio.h>
 
 typedef struct save_command_request {
@@ -393,8 +394,8 @@ static bool recovery_start(qa_frontend *f,qa_error *error)
     if (!owner || owner->recovery ||
         owner->recovery_available || owner->recovery_abandoned ||
         f->options.dedicated || f->source_restoring || frontend_network_save_authority(f)!=QA_SAVE_OFFLINE ||
-        qa_application_startup_pending(f->application) || qa_application_should_stop(f->application) ||
-        qa_application_get_state(f->application)!=QA_APPLICATION_RUNNING) return true;
+        qa_application_startup_pending(f->application) || qa_application_client_prepare_active(f->application) ||
+        qa_application_should_stop(f->application) || qa_application_get_state(f->application)!=QA_APPLICATION_RUNNING) return true;
     qa_error local={0},cleanup={0};qa_save_image *image=NULL;
     if (!qa_application_save_policy(f->application,QA_SAVE_OFFLINE,false,false,QA_SAVE_RECOVERY,&local)) return true;
     owner->draining=true;
@@ -866,7 +867,8 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
 {
     qa_application_save_request request;
     if (!f || !f->save_commands || f->stepping || f->preparing || f->source_restoring ||
-        frontend_save_commands_pending(f) || !qa_application_save_request_read(f->application,&request)) return true;
+        qa_application_client_prepare_active(f->application) || frontend_save_commands_pending(f) ||
+        !qa_application_save_request_read(f->application,&request)) return true;
     frontend_save_commands *owner=f->save_commands;
     qa_error local={0}, cleanup={0};
     if (!recovery_inspect(f,&local))

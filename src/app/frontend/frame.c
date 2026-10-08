@@ -35,6 +35,7 @@
 #include "round.h"
 #include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_client_prepare.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
 #include <stdio.h>
@@ -835,6 +836,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
             if (ok) ok=frontend_profiler_end(profiler,
                 frontend_tools_sync(frontend,error) &&
                     frontend_network_prepare(frontend,error) && frontend_network_maintenance(frontend,error),error);
+            if (ok && qa_application_client_prepare_active(frontend->application)) ready=false;
         }
         if (ok && ready && !replay && !qa_application_should_stop(frontend->application))
             ok=frontend_cinematic_drain(frontend,error);

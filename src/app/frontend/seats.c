@@ -680,6 +680,8 @@ static bool engine_recipient_command(qa_frontend *f,uint32_t physical,qa_command
     qa_command_context previous=qa_input_seat_context(seat->input);
     qa_command_context command;
     if (!qa_console_context_read(qa_application_console(f->application),&command,error)) return false;
+    /* ENGINE input outlives the GAME actor and launch publication. */
+    command.registry=command.generation=0; command.actor=(qa_actor_id){0};
     command.seat=physical; command.origin=QA_COMMAND_SEAT;
     command.dialect=previous.dialect; command.direct=true;
     (void)frontend_seat_launch_id_read(f,physical,&command.seat);
