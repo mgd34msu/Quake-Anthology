@@ -50,6 +50,7 @@
 #include "qa/game_q1_source_travel.h"
 #include "qa/modes_q1_source.h"
 #include "qa/network_q1_channel.h"
+#include "qa/game_domains.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -2631,10 +2632,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool rogue_reset = arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_ROGUE &&
             deathmatch(choices) && selected_teamplay(choices) >= 4;
-        qa_movement_kind movement_kind = movement->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3
-            : movement->component.clock.kind == QA_CLOCK_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE
-            : movement->component.clock.kind == QA_CLOCK_Q2_CLASSIC ? QA_MOVEMENT_Q2_CLASSIC
-            : movement->component.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_MOVEMENT_QUAKEWORLD : QA_MOVEMENT_NETQUAKE;
+        qa_movement_kind movement_kind = qa_clock_movement_kind(movement->component.clock.kind);
         qa_body_state body = {.bounds = qa_movement_input_default(movement_kind, actor).standing.bounds};
         const char *current_map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
         bool keep = keep_native_travel(character, choices, carry, carry_players,
@@ -3079,12 +3077,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!control->active || control->retired || !qa_actor_id_equal(control->actor, actor) ||
                 control->state.kind != physical.state.kind)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn changed its Source control");
-            control->state = physical.state;
-            control->bounds = physical.bounds;
-            control->ground = physical.ground;
-            control->view_angles = physical.view_angles;
-            control->view_offset = physical.view_offset;
-            control->view_height = physical.view_height;
+            qa_movement_result completed = {.state = physical.state, .bounds = physical.bounds,
+                .ground = physical.ground, .view_angles = physical.view_angles,
+                .view_offset = physical.view_offset, .view_height = physical.view_height,
+                .water_level = control->water_level, .water_type = control->water_type};
+            application_control_publish_motion(control, &completed);
             return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
                 admit_components(application, actor, error);
         }

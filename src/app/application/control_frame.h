@@ -164,6 +164,7 @@ bool application_control_outputs(const qa_application *, qa_actor_id,
 bool application_control_body_request(qa_application *, qa_actor_id, qa_bounds current,
     application_client_outputs *, qa_error *);
 void application_control_body_reset(qa_application *, qa_actor_id);
+void application_control_publish_motion(application_control_record *, const qa_movement_result *);
 bool application_arsenal_guest_outputs(application_provider *, qa_actor_id,
     application_client_outputs *, qa_error *);
 bool application_arsenal_guest_crouched(application_provider *, qa_actor_id, bool *, qa_error *);

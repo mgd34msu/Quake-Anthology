@@ -20,6 +20,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_wire.h"
+#include "qa/game_domains.h"
 #include "qa/text.h"
 
 #include <limits.h>
@@ -239,21 +240,17 @@ bool application_control_outputs(const qa_application *app, qa_actor_id actor,
     return application_qc_control_outputs(app, actor, out, error);
 }
 
-static qa_movement_kind movement_kind(qa_clock_kind kind)
+void application_control_publish_motion(application_control_record *control,
+                                        const qa_movement_result *result)
 {
-    switch (kind) {
-    case QA_CLOCK_NETQUAKE:
-        return QA_MOVEMENT_NETQUAKE;
-    case QA_CLOCK_QUAKEWORLD:
-        return QA_MOVEMENT_QUAKEWORLD;
-    case QA_CLOCK_Q2_CLASSIC:
-        return QA_MOVEMENT_Q2_CLASSIC;
-    case QA_CLOCK_Q2_RERELEASE:
-        return QA_MOVEMENT_Q2_RERELEASE;
-    case QA_CLOCK_Q3:
-        return QA_MOVEMENT_Q3;
-    }
-    return QA_MOVEMENT_NETQUAKE;
+    control->state = result->state;
+    control->bounds = result->bounds;
+    control->ground = result->ground;
+    control->view_angles = result->view_angles;
+    control->view_offset = result->view_offset;
+    control->view_height = result->view_height;
+    control->water_level = result->water_level;
+    control->water_type = result->water_type;
 }
 
 static qa_collision_family movement_family(qa_movement_kind kind)
@@ -287,7 +284,7 @@ static const qa_product *provider_product(const qa_application *application,
 static qa_movement_profile selected_profile(
     const qa_application *application, const application_provider *provider)
 {
-    qa_movement_kind kind = movement_kind(provider->component.clock.kind);
+    qa_movement_kind kind = qa_clock_movement_kind(provider->component.clock.kind);
     qa_movement_profile profile = qa_movement_profile_default(kind);
     const qa_product *product = provider_product(application, provider);
     if (kind == QA_MOVEMENT_NETQUAKE && product != NULL)
@@ -1817,7 +1814,7 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         !qa_combat_read_traits(application->combat, actor, &combat, error))
         return false;
 
-    qa_movement_kind kind = movement_kind(provider->component.clock.kind);
+    qa_movement_kind kind = qa_clock_movement_kind(provider->component.clock.kind);
     qa_application_movement_numeric numeric, prediction_numeric;
     if (!movement_numeric(application, provider, kind, false, &numeric, error) ||
         !movement_numeric(application, provider, kind, true, &prediction_numeric, error)) return false;
@@ -2408,10 +2405,7 @@ static bool external_stage_locomotion(const application_control_external_stage *
         ok = publish_result_body(move, &result->state, result->bounds, result->ground,
             result->view_angles, false, false, error);
         if (ok) {
-            move->control->state = result->state; move->control->bounds = result->bounds;
-            move->control->ground = result->ground; move->control->view_angles = result->view_angles;
-            move->control->view_offset = result->view_offset; move->control->view_height = result->view_height;
-            move->control->water_level = result->water_level; move->control->water_type = result->water_type;
+            application_control_publish_motion(move->control, result);
             *applied = move->command_applied ? move->applied_command : input.command;
         }
     }
@@ -2522,10 +2516,12 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
     if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
     application_control_record *control = &app->controls[actor.slot];
-    control->state = physical.state; control->bounds = physical.bounds; control->ground = physical.ground;
-    control->view_angles = physical.view_angles; control->view_offset = physical.view_offset;
-    control->view_height = physical.view_height; control->water_level = physical.water_level;
-    memcpy(&control->water_type, &physical.water_type, sizeof(control->water_type));
+    qa_movement_result completed = {.state = physical.state, .bounds = physical.bounds,
+        .ground = physical.ground, .view_angles = physical.view_angles,
+        .view_offset = physical.view_offset, .view_height = physical.view_height,
+        .water_level = physical.water_level};
+    memcpy(&completed.water_type, &physical.water_type, sizeof(completed.water_type));
+    application_control_publish_motion(control, &completed);
     control->command_angles = physical.command_angles;
     control->previous_buttons = control->buttons; control->buttons = command->buttons;
     qa_movement_command applied = *command;
@@ -2787,10 +2783,7 @@ static bool control_move(qa_application *application,
             ok = publish_result_body(&move, &result->state, result->bounds, result->ground,
                 result->view_angles, false, false, error);
             if (ok) {
-                record->state = result->state; record->bounds = result->bounds;
-                record->ground = result->ground; record->view_angles = result->view_angles;
-                record->view_offset = result->view_offset; record->view_height = result->view_height;
-                record->water_level = result->water_level; record->water_type = result->water_type;
+                application_control_publish_motion(record, result);
                 input.state = record->state; input.shape.bounds = record->bounds;
                 application_control_frames_state(application, actor, &input.state);
             }
@@ -2917,14 +2910,7 @@ static bool control_move(qa_application *application,
     }
     if (ok && live(application, actor) && record->active &&
         qa_actor_id_equal(record->actor, actor)) {
-        record->state = record->result.state;
-        record->bounds = record->result.bounds;
-        record->ground = record->result.ground;
-        record->view_angles = record->result.view_angles;
-        record->view_offset = record->result.view_offset;
-        record->view_height = record->result.view_height;
-        record->water_level = record->result.water_level;
-        record->water_type = record->result.water_type;
+        application_control_publish_motion(record, &record->result);
         record->previous_buttons = record->buttons;
         record->buttons = command->buttons;
         command_angle_feedback(&move, command);
@@ -3375,9 +3361,15 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
             : (qa_movement_ground){0};
         state->event_sequence = (uint32_t)player->eventSequence;
         state->movement_frame = player->pmoveFramecount; state->jump_pad_frame = player->jumppadFrame;
-        record->bounds = body.bounds; record->ground = state->ground;
-        record->view_angles = state->view_angles; record->view_height = state->view_height;
-        record->view_offset = qa_v3(0, 0, state->view_height);
+        record->result.status = QA_MOVEMENT_ACTIVE; record->result.actor = actor;
+        record->result.command_sequence = command->sequence; record->result.state = record->state;
+        record->result.bounds = body.bounds; record->result.ground = state->ground;
+        record->result.view_angles = state->view_angles;
+        record->result.view_offset = qa_v3(0, 0, state->view_height);
+        record->result.view_height = state->view_height; record->result.contact_count = 0;
+        record->result.water_level = record->water_level; record->result.water_type = record->water_type;
+        record->result.impact_delta = 0;
+        application_control_publish_motion(record, &record->result);
         if (!stage) {
             record->previous_buttons = record->buttons; record->buttons = command->buttons;
             command_angle_feedback(&move, command);
@@ -3385,13 +3377,6 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         if (!stage && !context->source_guestcmd) {
             record->command_sequence = command->sequence; record->command_seen = true;
         }
-        record->result.status = QA_MOVEMENT_ACTIVE; record->result.actor = actor;
-        record->result.command_sequence = command->sequence; record->result.state = record->state;
-        record->result.bounds = record->bounds; record->result.ground = record->ground;
-        record->result.view_angles = record->view_angles; record->result.view_offset = record->view_offset;
-        record->result.view_height = record->view_height; record->result.contact_count = 0;
-        record->result.water_level = record->water_level; record->result.water_type = record->water_type;
-        record->result.impact_delta = 0;
         input.state = record->state;
         if (stage) return external_stage_current(stage);
         bool source_weapons = application_guest_input_source_weapons(application, actor);
@@ -3592,7 +3577,7 @@ bool qa_application_control_prediction_read(qa_application *application,
     if (movement->close_pending || !character || !arsenal ||
         !character->constructed || !character->attached || character->close_pending ||
         !arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
-        movement_kind(movement->component.clock.kind) != record->state.kind)
+        qa_clock_movement_kind(movement->component.clock.kind) != record->state.kind)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Prediction configuration lost an admitted selected role");
     if (!application_control_numeric_current(application, actor, &record->numeric, error) ||
@@ -4189,7 +4174,7 @@ bool application_control_gravity(qa_application *application, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source gravity lost its actual selected control owner");
     if (movement->close_pending ||
-        movement_kind(movement->component.clock.kind) != record->state.kind)
+        qa_clock_movement_kind(movement->component.clock.kind) != record->state.kind)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Source gravity differs from its admitted movement family");
     qa_movement_state *active = application_control_frames_state_current(application, actor);
