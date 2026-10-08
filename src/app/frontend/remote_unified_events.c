@@ -267,6 +267,7 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events 
                 return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified sound has no declared resource or actual source actor");
             continue;
         }
+        if (row->payload.kind==QA_UNIFIED_SIMULATION_DAMAGE) continue;
         if (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE &&
             (row->payload.value.message.kind==QA_UNIFIED_MESSAGE_PRINT ||
              row->payload.value.message.kind==QA_UNIFIED_MESSAGE_CENTER_PRINT)) continue;
@@ -415,6 +416,9 @@ static bool apply_simulation(frontend_unified_events *o,const qa_unified_simulat
     double ms=row->milliseconds?row->time:row->time*1000;
     if (!isfinite(ms)) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified event source time overflow");
     if (row->payload.kind==QA_UNIFIED_SIMULATION_SOUND) return sound(o,&row->payload.value.sound,ms,e);
+    /* The server committed these mutations before publishing FRAME state.
+     * A client consumes the outcome without applying game damage again. */
+    if (row->payload.kind==QA_UNIFIED_SIMULATION_DAMAGE) return true;
     if (row->payload.kind==QA_UNIFIED_SIMULATION_MESSAGE) {
         if (row->payload.linked_presentation && mirrored(o,row->payload.source_presentation_sequence)) return true;
         qa_unified_message_kind kind=row->payload.value.message.kind;
