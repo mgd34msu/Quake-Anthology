@@ -1551,9 +1551,10 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
         active->surface_ticket = NULL; free(ticket); return false;
     }
     SDL_GetWindowPosition(active->window, &ticket->x, &ticket->y);
-    if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0) {
-        active->surface_ticket = NULL; free(ticket); return display_error(error, QA_ERROR_IO, "Reading prior native window display mode");
-    }
+    /* A windowed/tiling surface need not match an output's display modes. */
+    if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0)
+        (void)SDL_GetCurrentDisplayMode(ticket->original.display_index,
+                                      &ticket->original_mode);
     SDL_Window *focus = SDL_GetKeyboardFocus();
     ticket->previous_focus = focus ? SDL_GetWindowID(focus) : 0;
     *out = ticket;
@@ -1664,7 +1665,8 @@ bool qa_display_surface_rollback(qa_display_surface_ticket *ticket, qa_error *er
         qa_display_info actual;
         if (!qa_display_info_get(ticket->active, &actual, error)) return false;
         if (actual.fullscreen != ticket->original.fullscreen) {
-            if (SDL_SetWindowDisplayMode(ticket->active->window, &ticket->original_mode) < 0 ||
+            if (SDL_SetWindowDisplayMode(ticket->active->window,
+                    ticket->original_mode.w ? &ticket->original_mode : NULL) < 0 ||
                 !qa_display_set_fullscreen(ticket->active, ticket->original.fullscreen, error))
                 return display_error(error, QA_ERROR_IO, "Restoring prior native fullscreen mode");
         }
