@@ -111,7 +111,7 @@ static qa_ui_control button(lobby_menu *menu, qa_ui_id id, const char *label,
     unsigned row, bool enabled)
 {
     return (qa_ui_control){.id = id, .kind = QA_UI_BUTTON, .label = label,
-        .rect = {64, 118 + (float)row * 28, 512, 26}, .enabled = enabled,
+        .rect = {64, 92 + (float)row * 28, 512, 28}, .enabled = enabled,
         .visible = true, .context = menu, .action = action};
 }
 static uint64_t occupied(const qa_lobby_view *view)
