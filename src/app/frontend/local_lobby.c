@@ -114,13 +114,6 @@ static qa_ui_control button(lobby_menu *menu, qa_ui_id id, const char *label,
         .rect = {64, 118 + (float)row * 28, 512, 26}, .enabled = enabled,
         .visible = true, .context = menu, .action = action};
 }
-static qa_ui_control text(lobby_menu *menu, qa_ui_id id, const char *label, unsigned row)
-{
-    qa_ui_control control = button(menu, id, label, row, false);
-    control.kind = QA_UI_TEXT;
-    control.value.text = (qa_ui_text_style){.scale = 1.6f, .fit_width = 512, .source = true};
-    return control;
-}
 static uint64_t occupied(const qa_lobby_view *view)
 {
     uint64_t count = 0;
@@ -183,15 +176,15 @@ static bool factory(void *context, uint32_t physical, qa_ui_menu *out, qa_error 
         snprintf(menu->labels[count], sizeof(menu->labels[count]), "%s: %s", view->name,
             view->phase == QA_LOBBY_PLAYING ? "Playing" :
             view->phase == QA_LOBBY_STARTING ? "Starting host" : "Waiting for readiness");
-        menu->controls[count] = text(menu, 10, menu->labels[count], 0); ++count;
+        menu->controls[count] = button(menu, 10, menu->labels[count], 0, false); ++count;
         for (size_t i = 0; i < view->member_count; ++i) ready &= view->members[i].ready;
         for (size_t i = menu->page * 4; i < view->member_count && i < (menu->page + 1) * 4; ++i) {
             const qa_lobby_member *entry = view->members + i;
             snprintf(menu->labels[count], sizeof(menu->labels[count]), "%s: %s (%u seat%s)",
                 entry->account.name, entry->ready ? "Ready" : "Not ready", entry->seats,
                 entry->seats == 1 ? "" : "s");
-            menu->controls[count] = text(menu, 30 + i, menu->labels[count],
-                1 + (unsigned)(i % 4)); ++count;
+            menu->controls[count] = button(menu, 30 + i, menu->labels[count],
+                1 + (unsigned)(i % 4), false); ++count;
         }
         menu->controls[count++] = button(menu, 4, local && local->ready ? "Not ready" : "Ready", 5,
             enabled && local && view->phase == QA_LOBBY_OPEN);
@@ -201,9 +194,9 @@ static bool factory(void *context, uint32_t physical, qa_ui_menu *out, qa_error 
         menu->controls[count++] = button(menu, 6, host ? "Close lobby" : "Leave lobby", 7, enabled);
         menu->controls[count++] = button(menu, 11, "More members", 8, enabled && pages > 1);
     }
-    menu->controls[count++] = text(menu, 98, owner->status[0] ? owner->status :
+    menu->controls[count++] = button(menu, 98, owner->status[0] ? owner->status :
         busy(owner) ? "Working..." : view ? "Set Ready before starting the match" :
-        open_count(owner) ? "Choose a lobby or host your selected game" : "No open lobbies", 9);
+        open_count(owner) ? "Choose a lobby or host your selected game" : "No open lobbies", 9, false);
     menu->controls[count++] = button(menu, 99, "Back", 11, enabled);
     *out = (qa_ui_menu){.id = menu->id, .title = "Local lobbies",
         .controls = menu->controls, .count = count};
