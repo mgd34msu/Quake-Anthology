@@ -1556,7 +1556,7 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *path,
 bool qa_vfs_set_user_overlay(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_error *error)
 {
     mount *source = vfs == NULL ? NULL : find_mount(vfs, id);
-    if (source == NULL || source->archive != NULL) {
+    if (source == NULL || (enabled && source->archive != NULL)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "user overlay requires a loose mount");
         return false;
     }
