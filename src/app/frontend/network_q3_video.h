@@ -10,8 +10,9 @@ typedef struct frontend_network_q3_video_reinit_view {
     qa_application_q3_remote_init init;
     bool connecting;
 } frontend_network_q3_video_reinit_view;
-bool frontend_network_q3_video_reinit_read(const qa_frontend *,frontend_network_q3_video_reinit_view *,qa_error *);
+bool frontend_network_q3_video_reinit_read(const qa_frontend *,
+    const qa_application_q3_client_context *,frontend_network_q3_video_reinit_view *,qa_error *);
 bool frontend_network_q3_video_reinit_current(const qa_frontend *,const frontend_network_q3_video_reinit_view *);
-bool frontend_network_q3_video_initial_read(const qa_frontend *,frontend_remote_q3_initial **,
-    frontend_remote_q3_modules **,bool *present,qa_error *);
+bool frontend_network_q3_video_initial_read(const qa_frontend *,const frontend_remote_q3_initial *,
+    frontend_remote_q3_modules **,qa_error *);
 #endif

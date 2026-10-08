@@ -5539,18 +5539,19 @@ bool frontend_network_client_domain_current(const qa_frontend *f,
         source->initial.last_executed_server_command == n->q3_initial_command;
 }
 bool frontend_network_q3_video_reinit_read(const qa_frontend *f,
+    const qa_application_q3_client_context *receiver,
     frontend_network_q3_video_reinit_view *out,qa_error *error)
 {
     qa_frontend_network *n=f?f->network:NULL;
-    frontend_q3_client *client=q3_client_physical(f,0);
-    qa_application_q3_client_context receiver;
+    frontend_q3_client *client=q3_client_receiver(f,receiver);
+    qa_application_q3_client_context actual;
     qa_network_q3_client_init counters;
-    const qa_net_client *state=n?qa_net_connections_get(qa_network_connections(client->runtime),client->q3_client):NULL;
-    if(!out || !n || n->busy || n->detached_transport || !client->q3_session ||
+    const qa_net_client *state=client?qa_net_connections_get(qa_network_connections(client->runtime),client->q3_client):NULL;
+    if(!out || !n || n->busy || n->detached_transport || !client || !client->q3_session ||
         (!frontend_remote_q3_idle(f) && !frontend_video_guests_read(f)) || !qa_network_callbacks_idle(client->runtime) ||
         !qa_application_q3_remote_context_read(f->application,client->q3_cgame_owner,
-            client->q3_client_launch_seat,&receiver,error) ||
-        !frontend_network_client_domain_read(f,&receiver,&out->domain,error) ||
+            client->q3_client_launch_seat,&actual,error) ||
+        !frontend_network_client_domain_read(f,&actual,&out->domain,error) ||
         !qa_network_q3_client_init_read(client->runtime,client->q3_client,&counters,error) || !state)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Video restart lacks its returned decoded Q3 CLIENT");
     out->network=n; out->video_stage=frontend_video_guests_read(f); out->connecting=state->phase!=QA_NET_ACTIVE;
@@ -5580,23 +5581,24 @@ bool frontend_network_q3_video_reinit_current(const qa_frontend *f,
         view->init.last_executed_server_command==counters.last_executed_server_command &&
         view->init.client_number==counters.client_number;
 }
-bool frontend_network_q3_video_initial_read(const qa_frontend *f,frontend_remote_q3_initial **owner,
-    frontend_remote_q3_modules **modules,bool *present,qa_error *error)
+bool frontend_network_q3_video_initial_read(const qa_frontend *f,const frontend_remote_q3_initial *owner,
+    frontend_remote_q3_modules **modules,qa_error *error)
 {
-    if(!f || !owner || !modules || !present)
+    if(!f || !owner || !modules)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial video observation lacks its actual outputs");
-    *owner=NULL; *modules=NULL; *present=false;
+    *modules=NULL;
     qa_frontend_network *n=f->network;
-    if(!n || (!n->q3_clients[0].q3_initial && !n->q3_clients[0].q3_initial_modules)) return true;
     frontend_remote_q3_initial_view view;
-    if(n->busy || n->detached_transport || !n->q3_clients[0].q3_initial || n->q3_clients[0].q3_session || !n->q3_clients[0].q3_initial_modules ||
-        !qa_network_callbacks_idle(n->runtime) || !frontend_remote_q3_initial_idle(n->q3_clients[0].q3_initial) ||
-        !frontend_remote_q3_modules_idle(n->q3_clients[0].q3_initial_modules) ||
-        frontend_remote_q3_modules_initial_parent(n->q3_clients[0].q3_initial_modules)!=n->q3_clients[0].q3_initial ||
-        !frontend_remote_q3_initial_read(n->q3_clients[0].q3_initial,&view,error) ||
+    bool read=frontend_remote_q3_initial_read(owner,&view,error);
+    frontend_q3_client *client=read?q3_client_receiver(f,&view.attempt.source.receiver):NULL;
+    if(!n || n->busy || n->detached_transport || !client || client->q3_initial!=owner ||
+        client->q3_session || !client->q3_initial_modules ||
+        !qa_network_callbacks_idle(client->runtime) || !frontend_remote_q3_initial_idle(owner) ||
+        !frontend_remote_q3_modules_idle(client->q3_initial_modules) ||
+        frontend_remote_q3_modules_initial_parent(client->q3_initial_modules)!=owner ||
         !frontend_remote_q3_initial_current(&view))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial video restart lacks its returned real UI parent");
-    *owner=n->q3_clients[0].q3_initial; *modules=n->q3_clients[0].q3_initial_modules; *present=true; return true;
+    *modules=client->q3_initial_modules; return true;
 }
 bool frontend_network_client_domain_metadata_read(const qa_frontend *f,
     const qa_application_q3_client_context *receiver,

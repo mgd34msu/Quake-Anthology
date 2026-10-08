@@ -93,11 +93,8 @@ bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa
         if (!frontend_remote_q3_runtime_read(frontend_remote_q3_at(f,i)) &&
             !frontend_remote_q3_modules_read(frontend_remote_q3_at(f,i)))
             return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Remote CG lacks its retained video reset producer");
-    frontend_remote_q3_initial *initial=NULL;
-    frontend_remote_q3_modules *initial_modules=NULL;
-    bool initial_present=false;
-    if (!frontend_network_q3_video_initial_read(f,&initial,&initial_modules,&initial_present,error)) return false;
-    if (frontend_remote_q3_initial_count(f)!=(size_t)initial_present || decoded_count>SIZE_MAX-(size_t)initial_present)
+    size_t initial_count=frontend_remote_q3_initial_count(f);
+    if (decoded_count>SIZE_MAX-initial_count)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Video restart has an unassociated Initial resource parent");
     frontend_video_guests *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Source video guest recipes");
@@ -107,7 +104,7 @@ bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa
         owner->unified=calloc(owner->unified_count,sizeof(*owner->unified));
         if(!owner->unified) { owner->unified_count=0;return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Unified video replicas"); }
     }
-    owner->remote_count=decoded_count+(size_t)initial_present;
+    owner->remote_count=decoded_count+initial_count;
     if (owner->remote_count) {
         owner->remote=calloc(owner->remote_count,sizeof(*owner->remote));
         if (!owner->remote) { owner->remote_count=0; return frontend_fail(error,QA_ERROR_MEMORY,"Retaining acquired video CLIENT roster"); }
@@ -116,7 +113,11 @@ bool frontend_video_guests_prepare(qa_frontend *f,frontend_video_guests **out,qa
         owner->remote[i].decoded=frontend_remote_q3_at(f,i);
         owner->remote[i].modules=frontend_remote_q3_modules_read(owner->remote[i].decoded);
     }
-    if (initial_present) owner->remote[decoded_count]=(video_remote_row){.initial=initial,.modules=initial_modules};
+    for (size_t i=0;i<initial_count;++i) {
+        video_remote_row *row=owner->remote+decoded_count+i;
+        row->initial=frontend_remote_q3_initial_at(f,i);
+        if (!frontend_network_q3_video_initial_read(f,row->initial,&row->modules,error)) return false;
+    }
     if (f->frame.source_pending &&
         !qa_material_source_frame_end(f->frame.source_pending,&f->frame,false,error)) return false;
     qa_scene_frame_reset(&f->frame,f->frame.sequence);
@@ -152,7 +153,12 @@ static bool reopen_remote(frontend_video_guests *owner,video_remote_row *row,qa_
         row->media_ready=true;
     }
     frontend_network_q3_video_reinit_view reinit;
-    if (!row->initial && !frontend_network_q3_video_reinit_read(owner->frontend,&reinit,error)) return false;
+    if (!row->initial) {
+        frontend_remote_q3_resources resources;
+        uint64_t generation; bool complete;
+        if (!frontend_remote_q3_resources_video_read(row->decoded,row->modules,&resources,&generation,&complete,error) ||
+            !frontend_network_q3_video_reinit_read(owner->frontend,&resources.domain.source.receiver,&reinit,error)) return false;
+    }
     row->init_attempted=true;
     if (!frontend_remote_q3_modules_video_reopen(row->ticket,row->initial?NULL:&reinit.init,
         row->initial || reinit.connecting,error)) return false;
