@@ -655,7 +655,10 @@ static void retained_external_brush(void)
         qa_trace_result hit;
         GAME_CHECK(qa_world_trace(world, &query, &hit, &error));
         GAME_CHECK(hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(hit.actor, actor));
-        GAME_CHECK(hit.end.z > 191.9f && hit.end.z < 192.1f);
+        /* Stock caller clipping: Q3 SURFACE_CLIP_EPSILON is 1/8,
+         * Q1/Q2 DIST_EPSILON is 1/32, independent of the restored brush format. */
+        float expected_end = family == QA_COLLISION_Q3 ? 192.125f : 192.03125f;
+        GAME_CHECK(fabsf(hit.end.z - expected_end) < .0001f);
         if (family != QA_COLLISION_Q1) {
             qa_point_query point = {.point = {0, 0, 180}, .policy = query.policy};
             qa_point_contents contents;

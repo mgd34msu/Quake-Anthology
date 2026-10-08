@@ -85,7 +85,9 @@ void qa_collision_adapt_trace(qa_trace_result *result,const qa_trace_policy *pol
     }
     result->family=to;
     result->contents=qa_collision_convert_contents(native_contents,from,to);
-    result->has_secondary=false; result->secondary_has_surface=false;
+    if(to!=QA_COLLISION_Q2 || !policy->q2_merged_contents) {
+        result->has_secondary=false; result->secondary_has_surface=false;
+    }
     if(to==QA_COLLISION_Q1) {
         result->surface_flags=surface_flags;
         result->has_surface=false;
@@ -95,6 +97,10 @@ void qa_collision_adapt_trace(qa_trace_result *result,const qa_trace_policy *pol
         result->surface.flags=from==QA_COLLISION_Q3?qa_collision_convert_surface_flags(surface_flags,from,to):sky?4:0;
         if(sky) memcpy(result->surface.name,"sky",4);
         result->surface_flags=result->surface.flags;
+        if(result->has_secondary) {
+            result->secondary_has_surface=result->has_surface;
+            result->secondary_surface=result->surface;
+        }
     } else {
         result->has_surface=false;
         result->surface_flags=from==QA_COLLISION_Q2?qa_collision_convert_surface_flags(surface_flags,from,to):sky?20:0;
@@ -109,40 +115,47 @@ void qa_collision_adapt_point(qa_point_contents *result,const qa_trace_policy *p
     *result=(qa_point_contents){policy->family,contents,contents,contents};
 }
 
+typedef struct q2_box_trace {
+    qa_bounds expanded;
+    qa_vec3 start,end;
+} q2_box_trace;
+
+static qa_collision_side_distances q2_box_distances(void *context,size_t index,bool need_last)
+{
+    const q2_box_trace *box=context;
+    unsigned axis=(unsigned)(index/2);
+    float sign=index%2==0?1.0f:-1.0f;
+    float distance=qa_vec_component(index%2==0?box->expanded.maxs:box->expanded.mins,axis);
+    return (qa_collision_side_distances){(qa_vec_component(box->start,axis)-distance)*sign,
+        need_last?(qa_vec_component(box->end,axis)-distance)*sign:0};
+}
+
+static qa_collision_plane q2_box_plane(qa_bounds target,size_t index)
+{
+    unsigned axis=(unsigned)(index/2);
+    float sign=index%2==0?1.0f:-1.0f;
+    qa_vec3 normal={0}; qa_vec_set_component(&normal,axis,sign);
+    return qa_collision_make_plane(normal,
+        sign*qa_vec_component(index%2==0?target.maxs:target.mins,axis),
+        (int32_t)(axis+(sign<0.0f?3u:0u)));
+}
+
 static bool trace_q2_box(const qa_trace_query *query,qa_bounds target,qa_vec3 origin,int32_t contents,qa_trace_result *out)
 {
     qa_bounds moving=query->shape.kind==QA_SHAPE_POINT?(qa_bounds){0}:query->shape.bounds;
-    qa_bounds expanded={qa_vec_sub(target.mins,moving.maxs),qa_vec_sub(target.maxs,moving.mins)};
-    qa_vec3 start=qa_vec_sub(query->start,origin),end=qa_vec_sub(query->end,origin);
-    float enter=-1.0f,enter2=-1.0f,leave=1.0f;
-    bool start_out=false,get_out=false,miss=false,has_secondary=false;
-    qa_collision_plane plane={0},secondary={0};
-    for(unsigned i=0;i<6;++i) {
-        unsigned axis=i/2; float sign=i%2==0?1.0f:-1.0f;
-        float distance=qa_vec_component(i%2==0?expanded.maxs:expanded.mins,axis);
-        float d1=(qa_vec_component(start,axis)-distance)*sign,d2=(qa_vec_component(end,axis)-distance)*sign;
-        if(d1>0.0f) start_out=true;
-        if(d2>0.0f) get_out=true;
-        if(d1>0.0f && (d2>=0.03125f || d2>=d1)) { miss=true; break; }
-        if(d1<=0.0f && d2<=0.0f) continue;
-        if(d1>d2) {
-            float fraction=fmaxf(0.0f,(d1-0.03125f)/(d1-d2));
-            qa_vec3 normal={0}; qa_vec_set_component(&normal,axis,sign);
-            qa_collision_plane source=qa_collision_make_plane(normal,sign*qa_vec_component(i%2==0?target.maxs:target.mins,axis),(int32_t)(axis+(sign<0.0f?3u:0u)));
-            if(fraction>enter) { enter=fraction; plane=source; }
-            else if(fraction>enter2) { enter2=fraction; secondary=source; has_secondary=true; }
-        } else leave=fminf(leave,fminf(1.0f,(d1+0.03125f)/(d1-d2)));
-    }
+    q2_box_trace box={{qa_vec_sub(target.mins,moving.maxs),qa_vec_sub(target.maxs,moving.mins)},
+        qa_vec_sub(query->start,origin),qa_vec_sub(query->end,origin)};
     qa_trace_result result=qa_collision_empty_trace(query,QA_COLLISION_Q2);
-    result.start_solid=!miss&&!start_out; result.all_solid=result.start_solid&&!get_out;
     bool stationary=query->start.x==query->end.x && query->start.y==query->end.y && query->start.z==query->end.z;
-    result.fraction=miss?1.0f:result.all_solid&&(stationary||query->policy.q2_merged_contents)?0.0f:
-        result.start_solid?1.0f:enter<leave&&enter>=0.0f?enter:1.0f;
-    result.end=qa_vec_lerp(query->start,query->end,result.fraction);
-    result.contents=result.fraction<1.0f?contents:0;
-    if(!miss && !result.start_solid && result.fraction<1.0f) {
-        result.plane=plane; result.contact_plane=plane; result.has_secondary=has_secondary; result.secondary_plane=secondary;
+    const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
+    qa_collision_brush_contact contact;
+    if(qa_collision_trace_brush(&box,q2_box_distances,0,6,stationary,&rules,contents,&result,&contact)) {
+        result.plane=q2_box_plane(target,contact.side); result.contact_plane=result.plane;
+        if(contact.secondary!=SIZE_MAX) {
+            result.has_secondary=true; result.secondary_plane=q2_box_plane(target,contact.secondary);
+        }
     }
+    result.end=qa_vec_lerp(query->start,query->end,result.fraction);
     result.contact=result.fraction<1.0f&&!result.all_solid;
     result.hit=result.fraction<1.0f||result.start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     *out=result; return true;
@@ -157,10 +170,13 @@ bool qa_collision_trace_body(const qa_trace_query *query,qa_collision_family act
     bool native_q3=query->policy.family==QA_COLLISION_Q3 && actor_family==QA_COLLISION_Q3;
     qa_trace_query local=*query;
     local.target=(qa_collision_target){0};
-    local.policy=qa_collision_default_policy(QA_COLLISION_Q3);
-    local.policy.contents_mask=native_q3?query->policy.contents_mask:UINT32_C(0x02000000);
+    local.policy.contents_mask=native_q3?query->policy.contents_mask:
+        (uint32_t)qa_collision_convert_contents(0x02000000,QA_COLLISION_Q3,query->policy.family);
     if(!qa_q3_trace_shape(&local,target_kind,target,origin,0x02000000,out,error)) return false;
-    if(!native_q3) out->contents=qa_collision_convert_contents(contents,query->policy.family,QA_COLLISION_Q3);
+    if(!native_q3) {
+        bool occupied=out->fraction<1 || (query->policy.family==QA_COLLISION_Q1 && out->start_solid);
+        out->contents=occupied?qa_collision_convert_contents(contents,query->policy.family,QA_COLLISION_Q3):0;
+    }
     if(query->policy.family==QA_COLLISION_Q1) { out->in_open=!out->all_solid; out->in_water=(out->contents&56)!=0; }
     qa_collision_adapt_trace(out,&query->policy); return true;
 }

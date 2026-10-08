@@ -172,7 +172,7 @@ double q1_shape_support(const q1shape *shape,q1v n) {
     if(shape->capsule) return shape->radius+fabs(qdot(n,shape->axes[2]))*shape->half_segment;
     return fabs(qdot(n,shape->axes[0]))*shape->extents.x+fabs(qdot(n,shape->axes[1]))*shape->extents.y+fabs(qdot(n,shape->axes[2]))*shape->extents.z;
 }
-static bool sweep_box(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape *shape,q1interval *out) {
+static bool sweep_box(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape *shape,double epsilon,q1interval *out) {
     q1planes planes={0};
     if(!q1_separating_planes(w,cell,shape->axes,&planes)) return false;
     q1interval interval={-INFINITY,INFINITY,-INFINITY,{{0,0,0},0},0,0};
@@ -184,7 +184,7 @@ static bool sweep_box(q1work *w,const q1cell *cell,q1v start,q1v end,const q1sha
         double fraction=a/(a-b);
         if(a>b) {
             if(fraction>interval.enter) { interval.enter=fraction; interval.plane=p; }
-            interval.contact=fmax(interval.contact,(a-0.03125)/(a-b));
+            interval.contact=fmax(interval.contact,(a-epsilon)/(a-b));
         } else interval.exit=fmin(interval.exit,fraction);
         if(interval.enter>interval.exit) return false;
     }
@@ -264,13 +264,13 @@ static bool capsule_entrance(q1work *w,const q1cell *cell,q1v start,q1v end,cons
     }
     qa_error_set(w->error,QA_ERROR_FORMAT,0,"Quake solid-cell capsule sweep did not converge"); w->failed=true; return false;
 }
-bool q1_sweep_cell(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape *shape,q1interval *out) {
-    if(!shape->capsule) return sweep_box(w,cell,start,end,shape,out);
+bool q1_sweep_cell(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape *shape,double epsilon,q1interval *out) {
+    if(!shape->capsule) return sweep_box(w,cell,start,end,shape,epsilon,out);
     double entrance,reverse,contact; q1p plane,unused;
     if(!capsule_entrance(w,cell,start,end,shape,0,&entrance,&plane)) return false;
     bool reverse_hit=capsule_entrance(w,cell,end,start,shape,0,&reverse,&unused);
     if(w->failed) return false;
-    bool contact_hit=capsule_entrance(w,cell,start,end,shape,0.03125,&contact,&unused);
+    bool contact_hit=capsule_entrance(w,cell,start,end,shape,epsilon,&contact,&unused);
     if(w->failed) return false;
     *out=(q1interval){entrance,reverse_hit?1-reverse:entrance,contact_hit?contact:entrance,plane,0,0}; return true;
 }

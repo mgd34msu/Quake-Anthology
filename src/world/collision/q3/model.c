@@ -9,40 +9,39 @@ static qa_collision_plane box_plane(qa_bounds bounds, unsigned index) {
     return qa_collision_make_plane(normal, distance, (int32_t)(axis + (negative ? 3u : 0u)));
 }
 
+typedef struct q3_box_trace {
+    qa_bounds target;
+    qa_vec3 start,end;
+    const qa_q3_shape *shape;
+} q3_box_trace;
+
+static qa_collision_side_distances q3_box_distances(void *context,size_t side,bool need_last) {
+    const q3_box_trace *box=context;
+    qa_collision_plane plane=box_plane(box->target,(unsigned)side);
+    return (qa_collision_side_distances){q3_shape_distance(box->shape,box->start,plane),
+        need_last?q3_shape_distance(box->shape,box->end,plane):0};
+}
+
 static void trace_box(qa_trace_result *result, qa_bounds target, qa_vec3 start, qa_vec3 end,
-                      const qa_q3_shape *shape, bool stationary, uint32_t mask, int32_t contents) {
+                      const qa_q3_shape *shape, bool stationary, uint32_t mask, int32_t contents,
+                      const qa_collision_brush_rules *rules) {
     if (((uint32_t)contents & mask) == 0) return;
     if (stationary) {
         if (qa_bounds_overlap(q3_shape_bounds(shape, start), target)) {
             result->start_solid = result->all_solid = true;
-            result->fraction = 0;
+            if(rules->zero_stationary || rules->zero_all_solid) result->fraction = 0;
             result->contents = contents;
         }
         return;
     }
-    float enter = -1, leave = 1;
-    bool start_out = false, get_out = false, has_lead = false;
-    qa_collision_plane lead = {0};
-    for (unsigned side = 0; side < 6; ++side) {
-        qa_collision_plane plane = box_plane(target, side);
-        float first = q3_shape_distance(shape, start, plane);
-        float last = q3_shape_distance(shape, end, plane);
-        if (first > 0) start_out = true;
-        if (last > 0) get_out = true;
-        if (first > 0 && (last >= 0.125f || last >= first)) return;
-        if (first <= 0 && last <= 0) continue;
-        if (first > last) {
-            float fraction = fmaxf(0, (first - 0.125f) / (first - last));
-            if (fraction > enter) { enter = fraction; lead = plane; has_lead = true; }
-        } else leave = fminf(leave, fminf(1, (first + 0.125f) / (first - last)));
-    }
-    if (!start_out) {
-        result->start_solid = true;
-        if (!get_out) { result->all_solid = true; result->fraction = 0; result->contents = contents; }
-    } else if (enter < leave && enter > -1 && enter < result->fraction && has_lead) {
-        result->fraction = fmaxf(0, enter);
-        result->plane = lead;
-        result->contents = contents;
+    q3_box_trace box={target,start,end,shape};
+    qa_collision_brush_contact contact;
+    if(qa_collision_trace_brush(&box,q3_box_distances,0,6,false,rules,contents,result,&contact)) {
+        result->plane = box_plane(target,(unsigned)contact.side);
+        if(contact.secondary!=SIZE_MAX) {
+            result->has_secondary=true;
+            result->secondary_plane=box_plane(target,(unsigned)contact.secondary);
+        }
         result->surface_flags = 0;
     }
 }
@@ -77,7 +76,7 @@ static float line_distance_squared(qa_vec3 point, qa_vec3 start, qa_vec3 end, qa
 
 static void trace_rounded(qa_trace_result *result, qa_vec3 origin, float radius,
                           bool cylinder, float halfheight, qa_vec3 start, qa_vec3 end,
-                          qa_vec3 model_origin, int32_t contents) {
+                          qa_vec3 model_origin, int32_t contents,float epsilon) {
     qa_vec3 first = start, last = end, center = origin;
     if (cylinder) { first.z = 0; last.z = 0; center.z = 0; }
     qa_vec3 delta = qa_vec_sub(first, center), end_delta = qa_vec_sub(last, center);
@@ -93,7 +92,7 @@ static void trace_rounded(qa_trace_result *result, qa_vec3 origin, float radius,
     float length = qa_vec_length(movement);
     qa_vec3 direction = length == 0 ? qa_v3(0, 0, 0) : qa_vec_scale(movement, 1.0f / length);
     float closest = line_distance_squared(center, first, last, direction);
-    float near_radius = radius + 0.125f;
+    float near_radius = radius + epsilon;
     if (closest >= radius_squared && qa_vec_dot(end_delta, end_delta) > near_radius * near_radius) return;
     float inflated = radius + 1;
     float b = 2 * qa_vec_dot(direction, delta);
@@ -169,7 +168,8 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         start = qa_vec_add(start, center); end = qa_vec_add(end, center);
     }
     uint32_t mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
-    if (target_kind == QA_SHAPE_BOX) trace_box(&result, target_bounds, start, end, &shape, stationary, mask, contents);
+    const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
+    if (target_kind == QA_SHAPE_BOX) trace_box(&result, target_bounds, start, end, &shape, stationary, mask, contents,&rules);
     else {
         qa_vec3 target_center;
         qa_q3_shape target = q3_prepare_shape((qa_trace_shape){QA_SHAPE_CAPSULE, target_bounds}, &target_center);
@@ -193,7 +193,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
                 }
             } else {
                 trace_box(&result, (qa_bounds){shape.mins, shape.extents},
-                    qa_vec_sub(start, target_center), qa_vec_sub(end, target_center), &target, false, mask, contents);
+                    qa_vec_sub(start, target_center), qa_vec_sub(end, target_center), &target, false, mask, contents,&rules);
             }
         } else if (stationary) position_capsule(&result, target_center, &target, start, &shape);
         else {
@@ -203,16 +203,22 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
                 float radius = target.radius + shape.radius;
                 float halfheight = target.extents.z + moving_halfheight - radius;
                 if ((start.x != end.x || start.y != end.y) && halfheight > 0)
-                    trace_rounded(&result, target_center, radius, true, halfheight, start, end, origin, contents);
+                    trace_rounded(&result, target_center, radius, true, halfheight, start, end, origin, contents,rules.epsilon);
                 trace_rounded(&result, qa_vec_add(target_center, target.offset), radius, false, 0,
-                    qa_vec_sub(start, shape.offset), qa_vec_sub(end, shape.offset), origin, contents);
+                    qa_vec_sub(start, shape.offset), qa_vec_sub(end, shape.offset), origin, contents,rules.epsilon);
                 trace_rounded(&result, qa_vec_sub(target_center, target.offset), radius, false, 0,
-                    qa_vec_add(start, shape.offset), qa_vec_add(end, shape.offset), origin, contents);
+                    qa_vec_add(start, shape.offset), qa_vec_add(end, shape.offset), origin, contents,rules.epsilon);
             }
         }
     }
     if (rotated && result.fraction != 1)
         result.plane.normal = qa_collision_from_local(result.plane.normal, basis);
+    if(query->policy.family!=QA_COLLISION_Q3 && result.start_solid) {
+        bool blocked=result.all_solid && (rules.zero_all_solid || (stationary && rules.zero_stationary));
+        result.fraction=blocked?0.0f:1.0f;
+        result.plane=(qa_collision_plane){0};
+        result.has_secondary=false;
+    }
     q3_finish_trace(query, &result);
     *out = result;
     return true;

@@ -3,7 +3,6 @@
 #include <limits.h>
 #include <stdlib.h>
 
-#define Q2_DISTANCE_EPSILON 0.03125f
 #define Q2_POSITION_LEAF_LIMIT 1024u
 
 int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease)
@@ -68,6 +67,7 @@ typedef struct q2_work {
     const qa_trace_query *query;
     qa_vec3 start, end, extents;
     qa_bounds bounds;
+    qa_collision_trace_rules rules;
     bool stationary, merged;
     uint32_t mask;
     qa_trace_result result;
@@ -292,12 +292,10 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
     if (!q2_visit_brush(collision, index)) return;
     const qa_bsp_brush *brush = &collision->brushes[index];
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
-    const qa_collision_brush_rules rules = {
-        Q2_DISTANCE_EPSILON, work->merged, work->merged, work->merged};
     qa_collision_brush_contact contact;
     if (!qa_collision_trace_brush(work, q2_brush_distances,
             brush->sides.first, brush->sides.count, work->stationary,
-            &rules, brush->contents, &work->result, &contact)) return;
+            &work->rules.brush, brush->contents, &work->result, &contact)) return;
     const q2_side *lead = &collision->sides[contact.side];
     work->result.plane = collision->planes[lead->plane];
     work->result.has_surface = lead->texture >= 0;
@@ -373,7 +371,10 @@ static void q2_position_test(q2_work *work, int32_t headnode)
 
 static float q2_tree_extent(void *context, uint32_t plane)
 {
-    return q2_expanded_plane(context, plane)->extent;
+    q2_work *work = context;
+    if (work->rules.conservative_extent && work->query->shape.kind != QA_SHAPE_POINT
+        && work->collision->planes[plane].type >= 3) return 2048.0f;
+    return q2_expanded_plane(work, plane)->extent;
 }
 
 static void q2_tree_leaf(void *context, uint32_t leaf)
@@ -386,7 +387,7 @@ static void q2_sweep(q2_work *work, int32_t headnode)
     q2_collision *collision = work->collision;
     const qa_collision_tree_trace trace = {
         collision->planes, collision->nodes, collision->trace_stack,
-        work->start, work->end, {Q2_DISTANCE_EPSILON, 0, true},
+        work->start, work->end, work->rules.tree,
         &work->result, work, q2_tree_extent, q2_tree_leaf};
     qa_collision_trace_tree(&trace, headnode);
 }
@@ -503,6 +504,7 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
     q2_work work = {0};
     work.collision = collision;
     work.query = query;
+    work.rules = qa_collision_rules(&query->policy);
     work.start = q2_local(query->start, &query->target, basis);
     work.end = q2_local(query->end, &query->target, basis);
     work.bounds = q2_shape_bounds(&query->shape);

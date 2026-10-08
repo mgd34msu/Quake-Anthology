@@ -40,6 +40,7 @@ typedef struct q3_work {
     const qa_trace_query *query;
     qa_trace_result result;
     qa_q3_shape shape;
+    qa_collision_trace_rules rules;
     qa_vec3 start, end;
     qa_bounds position_bounds;
     uint32_t mask;
@@ -127,15 +128,18 @@ static void q3_trace_brush(q3_work *work, uint32_t index) {
     brush->visited = map->generation;
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
     if (work->stationary && !qa_bounds_overlap(work->position_bounds, brush->bounds)) return;
-    const qa_collision_brush_rules rules = {0.125f, true, false, true};
     uint32_t skipped = work->stationary && brush->sides.count >= 6 ? 6u : 0u;
     qa_collision_brush_contact contact;
     if (!qa_collision_trace_brush(work, q3_brush_distances,
             (size_t)brush->sides.first + skipped, brush->sides.count - skipped,
-            work->stationary, &rules, brush->contents, &work->result, &contact)) return;
+            work->stationary, &work->rules.brush, brush->contents, &work->result, &contact)) return;
     const q3_side *lead = &map->sides[contact.side];
     work->result.plane = map->planes[lead->plane];
     work->result.surface_flags = lead->flags;
+    if (contact.secondary != SIZE_MAX) {
+        work->result.has_secondary = true;
+        work->result.secondary_plane = map->planes[map->sides[contact.secondary].plane];
+    }
 }
 
 static void q3_trace_patch(q3_work *work, uint32_t index) {
@@ -154,7 +158,7 @@ static void q3_trace_patch(q3_work *work, uint32_t index) {
     } else {
         if (work->point_trace) shape.kind = QA_SHAPE_POINT;
         if (shape.kind == QA_SHAPE_POINT && !work->player_curves) return;
-        if (qa_q3_patch_trace(patch->collide, work->start, work->end, &shape,
+        if (qa_q3_patch_trace(patch->collide, work->start, work->end, &shape, work->rules.brush.epsilon,
                              &work->result.fraction, &work->result.plane)) {
             work->result.contents = patch->contents;
             work->result.surface_flags = patch->flags;
@@ -180,7 +184,11 @@ static float q3_tree_extent(void *context, uint32_t index) {
     q3_work *work = context;
     if (work->point_trace || work->shape.kind == QA_SHAPE_POINT) return 0;
     const qa_collision_plane *plane = &work->map->planes[index];
-    return plane->type < 3 ? qa_vec_component(work->shape.extents, (unsigned)plane->type) : 2048.0f;
+    if (plane->type < 3) return qa_vec_component(work->shape.extents, (unsigned)plane->type);
+    if (work->rules.conservative_extent) return 2048.0f;
+    return fabsf(work->shape.extents.x * plane->normal.x)
+        + fabsf(work->shape.extents.y * plane->normal.y)
+        + fabsf(work->shape.extents.z * plane->normal.z);
 }
 
 static void q3_tree_leaf(void *context, uint32_t leaf) {
@@ -191,7 +199,7 @@ static void q3_trace_tree(q3_work *work) {
     q3_map *map = work->map;
     const qa_collision_tree_trace trace = {
         map->planes, map->nodes, map->steps, work->start, work->end,
-        {0.125f, 1, false}, &work->result, work, q3_tree_extent, q3_tree_leaf};
+        work->rules.tree, &work->result, work, q3_tree_extent, q3_tree_leaf};
     qa_collision_trace_tree(&trace, map->node_count != 0 ? 0 : -1);
 }
 
@@ -303,6 +311,7 @@ bool qa_q3_trace_capsule_replacement(void *state, const qa_trace_query *query,
         return false;
     }
     q3_work work = {.map = map, .query = query,
+        .rules = qa_collision_rules(&query->policy),
         .result = qa_collision_empty_trace(query, QA_COLLISION_Q3),
         .shape = shape, .start = start, .end = end, .position_bounds = position_bounds,
         .mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3),
@@ -322,6 +331,7 @@ bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t
     }
     q3_work work = {0};
     work.map = map; work.query = query;
+    work.rules = qa_collision_rules(&query->policy);
     work.result = qa_collision_empty_trace(query, QA_COLLISION_Q3);
     work.result.model = model;
     qa_vec3 center, basis[3];
@@ -345,8 +355,8 @@ bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t
     work.point_trace = !work.stationary && q3_same_point(work.shape.mins, qa_v3(0, 0, 0));
     work.position_bounds = q3_shape_bounds(&work.shape, work.start);
     work.mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
-    work.curves = query->policy.family != QA_COLLISION_Q3 || query->policy.curves;
-    work.player_curves = query->policy.family != QA_COLLISION_Q3 || query->policy.player_curve_clip;
+    work.curves = query->policy.curves;
+    work.player_curves = query->policy.player_curve_clip;
     q3_next_generation(map);
     if (model != 0) {
         q3_trace_model(&work, model);

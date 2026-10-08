@@ -608,7 +608,7 @@ bool qa_q3_patch_position(const qa_q3_patch *patch, qa_vec3 start, const qa_q3_s
 }
 
 static bool trace_point(const qa_q3_patch *patch, qa_vec3 start, qa_vec3 end,
-                         const qa_q3_shape *shape, float *fraction, qa_collision_plane *hit_plane) {
+                         const qa_q3_shape *shape, float epsilon, float *fraction, qa_collision_plane *hit_plane) {
     float intersections[PATCH_MAX_PLANES];
     bool front[PATCH_MAX_PLANES];
     for (size_t i = 0; i < patch->plane_count; ++i) {
@@ -637,7 +637,7 @@ static bool trace_point(const qa_q3_patch *patch, qa_vec3 start, qa_vec3 end,
         double offset = box_offset(plane, plane.normal, shape);
         float d1 = (float)((double)qa_vec_dot(start, plane.normal)-plane.distance+offset);
         float d2 = (float)((double)qa_vec_dot(end, plane.normal)-plane.distance+offset);
-        *fraction = fmaxf(0.0f, (float)(((double)d1-0.125)/((double)d1-d2)));
+        *fraction = fmaxf(0.0f, (float)(((double)d1-epsilon)/((double)d1-d2)));
         hit_plane->normal = plane.normal;
         hit_plane->distance = plane.distance;
         hit = true;
@@ -652,13 +652,13 @@ typedef struct facet_trace {
 } facet_trace;
 
 static bool clip_trace(qa_vec3 start, qa_vec3 end, patch_plane plane,
-                        const qa_q3_shape *shape, int index, facet_trace *trace) {
+                        const qa_q3_shape *shape, float epsilon, int index, facet_trace *trace) {
     float d1 = qa_vec_dot(start, plane.normal)-plane.distance;
     float d2 = qa_vec_dot(end, plane.normal)-plane.distance;
-    if (d1 > 0.0f && (d2 >= 0.125f || d2 >= d1)) return false;
+    if (d1 > 0.0f && (d2 >= epsilon || d2 >= d1)) return false;
     if (d1 <= 0.0f && d2 <= 0.0f) return true;
     if (d1 > d2) {
-        float fraction = fmaxf(0.0f, (float)(((double)d1-0.125)/((double)d1-d2)));
+        float fraction = fmaxf(0.0f, (float)(((double)d1-epsilon)/((double)d1-d2)));
         if (fraction > trace->enter) {
             trace->enter = fraction;
             trace->hit_index = index;
@@ -667,26 +667,26 @@ static bool clip_trace(qa_vec3 start, qa_vec3 end, patch_plane plane,
                 trace->best.distance -= fabsf(qa_vec_dot(plane.normal, shape->offset));
         }
     } else {
-        float fraction = fminf(1.0f, (float)(((double)d1+0.125)/((double)d1-d2)));
+        float fraction = fminf(1.0f, (float)(((double)d1+epsilon)/((double)d1-d2)));
         trace->leave = fminf(trace->leave, fraction);
     }
     return true;
 }
 
 bool qa_q3_patch_trace(const qa_q3_patch *patch, qa_vec3 start, qa_vec3 end,
-                       const qa_q3_shape *shape, float *fraction, qa_collision_plane *plane) {
-    if (shape->kind == QA_SHAPE_POINT) return trace_point(patch, start, end, shape, fraction, plane);
+                       const qa_q3_shape *shape, float epsilon, float *fraction, qa_collision_plane *plane) {
+    if (shape->kind == QA_SHAPE_POINT) return trace_point(patch, start, end, shape, epsilon, fraction, plane);
     bool hit = false;
     for (size_t i = 0; i < patch->facet_count; ++i) {
         const patch_facet *facet = &patch->facets[i];
         facet_trace trace = {.enter = -1.0f, .leave = 1.0f, .hit_index = -1};
         patch_plane surface = expanded_plane(patch->planes[facet->surface], shape, NULL);
-        if (!clip_trace(start, end, surface, shape, -1, &trace)) continue;
+        if (!clip_trace(start, end, surface, shape, epsilon, -1, &trace)) continue;
         unsigned border;
         for (border = 0; border < facet->border_count; ++border) {
             const patch_border *side = &facet->borders[border];
             patch_plane clip = expanded_plane(patch->planes[side->plane], shape, side);
-            if (!clip_trace(start, end, clip, shape, (int)border, &trace)) break;
+            if (!clip_trace(start, end, clip, shape, epsilon, (int)border, &trace)) break;
         }
         if (border == facet->border_count && trace.hit_index != (int)facet->border_count-1 &&
             trace.enter < trace.leave && trace.enter >= 0.0f && trace.enter < *fraction) {

@@ -38,6 +38,6 @@ void q1_split(q1work *,q1cell *,q1p,q1cell **front,q1cell **back);
 q1cell *q1_clip(q1work *,q1cell *,q1p);
 bool q1_separating_planes(q1work *,const q1cell *,const q1v axes[3],q1planes *);
 double q1_shape_support(const q1shape *,q1v);
-bool q1_sweep_cell(q1work *,const q1cell *,q1v start,q1v end,const q1shape *,q1interval *);
+bool q1_sweep_cell(q1work *,const q1cell *,q1v start,q1v end,const q1shape *,double epsilon,q1interval *);
 
 #endif

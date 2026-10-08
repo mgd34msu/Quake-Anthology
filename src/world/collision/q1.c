@@ -6,7 +6,6 @@
 
 #define Q1_EMPTY (-1)
 #define Q1_SOLID (-2)
-#define Q1_EPSILON 0.03125f
 
 static const qa_bounds hull_bounds[3]={
     {{0,0,0},{0,0,0}},{{-16,-16,-24},{16,16,32}},{{-32,-32,-24},{32,32,64}}
@@ -83,6 +82,7 @@ typedef struct hull_frame {
  * backs out by the source 0.1 fraction, without trusting BSP depth to C's stack. */
 static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,const qa_trace_policy *policy,native_trace *out) {
     native_trace trace={1,end,false,true,false,false,{{0,0,0},0,0,0},Q1_EMPTY};
+    float epsilon=qa_collision_rules(policy).brush.epsilon;
     if(hull->count==SIZE_MAX) { qa_error_set(w->error,QA_ERROR_MEMORY,0,"Quake hull depth overflow"); return false; }
     hull_frame local_stack[64];
     hull_frame *stack=local_stack;
@@ -104,7 +104,7 @@ static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,co
             if((t1>=0 && t2>=0)||(t1<0 && t2<0)) {
                 frame->node=node->children[t1<0?1:0]; frame->depth++; continue;
             }
-            float fraction=qa_collision_clamp_fraction((t1+(t1<0?Q1_EPSILON:-Q1_EPSILON))/(t1-t2));
+            float fraction=qa_collision_clamp_fraction((t1+(t1<0?epsilon:-epsilon))/(t1-t2));
             frame->fraction=fraction; frame->t1=t1; frame->plane=node->plane;
             frame->midf=frame->p1f+(frame->p2f-frame->p1f)*fraction;
             frame->mid=qa_vec_lerp(frame->p1,frame->p2,fraction);
@@ -149,6 +149,7 @@ static q1hull model_hull(const q1state *state,size_t model,unsigned index) {
     return (q1hull){index==0?state->drawing:state->clip,index==0?state->drawing_count:state->clip_count,
         state->planes,state->plane_count,index==0?state->models[model].drawing_root:state->models[model].source.headnodes[index]};
 }
+static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; }
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
     qa_trace_result result=qa_collision_empty_trace(query,QA_COLLISION_Q1);
     result.fraction=trace->fraction;
@@ -160,9 +161,12 @@ static void native_result(const qa_trace_query *query,const native_trace *trace,
     result.contact_plane.distance+=qa_vec_dot(result.contact_plane.normal,origin);
     result.contents=trace->contents; result.contact=trace->fraction<1;
     result.hit=trace->fraction<1||trace->start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
+    const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
+    if(trace->all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) {
+        result.fraction=0; result.end=query->start; result.contact=false;
+    }
     *out=result;
 }
-static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; }
 static bool select_model(const q1state *state,const qa_collision_target *target,size_t *model,qa_vec3 *origin,qa_vec3 basis[3],qa_error *error) {
     *model=target->inline_model?target->model:0;
     if(*model>=state->model_count) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Unknown Quake collision model"); return false; }
@@ -250,11 +254,12 @@ static bool derive_clip(q1work *w,const q1state *state,size_t model,q1bounds env
 }
 typedef struct sweep_context {
     q1v start,end; q1shape shape;
+    double epsilon;
     q1interval *intervals; size_t count,capacity;
 } sweep_context;
 static bool sweep_cell(q1work *w,q1cell *cell,int32_t contents,void *context) {
     sweep_context *sweep=context; q1interval interval;
-    bool hit=q1_sweep_cell(w,cell,sweep->start,sweep->end,&sweep->shape,&interval);
+    bool hit=q1_sweep_cell(w,cell,sweep->start,sweep->end,&sweep->shape,sweep->epsilon,&interval);
     if(w->failed) return false;
     if(!hit) return true;
     void *data=sweep->intervals;
@@ -361,6 +366,8 @@ static bool arbitrary_trace(q1state *state,q1work *w,const qa_trace_query *query
     q1v center=qscale(qadd(qfrom(bounds.mins),qfrom(bounds.maxs)),0.5);
     q1v extents=qscale(qsub(qfrom(bounds.maxs),qfrom(bounds.mins)),0.5);
     sweep_context sweep={0};
+    const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
+    sweep.epsilon=rules.epsilon;
     sweep.start=local_derived(qsub(qadd(qfrom(query->start),center),qfrom(origin)),basis);
     sweep.end=local_derived(qsub(qadd(qfrom(query->end),center),qfrom(origin)),basis);
     sweep.shape.capsule=query->shape.kind==QA_SHAPE_CAPSULE; sweep.shape.extents=extents;
@@ -401,13 +408,17 @@ static bool arbitrary_trace(q1state *state,q1work *w,const qa_trace_query *query
     qa_vec3 reached=qa_vec_lerp(query->start,query->end,(float)fraction);
     if(!trace_hull(w,&point_hull,qa_collision_to_local(qa_vec_sub(query->start,origin),basis),
         qa_collision_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment)) return false;
+    bool all_solid=start_solid && covered>=1;
+    if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) fraction=0;
+    reached=qa_vec_lerp(query->start,query->end,(float)fraction);
     qa_trace_result result=qa_collision_empty_trace(query,QA_COLLISION_Q1);
     result.fraction=(float)fraction; result.end=fraction==1?query->end:reached;
-    result.start_solid=start_solid; result.all_solid=start_solid && covered>=1;
+    result.start_solid=start_solid; result.all_solid=all_solid;
     result.in_open=environment.in_open; result.in_water=environment.in_water;
     result.plane=qa_collision_make_plane(qa_collision_from_local(qto(plane.normal),basis),(float)plane.distance,3);
     result.contact_plane=result.plane; result.contact_plane.distance+=qa_vec_dot(result.plane.normal,origin);
-    result.contact=fraction<1; result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
+    result.contact=fraction<1 && (query->policy.family==QA_COLLISION_Q1 || !all_solid);
+    result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     result.contents=contents; *out=result; return true;
 }
 

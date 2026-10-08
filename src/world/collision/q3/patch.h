@@ -19,7 +19,7 @@ void qa_q3_patch_destroy(qa_q3_patch *patch);
 /* A hit changes fraction and the plane's normal/distance only: source patch
  * tracing retains type/signbits from a prior brush impact. */
 bool qa_q3_patch_trace(const qa_q3_patch *, qa_vec3 start, qa_vec3 end,
-                       const qa_q3_shape *, float *fraction,
+                       const qa_q3_shape *, float epsilon, float *fraction,
                        qa_collision_plane *plane);
 bool qa_q3_patch_position(const qa_q3_patch *, qa_vec3 start,
                           const qa_q3_shape *);

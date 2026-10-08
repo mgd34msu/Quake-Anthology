@@ -27,7 +27,7 @@ typedef struct qa_collision_topology {
 } qa_collision_topology;
 typedef struct qa_collision_brush_rules {
     float epsilon;
-    bool clamp_fractions, secondary_plane, zero_all_solid;
+    bool clamp_fractions, secondary_plane, zero_all_solid, zero_stationary;
 } qa_collision_brush_rules;
 typedef struct qa_collision_side_distances { float first, last; } qa_collision_side_distances;
 typedef qa_collision_side_distances (*qa_collision_side_distances_fn)(void *, size_t, bool);
@@ -44,6 +44,14 @@ typedef struct qa_collision_trace_frame {
     qa_vec3 start, end;
 } qa_collision_trace_frame;
 typedef struct qa_collision_tree_rules { float epsilon, margin; bool reciprocal; } qa_collision_tree_rules;
+typedef struct qa_collision_trace_rules {
+    qa_collision_brush_rules brush;
+    qa_collision_tree_rules tree;
+    bool conservative_extent;
+} qa_collision_trace_rules;
+/* Contact rules belong to the caller; BSP readers supply geometry only.
+ * NULL selects Q1 hull rules for internal medium probes. */
+qa_collision_trace_rules qa_collision_rules(const qa_trace_policy *);
 typedef struct qa_collision_tree_trace {
     const qa_collision_plane *planes;
     const qa_collision_node *nodes;

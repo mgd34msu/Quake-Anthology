@@ -2,6 +2,16 @@
 
 #include <stdlib.h>
 
+qa_collision_trace_rules qa_collision_rules(const qa_trace_policy *policy)
+{
+    if (policy != NULL && policy->family == QA_COLLISION_Q3)
+        return (qa_collision_trace_rules){{0.125f, true, false, true, true},
+            {0.125f, 1, false}, true};
+    bool rerelease = policy != NULL && policy->family == QA_COLLISION_Q2 && policy->q2_merged_contents;
+    return (qa_collision_trace_rules){{0.03125f, rerelease, rerelease, rerelease,
+        policy != NULL && policy->family != QA_COLLISION_Q1}, {0.03125f, 0, true}, false};
+}
+
 bool qa_collision_trace_brush(void *context, qa_collision_side_distances_fn distances,
     size_t first_side, size_t side_count, bool stationary,
     const qa_collision_brush_rules *rules, int32_t contents,
@@ -41,9 +51,10 @@ bool qa_collision_trace_brush(void *context, qa_collision_side_distances_fn dist
     }
     if (!start_out) {
         result->start_solid = true;
+        if (!rules->zero_stationary) result->contents = contents;
         if (!get_out) {
             result->all_solid = true;
-            if (stationary || rules->zero_all_solid) {
+            if ((stationary && rules->zero_stationary) || rules->zero_all_solid) {
                 result->fraction = 0;
                 result->contents = contents;
             }
@@ -218,7 +229,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         bool skip=false;
         for(size_t j=0;j<exclude_count;++j) if(qa_actor_id_equal(excluded[j],id)) { skip=true; break; }
         if(skip || skip_owner(world,query,&collision,id,pass)) continue;
-        if(collision.q1_corpse && has_volume(query->shape)) continue;
+        if(query->policy.family==QA_COLLISION_Q1 && collision.q1_corpse && has_volume(query->shape)) continue;
         if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS && !collision.inline_model) continue;
         int32_t contents=qa_world_actor_contents(&collision,query->policy.family);
         if(query->policy.family==QA_COLLISION_Q1?contents!=-2:((uint32_t)contents&query->policy.contents_mask)==0) continue;
