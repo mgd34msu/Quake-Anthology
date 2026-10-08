@@ -75,7 +75,6 @@
 #include <inttypes.h>
 
 static volatile sig_atomic_t interrupted;
-static uint64_t local_frontend_serial;
 typedef enum frontend_shutdown_phase {
     SHUTDOWN_CANDIDATE, SHUTDOWN_RETIRE_CANDIDATE, SHUTDOWN_ABORT_CANDIDATE,
     SHUTDOWN_CLIENTS, SHUTDOWN_PREPARE, SHUTDOWN_FAILED_PREPARE, SHUTDOWN_RELEASE,
@@ -697,20 +696,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->audio_output_format=device.format;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
-    {
-        uint64_t serial = ++local_frontend_serial;
-        char id[64];
-        snprintf(id,sizeof(id),"local-%" PRIu64,serial);
-        qa_local_account account = options->local_account.id ? options->local_account :
-            (qa_local_account){id,"Local player"};
-        frontend->lobbies = options->local_lobbies;
-        if (!frontend->lobbies) {
-            if (!qa_lobbies_create(serial,&frontend->lobbies,error)) goto fail;
-            frontend->lobbies_owned = true;
-        }
-        if (!frontend_local_lobby_create(frontend,frontend->lobbies,account,
-            &frontend->local_lobby,error)) goto fail;
-    }
+    if (!frontend_local_lobby_init(frontend,error)) goto fail;
     {
         const qa_console_dialect *source=NULL; qa_console_dialect dialect;
         if(options->game) {

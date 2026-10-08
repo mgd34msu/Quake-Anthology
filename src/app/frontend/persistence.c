@@ -35,6 +35,7 @@
 #include "view_bindings.h"
 #include "view_settings.h"
 #include "music_sources.h"
+#include "local_lobby.h"
 #include "campaign.h"
 #include "campaign_cinematic.h"
 #include "ui_features.h"
@@ -83,6 +84,7 @@ static bool prepare_services(void *context,qa_application *candidate,const qa_sa
         (f->options.dedicated || frontend_q1_sky_create(f,&f->q1_sky,error)) &&
         frontend_qc_messages_create(f,&f->qc_messages,error) && frontend_view_bindings_create(f,error) &&
         frontend_equipment_events_create(f,&f->gear_events,error) && frontend_commands(f,error) &&
+        frontend_local_lobby_init(f,error) &&
         frontend_outputs_create_detached(f,operation->active,&operation->native,error);
     return ok && (!operation->services || !operation->services->prepare_services ||
         operation->services->prepare_services(operation->services->context,candidate,image,error));

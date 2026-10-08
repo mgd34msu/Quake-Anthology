@@ -7,8 +7,7 @@
 typedef struct frontend_local_lobby frontend_local_lobby;
 
 /* The frontend owns the service and session across world and seat changes. */
-bool frontend_local_lobby_create(qa_frontend *, qa_lobbies *, qa_local_account,
-    frontend_local_lobby **, qa_error *);
+bool frontend_local_lobby_init(qa_frontend *, qa_error *);
 bool frontend_local_lobby_menu_create(frontend_local_lobby *, frontend_seat *,
     qa_ui_id, qa_error *);
 bool frontend_local_lobby_menu_destroy(frontend_local_lobby *, uint32_t physical, qa_error *);

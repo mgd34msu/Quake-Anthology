@@ -250,9 +250,19 @@ static bool leave(void *context, const qa_lobby_view *view, qa_error *error)
 }
 static bool completed(void *context, const qa_lobby_view *view, qa_error *error)
 { return leave(context,view,error); }
-bool frontend_local_lobby_create(qa_frontend *frontend, qa_lobbies *service,
-    qa_local_account account, frontend_local_lobby **out, qa_error *error)
+bool frontend_local_lobby_init(qa_frontend *frontend, qa_error *error)
 {
+    static uint64_t serial;
+    uint64_t instance = ++serial;
+    char id[64];
+    snprintf(id,sizeof(id),"local-%" PRIu64,instance);
+    qa_local_account account = frontend->options.local_account.id ? frontend->options.local_account :
+        (qa_local_account){id,"Local player"};
+    frontend->lobbies = frontend->options.local_lobbies;
+    if (!frontend->lobbies) {
+        if (!qa_lobbies_create(instance,&frontend->lobbies,error)) return false;
+        frontend->lobbies_owned = true;
+    }
     frontend_local_lobby *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating local lobby menu owner");
     owner->account_id = malloc(strlen(account.id) + 1);
@@ -261,9 +271,9 @@ bool frontend_local_lobby_create(qa_frontend *frontend, qa_lobbies *service,
         return frontend_fail(error, QA_ERROR_MEMORY, "Retaining local lobby account name");
     }
     strcpy(owner->account_id, account.id);
-    owner->frontend = frontend; owner->service = service;
-    *out = owner;
-    return qa_lobby_session_create(service,account,
+    owner->frontend = frontend; owner->service = frontend->lobbies;
+    frontend->local_lobby = owner;
+    return qa_lobby_session_create(frontend->lobbies,account,
         &(qa_lobby_transitions){.context=owner,.host=host,.host_ready=host_ready,.join=join,
             .leave=leave,.completed=completed},&owner->session,error);
 }
