@@ -11,13 +11,14 @@ static bool raw_send(void *context, const qa_net_address *to, qa_bytes bytes, qa
     return qa_net_transport_send(o->raw, to, bytes, e);
 }
 
-static bool raw_collect(void *context, uint64_t now, qa_net_transport_event *out, qa_error *e)
+static bool raw_collect(void *context, uint64_t now, qa_net_collect_policy policy,
+    qa_net_transport_event *out, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!o->raw || !o->raw_owned) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX raw collection has no physical socket owner"); return false;
     }
-    return qa_net_transport_collect(o->raw, now, out, e);
+    return qa_net_transport_collect(o->raw, now, policy, out, e);
 }
 
 static bool raw_dispatch(void *context, const qa_net_transport_event *event,
@@ -90,14 +91,15 @@ static bool game_send(void *context, const qa_net_address *to, qa_bytes bytes, q
     return ok;
 }
 
-static bool game_collect(void *context, uint64_t now, qa_net_transport_event *out, qa_error *e)
+static bool game_collect(void *context, uint64_t now, qa_net_collect_policy policy,
+    qa_net_transport_event *out, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!enter(o, e)) return false;
-    bool ok = qa_net_transport_collect(o->dispatch, now, out, e);
+    bool ok = qa_net_transport_collect(o->dispatch, now, policy, out, e);
     if (ok && out->packet.kind != QA_NET_POLL_EMPTY) out->source <<= 2;
     else if (ok && o->discovery) {
-        ok = qa_kex_mdns_owner_collect(o->discovery, now, out, e);
+        ok = qa_kex_mdns_owner_collect(o->discovery, now, policy, out, e);
         if (ok && out->packet.kind != QA_NET_POLL_EMPTY) out->source = (out->source << 2) | 1u;
     }
     o->entered = false;

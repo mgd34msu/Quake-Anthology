@@ -204,11 +204,13 @@ static bool socks_send(void *opaque, const qa_net_address *to, qa_bytes payload,
             (qa_bytes){socks->datagram, payload.size + SOCKS_HEADER_BYTES}, error);
 }
 
-static bool socks_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
+static bool socks_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy policy,
+    qa_net_transport_event *out, qa_error *error) {
     socks_transport *socks = opaque;
     *out = (qa_net_transport_event){0};
     if (socks->phase == SOCKS_FAILED) return socks_fail(socks, socks->failure, error);
-    if (!socks->control_sampled || socks->control_sample_ns != now_ns) {
+    if (policy == QA_NET_COLLECT_ALL &&
+        (!socks->control_sampled || socks->control_sample_ns != now_ns)) {
         socks->control_sampled = true;
         socks->control_sample_ns = now_ns;
         if (socks->phase == SOCKS_CONNECTING) {
@@ -236,7 +238,7 @@ static bool socks_collect(void *opaque, uint64_t now_ns, qa_net_transport_event 
         }
     }
     if (socks->phase != SOCKS_READY) return true;
-    if (!qa_net_transport_collect(socks->udp, now_ns, out, error)) return false;
+    if (!qa_net_transport_collect(socks->udp, now_ns, policy, out, error)) return false;
     out->source <<= 2;
     return true;
 }

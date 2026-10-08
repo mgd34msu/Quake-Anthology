@@ -199,8 +199,12 @@ static bool enter(qa_kex_mdns_owner *o, qa_error *e)
 }
 
 bool qa_kex_mdns_owner_collect(qa_kex_mdns_owner *o, uint64_t now,
-    qa_net_transport_event *out, qa_error *e)
+    qa_net_collect_policy policy, qa_net_transport_event *out, qa_error *e)
 {
+    if (policy == QA_NET_COLLECT_LOCAL) {
+        *out = (qa_net_transport_event){0};
+        return true;
+    }
     if (!enter(o, e)) return false;
     o->clock = now;
     bool ok = qa_kex_mdns_native_collect(o->socket, now, out, e);

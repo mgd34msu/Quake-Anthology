@@ -148,10 +148,10 @@ static bool ipx_tunnel_send(void *opaque, const qa_net_address *to, qa_bytes pay
     return sent;
 }
 
-static bool ipx_tunnel_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out,
-                               qa_error *error) {
+static bool ipx_tunnel_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy policy,
+    qa_net_transport_event *out, qa_error *error) {
     qa_net_ipx_tunnel *tunnel = opaque;
-    if (!qa_net_transport_collect(tunnel->udp, now_ns, out, error)) return false;
+    if (!qa_net_transport_collect(tunnel->udp, now_ns, policy, out, error)) return false;
     out->source <<= 2;
     return true;
 }
@@ -316,9 +316,10 @@ static bool ipx_game_send(void *opaque, const qa_net_address *to, qa_bytes paylo
                                  (qa_bytes){game->send_buffer, payload.size + 4}, error);
 }
 
-static bool ipx_game_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
+static bool ipx_game_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy policy,
+    qa_net_transport_event *out, qa_error *error) {
     ipx_game *game = opaque;
-    if (!qa_net_transport_collect(game->raw, now_ns, out, error)) return false;
+    if (!qa_net_transport_collect(game->raw, now_ns, policy, out, error)) return false;
     out->source <<= 2;
     return true;
 }

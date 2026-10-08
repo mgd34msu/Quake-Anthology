@@ -44,11 +44,11 @@ bool frontend_kex_browser_scan(frontend_kex_browser *b, qa_error *e)
 }
 
 bool frontend_kex_browser_collect(frontend_kex_browser *b, uint64_t now,
-    qa_net_transport_event *out, qa_error *e)
+    qa_net_collect_policy policy, qa_net_transport_event *out, qa_error *e)
 {
     if (!b || b->entered) { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser collection requires idle ownership"); return false; }
     b->entered = true;
-    bool ok = qa_kex_mdns_owner_collect(b->discovery, now, out, e);
+    bool ok = qa_kex_mdns_owner_collect(b->discovery, now, policy, out, e);
     b->entered = false;
     return ok;
 }
