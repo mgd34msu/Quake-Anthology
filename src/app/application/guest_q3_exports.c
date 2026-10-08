@@ -523,8 +523,6 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
     const qa_launch_snapshot *snapshot = !published && app->routing_snapshot ?
         app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    if (!choices || choices->seat_count != 1 || choices->seats[0].id != seat)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context leaves its single actual launch seat");
     application_provider **providers = !published && app->routing_providers ? app->routing_providers : app->providers;
     size_t count = !published && app->routing_providers ? app->routing_provider_count : app->provider_count;
     application_provider *provider = NULL;
@@ -535,9 +533,12 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
             provider = providers[i];
         }
     struct application_q3_guest *engine = q3g_engine(provider);
+    bool selected = false;
+    for (size_t i = 0; choices && i < choices->seat_count; ++i)
+        if (choices->seats[i].id == seat && q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, i))
+            selected = true;
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
-        provider->close_pending ||
-        !q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, 0))
+        provider->close_pending || !selected)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q3 context has no admitted selected HUD receiver");
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return application_native_q3_remote_role_context(provider, seat, out, error);

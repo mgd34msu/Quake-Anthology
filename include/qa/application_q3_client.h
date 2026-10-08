@@ -52,7 +52,7 @@ bool qa_application_q3_client_host_current(qa_application *,
 bool qa_application_q3_client_retire(qa_application *,
     const qa_application_q3_client_context *, qa_error *);
 
-/* Borrows the single actual launch seat's CGAME host with external services.
+/* Borrows the selected actual launch seat's CGAME host with external services.
  * GAME/source fields are absent; the network owner supplies and qualifies its
  * actual remote connection, physical client ordinal and presentation clock. */
 bool qa_application_q3_remote_context_read(qa_application *, qa_actor_owner receiver,

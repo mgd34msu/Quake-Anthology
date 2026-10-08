@@ -1336,13 +1336,6 @@ static q3g_role *external_cgame(qa_application *app, qa_actor_owner owner, uint3
     }
     return NULL;
 }
-static bool remote_launch_seat(qa_application *app, uint32_t *out)
-{
-    const qa_launch_choices *choices = app ? qa_launch_snapshot_choices(qa_application_launch(app)) : NULL;
-    if (!choices || choices->seat_count != 1) return false;
-    *out = choices->seats[0].id; return true;
-}
-
 bool qa_application_network_q3_client_actor(qa_application *app,
     const qa_application_network_q3_projection *projection, uint32_t source_number,
     qa_actor_id *out, bool *present, qa_error *error)
@@ -1427,15 +1420,14 @@ static bool projection_snapshot(const qa_q3_snapshot *snapshot,
     return true;
 }
 
-bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owner owner,
+bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owner owner, uint32_t seat,
     qa_application_network_q3_projection *projection, const qa_q3_snapshot *current,
     const qa_q3_snapshot *next, const qa_q3_prediction_scene *scene,
     const qa_q3_prediction_scene_view *view, qa_error *error)
 {
-    uint32_t seat; qa_application_q3_client_context receiver;
+    qa_application_q3_client_context receiver;
     if (!app || !projection || !current || app->destroy_requested || app->operation != APPLICATION_IDLE ||
         !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
-        !remote_launch_seat(app, &seat) ||
         !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
         !qa_application_q3_remote_context_current(app, &receiver) ||
         (projection->owner && projection->owner != owner) ||
@@ -1499,10 +1491,9 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
 bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id actor,
     qa_actor_owner *owner, qa_q3_product *product, uint32_t *launch_seat, qa_error *error)
 {
-    qa_actor_id viewing; uint32_t seat;
-    if (!app || !owner || !product || !launch_seat || !remote_launch_seat(app, &seat) ||
-        !qa_application_player_actor(app, seat, &viewing) ||
-        !qa_actor_id_equal(viewing, actor))
+    uint32_t seat;
+    if (!app || !owner || !product || !launch_seat ||
+        !qa_application_player_seat(app, actor, &seat))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 remote client requires its actual viewing seat actor");
     application_provider *hud = application_provider_for(app, actor, QA_ROLE_HUD, NULL);
     qa_application_q3_client_context receiver;

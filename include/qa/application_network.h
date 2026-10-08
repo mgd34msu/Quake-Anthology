@@ -247,7 +247,7 @@ typedef struct qa_application_network_q3_projection {
 } qa_application_network_q3_projection;
 struct qa_q3_prediction_scene;
 struct qa_q3_prediction_scene_view;
-bool qa_application_network_q3_client_project(qa_application *, qa_actor_owner,
+bool qa_application_network_q3_client_project(qa_application *, qa_actor_owner, uint32_t seat,
     qa_application_network_q3_projection *, const qa_q3_snapshot *current,
     const qa_q3_snapshot *next, const struct qa_q3_prediction_scene *,
     const struct qa_q3_prediction_scene_view *, qa_error *);

@@ -2597,7 +2597,7 @@ static bool client_project(qa_frontend_network *n, qa_error *error)
     /* A future server-count change must not reuse the current epoch's IDs. */
     if (scene.next_frame_teleport) next = NULL;
     if (!qa_application_network_q3_client_project(n->frontend->application,
-        n->q3_cgame_owner, &n->q3_projection, current, next, n->q3_prediction_scene, &scene, error)) return false;
+        n->q3_cgame_owner, n->q3_client_launch_seat, &n->q3_projection, current, next, n->q3_prediction_scene, &scene, error)) return false;
     n->q3_projection_epoch = epoch;
     n->q3_scene_frame = n->frontend->frame_number; n->q3_scene_frame_valid = true; return true;
 }
