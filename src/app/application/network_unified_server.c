@@ -267,11 +267,17 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             .application_seat = owner->application_seat, .source_slot = UINT32_MAX,
             .userinfo = packet->value.ready.userinfo};
         qa_unified_session_player actual;
-        qa_actor_id carried;
-        bool exists = qa_application_remote_player_actor(owner->application, client, owner->seat, &carried);
-        bool okay = exists ? application_unified_player_read(owner->application, client, owner->seat, &actual, error) :
-            application_unified_player_admit(owner->application, runtime, &request, &actual, error);
+        const qa_net_client *peer = qa_net_connections_get(qa_network_connections(runtime), client);
+        bool local = peer && peer->attachment == QA_NET_LOCAL_SEAT;
+        bool exists = application_players_connection_read(owner->application, client, owner->seat) != NULL;
+        bool okay = local ?
+            application_unified_player_bind_local(owner->application, peer, owner->seat,
+                owner->application_seat, &actual, error) :
+            exists ? application_unified_player_read(owner->application, client, owner->seat, &actual, error) :
+                application_unified_player_admit(owner->application, runtime, &request, &actual, error);
         if (okay) owner->player_attached = true;
+        if (okay && local && request.userinfo)
+            okay = application_unified_player_userinfo(owner->application, client, owner->seat, request.userinfo, error);
         if (okay) okay=player_receipt_retain(owner,&actual,error);
         if (okay && !owner->components) okay = application_unified_components_create(owner->application,
             client, actual.actor, &owner->components, error);
@@ -666,9 +672,8 @@ bool application_unified_server_destroy(application_unified_server *owner, qa_er
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified peer must retire its actual session before its Source owner");
     application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture = NULL;
     if (!application_unified_components_destroy(&owner->components, error)) return false;
-    qa_actor_id actor;
-    if (owner->player_attached && qa_application_remote_player_actor(owner->application,
-        owner->client, owner->seat, &actor) && !application_unified_player_disconnect(owner->application,
+    if (owner->player_attached && application_players_connection_read(owner->application,
+        owner->client, owner->seat) && !application_unified_player_disconnect(owner->application,
         owner->client, owner->seat, error)) return false;
     if (!application_unified_inputs_destroy(owner->inputs, error)) return false;
     qa_unified_document_destroy(owner->offer); application_unified_output_dispose(&owner->pending);

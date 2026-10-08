@@ -3,6 +3,16 @@
 #include "network_unified.h"
 #include "unified_output_capture.h"
 
+struct application_player_record;
+const struct application_player_record *application_players_connection_read(
+    const qa_application *, qa_net_client_id, qa_net_seat_id);
+bool application_players_local_connection_bind(qa_application *, const qa_net_client *,
+    qa_net_seat_id, uint32_t application_seat, qa_error *);
+bool application_players_connection_disconnect(qa_application *, qa_net_client_id,
+    qa_net_seat_id, qa_error *);
+bool application_unified_player_bind_local(qa_application *, const qa_net_client *,
+    qa_net_seat_id, uint32_t application_seat, qa_unified_session_player *, qa_error *);
+
 typedef struct retained_input {
     qa_unified_input value;
     qa_buffer provider, weapon;

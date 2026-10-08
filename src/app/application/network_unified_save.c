@@ -193,8 +193,13 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
     qa_unified_session_player player = {0};
     obsolete = application_unified_save_source_obsolete(source, &owner->offered);
     bool historical_player = obsolete || owner->source_dropped;
-    if (player_present && !historical_player && !application_unified_save_player_read(owner->application, peer->id,
-        owner->seat, &player, io->error)) return false;
+    if (player_present && !historical_player) {
+        bool present = !writing && peer->attachment == QA_NET_LOCAL_SEAT ?
+            application_unified_player_bind_local(owner->application, peer, owner->seat,
+                owner->application_seat, &player, io->error) :
+            application_unified_save_player_read(owner->application, peer->id, owner->seat, &player, io->error);
+        if (!present) return false;
+    }
     if (!player_receipt(io, owner, player_present && !historical_player ? &player : NULL)) return false;
     if (!drop_request(io, owner, source)) return false;
     if (historical_player && owner->admitted_receipt) player = owner->admitted_player;
@@ -277,6 +282,9 @@ bool application_unified_server_restore_dispose(application_unified_server **slo
     application_unified_server *owner = *slot;
     if (!owner->restore_pending || owner->session || owner->entered)
         return application_fail(e, QA_ERROR_ARGUMENT, "Quiet import cleanup requires its never-published Source owner");
+    const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->runtime), owner->client);
+    if (peer && peer->attachment == QA_NET_LOCAL_SEAT &&
+        !application_players_connection_disconnect(owner->application, owner->client, owner->seat, e)) return false;
     owner->bound = owner->player_attached = owner->admitted = false;
     owner->closed = true;
     if (owner->inputs && !owner->inputs->commands) owner->inputs->count = owner->inputs->cursor = 0;

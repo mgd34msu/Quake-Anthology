@@ -3,6 +3,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_restart.h"
 #include "map_players_private.h"
+#include "network_unified_private.h"
 #include "guest_qc_internal.h"
 #include "network_q1_signon.h"
 #include "network_q1_source.h"
@@ -689,11 +690,9 @@ bool qa_application_network_detach(qa_application *application, const qa_net_cli
 {
     if (!application || !client)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing disconnected roster owner");
-    for (size_t i = 0; i < client->seat_count; ++i) {
-        qa_actor_id actor;
-        if (qa_application_remote_player_actor(application, client->id, client->seats[i].seat, &actor) &&
-            !qa_application_remote_player_detach(application, client->id, client->seats[i].seat, error)) return false;
-    }
+    for (size_t i = 0; i < client->seat_count; ++i)
+        if (!application_players_connection_disconnect(application, client->id,
+            client->seats[i].seat, error)) return false;
     return true;
 }
 

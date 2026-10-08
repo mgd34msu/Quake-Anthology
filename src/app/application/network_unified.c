@@ -339,21 +339,6 @@ bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot
     return true;
 }
 
-static const application_player_record *remote(const qa_application *app, qa_net_client_id client,
-    qa_net_seat_id seat)
-{
-    if (!app || !app->players) return NULL;
-    const application_player_record *found = NULL;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *row = app->players->records + i;
-        if (!row->remote || row->retiring || !qa_net_client_id_equal(row->remote_client, client) ||
-            row->remote_seat.owner != seat.owner || row->remote_seat.index != seat.index) continue;
-        if (found) return NULL;
-        found = row;
-    }
-    return found;
-}
-
 static bool physical_player(application_provider *source, const application_player_record *row,
     uint32_t *entity, qa_error *error)
 {
@@ -417,7 +402,7 @@ static bool player_read(qa_application *app, qa_net_client_id client, qa_net_sea
 {
     application_unified_source source;
     if (!out || !source_read(app, &source, checkpoint, error)) return false;
-    const application_player_record *row = remote(app, client, seat);
+    const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_application_control_view control;
     if (!row || row->deferred || row->source_begin_pending || row->client_slot >= source.max_clients ||
         !qa_actors_get(qa_session_actors(app->session), row->actor) ||
@@ -474,7 +459,7 @@ bool application_unified_player_input(qa_application *app, qa_net_client_id clie
 bool application_unified_player_disconnect(qa_application *app, qa_net_client_id client,
     qa_net_seat_id seat, qa_error *error)
 {
-    return qa_application_remote_player_detach(app, client, seat, error);
+    return application_players_connection_disconnect(app, client, seat, error);
 }
 
 typedef struct unified_info_pair {
@@ -559,6 +544,21 @@ static char *info_canonical(const char *text, const char *address, bool q1_langu
     *write = 0; free(pairs); return result;
 }
 
+bool application_unified_player_bind_local(qa_application *app, const qa_net_client *peer,
+    qa_net_seat_id seat, uint32_t application_seat, qa_unified_session_player *out, qa_error *error)
+{
+    if (!application_players_local_connection_bind(app, peer, seat, application_seat, error)) return false;
+    char address[256];
+    if (peer->endpoint.kind == QA_NET_LOOPBACK) memcpy(address, "localhost", sizeof("localhost"));
+    else if (!qa_net_address_format(&peer->endpoint, address, sizeof(address), error)) return false;
+    application_player_record *row = (application_player_record *)application_players_connection_read(app, peer->id, seat);
+    char *userinfo = info_canonical(row->userinfo ? row->userinfo : "", address,
+        primary(app)->kind == APPLICATION_PROVIDER_Q1, error);
+    if (!userinfo) return false;
+    free(row->userinfo); row->userinfo = userinfo;
+    return player_read(app, peer->id, seat, out, app->operation == APPLICATION_PERSISTING, error);
+}
+
 static bool userinfo_source(application_provider *source, const qa_unified_session_player *player,
     uint32_t client_slot, const char *value, qa_error *error)
 {
@@ -601,7 +601,7 @@ bool application_unified_player_userinfo(qa_application *app, qa_net_client_id c
     application_unified_source receipt;
     if (!value || !application_unified_source_read(app, &receipt, error) ||
         !application_unified_player_read(app, client, seat, &player, error)) return false;
-    const application_player_record *row = remote(app, client, seat);
+    const application_player_record *row = application_players_connection_read(app, client, seat);
     const char *old = row->userinfo ? row->userinfo : "";
     unified_info_pair *pairs = calloc(strlen(old) / 2 + 3, sizeof(*pairs));
     if (!pairs) return application_fail(error, QA_ERROR_MEMORY, "Retaining unified client endpoint");
@@ -684,10 +684,10 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         size_t size = strlen(arguments[i]); memcpy(args + offset, arguments[i], size); offset += size;
     }
     args[offset] = 0;
+    const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count + 1,
-        .argv = words, .args_text = args, .context = {.origin = QA_COMMAND_REMOTE,
+        .argv = words, .args_text = args, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
         .owner = source->owner, .actor = player.actor}};
-    const application_player_record *row = remote(app, client, seat);
     command.context.seat = row->seat;
     command.context.dialect = source->product->family == QA_GAME_Q1 ? QA_CONSOLE_Q1 : QA_CONSOLE_Q3;
     if (source->product->family == QA_GAME_Q1)
@@ -762,9 +762,9 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
         size_t length = strlen(arguments[i]); memcpy(tail + offset, arguments[i], length); offset += length;
     }
     tail[offset] = 0;
-    const application_player_record *row = remote(app, client, seat);
+    const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count, .argv = arguments,
-        .args_text = tail, .context = {.origin = QA_COMMAND_REMOTE, .owner = player.source_owner,
+        .args_text = tail, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL, .owner = player.source_owner,
         .actor = player.actor, .seat = row->seat, .dialect = QA_CONSOLE_Q3}};
     bool handled = false;
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error) &&
@@ -819,9 +819,9 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
         size_t length=strlen(value->arguments[i]); memcpy(tail+offset,value->arguments[i],length); offset+=length;
     }
     tail[offset]=0;
-    const application_player_record *row=remote(app,client,seat);
+    const application_player_record *row=application_players_connection_read(app,client,seat);
     qa_command_invocation command={.console=app->console,.argc=value->argument_count,
-        .argv=value->arguments,.args_text=tail,.context={.origin=QA_COMMAND_REMOTE,
+        .argv=value->arguments,.args_text=tail,.context={.origin=row->remote?QA_COMMAND_REMOTE:QA_COMMAND_LOCAL,
         .owner=provider->owner,.actor=player.actor,.seat=row->seat,.dialect=QA_CONSOLE_Q3}};
     bool handled=false;
     bool okay=qa_application_capture_command_context(app,&command.context,&command.context,error) &&

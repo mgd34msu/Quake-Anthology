@@ -37,7 +37,7 @@
 #include "supplies.h"
 #include "character_selection.h"
 #include "startup_flow.h"
-#include "network_unified.h"
+#include "network_unified_private.h"
 #include "qa/game_q3_client.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -66,6 +66,16 @@ static const qa_launch_role player_roles[] = {
     QA_ROLE_CHARACTER, QA_ROLE_MOVEMENT, QA_ROLE_ARSENAL, QA_ROLE_INVENTORY,
     QA_ROLE_COMBAT, QA_ROLE_EFFECTS, QA_ROLE_EQUIPMENT
 };
+
+static void local_connections_clear(struct application_player_roster *roster)
+{
+    for (size_t i = 0; roster && i < roster->count; ++i) {
+        application_player_record *record = roster->records + i;
+        if (record->remote) continue;
+        record->remote_client = (qa_net_client_id){0};
+        record->remote_seat = (qa_net_seat_id){0};
+    }
+}
 
 static application_player_record *physical_player(qa_application *app,
     struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
@@ -3186,6 +3196,7 @@ bool application_players_publish(qa_application *application,
     application_players_close(application);
     application->players = travel->roster;
     travel->roster = NULL;
+    local_connections_clear(application->players);
     if (!prepare_spawnpoints(application, application->players, choices, error) ||
         !configure_q2_players(application, choices, error))
         return false;
@@ -3434,6 +3445,7 @@ bool application_q3_round_players_publish(qa_application *app,
     application_players_close(app);
     cut->installed = app->players = cut->travel->roster;
     cut->travel->roster = NULL;
+    local_connections_clear(app->players);
     return prepare_spawnpoints(app, app->players,
         qa_launch_snapshot_choices(qa_application_launch(app)), error);
 }
@@ -3753,22 +3765,64 @@ bool qa_application_player_seat(const qa_application *application, qa_actor_id a
     return false;
 }
 
+const application_player_record *application_players_connection_read(
+    const qa_application *application, qa_net_client_id client, qa_net_seat_id seat)
+{
+    if (!application || !application->players || !client.owner || !seat.owner) return NULL;
+    for (size_t i = 0; i < application->players->count; ++i) {
+        const application_player_record *record = application->players->records + i;
+        if (!record->retiring && qa_net_client_id_equal(record->remote_client, client) &&
+            record->remote_seat.owner == seat.owner && record->remote_seat.index == seat.index)
+            return record;
+    }
+    return NULL;
+}
+
+bool application_players_local_connection_bind(qa_application *application,
+    const qa_net_client *peer, qa_net_seat_id seat, uint32_t application_seat, qa_error *error)
+{
+    if (!application || !application->players || !application->session || !peer ||
+        peer->attachment != QA_NET_LOCAL_SEAT || !qa_net_client_owns_seat(peer, seat))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Local binding requires its actual connection seat");
+    for (size_t i = 0; i < application->players->count; ++i) {
+        application_player_record *record = application->players->records + i;
+        if (record->remote || record->bot || record->retiring || record->seat != application_seat ||
+            !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
+        if (!qa_net_client_id_equal(record->remote_client, peer->id) ||
+            record->remote_seat.owner != seat.owner || record->remote_seat.index != seat.index) {
+            record->remote_client = peer->id;
+            record->remote_seat = seat;
+            ++application->players->revision;
+        }
+        return true;
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Local connection has no existing authoritative player");
+}
+
+bool application_players_connection_disconnect(qa_application *application,
+    qa_net_client_id client, qa_net_seat_id seat, qa_error *error)
+{
+    const application_player_record *record = application_players_connection_read(application, client, seat);
+    if (!record) return true;
+    if (!record->remote) {
+        application_player_record *local = (application_player_record *)record;
+        local->remote_client = (qa_net_client_id){0};
+        local->remote_seat = (qa_net_seat_id){0};
+        ++application->players->revision;
+        return true;
+    }
+    return qa_application_remote_player_detach(application, client, seat, error);
+}
+
 bool qa_application_remote_player_actor(const qa_application *application,
                                          qa_net_client_id client, qa_net_seat_id seat,
                                          qa_actor_id *out)
 {
-    if (application == NULL || application->players == NULL || out == NULL ||
-        application->session == NULL) return false;
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = &application->players->records[i];
-        if (record->remote && !record->retiring && qa_net_client_id_equal(record->remote_client, client) &&
-            (record->remote_seat.owner == seat.owner && record->remote_seat.index == seat.index) &&
-            qa_actors_get(qa_session_actors(application->session), record->actor)) {
-            *out = record->actor;
-            return true;
-        }
-    }
-    return false;
+    const application_player_record *record = application_players_connection_read(application, client, seat);
+    if (!record || !out || !application->session ||
+        !qa_actors_get(qa_session_actors(application->session), record->actor)) return false;
+    *out = record->actor;
+    return true;
 }
 
 static application_provider *current_seat_provider(qa_application *application,
@@ -4797,10 +4851,12 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
              roster_write_actor(&writer, actors, record->configured_actor, error);
         qa_net_write_u32(&writer, record->character ? record->character->owner : 0);
         qa_net_write_u64(&writer, record->deferred_until_ns);
-        qa_net_write_u64(&writer, record->remote_client.owner);
-        qa_net_write_u64(&writer, record->remote_client.generation);
-        qa_net_write_u32(&writer, record->remote_client.slot);
-        qa_net_write_u64(&writer, record->remote_seat.owner); qa_net_write_u32(&writer, record->remote_seat.index);
+        qa_net_client_id connection = record->remote ? record->remote_client : (qa_net_client_id){0};
+        qa_net_seat_id connection_seat = record->remote ? record->remote_seat : (qa_net_seat_id){0};
+        qa_net_write_u64(&writer, connection.owner);
+        qa_net_write_u64(&writer, connection.generation);
+        qa_net_write_u32(&writer, connection.slot);
+        qa_net_write_u64(&writer, connection_seat.owner); qa_net_write_u32(&writer, connection_seat.index);
         uint32_t row_flags = (record->deferred ? 1u : 0u) | (record->spectator ? 2u : 0u) |
             (record->bot ? 4u : 0u) | (record->remote ? 8u : 0u) | (record->dynamic ? 16u : 0u) |
             (record->retiring ? 32u : 0u) | (record->userinfo != NULL ? 64u : 0u) |
@@ -4937,8 +4993,6 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         if ((character && !record->character) || (!character && record->actor.registry) ||
             (record->remote && (!record->dynamic || !record->remote_client.owner ||
                                !record->remote_client.generation || !record->remote_seat.owner)) ||
-            (!record->remote && (record->remote_client.owner || record->remote_client.generation ||
-                record->remote_client.slot || record->remote_seat.owner || record->remote_seat.index)) ||
             guests > qa_net_reader_remaining(&reader) / PLAYER_CHECKPOINT_GUEST) { ok = false; break; }
         const qa_actor_record *live = qa_actors_get(actors, record->actor);
         if (live && (live->owner != character || !live->has_source || live->source_slot != record->source_slot))
@@ -5027,6 +5081,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "roster continuation disagrees with candidate owners");
         return false;
     }
+    local_connections_clear(roster);
     candidate->players = roster;
     return true;
 }
