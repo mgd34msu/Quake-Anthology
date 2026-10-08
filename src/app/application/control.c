@@ -1482,7 +1482,7 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
                 move->context.path, phase, &move->context, call, error)) return QA_MOVEMENT_ERROR;
         if (!live(move->application, actor)) return QA_MOVEMENT_REMOVED;
         if (!move->context.source_usercmd &&
-            (!qa_world_link(move->application->world, actor, NULL, error) ||
+            (!qa_world_body_commit(move->application->world, actor, NULL, true, error) ||
              (phase == QA_MOVE_LINK_TRIGGERS && !qa_physics_touch_triggers(move->application->physics, actor, error))))
             return QA_MOVEMENT_ERROR;
         if (!move->context.source_usercmd && phase == QA_MOVE_LINK_TRIGGERS) move->touched_triggers = true;
@@ -2853,20 +2853,9 @@ static bool control_move(qa_application *application,
             if (move.execution && move.execution->kind == APPLICATION_PROVIDER_QC &&
                 !application_qc_control_body(move.execution, actor, &record->result.state,
                     record->result.ground, &desired, error)) ok = false;
-            bool changed = !same_vector(before.origin, desired.origin) ||
-                           !same_vector(before.velocity, desired.velocity) ||
-                           !same_vector(before.angles, desired.angles) ||
-                           !same_bounds(before.bounds, desired.bounds) ||
-                           !qa_actor_reference_equal(before.ground, desired.ground);
-            qa_linked_body linked;
-            bool is_linked =
-                qa_world_linked(application->world, actor, &linked);
             move.committed = true;
-            if (ok && ((changed &&
-                 !qa_world_body_write(application->world, actor, &desired,
-                                      error)) ||
-                (!context->source_usercmd && (changed || !is_linked) &&
-                 !qa_world_link(application->world, actor, NULL, error)) ||
+            if (ok && (!qa_world_body_commit(application->world, actor, &desired,
+                        !context->source_usercmd, error) ||
                 (!context->source_usercmd && !move.touched_triggers &&
                  !qa_physics_touch_triggers(application->physics, actor,
                                             error))))

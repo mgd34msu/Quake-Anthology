@@ -43,6 +43,30 @@ static bool valid_state(const qa_body_state *state)
         && qa_vec_finite(state->velocity) && qa_bounds_valid(state->bounds);
 }
 
+static bool same_vector(qa_vec3 left,qa_vec3 right)
+{ return left.x==right.x && left.y==right.y && left.z==right.z; }
+
+static bool same_bounds(qa_bounds left,qa_bounds right)
+{ return same_vector(left.mins,right.mins) && same_vector(left.maxs,right.maxs); }
+
+static bool same_state(const qa_body_state *left,const qa_body_state *right)
+{
+    return same_vector(left->origin,right->origin) && same_vector(left->angles,right->angles)
+        && same_vector(left->velocity,right->velocity) && same_bounds(left->bounds,right->bounds)
+        && qa_actor_reference_equal(left->ground,right->ground);
+}
+
+static bool same_collision(const qa_actor_collision *left,const qa_actor_collision *right)
+{
+    return left->family==right->family && left->shape==right->shape
+        && left->inline_model==right->inline_model && left->model==right->model
+        && left->model_geometry==right->model_geometry && left->contents==right->contents
+        && qa_actor_reference_equal(left->owner,right->owner) && left->role==right->role
+        && left->monster==right->monster && left->dead_monster==right->dead_monster
+        && left->q1_corpse==right->q1_corpse && left->has_q3_owner==right->has_q3_owner
+        && left->q3_entity_number==right->q3_entity_number && left->q3_owner_number==right->q3_owner_number;
+}
+
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
                      const qa_world_hooks *hooks, qa_world **out, qa_error *error)
 {
@@ -410,7 +434,10 @@ bool qa_world_next_attachment(const qa_world *world,uint64_t *cursor,qa_actor_id
     *cursor=next->attachment_order; *actor=next->actor; *out=next->attachment; return true;
 }
 
-static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,qa_error *error)
+typedef enum body_link_policy { BODY_LINK_COMMIT, BODY_LINK_EXPLICIT, BODY_LINK_RESTORE } body_link_policy;
+
+static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,
+                         body_link_policy policy,qa_error *error)
 {
     uint64_t serial=body->storage_serial;
     uint64_t previous_count=body->link_count;
@@ -427,6 +454,15 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during collision link read");
     if(body->link_count!=previous_count || body->linked!=previous_linked || body->member!=previous_member)
         return fail(error,QA_ERROR_ARGUMENT,"Body link changed during collision link read");
+    if(policy==BODY_LINK_COMMIT && body->linked && body->member && same_state(&body->link.state,&linked->state)
+        && same_bounds(body->link.absolute_bounds,linked->absolute_bounds)
+        && same_collision(&body->member->actor.collision,&collision)) return true;
+    qa_linked_body snapshot=*linked;
+    if(policy!=BODY_LINK_RESTORE) {
+        if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
+        snapshot.link_count=body->link_count+1;
+    }
+    linked=&snapshot;
     if(body->leaves_ready || body->leaves) {
         qa_world_leaf_membership membership;
         if(!qa_world_link_membership(world,linked->actor,&linked->absolute_bounds,
@@ -510,7 +546,7 @@ bool qa_world_q1_visible(qa_world *world,qa_actor_id actor,const qa_bounds *boun
 }
 
 static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,
-                       const qa_bounds *explicit_bounds,qa_error *error)
+                       const qa_bounds *explicit_bounds,bool force,qa_error *error)
 {
     if(origin_override!=NULL && !qa_vec_finite(*origin_override)) return fail(error,QA_ERROR_ARGUMENT,"Invalid link origin");
     qa_bounds bounds={0};
@@ -524,7 +560,6 @@ static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_ov
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired while linking");
     uint64_t serial=body->storage_serial;
-    if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
     if(explicit_bounds==NULL) bounds=qa_bounds_translate(state.bounds,state.origin);
     if(explicit_bounds==NULL && world->hooks.absolute_bounds!=NULL) {
         ++world->callback_depth;
@@ -536,13 +571,24 @@ static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_ov
             return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during link bounds callback");
     }
     if(!qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid absolute body bounds");
-    if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
-    qa_linked_body linked={actor,state,bounds,body->link_count+1};
-    return publish_link(world,body,&linked,error);
+    qa_linked_body linked={actor,state,bounds,body->link_count};
+    return publish_link(world,body,&linked,force?BODY_LINK_EXPLICIT:BODY_LINK_COMMIT,error);
+}
+
+bool qa_world_body_commit(qa_world *world,qa_actor_id actor,const qa_body_state *state,
+                           bool link,qa_error *error)
+{
+    if(state!=NULL) {
+        qa_body_state current;
+        if(!qa_world_body_read(world,actor,&current,error) ||
+            (!same_state(&current,state) && !qa_world_body_write(world,actor,state,error))) return false;
+    }
+    if(!link || qa_actors_get(world->actors,actor)==NULL) return true;
+    return link_body(world,actor,NULL,NULL,false,error);
 }
 
 bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,qa_error *error)
-{ return link_body(world,actor,origin_override,NULL,error); }
+{ return link_body(world,actor,origin_override,NULL,true,error); }
 
 bool qa_world_link_bounds(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,qa_error *error)
 { return qa_world_link_bounds_at(world,actor,bounds,NULL,error); }
@@ -551,7 +597,7 @@ bool qa_world_link_bounds_at(qa_world *world,qa_actor_id actor,const qa_bounds *
                              const qa_vec3 *origin_override,qa_error *error)
 {
     if(bounds==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing explicit body bounds");
-    return link_body(world,actor,origin_override,bounds,error);
+    return link_body(world,actor,origin_override,bounds,true,error);
 }
 
 bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)
@@ -596,7 +642,7 @@ bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body
         notify_unlink(world,actor); return true;
     }
     qa_linked_body linked={actor,saved->state,saved->absolute_bounds,saved->link_count};
-    return publish_link(world,body,&linked,error);
+    return publish_link(world,body,&linked,BODY_LINK_RESTORE,error);
 }
 
 typedef struct attachment_transport { qa_actor_id actor; qa_body_attachment attachment; } attachment_transport;

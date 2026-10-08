@@ -97,6 +97,12 @@ bool qa_world_body_bind(qa_world *, qa_actor_id, const qa_body_binding *, bool r
 uint64_t qa_world_body_storage_serial(const qa_world *, qa_actor_id);
 bool qa_world_body_read(qa_world *, qa_actor_id, qa_body_state *, qa_error *);
 bool qa_world_body_write(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
+/* Internal movement commit. NULL state retains the authoritative body; a
+ * changed state reaches its normal write binding. Optional linking preserves
+ * an unchanged retained membership and dispatches no linked notifications.
+ * Module LinkEntity requests use qa_world_link/_bounds for forced reinsertion.
+ * Trigger dispatch remains separate, including after an unchanged commit. */
+bool qa_world_body_commit(qa_world *, qa_actor_id, const qa_body_state *, bool link, qa_error *);
 /* Stored policy is used when no binding is present; NULL disables that policy.
  * Binding context is borrowed until explicit unbind (NULL) or actor release.
  * Neither operation relinks. Reads use current metadata with retained bounds. */
