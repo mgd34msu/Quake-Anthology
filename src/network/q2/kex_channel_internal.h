@@ -6,6 +6,8 @@
 struct pending {
     struct pending *next;
     uint16_t reliable;
+    uint64_t serial;
+    bool final;
     bool sent;
     size_t size;
     uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
@@ -22,6 +24,7 @@ struct qa_kex_channel {
     size_t expanded_size;
     unsigned retries;
     uint64_t retry_at, received_at;
+    qa_network_reliable_receipt receipt;
     uint8_t *fragments, *expanded;
 };
 

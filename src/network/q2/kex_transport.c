@@ -145,6 +145,12 @@ static bool game_ready(const void *context)
     const qa_kex_transport *o = context;
     return o && o->published && o->raw_owned && qa_kex_lan_ready(o->lobby);
 }
+static bool game_reliable_receipt(const void *context,const qa_net_address *to,
+    qa_network_reliable_receipt *out)
+{
+    const qa_kex_transport *o=context;
+    return qa_kex_lan_reliable_receipt(o->lobby,to,out);
+}
 
 void qa_kex_transport_destroy(qa_kex_transport *o)
 {
@@ -171,7 +177,8 @@ bool qa_kex_transport_finish(qa_kex_transport *o, qa_net_transport **out, qa_err
     };
     const qa_net_transport_ops game_ops = {
         .send = game_send, .collect = game_collect, .dispatch = game_dispatch,
-        .maintenance = game_maintenance, .ready = game_ready, .close = game_close
+        .maintenance = game_maintenance, .ready = game_ready, .close = game_close,
+        .reliable_receipt = game_reliable_receipt
     };
     qa_net_limits limits = {o->raw_limit, 256};
     if (!qa_net_transport_create(&o->lobby->local_address, limits, &raw_ops, o, &o->dispatch, e)) return false;

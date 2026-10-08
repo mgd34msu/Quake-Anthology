@@ -37,7 +37,14 @@ bool qa_q2_save_channel(qa_source_save_io *io, qa_q2_channel **owner)
         qa_source_save_bytes(io, channel->sending, channel->sending_size) &&
         qa_source_save_bytes(io, channel->receiving, channel->receive_size);
     if (reading) {
-        if (!ok) qa_q2_channel_destroy(channel); else *owner = channel;
+        if (!ok) qa_q2_channel_destroy(channel);
+        else {
+            if (options.protocol.kind != QA_NET_Q2KEX_2023) {
+                if (channel->reliable_size) channel->receipt.inflight = ++channel->receipt.queued;
+                if (channel->queued_size) channel->queued_serial = ++channel->receipt.queued;
+            }
+            *owner = channel;
+        }
     }
     return ok;
 }

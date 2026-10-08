@@ -119,6 +119,11 @@ typedef struct qa_net_transport_event {
      * wrapper shifts the child's route left on collect and right on dispatch. */
     uint32_t route;
 } qa_net_transport_event;
+/* Local owner-lifetime serials. Only native reliable completion advances
+ * acknowledged; these values are never written into a protocol packet. */
+typedef struct qa_network_reliable_receipt {
+    uint64_t queued, inflight, acknowledged;
+} qa_network_reliable_receipt;
 typedef struct qa_net_transport_ops {
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
     bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
@@ -128,6 +133,7 @@ typedef struct qa_net_transport_ops {
      * Plain physical transports need no decoder. Neither operation reads input. */
     bool (*dispatch)(void *, const qa_net_transport_event *, qa_net_datagram *, bool *present, qa_error *);
     bool (*maintenance)(void *, uint64_t now_ns, qa_error *);
+    bool (*reliable_receipt)(const void *, const qa_net_address *, qa_network_reliable_receipt *);
 } qa_net_transport_ops;
 bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               const qa_net_transport_ops *, void *owned_state,
@@ -157,6 +163,8 @@ bool qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes,
 bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_transport_event *, qa_error *);
 bool qa_net_transport_dispatch(qa_net_transport *, const qa_net_transport_event *, qa_net_datagram *, bool *, qa_error *);
 bool qa_net_transport_maintenance(qa_net_transport *, uint64_t, qa_error *);
+/* Ordinary datagram transports return false and a zero receipt. */
+bool qa_net_transport_reliable_receipt(const qa_net_transport *, const qa_net_address *, qa_network_reliable_receipt *);
 void qa_net_transport_close(qa_net_transport *);
 
 typedef struct qa_net_ipx_packet {

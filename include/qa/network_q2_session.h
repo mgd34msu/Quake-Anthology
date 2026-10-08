@@ -235,6 +235,9 @@ typedef struct qa_network_q2_state {
     uint64_t loading_generation;
     size_t pending_commands, pending_records;
     qa_q2_channel_status channel;
+    qa_network_reliable_receipt reliable;
+    bool reliable_supported;
+    uint64_t reliable_submitted;
 } qa_network_q2_state;
 bool qa_network_q2_state_read(qa_network_runtime *, qa_net_client_id,
     qa_network_q2_state *, qa_error *);

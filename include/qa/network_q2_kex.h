@@ -31,6 +31,7 @@ bool qa_kex_channel_send(qa_kex_channel *, uint8_t kind, qa_bytes, qa_kex_mode, 
 bool qa_kex_channel_receive(qa_kex_channel *, qa_bytes, uint64_t now_ns, qa_kex_message *, bool *present, qa_error *);
 bool qa_kex_channel_tick(qa_kex_channel *, uint64_t now_ns, qa_error *);
 bool qa_kex_channel_idle(const qa_kex_channel *);
+qa_network_reliable_receipt qa_kex_channel_reliable_receipt(const qa_kex_channel *);
 
 typedef struct qa_kex_attribute { char key[1024], value[4096]; } qa_kex_attribute;
 bool qa_kex_discovery_query(qa_net_writer *);
@@ -60,6 +61,7 @@ bool qa_kex_lan_receive(qa_kex_lan *, qa_net_datagram *, qa_error *);
 bool qa_kex_lan_admitted(const qa_kex_lan *, const qa_net_address *);
 bool qa_kex_lan_ready(const qa_kex_lan *);
 bool qa_kex_lan_idle(const qa_kex_lan *);
+bool qa_kex_lan_reliable_receipt(const qa_kex_lan *, const qa_net_address *, qa_network_reliable_receipt *);
 bool qa_kex_lan_set_attribute(qa_kex_lan *, const char *, const char *, qa_error *);
 /* Changes admission and discovery capacity; existing ordered lobby members
  * retain their genuine IDs when the current Source lowers its capacity. */

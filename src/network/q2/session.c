@@ -313,6 +313,15 @@ bool qa_network_q2_state_read(qa_network_runtime *runtime, qa_net_client_id id,
         out->acknowledged_frame = client->last_frame; out->loading_generation = client->loading_generation;
         out->pending_commands = client->command_count; out->pending_records = client->batch.count - client->batch.cursor;
         out->preparing = client->selecting_server_data || client->preparing_game_state; }
-    return !session->server && session->state.client.policy.messages.demo ? true :
-        qa_q2_channel_get_status(session->channel, &out->channel);
+    if (!session->server && session->state.client.policy.messages.demo) return true;
+    out->reliable_submitted = qa_q2_channel_reliable_submitted(session->channel);
+    if (session->codec.protocol.kind == QA_NET_Q2KEX_2023) {
+        const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
+        out->reliable_supported = client && qa_net_transport_reliable_receipt(runtime->transport,
+            &client->endpoint, &out->reliable);
+    } else {
+        out->reliable = qa_q2_channel_reliable_receipt(session->channel);
+        out->reliable_supported = true;
+    }
+    return qa_q2_channel_get_status(session->channel, &out->channel);
 }

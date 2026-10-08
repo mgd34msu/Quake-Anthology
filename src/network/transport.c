@@ -319,6 +319,13 @@ bool qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to
         return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram destination or payload");
     return transport->ops.send(transport->state, to, payload, error);
 }
+bool qa_net_transport_reliable_receipt(const qa_net_transport *transport,
+    const qa_net_address *to, qa_network_reliable_receipt *out)
+{
+    *out = (qa_network_reliable_receipt){0};
+    return transport && transport->ops.reliable_receipt &&
+        transport->ops.reliable_receipt(transport->state, to, out);
+}
 bool qa_net_transport_collect(qa_net_transport *transport, uint64_t now_ns,
     qa_net_transport_event *out, qa_error *error)
 {
@@ -367,6 +374,12 @@ static bool host_send(void *context, const qa_net_address *to, qa_bytes payload,
     host_state *state = context;
     return qa_net_transport_send(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0],
         to, payload, error);
+}
+static bool host_reliable_receipt(const void *context, const qa_net_address *to,
+    qa_network_reliable_receipt *out)
+{
+    const host_state *state = context;
+    return qa_net_transport_reliable_receipt(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0], to, out);
 }
 
 static bool host_collect(void *context, uint64_t now_ns, qa_net_transport_event *out, qa_error *error)
@@ -451,7 +464,7 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
     }
     const qa_net_transport_ops ops = {.send = host_send, .collect = host_collect,
         .dispatch = host_dispatch, .maintenance = host_maintenance,
-        .ready = host_ready, .close = host_close};
+        .ready = host_ready, .close = host_close, .reliable_receipt = host_reliable_receipt};
     if (!qa_net_transport_create(external ? &external->address : &local->address,
         limits, &ops, state, out, error)) {
         free(state);

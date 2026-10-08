@@ -115,6 +115,8 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
             }
             pending->next=NULL;
             pending->reliable=rel;
+            pending->serial=c->receipt.queued+1;
+            pending->final=final;
             pending->sent=false;
             pending->size=size;
             memcpy(pending->bytes,bytes,size);
@@ -133,6 +135,7 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
     while(at<data.size);
     free(compressed);
     if(mode==QA_KEX_RELIABLE) {
+        ++c->receipt.queued;
         if(c->tail)c->tail->next=staged_head;
         else {
             c->head=staged_head;
@@ -144,6 +147,7 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
         c->pending_count+=packet_count;
         c->sequence=sequence;
         c->reliable=reliable;
+        c->receipt.inflight=c->head->serial;
         for(struct pending *p=staged_head;p;p=p->next) {
             qa_error ignored={0};
             if(!c->emit(c->user,(qa_bytes){p->bytes,p->size},&ignored))break;
@@ -243,11 +247,13 @@ static bool receive_body(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_mes
             c->head=remove->next;
             c->pending_bytes-=remove->size;
             c->pending_count--;
+            if(remove->final)c->receipt.acknowledged=remove->serial;
             free(remove);
             c->retry_at=now;
             c->retries=0;
         }
         if(!c->head)c->tail=NULL;
+        c->receipt.inflight=c->head?c->head->serial:0;
         c->received_at=now;
         return true;
     }
@@ -422,4 +428,8 @@ bool qa_kex_channel_tick(qa_kex_channel *c, uint64_t now, qa_error *e)
 bool qa_kex_channel_idle(const qa_kex_channel *c)
 {
     return c && !c->entered;
+}
+qa_network_reliable_receipt qa_kex_channel_reliable_receipt(const qa_kex_channel *c)
+{
+    return c?c->receipt:(qa_network_reliable_receipt){0};
 }

@@ -9,5 +9,7 @@ struct qa_q2_channel {
     uint8_t *queued,*reliable,*sending,*receiving,*packet;
     bool sending_reliable,id_recording;
     uint64_t sent_ns,received_ns;
+    qa_network_reliable_receipt receipt;
+    uint64_t queued_serial,reliable_submitted;
 };
 #endif

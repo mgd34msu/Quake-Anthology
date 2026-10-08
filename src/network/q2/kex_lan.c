@@ -221,6 +221,15 @@ bool qa_kex_lan_admitted(const qa_kex_lan*l,const qa_net_address*a) {
     struct peer*p=find_peer(l,a);
     return p&&p->count>0;
 }
+bool qa_kex_lan_reliable_receipt(const qa_kex_lan *l,const qa_net_address *a,
+    qa_network_reliable_receipt *out) {
+    *out=(qa_network_reliable_receipt){0};
+    if(!qa_kex_lan_admitted(l,a))return false;
+    const struct peer *p=find_peer(l,a);
+    if(!p)return false;
+    *out=qa_kex_channel_reliable_receipt(p->channel);
+    return true;
+}
 bool qa_kex_lan_ready(const qa_kex_lan*l) {
     return l&&qa_net_transport_ready(l->transport)&&l->joined&&!strcmp(attrs_get(&l->attributes,"ingame"),"1");
 }

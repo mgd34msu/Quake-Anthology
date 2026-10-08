@@ -121,6 +121,16 @@ bool qa_kex_channel_restore(qa_bytes bytes, qa_kex_emit_fn emit, void *user,
         if (!e || e->code == QA_OK) qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX channel retained state");
         return false;
     }
+    bool first = true;
+    uint64_t serial = 0;
+    for (struct pending *p = c->head; p; p = p->next) {
+        if (first) serial = ++c->receipt.queued;
+        p->serial = serial;
+        uint8_t fragment = p->bytes[1] & 12u;
+        p->final = fragment == 0 || fragment == 12;
+        first = p->final;
+    }
+    c->receipt.inflight = c->head ? c->head->serial : 0;
     *out = c;
     return true;
 }

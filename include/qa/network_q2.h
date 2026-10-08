@@ -146,6 +146,12 @@ typedef struct qa_q2_channel_status {
     size_t capacity, payload_bytes;
 } qa_q2_channel_status;
 bool qa_q2_channel_get_status(const qa_q2_channel *, qa_q2_channel_status *);
+/* Classic toggle-channel receipt. KEX completion belongs to its LAN transport
+ * and this getter returns zero for that nested game channel. */
+qa_network_reliable_receipt qa_q2_channel_reliable_receipt(const qa_q2_channel *);
+/* Token of the last reliable batch accepted by channel_send. For KEX this is
+ * the actual LAN message serial, not the Q2 sentinel or its packet sequence. */
+uint64_t qa_q2_channel_reliable_submitted(const qa_q2_channel *);
 bool qa_q2_channel_pending(const qa_q2_channel *);
 bool qa_q2_channel_fragment_pending(const qa_q2_channel *);
 bool qa_q2_channel_should_update(const qa_q2_channel *, uint64_t now_ns);

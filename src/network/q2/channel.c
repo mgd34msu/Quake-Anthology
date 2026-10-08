@@ -66,7 +66,10 @@ bool qa_q2_channel_queue(qa_q2_channel*c,qa_bytes b,qa_error*e) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 reliable queue exceeds capacity");
         return false;
     }
-    if(b.size)memcpy(c->queued+c->queued_size,b.data,b.size);
+    if(b.size) {
+        if(!kex(c)&&!c->queued_size)c->queued_serial=++c->receipt.queued;
+        memcpy(c->queued+c->queued_size,b.data,b.size);
+    }
     c->queued_size+=b.size;
     return true;
 }
@@ -142,6 +145,7 @@ bool qa_q2_channel_transmit(qa_q2_channel*c,qa_bytes unrel,uint64_t now,qa_net_w
         c->reliable_size=compressed?wrapped.size:c->queued_size;
         memcpy(c->reliable,compressed?wrapped.data:c->queued,c->reliable_size);
         qa_buffer_free(&wrapped);
+        c->receipt.inflight=c->queued_serial;
         c->queued_size=0;
         c->reliable_bit=!c->reliable_bit;
         reliable=true;
@@ -218,7 +222,11 @@ bool qa_q2_channel_receive(qa_q2_channel*c,qa_bytes b,uint64_t now,qa_q2_receive
     };
     if(!kex(c)) {
         c->incoming_reliable_ack=(aw>>31)!=0;
-        if(c->incoming_reliable_ack==c->reliable_bit)c->reliable_size=0;
+        if(c->incoming_reliable_ack==c->reliable_bit&&c->reliable_size) {
+            c->reliable_size=0;
+            c->receipt.acknowledged=c->receipt.inflight;
+            c->receipt.inflight=0;
+        }
     }
     if(fragmented) {
         if(sequence!=c->receive_sequence) {
@@ -287,6 +295,9 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
             if(w.failed||!qa_net_transport_send(t,to,(qa_bytes) {
                 bytes,qa_net_writer_size(&w)
             },e))return false;
+            qa_network_reliable_receipt receipt;
+            if(qa_net_transport_reliable_receipt(t,to,&receipt))
+                c->reliable_submitted=receipt.queued;
             c->queued_size=0;
             c->sent_ns=now;
         }
@@ -314,6 +325,7 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
         bytes,qa_net_writer_size(&w)
     },e);
     if(!ok) { *c=before; *included=false; }
+    else if(c->receipt.inflight)c->reliable_submitted=c->receipt.inflight;
     return ok;
 }
 bool qa_q2_channel_get_status(const qa_q2_channel *c,qa_q2_channel_status *out) {
@@ -326,4 +338,10 @@ bool qa_q2_channel_get_status(const qa_q2_channel *c,qa_q2_channel_status *out) 
         .capacity=c->capacity,.payload_bytes=c->payload_bytes
     };
     return true;
+}
+qa_network_reliable_receipt qa_q2_channel_reliable_receipt(const qa_q2_channel *c) {
+    return c&&!kex(c)?c->receipt:(qa_network_reliable_receipt){0};
+}
+uint64_t qa_q2_channel_reliable_submitted(const qa_q2_channel *c) {
+    return c?c->reliable_submitted:0;
 }
