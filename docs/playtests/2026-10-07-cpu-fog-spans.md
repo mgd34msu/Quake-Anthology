@@ -500,3 +500,34 @@ pressure qualification is claimed.
 Evidence: `qa-the196-padded-surfaces-20261007/root-build-result.json`,
 `qa-private-av-toxi38wn/installer-shaped-qualification.json` and
 `qa-the196-vector-return-plan-cfjiirzu/paired-result.json`.
+
+## Installed Original Q3 filter check
+
+Installed `98225ced` passed the private GPU0 GL route with the Original
+Q3 module on retail q3dm1 and a fresh copy of the 34 owner settings.
+The observer now records Source image-use bits at entry to
+`qa_render_source_report`, before they are cleared. Each accepted report
+matches the completed N+1 frame, phase, renderer, controls and returned
+Source world view. This fixes the observer's evidence cut; no engine code
+was changed.
+
+The actually used mip image `gfx/2d/numbers/zero_32b.tga`, Source ordinal
+51 / GL name 53, followed the common mode from linear-mipmap-nearest to
+nearest-mipmap-nearest and back. The same GL name received real min/mag
+parameter calls 9984/9728 on change and 9985/9729 on restoration.
+The actually used no-mip `*white`, ordinal 1 / GL name 3, retained linear
+filtering. Use bits establish use in that Source frame, not a particular
+world or HUD draw; submitted GL calls are not an independent driver query.
+
+All three completed gameplay PNGs were viewed. Public quit returned zero,
+the original profile and installed files stayed unchanged, and an
+independent PID/start-token check found all 16 owned processes absent.
+The pre-existing Original Q3 autosave warning remains tracked separately
+under THE-585. This debugger-assisted check makes no timing claim.
+
+Evidence: `qa-private-av-ls0nyznc/user/evidence/policy-checks.json`,
+`completed-policy-captures.jsonl`, `gl-tex-parameter-calls.jsonl`, three
+PNGs, parent `qualification-result.json` and `root-owned-cleanup.json`.
+THE-843 remains open for retail Q1 classic/rerelease and Q2 classic CPU/GL
+checks, actual skin samples, and the other unqualified paths. This run
+does not close THE-196's CPU frame-time targets.
