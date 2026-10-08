@@ -5,8 +5,13 @@
 #include "qa/game_q2_combat.h"
 #include <math.h>
 
-bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
-    qa_application_native_q2_hud *out, bool *found, qa_error *error)
+typedef struct hud_selection {
+    qa_application_native_q2_hud_source source;
+    application_provider *hud, *character, *original;
+    uint32_t slot;
+} hud_selection;
+
+static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *out, bool *found, qa_error *error)
 {
     if (!app || !out || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 HUD requires its actor and output");
@@ -16,53 +21,89 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
     if (!hud || !hud->constructed || hud->close_pending || !hud->product ||
         hud->product->family != QA_GAME_Q2) return true;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
-    qa_application_native_q2_hud value = {.provider = hud->owner, .layout = ""};
+    hud_selection selected = {.hud = hud, .character = character};
+    qa_application_native_q2_hud_source *value = &selected.source;
+    value->provider = value->data_provider = hud->owner;
     if (hud->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_combat_rules rules;
         if (!hud->state.q2 || !qa_q2_combat_rules_read(hud->state.q2, &rules)) return true;
-        value.edition = rules.edition;
+        value->edition = rules.edition;
+        value->deathmatch = rules.deathmatch; value->cooperative = rules.cooperative;
     } else if (hud->kind == APPLICATION_PROVIDER_NATIVE) {
         struct application_native_q2 *engine = hud->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
             engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
-        value.edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
     } else return true;
-    value.frame_ns = hud->component.clock.interval_ns;
-    qa_clock_state clock;
-    if (!qa_session_clock(app->session, hud->owner, &clock)) return true;
-    value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
-    value.cvars = application_native_q2_console_registry(hud);
-    application_provider *original = hud->kind == APPLICATION_PROVIDER_NATIVE ? hud :
+    selected.original = hud->kind == APPLICATION_PROVIDER_NATIVE ? hud :
         character && character->product && character->product->family == QA_GAME_Q2 &&
         character->kind == APPLICATION_PROVIDER_NATIVE ? character : NULL;
-    if (original) {
-        struct application_native_q2 *engine = original->state.native.q2_engine;
+    if (selected.original) {
+        struct application_native_q2 *engine = selected.original->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
             engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
-        uint32_t slot = 0;
         for (uint32_t i = 1; i < sizeof(engine->clients) / sizeof(engine->clients[0]); ++i)
             if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) {
-                slot = i; break;
+                selected.slot = i; break;
             }
-        if (!slot) return true;
+        if (!selected.slot) return true;
+        value->data_provider = selected.original->owner; value->config_revision = engine->config_revision;
+        value->original = true; value->configstrings = (const char *const *)engine->configstrings;
+        value->configstring_count = engine->configstring_count;
+        value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value->statusbar = value->configstring_count > 5 && value->configstrings[5] ? value->configstrings[5] : "";
+    } else {
+        value->game = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->state.q2 : hud->state.q2;
+        value->data_provider = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->owner : hud->owner;
+        value->statusbar = qa_q2_wire_statusbar(hud->state.q2);
+    }
+    *out = selected; *found = true;
+    return true;
+}
+
+bool qa_application_native_q2_hud_source_read(qa_application *app, qa_actor_id actor,
+    qa_application_native_q2_hud_source *out, bool *found, qa_error *error)
+{
+    hud_selection selected; bool present;
+    if (!out || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 HUD requires its actor and output");
+    if (!hud_select(app, actor, &selected, &present, error)) return false;
+    *found = present;
+    if (present) *out = selected.source;
+    return true;
+}
+
+bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
+    qa_application_native_q2_hud *out, bool *found, qa_error *error)
+{
+    hud_selection selected; bool present;
+    if (!out || !found) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 HUD requires its actor and output");
+    if (!hud_select(app, actor, &selected, &present, error)) return false;
+    *found = false;
+    if (!present) return true;
+    const qa_application_native_q2_hud_source *source = &selected.source;
+    application_provider *hud = selected.hud, *character = selected.character, *original = selected.original;
+    qa_application_native_q2_hud value = {.provider = source->provider, .data_provider = source->data_provider,
+        .config_revision = source->config_revision, .edition = source->edition,
+        .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
+        .game = source->game, .statusbar = source->statusbar, .configstrings = source->configstrings,
+        .configstring_count = source->configstring_count, .layout = ""};
+    application_provider *clock_owner = original ? original : hud;
+    qa_clock_state clock;
+    if (!qa_session_clock(app->session, clock_owner->owner, &clock)) return true;
+    value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
+    value.frame_ns = clock_owner->component.clock.interval_ns;
+    value.cvars = application_native_q2_console_registry(clock_owner);
+    if (original) {
+        struct application_native_q2 *engine = original->state.native.q2_engine;
         qa_q2_player player;
-        if (!qa_native_host_q2_player(original->state.native.host, slot, &player, error)) return false;
+        if (!qa_native_host_q2_player(original->state.native.host, selected.slot, &player, error)) return false;
         memcpy(value.stats, player.stats, sizeof(value.stats));
-        for (unsigned i = 0; i < sizeof(value.inventory) / sizeof(value.inventory[0]); ++i)
-            value.inventory[i] = engine->clients[slot].inventory[i];
-        value.original = true; value.configstrings = (const char *const *)engine->configstrings;
-        value.configstring_count = engine->configstring_count;
-        value.layout = engine->clients[slot].layout;
-        value.player_number = (int32_t)slot - 1;
-        value.edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
-        value.cvars = engine->cvars;
-        if (!qa_session_clock(app->session, original->owner, &clock)) return true;
-        value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
-        value.frame_ns = original->component.clock.interval_ns;
-        value.statusbar = value.configstring_count > 5 && value.configstrings[5] ? value.configstrings[5] : "";
-    } else if (hud->kind == APPLICATION_PROVIDER_Q2) {
-        value.game = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->state.q2 : hud->state.q2;
-        value.statusbar = qa_q2_wire_statusbar(hud->state.q2);
+        if (player.stats[13] & 2)
+            for (unsigned i = 0; i < sizeof(value.inventory) / sizeof(value.inventory[0]); ++i)
+                value.inventory[i] = engine->clients[selected.slot].inventory[i];
+        value.layout = engine->clients[selected.slot].layout;
+        value.player_number = (int32_t)selected.slot - 1;
+    } else {
         qa_q2_player_info player;
         bool native_character = character && character->kind == APPLICATION_PROVIDER_Q2;
         if (native_character) {
@@ -101,7 +142,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
             }
             value.inventory[i + 1] = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
         }
-    } else return true;
+    }
     *out = value; *found = true;
     return true;
 }

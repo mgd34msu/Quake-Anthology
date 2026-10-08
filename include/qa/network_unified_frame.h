@@ -32,9 +32,22 @@ typedef struct qa_unified_inventory_state {
     qa_unified_inventory_entry *entries;
     size_t entry_count;
 } qa_unified_inventory_state;
+typedef struct qa_unified_q2_configstring {
+    uint32_t index;
+    char *value;
+} qa_unified_q2_configstring;
+typedef struct qa_unified_q2_hud_configuration {
+    qa_actor_owner data_provider;
+    uint64_t revision;
+    bool deathmatch, cooperative;
+    qa_net_protocol_id protocol;
+    qa_unified_q2_configstring *configstrings;
+    size_t configstring_count;
+} qa_unified_q2_hud_configuration;
 typedef struct qa_unified_configuration_state {
     qa_actor_id actor;
-    qa_unified_provider_state movement, character, appearance, inventory;
+    qa_unified_provider_state movement, character, appearance, inventory, hud;
+    qa_unified_q2_hud_configuration *q2_hud;
     qa_unified_provider_state *weapons;
     size_t weapon_count;
 } qa_unified_configuration_state;

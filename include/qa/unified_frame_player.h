@@ -2,6 +2,7 @@
 #define QA_UNIFIED_FRAME_PLAYER_H
 
 #include "qa/network_unified_frame.h"
+#include "qa/unified_frame_components.h"
 
 typedef struct qa_unified_source_identity {
     qa_actor_owner provider;
@@ -97,11 +98,17 @@ typedef struct qa_unified_player_ui {
     qa_unified_native_inventory *native_inventory;
     qa_unified_q1_team_face *q1_team_face;
 } qa_unified_player_ui;
+typedef struct qa_unified_q2_hud_state {
+    qa_unified_native_hud frame;
+    int32_t player_number;
+} qa_unified_q2_hud_state;
 struct qa_unified_frame_player {
     qa_actor_id actor, ui_actor;
     qa_unified_player_view view;
     qa_unified_player_ui ui;
     qa_unified_client_presentation *client_presentation;
+    bool has_q2_hud;
+    qa_unified_q2_hud_state q2_hud;
 };
 
 #endif

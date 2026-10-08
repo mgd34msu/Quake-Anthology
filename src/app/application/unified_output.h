@@ -15,7 +15,7 @@ typedef struct application_unified_metadata_receipt {
 } application_unified_metadata_receipt;
 
 bool application_unified_output_metadata(qa_application *, const application_unified_source *,
-    const application_unified_q3_sources *, uint32_t epoch, const application_unified_metadata_receipt *committed,
+    const application_unified_q3_sources *, qa_unified_frame *, uint32_t epoch, const application_unified_metadata_receipt *committed,
     const qa_unified_document *committed_source_metadata,
     application_unified_metadata_receipt *proposed, qa_unified_document **, qa_error *);
 

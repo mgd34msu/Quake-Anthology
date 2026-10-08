@@ -63,6 +63,9 @@ static const qa_unified_record_layout qa_unified_q2_flare_layout;
 static const qa_unified_record_layout qa_unified_source_identity_layout;
 const qa_unified_record_layout qa_unified_player_frame_layout;
 static const qa_unified_record_layout qa_unified_client_presentation_layout;
+static const qa_unified_record_layout qa_unified_q2_hud_state_layout;
+static const qa_unified_record_layout qa_unified_q2_hud_configuration_layout;
+static const qa_unified_record_layout component_protocol_layout;
 static const qa_unified_record_layout qa_unified_player_ui_layout;
 static const qa_unified_record_layout qa_unified_q1_team_face_layout;
 static const qa_unified_record_layout qa_unified_native_inventory_layout;
@@ -533,8 +536,16 @@ static const qa_unified_field qa_unified_frame_player_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_frame_player, view, qa_unified_player_view_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_player, ui, qa_unified_player_ui_layout),
     QA_UNIFIED_POINTER(qa_unified_frame_player, client_presentation, qa_unified_client_presentation_layout),
+    QA_UNIFIED_FIELD(qa_unified_frame_player, has_q2_hud, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_RECORD(qa_unified_frame_player, q2_hud, qa_unified_q2_hud_state_layout),
 };
 const qa_unified_record_layout qa_unified_player_frame_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_player, qa_unified_frame_player_fields);
+
+static const qa_unified_field qa_unified_q2_hud_state_fields[] = {
+    QA_UNIFIED_RECORD(qa_unified_q2_hud_state, frame, qa_unified_native_hud_layout),
+    QA_UNIFIED_FIELD(qa_unified_q2_hud_state, player_number, QA_UNIFIED_FIELD_I32),
+};
+static const qa_unified_record_layout qa_unified_q2_hud_state_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_hud_state, qa_unified_q2_hud_state_fields);
 
 static const qa_unified_field qa_unified_client_presentation_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_client_presentation, recipient, qa_unified_actor_layout),
@@ -883,9 +894,26 @@ static const qa_unified_field qa_unified_configuration_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_configuration_state, character, qa_unified_provider_layout),
     QA_UNIFIED_RECORD(qa_unified_configuration_state, appearance, qa_unified_provider_layout),
     QA_UNIFIED_RECORD(qa_unified_configuration_state, inventory, qa_unified_provider_layout),
+    QA_UNIFIED_RECORD(qa_unified_configuration_state, hud, qa_unified_provider_layout),
+    QA_UNIFIED_POINTER(qa_unified_configuration_state, q2_hud, qa_unified_q2_hud_configuration_layout),
     QA_UNIFIED_ARRAY(qa_unified_configuration_state, weapons, weapon_count, qa_unified_provider_layout, 256),
 };
 static const qa_unified_record_layout qa_unified_configuration_state_layout = QA_UNIFIED_ACTOR_LAYOUT(qa_unified_configuration_state, qa_unified_configuration_state_fields, actor);
+
+static const qa_unified_field qa_unified_q2_configstring_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_q2_configstring, index, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_q2_configstring, value, QA_UNIFIED_FIELD_STRING),
+};
+static const qa_unified_record_layout qa_unified_q2_configstring_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_configstring, qa_unified_q2_configstring_fields);
+static const qa_unified_field qa_unified_q2_hud_configuration_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, data_provider, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, revision, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, deathmatch, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, cooperative, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_RECORD(qa_unified_q2_hud_configuration, protocol, component_protocol_layout),
+    QA_UNIFIED_ARRAY(qa_unified_q2_hud_configuration, configstrings, configstring_count, qa_unified_q2_configstring_layout, 16384),
+};
+static const qa_unified_record_layout qa_unified_q2_hud_configuration_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_hud_configuration, qa_unified_q2_hud_configuration_fields);
 
 static const qa_unified_field qa_unified_body_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_body_state, actor, qa_unified_actor_layout),

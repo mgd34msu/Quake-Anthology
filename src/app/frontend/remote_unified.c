@@ -137,7 +137,8 @@ static const qa_recipe_provider *frame_provider(const frontend_remote_unified *o
         if (!qa_actor_id_equal(row->actor,owner->wire_player)) continue;
         const qa_unified_provider_state *selected = role == QA_ROLE_MOVEMENT ? &row->movement :
             role == QA_ROLE_INVENTORY ? &row->inventory : role == QA_ROLE_CHARACTER ? &row->character :
-            role == QA_ROLE_BODY ? &row->appearance : role == QA_ROLE_ARSENAL && row->weapon_count ? row->weapons : NULL;
+            role == QA_ROLE_BODY ? &row->appearance : role == QA_ROLE_HUD ? &row->hud :
+            role == QA_ROLE_ARSENAL && row->weapon_count ? row->weapons : NULL;
         if (!selected || !selected->provider || !selected->content) return NULL;
         for (size_t p = 0; p < qa_executable_recipe_provider_count(owner->recipe); ++p) {
             const qa_recipe_provider *provider = qa_executable_recipe_provider(owner->recipe, p);

@@ -87,7 +87,26 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         }
     }
     qa_actor_id recipient = v->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : v->actor;
-    if (ok) ok = emit(p, &payload, NULL, v->actor, recipient, clock.frame.time_ns, NULL, e);
+    qa_unified_simulation_payload simulation = {.kind = QA_UNIFIED_SIMULATION_MESSAGE};
+    int16_t counts[256] = {0};
+    const qa_unified_simulation_payload *inventory = NULL;
+    if (ok && v->kind == QA_Q2_PLAYER_INVENTORY && v->visible) {
+        size_t items = qa_q2_item_count(p->state.q2);
+        for (size_t i = 0; i < items && i + 1 < 256; ++i) {
+            const qa_q2_item_definition *item = qa_q2_item_at(p->state.q2, i);
+            for (size_t n = 0; n < v->count; ++n) if (v->inventory[n].item == item->item) {
+                double count = v->inventory[n].count;
+                int32_t value = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
+                uint16_t bits = (uint16_t)(uint32_t)value;
+                memcpy(counts + i + 1, &bits, sizeof(bits));
+                break;
+            }
+        }
+        simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_Q2_INVENTORY,
+            .counts = counts, .count = 256};
+        inventory = &simulation;
+    }
+    if (ok) ok = emit(p, &payload, inventory, v->actor, recipient, clock.frame.time_ns, NULL, e);
     free(r->scores); free(r->inventory); return ok;
 }
 

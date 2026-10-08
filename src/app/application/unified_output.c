@@ -12,6 +12,7 @@
 #include "qa/application_selected_effects.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q2_items.h"
 #include <stdio.h>
 
 
@@ -56,7 +57,143 @@ static int configuration_compare(const void *left, const void *right)
     return a.generation == b.generation ? 0 : a.generation < b.generation ? -1 : 1;
 }
 
-static bool configurations(qa_application *app, qa_unified_frame_metadata *out, qa_error *error)
+static const qa_unified_configuration_state *player_configuration(const qa_unified_frame_metadata *metadata,
+    qa_actor_id actor)
+{
+    for (size_t i = 0; metadata && i < metadata->configuration_count; ++i)
+        if (qa_actor_id_equal(metadata->configurations[i].actor, actor)) return metadata->configurations + i;
+    return NULL;
+}
+
+static bool q2_configuration_same(const qa_unified_q2_hud_configuration *old,
+    const qa_application_native_q2_hud_source *hud, bool found)
+{
+    return !found ? !old : old && old->data_provider == hud->data_provider &&
+        old->revision == hud->config_revision && old->deathmatch == hud->deathmatch &&
+        old->cooperative == hud->cooperative && old->protocol.kind ==
+            (hud->edition == QA_Q2_CLASSIC ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023);
+}
+
+static int image_compare(const void *left, const void *right)
+{ return strcmp(*(const char *const *)left, *(const char *const *)right); }
+static int configstring_compare(const void *left, const void *right)
+{
+    uint32_t a = ((const qa_unified_q2_configstring *)left)->index;
+    uint32_t b = ((const qa_unified_q2_configstring *)right)->index;
+    return a < b ? -1 : a > b;
+}
+static bool q2_configstring(qa_unified_q2_hud_configuration *out, uint32_t index,
+    const char *value, qa_error *error)
+{
+    qa_unified_q2_configstring *row = out->configstrings + out->configstring_count++;
+    row->index = index;
+    return application_unified_frame_string(NULL, &row->value, value, error);
+}
+static bool q2_configuration(qa_application *app, const application_unified_source *source,
+    qa_unified_configuration_state *row, qa_error *error)
+{
+    qa_application_native_q2_hud_source hud; bool found;
+    if (!qa_application_native_q2_hud_source_read(app, row->actor, &hud, &found, error)) return false;
+    if (!found) return true;
+    qa_unified_q2_hud_configuration *out = calloc(1, sizeof(*out));
+    if (!out) return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configuration");
+    row->q2_hud = out;
+    out->data_provider = hud.data_provider; out->revision = hud.config_revision;
+    out->deathmatch = hud.deathmatch; out->cooperative = hud.cooperative;
+    out->protocol = (qa_net_protocol_id){.kind = hud.edition == QA_Q2_CLASSIC ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
+    if (hud.original) {
+        out->configstrings = calloc(hud.configstring_count, sizeof(*out->configstrings));
+        if (hud.configstring_count && !out->configstrings)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Original Q2 configstrings");
+        for (uint32_t i = 0; i < hud.configstring_count; ++i)
+            if (hud.configstrings[i] && *hud.configstrings[i] &&
+                !q2_configstring(out, i, hud.configstrings[i], error)) return false;
+        return true;
+    }
+    qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = out->protocol};
+    if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    size_t count = qa_q2_item_count(hud.game), images = 2;
+    const char **names = calloc(count + images, sizeof(*names));
+    if (!names) return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD image indices");
+    names[0] = "i_health"; names[1] = "i_help";
+    for (size_t i = 0; i < count; ++i) {
+        const qa_q2_item_definition *item = qa_q2_item_at(hud.game, i);
+        if (item->icon && *item->icon) names[images++] = item->icon;
+    }
+    qsort(names, images, sizeof(*names), image_compare);
+    size_t unique = 0;
+    for (size_t i = 0; i < images; ++i)
+        if (!unique || strcmp(names[i], names[unique - 1])) names[unique++] = names[i];
+    out->configstrings = calloc(2 + unique + count, sizeof(*out->configstrings));
+    if (!out->configstrings) { free(names); return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configstrings"); }
+    char clients[32]; snprintf(clients, sizeof(clients), "%u", source->max_clients);
+    bool ok = q2_configstring(out, 5, hud.statusbar, error) &&
+        q2_configstring(out, layout.max_clients, clients, error);
+    for (size_t i = 0; ok && i < unique; ++i)
+        ok = q2_configstring(out, layout.images + (uint32_t)i + 1, names[i], error);
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = q2_configstring(out, layout.items + (uint32_t)i + 1, qa_q2_item_at(hud.game, i)->name, error);
+    free(names);
+    if (ok) qsort(out->configstrings, out->configstring_count, sizeof(*out->configstrings), configstring_compare);
+    return ok;
+}
+
+typedef struct q2_stat_images {
+    const qa_unified_q2_configstring *rows;
+    size_t count;
+    uint32_t base;
+} q2_stat_images;
+static bool q2_stat_image(void *context, const char *name, uint32_t *out, qa_error *error)
+{
+    (void)error;
+    const q2_stat_images *images = context;
+    size_t low = 0, high = images->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int order = strcmp(images->rows[middle].value, name);
+        if (order < 0) low = middle + 1; else high = middle;
+    }
+    *out = low == images->count || strcmp(images->rows[low].value, name) ? 0 :
+        images->rows[low].index - images->base;
+    return true;
+}
+static size_t q2_config_lower_bound(const qa_unified_q2_hud_configuration *config, uint32_t index)
+{
+    size_t low = 0, high = config->configstring_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        if (config->configstrings[middle].index < index) low = middle + 1; else high = middle;
+    }
+    return low;
+}
+static bool q2_hud_state(const qa_application_native_q2_hud *hud,
+    const qa_unified_configuration_state *configuration, qa_unified_frame_player *out, qa_error *error)
+{
+    qa_unified_q2_hud_state *state = &out->q2_hud;
+    const qa_unified_q2_hud_configuration *config = configuration->q2_hud;
+    if (hud->original) memcpy(state->frame.stats, hud->stats, sizeof(hud->stats));
+    else {
+        qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = config->protocol};
+        if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
+        size_t first = q2_config_lower_bound(config, layout.images);
+        q2_stat_images images = {.rows = config->configstrings + first,
+            .count = q2_config_lower_bound(config, layout.images + layout.max_images) - first, .base = layout.images};
+        if (!qa_q2_wire_stats(hud->game, &hud->view,
+            &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image},
+            state->frame.stats, error)) return false;
+    }
+    state->frame.stat_count = hud->edition == QA_Q2_CLASSIC ? 32 : 64;
+    state->frame.server_frame = hud->server_frame;
+    state->frame.time_ms = (double)hud->time_ns / 1000000;
+    state->frame.has_frame_time = hud->frame_ns != 0;
+    state->frame.frame_time_ms = (double)hud->frame_ns / 1000000;
+    state->player_number = hud->player_number;
+    out->has_q2_hud = true;
+    return true;
+}
+
+static bool configurations(qa_application *app, const application_unified_source *source,
+    qa_unified_frame_metadata *out, qa_error *error)
 {
     size_t count = app->players->count;
     out->configurations = count ? calloc(count, sizeof(*out->configurations)) : NULL;
@@ -73,7 +210,9 @@ static bool configurations(qa_application *app, qa_unified_frame_metadata *out, 
             !provider(&v->character, application_provider_for(app, row->actor, QA_ROLE_CHARACTER, ""), error) ||
             !provider(&v->appearance, application_provider_for(app, row->actor, QA_ROLE_BODY, ""), error) ||
             !provider(v->weapons, application_provider_for(app, row->actor, QA_ROLE_ARSENAL, ""), error) ||
-            !provider(&v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error)) return false;
+            !provider(&v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error) ||
+            !provider(&v->hud, application_provider_for(app, row->actor, QA_ROLE_HUD, ""), error) ||
+            !q2_configuration(app, source, v, error)) return false;
     }
     if (out->configuration_count > 1)
         qsort(out->configurations, out->configuration_count, sizeof(*out->configurations), configuration_compare);
@@ -159,7 +298,7 @@ static bool q1_world_metadata(const qa_application_network_q1_world *world,
 }
 
 bool application_unified_output_metadata(qa_application *app, const application_unified_source *source,
-    const application_unified_q3_sources *q3_sources, uint32_t epoch, const application_unified_metadata_receipt *committed,
+    const application_unified_q3_sources *q3_sources, qa_unified_frame *frame, uint32_t epoch, const application_unified_metadata_receipt *committed,
     const qa_unified_document *committed_source_metadata, application_unified_metadata_receipt *proposed, qa_unified_document **out, qa_error *error)
 {
     if (!app || !source || !epoch || !proposed || !out || *out || !application_unified_source_current(app, source))
@@ -176,6 +315,14 @@ bool application_unified_output_metadata(qa_application *app, const application_
     bool initial = !committed || committed->epoch != epoch || committed->map_revision != value.map_revision;
     bool configuration_changed = initial || committed->publication_revision != value.publication_revision ||
         committed->roster_revision != value.roster_revision;
+    if (!configuration_changed) for (size_t i = 0; i < previous->configuration_count; ++i) {
+        const qa_unified_configuration_state *old = previous->configurations + i;
+        qa_application_native_q2_hud_source hud; bool found;
+        if (!qa_application_native_q2_hud_source_read(app, old->actor, &hud, &found, error)) return false;
+        if (!q2_configuration_same(old->q2_hud, &hud, found)) { configuration_changed = true; break; }
+    }
+    qa_application_native_q2_hud hud; bool has_q2_hud;
+    if (!qa_application_native_q2_hud_read(app, frame->player->actor, &hud, &has_q2_hud, error)) return false;
     bool styles_changed = initial || committed->style_source != value.style_source || committed->style_revision != value.style_revision;
     bool q3_changed = initial || !application_unified_q3_sources_metadata_current(q3_sources, committed_source_metadata);
     bool q1_changed = initial || !q1_world_equal(previous ? previous->q1 : NULL, q1);
@@ -184,20 +331,27 @@ bool application_unified_output_metadata(qa_application *app, const application_
         if (value.q1_revision == UINT64_MAX) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 world metadata revision exhausted");
         ++value.q1_revision;
     }
-    if (!configuration_changed && !styles_changed && !q3_changed && !q1_changed) { *proposed = value; return true; }
+    if (!configuration_changed && !styles_changed && !q3_changed && !q1_changed) {
+        if (has_q2_hud && !q2_hud_state(&hud, player_configuration(previous, frame->player->actor), frame->player, error)) return false;
+        *proposed = value; return true;
+    }
     qa_unified_frame_metadata *metadata = calloc(1, sizeof(*metadata));
     if (!metadata) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Unified Source metadata");
     metadata->epoch = epoch; metadata->frame = source->frame.number;
-    metadata->configuration_revision = value.publication_revision; metadata->roster_revision = value.roster_revision;
+    metadata->configuration_revision = previous ? previous->configuration_revision : 0;
+    if (configuration_changed) ++metadata->configuration_revision;
+    metadata->roster_revision = value.roster_revision;
     metadata->style_revision = value.style_revision;
     metadata->q1_revision = value.q1_revision;
     metadata->replace_configurations = configuration_changed; metadata->replace_styles = styles_changed;
     metadata->replace_q3 = q3_changed;
     metadata->replace_q1 = q1_changed;
-    bool ok = (!configuration_changed || configurations(app, metadata, error)) &&
+    bool ok = (!configuration_changed || configurations(app, source, metadata, error)) &&
         (!styles_changed || styles(app, source, metadata, error)) &&
         (!q3_changed || application_unified_q3_sources_metadata(q3_sources, metadata, error)) &&
         (!q1_changed || q1_world_metadata(q1, metadata, error));
+    if (ok && has_q2_hud) ok = q2_hud_state(&hud,
+        player_configuration(configuration_changed ? metadata : previous, frame->player->actor), frame->player, error);
     application_unified_metadata_receipt after;
     if (ok) ok = metadata_revision(app, source, epoch, &after, error) &&
         after.publication_revision == value.publication_revision && after.roster_revision == value.roster_revision &&

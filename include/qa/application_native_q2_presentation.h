@@ -85,8 +85,24 @@ bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_own
 bool qa_application_native_q2_source_clock_read(qa_application *, qa_actor_owner,
     qa_q2_edition *edition, uint64_t *interval_ns, bool *found, qa_error *);
 
+typedef struct qa_application_native_q2_hud_source {
+    qa_actor_owner provider, data_provider;
+    uint64_t config_revision;
+    qa_q2_edition edition;
+    bool deathmatch, cooperative, original;
+    const qa_q2_game *game;
+    const char *statusbar;
+    const char *const *configstrings;
+    uint32_t configstring_count;
+} qa_application_native_q2_hud_source;
+/* Selects the actor's actual HUD/data owners without reading mutable player state. */
+bool qa_application_native_q2_hud_source_read(qa_application *, qa_actor_id,
+    qa_application_native_q2_hud_source *, bool *found, qa_error *);
+
 typedef struct qa_application_native_q2_hud {
-    qa_actor_owner provider;
+    qa_actor_owner provider, data_provider;
+    uint64_t config_revision;
+    bool deathmatch, cooperative;
     qa_q2_edition edition;
     const qa_cvars *cvars;
     const qa_q2_game *game;

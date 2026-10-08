@@ -84,7 +84,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
     }
     if (ok && publisher) ok = application_unified_components_prepare(publisher, source, player,
         epoch, v->owned, v->owned->player, &v->components, e);
-    if (ok) ok = application_unified_output_metadata(app, source, v->q3_sources, epoch, committed_metadata,
+    if (ok) ok = application_unified_output_metadata(app, source, v->q3_sources, v->owned, epoch, committed_metadata,
         committed_source_metadata, &v->metadata_receipt, &v->metadata, e);
     if (ok) {
         v->owned->q3 = application_unified_q3_sources_take(v->q3_sources);

@@ -1,5 +1,6 @@
 #include "qa/network_unified_control.h"
 #include "remote_unified_private.h"
+#include "remote_unified_metadata.h"
 #include "remote_unified_q2.h"
 #include "q2_entity_effects.h"
 #include "remote_unified_q2_hud.h"
@@ -19,6 +20,7 @@
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_visuals.h"
 #include "qa/unified_frame_components.h"
+#include "qa/unified_frame_metadata.h"
 #include "../application/native_q2_publication.h"
 #include "qa/console_cvar_observer.h"
 #include <float.h>
@@ -108,6 +110,7 @@ typedef struct q2_native {
     qa_net_protocol_id protocol;
     char **configs;
     size_t config_count;
+    const qa_unified_q2_hud_configuration *configuration;
     int32_t inventory[256],player_number;
     bool hud,replace_status,camera;
     const qa_font *font;
@@ -132,6 +135,7 @@ struct frontend_unified_q2 {
     qa_scene_fog fog_start,fog_target;
     double fog_started_ms,fog_duration_ms;
     qa_unified_document *frame, *prepared_frame;
+    qa_unified_document *status_metadata, *prepared_status_metadata;
     qa_hud *hud;
     frontend_unified_q2_rr_hud *rr_hud;
     char *help, *layout, *help_text[2];
@@ -173,6 +177,7 @@ struct frontend_unified_q2 {
     q2_muzzle_receipt *muzzles;
     size_t muzzle_count;
     q2_native *native;
+    q2_native status, prepared_status;
     size_t native_count;
     uint64_t native_revision;
     unsigned busy;
@@ -780,7 +785,17 @@ static bool native_text(const char *text,char **out,qa_error *e)
 static const char *native_config(void *context,int32_t index)
 {
     const q2_native *v=context;
-    return index>=0 && (size_t)index<v->config_count && v->configs[index]?v->configs[index]:"";
+    if (index < 0) return "";
+    if (v->configuration) {
+        size_t low=0,high=v->configuration->configstring_count;
+        const qa_unified_q2_configstring *rows=v->configuration->configstrings;
+        while (low<high) {
+            size_t middle=low+(high-low)/2;
+            if (rows[middle].index<(uint32_t)index) low=middle+1; else high=middle;
+        }
+        return low<v->configuration->configstring_count && rows[low].index==(uint32_t)index?rows[low].value:"";
+    }
+    return (size_t)index<v->config_count && v->configs[index]?v->configs[index]:"";
 }
 static const qa_scene_image *native_picture(void *context,const char *name,qa_error *e)
 {
@@ -807,6 +822,16 @@ static const qa_scene_image *native_picture(void *context,const char *name,qa_er
     p->name=malloc(length+1);
     if (!p->name) { qa_scene_image_release(p->image); free(p); return NULL; }
     memcpy(p->name,name,length+1); p->next=v->bank->native_pictures; v->bank->native_pictures=p; return p->image;
+}
+static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
+{
+    if (!v->bank->native_font) {
+        qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
+        const qa_scene_image *conchars=native_picture(v,"conchars",e);
+        if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content,&images,&materials,&fonts,&sounds,e) ||
+            !qa_font_classic_create(fonts,"unified-native-q2:conchars",conchars,QA_FONT_BAKED_COLOR,&v->bank->native_font,e))return false;
+    }
+    v->font=v->bank->native_font;return true;
 }
 static bool native_configs(const qa_unified_component_q2 *row,const q2_native *old,q2_native *v,qa_error *e)
 {
@@ -878,13 +903,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
-    if (!v->bank->native_font) {
-        qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
-        const qa_scene_image *conchars=native_picture(v,"conchars",e);
-        if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content,&images,&materials,&fonts,&sounds,e) ||
-            !qa_font_classic_create(fonts,"unified-native-q2:conchars",conchars,QA_FONT_BAKED_COLOR,&v->bank->native_font,e))return false;
-    }
-    v->font=v->bank->native_font;return true;
+    return native_font(o,v,e);
 }
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -940,11 +959,36 @@ static bool native_frame_read(frontend_unified_q2 *o,const qa_unified_document *
     }
     return cameras<=1 && replacements<=1;
 }
+static bool status_prepare(frontend_unified_q2 *o,const qa_unified_frame *frame,qa_error *e)
+{
+    o->prepared_status=(q2_native){0};
+    if (!frame->player->has_q2_hud) return true;
+    const qa_unified_document *document=frontend_remote_unified_metadata_document(o->replica,frame);
+    const qa_unified_frame_metadata *metadata=qa_unified_document_metadata(document);
+    const qa_unified_configuration_state *selected=NULL;
+    for (size_t i=0;metadata && i<metadata->configuration_count;++i)
+        if (qa_actor_id_equal(metadata->configurations[i].actor,frame->player->actor)) {
+            selected=metadata->configurations+i;break;
+        }
+    if (!selected || !selected->q2_hud) return true;
+    const qa_recipe_provider *provider=frontend_remote_unified_provider(o->replica,QA_ROLE_HUD,"");
+    if (!provider) return true;
+    const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(
+        frontend_remote_unified_recipe(o->replica)),provider->selection.product);
+    q2_native *status=&o->prepared_status;
+    status->configuration=selected->q2_hud;status->protocol=selected->q2_hud->protocol;
+    status->hud=true;status->replace_status=true;
+    if (!bank(o,selected->hud.content,NULL,selected->hud.provider,
+        product->edition==QA_EDITION_RERELEASE?FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE:FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
+        false,&status->bank,e)) return false;
+    return native_font(o,status,e) && qa_unified_document_retain(document,&o->prepared_status_metadata,e);
+}
 bool frontend_unified_q2_status_replacement(const frontend_unified_q2 *o,bool *out,qa_error *e)
 {
     if (!o || !out || o->busy || !current(o,e)) return false;
     *out=false;
     if (!o->frame) return true;
+    *out=o->status.hud;
     for (size_t i=0;i<o->native_count;++i) if (o->native[i].replace_status) *out=true;
     return true;
 }
@@ -1406,7 +1450,7 @@ bool frontend_unified_q2_frame_prepare(frontend_unified_q2 *o,const qa_unified_d
     double seconds=frame->world->presentation_seconds;
     uint64_t n=frame->world->source.number;
     if (!qa_unified_document_retain(d,&o->prepared_frame,e)) return false;
-    if (!frontend_unified_q2_rr_frame_prepare(o->rr_hud,d,e)) {
+    if (!status_prepare(o,frame,e) || !frontend_unified_q2_rr_frame_prepare(o->rr_hud,d,e)) {
         frontend_unified_q2_frame_abort(o); return false;
     }
     o->prepared_seconds=seconds; o->prepared_number=n; return true;
@@ -1416,6 +1460,9 @@ void frontend_unified_q2_frame_commit(frontend_unified_q2 *o)
     if (!o || !o->prepared_frame || o->busy) return;
     qa_unified_document_destroy(o->frame); o->frame=o->prepared_frame; o->prepared_frame=NULL;
     o->seconds=o->prepared_seconds; o->frame_number=o->prepared_number;
+    o->status=o->prepared_status;o->prepared_status=(q2_native){0};
+    qa_unified_document_destroy(o->status_metadata);
+    o->status_metadata=o->prepared_status_metadata;o->prepared_status_metadata=NULL;
     frontend_unified_q2_rr_frame_commit(o->rr_hud);
     size_t retained=0;
     for (size_t i=0;i<o->muzzle_count;++i) if (!o->muzzles[i].consumed) o->muzzles[retained++]=o->muzzles[i];
@@ -1441,6 +1488,8 @@ void frontend_unified_q2_frame_abort(frontend_unified_q2 *o)
     if (o && !o->busy) {
         frontend_unified_q2_rr_frame_abort(o->rr_hud);
         qa_unified_document_destroy(o->prepared_frame); o->prepared_frame=NULL;
+        o->prepared_status=(q2_native){0};
+        qa_unified_document_destroy(o->prepared_status_metadata);o->prepared_status_metadata=NULL;
     }
 }
 bool frontend_unified_q2_entity_beam(frontend_unified_q2 *o,const char *content,
@@ -1753,6 +1802,23 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
     return qa_scene_frame_picture_f(frame,o->marker_image,viewport,rect,(qa_scene_vec4){0,0,1,1},
         (qa_scene_vec4){1,0,0,opacity*(1-fraction*fraction)},e);
 }
+static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,
+    const int32_t inventory[256],const char *layout,int32_t player_number,
+    qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
+{
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
+        .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
+        .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture};
+    options.fonts.classic=v->font;
+    const qa_cvar_view *use_font=qa_cvars_find(d->cvars,"scr_usekfont");
+    options.use_font=v->protocol.kind==QA_NET_Q2KEX_2023 && use_font && use_font->integer!=0;
+    qa_hud_q2_frame hud={.protocol=v->protocol,.stats=state->stats,.stat_count=state->stat_count,
+        .inventory=inventory,.inventory_count=256,.layout=layout,.player_number=player_number,
+        .server_frame=state->server_frame,.time_ns=nanoseconds(state->time_ms*.001),
+        .frame_ns=state->has_frame_time?nanoseconds(state->frame_time_ms*.001):0};
+    return qa_hud_q2_draw(&options,&hud,!v->replace_status,frame,e);
+}
 bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || o->busy || !current(o,e)) return false;
@@ -1762,28 +1828,26 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (ui!=o->frontend->seats[d->physical_seat].ui) return false;
     const qa_unified_frame *received=qa_unified_document_frame(o->frame);
     const qa_unified_frame_components *components=received?received->components:NULL;
+    bool replacement=false;
+    for (size_t i=0;i<o->native_count;++i) replacement|=o->native[i].replace_status;
+    if (o->status.hud && !replacement) {
+        const qa_unified_q2_hud_state *state=&received->player->q2_hud;
+        if (!status_draw(o,&o->status,&state->frame,o->inventory,o->layout,state->player_number,viewport,frame,e)) return false;
+    }
     for (size_t i=0;components && i<components->native_count;++i) {
         const qa_unified_native_component *row=components->native+i;
         if (!row->hud) continue;
         q2_native *v=NULL;
         for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) v=o->native+k;
         if (!v || !v->font) return false;
-        qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
-            .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
-            .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture};
-        options.fonts.classic=v->font;
-        qa_hud_q2_frame hud={.protocol=v->protocol,.stats=row->hud->stats,.stat_count=row->hud->stat_count,
-            .inventory=v->inventory,.inventory_count=256,.layout=v->layout,.player_number=v->player_number,
-            .server_frame=row->hud->server_frame,.time_ns=nanoseconds(row->hud->time_ms*.001),
-            .frame_ns=row->hud->has_frame_time?nanoseconds(row->hud->frame_time_ms*.001):0};
-        if (!qa_hud_q2_draw(&options,&hud,!v->replace_status,frame,e)) return false;
+        if (!status_draw(o,v,row->hud,v->inventory,v->layout,v->player_number,viewport,frame,e)) return false;
     }
     ++o->busy;
     bool okay=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=nanoseconds(o->seconds),
         .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
     --o->busy;
     if (okay) okay=marker_draw(o,viewport,frame,e);
-    if (okay && o->inventory_visible) {
+    if (okay && o->inventory_visible && !o->status.hud && !replacement) {
         okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_scene_vec4){1,1,1,1},e);
         for (size_t i=0;okay && i<o->item_count;++i) {
             char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
@@ -1833,6 +1897,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     }
     if (o->hud && !qa_hud_destroy(o->hud,e)) return false;
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
+    qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
     free(o->native);
     if (o->config) for (size_t i=0;i<o->config_count;++i) free(o->config[i]);
