@@ -150,6 +150,75 @@ static bool absorb(qa_combat *combat, const qa_combat_policy *policy,
     return true;
 }
 
+typedef struct protection_rules {
+    bool armor_before_power;
+    bool integer_after_power;
+    bool after_armor_effect;
+} protection_rules;
+static const protection_rules protection_order[] = {
+    [QA_GAME_Q1] = {.armor_before_power = true},
+    [QA_GAME_Q2] = {.integer_after_power = true, .after_armor_effect = true},
+    [QA_GAME_Q3] = {.after_armor_effect = true}
+};
+typedef struct protection_result {
+    float power, regular, take;
+} protection_result;
+static bool protection_damage(qa_combat *combat, const qa_combat_policy *policy,
+                              const qa_damage_request *request, float amount,
+                              qa_damage_flags flags, bool enabled,
+                              protection_result *result, qa_error *error) {
+    const protection_rules *rules = protection_order + policy->family;
+    *result = (protection_result){0};
+    bool armor_allowed = true;
+    qa_damage_effect value = {.amount = amount, .allowed = true};
+    if (rules->armor_before_power) {
+        if (!effect(combat, policy, QA_DAMAGE_ARMOR_ALLOWED, request, &value, error))
+            return false;
+        if (!qa_combat_live(combat, request->target)) return true;
+        armor_allowed = value.allowed;
+    }
+    value = (qa_damage_effect){.amount = amount, .allowed = true};
+    if (!effect(combat, policy, QA_DAMAGE_POWER_ALLOWED, request, &value, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    if (enabled && armor_allowed && value.allowed &&
+        !absorb(combat, policy, request, QA_PROTECTION_POWERED, amount, flags,
+                &result->power, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    value = (qa_damage_effect){.amount = amount - result->power, .allowed = true};
+    if (!effect(combat, policy, QA_DAMAGE_AFTER_POWER, request, &value, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    float after_power = value.amount;
+    if (rules->integer_after_power) {
+        int32_t integer_amount;
+        if (!integer(after_power, &integer_amount, error)) return false;
+        after_power = (float)integer_amount;
+    }
+    if (!rules->armor_before_power) {
+        value = (qa_damage_effect){.amount = after_power, .allowed = true};
+        if (!effect(combat, policy, QA_DAMAGE_ARMOR_ALLOWED, request, &value, error))
+            return false;
+        if (!qa_combat_live(combat, request->target)) return true;
+        armor_allowed = value.allowed;
+    }
+    if (enabled && armor_allowed &&
+        !absorb(combat, policy, request, QA_PROTECTION_REGULAR, after_power, flags,
+                &result->regular, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    result->take = after_power - result->regular;
+    if (rules->after_armor_effect) {
+        value = (qa_damage_effect){.amount = result->take, .allowed = true};
+        if (!effect(combat, policy, QA_DAMAGE_AFTER_ARMOR, request, &value, error))
+            return false;
+        if (!qa_combat_live(combat, request->target)) return true;
+        result->take = value.amount;
+    }
+    return true;
+}
+
 static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
                       const qa_damage_request *request, qa_damage_result *result, qa_error *error) {
     qa_combat_state target, attacker;
@@ -180,36 +249,13 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!qa_combat_live(combat, request->target) || !target.can_take_damage)
         return true;
     qa_q1_combat_context source = context.game.q1;
-    value = (qa_damage_effect){.amount = damage, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_ARMOR_ALLOWED, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    bool armor_allowed = value.allowed;
-    float power = 0, regular = 0;
+    protection_result protection;
     qa_damage_flags flags = qa_attack_flags(&request->attack);
-    value = (qa_damage_effect){.amount = damage, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_POWER_ALLOWED, request, &value, error))
+    if (!protection_damage(combat, policy, request, damage, flags, true, &protection, error))
         return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    if (armor_allowed && value.allowed &&
-        !absorb(combat, policy, request, QA_PROTECTION_POWERED, damage, flags, &power, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    value = (qa_damage_effect){.amount = damage - power, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_AFTER_POWER, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    float after_power = value.amount;
-    if (armor_allowed && !absorb(combat, policy, request, QA_PROTECTION_REGULAR, after_power, flags,
-                                 &regular, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    float take = ceilf(after_power - regular);
+    if (!qa_combat_live(combat, request->target)) return true;
+    float power = protection.power, regular = protection.regular;
+    float take = ceilf(protection.take);
     *result = (qa_damage_result){.has_feedback = true, .feedback_family = QA_GAME_Q1,
         .power_saved = power, .armor_saved = regular, .blood = take};
     if (!current(combat, request, &target, &attacker, &has_attacker, error))
@@ -358,42 +404,14 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         &(qa_damage_feedback){.stage = QA_DAMAGE_FEEDBACK_PROTECTION,
             .armor_saved = protection_saved}, error)) return false;
     if (!qa_combat_live(combat, request->target)) return true;
-    float amount = (float)damage - protection_saved, power = 0, regular = 0;
-    value = (qa_damage_effect){.amount = amount, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_POWER_ALLOWED, request, &value, error))
+    protection_result protection;
+    if (!protection_damage(combat, policy, request, (float)damage - protection_saved, flags,
+                            !source.team_armor_protect, &protection, error))
         return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    if (value.allowed && !source.team_armor_protect &&
-        !absorb(combat, policy, request, QA_PROTECTION_POWERED, amount, flags, &power, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    value = (qa_damage_effect){.amount = amount - power, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_AFTER_POWER, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    int32_t after_power;
-    if (!integer(value.amount, &after_power, error))
-        return false;
-    value = (qa_damage_effect){.amount = (float)after_power, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_ARMOR_ALLOWED, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    if (value.allowed && !source.team_armor_protect && !absorb(combat, policy, request, QA_PROTECTION_REGULAR, (float)after_power,
-                                 flags, &regular, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
-    value = (qa_damage_effect){.amount = (float)after_power - regular, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_AFTER_ARMOR, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target))
-        return true;
+    if (!qa_combat_live(combat, request->target)) return true;
+    float power = protection.power, regular = protection.regular;
     int32_t take;
-    if (!integer(value.amount, &take, error) ||
+    if (!integer(protection.take, &take, error) ||
         !current(combat, request, &target, &attacker, &has_attacker, error))
         return false;
     if (!flags.no_protection && source.reject_team_damage)
@@ -549,53 +567,18 @@ static bool q3_damage(qa_combat *combat, const qa_combat_policy *policy,
         damage /= 2;
     if (damage < 1)
         damage = 1;
-    float power = 0, regular = 0;
-    qa_damage_effect value = {.amount = (float)damage, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_POWER_ALLOWED, request, &value, error))
+    protection_result protection;
+    if (!protection_damage(combat, policy, request, (float)damage, flags, true,
+                            &protection, error))
         return false;
     if (!qa_combat_live(combat, request->target)) {
         *result = (qa_damage_result){0};
         return true;
     }
-    if (value.allowed && !absorb(combat, policy, request, QA_PROTECTION_POWERED, (float)damage,
-                                 flags, &power, error))
-        return false;
-    if (!qa_combat_live(combat, request->target)) {
-        *result = (qa_damage_result){0};
-        return true;
-    }
-    value = (qa_damage_effect){.amount = (float)damage - power, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_AFTER_POWER, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target)) {
-        *result = (qa_damage_result){0};
-        return true;
-    }
-    float after_power = value.amount;
-    value = (qa_damage_effect){.amount = after_power, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_ARMOR_ALLOWED, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target)) {
-        *result = (qa_damage_result){0};
-        return true;
-    }
-    if (value.allowed && !absorb(combat, policy, request, QA_PROTECTION_REGULAR, after_power, flags,
-                                 &regular, error))
-        return false;
-    if (!qa_combat_live(combat, request->target)) {
-        *result = (qa_damage_result){0};
-        return true;
-    }
-    value = (qa_damage_effect){.amount = after_power - regular, .allowed = true};
-    if (!effect(combat, policy, QA_DAMAGE_AFTER_ARMOR, request, &value, error))
-        return false;
-    if (!qa_combat_live(combat, request->target)) {
-        *result = (qa_damage_result){0};
-        return true;
-    }
+    float power = protection.power, regular = protection.regular;
     int32_t take;
-    if (!integer(value.amount, &take, error))
-        return false;
+    if (!integer(protection.take, &take, error)) return false;
+    qa_damage_effect value;
     result->power_saved = power;
     result->armor_saved = regular;
     result->blood = (float)take;
