@@ -22,6 +22,7 @@ typedef struct frontend_network_client_attempt {
     bool attached;
 } frontend_network_client_attempt;
 bool frontend_network_client_attempt_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_client_attempt *, bool *present, qa_error *);
 bool frontend_network_client_attempt_current(const qa_frontend *,
     const frontend_network_client_attempt *);
@@ -60,6 +61,7 @@ typedef struct frontend_network_construction_source {
 } frontend_network_construction_source;
 
 bool frontend_network_construction_source_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_construction_source *, qa_error *);
 bool frontend_network_construction_source_current(const qa_frontend *,
     const frontend_network_construction_source *);
@@ -78,12 +80,14 @@ typedef struct frontend_network_client_domain {
     qa_network_q3_client_init initial;
 } frontend_network_client_domain;
 bool frontend_network_client_domain_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_client_domain *, qa_error *);
 bool frontend_network_client_domain_current(const qa_frontend *,
     const frontend_network_client_domain *);
 /* Final resource sealing reads owned metadata under the actual inventory
  * fence, without invoking connection, media, or source callbacks. */
 bool frontend_network_client_domain_metadata_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_client_domain *, qa_error *);
 bool frontend_network_client_domain_metadata_current(const qa_frontend *,
     const frontend_network_client_domain *);
@@ -91,10 +95,12 @@ bool frontend_network_client_domain_metadata_current(const qa_frontend *,
  * collision snapshot exists. Its reached-command receipt has the same native
  * execute-result owner as the later snapshot facade. */
 bool frontend_network_native_publication_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     struct q3n_remote_publication *, qa_error *);
 bool frontend_network_native_publication_current(const qa_frontend *,
     const struct q3n_remote_publication *);
-bool frontend_network_native_command_read(qa_frontend *, int32_t,
+bool frontend_network_native_command_read(qa_frontend *,
+    const qa_application_q3_client_context *receiver, int32_t,
     struct q3n_remote_command *, qa_error *);
 bool frontend_network_native_command_current(const qa_frontend *,
     const struct q3n_remote_command *);
@@ -125,6 +131,7 @@ typedef struct frontend_network_presentation_command {
 bool frontend_network_presentation_services(qa_frontend *,
     const qa_application_q3_client_context *, qa_q3_host_client_services *, qa_error *);
 bool frontend_network_presentation_source_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_presentation_source *, bool *, qa_error *);
 bool frontend_network_presentation_source_current(const qa_frontend *,
     const frontend_network_presentation_source *);

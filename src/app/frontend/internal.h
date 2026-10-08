@@ -441,6 +441,7 @@ bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_n
 bool frontend_network_receive_ready(const qa_frontend *);
 bool frontend_network_event_ready(const qa_frontend *, const qa_platform_event *);
 bool frontend_network_local_input_owned(const qa_frontend *, uint32_t physical);
+bool frontend_network_q3_input_owned(const qa_frontend *, uint32_t physical);
 bool frontend_network_local_seat(const qa_frontend *, const qa_net_address *,
     qa_net_seat_id *, uint32_t *application_seat);
 bool frontend_network_receive(qa_frontend *, const qa_platform_event *, qa_bytes, bool *consumed, qa_error *);

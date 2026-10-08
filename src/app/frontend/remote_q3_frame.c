@@ -372,7 +372,8 @@ bool frontend_remote_q3_frame_predict(frontend_remote_q3_frame *owner,frontend_r
         return fail(e,"Remote prediction completion requires its real snapshot and predictor owners");
     *present=false; owner->processing=true;
     bool available=false,source_present=false;
-    bool okay=frontend_network_prediction_source_read(owner->row->frontend,&network,&source_present,e);
+    bool okay=frontend_network_prediction_source_read(owner->row->frontend,
+        &owner->row->resources.domain.source.receiver,&network,&source_present,e);
     if(okay && source_present) okay=frontend_network_prediction_teleport_feedback(owner->row->frontend,
         &network,&snapshot,&refreshed,e) && frontend_remote_prediction_source_read(predictor,&source,&source_present,e);
     if(okay && source_present) {
@@ -501,7 +502,8 @@ bool frontend_remote_q3_frame_network_source(const frontend_remote_q3_frame *own
 {
     frontend_network_prediction_source source; bool present=false;
     if(!out || !owner || !current((void *)owner,frame) ||
-        !frontend_network_prediction_source_read(owner->row->frontend,&source,&present,e) || !present)
+        !frontend_network_prediction_source_read(owner->row->frontend,
+            &owner->row->resources.domain.source.receiver,&source,&present,e) || !present)
         return fail(e,"Network trace source requires its actual entered CGAME recipient");
     const qa_native_q3_remote_client_basis *basis=&frame->source.basis;
     const qa_application_q3_client_context *a=&source.receiver,*b=&basis->client;

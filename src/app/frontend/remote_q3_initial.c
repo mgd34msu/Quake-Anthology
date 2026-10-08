@@ -261,7 +261,8 @@ static bool public_attempt_read(const frontend_remote_q3_initial *owner,
     if (owner->frontend->source_restoring &&
         frontend_network_client_restore_attempt_read(owner->frontend,attempt,present,error) && *present &&
         frontend_network_client_restore_initial_completed_current(owner->frontend,owner,attempt)) return true;
-    return frontend_network_client_attempt_read(owner->frontend,attempt,present,error);
+    return frontend_network_client_attempt_read(owner->frontend,
+        &owner->view.attempt.source.receiver,attempt,present,error);
 }
 static bool public_attempt_current(const frontend_remote_q3_initial *owner,
     const frontend_network_client_attempt *attempt)

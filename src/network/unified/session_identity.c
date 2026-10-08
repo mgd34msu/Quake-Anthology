@@ -23,7 +23,7 @@ bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_netw
     if (!s || s->runtime != runtime || !runtime || qa_network_callbacks_idle(runtime) || !s->bound_source ||
         s->entered || s->closing || s->disconnected || s->timeout_pending || !request || !client ||
         !qa_unified_session_peer(installed) || installed->state != s ||
-        request->attachment != client->attachment || request->attachment != QA_NET_REMOTE ||
+        request->attachment != client->attachment ||
         request->protocol.kind != QA_NET_UNIFIED_1 || request->protocol.flags || request->protocol.revision ||
         request->seats != client->seats || request->seat_count != 1 || client->seat_count != 1 ||
         !qa_net_address_equal(&request->endpoint, &client->endpoint, true) || !qa_unified_session_kind(offer, "offer"))

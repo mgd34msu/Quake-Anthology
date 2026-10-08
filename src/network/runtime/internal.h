@@ -58,10 +58,6 @@ bool qa_network_qw_peer_matches(const qa_network_peer *, const qa_net_datagram *
 struct qa_network_q1_client_policy;
 struct qa_network_q1_client_hooks;
 bool qa_network_q1_client_peer(const qa_network_peer *);
-bool qa_network_local_peer(const qa_network_peer *);
-bool qa_network_local_checkpoint_peer(const qa_network_peer *,const struct qa_network_checkpoint_refs *,qa_buffer *,qa_error *);
-bool qa_network_local_restore_peer(qa_network_runtime *,const qa_net_client *,qa_bytes,
-    const struct qa_network_checkpoint_refs *,qa_network_peer *,qa_error *);
 bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *,qa_buffer *,qa_error *);
 bool qa_network_q1_client_restore_peer(qa_network_runtime *,const qa_net_client *,qa_bytes,
     const struct qa_network_q1_client_policy *,const struct qa_network_q1_client_hooks *,

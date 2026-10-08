@@ -127,7 +127,7 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
             request->seats[0].seat.owner != peer->binding.seat.owner ||
             request->seats[0].seat.index != peer->binding.seat.index ||
             request->seats[0].remote_index != peer->binding.remote_index) continue;
-        if (request->protocol.revision || request->protocol.flags || request->attachment != QA_NET_REMOTE ||
+        if (request->protocol.revision || request->protocol.flags ||
             pending->seats != &peer->binding || peer->binding.remote_index ||
             peer->binding.seat.owner != owner->options.seat_owner)
             return fail(error, "Unified admission changed its staged canonical transport seat");

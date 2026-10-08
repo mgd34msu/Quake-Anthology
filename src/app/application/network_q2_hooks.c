@@ -2,7 +2,6 @@
 #include "client_events.h"
 #include "native_q2_visibility.h"
 #include "qa/application_network.h"
-#include "qa/network_local.h"
 #include "qa/text.h"
 #include "native_q2_wire_engine.h"
 
@@ -428,11 +427,6 @@ bool application_network_q2_print_recipients(application_provider *provider, qa_
         for (size_t i = 0; i < client->seat_count; ++i) {
             qa_actor_id player;
             bool found = qa_application_remote_player_actor(provider->application, client->id, client->seats[i].seat, &player);
-            if (!found && client->attachment == QA_NET_LOCAL_SEAT) {
-                qa_network_local_player local;
-                if (!qa_network_local_player_read(binding->bindings.runtime, client->id, &local, error)) return false;
-                player = local.actor; found = true;
-            }
             if (!found) continue;
             qa_application_network_q2_recipient_view recipient;
             bool present;

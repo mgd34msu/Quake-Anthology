@@ -34,10 +34,7 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, const 
         if (!client || !peer->epoch || peer->seat_count != client->seat_count) {
             ok = qa_network_fail(error, "Network peer and connection inventory differ"); break;
         }
-        if(qa_network_local_peer(peer)) {
-            kinds[i]=QA_NETWORK_SOURCE_LOCAL;
-            ok=qa_network_local_checkpoint_peer(peer,refs,&sources[i],error);
-        } else if(qa_network_q1_client_peer(peer)) {
+        if(qa_network_q1_client_peer(peer)) {
             kinds[i]=QA_NETWORK_SOURCE_Q1_CLIENT;
             ok=qa_network_q1_client_checkpoint_peer(peer,&sources[i],error);
         } else if (qa_network_nq_peer(peer)) {
@@ -112,7 +109,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     if (!options || !out || *out || !transport || !refs ||
         (!refs->source && !refs->source_nq && !refs->source_qw &&
          !refs->q2.source_server && !refs->q2.source_client && !refs->source_unified &&
-         !refs->source_q1_client && !refs->source_local) || !bytes.data)
+         !refs->source_q1_client) || !bytes.data)
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r);
@@ -152,9 +149,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
          * the owned protocol channel transfers only after decoding succeeds. */
         peer->id=client->id; peer->epoch=epoch; peer->seat_count=client->seat_count;
         bool restored;
-        if(kind==QA_NETWORK_SOURCE_LOCAL) {
-            restored=qa_network_local_restore_peer(runtime,client,source,refs,peer,error);
-        } else if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
+        if(kind==QA_NETWORK_SOURCE_Q1_CLIENT) {
             qa_network_q1_client_policy policy={0}; qa_network_q1_client_hooks hooks={0};
             restored=refs->source_q1_client && refs->source_q1_client(refs->context,runtime,client,&policy,&hooks,error) &&
                 qa_network_q1_client_restore_peer(runtime,client,source,&policy,&hooks,peer,error);
@@ -231,36 +226,6 @@ void qa_network_transport_publish_retained(qa_network_runtime *active,qa_network
             qa_network_qw_transport_rebind(&candidate->peers[i], candidate->transport);
             qa_network_q1_client_transport_rebind(&candidate->peers[i],candidate->transport);
         }
-}
-bool qa_network_local_only(const qa_network_runtime *runtime)
-{
-    if (!runtime || !qa_network_callbacks_idle(runtime)) return false;
-    uint32_t cursor = 0, count = 0, occupied = 0;
-    const qa_net_client *client;
-    while (qa_net_connections_next(runtime->connections, &cursor, &client)) {
-        if (client->attachment != QA_NET_LOCAL_SEAT || client->endpoint.kind != QA_NET_LOOPBACK ||
-            client->id.slot >= runtime->options.clients ||
-            !qa_network_local_peer(&runtime->peers[client->id.slot]) ||
-            !qa_net_client_id_equal(runtime->peers[client->id.slot].id, client->id)) return false;
-        ++count;
-    }
-    for (uint32_t j = 0; j < runtime->options.clients; ++j)
-        if (runtime->peers[j].occupied) ++occupied;
-    return count == occupied;
-}
-bool qa_network_transport_replace_local(qa_network_runtime *candidate, const qa_network_runtime *published,
-    qa_net_transport **replacement, qa_error *error)
-{
-    if (!candidate || !published || candidate == published || !replacement || !*replacement ||
-        *replacement == candidate->transport || *replacement == published->transport ||
-        !qa_network_local_only(candidate) || !qa_network_local_only(published) ||
-        !qa_net_address_equal(qa_net_transport_address(*replacement),
-            qa_network_local_address(published), true))
-        return qa_network_fail(error, "Offline transport replacement lost its returned LOCAL runtime owners");
-    qa_net_transport *previous = candidate->transport;
-    candidate->transport = *replacement; *replacement = NULL;
-    qa_net_transport_close(previous);
-    return true;
 }
 void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtime *candidate)
 {

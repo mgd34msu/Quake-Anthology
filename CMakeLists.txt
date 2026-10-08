@@ -1037,7 +1037,6 @@ add_library(qa_network STATIC
     src/network/runtime/q1_client_save.c
     src/network/unified/session_continuation.c
     src/network/q2/kex_discovery_handoff.c
-    src/network/runtime/local.c
     src/network/q2/unicast.c
     src/network/unified/session_close.c
 )

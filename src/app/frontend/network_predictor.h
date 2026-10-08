@@ -7,8 +7,10 @@
 typedef struct frontend_network_predictor frontend_network_predictor;
 
 bool frontend_network_predictor_create(qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     const qa_application_control_prediction_configuration *, frontend_network_predictor **, qa_error *);
-bool frontend_network_predictor_restore(qa_frontend *, qa_bytes, frontend_network_predictor **, qa_error *);
+bool frontend_network_predictor_restore(qa_frontend *,
+    const qa_application_q3_client_context *receiver, qa_bytes, frontend_network_predictor **, qa_error *);
 void frontend_network_predictor_destroy(frontend_network_predictor *);
 frontend_remote_prediction *frontend_network_predictor_read(const frontend_network_predictor *);
 bool frontend_network_predictor_source_current(frontend_network_predictor *, const frontend_remote_prediction_source *);
@@ -23,11 +25,14 @@ bool frontend_network_client_sample(qa_frontend *, uint32_t physical_seat, qa_ac
 
 /* These observations retain the actual transport ring and source-input owner.
  * They neither append a command nor create a prediction configuration. */
-bool frontend_network_prediction_input_read(const qa_frontend *, frontend_remote_input_source *, bool *, qa_error *);
+bool frontend_network_prediction_input_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver, frontend_remote_input_source *, bool *, qa_error *);
 bool frontend_network_prediction_input_current(const qa_frontend *, const frontend_remote_input_source *);
 bool frontend_network_prediction_acknowledgement(const qa_frontend *,
     const frontend_network_prediction_source *, bool *, uint64_t *, bool *, qa_error *);
-bool frontend_network_prediction_actor_at(const qa_frontend *, uint32_t, qa_actor_id *, bool *, qa_error *);
-bool frontend_network_prediction_number_of(const qa_frontend *, qa_actor_id, uint32_t *, bool *, qa_error *);
+bool frontend_network_prediction_actor_at(const qa_frontend *,
+    const qa_application_q3_client_context *receiver, uint32_t, qa_actor_id *, bool *, qa_error *);
+bool frontend_network_prediction_number_of(const qa_frontend *,
+    const qa_application_q3_client_context *receiver, qa_actor_id, uint32_t *, bool *, qa_error *);
 
 #endif

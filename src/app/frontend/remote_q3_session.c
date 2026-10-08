@@ -214,7 +214,7 @@ static bool acquired_draw(const frontend_remote_q3_session_view *view,uint32_t s
         !qa_q3_presentation_frame(media.presentation,&f->frame,
             frontend_viewport(f,view->resources.physical_seat),error) ||
         !frontend_remote_q3_modules_listener_begin(view->modules,QA_QVM_CGAME,error) ||
-        !frontend_network_native_publication_read(f,&publication,error) ||
+        !frontend_network_native_publication_read(f,&view->resources.domain.source.receiver,&publication,error) ||
         !frontend_network_native_publication_current(f,&publication)) return false;
     int32_t arguments[]={view->resources.domain.source.receiver.source_milliseconds,(int32_t)stereo,
         publication.demo_playback?1:0};

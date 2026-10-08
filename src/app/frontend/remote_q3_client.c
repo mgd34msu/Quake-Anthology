@@ -255,7 +255,8 @@ bool frontend_remote_q3_resources_read(const frontend_remote_q3 *row,frontend_re
     if(row && row->importing) return frontend_remote_q3_resources_import_read(row,out,error);
     frontend_network_client_domain domain;
     if(!row || !out || !linked(row) || !row->resources_ready || row->application!=row->frontend->application ||
-        !frontend_network_client_domain_read(row->frontend,&domain,error)) return false;
+        !frontend_network_client_domain_read(row->frontend,
+            &row->resources.domain.source.receiver,&domain,error)) return false;
     if(!same_domain(&row->resources.domain,&domain) || !row->resources.descriptor ||
         row->resources.descriptor->storage!=domain.source.descriptor->storage ||
         row->resources.physical_seat>=row->frontend->options.seats ||
@@ -272,7 +273,8 @@ bool frontend_remote_q3_resources_compiled_video_read(const frontend_remote_q3 *
         !frontend_remote_q3_compiled_video_parent_is(row,row->compiled_video) ||
         row->application!=row->frontend->application || row->retiring || row->importing ||
         row->frontend->capture || row->frontend->resource_inventory || row->frontend->source_restoring ||
-        !frontend_network_client_domain_read(row->frontend,&domain,error))return false;
+        !frontend_network_client_domain_read(row->frontend,
+            &row->resources.domain.source.receiver,&domain,error))return false;
     const frontend_remote_q3_resources *v=&row->resources;
     if(!same_domain(&v->domain,&domain) || !row->descriptor ||
         v->descriptor!=qa_launch_instance_lease_view(row->descriptor) ||
@@ -367,7 +369,8 @@ bool frontend_remote_q3_resources_metadata_read(const frontend_remote_q3 *row,
     frontend_network_client_domain domain;
     if(!row || !out || !linked(row) || !row->resources_ready || row->constructing || row->retiring ||
         row->application!=row->frontend->application || !row->frontend->resource_inventory ||
-        !frontend_network_client_domain_metadata_read(row->frontend,&domain,error))
+        !frontend_network_client_domain_metadata_read(row->frontend,
+            &row->resources.domain.source.receiver,&domain,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Resource inventory lacks its retained remote CLIENT metadata");
     frontend_remote_q3_resources receipt=row->resources; receipt.domain=domain;
     if(!frontend_remote_q3_resources_metadata_current(&receipt))

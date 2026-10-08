@@ -139,7 +139,8 @@ static bool publication_read(void *context,q3n_remote_publication *out,qa_error 
 {
     frontend_remote_q3_services *owner=context;
     return owner->row->importing?frontend_network_restore_publication_read(owner->row->frontend,out,error):
-        frontend_network_native_publication_read(owner->row->frontend,out,error);
+        frontend_network_native_publication_read(owner->row->frontend,
+            &owner->row->resources.domain.source.receiver,out,error);
 }
 static bool publication_current(void *context,const q3n_remote_publication *view)
 {
@@ -153,7 +154,8 @@ static bool command_read(void *context,int32_t sequence,q3n_remote_command *out,
     if(owner->retiring || owner->released || owner->row->importing || owner->callbacks==SIZE_MAX)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote reached command lost its retained source owner");
     ++owner->callbacks;
-    bool ok=frontend_network_native_command_read(owner->row->frontend,sequence,out,error);
+    bool ok=frontend_network_native_command_read(owner->row->frontend,
+        &owner->row->resources.domain.source.receiver,sequence,out,error);
     --owner->callbacks;
     return ok && frontend_remote_q3_services_bind(owner->row,error);
 }

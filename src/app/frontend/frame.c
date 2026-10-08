@@ -203,6 +203,7 @@ static bool control_bindings(qa_frontend *frontend,qa_error *error)
     for (uint32_t ordinal=0;ordinal<frontend->options.seats;++ordinal) {
         frontend_seat *seat=frontend->seats+ordinal;
         if (qa_input_seat_context(seat->input).owner ||
+            frontend_network_local_input_owned(frontend,ordinal) ||
             frontend_network_q1_input_owned(frontend,ordinal) ||
             frontend_network_q2_input_owned(frontend,ordinal)) continue;
         qa_actor_id actor; uint32_t launch_seat;
@@ -254,7 +255,6 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
     double now=(double)frontend->wall_time_ns/1000000.0;
     double default_duration=(double)elapsed_ns/1000000.0;
     double default_wall_duration=(double)wall_elapsed_ns/1000000.0;
-    bool remote=frontend_network_remote(frontend);
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
         seat->client_frame_ns=0;
@@ -332,22 +332,24 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             seat->sequence=sequence;
             continue;
         }
-        if (frontend_network_local_input_owned(frontend,i) || !remote) continue;
+        if (!frontend_network_q3_input_owned(frontend,i)) continue;
         qa_actor_id actor; uint32_t launch_seat;
         if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
             !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
+        frontend_remote_config_view configuration;
+        bool configured=false;
+        if (!frontend_network_client_configuration_read(frontend,launch_seat,&configuration,&configured,error)) return false;
+        if (!configured) continue;
         qa_application_control_view state;
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
-        if (!control_binding(frontend,seat,actor,&state,remote,error)) return false;
+        if (!control_binding(frontend,seat,actor,&state,true,error)) return false;
         seat->client_frame_ns=elapsed_ns;
         qa_movement_kind kind = state.profile.kind;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
         qa_movement_kind configured_kind;
         qa_cvars *input_settings, *view_settings;
-        frontend_remote_config_view configuration;
-        if (!frontend_network_client_configuration(frontend,launch_seat,&configuration,error)) return false;
         input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
         configured_kind=configuration.movement;
         if (!input_settings || !view_settings || configured_kind!=kind)
@@ -489,6 +491,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
             }
             bool printed=false;
             for (unsigned seat = 0; seat < frontend->options.seats && !frontend->options.dedicated; ++seat) {
+                if (frontend_network_local_input_owned(frontend,seat)) continue;
                 qa_actor_id actor; uint32_t launch_seat;
                 if (event.actor.registry && (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
                     !qa_application_player_actor(frontend->application, launch_seat, &actor) || !qa_actor_id_equal(actor, event.actor))) continue;

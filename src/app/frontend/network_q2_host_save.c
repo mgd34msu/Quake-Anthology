@@ -35,11 +35,6 @@ bool frontend_network_q2_host_restore_admit(frontend_network_q2_host *h,const qa
     size_t found=0;
     for(size_t i=0;i<h->capacity;++i) if(h->peers[i].reserved && h->peers[i].committed &&
         request_equal(request,&h->peers[i].admission.connection)) ++found;
-    for(size_t i=0;i<h->local_count;++i) if(h->locals[i].client.owner) {
-        qa_net_connect local;
-        if(!frontend_network_q2_host_local_request(h,&h->locals[i],&local,e)) return false;
-        if(request_equal(request,&local)) ++found;
-    }
     return found==1 || bad(e,"Imported Q2 connection differs from its one genuine retained Source claim");
 }
 
@@ -70,22 +65,11 @@ bool frontend_network_q2_host_qualified(const frontend_network_q2_host *h,const 
                 return bad(e,"Q2 event cursor exceeds its real retained journal generation");
             ++found;
         }
-        for(size_t i=0;i<h->local_count;++i) {
-            const q2_local_peer *local=&h->locals[i]; qa_net_connect request;
-            if(!frontend_network_q2_host_local_request(h,local,&request,e)) return false;
-            if(!local->client.owner || !client_request(client,&request,local->client)) continue;
-            if(h->importing && (!local->import_bound || qa_network_epoch(runtime,client->id)!=local->import_epoch)) return false;
-            qa_network_local_player actual;
-            if(!qa_network_local_player_retained_read(runtime,client->id,&actual,e) || !qa_actor_id_equal(actual.actor,local->player.actor) ||
-                actual.source_owner!=local->player.source_owner || actual.source_slot!=local->player.source_slot) return false;
-            ++found;
-        }
-        if(found!=1) return bad(e,"Q2 HOST runtime differs from its exact Source/LOCAL claim inventory");
+        if(found!=1) return bad(e,"Q2 HOST runtime differs from its exact Source claim inventory");
         ++count;
     }
     size_t claimed=0;
     for(size_t i=0;i<h->capacity;++i) if(h->peers[i].committed) ++claimed;
-    for(size_t i=0;i<h->local_count;++i) if(h->locals[i].client.owner) ++claimed;
     return count==claimed || bad(e,"Q2 HOST retains a canonical claim absent from its actual runtime");
 }
 
@@ -114,5 +98,5 @@ void frontend_network_q2_host_restore_abort(frontend_network_q2_host **owned)
         free(p->signon_configs);
     }
     qa_buffer_free(&h->import_bootstrap); qa_buffer_free(&h->import_unicast);
-    free(h->peers); free(h->locals); free(h); *owned=NULL;
+    free(h->peers); free(h); *owned=NULL;
 }

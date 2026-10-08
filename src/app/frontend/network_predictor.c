@@ -10,6 +10,7 @@
 struct frontend_network_predictor {
     qa_frontend *frontend;
     qa_application *application;
+    qa_application_q3_client_context receiver;
     frontend_remote_prediction *prediction;
 };
 static bool fail(qa_error *error, const char *message)
@@ -128,14 +129,14 @@ static bool source_observe(void *context, frontend_remote_prediction_source *out
     bool available=false;
     bool importing=frontend_network_restore_prediction_pending(owner->frontend);
     if(!(importing?frontend_network_restore_prediction_read(owner->frontend,&network,&available,error):
-        frontend_network_prediction_source_read(owner->frontend,&network,&available,error))) return false;
+        frontend_network_prediction_source_read(owner->frontend,&owner->receiver,&network,&available,error))) return false;
     if(!available) return true;
     if(!network.receiver.native_source) return fail(error,"Compiled prediction cannot borrow an original CGAME cache");
     frontend_remote_q3 *row=NULL; frontend_remote_q3_services_view services;
     qa_native_q3_remote_client_cache cache; q3n_remote_source_view source;
     if(!native_children(owner,&network,&row,&services,error) ||
         !(importing?frontend_network_restore_prediction_input_read(owner->frontend,&out->input,&available,error):
-          frontend_network_prediction_input_read(owner->frontend,&out->input,&available,error)) || !available ||
+          frontend_network_prediction_input_read(owner->frontend,&owner->receiver,&out->input,&available,error)) || !available ||
         !qa_native_q3_remote_client_cache_read(services.client,&cache,error) ||
         !q3n_remote_source_read(services.source,&source,error) ||
         !qa_application_control_prediction_read(owner->frontend->application,network.viewer,&out->configuration,error)) return false;
@@ -234,9 +235,15 @@ static bool source_current_observe(void *context, const frontend_remote_predicti
 static bool source_current(void *context, const frontend_remote_prediction_source *source)
 { return source_current_observe(context,source,NULL); }
 static bool actor_at(void *context, uint32_t number, qa_actor_id *out, bool *present, qa_error *error)
-{ return frontend_network_prediction_actor_at(((frontend_network_predictor *)context)->frontend,number,out,present,error); }
+{
+    frontend_network_predictor *owner=context;
+    return frontend_network_prediction_actor_at(owner->frontend,&owner->receiver,number,out,present,error);
+}
 static bool number_of(void *context, qa_actor_id actor, uint32_t *out, bool *present, qa_error *error)
-{ return frontend_network_prediction_number_of(((frontend_network_predictor *)context)->frontend,actor,out,present,error); }
+{
+    frontend_network_predictor *owner=context;
+    return frontend_network_prediction_number_of(owner->frontend,&owner->receiver,actor,out,present,error);
+}
 static bool trace(void *context, const frontend_remote_prediction_source *source,
     const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
@@ -320,23 +327,26 @@ static frontend_remote_prediction_options options(frontend_network_predictor *ow
         .trigger_count=trigger_count,.trigger_at=trigger_at,.trigger_overlap=overlap,.item_position=item_position,
         .item_misc_time=item_misc_time,.set_pmove_msec=set_pmove_msec,.warning=warning};
 }
-bool frontend_network_predictor_create(qa_frontend *f, const qa_application_control_prediction_configuration *initial,
+bool frontend_network_predictor_create(qa_frontend *f, const qa_application_q3_client_context *receiver,
+    const qa_application_control_prediction_configuration *initial,
     frontend_network_predictor **out, qa_error *error)
 {
-    if(!f || !initial || !out || *out) return fail(error,"Prediction construction needs its actual cold configuration");
+    if(!f || !receiver || !initial || !out || *out) return fail(error,"Prediction construction needs its actual cold configuration");
     frontend_network_predictor *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the Network prediction bindings");
-    owner->frontend=f; owner->application=f->application;
+    owner->frontend=f; owner->application=f->application; owner->receiver=*receiver;
     frontend_remote_prediction_options actual=options(owner); actual.initial_configuration=*initial;
     if(!frontend_remote_prediction_create(&actual,&owner->prediction,error)) { free(owner); return false; }
     *out=owner; return true;
 }
-bool frontend_network_predictor_restore(qa_frontend *f, qa_bytes bytes, frontend_network_predictor **out, qa_error *error)
+bool frontend_network_predictor_restore(qa_frontend *f, const qa_application_q3_client_context *receiver,
+    qa_bytes bytes, frontend_network_predictor **out, qa_error *error)
 {
-    if(!f || !out || *out) return fail(error,"Prediction restore needs an empty actual candidate holder");
+    if(!f || !receiver || !out || *out) return fail(error,"Prediction restore needs an empty actual candidate holder");
     frontend_network_predictor *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Network prediction bindings");
-    owner->frontend=f; owner->application=f->application; frontend_remote_prediction_options actual=options(owner);
+    owner->frontend=f; owner->application=f->application; owner->receiver=*receiver;
+    frontend_remote_prediction_options actual=options(owner);
     if(!frontend_remote_prediction_restore_new(&actual,bytes,&owner->prediction,error)) { free(owner); return false; }
     *out=owner; return true;
 }

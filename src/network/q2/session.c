@@ -8,7 +8,7 @@ bool qa_network_q2_server_timeout_policy(qa_network_runtime *runtime, double sec
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 timeout policy requires its returned runtime and finite Source duration");
     for (uint32_t i = 0; i < runtime->options.clients; ++i) {
         const qa_network_peer *peer = &runtime->peers[i];
-        if (!peer->occupied || qa_network_local_peer(peer)) continue;
+        if (!peer->occupied) continue;
         if (!qa_network_q2_peer(peer) || !peer->state || !((const q2_session *)peer->state)->server)
             return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 server timeout policy cannot replace another transport owner");
     }

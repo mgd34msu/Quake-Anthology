@@ -20,6 +20,7 @@ struct frontend_remote_prediction;
 struct frontend_remote_prediction_source;
 
 bool frontend_network_prediction_source_read(const qa_frontend *,
+    const qa_application_q3_client_context *receiver,
     frontend_network_prediction_source *, bool *present, qa_error *);
 bool frontend_network_prediction_source_current(const qa_frontend *,
     const frontend_network_prediction_source *);

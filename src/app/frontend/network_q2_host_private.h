@@ -30,19 +30,6 @@ typedef struct q2_host_peer {
     bool import_bound;
     bool travel_installed;
 } q2_host_peer;
-typedef struct q2_local_peer {
-    frontend_network_q2_host *host;
-    qa_network_local_player player;
-    qa_net_seat_binding binding;
-    qa_net_client_id client;
-    uint32_t physical,authored;
-    uint64_t composition;
-    bool admitting,travel_restarted;
-    uint64_t map_revision;
-    bool import_historical;
-    uint64_t import_epoch;
-    bool import_bound;
-} q2_local_peer;
 struct frontend_network_q2_host {
     frontend_network_q2_host_options options;
     qa_network_q2_bootstrap *bootstrap;
@@ -50,14 +37,12 @@ struct frontend_network_q2_host {
     qa_application_network_q2_host source;
     qa_q2_unicast_cache *unicast;
     q2_host_peer *peers;
-    q2_local_peer *locals;
-    size_t local_count;
     size_t capacity;
     unsigned calls;
     qa_application_network_q2 *travel_discovery;
     qa_application_network_q2 *import_discovery;
     qa_application_network_q2_host travel_target;
-    size_t travel_cursor,travel_local_cursor;
+    size_t travel_cursor;
     int32_t server_count;
     bool traveling,travel_discovery_installed;
     bool importing,import_ready,import_published;
@@ -79,8 +64,5 @@ bool frontend_network_q2_host_bind_publisher(frontend_network_q2_host *,qa_appli
 bool frontend_network_q2_host_bind_peer(q2_host_peer *,qa_application_network_q2 *,
     qa_network_runtime *,qa_network_q2_server_hooks *,qa_error *);
 qa_q2_server_bootstrap_options frontend_network_q2_host_bootstrap_options(frontend_network_q2_host *);
-bool frontend_network_q2_host_local_retained(void *,qa_net_seat_id,qa_network_local_player *,qa_error *);
-bool frontend_network_q2_host_local_request(const frontend_network_q2_host *,const q2_local_peer *,
-    qa_net_connect *,qa_error *);
 
 #endif

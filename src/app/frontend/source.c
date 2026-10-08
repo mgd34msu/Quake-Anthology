@@ -122,7 +122,7 @@ struct frontend_source {
     qa_resource *map_resource;
     qa_collision_geometry *geometry;
     qa_scene_world *world;
-    bool private_map;
+    bool private_map, packet_client;
     qa_audio_listener listener;
     bool has_listener, music_attached;
 };
@@ -260,8 +260,10 @@ static bool lease_dispose(frontend_source_lease *lease)
 static bool time_context_read(qa_frontend *f,qa_actor_owner owner,uint32_t seat,
     qa_application_q3_client_context *out,qa_error *error)
 {
-    return frontend_network_remote(f)?frontend_network_q3_client_context_read(f,owner,seat,out,error):
-        qa_application_q3_client_context_read(f->application,owner,seat,out,error);
+    for (const frontend_source *source=f->sources;source;source=source->next)
+        if (source->owner==owner && source->launch_seat==seat && source->packet_client)
+            return frontend_network_q3_client_context_read(f,owner,seat,out,error);
+    return qa_application_q3_client_context_read(f->application,owner,seat,out,error);
 }
 static bool time_current(const frontend_source_lease *lease)
 {
@@ -272,7 +274,7 @@ static bool time_current(const frontend_source_lease *lease)
         lease->time_context.seat!=source->launch_seat || lease->time_context.service_owner!=lease->service_owner) return false;
     bool linked=false;
     for (const frontend_source_lease *row=source->lease_list;row;row=row->next) if (row==lease) { linked=true; break; }
-    return linked && (frontend_network_remote(f)?frontend_network_q3_client_context_current(f,&lease->time_context):
+    return linked && (source->packet_client?frontend_network_q3_client_context_current(f,&lease->time_context):
         qa_application_q3_client_context_current(source->application,&lease->time_context));
 }
 static bool time_enter(frontend_source_lease *lease,qa_error *error)
@@ -383,14 +385,14 @@ bool frontend_source_effect(void *context,qa_application *application,qa_actor_o
         ordinal>=f->options.seats || !time_context_read(f,receiver,seat,&view,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 effect requires its actual frontend receiver lifetime");
     if (effect==QA_APPLICATION_Q3_SYSTEM_INFO) return frontend_source_system_info(f,&view,text,error);
-    if (frontend_network_remote(f) && (effect==QA_APPLICATION_Q3_MAP_RESTART || effect==QA_APPLICATION_Q3_DISCONNECT))
-        return frontend_network_q3_client_effect(f,&view,effect,text,error);
     frontend_source_lease *lease=NULL;
     for (frontend_source *source=f->sources;source;source=source->next)
         for (frontend_source_lease *row=source->lease_list;row;row=row->next)
             if (row==view.frontend_lifetime) lease=row;
     if (!lease || lease->role!=QA_QVM_CGAME)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 effect receiver has no linked frontend CGAME role");
+    if (lease->source->packet_client && (effect==QA_APPLICATION_Q3_MAP_RESTART || effect==QA_APPLICATION_Q3_DISCONNECT))
+        return frontend_network_q3_client_effect(f,&view,effect,text,error);
     lease->time_context=view;
     if (!time_enter(lease,error)) return false;
     bool ok=false;
@@ -433,7 +435,7 @@ bool frontend_source_drain(qa_frontend *f,qa_error *error)
             for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
                 if (lease->disconnect_pending) { pending=lease; break; }
         if (!pending) return true;
-        if (frontend_network_remote(f) || !time_current(pending))
+        if (pending->source->packet_client || !time_current(pending))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Pending local client disconnect lost its actual receiver");
         /* Consume the attempt before Shutdown can reenter. A failed physical
          * teardown remains with the application's real retired descriptor;
@@ -993,8 +995,8 @@ static bool common_arguments(void *context, qa_native_host_command_view *out, qa
 static bool common_command(void *context, const char *text, qa_error *error)
 {
     frontend_source_lease *lease = context;
-    if (frontend_network_remote(lease->source->frontend))
-        return frontend_network_client_command(lease->source->frontend, text, error);
+    if (lease->source->packet_client)
+        return frontend_network_client_command_seat(lease->source->frontend,lease->source->launch_seat,text,error);
     return lease->common.client_command ? lease->common.client_command(lease->common.context, text, error) :
         frontend_fail(error, QA_ERROR_UNSUPPORTED, "source client command route is unavailable");
 }
@@ -1398,13 +1400,15 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     frontend_config_source *configured=preparation.source_cvars?
         frontend_config_store_source(frontend->config_store,preparation.source_cvars):NULL;
     frontend_key_profile *profile=client_config?client_view.keys:configured?frontend_config_source_keys(configured):NULL;
-    if ((!client_config && frontend_network_remote(frontend)) ||
-        (configured && !client_config && frontend_config_source_cvars(configured)!=preparation.source_cvars) ||
+    if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
+    bool packet_client=host->client.gamestate!=NULL;
+    if ((configured && !client_config && frontend_config_source_cvars(configured)!=preparation.source_cvars) ||
         ((client_config || configured) && (!profile || !frontend_key_profile_state(profile))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require their prepared physical configuration and registry");
     if (frontend->source_restoring && (!frontend->seats || !frontend->seats[ordinal].input || !frontend->seats[ordinal].console))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
-    if (!frontend->source_restoring && !frontend_network_remote(frontend) && !frontend_scene_sync(frontend, error)) return false;
+    if (!frontend->source_restoring && qa_world_geometry(qa_application_world(application)) &&
+        !frontend_scene_sync(frontend, error)) return false;
     frontend_source *source = frontend->sources;
     if (frontend->source_restoring) {
         for (; source; source = source->next) {
@@ -1437,17 +1441,18 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     bool created = source == NULL;
     if (created && !create_source(frontend, application, owner, ordinal,seat, host,profile,&preparation,&source,error)) return false;
     if (!music_metadata_prepare(source,&preparation,error)) return false;
+    source->packet_client=packet_client;
     if (!frontend->source_restoring) {
-        bool private_map=frontend_network_remote(frontend);
+        bool private_map=packet_client && !qa_world_geometry(qa_application_world(application));
         if (!created && source->private_map!=private_map)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Source constructor changed its private collision ownership policy");
         source->private_map=private_map;
     }
-    if (!frontend->source_restoring && frontend_network_remote(frontend)) {
+    if (!frontend->source_restoring && packet_client) {
         const qa_resource *map=NULL; bool present=false;
         bool ok=frontend_network_client_map_read(frontend,application,owner,role,seat,host->mounts,&map,&present,error) &&
-            (!present || source_map_prepare(source,map,true,error));
-        if (ok && !present && source->map_resource)
+            (!present || !source->private_map || source_map_prepare(source,map,true,error));
+        if (ok && !present && source->private_map && source->map_resource)
             ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Private source constructor lost its prepared map receipt");
         if (!ok) {
             if (created) {
@@ -1492,7 +1497,6 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         host->cvars=frontend_client_registry_cvars(lease->registry); lease->cvars=host->cvars;
         if (!host->cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its canonical prepared registry");
     }
-    if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
     lease->common=host->common; lease->cvars=host->cvars;
     qa_application_startup_source parent_game;
     if(!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error) ||
@@ -1507,7 +1511,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         frontend_config_host_cvar_entered};
     if (role==QA_QVM_CGAME)
         host->cvar_status=(qa_q3_host_cvar_status_services){lease,status_visible};
-    if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate) {
+    if (role==QA_QVM_CGAME && !host->client.gamestate) {
         host->client_time_from_game=true;
         if (!time_register(preparation.source_cvars,host->cvars,host->service_owner,error)) return false;
     }
@@ -1522,7 +1526,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         .fonts=source->fonts,.configuration=configuration,.update_screen=update_screen,.end_registration=end_registration};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
         common_calendar, host->common.arguments ? common_arguments : NULL,
-        (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
+        (host->common.client_command || packet_client) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
         common_clipboard};
     if (frontend->source_restoring) return true;
     return source_publish_backend(source, error) &&
@@ -1808,7 +1812,7 @@ static bool equipment_current(void *context,const qa_application_q3_client_conte
     bool linked=false;
     for (const frontend_source_lease *row=source->lease_list;row;row=row->next)
         if (row==lease) { linked=true; break; }
-    return linked && (frontend_network_remote(source->frontend)?
+    return linked && (source->packet_client?
         frontend_network_q3_client_context_current(source->frontend,view):
         qa_application_q3_client_context_current(source->application,view));
 }
@@ -1831,7 +1835,7 @@ static bool render_enter(void *context,const qa_q3_host *host,const qa_qvm_call 
     *scope=(source_render_scope){lease,host,call,definition,NULL};
     ++lease->time_busy; ++source->role_operations;
     source->render_scope=scope; *out=scope;
-    if (lease->role!=QA_QVM_CGAME || source->private_map || (definition->flags&1)) return true;
+    if (lease->role!=QA_QVM_CGAME || source->packet_client || (definition->flags&1)) return true;
     qa_application_q3_client_context client;
     if (!time_context_read(source->frontend,source->owner,source->launch_seat,&client,error)) return false;
     if (!equipment_current(lease,&client))
@@ -2344,10 +2348,12 @@ bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
     qa_application_q3_client_host local={0};
     qa_application_network_q3_cgame_host remote={0};
     qa_q3_host *host=NULL; qa_q3_host_client_context context; bool present=false;
-    bool network=frontend_network_remote(f);
+    bool network=lease->source->packet_client;
     if (network) {
         frontend_network_client_domain domain;
-        if (!frontend_network_client_domain_read(f,&domain,error) ||
+        qa_application_q3_client_context receiver;
+        if (!qa_application_q3_remote_context_read(f->application,lease->source->owner,seat,&receiver,error) ||
+            !frontend_network_client_domain_read(f,&receiver,&domain,error) ||
             !qa_application_network_q3_cgame_host_read(f->application,&domain.source,&remote,&present,error)) return false;
         host=remote.host; context=remote.context;
     } else {
