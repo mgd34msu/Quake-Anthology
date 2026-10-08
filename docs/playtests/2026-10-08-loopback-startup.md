@@ -116,3 +116,15 @@ The install receipt is `installed-m0-selected-view-weapon-20261008.json`, and
 a Slack retest note was posted. Standalone `q3dm0` GL retained one stock gun,
 world and original HUD; actual mouse turning and ammo 100 to 94 were observed,
 with a normal quit and no debugger. Mixed firing remains under investigation.
+
+A subsequent bounded selected-arsenal read on that same build established a
+shot. Actual held Mouse1 supplied attack 1 and selected shotgun 3; the natural
+step returned successfully, emitted fire event 23 and consumed ammo 25 to 24.
+The coordinator opened the later held-fire and released-fire images, which
+both show 24 on the received Q1 HUD. The earlier short captures showing 25
+therefore do not establish a firing or HUD publication defect. This diagnostic
+used one debugger entry and natural return, with no inferior calls or writes;
+it makes no timing claim. The run quit normally with unchanged owner settings
+and candidate files and all ten recorded owned processes stopped. Its index
+is `qa-the907-mixed-fire-state-20261008/firing-entry-return-evidence.json`.
+Plain installed CPU/GL movement, jump, mouse and fire checks remain pending.
