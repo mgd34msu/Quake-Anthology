@@ -481,7 +481,13 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             .current=selected_weapon_current,.submit=selected_weapon_submit};
         q3n_selected_weapon_view camera={.origin=world->view.origin,
             .angles=qa_axes_angles(world->view.axis),.horizontal_speed=wire->horizontal_speed,
+            .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
             .bob_cycle=wire->bob_cycle,.draw_gun=true};
+        qa_cvars *cvars=qa_application_cvars(o->frontend->application);
+        const qa_cvar_view *x=qa_cvars_find(cvars,"cg_gunX"),*y=qa_cvars_find(cvars,"cg_gunY"),
+            *z=qa_cvars_find(cvars,"cg_gunZ"),*gun_frame=qa_cvars_find(cvars,"cg_gun_frame");
+        camera.gun_offset=qa_v3(x?(float)x->number:0,y?(float)y->number:0,z?(float)z->number:0);
+        camera.gun_frame=gun_frame?gun_frame->integer:0;
         q3n_selected_weapon_media media;
         if (!model->anchor) {
             q3n_selected_media_request load={.weapon=wire->weapon,.view_required=true,
@@ -507,7 +513,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             }
             q3n_selected_weapon_authored_view authored={.camera=camera,.anchor_tag=model->anchor->tag,
                 .anchor_offset=model->anchor->offset,
-                .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
+                .field_of_view=camera.field_of_view,
                 .fov_above=model->anchor->fov_above,.fov_scale=model->anchor->fov_scale,
                 .frame=(int32_t)model->frame,.old_frame=(int32_t)model->old_frame,.back_lerp=model->back_lerp,
                 .attachments=state->attachments,.attachment_count=model->attachment_count};
@@ -1020,7 +1026,8 @@ bool frontend_unified_q3_equipment_replacement(frontend_unified_q3 *o,const q3n_
         equipment->source_frame!=o->replica->frame_number || equipment->scene_sequence!=binding.frame->sequence ||
         !f->compiled->source.basis.instance)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Selected view equipment changed its registered frame receipt");
-    *consumed=equipment->slot || equipment->provider!=f->compiled->source.basis.provider ||
+    *consumed=equipment->input->family==QA_SCENE_Q3 || equipment->slot ||
+        equipment->provider!=f->compiled->source.basis.provider ||
         strcmp(equipment->instance,f->compiled->source.basis.instance)!=0;
     return true;
 }

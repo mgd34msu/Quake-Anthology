@@ -58,9 +58,10 @@ typedef struct q3n_selected_weapon_draw {
 } q3n_selected_weapon_draw;
 typedef struct q3n_selected_weapon_view {
     const qa_player_animation_config *animations;
-    qa_vec3 origin, angles;
+    qa_vec3 origin, angles, gun_offset;
     double horizontal_speed;
-    int32_t bob_cycle;
+    float field_of_view;
+    int32_t bob_cycle, gun_frame;
     bool draw_gun;
 } q3n_selected_weapon_view;
 typedef struct q3n_selected_weapon_attachment {

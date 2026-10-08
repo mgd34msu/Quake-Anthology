@@ -86,6 +86,10 @@ no consumer for its serialized Q3 animation, hands and attachment continuation.
 It submitted the bare gun at the camera instead. The existing selected-weapon
 renderer now consumes that continuation with the common camera, keeping its
 animation and asset cache in the persistent received owner. Character state is
-left intact. Both strict compilers, the full build and core checks pass; live
-qualification of this change is pending. The diagnostic index is
+left intact. Both strict compilers, the full build and core checks pass. The
+first live pair still showed no gun: an earlier compiled ownership marker can
+skip the received continuation without observing a draw. Received Q3 weapons
+now use the shared selected-weapon renderer before that ownership check; the
+compiled default view is consumed. Live qualification of that change is
+pending. The diagnostic index is
 `qa-the907-mixed-1a6291ca-q3-view-state.json`.

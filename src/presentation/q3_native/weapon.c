@@ -582,10 +582,17 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!q3n_lerp_run(view->animations,&state->torso,draw->player->torsoAnim,draw->time,1,false,e)) return selected_end(owner,false);
     qa_vec3 angles=selected_view_angles(view,draw->time);
     qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->origin);
-    hands.origin=hands.old_origin=view->origin; q3n_angles_axis(angles,hands.axis);
-    if (!torso_frame(view->animations,state->torso.frame,&hands.frame,e) ||
-        !torso_frame(view->animations,state->torso.old_frame,&hands.old_frame,e)) return selected_end(owner,false);
-    hands.back_lerp=state->torso.back_lerp;
+    qa_vec3 camera_axis[3];q3n_angles_axis(view->angles,camera_axis);
+    float fov_offset=view->field_of_view>90?-.2f*(view->field_of_view-90):0;
+    hands.origin=ma(ma(ma(view->origin,view->gun_offset.x,camera_axis[0]),
+        view->gun_offset.y,camera_axis[1]),view->gun_offset.z+fov_offset,camera_axis[2]);
+    hands.old_origin=hands.origin;q3n_angles_axis(angles,hands.axis);
+    if (view->gun_frame) hands.frame=hands.old_frame=view->gun_frame;
+    else {
+        if (!torso_frame(view->animations,state->torso.frame,&hands.frame,e) ||
+            !torso_frame(view->animations,state->torso.old_frame,&hands.old_frame,e)) return selected_end(owner,false);
+        hands.back_lerp=state->torso.back_lerp;
+    }
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->origin); bool found;
     if (!selected_attach(media->assets,&gun,&hands,"tag_weapon",true,&found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);

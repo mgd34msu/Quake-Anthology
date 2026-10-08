@@ -399,6 +399,12 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
         if (!m->visible || native_hidden || m->input.color.w<=0 || scale==0 ||
             (reflected && m->input.view_model) ||
             (qa_actor_id_equal(m->actor,player) && !m->input.view_model && !reflected)) continue;
+        if (m->input.view_model && m->source->q3_weapon && children && children->selected_weapon) {
+            bool submitted=false;
+            if (!children->selected_weapon(children->context,m->source,world,frame,&submitted,e)) return false;
+            m->submitted=submitted;m->submitted_cycle=frame->sequence;
+            continue;
+        }
         if (m->source_client && m->source_instance && children && children->source_model) {
             bool owned=false;
             if (!children->source_model(children->context,m->actor,m->source_provider,m->source_instance,&owned,e)) return false;
@@ -412,12 +418,6 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             if (!unified_scene_current(c))
                 return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified view model lost its completed EQUIPMENT receipt");
             if (owned) continue;
-        }
-        if (m->input.view_model && m->source->q3_weapon && children && children->selected_weapon) {
-            bool submitted=false;
-            if (!children->selected_weapon(children->context,m->source,world,frame,&submitted,e)) return false;
-            m->submitted=submitted;m->submitted_cycle=frame->sequence;
-            continue;
         }
         qa_scene_model_input input=m->input; input.view=world->view;
         qa_vec3 position=m->origin,previous=m->has_previous_origin?m->previous_origin:position;
