@@ -272,7 +272,7 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
             if p.poll() is not None:
                 result['exit_code'] = p.returncode
                 raise RuntimeError('candidate exited before compositor window close')
-            quit_argv = ['/usr/bin/swaymsg', '-s', s.env['SWAYSOCK'], '[con_id=' + str(window['id']) + '] kill']
+            quit_argv = ['/usr/bin/swaymsg', '-s', s.env['SWAYSOCK'], '[pid=' + str(game['pid']) + '] kill']
             result['public_window_close'] = {'argv': quit_argv, 'log': str(s.root / 'logs/public-window-close.log'), 'exit_code': None}
             quit_process = s.start('public-window-close', quit_argv)
             result['public_window_close']['exit_code'] = quit_process.wait(timeout=max(0.01, end - time.monotonic()))
