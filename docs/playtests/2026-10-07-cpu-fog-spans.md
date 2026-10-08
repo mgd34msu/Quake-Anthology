@@ -454,3 +454,49 @@ This is not a speedup claim, and both CPU targets remain open.
 Evidence: `qa-the196-integral-fog-pack-20261007/root-results.json`,
 `qa-private-av-9_4e7ixf/installer-shaped-qualification.json` and
 `qa-the196-vector-return-plan-xc_7fu16/paired-result.json`.
+
+## Rejected duplicated surface borders
+
+The next candidate stored a duplicated one-texel ring around each lit mip
+inside the existing 32 MiB arena. The span sampler then used four adjacent
+taps without repeating half-texel boundary clamps. Filtering, interpolation,
+lighting, depth, fog and cache stamps remained unchanged. Returned stride
+was derived from the retained slot width, including cache hits.
+
+The reused component called the actual surface builder twice after a color
+and light revision change. Interior rows and rebuilt borders were checked,
+then RGBA, native float depth, stencil, write counts and floating-point state
+were compared over 2,048 cases in each SSE2 and portable span/cache wrapper.
+Both passed across all four rounding modes, including 1×N and N×1 mips.
+The small-block fixture does not qualify arena admission or eviction.
+
+Strict build and six configured CTests passed. Exact-candidate gameplay
+with a fresh copy of the 34 owner settings reached retail base1, exercised
+and restored filtering, captured completed frames and quit with zero.
+The coordinator viewed all three PNGs. Original settings and artifact pins
+stayed unchanged; recorded owned processes were absent.
+
+The quiet sequential pair used installed `98225ced` as the baseline, the
+same filter/fog/caps/FOV/40 Hz settings, affinity `0-7,12-19`, and 600
+presentation intervals after at least 833 warm intervals. No debugger,
+profiler, compiler, audio or other game ran during measurement.
+
+| Drawable | Baseline median ms | Candidate median ms | Baseline p99 ms | Candidate p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 6.003911 | 5.923569 | 16.206950 | 15.172958 |
+| 320×200 | 4.364767 | 4.324656 | 6.156010 | 6.173379 |
+
+Separate warmed renderer means were 4.934278 → 4.808488 ms and
+3.383911 → 3.355497 ms. Span work matched within each pair, with zero
+cache rejects. Every run quit with zero, preserved settings/build pins
+and left no owned processes.
+
+The full-frame differences are small. Padding also reduces the number of
+surfaces that fit in the unchanged arena, particularly tiny mips. The
+candidate was reverted in the repository and SDK; the installed executable
+was not replaced. Both CPU targets remain open. No broad speedup or cache
+pressure qualification is claimed.
+
+Evidence: `qa-the196-padded-surfaces-20261007/root-build-result.json`,
+`qa-private-av-toxi38wn/installer-shaped-qualification.json` and
+`qa-the196-vector-return-plan-cfjiirzu/paired-result.json`.
