@@ -628,7 +628,12 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             (qa_application_get_state(app) == QA_APPLICATION_RUNNING ||
              frontend_network_client_only(frontend));
         bool fatal = !playing || qa_application_should_stop(app) || qa_session_faulted(qa_application_session(app));
-        if (!frontend_frame_cancel(frontend, error)) return false;
+        qa_error cancellation = {0};
+        if (!frontend_frame_cancel(frontend, &cancellation)) {
+            qa_application_feature_report(app, "presentation cancellation", &cancellation);
+            if (error) *error = feature.code != QA_OK ? feature : cancellation;
+            return false;
+        }
         if (fatal) {
             if (error) *error = feature;
             return false;
