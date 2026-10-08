@@ -290,7 +290,7 @@ bool qa_net_transport_create(const qa_net_address *address, qa_net_limits limits
                               qa_net_transport **out, qa_error *error)
 {
     if (!valid_address(address) || limits.datagram_bytes == 0 || limits.datagram_bytes > 65535 ||
-        limits.queue_packets == 0 || ops == NULL || ops->send == NULL || ops->receive == NULL ||
+        limits.queue_packets == 0 || ops == NULL || ops->send == NULL || ops->collect == NULL ||
         ops->close == NULL || out == NULL)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram transport configuration");
     qa_net_transport *transport = malloc(sizeof(*transport));
@@ -319,18 +319,36 @@ bool qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to
         return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram destination or payload");
     return transport->ops.send(transport->state, to, payload, error);
 }
-bool qa_net_transport_receive(qa_net_transport *transport, uint64_t now_ns, qa_net_datagram *out, qa_error *error)
+bool qa_net_transport_collect(qa_net_transport *transport, uint64_t now_ns,
+    qa_net_transport_event *out, qa_error *error)
 {
     if (transport == NULL || out == NULL) return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram receive request");
-    qa_net_datagram result = {0};
-    if (!transport->ops.receive(transport->state, now_ns, &result, error)) return false;
+    *out=(qa_net_transport_event){0};
+    return transport->ops.collect(transport->state,now_ns,out,error);
+}
+bool qa_net_transport_dispatch(qa_net_transport *transport, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *error)
+{
+    qa_net_datagram result={0};
+    *present=false;
+    if (transport->ops.dispatch) {
+        if (!transport->ops.dispatch(transport->state,event,&result,present,error)) return false;
+    } else if (event) {
+        result=event->packet;
+        *present=result.kind!=QA_NET_POLL_EMPTY;
+    }
+    if (!*present) return true;
     if (result.kind < QA_NET_POLL_EMPTY || result.kind > QA_NET_POLL_DROPPED ||
         (result.kind != QA_NET_POLL_EMPTY && !valid_address(&result.from)) ||
         (result.kind == QA_NET_POLL_PACKET && (result.payload.size > transport->limits.datagram_bytes ||
             (result.payload.size != 0 && result.payload.data == NULL))))
         return fail(error, QA_ERROR_FORMAT, "Transport returned an invalid datagram");
-    *out = result;
+    *out=result;
     return true;
+}
+bool qa_net_transport_maintenance(qa_net_transport *transport,uint64_t now_ns,qa_error *error)
+{
+    return !transport->ops.maintenance || transport->ops.maintenance(transport->state,now_ns,error);
 }
 void qa_net_transport_close(qa_net_transport *transport)
 {
@@ -357,8 +375,9 @@ static bool udp_send(void *context, const qa_net_address *to, qa_bytes bytes, qa
     return true;
 }
 
-static bool udp_receive(void *context, uint64_t now_ns, qa_net_datagram *out, qa_error *error)
+static bool udp_receive(void *context, uint64_t now_ns, qa_net_transport_event *event, qa_error *error)
 {
+    qa_net_datagram *out=&event->packet;
     udp_state *state = context;
     struct sockaddr_storage source;
     struct iovec vector = { .iov_base = state->bytes, .iov_len = state->capacity };
@@ -395,7 +414,7 @@ bool qa_net_udp_policy_read(const qa_net_transport *transport, qa_net_udp_policy
         return fail(error, QA_ERROR_ARGUMENT, "Missing native UDP policy observation");
     *out = (qa_net_udp_policy){0};
     *present = false;
-    if (transport->ops.send != udp_send || transport->ops.receive != udp_receive ||
+    if (transport->ops.send != udp_send || transport->ops.collect != udp_receive ||
         transport->ops.close != udp_close) return true;
     const udp_state *state = transport->state;
     if (!state || state->fd < 0)
@@ -466,7 +485,7 @@ bool qa_net_udp_open(const qa_net_udp_options *options, qa_net_transport **out, 
     if (getsockname(state->fd, (struct sockaddr *)&address, &size) < 0) goto io_error;
     qa_net_address actual;
     if (!from_sockaddr((const struct sockaddr *)&address, size, &actual)) goto io_error;
-    const qa_net_transport_ops ops = { .send = udp_send, .receive = udp_receive, .close = udp_close };
+    const qa_net_transport_ops ops = { .send = udp_send, .collect = udp_receive, .close = udp_close };
     if (!qa_net_transport_create(&actual, options->limits, &ops, state, out, error)) { udp_close(state); return false; }
     return true;
 io_error:
@@ -526,8 +545,9 @@ static bool loop_send(void *context, const qa_net_address *to, qa_bytes bytes, q
     return true;
 }
 
-static bool loop_receive(void *context, uint64_t now_ns, qa_net_datagram *out, qa_error *error)
+static bool loop_receive(void *context, uint64_t now_ns, qa_net_transport_event *event, qa_error *error)
 {
+    qa_net_datagram *out=&event->packet;
     loop_endpoint *endpoint = context;
     if (endpoint->closed || endpoint->hub->closed) return fail(error, QA_ERROR_IO, "Loopback endpoint is closed");
     *out = (qa_net_datagram){0};
@@ -607,7 +627,7 @@ bool qa_net_loopback_bind(qa_net_loopback *hub, const char *name, qa_net_transpo
     endpoint->borrowed = endpoint->storage + hub->limits.queue_packets * hub->limits.datagram_bytes;
     endpoint->hub = hub;
     endpoint->address = address;
-    const qa_net_transport_ops ops = { .send = loop_send, .receive = loop_receive,
+    const qa_net_transport_ops ops = { .send = loop_send, .collect = loop_receive,
         .close = loop_close, .ready = loop_ready };
     if (!qa_net_transport_create(&address, hub->limits, &ops, endpoint, out, error)) {
         free(endpoint->packets);

@@ -1,5 +1,5 @@
 #include "qa/network.h"
-#include "socket_private.h"
+#include "transport/socket_events.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,12 +18,13 @@ typedef struct socks_transport {
     qa_net_address server, relay;
     qa_socket control;
     socks_phase phase;
-    bool platform_started, authenticated;
-    uint64_t started_ns, now_ns, timeout_ns;
+    bool platform_started, authenticated, control_sampled;
+    uint64_t started_ns, now_ns, timeout_ns, control_sample_ns;
     size_t limit, tx_size, tx_offset, rx_size, rx_expected, credential_size, extra_bytes;
     uint16_t local_port;
     uint8_t tx[SOCKS_CREDENTIAL_BYTES], rx[SOCKS_HEADER_BYTES];
     uint8_t credentials[SOCKS_CREDENTIAL_BYTES];
+    uint8_t control_bytes[SOCKS_CONTROL_LIMIT];
     uint8_t *datagram;
     const char *failure;
 } socks_transport;
@@ -108,122 +109,74 @@ static bool socks_write(socks_transport *socks, bool *complete, qa_error *error)
     return true;
 }
 
-static bool socks_read(socks_transport *socks, bool *complete, qa_error *error) {
-    size_t remaining = socks->rx_expected - socks->rx_size;
-#if defined(_WIN32)
-    int count = recv(socks->control, (char *)socks->rx + socks->rx_size, (int)remaining, 0);
-#else
-    ssize_t count = recv(socks->control, socks->rx + socks->rx_size, remaining, 0);
-#endif
-    *complete = false;
-    if (count < 0) {
-        int code = qa_socket_error();
-        if (qa_socket_again(code) || qa_socket_interrupted(code)) return true;
-        return socks_fail(socks, "SOCKS control read failed", error);
+static bool socks_control_dispatch(socks_transport *socks, const qa_net_datagram *packet, qa_error *error) {
+    if (packet->kind == QA_NET_POLL_DROPPED)
+        return socks_fail(socks, "SOCKS control connection closed", error);
+    if (socks->phase == SOCKS_READY) {
+        socks->extra_bytes += packet->payload.size;
+        if (socks->extra_bytes > SOCKS_CONTROL_LIMIT)
+            return socks_fail(socks, "SOCKS control response exceeds limit", error);
+        return true;
     }
-    if (!count) return socks_fail(socks, "SOCKS control connection closed", error);
-    socks->rx_size += (size_t)count;
-    *complete = socks->rx_size == socks->rx_expected;
+    if (packet->payload.size) memcpy(socks->rx + socks->rx_size, packet->payload.data, packet->payload.size);
+    socks->rx_size += packet->payload.size;
+    if (socks->rx_size != socks->rx_expected) return true;
+    switch (socks->phase) {
+    case SOCKS_GREETING_READ:
+        if (socks->rx[0] != 5 ||
+            (socks->rx[1] != 0 && (socks->rx[1] != 2 || !socks->authenticated)))
+            return socks_fail(socks, "SOCKS authentication method rejected", error);
+        if (socks->rx[1] == 2) {
+            socks_schedule(socks, SOCKS_AUTH_SEND, socks->credentials, socks->credential_size, 2);
+            socks_wipe(socks->credentials, sizeof(socks->credentials));
+            socks->credential_size = 0;
+        } else socks_associate(socks);
+        break;
+    case SOCKS_AUTH_READ:
+        if (socks->rx[0] != 1 || socks->rx[1] != 0)
+            return socks_fail(socks, "SOCKS authentication failed", error);
+        socks_associate(socks);
+        break;
+    case SOCKS_ASSOCIATE_READ:
+        if (socks->rx_expected == 4) {
+            if (socks->rx[0] != 5 || socks->rx[1] != 0 || socks->rx[2] != 0)
+                return socks_fail(socks, "SOCKS UDP association rejected", error);
+            if (socks->rx[3] != 1)
+                return socks_fail(socks, "SOCKS relay address is not IPv4", error);
+            socks->rx_expected = 10;
+            break;
+        }
+        socks->relay.kind = QA_NET_IPV4;
+        memcpy(socks->relay.host.ipv4, socks->rx + 4, 4);
+        socks->relay.port = (uint16_t)((uint16_t)socks->rx[8] << 8 | socks->rx[9]);
+        if (!socks->relay.port) return socks_fail(socks, "SOCKS relay port is zero", error);
+        /* Some proxies return INADDR_ANY for their control connection's host. */
+        if (!socks->relay.host.ipv4[0] && !socks->relay.host.ipv4[1] &&
+            !socks->relay.host.ipv4[2] && !socks->relay.host.ipv4[3])
+            memcpy(socks->relay.host.ipv4, socks->server.host.ipv4, 4);
+        socks->phase = SOCKS_READY;
+        break;
+    default:
+        break;
+    }
     return true;
 }
 
-static bool socks_control_health(socks_transport *socks, qa_error *error) {
-    uint8_t buffer[SOCKS_CONTROL_LIMIT];
-#if defined(_WIN32)
-    int count = recv(socks->control, (char *)buffer, (int)sizeof(buffer), 0);
-#else
-    ssize_t count = recv(socks->control, buffer, sizeof(buffer), 0);
-#endif
-    if (count < 0) {
-        int code = qa_socket_error();
-        if (qa_socket_again(code) || qa_socket_interrupted(code)) return true;
-        return socks_fail(socks, "SOCKS control connection failed", error);
-    }
-    if (!count) return socks_fail(socks, "SOCKS control connection closed", error);
-    socks->extra_bytes += (size_t)count;
-    if (socks->extra_bytes > SOCKS_CONTROL_LIMIT)
-        return socks_fail(socks, "SOCKS control response exceeds limit", error);
-    return true;
-}
-
-static bool socks_advance(socks_transport *socks, uint64_t now_ns, qa_error *error) {
+static bool socks_maintenance(void *opaque, uint64_t now_ns, qa_error *error) {
+    socks_transport *socks = opaque;
     if (socks->phase == SOCKS_FAILED) return socks_fail(socks, socks->failure, error);
     if (now_ns < socks->now_ns) return socks_fail(socks, "SOCKS clock moved backwards", error);
     socks->now_ns = now_ns;
     if (socks->phase != SOCKS_READY && now_ns - socks->started_ns >= socks->timeout_ns)
         return socks_fail(socks, "SOCKS negotiation timed out", error);
-    for (size_t step = 0; step < 32; ++step) {
+    if (socks->phase == SOCKS_GREETING_SEND || socks->phase == SOCKS_AUTH_SEND ||
+        socks->phase == SOCKS_ASSOCIATE_SEND) {
         bool complete;
-        switch (socks->phase) {
-        case SOCKS_CONNECTING: {
-            int ready = qa_socket_connect_ready(socks->control);
-            if (ready < 0) {
-                if (qa_socket_interrupted(qa_socket_error())) return true;
-                return socks_fail(socks, "SOCKS control connection failed", error);
-            }
-            if (!ready) return true;
-            int status = 0;
-            qa_socklen length = (qa_socklen)sizeof(status);
-            if (getsockopt(socks->control, SOL_SOCKET, SO_ERROR, (char *)&status, &length) != 0 || status)
-                return socks_fail(socks, "SOCKS control connection failed", error);
-            socks_greeting(socks);
-            break;
-        }
-        case SOCKS_GREETING_SEND:
-        case SOCKS_AUTH_SEND:
-        case SOCKS_ASSOCIATE_SEND:
-            if (!socks_write(socks, &complete, error)) return false;
-            if (!complete) return true;
-            socks->phase = socks->phase == SOCKS_GREETING_SEND ? SOCKS_GREETING_READ :
-                socks->phase == SOCKS_AUTH_SEND ? SOCKS_AUTH_READ : SOCKS_ASSOCIATE_READ;
-            break;
-        case SOCKS_GREETING_READ:
-            if (!socks_read(socks, &complete, error)) return false;
-            if (!complete) return true;
-            if (socks->rx[0] != 5 ||
-                (socks->rx[1] != 0 && (socks->rx[1] != 2 || !socks->authenticated)))
-                return socks_fail(socks, "SOCKS authentication method rejected", error);
-            if (socks->rx[1] == 2) {
-                socks_schedule(socks, SOCKS_AUTH_SEND, socks->credentials, socks->credential_size, 2);
-                socks_wipe(socks->credentials, sizeof(socks->credentials));
-                socks->credential_size = 0;
-            } else socks_associate(socks);
-            break;
-        case SOCKS_AUTH_READ:
-            if (!socks_read(socks, &complete, error)) return false;
-            if (!complete) return true;
-            if (socks->rx[0] != 1 || socks->rx[1] != 0)
-                return socks_fail(socks, "SOCKS authentication failed", error);
-            socks_associate(socks);
-            break;
-        case SOCKS_ASSOCIATE_READ:
-            if (!socks_read(socks, &complete, error)) return false;
-            if (!complete) return true;
-            if (socks->rx_expected == 4) {
-                if (socks->rx[0] != 5 || socks->rx[1] != 0 || socks->rx[2] != 0)
-                    return socks_fail(socks, "SOCKS UDP association rejected", error);
-                if (socks->rx[3] != 1)
-                    return socks_fail(socks, "SOCKS relay address is not IPv4", error);
-                socks->rx_expected = 10;
-                break;
-            }
-            socks->relay.kind = QA_NET_IPV4;
-            memcpy(socks->relay.host.ipv4, socks->rx + 4, 4);
-            socks->relay.port = (uint16_t)((uint16_t)socks->rx[8] << 8 | socks->rx[9]);
-            if (!socks->relay.port) return socks_fail(socks, "SOCKS relay port is zero", error);
-            /* Some proxies return INADDR_ANY for their control connection's host. */
-            if (!socks->relay.host.ipv4[0] && !socks->relay.host.ipv4[1] &&
-                !socks->relay.host.ipv4[2] && !socks->relay.host.ipv4[3])
-                memcpy(socks->relay.host.ipv4, socks->server.host.ipv4, 4);
-            socks->phase = SOCKS_READY;
-            break;
-        case SOCKS_READY:
-            return socks_control_health(socks, error);
-        case SOCKS_FAILED:
-            return socks_fail(socks, socks->failure, error);
-        }
+        if (!socks_write(socks, &complete, error)) return false;
+        if (complete) socks->phase = socks->phase == SOCKS_GREETING_SEND ? SOCKS_GREETING_READ :
+            socks->phase == SOCKS_AUTH_SEND ? SOCKS_AUTH_READ : SOCKS_ASSOCIATE_READ;
     }
-    return true;
+    return qa_net_transport_maintenance(socks->udp, now_ns, error);
 }
 
 static bool socks_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
@@ -238,7 +191,6 @@ static bool socks_send(void *opaque, const qa_net_address *to, qa_bytes payload,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid SOCKS IPv4 datagram");
         return false;
     }
-    if (!socks_control_health(socks, error)) return false;
     bool broadcast = to->host.ipv4[0] == 255 && to->host.ipv4[1] == 255 &&
                      to->host.ipv4[2] == 255 && to->host.ipv4[3] == 255;
     if (broadcast) return qa_net_transport_send(socks->udp, to, payload, error);
@@ -252,14 +204,57 @@ static bool socks_send(void *opaque, const qa_net_address *to, qa_bytes payload,
             (qa_bytes){socks->datagram, payload.size + SOCKS_HEADER_BYTES}, error);
 }
 
-static bool socks_receive(void *opaque, uint64_t now_ns, qa_net_datagram *out, qa_error *error) {
+static bool socks_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
     socks_transport *socks = opaque;
-    *out = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY};
-    if (!socks_advance(socks, now_ns, error)) return false;
+    *out = (qa_net_transport_event){0};
+    if (socks->phase == SOCKS_FAILED) return socks_fail(socks, socks->failure, error);
+    if (!socks->control_sampled || socks->control_sample_ns != now_ns) {
+        socks->control_sampled = true;
+        socks->control_sample_ns = now_ns;
+        if (socks->phase == SOCKS_CONNECTING) {
+            bool connected;
+            if (!qa_net_socket_connected(socks->control, &connected, error))
+                return socks_fail(socks, "SOCKS control connection failed", error);
+            if (connected) {
+                *out = (qa_net_transport_event){.packet = {.kind = QA_NET_POLL_PACKET,
+                    .from = socks->server, .received_ns = now_ns}, .source = 2};
+                return true;
+            }
+        } else if (socks->phase == SOCKS_GREETING_READ || socks->phase == SOCKS_AUTH_READ ||
+            socks->phase == SOCKS_ASSOCIATE_READ || socks->phase == SOCKS_READY) {
+            size_t capacity = socks->phase == SOCKS_READY ? sizeof(socks->control_bytes) :
+                socks->rx_expected - socks->rx_size;
+            size_t size;
+            bool eof;
+            if (!qa_net_socket_read(socks->control, socks->control_bytes, capacity, &size, &eof, error))
+                return socks_fail(socks, "SOCKS control read failed", error);
+            if (size || eof) {
+                *out = (qa_net_transport_event){.packet = {.kind = eof ? QA_NET_POLL_DROPPED : QA_NET_POLL_PACKET,
+                    .from = socks->server, .payload = {socks->control_bytes, size}, .received_ns = now_ns}, .source = 1};
+                return true;
+            }
+        }
+    }
     if (socks->phase != SOCKS_READY) return true;
-    for (size_t i = 0; i < SOCKS_POLL_BUDGET; ++i) {
-        if (!qa_net_transport_receive(socks->udp, now_ns, out, error)) return false;
-        if (out->kind != QA_NET_POLL_PACKET) return true;
+    if (!qa_net_transport_collect(socks->udp, now_ns, out, error)) return false;
+    out->source <<= 2;
+    return true;
+}
+
+static bool socks_dispatch(void *opaque, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *error) {
+    socks_transport *socks = opaque;
+    *present = false;
+    if (event && (event->source & 3u) == 2) {
+        if (socks->phase == SOCKS_CONNECTING) socks_greeting(socks);
+        return true;
+    }
+    if (event && (event->source & 3u) == 1) return socks_control_dispatch(socks, &event->packet, error);
+    qa_net_transport_event child;
+    if (event) { child = *event; child.source >>= 2; }
+    for (size_t i = 0; i < (event ? 1U : SOCKS_POLL_BUDGET); ++i) {
+        if (!qa_net_transport_dispatch(socks->udp, event ? &child : NULL, out, present, error)) return false;
+        if (!*present || out->kind != QA_NET_POLL_PACKET) return true;
         if (!qa_net_address_equal(&out->from, &socks->relay, true)) {
             /* Preserve direct LAN replies, including broadcast discovery. */
             if (out->payload.size > socks->limit) {
@@ -278,7 +273,7 @@ static bool socks_receive(void *opaque, uint64_t now_ns, qa_net_datagram *out, q
         out->payload = (qa_bytes){bytes.data + SOCKS_HEADER_BYTES, bytes.size - SOCKS_HEADER_BYTES};
         return true;
     }
-    *out = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY};
+    *present = false;
     return true;
 }
 
@@ -373,7 +368,8 @@ bool qa_net_socks_wrap(qa_net_transport *udp, const qa_net_socks_options *option
         socks->phase = SOCKS_CONNECTING;
     } else socks_greeting(socks);
     const qa_net_transport_ops ops = {
-        .send = socks_send, .receive = socks_receive, .close = socks_close, .ready = socks_ready
+        .send = socks_send, .collect = socks_collect, .dispatch = socks_dispatch,
+        .maintenance = socks_maintenance, .close = socks_close, .ready = socks_ready
     };
     if (!qa_net_transport_create(bound, (qa_net_limits){socks->limit, 256}, &ops, socks, out, error)) {
         socks_close(socks);

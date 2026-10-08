@@ -453,7 +453,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
 {
     qa_platform_event event; qa_bytes payload;
     while (qa_platform_events_peek(frontend->platform_events,&event,&payload)) {
-        bool ok=true;
+        bool ok=true,consumed=true;
         switch (event.kind) {
         case QA_PLATFORM_EVENT_TIME:
             if (event.time_ns>frontend->wall_time_ns) frontend->wall_time_ns=event.time_ns;
@@ -463,7 +463,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             break;
         case QA_PLATFORM_EVENT_PACKET:
             if (!frontend_network_receive_ready(frontend)) return true;
-            ok=frontend_network_receive(frontend,&event,payload,error);
+            ok=frontend_network_receive(frontend,&event,payload,&consumed,error);
             break;
         case QA_PLATFORM_EVENT_CONSOLE_LINE:
             if (!qa_application_should_stop(frontend->application)) {
@@ -482,7 +482,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             }
             break;
         }
-        qa_platform_events_consume(frontend->platform_events);
+        if(consumed) qa_platform_events_consume(frontend->platform_events);
         if (!ok) return false;
     }
     return true;

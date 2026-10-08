@@ -13,7 +13,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-struct qa_kex_mdns_socket { SOCKET descriptor; };
+struct qa_kex_mdns_socket { SOCKET descriptor; uint8_t bytes[9000]; };
 static bool socket_error(qa_error *e, const char *operation)
 {
     qa_error_set(e, QA_ERROR_IO, 0, "KEX mDNS %s failed: Winsock %d", operation, WSAGetLastError());
@@ -26,7 +26,7 @@ static bool socket_error(qa_error *e, const char *operation)
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
-struct qa_kex_mdns_socket { int descriptor; };
+struct qa_kex_mdns_socket { int descriptor; uint8_t bytes[9000]; };
 static bool socket_error(qa_error *e, const char *operation)
 {
     qa_error_set(e, QA_ERROR_IO, 0, "KEX mDNS %s failed: %s", operation, strerror(errno));
@@ -109,34 +109,42 @@ bool qa_kex_mdns_native_send(qa_kex_mdns_socket *s, qa_bytes bytes, qa_error *e)
     return false;
 }
 
-bool qa_kex_mdns_native_receive(qa_kex_mdns_socket *s, void *bytes, size_t capacity,
-    size_t *size, bool *available, bool *oversize, qa_error *e)
+bool qa_kex_mdns_native_collect(qa_kex_mdns_socket *s, uint64_t now,
+    qa_net_transport_event *out, qa_error *e)
 {
-    *available = false;
-    *oversize = false;
+    *out = (qa_net_transport_event){0};
+    struct sockaddr_in from = {0};
+    bool oversize = false;
 #ifdef _WIN32
+    int from_size = sizeof(from);
     int count;
-    do { count = recvfrom(s->descriptor, bytes, (int)capacity, 0, NULL, NULL); }
+    do { count = recvfrom(s->descriptor, (char *)s->bytes, (int)sizeof(s->bytes), 0,
+                          (struct sockaddr *)&from, &from_size); }
     while (count == SOCKET_ERROR && WSAGetLastError() == WSAEINTR);
     if (count == SOCKET_ERROR) {
         int code = WSAGetLastError();
         if (code == WSAEWOULDBLOCK) return true;
-        if (code == WSAEMSGSIZE) { *available = true; *oversize = true; *size = 0; return true; }
-        return socket_error(e, "receive");
+        if (code == WSAEMSGSIZE) { oversize = true; count = 0; }
+        else return socket_error(e, "receive");
     }
 #else
-    struct iovec iov = {.iov_base = bytes, .iov_len = capacity};
-    struct msghdr message = {.msg_iov = &iov, .msg_iovlen = 1};
+    struct iovec iov = {.iov_base = s->bytes, .iov_len = sizeof(s->bytes)};
+    struct msghdr message = {.msg_name = &from, .msg_namelen = sizeof(from),
+        .msg_iov = &iov, .msg_iovlen = 1};
     ssize_t count;
     do { count = recvmsg(s->descriptor, &message, 0); } while (count < 0 && errno == EINTR);
     if (count < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return true;
         return socket_error(e, "receive");
     }
-    *oversize = (message.msg_flags & MSG_TRUNC) != 0 || (size_t)count > capacity;
+    oversize = (message.msg_flags & MSG_TRUNC) != 0 || (size_t)count > sizeof(s->bytes);
 #endif
-    *available = true;
-    *size = (size_t)count;
+    out->packet.kind = oversize ? QA_NET_POLL_OVERSIZE : QA_NET_POLL_PACKET;
+    out->packet.from.kind = QA_NET_IPV4;
+    out->packet.from.port = ntohs(from.sin_port);
+    memcpy(out->packet.from.host.ipv4, &from.sin_addr, 4);
+    out->packet.received_ns = now;
+    if (!oversize) out->packet.payload = (qa_bytes){s->bytes, (size_t)count};
     return true;
 }
 

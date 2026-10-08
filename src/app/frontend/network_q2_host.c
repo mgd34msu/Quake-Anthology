@@ -840,8 +840,7 @@ bool frontend_network_q2_host_stop(frontend_network_q2_host *host,uint64_t now,
      * until both the final delivery and its drop callback have returned. */
     if(remote) {
         qa_frontend *f=host->options.frontend;
-        if(qa_network_receive_ready(host->options.runtime) &&
-            !qa_network_events_collect(qa_network_transport(host->options.runtime),f->platform_events,now,256,error)) return false;
+        if(!frontend_network_intake(f,f->platform_events,now,error)) return false;
         if(!frontend_platform_drain(f,error) || !qa_network_tick(host->options.runtime,now,error)) return false;
     }
     for(size_t i=0;i<host->capacity;++i) {

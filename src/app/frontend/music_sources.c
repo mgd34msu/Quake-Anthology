@@ -164,7 +164,7 @@ bool frontend_music_sources_create(qa_frontend *f, frontend_music_sources **out,
     if (!qa_audio_music_controls_create(&owner->controls, e)) return false;
     /* Fresh native seed for this independent owner, sampled once. Playback
      * and source clocks never seed or advance this retained shuffle stream. */
-    owner->seed = SDL_GetPerformanceCounter();
+    owner->seed = qa_platform_time_ns();
     owner->command_registry = qa_actors_identity(qa_session_actors(qa_application_session(f->application)));
     return !owner->engine || menu_create(owner, e);
 }

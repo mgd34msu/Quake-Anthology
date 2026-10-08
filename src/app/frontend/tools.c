@@ -9,7 +9,6 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <time.h>
 
 struct qa_frontend_tools {
     qa_frontend *frontend;
@@ -28,8 +27,7 @@ struct qa_frontend_tools {
 static double milliseconds(void *context) { qa_frontend *f = context; return (double)f->time_ns / 1000000.0; }
 static double profiler_milliseconds(void *context) {
     qa_frontend *f = context;
-    uint64_t frequency = SDL_GetPerformanceFrequency();
-    double native = frequency ? (double)SDL_GetPerformanceCounter() * 1000 / (double)frequency : NAN;
+    double native = (double)qa_platform_time_ns() / 1000000;
     if (!isfinite(native) || !f || !f->tools) return NAN;
     qa_frontend_tools *tools = f->tools;
     if (tools->profiler_reanchor) {
@@ -40,9 +38,8 @@ static double profiler_milliseconds(void *context) {
     return native + tools->profiler_offset;
 }
 static double wall_milliseconds(void *context) {
-    (void)context; struct timespec now;
-    if (timespec_get(&now, TIME_UTC) != TIME_UTC) return NAN;
-    return (double)now.tv_sec * 1000 + (double)now.tv_nsec / 1000000;
+    (void)context;
+    return qa_platform_utc_ms();
 }
 static bool open_browser(void *context, const char *url, qa_error *error) {
     (void)context;
@@ -227,7 +224,7 @@ static bool timers_report(qa_frontend *f, const qa_command_invocation *call, dia
     if (strcmp(action, "report")) return true;
     qa_cpu_statistics stats;
     if (!qa_cpu_statistics_read(f->cpu, &stats, error)) return false;
-    double tick_ms = 1000.0 / (double)SDL_GetPerformanceFrequency();
+    double tick_ms = qa_platform_tick_ms();
     return append(text, error, "CPU renderer totals\n") &&
         append(text, error, "cpu_brush draws=%" PRIu64 " candidates=%" PRIu64 " predicate_rejects=%" PRIu64
             " planarity_rejects=%" PRIu64 " cache_rejects=%" PRIu64 "\n",

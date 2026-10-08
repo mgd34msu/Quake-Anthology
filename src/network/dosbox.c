@@ -153,13 +153,44 @@ bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
     return true;
 }
 
-bool qa_net_dosbox_pump(qa_net_dosbox *network, uint64_t now_ns, bool *registered,
-                       qa_error *error) {
-    if (!network || !registered) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid DOSBox pump arguments");
-        return false;
-    }
+bool qa_net_dosbox_collect(qa_net_dosbox *network, uint64_t now_ns,
+    qa_net_transport_event *out, qa_error *error) {
+    if (network->phase == DOSBOX_FAILED || network->phase == DOSBOX_CLOSED)
+        return dosbox_ready(network, error);
+    if (!qa_net_transport_collect(network->udp, now_ns, out, error))
+        return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
+    return true;
+}
+
+static bool dosbox_dispatch_body(qa_net_dosbox *network, const qa_net_transport_event *event,
+    bool *processed, qa_error *error) {
+    qa_net_datagram input;
+    if (!qa_net_transport_dispatch(network->udp, event, &input, processed, error))
+        return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
+    if (*processed && input.received_ns > network->now_ns) network->now_ns = input.received_ns;
+    if (!*processed || input.kind != QA_NET_POLL_PACKET || input.payload.size > DOSBOX_WIRE_BYTES ||
+        !qa_net_address_equal(&input.from, &network->server, true)) return true;
+    qa_net_ipx_packet packet;
+    if (!qa_net_ipx_decode(input.payload, &packet, NULL)) return true;
+    if (network->phase == DOSBOX_REGISTERING) {
+        if (packet.payload.size || packet.from.port != 2 || packet.to.port != 2 ||
+            packet.from.host.ipx.network != 1 || dosbox_node_is(&packet.to, 0) ||
+            dosbox_node_is(&packet.to, 255)) return true;
+        network->address = packet.to;
+        network->phase = DOSBOX_READY;
+    } else dosbox_deliver(network, &packet, input.received_ns);
+    return true;
+}
+
+bool qa_net_dosbox_dispatch(qa_net_dosbox *network, const qa_net_transport_event *event,
+    bool *registered, qa_error *error) {
+    bool processed;
+    bool ok = dosbox_dispatch_body(network, event, &processed, error);
     *registered = network->phase == DOSBOX_READY;
+    return ok;
+}
+
+bool qa_net_dosbox_maintenance(qa_net_dosbox *network, uint64_t now_ns, qa_error *error) {
     if (network->phase == DOSBOX_FAILED || network->phase == DOSBOX_CLOSED)
         return dosbox_ready(network, error);
     if (now_ns < network->now_ns)
@@ -167,28 +198,18 @@ bool qa_net_dosbox_pump(qa_net_dosbox *network, uint64_t now_ns, bool *registere
     network->now_ns = now_ns;
     if (network->phase == DOSBOX_REGISTERING && now_ns - network->started_ns >= network->timeout_ns)
         return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX registration timed out", error);
-    for (size_t i = 0; i < DOSBOX_PUMP_BUDGET; ++i) {
-        qa_net_datagram event;
-        qa_error read_error = {0};
-        if (!qa_net_transport_receive(network->udp, now_ns, &event, &read_error)) {
-            dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
-            return false;
-        }
-        if (event.kind == QA_NET_POLL_EMPTY) break;
-        if (event.kind != QA_NET_POLL_PACKET || event.payload.size > DOSBOX_WIRE_BYTES ||
-            !qa_net_address_equal(&event.from, &network->server, true)) continue;
-        qa_net_ipx_packet packet;
-        if (!qa_net_ipx_decode(event.payload, &packet, NULL)) continue;
-        if (network->phase == DOSBOX_REGISTERING) {
-            if (packet.payload.size || packet.from.port != 2 || packet.to.port != 2 ||
-                packet.from.host.ipx.network != 1 || dosbox_node_is(&packet.to, 0) ||
-                dosbox_node_is(&packet.to, 255)) continue;
-            network->address = packet.to;
-            network->phase = DOSBOX_READY;
-            *registered = true;
-        } else dosbox_deliver(network, &packet, event.received_ns);
-    }
+    if (!qa_net_transport_maintenance(network->udp, now_ns, error))
+        return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
     return true;
+}
+
+static void dosbox_queue_local(qa_net_dosbox *network, const qa_net_ipx_packet *packet) {
+    bool local = qa_net_address_equal(&packet->to, &network->address, false);
+    bool broadcast = dosbox_node_is(&packet->to, 255) &&
+        (!packet->to.host.ipx.network || packet->to.host.ipx.network == network->address.host.ipx.network);
+    if (!local && !broadcast) return;
+    dosbox_socket *socket = dosbox_find(network, packet->to.port);
+    if (socket) dosbox_accept(socket, packet, network->now_ns);
 }
 
 static bool dosbox_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
@@ -203,17 +224,14 @@ static bool dosbox_send(void *opaque, const qa_net_address *to, qa_bytes bytes, 
     qa_net_ipx_packet packet = {socket->address, *to, socket->packet_type, 0, bytes};
     bool local = qa_net_address_equal(to, &network->address, false);
     bool sent = local || dosbox_udp_packet(network, &packet, error);
-    if (local || dosbox_node_is(to, 255)) dosbox_deliver(network, &packet, network->now_ns);
+    if (local || dosbox_node_is(to, 255)) dosbox_queue_local(network, &packet);
     return sent;
 }
 
-static bool dosbox_receive(void *opaque, uint64_t now_ns, qa_net_datagram *out, qa_error *error) {
-    dosbox_socket *socket = opaque;
-    bool registered;
+static bool dosbox_take(dosbox_socket *socket, uint64_t now_ns, qa_net_datagram *out) {
     free(socket->borrowed);
     socket->borrowed = NULL;
     *out = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY};
-    if (!qa_net_dosbox_pump(socket->network, now_ns, &registered, error)) return false;
     if (socket->dropped) {
         socket->dropped = false;
         out->kind = QA_NET_POLL_DROPPED;
@@ -221,7 +239,7 @@ static bool dosbox_receive(void *opaque, uint64_t now_ns, qa_net_datagram *out, 
         out->received_ns = now_ns;
         return true;
     }
-    if (!socket->count) return true;
+    if (!socket->count) return false;
     dosbox_packet *packet = socket->packets[socket->head];
     socket->head = (socket->head + 1) % DOSBOX_QUEUE;
     --socket->count;
@@ -229,6 +247,40 @@ static bool dosbox_receive(void *opaque, uint64_t now_ns, qa_net_datagram *out, 
     *out = (qa_net_datagram){QA_NET_POLL_PACKET, packet->from,
                            {packet->data, packet->size}, packet->received_ns};
     return true;
+}
+
+static bool dosbox_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
+    dosbox_socket *socket = opaque;
+    *out = (qa_net_transport_event){0};
+    if (socket->dropped || socket->count) {
+        (void)dosbox_take(socket, now_ns, &out->packet);
+        out->source = 1;
+        return true;
+    }
+    if (!qa_net_dosbox_collect(socket->network, now_ns, out, error)) return false;
+    out->source <<= 2;
+    return true;
+}
+
+static bool dosbox_dispatch(void *opaque, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *error) {
+    dosbox_socket *socket = opaque;
+    if (event && (event->source & 3u) == 1) { *out = event->packet; *present = true; return true; }
+    qa_net_transport_event child;
+    if (event) { child = *event; child.source >>= 2; }
+    for (size_t i = 0; i < (event ? 1U : DOSBOX_PUMP_BUDGET); ++i) {
+        bool processed;
+        if (!dosbox_dispatch_body(socket->network, event ? &child : NULL, &processed, error)) return false;
+        *present = dosbox_take(socket, socket->network->now_ns, out);
+        if (*present || event || !processed) return true;
+    }
+    *present = false;
+    return true;
+}
+
+static bool dosbox_maintenance(void *opaque, uint64_t now_ns, qa_error *error) {
+    dosbox_socket *socket = opaque;
+    return qa_net_dosbox_maintenance(socket->network, now_ns, error);
 }
 
 static void dosbox_close_socket(void *opaque) {
@@ -278,7 +330,8 @@ bool qa_net_dosbox_bind(qa_net_dosbox *network, uint16_t port, uint8_t packet_ty
     socket->packet_type = packet_type;
     while (network->sockets[socket->slot]) ++socket->slot;
     const qa_net_transport_ops ops = {
-        .send = dosbox_send, .receive = dosbox_receive, .close = dosbox_close_socket,
+        .send = dosbox_send, .collect = dosbox_collect, .dispatch = dosbox_dispatch,
+        .maintenance = dosbox_maintenance, .close = dosbox_close_socket,
         .ready = dosbox_socket_ready
     };
     if (!qa_net_transport_create(&socket->address, (qa_net_limits){DOSBOX_PAYLOAD_BYTES, DOSBOX_QUEUE},

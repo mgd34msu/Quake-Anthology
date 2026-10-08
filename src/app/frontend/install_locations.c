@@ -1,5 +1,6 @@
 #include "install_locations.h"
 #include "qa/filesystem.h"
+#include "qa/platform_events.h"
 #include "qa/json.h"
 #include "qa/tokenizer.h"
 #include <SDL.h>
@@ -118,7 +119,7 @@ static bool save_settings(qa_fs_root *root,char *const *paths,size_t count,qa_er
         qa_buffer_free(&quoted);
     }
     if (ok) ok=append_text(&bytes,"\n  ]\n}\n",error) &&
-        qa_fs_root_replace(root,settings_file,(qa_bytes){bytes.data,bytes.size},SDL_GetPerformanceCounter(),error);
+        qa_fs_root_replace(root,settings_file,(qa_bytes){bytes.data,bytes.size},qa_platform_time_ns(),error);
     qa_buffer_free(&bytes); return ok;
 }
 static bool optional_directory(frontend_install_locations *owner,const char *path,qa_error *error)

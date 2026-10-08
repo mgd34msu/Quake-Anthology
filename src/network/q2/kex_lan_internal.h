@@ -48,6 +48,7 @@ struct qa_kex_lan {
 
 bool qa_kex_lan_valid(const qa_kex_lan *);
 bool qa_kex_lan_emit(void *, qa_bytes, qa_error *);
+bool qa_kex_lan_dispatch(qa_kex_lan *, const qa_net_datagram *, qa_error *);
 void qa_kex_lan_destroy_detached(qa_kex_lan *);
 
 #endif

@@ -43,11 +43,31 @@ bool frontend_kex_browser_scan(frontend_kex_browser *b, qa_error *e)
     return qa_kex_mdns_owner_query(b->discovery, e);
 }
 
-bool frontend_kex_browser_pump(frontend_kex_browser *b, uint64_t now, qa_error *e)
+bool frontend_kex_browser_collect(frontend_kex_browser *b, uint64_t now,
+    qa_net_transport_event *out, qa_error *e)
 {
-    if (!b || b->entered) { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser pump requires idle ownership"); return false; }
+    if (!b || b->entered) { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser collection requires idle ownership"); return false; }
     b->entered = true;
-    bool ok = qa_kex_mdns_owner_pump(b->discovery, now, e);
+    bool ok = qa_kex_mdns_owner_collect(b->discovery, now, out, e);
+    b->entered = false;
+    return ok;
+}
+
+bool frontend_kex_browser_dispatch(frontend_kex_browser *b,
+    const qa_net_transport_event *event, qa_error *e)
+{
+    if (!b || b->entered) { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser dispatch requires idle ownership"); return false; }
+    b->entered = true;
+    bool ok = qa_kex_mdns_owner_dispatch(b->discovery, event, e);
+    b->entered = false;
+    return ok;
+}
+
+bool frontend_kex_browser_maintenance(frontend_kex_browser *b, uint64_t now, qa_error *e)
+{
+    if (!b || b->entered) { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Retail browser maintenance requires idle ownership"); return false; }
+    b->entered = true;
+    bool ok = qa_kex_mdns_owner_maintenance(b->discovery, now, e);
     b->entered = false;
     return ok;
 }

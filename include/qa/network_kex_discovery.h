@@ -14,15 +14,21 @@ typedef struct qa_kex_mdns_hooks {
 bool qa_kex_mdns_owner_open(uint16_t advertised_port, const qa_kex_mdns_hooks *,
                             qa_kex_mdns_owner **, qa_error *);
 bool qa_kex_mdns_owner_query(qa_kex_mdns_owner *, qa_error *);
-bool qa_kex_mdns_owner_pump(qa_kex_mdns_owner *, uint64_t now_ns, qa_error *);
+/* Collect only reads the socket. Dispatch decodes a packet from the common
+ * event queue; NULL resumes unfinished found callbacks without reading.
+ * Maintenance sends pending announcements without reading. */
+bool qa_kex_mdns_owner_collect(qa_kex_mdns_owner *, uint64_t now_ns,
+                               qa_net_transport_event *, qa_error *);
+bool qa_kex_mdns_owner_dispatch(qa_kex_mdns_owner *, const qa_net_transport_event *, qa_error *);
+bool qa_kex_mdns_owner_maintenance(qa_kex_mdns_owner *, uint64_t now_ns, qa_error *);
 bool qa_kex_mdns_owner_shutdown(qa_kex_mdns_owner *, qa_error *);
 void qa_kex_mdns_owner_destroy(qa_kex_mdns_owner *);
 bool qa_kex_mdns_owner_idle(const qa_kex_mdns_owner *);
 
-/* Capture retains any unfinished endpoint callback prefix for the next pump.
+/* Capture retains any unfinished endpoint callback prefix for the next dispatch.
  * Decode is detached: no socket, interface enumeration, callbacks, queries or
  * announcements run. Activate opens only the socket. Publish marks the real
- * activated owner for an initial announcement on its next pump; it allocates
+ * activated owner for an initial announcement on its next maintenance; it allocates
  * nothing and sends nothing during enclosing candidate publication. */
 bool qa_kex_mdns_owner_checkpoint(const qa_kex_mdns_owner *, qa_buffer *, qa_error *);
 bool qa_kex_mdns_owner_restore(qa_bytes, const qa_kex_mdns_hooks *,

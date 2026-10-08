@@ -82,6 +82,7 @@
 #include <stdio.h>
 
 #define NETWORK_OWNER QA_NETWORK_COMMAND_OWNER
+static uint64_t next_input_serial;
 typedef struct frontend_q3_peer {
     qa_frontend_network *network;
     qa_net_client_id client;
@@ -130,6 +131,7 @@ struct qa_frontend_network {
     frontend_network_menu_preferences menu_preferences[4];
     frontend_network_menu_status browser_status;
     uint64_t browser_receipt, browser_expired[4];
+    uint64_t input_serial;
     uint64_t nonce;
     uint64_t preparation_nonce;
     uint32_t rotation_random;
@@ -3838,7 +3840,8 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "selected connection requires its complete original/unified signon and prediction producer");
     qa_frontend_network *n = calloc(1, sizeof(*n));
     if (!n) return frontend_fail(error, QA_ERROR_MEMORY, "allocating network frontend owner");
-    n->frontend = f; n->detached_transport=active!=NULL; n->nonce = SDL_GetPerformanceCounter();
+    n->input_serial=++next_input_serial;
+    n->frontend = f; n->detached_transport=active!=NULL; n->nonce = qa_platform_time_ns();
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;
     n->q3_client_requested = frontend_network_remote(f); n->q3_sensitivity = 1;
     if (client_target_selected(n)) {
@@ -4068,13 +4071,14 @@ static bool detached_send(void *context, const qa_net_address *to, qa_bytes byte
     (void)context; (void)to; (void)bytes;
     return frontend_fail(error, QA_ERROR_ARGUMENT, "detached network candidate has no published transport");
 }
-static bool detached_receive(void *context, uint64_t now, qa_net_datagram *packet, qa_error *error)
-{ (void)context; (void)now; (void)error; *packet = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY}; return true; }
+static bool detached_collect(void *context, uint64_t now, qa_net_transport_event *event, qa_error *error)
+{ (void)context; (void)now; (void)error; *event = (qa_net_transport_event){0}; return true; }
 static void detached_close(void *context) { (void)context; }
 static bool detached_ready(const void *context) { (void)context; return false; }
 static bool detached_transport(const qa_net_address *address, qa_net_transport **out, qa_error *error)
 {
-    const qa_net_transport_ops ops = {detached_send, detached_receive, detached_close, detached_ready};
+    const qa_net_transport_ops ops = {.send=detached_send, .collect=detached_collect,
+        .close=detached_close, .ready=detached_ready};
     return qa_net_transport_create(address, (qa_net_limits){65507, 256}, &ops, NULL, out, error);
 }
 static bool network_address_fields(qa_source_save_io *io, qa_net_address *v)
@@ -5491,11 +5495,28 @@ bool frontend_network_collect(qa_frontend *f, qa_platform_events *events, qa_err
         if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error) || !present ||
             !qa_server_admin_refresh_masters(n->admin,source.cvars,error)) return false;
     }
-    ++n->busy;
-    if(n->kex_browser && !frontend_kex_browser_pump(n->kex_browser,f->wall_time_ns,error)) { --n->busy; return false; }
     qa_server_browser_expire(n->browser, f->wall_time_ns);
-    bool ok = !qa_network_receive_ready(n->runtime) ||
-        qa_network_events_collect(qa_network_transport(n->runtime),events,f->wall_time_ns,256,error);
+    return frontend_network_intake(f,events,f->wall_time_ns,error);
+}
+static bool transport_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)
+{ return qa_net_transport_collect(context,now,out,error); }
+static bool browser_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)
+{ return frontend_kex_browser_collect(context,now,out,error); }
+bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t now,qa_error *error)
+{
+    qa_frontend_network *n=f->network;
+    if(!n) return true;
+    ++n->busy;
+    qa_net_transport *transport=qa_network_transport(n->runtime);
+    qa_network_event_source source={.id=n->input_serial, .context=transport, .collect=transport_collect};
+    bool ok=qa_net_transport_maintenance(transport,now,error) &&
+        (!n->kex_browser || frontend_kex_browser_maintenance(n->kex_browser,now,error));
+    if(ok && qa_network_receive_ready(n->runtime))
+        ok=qa_network_events_collect(&source,events,now,256,error);
+    if(ok && n->kex_browser) {
+        source.destination=1; source.context=n->kex_browser; source.collect=browser_collect;
+        ok=qa_network_events_collect(&source,events,now,256,error);
+    }
     --n->busy;
     return ok;
 }
@@ -5504,14 +5525,30 @@ bool frontend_network_receive_ready(const qa_frontend *f)
     const qa_frontend_network *n=f?f->network:NULL;
     return !n || qa_network_receive_ready(n->runtime);
 }
-bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_bytes bytes,qa_error *error)
+bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_bytes bytes,
+    bool *consumed,qa_error *error)
 {
+    *consumed=true;
     qa_frontend_network *n=f->network;
     if(!n) return true;
-    qa_net_datagram packet;
-    qa_network_event_packet(event,bytes,&packet);
+    qa_net_transport_event input; uint64_t source_id;
+    qa_network_event_packet(event,bytes,&source_id,&input);
+    /* Closed owners leave copied input behind; their load serial drops it. */
+    if(source_id!=n->input_serial) return true;
+    const qa_net_transport_event *physical=input.packet.kind==QA_NET_POLL_EMPTY ? NULL : &input;
     ++n->busy;
-    bool ok=qa_network_receive(n->runtime,&packet,error);
+    bool ok=true;
+    if(event->value2==1) {
+        if(n->kex_browser) ok=frontend_kex_browser_dispatch(n->kex_browser,physical,error);
+    } else {
+        qa_net_datagram packet; bool present;
+        ok=qa_net_transport_dispatch(qa_network_transport(n->runtime),physical,&packet,&present,error);
+        if(ok && present) {
+            ok=qa_network_receive(n->runtime,&packet,error);
+            /* Keep the boundary until all saved logical deliveries have run. */
+            if(!physical) *consumed=false;
+        }
+    }
     --n->busy;
     return ok;
 }

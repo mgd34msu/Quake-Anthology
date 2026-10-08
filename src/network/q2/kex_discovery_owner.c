@@ -190,43 +190,62 @@ static bool found_continue(qa_kex_mdns_owner *o,uint64_t now,qa_error *e)
     return true;
 }
 
-bool qa_kex_mdns_owner_pump(qa_kex_mdns_owner *o, uint64_t now, qa_error *e)
+static bool enter(qa_kex_mdns_owner *o, qa_error *e)
 {
-    if (!qa_kex_mdns_owner_valid(o) || o->entered || o->closed || !o->bound_published || !o->socket)
-        return fail(e, QA_ERROR_ARGUMENT, "KEX mDNS pump requires a published idle socket");
-    qa_kex_mdns_result *result = calloc(1, sizeof(*result));
-    if (!result) return fail(e, QA_ERROR_MEMORY, "Allocating KEX mDNS decode records");
+    if (!o || o->entered || o->closed || !o->bound_published || !o->socket)
+        return fail(e, QA_ERROR_ARGUMENT, "KEX mDNS operation requires a published idle socket");
     o->entered = true;
+    return true;
+}
+
+bool qa_kex_mdns_owner_collect(qa_kex_mdns_owner *o, uint64_t now,
+    qa_net_transport_event *out, qa_error *e)
+{
+    if (!enter(o, e)) return false;
+    o->clock = now;
+    bool ok = qa_kex_mdns_native_collect(o->socket, now, out, e);
+    o->entered = false;
+    return ok;
+}
+
+bool qa_kex_mdns_owner_maintenance(qa_kex_mdns_owner *o, uint64_t now, qa_error *e)
+{
+    if (!enter(o, e)) return false;
+    o->clock = now;
     bool ok = true;
     if (o->announce_pending) {
         ok = announce(o, 120, e);
         if (ok) o->announce_pending = false;
     }
-    if(ok) ok=found_continue(o,now,e);
-    for (unsigned drained = 0; ok && drained < 4096; ++drained) {
-        uint8_t bytes[9000];
-        size_t n = 0;
-        bool available, oversize;
-        if (!qa_kex_mdns_native_receive(o->socket, bytes, sizeof(bytes), &n, &available, &oversize, e)) { ok = false; break; }
-        if (!available) break;
-        if (oversize) continue;
+    o->entered = false;
+    return ok;
+}
+
+bool qa_kex_mdns_owner_dispatch(qa_kex_mdns_owner *o,
+    const qa_net_transport_event *event, qa_error *e)
+{
+    if (!enter(o, e)) return false;
+    if (event) o->clock = event->packet.received_ns;
+    bool ok = found_continue(o, o->clock, e);
+    qa_kex_mdns_result result = {0};
+    if (ok && event && event->packet.kind == QA_NET_POLL_PACKET) {
         qa_error malformed = {0};
-        qa_kex_mdns_result_free(result);
-        if (!qa_kex_mdns_read((qa_bytes){bytes, n}, result, &malformed)) {
-            if (malformed.code == QA_ERROR_MEMORY) { if (e) *e = malformed; ok = false; break; }
-            continue;
+        if (!qa_kex_mdns_read(event->packet.payload, &result, &malformed)) {
+            if (malformed.code == QA_ERROR_MEMORY) { if (e) *e = malformed; ok = false; }
+        } else {
+            if (result.question) ok = announce(o, 120, e);
+            if (ok) {
+                retain_records(o, &result);
+                if (o->hooks.found) {
+                    o->found_pending = o->endpoint_count != 0;
+                    o->found_cursor = 0;
+                    ok = found_continue(o, o->clock, e);
+                }
+            }
         }
-        if (result->question && !announce(o, 120, e)) { ok = false; break; }
-        retain_records(o, result);
-        if (!o->hooks.found) continue;
-        o->found_pending=o->endpoint_count!=0;
-        o->found_cursor=0;
-        ok=found_continue(o,now,e);
-        if (!ok) break;
     }
     o->entered = false;
-    qa_kex_mdns_result_free(result);
-    free(result);
+    qa_kex_mdns_result_free(&result);
     return ok;
 }
 

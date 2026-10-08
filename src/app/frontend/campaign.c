@@ -330,7 +330,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     owner->base_game=game; owner->base_result=result; memcpy(owner->players,players,sizeof(players));
     owner->player_count=player_count; owner->player_client=player; owner->result=true;
     owner->announced=duplicate; owner->movie_played=duplicate;
-    if (!duplicate) { owner->result_counter=SDL_GetPerformanceCounter(); owner->result_frequency=SDL_GetPerformanceFrequency(); }
+    if (!duplicate) { owner->result_counter=qa_platform_time_ns(); owner->result_frequency=UINT64_C(1000000000); }
     return duplicate || campaign_music(f,view,result.rank==1?"music/win":"music/loss",error);
 }
 static bool campaign_base_action(qa_frontend *f,const qa_application_q3_campaign *view,const char *name,qa_error *error)
@@ -382,7 +382,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
         free(saved); if (!ok) return false;
     }
     owner->team_result=result; owner->result=true;
-    owner->result_counter=SDL_GetPerformanceCounter(); owner->result_frequency=SDL_GetPerformanceFrequency();
+    owner->result_counter=qa_platform_time_ns(); owner->result_frequency=UINT64_C(1000000000);
     if (result.new_high_score) {
         char message[96]; (void)snprintf(message,sizeof(message),"New Team Arena high score: %" PRId32 "\n",result.current.score);
         frontend_print(f,message);

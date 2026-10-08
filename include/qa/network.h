@@ -109,13 +109,20 @@ typedef struct qa_net_udp_options {
     bool broadcast, ipv6_only;
 } qa_net_udp_options;
 /* Each transport has one caller thread. Poll payloads are borrowed until its
- * next receive or close. now_ns is supplied by the application, not gameplay. */
+ * next collection or close. now_ns is supplied by the application, not gameplay. */
+typedef struct qa_net_transport_event {
+    qa_net_datagram packet;
+    uint32_t source;
+} qa_net_transport_event;
 typedef struct qa_net_transport_ops {
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
-    bool (*receive)(void *, uint64_t now_ns, qa_net_datagram *, qa_error *);
+    bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
     void (*close)(void *);
-    /* Optional. Missing callback means ready; receive drives negotiation. */
     bool (*ready)(const void *);
+    /* Decode one copied physical event. NULL drains saved logical deliveries.
+     * Plain physical transports need no decoder. Neither operation reads input. */
+    bool (*dispatch)(void *, const qa_net_transport_event *, qa_net_datagram *, bool *present, qa_error *);
+    bool (*maintenance)(void *, uint64_t now_ns, qa_error *);
 } qa_net_transport_ops;
 bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               const qa_net_transport_ops *, void *owned_state,
@@ -135,7 +142,9 @@ const qa_net_address *qa_net_transport_address(const qa_net_transport *);
 size_t qa_net_transport_limit(const qa_net_transport *);
 bool qa_net_transport_ready(const qa_net_transport *);
 bool qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);
-bool qa_net_transport_receive(qa_net_transport *, uint64_t, qa_net_datagram *, qa_error *);
+bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_transport_event *, qa_error *);
+bool qa_net_transport_dispatch(qa_net_transport *, const qa_net_transport_event *, qa_net_datagram *, bool *, qa_error *);
+bool qa_net_transport_maintenance(qa_net_transport *, uint64_t, qa_error *);
 void qa_net_transport_close(qa_net_transport *);
 
 typedef struct qa_net_ipx_packet {
@@ -160,17 +169,19 @@ bool qa_net_ipx_tunnel_peer(qa_net_ipx_tunnel *, const qa_net_address *ipx,
 bool qa_net_ipx_tunnel_remove(qa_net_ipx_tunnel *, const qa_net_address *);
 void qa_net_ipx_tunnel_destroy(qa_net_ipx_tunnel *);
 typedef struct qa_net_dosbox qa_net_dosbox;
-/* Registration is nonblocking. Pump with explicit monotonic time, then bind.
+/* Registration is nonblocking. Collect and dispatch queued input, then bind.
  * The network owns UDP on success; bound transport handles are caller-owned. */
 bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
                            uint64_t now_ns, uint64_t timeout_ns,
                            qa_net_dosbox **, qa_error *);
-bool qa_net_dosbox_pump(qa_net_dosbox *, uint64_t now_ns, bool *registered, qa_error *);
+bool qa_net_dosbox_collect(qa_net_dosbox *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
+bool qa_net_dosbox_dispatch(qa_net_dosbox *, const qa_net_transport_event *, bool *registered, qa_error *);
+bool qa_net_dosbox_maintenance(qa_net_dosbox *, uint64_t now_ns, qa_error *);
 bool qa_net_dosbox_bind(qa_net_dosbox *, uint16_t port, uint8_t packet_type,
                          qa_net_transport **, qa_error *);
 void qa_net_dosbox_destroy(qa_net_dosbox *);
 /* SOCKS wrapper owns UDP after successful creation. Handshake advances from
- * receive; sends fail until ready. Credentials are never included in errors. */
+ * queued dispatch; sends fail until ready. Credentials are never included in errors. */
 typedef struct qa_net_socks_options {
     qa_net_address server;
     qa_bytes username, password;

@@ -11,24 +11,34 @@ static bool raw_send(void *context, const qa_net_address *to, qa_bytes bytes, qa
     return qa_net_transport_send(o->raw, to, bytes, e);
 }
 
-static bool raw_receive(void *context, uint64_t now, qa_net_datagram *out, qa_error *e)
+static bool raw_collect(void *context, uint64_t now, qa_net_transport_event *out, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!o->raw || !o->raw_owned) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX raw receive has no physical socket owner"); return false;
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX raw collection has no physical socket owner"); return false;
     }
-    for (unsigned drained = 0; drained < 4096; ++drained) {
-        qa_net_datagram packet;
-        if (!qa_net_transport_receive(o->raw, now, &packet, e)) return false;
+    return qa_net_transport_collect(o->raw, now, out, e);
+}
+
+static bool raw_dispatch(void *context, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *e)
+{
+    qa_kex_transport *o = context;
+    for (;;) {
+        if (!qa_net_transport_dispatch(o->raw, event, out, present, e)) return false;
         bool recognized = false;
-        if (packet.kind == QA_NET_POLL_PACKET && o->hooks.connectionless &&
-            !o->hooks.connectionless(o->hooks.context, &packet, &recognized, e)) return false;
-        if (recognized) continue;
-        *out = packet;
-        return true;
+        if (*present && out->kind == QA_NET_POLL_PACKET && o->hooks.connectionless &&
+            !o->hooks.connectionless(o->hooks.context, out, &recognized, e)) return false;
+        if (!recognized) return true;
+        *present = false;
+        if (event) return true;
     }
-    *out = (qa_net_datagram){0};
-    return true;
+}
+
+static bool raw_maintenance(void *context, uint64_t now, qa_error *e)
+{
+    qa_kex_transport *o = context;
+    return qa_net_transport_maintenance(o->raw, now, e);
 }
 
 static bool raw_ready(const void *context)
@@ -80,12 +90,52 @@ static bool game_send(void *context, const qa_net_address *to, qa_bytes bytes, q
     return ok;
 }
 
-static bool game_receive(void *context, uint64_t now, qa_net_datagram *out, qa_error *e)
+static bool game_collect(void *context, uint64_t now, qa_net_transport_event *out, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!enter(o, e)) return false;
-    bool ok = (!o->discovery || qa_kex_mdns_owner_pump(o->discovery, now, e)) &&
-        qa_kex_lan_tick(o->lobby, now, e) && qa_kex_lan_receive(o->lobby, out, e);
+    bool ok = qa_net_transport_collect(o->dispatch, now, out, e);
+    if (ok && out->packet.kind != QA_NET_POLL_EMPTY) out->source <<= 2;
+    else if (ok && o->discovery) {
+        ok = qa_kex_mdns_owner_collect(o->discovery, now, out, e);
+        if (ok && out->packet.kind != QA_NET_POLL_EMPTY) out->source = (out->source << 2) | 1u;
+    }
+    o->entered = false;
+    return ok;
+}
+
+static bool game_dispatch(void *context, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *e)
+{
+    qa_kex_transport *o = context;
+    if (!enter(o, e)) return false;
+    bool ok = true;
+    *present = false;
+    *out = (qa_net_datagram){0};
+    qa_net_transport_event child;
+    if (event) { child = *event; child.source >>= 2; }
+    if (!event || (event->source & 3u) == 0) {
+        qa_net_datagram packet;
+        bool packet_present;
+        ok = qa_net_transport_dispatch(o->dispatch, event ? &child : NULL, &packet, &packet_present, e);
+        if (ok && packet_present) ok = qa_kex_lan_dispatch(o->lobby, &packet, e);
+    }
+    if (ok && o->discovery && (!event || (event->source & 3u) == 1u))
+        ok = qa_kex_mdns_owner_dispatch(o->discovery, event ? &child : NULL, e);
+    if (ok) {
+        ok = qa_kex_lan_receive(o->lobby, out, e);
+        *present = ok && out->kind != QA_NET_POLL_EMPTY;
+    }
+    o->entered = false;
+    return ok;
+}
+
+static bool game_maintenance(void *context, uint64_t now, qa_error *e)
+{
+    qa_kex_transport *o = context;
+    if (!enter(o, e)) return false;
+    bool ok = (!o->discovery || qa_kex_mdns_owner_maintenance(o->discovery, now, e)) &&
+        qa_kex_lan_tick(o->lobby, now, e);
     o->entered = false;
     return ok;
 }
@@ -116,10 +166,12 @@ static void game_close(void *context) { qa_kex_transport_destroy(context); }
 bool qa_kex_transport_finish(qa_kex_transport *o, qa_net_transport **out, qa_error *e)
 {
     const qa_net_transport_ops raw_ops = {
-        .send = raw_send, .receive = raw_receive, .ready = raw_ready, .close = raw_close
+        .send = raw_send, .collect = raw_collect, .dispatch = raw_dispatch,
+        .maintenance = raw_maintenance, .ready = raw_ready, .close = raw_close
     };
     const qa_net_transport_ops game_ops = {
-        .send = game_send, .receive = game_receive, .ready = game_ready, .close = game_close
+        .send = game_send, .collect = game_collect, .dispatch = game_dispatch,
+        .maintenance = game_maintenance, .ready = game_ready, .close = game_close
     };
     qa_net_limits limits = {o->raw_limit, 256};
     if (!qa_net_transport_create(&o->lobby->local_address, limits, &raw_ops, o, &o->dispatch, e)) return false;

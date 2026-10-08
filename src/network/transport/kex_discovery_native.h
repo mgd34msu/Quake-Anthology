@@ -6,8 +6,8 @@
 typedef struct qa_kex_mdns_socket qa_kex_mdns_socket;
 bool qa_kex_mdns_native_open(qa_kex_mdns_socket **, qa_error *);
 bool qa_kex_mdns_native_send(qa_kex_mdns_socket *, qa_bytes, qa_error *);
-bool qa_kex_mdns_native_receive(qa_kex_mdns_socket *, void *, size_t, size_t *,
-                               bool *available, bool *oversize, qa_error *);
+bool qa_kex_mdns_native_collect(qa_kex_mdns_socket *, uint64_t,
+                                qa_net_transport_event *, qa_error *);
 bool qa_kex_mdns_native_close(qa_kex_mdns_socket *, qa_error *);
 bool qa_kex_mdns_native_hostname(char label[64], qa_error *);
 

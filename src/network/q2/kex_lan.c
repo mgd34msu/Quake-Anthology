@@ -498,52 +498,49 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
     if(m->kind==253)return player_message(l,p,m->payload,e);
     return true;
 }
-static bool tick_body(qa_kex_lan*l,uint64_t now,qa_error*e) {
-    if(!l) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Missing KEX LAN owner");
-        return false;
+static bool dispatch_body(qa_kex_lan*l,const qa_net_datagram *event,qa_error*e) {
+    l->clock=event->received_ns;
+    if(event->kind==QA_NET_POLL_EMPTY)return true;
+    if(event->kind!=QA_NET_POLL_PACKET) {
+        if(!queue(l,&event->from,(qa_bytes){0},e))return false;
+        l->tail->kind=event->kind;
+        l->tail->received=event->received_ns;
+        return true;
     }
-    l->clock=now;
-    for(unsigned drained=0;drained<256;drained++) {
-        qa_net_datagram event;
-        if(!qa_net_transport_receive(l->transport,now,&event,e))return false;
-        if(event.kind==QA_NET_POLL_EMPTY)break;
-        if(event.kind!=QA_NET_POLL_PACKET) {
-            if(!queue(l,&event.from,(qa_bytes){0},e))return false;
-            l->tail->kind=event.kind;
-            l->tail->received=event.received_ns;
-            continue;
-        }
-        if(!l->options.host&&!qa_net_address_equal(&event.from,&l->options.server,true))continue;
-        struct peer*p=find_peer(l,&event.from);
-        if(!p) {
-            qa_error parse= {
-                0
-            };
-            qa_kex_packet packet;
-            if(!qa_kex_packet_read(event.payload,&packet,&parse)||packet.flags||!packet.has_kind||(packet.kind!=128&&packet.kind!=129)||l->peer_count==256)continue;
-            p=add_peer(l,&event.from,e);
-            if(!p)return false;
-        }
-        qa_kex_message m;
-        bool present;
+    if(!l->options.host&&!qa_net_address_equal(&event->from,&l->options.server,true))return true;
+    struct peer*p=find_peer(l,&event->from);
+    if(!p) {
         qa_error parse= {
             0
         };
-        if(!qa_kex_channel_receive(p->channel,event.payload,now,&m,&present,&parse)) {
-            if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
-                if(e)*e=parse;
-                return false;
-            }
-            continue;
+        qa_kex_packet packet;
+        if(!qa_kex_packet_read(event->payload,&packet,&parse)||packet.flags||!packet.has_kind||(packet.kind!=128&&packet.kind!=129)||l->peer_count==256)return true;
+        p=add_peer(l,&event->from,e);
+        if(!p)return false;
+    }
+    qa_kex_message m;
+    bool present;
+    qa_error parse= {
+        0
+    };
+    if(!qa_kex_channel_receive(p->channel,event->payload,event->received_ns,&m,&present,&parse)) {
+        if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
+            if(e)*e=parse;
+            return false;
         }
-        if(present&&!message(l,p,&m,&parse)) {
-            if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
-                if(e)*e=parse;
-                return false;
-            }
+        return true;
+    }
+    if(present&&!message(l,p,&m,&parse)) {
+        if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
+            if(e)*e=parse;
+            return false;
         }
     }
+    return true;
+}
+static bool tick_body(qa_kex_lan*l,uint64_t now,qa_error*e) {
+    l->clock=now;
+    if(!qa_net_transport_maintenance(l->transport,now,e))return false;
     if(!l->options.host&&!l->joined&&(!l->retried||now<l->retry_at||now-l->retry_at>=UINT64_C(500000000))) {
         struct peer*p=add_peer(l,&l->options.server,e);
         if(!p)return false;
@@ -593,6 +590,13 @@ bool qa_kex_lan_receive(qa_kex_lan *l, qa_net_datagram *out, qa_error *e)
 {
     if (!enter(l, e)) return false;
     bool ok = receive_body(l, out, e);
+    l->entered = false;
+    return ok;
+}
+bool qa_kex_lan_dispatch(qa_kex_lan *l, const qa_net_datagram *event, qa_error *e)
+{
+    if (!enter(l, e)) return false;
+    bool ok = dispatch_body(l, event, e);
     l->entered = false;
     return ok;
 }

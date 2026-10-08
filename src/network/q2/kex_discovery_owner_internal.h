@@ -2,7 +2,7 @@
 #define QA_KEX_DISCOVERY_OWNER_INTERNAL_H
 
 #include "qa/network_kex_discovery.h"
-#include "kex_discovery_native.h"
+#include "../transport/kex_discovery_native.h"
 
 struct qa_kex_mdns_owner {
     qa_kex_mdns_socket *socket;
@@ -11,6 +11,7 @@ struct qa_kex_mdns_owner {
     qa_kex_mdns_endpoint endpoints[256];
     qa_kex_mdns_address addresses[256];
     size_t endpoint_count, address_count, found_cursor;
+    uint64_t clock;
     bool entered, closed, published, announce_pending, bound_published;
     bool found_pending;
 };

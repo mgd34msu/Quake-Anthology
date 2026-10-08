@@ -2,6 +2,8 @@
 
 #include <SDL.h>
 #include <limits.h>
+#include <math.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -114,4 +116,16 @@ void qa_platform_sleep_ns(uint64_t duration)
         milliseconds -= UINT32_MAX;
     }
     if (milliseconds) SDL_Delay((uint32_t)milliseconds);
+}
+
+double qa_platform_utc_ms(void)
+{
+    struct timespec now;
+    if(timespec_get(&now,TIME_UTC)!=TIME_UTC) return NAN;
+    return (double)now.tv_sec*1000 + (double)now.tv_nsec/1000000;
+}
+
+double qa_platform_tick_ms(void)
+{
+    return 1000.0/(double)SDL_GetPerformanceFrequency();
 }

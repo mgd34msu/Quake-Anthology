@@ -946,7 +946,7 @@ add_library(qa_network STATIC
     src/network/q2/kex_channel.c
     src/network/q2/kex_channel_save.c
     src/network/q2/kex_discovery.c
-    src/network/q2/kex_discovery_native.c
+    src/network/transport/kex_discovery_native.c
     src/network/q2/kex_discovery_owner.c
     src/network/q2/kex_discovery_owner_save.c
     src/network/q2/kex_game.c
@@ -1008,6 +1008,8 @@ add_library(qa_network STATIC
     src/network/runtime/prediction_save.c
     src/network/socks.c
     src/network/transport.c
+    src/network/transport/ipx_native.c
+    src/network/transport/socket_events.c
     src/network/unified/channel.c
     src/network/unified/composition.c
     src/network/unified/document.c
