@@ -39,6 +39,12 @@ The source attestation compared 3,066 build inputs directly, without hashing.
 All original settings and candidate files remained unchanged. All 992 recorded
 Wayland process tokens were absent after cleanup.
 
+Supplemental bare launches under private headless Weston 15.0.1 also showed
+the menu on default GL and CPU, using the same candidate overlays and copied
+profile. Root reviewed both compositor framebuffer captures. Both runs exited
+normally with code 0; settings and candidate pins were unchanged, and all 49
+recorded process tokens were absent after cleanup.
+
 Private X11 checks also reached gameplay on CPU and NVIDIA GPU 0
 (RTX 5060 Ti), exercised two local-lobby Start/End cycles, and quit through
 the public UI with code 0. The GL qualification helper initially rejected its
