@@ -173,8 +173,11 @@ static bool format_number(qa_console_dialect dialect,float value,char out[32],
 }
 static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values *values,cvar_alias *alias)
 {
-    cvar *target=qac_cvars_find_values(registry,values,alias->target);
+    cvar *target=alias->target_ordinal==SIZE_MAX
+        ?qac_cvars_find_values(registry,values,alias->target)
+        :values->rows[alias->target_ordinal];
     if (!target) return NULL;
+    alias->target_ordinal=target->ordinal;
     qac_cvars_refresh((qa_cvars *)registry,target);
     alias->projection=target->view;
     alias->projection.name=alias->name;
@@ -552,6 +555,7 @@ cvar_alias *qac_cvars_alias_copy(const cvar_alias *source,qa_error *error)
     cvar_alias *alias=calloc(1,sizeof(*alias));
     if (!alias) { qac_fail(error,QA_ERROR_MEMORY,"retaining canonical cvar alias"); return NULL; }
     alias->ordinal=source->ordinal;
+    alias->target_ordinal=source->target_ordinal;
     alias->name=qac_copy(source->name,error); alias->target=qac_copy(source->target,error);
     alias->description=qac_copy(source->description,error);
     alias->handle=source->handle; alias->vm_bound=source->vm_bound;
@@ -1695,6 +1699,7 @@ static bool vm_handle_variable(cvar_target target,const char *name,size_t *handl
     cvar *entry=qac_cvars_find_values(target.registry,target.values,alias?alias->target:name);
     if (!entry || !handle) return qac_fail(error,QA_ERROR_NOT_FOUND,"VM Source name is absent");
     if (!source_handle(target,entry,alias,error)) return false;
+    if (alias) alias->target_ordinal=entry->ordinal;
     *handle=alias?alias->handle:entry->view.handle;
     return true;
 }

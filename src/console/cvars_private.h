@@ -68,7 +68,7 @@ struct cvar {
 struct cvar_alias {
     struct cvar_alias *next;
     struct cvar_alias *canonical;
-    size_t ordinal;
+    size_t ordinal, target_ordinal;
     char *name, *target, *description;
     const qa_console_documentation *documentation;
     const qa_cvar_catalog_binding *catalog_binding;

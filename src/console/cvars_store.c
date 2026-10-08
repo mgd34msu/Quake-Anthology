@@ -462,6 +462,7 @@ cvar_alias *qac_cvars_source_alias(qa_cvars *registry, cvar_values *values,
     alias = qac_cvars_alias_copy(canonical, error);
     if (!alias) return NULL;
     alias->canonical = canonical;
+    alias->target_ordinal = SIZE_MAX;
     free(alias->name); free(alias->target);
     alias->name = canonical->name; alias->target = canonical->target;
     alias->handle = SIZE_MAX;
@@ -818,7 +819,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
         if (!target) { qac_fail(error, QA_ERROR_FORMAT, "catalog alias lost its canonical row"); goto failed; }
         cvar_alias prototype = {.name = (char *)qa_cvar_catalog_string(binding->name),
             .target = (char *)target->view.name, .description = "", .catalog_binding = binding,
-            .ordinal = store->values.alias_count, .handle = SIZE_MAX};
+            .ordinal = store->values.alias_count, .target_ordinal = SIZE_MAX, .handle = SIZE_MAX};
         cvar_alias *alias = qac_cvars_alias_copy(&prototype, error);
         if (!alias) goto failed;
         if (store->values.last_alias) store->values.last_alias->next = alias;
