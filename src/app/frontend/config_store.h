@@ -146,17 +146,10 @@ qa_input_seat *frontend_config_store_prepared_input(const frontend_config_store 
  * installed physical seat, rather than a missing source staging fallback. */
 bool frontend_config_store_input_configuration(const frontend_config_store *,qa_application *,
     const qa_launch_snapshot *,unsigned physical_ordinal,qa_input_seat **,qa_error *);
-/* The same frontend publishes its initial or replacement view through the
- * installed preference owner's actual consume history. CLIENT scopes alone
- * do not imply ownership borrowed from a different frontend. */
-bool frontend_config_store_view_transition(const frontend_config_store *,qa_application *,
-    const qa_launch_snapshot *,frontend_view_transition *,qa_error *);
 bool frontend_config_store_client_input_configuration(const frontend_config_store *,
     const qa_application_client_preparation *,uint32_t,qa_input_seat **,qa_error *);
 bool frontend_config_store_client_controller_selection(const frontend_config_store *,
     const qa_application_client_preparation *,uint32_t,qa_controller_selection *,qa_error *);
-bool frontend_config_store_client_view_transition(const frontend_config_store *,
-    const qa_application_client_preparation *,frontend_view_transition *,qa_error *);
 bool frontend_config_store_client_settings_begin(frontend_config_store *,qa_application_client_preparation *,qa_error *);
 bool frontend_config_store_client_settings_seed(frontend_config_store *,qa_application_client_preparation *,qa_cvar_archive *,qa_error *);
 bool frontend_config_store_has_canonical_archive(const frontend_config_store *);

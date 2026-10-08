@@ -1394,20 +1394,6 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
         return fail(error,QA_ERROR_ARGUMENT,"Changed input source has no actual prepared dictionary");
     *out=physical->input; return true;
 }
-bool frontend_config_store_view_transition(const frontend_config_store *manager,qa_application *application,
-    const qa_launch_snapshot *candidate,frontend_view_transition *out,qa_error *error)
-{
-    const qa_frontend *f=manager?manager->frontend:NULL;
-    bool published=false;
-    if (!out || !f || f->application!=application || (!candidate && !root_current(manager)) ||
-        !frontend_config_store_shared(manager,application,candidate) ||
-        !qa_application_startup_resource_phase(application,candidate) ||
-        !frontend_view_settings_parent_is(f->view_settings,f,qa_application_cvars(application)) ||
-        !frontend_view_settings_has_published(f->view_settings,&published))
-        return fail(error,QA_ERROR_ARGUMENT,"View transition lost its actual candidate and published preference owner");
-    *out=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL;
-    return true;
-}
 static qa_input_seat *binding_seat(void *context,const qa_command_context *command)
 {
     frontend_config_source *source=context;
@@ -3503,21 +3489,6 @@ bool frontend_config_store_client_controller_selection(const frontend_config_sto
     const qa_application_client_preparation *preparation,uint32_t ordinal,qa_controller_selection *out,qa_error *error)
 {
     return manager && frontend_neutral_config_client_controller(manager->neutral,preparation,ordinal,out,error);
-}
-bool frontend_config_store_client_view_transition(const frontend_config_store *manager,
-    const qa_application_client_preparation *preparation,frontend_view_transition *out,qa_error *error)
-{
-    const qa_frontend *f=manager?manager->frontend:NULL;
-    const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
-    bool published=false;
-    qa_input_seat *input=NULL;
-    if (!f || !out || !source ||
-        !qa_application_client_prepare_phase_is(preparation,QA_CLIENT_PREPARE_RESOURCES) ||
-        !frontend_neutral_config_client_input(manager->neutral,preparation,source->context.physical_seat,&input,error) ||
-        !frontend_view_settings_parent_is(f->view_settings,f,qa_application_cvars(f->application)) ||
-        !frontend_view_settings_has_published(f->view_settings,&published))
-        return fail(error,QA_ERROR_ARGUMENT,"CLIENT view transition lost its actual token and published preference owner");
-    *out=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL; return true;
 }
 static bool client_settings_current(const frontend_config_store *manager,const qa_application_client_preparation *client)
 {

@@ -157,17 +157,13 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
     if (!frontend_music_sources_parent_is(ticket->music_sources,f,f->audio) ||
         !frontend_music_sources_queued(ticket->music_sources,&queued) || queued)
         return fail(e,"Final publication requires returned music requests before holding resource children");
-    frontend_view_transition transition;
+    bool published=false;
+    if (!frontend_view_settings_has_published(f->view_settings,&published)) return false;
+    frontend_view_transition transition=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL;
     if (owner->client) {
-        bool published=false;
-        if (!frontend_view_settings_has_published(f->view_settings,&published))
-            return fail(e,"CLIENT view preparation lost its actual published preference history");
-        transition=published?FRONTEND_VIEW_REPLACEMENT:FRONTEND_VIEW_INITIAL;
         if (!frontend_view_settings_prepare_client(f->view_settings,owner->client,edit,transition,&ticket->view,e) ||
             !frontend_shared_resource_policy_begin_client(f,owner->client,edit,&ticket->resources,e)) return false;
-    } else if (!frontend_config_store_view_transition(owner->manager,owner->application,
-        owner->candidate,&transition,e) || !frontend_view_settings_prepare(f->view_settings,
-        owner->candidate,edit,transition,&ticket->view,e) ||
+    } else if (!frontend_view_settings_prepare(f->view_settings,owner->candidate,edit,transition,&ticket->view,e) ||
         !frontend_shared_resource_policy_begin(f,owner->candidate,edit,&ticket->resources,e)) return false;
     ticket->audio_engine=f->audio; ticket->audio_device=f->device;
     if (!ticket->audio_engine && ticket->audio_device)

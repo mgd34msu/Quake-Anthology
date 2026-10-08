@@ -27,8 +27,8 @@ struct frontend_view_preparation {
     const qa_launch_snapshot *candidate;
     const qa_application_client_preparation *client;
     const qa_cvars_edit *edit;
-    char *value,*previous;
-    double number;
+    char *value;
+    double number,previous_number;
     uint64_t modification_count;
     frontend_view_transition transition;
     bool previous_explicit,previous_published,explicit_override,notify,published,applied;
@@ -130,7 +130,7 @@ bool frontend_view_settings_read(const frontend_view_settings *owner,double *val
 }
 bool frontend_view_settings_has_published(const frontend_view_settings *owner,bool *out)
 {
-    if (!out || !value_current(owner) || owner->preparation || owner->notifying) return false;
+    if (!out || !current(owner) || owner->preparation || owner->notifying) return false;
     *out=owner->published; return true;
 }
 bool frontend_view_settings_preferences(const frontend_view_settings *owner,frontend_shared_view_preferences *out)
@@ -531,12 +531,12 @@ static bool prepare(frontend_view_settings *owner,const qa_launch_snapshot *cand
     frontend_view_preparation *held=calloc(1,sizeof(*held));
     if (!held) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining candidate view preference");
     held->parent=owner; held->candidate=candidate; held->client=client; held->edit=edit; held->transition=transition;
-    held->value=copy(row->value,e); held->previous=copy(previous->value,e);
-    if (!held->value || !held->previous) { free(held->value); free(held->previous); free(held); return false; }
+    held->value=copy(row->value,e); held->previous_number=owner->value;
+    if (!held->value) { free(held); return false; }
     held->number=number; held->modification_count=row->modification_count;
     held->previous_explicit=owner->explicit_override; held->previous_published=owner->published;
     held->notify=transition==FRONTEND_VIEW_BORROWED ||
-        (transition==FRONTEND_VIEW_INITIAL?number!=90:strcmp(row->value,previous->value)!=0);
+        (transition==FRONTEND_VIEW_INITIAL?number!=90:number!=owner->value);
     held->explicit_override=transition==FRONTEND_VIEW_INITIAL?number!=90:
         owner->explicit_override || held->notify;
     owner->preparation=held; *out=held; return true;
@@ -566,7 +566,7 @@ bool frontend_view_settings_ready_is(const frontend_view_preparation *held)
     const qa_cvar_view *row=canonical?qa_cvars_edit_find(held->edit,canonical->name):NULL,*previous=record(owner);
     return row && previous && !strcmp(row->name,previous->name) &&
         row->modification_count==held->modification_count && !strcmp(row->value,held->value) &&
-        !strcmp(previous->value,held->previous);
+        owner->value==held->previous_number;
 }
 void frontend_view_settings_publish(frontend_view_preparation *held)
 {
@@ -595,7 +595,7 @@ bool frontend_view_settings_apply(frontend_view_preparation *held,qa_error *e)
 static void release(frontend_view_preparation *held)
 {
     held->parent->preparation=NULL;
-    free(held->value); free(held->previous); free(held);
+    free(held->value); free(held);
 }
 bool frontend_view_settings_finish(frontend_view_preparation **in,qa_error *e)
 {
