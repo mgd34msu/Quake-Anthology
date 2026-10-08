@@ -66,10 +66,12 @@ uint64_t frontend_network_unified_events_after(const frontend_network_unified *o
     uint64_t next = UINT64_MAX;
     if (owner && owner->options.server) for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         const unified_peer *peer = owner->peers + i;
-        const application_unified_server *server = peer->server;
+        application_unified_server *server = peer->server;
         if (server && server->admitted && !server->closed &&
-            !qa_unified_session_retiring(peer->session) && server->events_after < next)
-            next = server->events_after;
+            !qa_unified_session_retiring(peer->session)) {
+            uint64_t retired = application_unified_server_events_retired(server);
+            if (retired < next) next = retired;
+        }
     }
     return next;
 }

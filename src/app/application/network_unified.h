@@ -78,6 +78,7 @@ bool application_unified_server_publish(application_unified_server *,
     struct qa_unified_world_frame *borrowed_world,
     const struct application_unified_output_external *, qa_error *);
 bool application_unified_server_publication_complete(const application_unified_server *);
+uint64_t application_unified_server_events_retired(application_unified_server *);
 bool application_unified_server_source_drop(application_unified_server *,qa_actor_owner,
     uint32_t source_slot,const char *reason,bool *matched,qa_error *);
 bool application_unified_source_drop_recipient(qa_application *,qa_actor_owner,uint32_t,

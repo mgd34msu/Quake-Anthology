@@ -30,6 +30,11 @@ struct application_unified_inputs {
     int64_t queued, submitted;
     bool advancing;
 };
+enum { APPLICATION_UNIFIED_EVENT_RECEIPTS = 64 };
+typedef struct application_unified_event_receipt {
+    uint64_t first;
+    uint32_t reliable_last;
+} application_unified_event_receipt;
 struct application_unified_server {
     qa_application *application;
     qa_network_runtime *runtime;
@@ -53,6 +58,8 @@ struct application_unified_server {
     uint32_t pending_first, pending_last;
     uint64_t frame_before, published_frame;
     uint64_t events_after, pending_events_through;
+    application_unified_event_receipt event_receipts[APPLICATION_UNIFIED_EVENT_RECEIPTS];
+    size_t event_receipt_head, event_receipt_count;
     /* Derived setup receipts; a restored transport declares its dictionary again. */
     size_t declared_resources, pending_declared_resources;
     int64_t acknowledged;

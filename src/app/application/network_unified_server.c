@@ -562,6 +562,30 @@ bool application_unified_server_source_drop_finish(application_unified_server *o
     owner->inputs=NULL; player_receipt_clear(owner); metadata_clear(owner); owner->source_dropped=false; return true;
 }
 
+uint64_t application_unified_server_events_retired(application_unified_server *owner)
+{
+    if (!owner) return UINT64_MAX;
+    uint32_t acknowledged = qa_unified_session_reliable_acknowledged(owner->session);
+    while (owner->event_receipt_count) {
+        const application_unified_event_receipt *receipt = owner->event_receipts + owner->event_receipt_head;
+        if (acknowledged < receipt->reliable_last) return receipt->first;
+        owner->event_receipt_head = (owner->event_receipt_head + 1) % APPLICATION_UNIFIED_EVENT_RECEIPTS;
+        --owner->event_receipt_count;
+    }
+    return owner->events_after;
+}
+
+static void event_receipt(application_unified_server *owner, uint64_t through)
+{
+    if (owner->pending_last && through != owner->events_after) {
+        size_t slot = (owner->event_receipt_head + owner->event_receipt_count) % APPLICATION_UNIFIED_EVENT_RECEIPTS;
+        owner->event_receipts[slot] = (application_unified_event_receipt){
+            .first = owner->events_after, .reliable_last = owner->pending_last};
+        ++owner->event_receipt_count;
+    }
+    owner->events_after = through;
+}
+
 bool application_unified_server_publish(application_unified_server *owner, qa_unified_world_frame *borrowed_world,
     const application_unified_output_external *external, qa_error *error)
 {
@@ -578,6 +602,11 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         !application_unified_player_read(owner->application, owner->client, owner->seat, &actual, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified publication lacks its genuinely completed Source frame");
     if (!owner->pending.frame) {
+        (void)application_unified_server_events_retired(owner);
+        if (owner->event_receipt_count == APPLICATION_UNIFIED_EVENT_RECEIPTS) {
+            owner->preparing_frame = false;
+            return true;
+        }
         int64_t acknowledged = application_unified_inputs_submitted(owner->inputs);
         application_unified_output_capture *capture = NULL;
         if (!application_unified_output_acquire(owner->application, &source, borrowed_world,
@@ -649,7 +678,7 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
             source_metadata = NULL;
         }
         application_unified_output_capture_dispose(owner->pending_capture); owner->pending_capture = NULL;
-        owner->events_after = owner->pending_events_through;
+        event_receipt(owner, owner->pending_events_through);
         owner->declared_resources = owner->pending_declared_resources;
         application_unified_output_dispose(&owner->pending); owner->control_cursor = 0;
         owner->pending_first=owner->pending_last=0;

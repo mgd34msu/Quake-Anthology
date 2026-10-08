@@ -333,5 +333,15 @@ bool application_unified_server_restore_bind(application_unified_server *owner,
         !continuation_valid(owner, &source, needs_player ? &player : NULL, peer, e))
         return bad(e, "Source import binding changed its retained physical player or output");
     owner->session = session; owner->restore_pending = false;
+    uint32_t required = qa_unified_session_required(session);
+    if (required > qa_unified_session_reliable_acknowledged(session) &&
+        owner->application->unified_event_count) {
+        uint64_t first = owner->application->unified_events[0].order;
+        if (first < owner->events_after) {
+            owner->event_receipts[0] = (application_unified_event_receipt){
+                .first = first, .reliable_last = required};
+            owner->event_receipt_count = 1;
+        }
+    }
     return true;
 }
