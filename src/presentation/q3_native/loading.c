@@ -225,11 +225,13 @@ bool q3n_loading_client(q3n_loading *o,const q3n_frame *f,uint32_t number,qa_err
         info_text(info,"model",model,sizeof(model),e) && info_text(info,"n",personality,sizeof(personality),e);
     if(ok && o->state.player_count<16) {
         char *skin=strrchr(model,'/'); if(skin)*skin++=0; else skin="default";
-        char path[sizeof(model) * 2 + sizeof("models/players/characters//icon_.tga")]; int32_t handle;
-        snprintf(path,sizeof(path),"models/players/%s/icon_%s.tga",model,skin);
-        ok=shader(o,f,path,false,&handle,e);
-        if(ok && !handle) { snprintf(path,sizeof(path),"models/players/characters/%s/icon_%s.tga",model,skin);
-            ok=shader(o,f,path,false,&handle,e); }
+        char path[sizeof(model) * 2 + sizeof("models/players/characters//icon_.tga")]; int32_t handle=0;
+        if(*model) {
+            snprintf(path,sizeof(path),"models/players/%s/icon_%s.tga",model,skin);
+            ok=shader(o,f,path,false,&handle,e);
+            if(ok && !handle) { snprintf(path,sizeof(path),"models/players/characters/%s/icon_%s.tga",model,skin);
+                ok=shader(o,f,path,false,&handle,e); }
+        }
         if(ok && !handle)ok=shader(o,f,"models/players/sarge/icon_default.tga",false,&handle,e);
         if(ok && handle)o->state.player_icons[o->state.player_count++]=handle;
     }
