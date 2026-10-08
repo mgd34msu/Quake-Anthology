@@ -4,7 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct cin_picture { uint8_t *pixels; uint64_t index; bool present; } cin_picture;
+typedef struct cin_picture {
+    uint8_t *pixels;
+    uint64_t index;
+    uint8_t palette[768];
+    bool present;
+} cin_picture;
 struct qa_cin_playback {
     qa_cin_decoder *decoder;
     qa_cin_info info;
@@ -33,6 +38,7 @@ static bool read_picture(qa_cin_playback *player, cin_picture *picture, qa_error
     if (frame.ended) return true;
     picture->index = frame.index;
     memcpy(picture->pixels, frame.pixels, player->pixels);
+    memcpy(picture->palette, frame.palette, sizeof(picture->palette));
     player->image_dirty = true;
     if (frame.info.channels && !player->options.silent) {
         double source_ms = (double)frame.source_sample * 1000 / frame.info.sample_rate;
@@ -82,7 +88,8 @@ const qa_media_frame *qa_cin_playback_frame(qa_cin_playback *player) {
     if (player->image_dirty) {
         qa_error unused;
         if (!qa_cin_rgba((qa_bytes){player->picture.pixels, player->pixels},
-            (qa_bytes){qa_cin_decoder_palette(player->decoder), 768}, rgba, player->pixels * 4, &unused)) return NULL;
+            (qa_bytes){player->picture.palette, sizeof(player->picture.palette)},
+            rgba, player->pixels * 4, &unused)) return NULL;
         player->image_dirty = false;
     }
     double source = (double)player->picture.index * 1000 / 14;

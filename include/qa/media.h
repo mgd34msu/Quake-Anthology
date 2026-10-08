@@ -43,11 +43,9 @@ void qa_cin_decoder_destroy(qa_cin_decoder *);
  * not advance the stream; previously borrowed pixel/audio scratch may change. */
 bool qa_cin_decoder_next(qa_cin_decoder *, qa_cin_frame *out, qa_error *);
 void qa_cin_decoder_rewind(qa_cin_decoder *);
-const uint8_t *qa_cin_decoder_palette(const qa_cin_decoder *);
 uint64_t qa_cin_decoder_index(const qa_cin_decoder *);
 bool qa_cin_sample_range(uint64_t frame, uint32_t rate, uint64_t *start, uint64_t *end, qa_error *);
-/* RGBA output permits the Q2 playback owner to display retained old indices
- * with the palette updated by a prefetched frame. */
+/* Converts a frame's indexed pixels with its palette. */
 bool qa_cin_rgba(qa_bytes pixels, qa_bytes palette, void *rgba, size_t capacity, qa_error *);
 
 typedef enum qa_media_status {

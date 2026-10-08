@@ -157,7 +157,6 @@ void qa_cin_decoder_rewind(qa_cin_decoder *decoder) {
     decoder->offset = CIN_HEADER_BYTES; decoder->index = 0; decoder->ended = false;
     memset(decoder->palette, 0, sizeof(decoder->palette));
 }
-const uint8_t *qa_cin_decoder_palette(const qa_cin_decoder *decoder) { return decoder->palette; }
 uint64_t qa_cin_decoder_index(const qa_cin_decoder *decoder) { return decoder->index; }
 bool qa_cin_rgba(qa_bytes pixels, qa_bytes palette, void *rgba, size_t capacity, qa_error *error) {
     if ((pixels.size && (!pixels.data || !rgba)) || !palette.data || palette.size != 768 ||
