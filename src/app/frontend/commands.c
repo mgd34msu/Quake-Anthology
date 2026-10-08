@@ -12,8 +12,6 @@
 #include "q1_help.h"
 #include <stdio.h>
 
-static const char *const client_menus[]={"toggleconsole","menu","messagemode","messagemode2",
-    "menu_anthology","library","mods","settings","rankings","assistance","controls","quit","togglemenu","help"};
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
     FRONTEND_OPTIONS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_CONTROLS};
 static bool menu_command(frontend_seat *seat, const qa_command_context *context,
@@ -48,17 +46,6 @@ bool frontend_commands_menus_pump(qa_frontend *frontend, qa_error *error)
     }
     return true;
 }
-struct frontend_client_commands {
-    qa_frontend *frontend;
-    qa_console *console;
-    qa_cvars *cvars;
-    qa_command_context registration;
-    const void *lifetime;
-    qa_actor_owner receiver;
-    uint64_t command_owner;
-    uint32_t seat,physical;
-    size_t registered;
-};
 static bool client_name(const char *text,const char *name)
 {
     for (;*text && *name;++text,++name) {
@@ -185,87 +172,6 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
     if (*handled) return true;
     return true;
 }
-static bool client_menu_command(void *context,const qa_command_invocation *command,qa_error *error)
-{
-    frontend_client_commands *owner=context;
-    qa_frontend *f=owner?owner->frontend:NULL;
-    qa_application_client_source source;
-    bool engine=command && !command->context.owner;
-    if (!f || !command || !command->argc || command->console!=owner->console ||
-        !qa_application_client_physical_read(f->application,owner->receiver,owner->seat,&source,error) ||
-        source.context.console!=owner->console || source.context.cvars!=owner->cvars ||
-        source.context.lifetime!=owner->lifetime || source.context.physical_seat!=owner->physical ||
-        !qa_console_invocation_delivered_view(command,qa_cvars_view_identity(owner->cvars),0,owner->receiver) ||
-        !qa_application_command_context_active(f->application,&command->context) ||
-        (!engine && (command->context.owner!=source.context.command.owner ||
-            command->context.cvar_view!=source.context.command.cvar_view)) ||
-        command->context.session!=source.context.command.session ||
-        command->context.client!=source.context.command.client || command->context.seat!=source.context.command.seat ||
-        command->context.registry!=source.context.command.registry || command->context.generation!=source.context.command.generation ||
-        command->context.dialect!=source.context.command.dialect ||
-        !qa_actor_id_equal(command->context.actor,source.context.command.actor) || !f->seats ||
-        owner->physical>=f->options.seats || f->seats[owner->physical].frontend!=f)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu command lost its actual physical namespace");
-    frontend_seat *seat=f->seats+owner->physical;
-    if (client_name(command->argv[0],"help"))
-        return menu_command(seat,&command->context,FRONTEND_Q1_HELP,false,error);
-    if (command->context.origin==QA_COMMAND_REMOTE) {
-        frontend_console_print(f,&command->context,"Menu commands require the local client.\n"); return true;
-    }
-    if (client_name(command->argv[0],"quit")) { qa_application_request_stop(f->application); return true; }
-    size_t kind=0;
-    while (kind<sizeof(client_menus)/sizeof(*client_menus) && !client_name(command->argv[0],client_menus[kind])) ++kind;
-    if (kind==0) return qa_seat_console_toggle(seat->console,false,false,error);
-    if (kind==1 || client_name(command->argv[0],"togglemenu"))
-        return menu_command(seat,&command->context,FRONTEND_HOME,true,error);
-    if (kind==2 || kind==3) return qa_seat_console_message(seat->console,kind==3,false,0,error);
-    if (kind >= 4 && kind - 4 < sizeof(menu_destinations)/sizeof(*menu_destinations))
-        return menu_command(seat,&command->context,menu_destinations[kind-4],false,error);
-    return frontend_fail(error,QA_ERROR_ARGUMENT,"Unknown registered CLIENT menu command");
-}
-bool frontend_commands_client_unbind(frontend_client_commands **slot,qa_error *error)
-{
-    frontend_client_commands *owner=slot?*slot:NULL;
-    if (!owner) return true;
-    if (!qa_console_cvar_returned(owner->console))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menu handler has not returned");
-    for (size_t i=0;i<owner->registered;++i)
-        qa_console_unregister_context(owner->console,&owner->registration,client_menus[i],0);
-    free(owner); *slot=NULL; return true;
-}
-bool frontend_commands_client_bind(qa_frontend *f,const qa_application_client_source *source,
-    frontend_client_commands **out,qa_error *error)
-{
-    if (!f || !source || !out || *out || !source->context.receiver ||
-        !qa_console_cvar_returned(source->context.console) ||
-        (!qa_application_client_current(f->application,source) &&
-            !(f->source_restoring && qa_application_client_retirement_current(f->application,source))))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT menus require their actual returned Source console");
-    frontend_client_commands *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Owning CLIENT menu command handlers");
-    *owner=(frontend_client_commands){.frontend=f,.console=source->context.console,.cvars=source->context.cvars,
-        .lifetime=source->context.lifetime,.receiver=source->context.receiver,
-        .command_owner=source->context.command.owner,
-        .registration=source->context.command,
-        .seat=source->context.seat,.physical=source->context.physical_seat};
-    *out=owner;
-    for (size_t i=0;i<sizeof(client_menus)/sizeof(*client_menus);++i) {
-        if (client_name(client_menus[i],"help") && source->context.command.dialect!=QA_CONSOLE_Q1 &&
-            source->context.command.dialect!=QA_CONSOLE_QW)continue;
-        if (!qa_console_register_context(owner->console,&owner->registration,client_menus[i],"Native client menu command",0,
-            owner->receiver,true,client_menu_command,owner,error)) {
-            qa_error original=error?*error:(qa_error){0};
-            if (!frontend_commands_client_unbind(out,error)) return false;
-            if (error) *error=original;
-            return false;
-        }
-        ++owner->registered;
-    }
-    return true;
-}
-void frontend_commands_client_rebind(frontend_client_commands *owner,qa_frontend *f)
-{ if (owner && f) owner->frontend=f; }
-
 static qa_input_seat *input_seat(void *context, const qa_command_context *command)
 {
     qa_frontend *frontend = context;

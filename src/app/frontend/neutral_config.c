@@ -42,8 +42,6 @@ struct frontend_neutral_config {
     qa_input_seat *input;
     qa_input_seat *retirement_input;
     qa_input_release *retirement_release;
-    frontend_restart_client_binding *restart_binding;
-    frontend_client_commands *commands;
     qa_cvars *client, *mouse, *movement;
     qa_cvar_archive client_archive, mouse_archive, movement_archive, shared_archive;
     qa_seat_settings settings;
@@ -508,8 +506,6 @@ static bool install(void *context,const qa_application_client_source *source,boo
         return fail(e,QA_ERROR_ARGUMENT,"Neutral install changed its actual registry constructor");
     row->source=*source; row->attached=true;
     if (restoring && row->retiring) return true;
-    if (!frontend_restart_client_bind(f->restart,source,&row->restart_binding,e)) return false;
-    if (!frontend_commands_client_bind(f,source,&row->commands,e)) return false;
     if (!restoring) {
         qa_input_seat *live=f->seats[row->physical_seat].input;
         if (!live) return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT lacks its actual physical input");
@@ -789,8 +785,6 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
             row->recipient_returned=true;
         }
     }
-    if (!frontend_restart_client_unbind(&row->restart_binding,e)) return false;
-    if (!frontend_commands_client_unbind(&row->commands,e)) return false;
     if (row->bindings && !qa_console_idle(row->source.context.console))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral input handlers still have an entered physical console");
     qa_input_console_destroy(row->bindings);
@@ -803,7 +797,7 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
 }
 static bool dispose(frontend_neutral_config *row,qa_error *e)
 {
-    if (row->running || row->preparation || row->retirement_release || row->restart_binding || row->commands ||
+    if (row->running || row->preparation || row->retirement_release ||
         row->bindings || row->phase ||
         (row->files && !frontend_config_files_destroy(row->files,e))) return false;
     row->files=NULL;
@@ -1175,8 +1169,6 @@ void frontend_neutral_configs_rebind(frontend_neutral_configs *owner,qa_frontend
 {
     if (owner && f && manager) {
         owner->frontend=f; owner->manager=manager;
-        for (frontend_neutral_config *row=owner->rows;row;row=row->next)
-            frontend_commands_client_rebind(row->commands,f);
     }
 }
 bool frontend_neutral_configs_save(frontend_neutral_configs *owner,qa_error *e)

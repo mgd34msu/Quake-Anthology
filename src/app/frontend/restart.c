@@ -17,16 +17,6 @@ typedef struct frontend_video_attempt {
     bool input_attempted,published,color_retired,reopened,native_started,release_started;
     qa_error failure;
 } frontend_video_attempt;
-struct frontend_restart_client_binding {
-    frontend_restart_client_binding *next;
-    frontend_restart *controller;
-    qa_console *console;
-    qa_cvars *cvars;
-    const void *lifetime;
-    qa_actor_owner receiver;
-    uint32_t seat,physical;
-    unsigned registered;
-};
 struct frontend_restart {
     frontend_restart_options options;
     qa_restart_controls *controls;
@@ -36,7 +26,6 @@ struct frontend_restart {
     qa_display_backend backend;
     uint64_t generation;
     frontend_video_attempt *attempt;
-    frontend_restart_client_binding *clients;
     bool video_requested,running,registered,input_registered,releasing;
 };
 static bool fail(qa_error *error,qa_status code,const char *text)
@@ -247,19 +236,10 @@ bool frontend_restart_destroy(frontend_restart *owner,qa_error *error)
 {
     if (!owner) return true;
     if (owner->running) return fail(error,QA_ERROR_ARGUMENT,"Restart callback has not returned");
-    for (frontend_restart_client_binding *at=owner->clients;at;at=at->next)
-        if (!qa_console_idle(at->console)) return fail(error,QA_ERROR_ARGUMENT,"CLIENT restart handler has not returned");
     if (owner->attempt && !video_cleanup(owner,true,error)) return false;
     if (!qa_restart_destroy(owner->controls,error)) return false;
     if (owner->registered) qa_console_unregister(owner->console,"vid_restart",0);
     if (owner->input_registered) qa_console_unregister(owner->console,"in_restart",0);
-    while (owner->clients) {
-        frontend_restart_client_binding *binding=owner->clients; owner->clients=binding->next;
-        static const char *const names[]={"vid_restart","in_restart","snd_restart"};
-        for (unsigned i=0;i<3;++i) if (binding->registered&(1u<<i))
-            qa_console_unregister(binding->console,names[i],binding->receiver);
-        binding->controller=NULL; binding->next=NULL; binding->registered=0;
-    }
     free(owner->script); free(owner); return true;
 }
 static bool video_command(void *context,const qa_command_invocation *command,qa_error *error)
@@ -297,85 +277,6 @@ static bool input_command(void *context,const qa_command_invocation *command,qa_
         !owner->options.stage_input(owner->options.context,command,&staged,error)) return false;
     return staged || (owner->options.current(owner->options.context,&command->context,error) &&
         qa_restart_request(owner->controls,QA_RESTART_INPUT,error));
-}
-static bool command_is(const char *text,const char *name)
-{
-    for (;*text && *name;++text,++name) {
-        unsigned char c=(unsigned char)*text;
-        if (c>='A' && c<='Z') c=(unsigned char)(c+'a'-'A');
-        if (c!=(unsigned char)*name) return false;
-    }
-    return !*text && !*name;
-}
-static bool client_command(void *context,const qa_command_invocation *command,qa_error *error)
-{
-    frontend_restart_client_binding *binding=context;
-    frontend_restart *owner=binding?binding->controller:NULL;
-    qa_frontend *f=owner?owner->options.frontend:NULL;
-    qa_application_client_source source;
-    if (!f || !command || command->console!=binding->console ||
-        !qa_application_client_physical_read(f->application,binding->receiver,binding->seat,&source,error) ||
-        source.context.console!=binding->console || source.context.cvars!=binding->cvars ||
-        source.context.lifetime!=binding->lifetime || source.context.physical_seat!=binding->physical ||
-        command->context.owner!=source.context.command.owner || command->context.session!=source.context.command.session ||
-        command->context.client!=source.context.command.client || command->context.seat!=source.context.command.seat ||
-        command->context.registry!=source.context.command.registry || command->context.generation!=source.context.command.generation ||
-        command->context.dialect!=source.context.command.dialect ||
-        !qa_actor_id_equal(command->context.actor,source.context.command.actor))
-        return fail(error,QA_ERROR_ARGUMENT,"Restart command lost its actual physical CLIENT handler");
-    if (!command->argc) return fail(error,QA_ERROR_ARGUMENT,"CLIENT restart handler requires its actual command");
-    if (command_is(command->argv[0],"vid_restart")) return video_command(owner,command,error);
-    if (command_is(command->argv[0],"in_restart")) return input_command(owner,command,error);
-    if (!command_is(command->argv[0],"snd_restart")) return fail(error,QA_ERROR_ARGUMENT,"Unknown CLIENT restart command");
-    if (command->context.origin==QA_COMMAND_REMOTE) {
-        frontend_console_print(f,&command->context,"Device restart is a local client command.\n"); return true;
-    }
-    return owner->options.current(owner->options.context,&command->context,error) &&
-        qa_restart_request(owner->controls,QA_RESTART_AUDIO,error);
-}
-bool frontend_restart_client_unbind(frontend_restart_client_binding **slot,qa_error *error)
-{
-    frontend_restart_client_binding *binding=slot?*slot:NULL;
-    if (!binding) return true;
-    if (!qa_console_cvar_returned(binding->console) || (binding->controller && binding->controller->running))
-        return fail(error,QA_ERROR_ARGUMENT,"CLIENT restart binding has an entered handler");
-    static const char *const names[]={"vid_restart","in_restart","snd_restart"};
-    for (unsigned i=0;i<3;++i) if (binding->registered&(1u<<i))
-        qa_console_unregister(binding->console,names[i],binding->receiver);
-    if (binding->controller) {
-        frontend_restart_client_binding **link=&binding->controller->clients;
-        while (*link && *link!=binding) link=&(*link)->next;
-        if (*link) *link=binding->next;
-    }
-    free(binding); *slot=NULL; return true;
-}
-bool frontend_restart_client_bind(frontend_restart *owner,const qa_application_client_source *source,
-    frontend_restart_client_binding **out,qa_error *error)
-{
-    if (!owner || !source || !out || *out || owner->running || !source->context.receiver ||
-        !qa_console_cvar_returned(source->context.console) ||
-        (!qa_application_client_current(owner->options.frontend->application,source) &&
-            !(owner->options.frontend->source_restoring &&
-                qa_application_client_retirement_current(owner->options.frontend->application,source))))
-        return fail(error,QA_ERROR_ARGUMENT,"Restart binding requires its actual returned CLIENT namespace");
-    frontend_restart_client_binding *binding=calloc(1,sizeof(*binding));
-    if (!binding) return fail(error,QA_ERROR_MEMORY,"Retaining the CLIENT restart command binding");
-    *binding=(frontend_restart_client_binding){.controller=owner,.console=source->context.console,
-        .cvars=source->context.cvars,.lifetime=source->context.lifetime,.receiver=source->context.receiver,
-        .seat=source->context.seat,.physical=source->context.physical_seat,.next=owner->clients};
-    owner->clients=binding; *out=binding;
-    static const char *const names[]={"vid_restart","in_restart","snd_restart"};
-    for (unsigned i=0;i<3;++i) {
-        if (!qa_console_register_owned(binding->console,names[i],"Restart the actual physical client device",0,
-            binding->receiver,true,client_command,binding,error)) {
-            qa_error original=error?*error:(qa_error){0};
-            if (!frontend_restart_client_unbind(out,error)) return false;
-            if (error) *error=original;
-            return false;
-        }
-        binding->registered|=1u<<i;
-    }
-    return true;
 }
 bool frontend_restart_register(frontend_restart *owner,qa_console *console,qa_error *error)
 {
