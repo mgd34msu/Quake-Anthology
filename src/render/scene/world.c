@@ -1951,7 +1951,7 @@ bool qa_scene_world_source_model_admission(const qa_scene_world *world, uint32_t
     const qa_model_transform *transform, const qa_scene_world_input *input, bool *visible, qa_error *error)
 {
     if (!world || !world->references || world->checkpoint_active || world->capture || world->image_policy ||
-        world->bsp.family!=QA_BSP_Q3 || !input || !input->source_order || !transform || !visible ||
+        world->bsp.family!=QA_BSP_Q3 || !input || !transform || !visible ||
         model>=world->model_count)
         return world_error(error,QA_ERROR_ARGUMENT,"Source inline admission requires its actual retained model and view");
     if (!valid_input(world,input,error)) return false;
