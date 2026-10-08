@@ -871,7 +871,10 @@ bool qa_application_complete_frame(qa_application *application, qa_error *error)
 
 bool qa_application_clients_drain(qa_application *application, qa_error *error)
 {
-    if (!application || application->operation != APPLICATION_IDLE ||
+    if (!application)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "client drop drain requires returned application callbacks");
+    if (application->operation != APPLICATION_IDLE ||
         application->q3_round_active || application->frame_preparing ||
         application->client_preparation || application->q1_original_save || application->q2_original_save ||
         qa_application_startup_pending(application) ||
@@ -890,8 +893,7 @@ bool qa_application_clients_drain(qa_application *application, qa_error *error)
         (application->combat && !qa_combat_idle(application->combat)) ||
         (application->modes && !qa_modes_idle(application->modes)) ||
         (application->equipment && !qa_equipment_idle(application->equipment)))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "client drop drain requires returned application callbacks");
+        return true;
     return application_native_q3_clients_drain(application, error) &&
         (application->state != QA_APPLICATION_RUNNING ||
          application_q3_publish_local_snapshots(application, error));

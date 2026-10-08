@@ -2107,6 +2107,8 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *f)
     bool unified_server = frontend_network_unified_server(n->unified);
     if (frontend_network_remote(f) || frontend_network_client_only(f) || n->q1_client_owner ||
         n->q2_client_owner || n->unified_client_service || (n->unified && !unified_server)) return QA_SAVE_REMOTE;
+    if (n->loopback && !f->options.network_host && !f->options.network_connect && !f->options.dedicated)
+        return QA_SAVE_OFFLINE;
     return n->q3_admission || n->nq_host || n->qw_host || unified_server ||
         n->q2_host ? QA_SAVE_SERVER : QA_SAVE_OFFLINE;
 }
