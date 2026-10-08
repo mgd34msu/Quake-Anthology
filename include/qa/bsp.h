@@ -7,7 +7,8 @@
 typedef enum qa_bsp_family { QA_BSP_Q1 = 1, QA_BSP_Q2, QA_BSP_Q3 } qa_bsp_family;
 typedef enum qa_bsp_format {
     QA_BSP_29, QA_BSP_2, QA_BSP_2PSB, QA_BSP_QUAKE64,
-    QA_BSP_IBSP38, QA_BSP_QBSP, QA_BSP_IBSP44, QA_BSP_IBSP46
+    QA_BSP_IBSP38, QA_BSP_QBSP, QA_BSP_IBSP44, QA_BSP_IBSP46,
+    QA_BSP_30, QA_BSP_IBSP47
 } qa_bsp_format;
 
 /* Semantic names resolve to each format's actual on-disk directory. */
@@ -18,7 +19,7 @@ typedef enum qa_bsp_lump_kind {
     QA_BSP_EDGES, QA_BSP_SURFEDGES, QA_BSP_MODELS, QA_BSP_LEAF_BRUSHES,
     QA_BSP_BRUSHES, QA_BSP_BRUSH_SIDES, QA_BSP_POP, QA_BSP_AREAS,
     QA_BSP_AREA_PORTALS, QA_BSP_SHADERS, QA_BSP_INDICES, QA_BSP_FOGS,
-    QA_BSP_SURFACES, QA_BSP_LIGHTGRID, QA_BSP_LUMP_COUNT
+    QA_BSP_SURFACES, QA_BSP_LIGHTGRID, QA_BSP_ADVERTISEMENTS, QA_BSP_LUMP_COUNT
 } qa_bsp_lump_kind;
 
 typedef struct qa_bsp_lump {
@@ -87,7 +88,7 @@ typedef struct qa_bsp_face {
     qa_bsp_range edges;
     uint32_t texinfo;
     uint8_t styles[4];
-    int32_t lighting_offset; /* Quake64 converted to sample offset. */
+    int32_t lighting_offset; /* Q1-family byte offsets converted to sample offsets. */
 } qa_bsp_face;
 typedef struct qa_bsp_clipnode { int32_t plane, children[2]; } qa_bsp_clipnode;
 typedef struct qa_bsp_texinfo {
@@ -175,6 +176,7 @@ typedef struct qa_bsp_texture {
     qa_bytes name;
     uint32_t width, height, quake64_shift, mip_offsets[4];
     qa_bytes levels[4];
+    qa_bytes palette_rgb; /* BSP30 palette borrows the texture lump. */
 } qa_bsp_texture;
 bool qa_bsp_texture_count(const qa_bsp_view *, size_t *, qa_error *);
 bool qa_bsp_read_texture(const qa_bsp_view *, size_t, qa_bsp_texture *, qa_error *);

@@ -13,19 +13,36 @@ static unsigned checks;
 
 typedef struct fixture { uint8_t data[8192]; size_t size, directory, count; } fixture;
 
+static const qa_bsp_format formats[] = {
+    QA_BSP_29, QA_BSP_2, QA_BSP_2PSB, QA_BSP_QUAKE64,
+    QA_BSP_IBSP38, QA_BSP_QBSP, QA_BSP_IBSP44, QA_BSP_IBSP46,
+    QA_BSP_30, QA_BSP_IBSP47
+};
+
+static bool q1_format(qa_bsp_format format)
+{
+    return format <= QA_BSP_QUAKE64 || format == QA_BSP_30;
+}
+
+static bool modern_q3(qa_bsp_format format)
+{
+    return format == QA_BSP_IBSP46 || format == QA_BSP_IBSP47;
+}
+
 static fixture make_fixture(qa_bsp_format format)
 {
     fixture file = {0};
     static const uint32_t magic[] = {29, UINT32_C(0x32505342), UINT32_C(0x42535032),
         UINT32_C(0x51363420), UINT32_C(0x50534249), UINT32_C(0x50534251),
-        UINT32_C(0x50534249), UINT32_C(0x50534249)};
-    file.directory = format <= QA_BSP_QUAKE64 ? 4 : 8;
-    file.count = format <= QA_BSP_QUAKE64 || format == QA_BSP_IBSP44 ? 15
-        : format == QA_BSP_IBSP46 ? 17 : 19;
+        UINT32_C(0x50534249), UINT32_C(0x50534249), 30, UINT32_C(0x50534249)};
+    file.directory = q1_format(format) ? 4 : 8;
+    file.count = q1_format(format) || format == QA_BSP_IBSP44 ? 15
+        : format == QA_BSP_IBSP46 ? 17 : format == QA_BSP_IBSP47 ? 18 : 19;
     file.size = file.directory + file.count * 8;
     qa_store_u32le(file.data, magic[format]);
     if (file.directory == 8)
-        qa_store_u32le(file.data + 4, format == QA_BSP_IBSP44 ? 44 : format == QA_BSP_IBSP46 ? 46 : 38);
+        qa_store_u32le(file.data + 4, format == QA_BSP_IBSP44 ? 44 : format == QA_BSP_IBSP46 ? 46
+            : format == QA_BSP_IBSP47 ? 47 : 38);
     return file;
 }
 
@@ -55,7 +72,8 @@ static bool equal_text(qa_bytes bytes, const char *text)
 static void probes(void)
 {
     qa_error error = {0};
-    for (int format = QA_BSP_29; format <= QA_BSP_IBSP46; ++format) {
+    for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
+        qa_bsp_format format = formats[f];
         fixture file = make_fixture((qa_bsp_format)format);
         qa_bsp_format detected;
         CHECK(qa_bsp_probe((qa_bytes){file.data, file.directory}, &detected, &error));
@@ -90,11 +108,12 @@ static void headers(void)
 {
     qa_error error = {0};
     qa_bsp_view map;
-    for (int format = QA_BSP_29; format <= QA_BSP_IBSP46; ++format) {
+    for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
+        qa_bsp_format format = formats[f];
         fixture file = make_fixture((qa_bsp_format)format);
         CHECK(qa_bsp_open((qa_bytes){file.data,file.size}, &map, &error));
         CHECK(map.format == (qa_bsp_format)format);
-        CHECK(map.family == (format <= QA_BSP_QUAKE64 ? QA_BSP_Q1 : format <= QA_BSP_QBSP ? QA_BSP_Q2 : QA_BSP_Q3));
+        CHECK(map.family == (q1_format(format) ? QA_BSP_Q1 : format == QA_BSP_IBSP38 || format == QA_BSP_QBSP ? QA_BSP_Q2 : QA_BSP_Q3));
         CHECK(strcmp(qa_bsp_format_name(map.format), "unknown") != 0);
         CHECK(map.source.data == file.data);
         for (size_t size = 0; size < file.size; ++size)
@@ -108,7 +127,7 @@ static void headers(void)
     }
     CHECK(!qa_bsp_open((qa_bytes){NULL,4}, &map, &error));
     fixture file = make_fixture(QA_BSP_IBSP46);
-    qa_store_u32le(file.data + 4, 47);
+    qa_store_u32le(file.data + 4, 48);
     CHECK(!qa_bsp_open((qa_bytes){file.data,file.size}, &map, &error) && error.code == QA_ERROR_UNSUPPORTED);
     file = make_fixture(QA_BSP_QBSP);
     qa_store_u32le(file.data + 4, 46);
@@ -132,15 +151,16 @@ static void headers(void)
 static void geometry(void)
 {
     qa_error error = {0};
-    for (int format = QA_BSP_29; format <= QA_BSP_IBSP46; ++format) {
+    for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
+        qa_bsp_format format = formats[f];
         fixture file = make_fixture((qa_bsp_format)format);
-        bool q1 = format <= QA_BSP_QUAKE64, q2 = format == QA_BSP_IBSP38 || format == QA_BSP_QBSP;
+        bool q1 = q1_format(format), q2 = format == QA_BSP_IBSP38 || format == QA_BSP_QBSP;
         bool wide = format == QA_BSP_2 || format == QA_BSP_2PSB || format == QA_BSP_QBSP;
         bool float_bounds = format == QA_BSP_2 || format == QA_BSP_QBSP;
-        size_t plane_disk = format == QA_BSP_IBSP46 ? 2 : 1;
+        size_t plane_disk = modern_q3(format) ? 2 : 1;
         uint8_t plane[20] = {0};
         put_float(plane, -1.0f); put_float(plane + 12, 128.5f); qa_store_u32le(plane + 16, 3);
-        add_lump(&file, plane_disk, plane, format == QA_BSP_IBSP46 ? 16 : 20);
+        add_lump(&file, plane_disk, plane, modern_q3(format) ? 16 : 20);
         uint8_t vertex[44] = {0};
         put_float(vertex, 1.25f); put_float(vertex + 4, -2.0f); put_float(vertex + 8, 3.5f);
         vertex[40] = 240; vertex[43] = 255;
@@ -160,7 +180,7 @@ static void geometry(void)
         qa_bsp_plane p;
         CHECK(qa_bsp_read_plane(&map, 0, &p, &error));
         CHECK(p.normal.x == -1 && p.distance == 128.5f);
-        CHECK(p.type == (format == QA_BSP_IBSP46 ? -1 : 3));
+        CHECK(p.type == (modern_q3(format) ? -1 : 3));
         qa_bsp_vertex v;
         CHECK(qa_bsp_read_vertex(&map, 0, &v, &error) && v.position.z == 3.5f);
         if (!q1 && !q2) CHECK(v.color[0] == 240 && v.color[3] == 255);
@@ -208,9 +228,11 @@ static void unsigned_q1_children(void)
 static void faces_and_models(void)
 {
     qa_error error = {0};
-    for (int format = QA_BSP_29; format <= QA_BSP_QBSP; ++format) {
+    for (size_t i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i) {
+        qa_bsp_format format = formats[i];
+        if (!q1_format(format) && format != QA_BSP_IBSP38 && format != QA_BSP_QBSP) continue;
         fixture file = make_fixture((qa_bsp_format)format);
-        bool q1 = format <= QA_BSP_QUAKE64;
+        bool q1 = q1_format(format);
         bool wide = format == QA_BSP_2 || format == QA_BSP_2PSB || format == QA_BSP_QBSP;
         uint8_t face[28] = {0};
         size_t cursor = 0;
@@ -220,7 +242,7 @@ static void faces_and_models(void)
         if (wide) { qa_store_u32le(face + cursor, 9); qa_store_u32le(face + cursor + 4, 123); cursor += 8; }
         else { qa_store_u16le(face + cursor, 9); qa_store_u16le(face + cursor + 2, 123); cursor += 4; }
         face[cursor] = 7; face[cursor + 3] = 255; cursor += 4;
-        qa_store_u32le(face + cursor, 40);
+        qa_store_u32le(face + cursor, format == QA_BSP_30 ? 42 : 40);
         size_t face_offset = add_lump(&file, q1 ? 7 : 6, face, wide ? 28 : 20);
         uint8_t model[64] = {0};
         put_float(model, -128); put_float(model + 12, 256); put_float(model + 24, 3);
@@ -236,7 +258,7 @@ static void faces_and_models(void)
         CHECK(f.plane == (wide ? 70000u : 50000u) && f.draw_flags == 1);
         CHECK(f.edges.first == 90 && f.edges.count == 9 && f.texinfo == 123);
         CHECK(f.styles[0] == 7 && f.styles[3] == 255);
-        CHECK(f.lighting_offset == (format == QA_BSP_QUAKE64 ? 20 : 40));
+        CHECK(f.lighting_offset == (format == QA_BSP_QUAKE64 ? 20 : format == QA_BSP_30 ? 14 : 40));
         CHECK(qa_bsp_read_model(&map, 0, &m, &error));
         CHECK(m.headnodes[0] == -1 && m.origin.x == 3 && m.faces.count == 3);
         if (format == QA_BSP_QUAKE64) {
@@ -251,8 +273,9 @@ static void faces_and_models(void)
 static void q3_surfaces(void)
 {
     qa_error error = {0};
-    for (int version = 0; version < 2; ++version) {
-        fixture file = make_fixture(version == 0 ? QA_BSP_IBSP44 : QA_BSP_IBSP46);
+    for (int version = 0; version < 3; ++version) {
+        fixture file = make_fixture(version == 0 ? QA_BSP_IBSP44
+            : version == 1 ? QA_BSP_IBSP46 : QA_BSP_IBSP47);
         uint8_t surface[164] = {0};
         size_t light;
         if (version == 0) {
@@ -293,9 +316,10 @@ static void q3_surfaces(void)
 static void remaining_records(void)
 {
     qa_error error = {0};
-    for (int format = QA_BSP_29; format <= QA_BSP_IBSP46; ++format) {
+    for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
+        qa_bsp_format format = formats[f];
         fixture file = make_fixture((qa_bsp_format)format);
-        bool q1 = format <= QA_BSP_QUAKE64, q2 = format == QA_BSP_IBSP38 || format == QA_BSP_QBSP;
+        bool q1 = q1_format(format), q2 = format == QA_BSP_IBSP38 || format == QA_BSP_QBSP;
         bool wide = format == QA_BSP_2 || format == QA_BSP_2PSB || format == QA_BSP_QBSP;
         size_t leaf_size = q1 ? (wide ? format == QA_BSP_2 ? 44 : 32 : 28) : q2 ? (wide ? 52 : 28) : 48;
         uint8_t leaf[52] = {0};
@@ -335,7 +359,7 @@ static void remaining_records(void)
         if (!q1 && !q2) {
             uint8_t fog[72] = {0}; memcpy(fog, "fog/test", 8); qa_store_u32le(fog + 64, 2); qa_store_u32le(fog + 68, 3);
             add_lump(&file, format == QA_BSP_IBSP44 ? 13 : 12, fog, format == QA_BSP_IBSP44 ? 68 : 72);
-            if (format == QA_BSP_IBSP46) {
+            if (modern_q3(format)) {
                 uint8_t shader[72] = {0}; memcpy(shader, "shader/test", 11);
                 qa_store_u32le(shader + 64, 17); qa_store_u32le(shader + 68, 19);
                 add_lump(&file, 1, shader, sizeof(shader));
@@ -369,7 +393,7 @@ static void remaining_records(void)
             qa_bsp_brush b;
             qa_bsp_brush_side s;
             CHECK(qa_bsp_read_brush(&map, 0, &b, &error) && b.sides.first == 11 && b.sides.count == 6);
-            CHECK((format == QA_BSP_IBSP46 ? b.shader : b.contents) == 1234);
+            CHECK((modern_q3(format) ? b.shader : b.contents) == 1234);
             CHECK(qa_bsp_read_brush_side(&map, 0, &s, &error) && s.plane == 9);
             CHECK(q2 ? s.texinfo == -1 : format == QA_BSP_IBSP44 ? s.flags == 16 : s.shader == 16);
         }
@@ -531,10 +555,104 @@ static void bspx(void)
     CHECK(map.bspx_offset == 124 && map.extension_count == 1);
 }
 
+
+static void halflife_assets(void)
+{
+    fixture file = make_fixture(QA_BSP_30);
+    qa_error error = {0};
+    const uint8_t rgb[] = {7, 11, 13, 17, 19, 23};
+    size_t light_offset = add_lump(&file, 8, rgb, sizeof(rgb));
+    uint8_t face[20] = {0};
+    qa_store_u32le(face + 16, 3);
+    size_t face_offset = add_lump(&file, 7, face, sizeof(face));
+    uint8_t texture[1158] = {0};
+    qa_store_u32le(texture, 1); qa_store_u32le(texture + 4, 8);
+    uint8_t *mip = texture + 8;
+    memcpy(mip, "{fence", 6);
+    qa_store_u32le(mip + 16, 16); qa_store_u32le(mip + 20, 16);
+    const uint32_t offsets[] = {40, 296, 360, 376};
+    for (size_t i = 0; i < 4; ++i) {
+        qa_store_u32le(mip + 24 + i * 4, offsets[i]);
+        memset(mip + offsets[i], 17, (size_t)256 >> (i * 2));
+        mip[offsets[i]] = 255;
+    }
+    qa_store_u16le(mip + 380, 256);
+    for (size_t i = 0; i < 256; ++i) {
+        mip[382 + i * 3] = (uint8_t)i;
+        mip[383 + i * 3] = (uint8_t)(255 - i);
+        mip[384 + i * 3] = (uint8_t)(i ^ 0x55u);
+    }
+    size_t texture_offset = add_lump(&file, 2, texture, sizeof(texture));
+    qa_bsp_view map;
+    CHECK(qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    qa_bsp_lighting lighting;
+    CHECK(qa_bsp_select_lighting(&map, (qa_bytes){0}, &lighting, &error));
+    CHECK(lighting.encoding == QA_BSP_LIGHT_RGB8 && lighting.sample_count == 2);
+    CHECK(lighting.samples.data == file.data + light_offset);
+    uint8_t sample[3];
+    CHECK(qa_bsp_light_sample(&lighting, 1, sample, &error));
+    CHECK(memcmp(sample, rgb + 3, sizeof(sample)) == 0);
+    qa_bsp_face decoded_face;
+    CHECK(qa_bsp_read_face(&map, 0, &decoded_face, &error));
+    CHECK(decoded_face.lighting_offset == 1);
+    qa_store_u32le(file.data + face_offset + 16, 4);
+    CHECK(!qa_bsp_read_face(&map, 0, &decoded_face, &error));
+    qa_store_u32le(file.data + face_offset + 16, UINT32_MAX);
+    CHECK(qa_bsp_read_face(&map, 0, &decoded_face, &error) && decoded_face.lighting_offset == -1);
+    qa_bsp_texture decoded_texture;
+    CHECK(qa_bsp_read_texture(&map, 0, &decoded_texture, &error));
+    CHECK(decoded_texture.storage == QA_BSP_TEXTURE_EMBEDDED && decoded_texture.width == 16);
+    CHECK(equal_text(decoded_texture.name, "{fence"));
+    for (size_t i = 0; i < 4; ++i) {
+        CHECK(decoded_texture.levels[i].size == ((size_t)256 >> (i * 2)));
+        CHECK(decoded_texture.levels[i].data[0] == 255 && decoded_texture.levels[i].data[1] == 17);
+    }
+    CHECK(decoded_texture.palette_rgb.size == 768);
+    CHECK(decoded_texture.palette_rgb.data == file.data + texture_offset + 8 + 382);
+    CHECK(decoded_texture.palette_rgb.data[17 * 3] == 17);
+    CHECK(decoded_texture.palette_rgb.data[17 * 3 + 1] == 238);
+    qa_store_u16le(file.data + texture_offset + 8 + 380, 257);
+    CHECK(!qa_bsp_read_texture(&map, 0, &decoded_texture, &error));
+    CHECK(error.code == QA_ERROR_UNSUPPORTED);
+    qa_store_u16le(file.data + texture_offset + 8 + 380, 256);
+    qa_store_u32le(file.data + file.directory + 2 * 8 + 4, sizeof(texture) - 1);
+    CHECK(qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    CHECK(!qa_bsp_read_texture(&map, 0, &decoded_texture, &error));
+    qa_store_u32le(file.data + file.directory + 8 * 8 + 4, 4);
+    CHECK(qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    CHECK(!qa_bsp_select_lighting(&map, (qa_bytes){0}, &lighting, &error));
+}
+
+static void quakelive_advertisements(void)
+{
+    fixture file = make_fixture(QA_BSP_IBSP47);
+    uint8_t ads[256] = {0};
+    qa_store_u32le(ads, 7); qa_store_u32le(ads + 128, 11);
+    memcpy(ads + 64, "textures/ad/first", 17);
+    memcpy(ads + 192, "textures/ad/second", 18);
+    size_t offset = add_lump(&file, 17, ads, sizeof(ads));
+    qa_error error = {0};
+    qa_bsp_view map;
+    CHECK(qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    CHECK(map.family == QA_BSP_Q3 && map.format == QA_BSP_IBSP47);
+    CHECK(map.lumps[QA_BSP_ADVERTISEMENTS].present);
+    CHECK(map.lumps[QA_BSP_ADVERTISEMENTS].stride == 128);
+    CHECK(qa_bsp_record_count(&map, QA_BSP_ADVERTISEMENTS) == 2);
+    qa_bytes record;
+    CHECK(qa_bsp_record(&map, QA_BSP_ADVERTISEMENTS, 1, &record, &error));
+    CHECK(record.data == file.data + offset + 128 && record.size == 128);
+    CHECK(qa_load_u32le(record.data) == 11 && memcmp(record.data + 64, ads + 192, 18) == 0);
+    CHECK(!qa_bsp_record(&map, QA_BSP_ADVERTISEMENTS, 2, &record, &error));
+    qa_store_u32le(file.data + file.directory + 17 * 8 + 4, 129);
+    CHECK(!qa_bsp_open((qa_bytes){file.data, file.size}, &map, &error));
+    CHECK(qa_bsp_probe((qa_bytes){file.data, file.size}, NULL, NULL));
+}
+
 int main(void)
 {
     probes(); headers(); geometry(); unsigned_q1_children(); faces_and_models();
     q3_surfaces(); remaining_records(); entities(); visibility(); bspx();
+    halflife_assets(); quakelive_advertisements();
     printf("BSP foundation: %u checks passed\n", checks);
     return 0;
 }

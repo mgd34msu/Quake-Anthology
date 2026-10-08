@@ -29,7 +29,7 @@ static const lump_layout q3_layout[] = {
     {QA_BSP_LEAF_BRUSHES,4}, {QA_BSP_MODELS,40}, {QA_BSP_BRUSHES,12},
     {QA_BSP_BRUSH_SIDES,8}, {QA_BSP_VERTICES,44}, {QA_BSP_INDICES,4},
     {QA_BSP_FOGS,72}, {QA_BSP_SURFACES,104}, {QA_BSP_LIGHTING,49152},
-    {QA_BSP_LIGHTGRID,8}, {QA_BSP_VISIBILITY,0}
+    {QA_BSP_LIGHTGRID,8}, {QA_BSP_VISIBILITY,0}, {QA_BSP_ADVERTISEMENTS,128}
 };
 static const lump_layout q3_44_layout[] = {
     {QA_BSP_ENTITIES,0}, {QA_BSP_PLANES,20}, {QA_BSP_NODES,36},
@@ -56,6 +56,8 @@ const char *qa_bsp_format_name(qa_bsp_format format)
     case QA_BSP_QBSP: return "qbsp";
     case QA_BSP_IBSP44: return "ibsp44";
     case QA_BSP_IBSP46: return "ibsp46";
+    case QA_BSP_30: return "bsp30";
+    case QA_BSP_IBSP47: return "ibsp47";
     }
     return "unknown";
 }
@@ -67,7 +69,7 @@ const char *qa_bsp_lump_name(qa_bsp_lump_kind kind)
         "texinfo", "faces", "lighting", "clipnodes", "leaves", "leaf_faces",
         "edges", "surfedges", "models", "leaf_brushes", "brushes", "brush_sides",
         "pop", "areas", "area_portals", "shaders", "indices", "fogs", "surfaces",
-        "lightgrid"
+        "lightgrid", "advertisements"
     };
     return (unsigned)kind < QA_BSP_LUMP_COUNT ? names[kind] : "unknown";
 }
@@ -207,6 +209,7 @@ bool qa_bsp_probe(qa_bytes source, qa_bsp_format *out, qa_error *error)
     uint32_t magic = qa_load_u32le(source.data);
     switch (magic) {
     case 29: format = QA_BSP_29; break;
+    case 30: format = QA_BSP_30; break;
     case UINT32_C(0x32505342): format = QA_BSP_2; break;
     case UINT32_C(0x42535032): format = QA_BSP_2PSB; break;
     case UINT32_C(0x51363420): format = QA_BSP_QUAKE64; break;
@@ -215,8 +218,8 @@ bool qa_bsp_probe(qa_bytes source, qa_bsp_format *out, qa_error *error)
         uint32_t version = qa_load_u32le(source.data + 4);
         if (version == 38) {
             format = magic == UINT32_C(0x50534249) ? QA_BSP_IBSP38 : QA_BSP_QBSP;
-        } else if (magic == UINT32_C(0x50534249) && (version == 44 || version == 46)) {
-            format = version == 44 ? QA_BSP_IBSP44 : QA_BSP_IBSP46;
+        } else if (magic == UINT32_C(0x50534249) && (version == 44 || version == 46 || version == 47)) {
+            format = version == 44 ? QA_BSP_IBSP44 : version == 46 ? QA_BSP_IBSP46 : QA_BSP_IBSP47;
         } else return fail(error, QA_ERROR_UNSUPPORTED, 4, "unsupported BSP version");
         break;
     }
@@ -243,6 +246,9 @@ bool qa_bsp_open(qa_bytes source, qa_bsp_view *out, qa_error *error)
         break;
     case QA_BSP_IBSP46:
         map.family = QA_BSP_Q3; layout = q3_layout; count = 17; directory = 8;
+        break;
+    case QA_BSP_IBSP47:
+        map.family = QA_BSP_Q3; layout = q3_layout; count = 18; directory = 8;
         break;
     default: break;
     }
@@ -394,7 +400,11 @@ static bool end_record(const record_reader *r, qa_error *error)
 }
 static bool narrow_q1(const qa_bsp_view *map)
 {
-    return map->format == QA_BSP_29 || map->format == QA_BSP_QUAKE64;
+    return map->format == QA_BSP_29 || map->format == QA_BSP_30 || map->format == QA_BSP_QUAKE64;
+}
+static bool modern_q3(const qa_bsp_view *map)
+{
+    return map->family == QA_BSP_Q3 && map->format != QA_BSP_IBSP44;
 }
 static bool wide_faces(const qa_bsp_view *map)
 {
@@ -509,10 +519,11 @@ bool qa_bsp_read_face(const qa_bsp_view *map, size_t index, qa_bsp_face *out, qa
     value.texinfo = wide ? r_u32(&r) : r_u16(&r);
     memcpy(value.styles, r.bytes.data + r.position, 4); r.position += 4;
     value.lighting_offset = r_i32(&r);
-    if (map->format == QA_BSP_QUAKE64 && value.lighting_offset != -1) {
-        if (value.lighting_offset % 2 != 0)
-            return fail(error, QA_ERROR_FORMAT, r.file_offset + r.position - 4, "unaligned Quake64 light offset");
-        value.lighting_offset /= 2;
+    int32_t sample_bytes = map->format == QA_BSP_QUAKE64 ? 2 : map->format == QA_BSP_30 ? 3 : 1;
+    if (sample_bytes > 1 && value.lighting_offset != -1) {
+        if (value.lighting_offset % sample_bytes != 0)
+            return fail(error, QA_ERROR_FORMAT, r.file_offset + r.position - 4, "unaligned BSP light offset");
+        value.lighting_offset /= sample_bytes;
     }
     *out = value;
     return true;
@@ -559,7 +570,7 @@ bool qa_bsp_read_model(const qa_bsp_view *map, size_t index, qa_bsp_model *out, 
     if (!begin_record(map, QA_BSP_MODELS, index, out, &r, error)) return false;
     qa_bsp_model value = {0};
     value.bounds = r_bounds(&r, BOUNDS_FLOAT);
-    if (map->format == QA_BSP_IBSP46) {
+    if (modern_q3(map)) {
         value.faces = r_range(&r, true); value.brushes = r_range(&r, true);
     } else {
         value.origin = r_vector(&r);
@@ -582,7 +593,7 @@ bool qa_bsp_read_brush(const qa_bsp_view *map, size_t index, qa_bsp_brush *out, 
     if (!begin_record(map, QA_BSP_BRUSHES, index, out, &r, error)) return false;
     qa_bsp_brush value = {.shader = -1};
     value.sides = r_range(&r, true);
-    if (map->format == QA_BSP_IBSP46) value.shader = r_i32(&r);
+    if (modern_q3(map)) value.shader = r_i32(&r);
     else value.contents = r_i32(&r);
     *out = value;
     return true;
@@ -982,6 +993,18 @@ bool qa_bsp_read_texture(const qa_bsp_view *map, size_t index, qa_bsp_texture *o
             return fail(error, QA_ERROR_FORMAT, lump.offset + offset, "invalid mip pixel range");
         texture.levels[i] = (qa_bytes){p + mip, (size_t)pixels};
     }
+    if (!external && map->format == QA_BSP_30) {
+        size_t palette_offset = texture.mip_offsets[3] + texture.levels[3].size;
+        size_t remaining = lump.bytes.size - offset;
+        if (palette_offset > remaining || remaining - palette_offset < 2)
+            return fail(error, QA_ERROR_FORMAT, lump.offset + offset, "truncated Half-Life texture palette");
+        size_t colors = qa_load_u16le(p + palette_offset);
+        if (colors != 256)
+            return fail(error, QA_ERROR_UNSUPPORTED, lump.offset + offset + palette_offset, "Half-Life texture palette must have 256 colors");
+        if (remaining - palette_offset - 2 < colors * 3)
+            return fail(error, QA_ERROR_FORMAT, lump.offset + offset + palette_offset, "truncated Half-Life texture palette colors");
+        texture.palette_rgb = (qa_bytes){p + palette_offset + 2, colors * 3};
+    }
     *out = texture;
     return true;
 }
@@ -994,9 +1017,12 @@ bool qa_bsp_select_lighting(const qa_bsp_view *map, qa_bytes lit, qa_bsp_lightin
     bool packed = map->format == QA_BSP_QUAKE64;
     if (packed && samples.size % 2 != 0)
         return fail(error, QA_ERROR_FORMAT, map->lumps[QA_BSP_LIGHTING].offset, "incomplete Quake64 light sample");
-    size_t source_count = packed ? samples.size / 2 : samples.size;
+    bool half_life = map->format == QA_BSP_30;
+    if (half_life && samples.size % 3 != 0)
+        return fail(error, QA_ERROR_FORMAT, map->lumps[QA_BSP_LIGHTING].offset, "incomplete Half-Life RGB light sample");
+    size_t source_count = packed ? samples.size / 2 : half_life ? samples.size / 3 : samples.size;
     qa_bsp_light_encoding encoding = map->family == QA_BSP_Q1
-        ? packed ? QA_BSP_LIGHT_QUAKE64 : QA_BSP_LIGHT_LUMINANCE : QA_BSP_LIGHT_RGB8;
+        ? packed ? QA_BSP_LIGHT_QUAKE64 : half_life ? QA_BSP_LIGHT_RGB8 : QA_BSP_LIGHT_LUMINANCE : QA_BSP_LIGHT_RGB8;
     if (map->family == QA_BSP_Q1) {
         qa_bsp_extension rgb;
         bool replacement = false;
@@ -1450,7 +1476,7 @@ static bool validate_q3_surfaces(const qa_bsp_view *map, qa_error *error)
         qa_bsp_surface surface;
         if (!qa_bsp_read_surface(map,i,&surface,error)) { valid = false; break; }
         size_t offset = map->lumps[QA_BSP_SURFACES].offset + i * map->lumps[QA_BSP_SURFACES].stride;
-        if (map->format == QA_BSP_IBSP46) {
+        if (modern_q3(map)) {
             if (!reference(surface.shader,qa_bsp_record_count(map,QA_BSP_SHADERS),offset,"surface shader",error)) { valid = false; break; }
         } else if (surface.brush_side >= 0
             && !reference(surface.brush_side,qa_bsp_record_count(map,QA_BSP_BRUSH_SIDES),offset,"surface brush side",error)) { valid = false; break; }
@@ -1611,7 +1637,7 @@ bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
         if (!qa_bsp_read_brush(map,i,&brush,error)) return false;
         size_t offset = map->lumps[QA_BSP_BRUSHES].offset + i * map->lumps[QA_BSP_BRUSHES].stride;
         if (!range_reference(brush.sides,counts[QA_BSP_BRUSH_SIDES],offset,"brush sides",error)) return false;
-        if (map->format == QA_BSP_IBSP46 && !reference(brush.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
+        if (modern_q3(map) && !reference(brush.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
     }
     for (size_t i = 0; i < counts[QA_BSP_BRUSH_SIDES]; ++i) {
         qa_bsp_brush_side side;
@@ -1619,14 +1645,14 @@ bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
         size_t offset = map->lumps[QA_BSP_BRUSH_SIDES].offset + i * map->lumps[QA_BSP_BRUSH_SIDES].stride;
         if (!reference(side.plane,counts[QA_BSP_PLANES],offset,"brush plane",error)) return false;
         if (map->family == QA_BSP_Q2 && side.texinfo != -1 && !reference(side.texinfo,counts[QA_BSP_TEXINFO],offset,"brush texture",error)) return false;
-        if (map->format == QA_BSP_IBSP46 && !reference(side.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
+        if (modern_q3(map) && !reference(side.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
     }
     for (size_t i = 0; i < counts[QA_BSP_MODELS]; ++i) {
         qa_bsp_model model;
         if (!qa_bsp_read_model(map,i,&model,error)) return false;
         size_t offset = map->lumps[QA_BSP_MODELS].offset + i * map->lumps[QA_BSP_MODELS].stride;
         if (map->format != QA_BSP_IBSP44 && !range_reference(model.faces,counts[map->family == QA_BSP_Q3 ? QA_BSP_SURFACES : QA_BSP_FACES],offset,"model faces",error)) return false;
-        if (map->format == QA_BSP_IBSP46) {
+        if (modern_q3(map)) {
             if (!range_reference(model.brushes,counts[QA_BSP_BRUSHES],offset,"model brushes",error)) return false;
         } else if (!child_reference(map,model.headnodes[0],offset,error)) return false;
         if (map->family == QA_BSP_Q1) {
@@ -1712,7 +1738,7 @@ bool qa_bsp_build_materials(const qa_bsp_view *map, qa_bsp_materials *out, qa_er
         && allocate_array(result.side_count,sizeof(*result.sides),&sides,error);
     result.shaders = shaders; result.surfaces = surfaces; result.brushes = brushes; result.sides = sides;
     if (!allocated) { qa_bsp_materials_free(&result); return false; }
-    if (map->format == QA_BSP_IBSP46) {
+    if (modern_q3(map)) {
         result.shader_count = maximum;
         for (size_t i = 0; i < maximum; ++i)
             if (!qa_bsp_read_shader(map,i,&result.shaders[i],error)) goto failed;

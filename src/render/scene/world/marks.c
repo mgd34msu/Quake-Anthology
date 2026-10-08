@@ -64,7 +64,7 @@ static bool mark_q3_flags(const qa_scene_world *world, uint32_t index,
     qa_bsp_surface source;
     if (!qa_bsp_read_surface(&world->bsp, index, &source, error)) return false;
     *flags = *contents = 0;
-    if (world->bsp.format == QA_BSP_IBSP46) {
+    if (world->bsp.format != QA_BSP_IBSP44) {
         qa_bsp_shader shader;
         if (!qa_bsp_read_shader(&world->bsp, (size_t)source.shader, &shader, error)) return false;
         *flags = (uint32_t)shader.surface_flags;

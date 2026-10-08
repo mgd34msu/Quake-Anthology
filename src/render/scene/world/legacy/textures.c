@@ -19,19 +19,21 @@ static bool load_optional(qa_scene_world *world, const char *name, const qa_scen
 static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
                              const qa_bsp_texture *source, qa_error *error)
 {
-    if (!world->options.images.palette_rgb.size &&
+    if (!source->palette_rgb.size && !world->options.images.palette_rgb.size &&
         !qa_scene_resources_palette(world->resources, QA_SCENE_Q1, &world->options.images.palette_rgb, error)) return false;
-    qa_bytes palette = world->options.images.palette_rgb;
+    qa_bytes palette = source->palette_rgb.size ? source->palette_rgb : world->options.images.palette_rgb;
     if (!palette.data || palette.size < 768) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Embedded brush textures require a 256-color palette");
         return false;
     }
-    unsigned first_fullbright = qa_scene_resources_fullbright_first(world->resources);
+    unsigned first_fullbright = source->palette_rgb.size ? 256 : qa_scene_resources_fullbright_first(world->resources);
     bool fullbright = first_fullbright < 256 && strncmp(texture->name, "sky", 3) != 0 && texture->name[0] != '*';
     qa_indexed_level levels[4] = {0}; size_t count = 0;
     image_asset_recipe recipe = {.kind = 1, .fullbright_first = first_fullbright,
         .fullbright_last = 255, .layer = QA_PALETTE_COMBINED};
-    scene_image_asset_palette(world->resources, &recipe, &world->options.images);
+    qa_scene_image_options upload = world->options.images;
+    upload.palette_rgb = palette;
+    scene_image_asset_palette(world->resources, &recipe, &upload);
     recipe.options.wrap = QA_SCENE_REPEAT;
     recipe.options.transparent = texture->name[0] == '{'; recipe.options.transparent_index = 255;
     recipe.generate_mips = recipe.options.transparent && world->options.images.mipmap;
@@ -62,7 +64,7 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
         .fullbright_first = first_fullbright < 256 ? (int)first_fullbright : -1,
         .fullbright_last = 255, .layer = QA_PALETTE_COMBINED,
         .translation = world->options.images.translation.size == 256 ? world->options.images.translation.data : NULL};
-    qa_scene_image_options upload = world->options.images; upload.wrap = QA_SCENE_REPEAT;
+    upload.wrap = QA_SCENE_REPEAT;
     upload.transparent = recipe.options.transparent; upload.transparent_index = recipe.options.transparent_index;
     if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
         &options, recipe.generate_mips, (qa_scene_vec4){0,0,0,1}, &texture->image, error) ||
@@ -182,7 +184,7 @@ bool qawl_textures_build(qa_scene_world *world, qa_error *error)
         texture->width = q1 && source.width ? source.width : texture->image->logical_width;
         texture->height = q1 && source.height ? source.height : texture->image->logical_height;
         texture->quake64_shift = source.quake64_shift;
-        if (q1 && !strncmp(texture->name, "sky", 3) && texture->image != qa_scene_missing(world->resources) &&
+        if (q1 && world->bsp.format != QA_BSP_30 && !strncmp(texture->name, "sky", 3) && texture->image != qa_scene_missing(world->resources) &&
             !split_sky(world, texture, &source, embedded, error)) return false;
     }
     if (q1 && !animations(data, error)) return false;
