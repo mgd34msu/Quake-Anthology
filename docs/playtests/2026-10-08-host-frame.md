@@ -72,6 +72,17 @@ test contains no frame tail; it does not qualify older recorded-frame replay.
 THE-865 remains In Progress pending that replay proof and its remaining
 architecture acceptance. No per-frame recovery writer was reintroduced.
 
+The public Load Game → Recover control recognized an actual October 5 Q2
+rerelease journal with 290 frame/input/advance records and one successful
+`hand 0` command. Its checkpoint decoder rejected a source count before
+restoring a world or reaching the tail. The count field, value and maximum
+were not captured. This exposes a retained-checkpoint compatibility gap;
+it proves neither success nor failure of the changed frame replay. The
+application returned to the menu and quit publicly with code 0. Root viewed
+all three screenshots. The original journal, profile and installed files
+were unchanged; all 15 owned process tokens were absent. Evidence packet:
+`qa-the865-public-tail-9836-20261008-0nu4fspd/failure-packet.json`.
+
 ## Pinned CPU comparison
 
 Q2 rerelease `base1`, copied owner profile, stationary view, swap interval and
