@@ -72,6 +72,7 @@ def qualify_wayland(build, profile, qualification):
     cases = qualification.get('cases')
     require(isinstance(cases, list), 'Wayland qualification must record launches')
     scopes = set()
+    owner_defaults = set()
     for case in cases:
         require(isinstance(case, dict) and case.get('normal_exit') is True and
                 type(case.get('exit_code')) is int and case['exit_code'] == 0,
@@ -81,10 +82,17 @@ def qualify_wayland(build, profile, qualification):
                          'reached_gameplay') is True,
                 'Wayland launch must reach its menu or gameplay')
         scopes.add((product, case.get('renderer')))
+        if case.get('owner_display_defaults') is True:
+            require(product == 'menu' and
+                    case.get('actual_private_overlay_files') == files,
+                    'Bare owner launch must use the qualified application files')
+            owner_defaults.add(case.get('renderer'))
     required = {(product, renderer) for product in WAYLAND_PRODUCTS
                 for renderer in ('cpu', 'gl')}
     require(required <= scopes,
             'Wayland qualification must cover the menu and every game on CPU and GL')
+    require({'cpu', 'gl'} <= owner_defaults,
+            'Wayland qualification must cover bare owner display defaults on CPU and GL')
     return files
 
 

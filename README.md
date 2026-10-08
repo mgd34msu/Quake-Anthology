@@ -25,11 +25,11 @@ The application searches for installed games beside the executable, in surroundi
 
 `--user-content-root PATH` selects a different directory for writable settings and user content. Keep the same user directory between sessions to retain your files.
 
-For a system or user installation, choose an installation prefix when configuring, then run `cmake --install build`. Keep the installed native runtime files alongside the application’s installation; original native mods use them.
+For a system or user installation, choose an installation prefix when configuring, then run `cmake --install build`. Keep `engine-data` and the installed native runtime files beside the executable. `engine-data` includes the launcher font; original native mods use the runtime files.
 
 ## Add your games
 
-Keep your games in their existing installation directories. You can place the executable, or the folder containing it, alongside your games. For example:
+Keep your games in their existing installation directories. Place the executable and its `engine-data` folder alongside your games, or move the folder containing both. For example:
 
 ```text
 SteamLibrary/steamapps/common/
@@ -41,6 +41,8 @@ SteamLibrary/steamapps/common/
         baseq3/
     Quake Anthology/
         quake-anthology
+        engine-data/
+            fonts/
 ```
 
 The outer installation folder names can differ. Quake Anthology recognizes the game data inside them. Expansions need their base game's data too.
@@ -166,5 +168,5 @@ Protocol names include `nq15`, `fitz666`, `rmq999`, `qw28`, `qw29`, `q2-34`, `r1
 - **Game missing from the menu:** run `--game-path "/path/to/game installation" --list-content`. If the game is found, remember its location with `--save-game-path`. Check that the installation contains the complete game archives.
 - **Missing expansion assets:** install the base game and the expansion's complete data directory.
 - **Display problems:** try `--renderer cpu` and a smaller window size.
-- **Menu font missing:** pass `--font-directory /path/to/fonts --font Font.ttf`. The default font is `DejaVuSans.ttf` in `/usr/share/fonts/truetype/dejavu`.
+- **Menu font missing:** keep `engine-data/fonts` beside the executable. DejaVu Sans is bundled for every platform. To use another font, pass `--font-directory /path/to/fonts --font Font.ttf`.
 - **Server connection problems:** check the address, port, protocol and required game or mod data.
