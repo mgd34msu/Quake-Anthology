@@ -1091,7 +1091,7 @@ static bool published_binding_seat(frontend_neutral_configs *owner,uint32_t logi
         if (!qa_input_seat_recipient_read(input,&console,&cvars,&command) ||
             console!=row->source.context.console || cvars!=row->client || !same_context(&command,&row->command)) continue;
         frontend_neutral_config_view view;
-        if (!frontend_neutral_config_read(owner,cvars,&view,e) || !view.ready ||
+        if (!frontend_neutral_config_read(owner,cvars,&view,e) ||
             !frontend_neutral_config_current(&view) || !frontend_authored_bindings_completed(row->authored))
             return fail(e,QA_ERROR_ARGUMENT,"Bindings lost their completed physical CLIENT metadata");
         if (*out) return fail(e,QA_ERROR_ARGUMENT,"Bindings have multiple actual physical CLIENT recipients");

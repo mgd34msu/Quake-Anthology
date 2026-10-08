@@ -11,7 +11,8 @@ typedef struct frontend_network_q1_client_options {
     qa_network_runtime *runtime;
     qa_net_address remote;
     qa_net_protocol_id protocol;
-    qa_product_id profile;
+    qa_product_id profile, selected;
+    qa_net_seat_id seat;
     uint32_t physical_seat;
     uint16_t qport;
     bool demo_playback;

@@ -126,7 +126,10 @@ static bool accepts_checksum(void *context, uint32_t checksum)
 static bool source_spawn(void *context, uint8_t start, qa_q1_emit_fn emit, void *output, qa_error *error)
 {
     qw_frontend_peer *peer = context; frontend_qw_host *host = peer->host; qa_actor_id actor;
-    if (!peer_actor(peer, &actor, error) || !qa_application_network_qw_prepare(host->frontend->application, actor, error)) return false;
+    qa_application_network_qw_client source;
+    if (!peer_actor(peer, &actor, error) ||
+        !qa_application_network_qw_client_read(host->frontend->application, actor, &source, error) ||
+        (!source.begun && !qa_application_network_qw_prepare(host->frontend->application, actor, error))) return false;
     uint8_t bytes[QW_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_qw_service service = {.kind = QA_QW_PAUSE, .data.paused = qa_application_q1_paused(host->frontend->application)};
     if (!qa_qw_service_write(&writer, protocol, &service, NULL) ||
@@ -147,7 +150,6 @@ static bool source_spawn(void *context, uint8_t start, qa_q1_emit_fn emit, void 
         if (!qa_qw_service_write(&writer, protocol, &service, NULL) ||
             !emit(output, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error)) return false;
     }
-    qa_application_network_qw_client source;
     if (!qa_application_network_qw_client_read(host->frontend->application, actor, &source, error)) return false;
     for (uint8_t i = 0; i < 16; ++i) if (source.stat_mask & (UINT16_C(1) << i)) {
         qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
@@ -525,28 +527,37 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
     }
     qa_application_network_qw_world world;
     if (!source_world(host, &world, error)) return false;
-    const qa_cvar_view *maximum = qa_cvars_find(world.source.cvars, "maxspectators");
-    if (request->spectator && (!maximum || !isfinite(maximum->number)))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld admission requires its actual source player-limit policy");
-    uint32_t limit = request->spectator ? maximum->number <= 0 ? 0 : maximum->number >= 32 ? 32 : (uint32_t)maximum->number : host->active_limit;
-    bool occupied[QW_CLIENTS] = {0}; size_t count = 0; uint32_t cursor = 0;
-    bool present; qa_application_network_qw_client source;
-    for (;;) {
-        if (!qa_application_network_qw_client_next(host->frontend->application, &cursor, &present, &source, error)) return false;
-        if (!present) break;
-        occupied[source.source_slot - 1] = true;
+    qa_net_seat_id local_seat = {0}; uint32_t application_seat = 0;
+    bool local_player = frontend_network_local_seat(host->frontend, &request->from, &local_seat, &application_seat);
+    qa_actor_id actor; qa_application_network_qw_client source;
+    size_t index = 0; bool spectator = request->spectator;
+    if (local_player) {
+        if (!qa_application_player_actor(host->frontend->application, application_seat, &actor) ||
+            !qa_application_network_qw_client_read(host->frontend->application, actor, &source, error)) return false;
+        index = source.source_slot - 1; spectator = source.spectator;
     }
-    for (size_t i = 0; i < QW_CLIENTS; ++i)
-        if (host->peers[i].occupied && !host->peers[i].retiring && host->peers[i].spectator == request->spectator) ++count;
-    size_t index = 0;
-    while (index < QW_CLIENTS && (occupied[index] || host->peers[index].occupied)) ++index;
-    if (count >= limit || index == QW_CLIENTS) {
-        *out = (qa_q1_connect_result){.decision = QA_Q1_CONNECT_REJECT, .reason = "Server is full\n"}; return true;
+    const qa_cvar_view *maximum = qa_cvars_find(world.source.cvars, "maxspectators");
+    if (!local_player && request->spectator && (!maximum || !isfinite(maximum->number)))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld admission requires its actual source player-limit policy");
+    if (!local_player) {
+        uint32_t limit = request->spectator ? maximum->number <= 0 ? 0 : maximum->number >= 32 ? 32 : (uint32_t)maximum->number : host->active_limit;
+        bool occupied[QW_CLIENTS] = {0}; size_t count = 0; uint32_t cursor = 0; bool present;
+        for (;;) {
+            if (!qa_application_network_qw_client_next(host->frontend->application, &cursor, &present, &source, error)) return false;
+            if (!present) break;
+            occupied[source.source_slot - 1] = true;
+        }
+        for (size_t i = 0; i < QW_CLIENTS; ++i)
+            if (host->peers[i].occupied && !host->peers[i].retiring && host->peers[i].spectator == request->spectator) ++count;
+        while (index < QW_CLIENTS && (occupied[index] || host->peers[index].occupied)) ++index;
+        if (count >= limit || index == QW_CLIENTS) {
+            *out = (qa_q1_connect_result){.decision = QA_Q1_CONNECT_REJECT, .reason = "Server is full\n"}; return true;
+        }
     }
     char info[4096];
     if (strlen(request->userinfo) >= sizeof(info)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld admission userinfo exceeds its source extent");
     strcpy(info, request->userinfo);
-    if (!qa_q3_info_set(info, sizeof(info), "*spectator", request->spectator ? "1" : "", error)) return false;
+    if (!qa_q3_info_set(info, sizeof(info), "*spectator", spectator ? "1" : "", error)) return false;
     qa_qw_info parsed = {0}; if (!qa_qw_info_parse(info, &parsed, error)) return false;
     const char *language=qa_qw_info_get(&parsed,"language");
     if (language && !qa_localization_language_valid(language)) {
@@ -559,14 +570,15 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
     const char *name = qa_qw_info_get(&parsed, "name"), *team = qa_qw_info_get(&parsed, "team"), *skin = qa_qw_info_get(&parsed, "skin"),
         *rate = qa_qw_info_get(&parsed, "rate"), *message_level_text = qa_qw_info_get(&parsed, "msg");
     qw_frontend_peer *peer = host->peers + index;
-    *peer = (qw_frontend_peer){.host = host, .seat = {QA_NETWORK_COMMAND_OWNER, 256u + (uint32_t)index},
+    *peer = (qw_frontend_peer){.host = host,
+        .seat = local_player ? local_seat : (qa_net_seat_id){QA_NETWORK_COMMAND_OWNER, 256u + (uint32_t)index},
         .qport = request->qport, .rate = rate && *rate ? source_rate(rate) : 2500,
-        .connected_ns = now, .command_time_ns = world.source.source_time_ns, .spectator = request->spectator,
+        .connected_ns = now, .command_time_ns = world.source.source_time_ns, .spectator = spectator,
         .message_level = message_level_text && *message_level_text ? source_integer(message_level_text) : 0};
     peer->userinfo = text_copy(info, error);
     if (!peer->userinfo) { qa_qw_info_free(&parsed); return false; }
     qa_net_seat_binding seat = {peer->seat, 0};
-    qa_net_connect connect = {.attachment = QA_NET_REMOTE, .endpoint = request->from, .protocol = protocol,
+    qa_net_connect connect = {.attachment = local_player ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE, .endpoint = request->from, .protocol = protocol,
         .seats = &seat, .seat_count = 1, .composition = host->composition};
     qa_network_qw_server_policy policy = {peer->qport, peer->rate, QW_MESSAGE, 5};
     qa_network_qw_server_hooks hooks = frontend_qw_peer_hooks(peer);
@@ -577,9 +589,11 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
             .application_seat = peer->seat.index, .source_slot = (uint32_t)index + 1,
             .name = name ? name : "unnamed", .team = team ? team : "", .skin = skin ? skin : "",
             .userinfo = info, .spectator = request->spectator, .defer_source_begin = true};
-        qa_actor_id actor;
-        ok = qa_application_remote_player_attach(host->frontend->application, &player, &actor, error) &&
-            peer_actor(peer, &actor, error) &&
+        ok = local_player ? qa_application_network_local_bind(host->frontend->application,
+            qa_net_connections_get(qa_network_connections(host->runtime), peer->client), peer->seat, application_seat, error) &&
+            qa_application_network_qw_userinfo(host->frontend->application, actor, info, error) :
+            qa_application_remote_player_attach(host->frontend->application, &player, &actor, error);
+        ok = ok && peer_actor(peer, &actor, error) &&
             qa_network_qw_server_baselines(host->runtime, peer->client, host->baselines, host->baseline_count, error);
         if (!ok) {
             qa_error failure = error ? *error : (qa_error){0};
@@ -1013,7 +1027,8 @@ bool frontend_qw_source_hooks(frontend_qw_host *host, const qa_net_client *clien
     qa_network_qw_server_policy *policy, qa_network_qw_server_hooks *hooks,
     qa_qw_download_admission *downloads, qa_error *error)
 {
-    if (!host || !client || !policy || !hooks || !downloads || client->attachment != QA_NET_REMOTE ||
+    if (!host || !client || !policy || !hooks || !downloads ||
+        (client->attachment != QA_NET_REMOTE && client->attachment != QA_NET_LOCAL_SEAT) ||
         client->protocol.kind != QA_NET_QW28 || client->protocol.flags || client->protocol.revision || client->seat_count != 1 ||
         client->seats[0].remote_index || client->composition != host->composition)
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld restored source changes its admitted protocol or composition");
@@ -1029,7 +1044,8 @@ bool frontend_qw_source_hooks(frontend_qw_host *host, const qa_net_client *clien
         if (!peer->retiring) {
             qa_application_network_qw_client source; const char *info;
             if (!qa_application_network_qw_client_read(host->frontend->application, row.actor, &source, error) ||
-                source.source_slot != index + 1 || source.spectator != peer->spectator || source.begun != peer->begun ||
+                source.source_slot != index + 1 || source.spectator != peer->spectator ||
+                (client->attachment == QA_NET_REMOTE && source.begun != peer->begun) ||
                 !qa_application_network_qw_userinfo_read(host->frontend->application, row.actor, &info, error) || strcmp(info, peer->userinfo))
                 return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld restored canonical/source role, Begin or raw userinfo differs");
         }
@@ -1099,7 +1115,7 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
         }
         ++occupied;
         if (peer->host != host || !peer->client.generation || peer->client.owner != QA_NETWORK_COMMAND_OWNER ||
-            peer->seat.owner != QA_NETWORK_COMMAND_OWNER || peer->seat.index != 256u + i || !peer->userinfo ||
+            peer->seat.owner != QA_NETWORK_COMMAND_OWNER || !peer->userinfo ||
             peer->rate < 500 || peer->rate > 10000 || peer->input_sequence > INT32_MAX)
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld retained peer has invalid full source admission");
         if (complete) {

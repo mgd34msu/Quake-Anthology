@@ -44,9 +44,11 @@ typedef struct frontend_remote_q2_source_view {
     frontend_remote_q2_domain domain;
     bool bound;
 } frontend_remote_q2_source_view;
-/* The authenticated wire family selects its actual installed compiled CLIENT
- * profile. The caller owns the opened view until metadata preparation clones it. */
-bool frontend_remote_q2_source_recipe(qa_catalog *, qa_net_protocol_id, const char *instance,
+/* Zero profile selects the negotiated wire's compiled CLIENT profile; zero
+ * selected uses that profile's content. The caller owns the opened selected
+ * view until metadata preparation clones it. */
+bool frontend_remote_q2_source_recipe(qa_catalog *, qa_net_protocol_id, qa_product_id profile,
+    qa_product_id selected, const char *instance,
     uint32_t logical_seat, qa_launch_q2_client_metadata *, qa_vfs **prepared, qa_error *);
 bool frontend_remote_q2_source_create(qa_frontend *, const frontend_remote_q2_source_options *,
     frontend_remote_q2_source **, qa_error *);

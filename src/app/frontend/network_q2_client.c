@@ -120,6 +120,7 @@ static bool namespace_prepare(void *context,const qa_launch_instance *descriptor
     frontend_network_q2_client *owner=context; qa_frontend *f=owner->options.frontend;
     if (!parent(owner) || !qa_application_client_provider_prepare(f->application,descriptor,&owner->receiver,error)) return false;
     qa_command_context input=qa_input_seat_context(f->seats[owner->options.physical_seat].input);
+    input.seat=owner->options.seat.index;
     input.owner=0; input.actor=(qa_actor_id){0}; input.client=0; input.registry=0; input.generation=0;
     input.script=false;
     const qa_product *profile=qa_catalog_product(domain->catalog,domain->product);
@@ -368,7 +369,7 @@ static bool prepare(void *context,const qa_net_address *remote,const qa_q2_conne
     frontend_remote_q2_source_view view;
     if(!frontend_remote_q2_source_read(owner->source,&view,error) ||
         !frontend_remote_q2_hooks(view.receiver,&owner->admission.hooks,error)) return false;
-    owner->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,owner->options.physical_seat},0};
+    owner->binding=(qa_net_seat_binding){owner->options.seat,0};
     owner->admission.connection=(qa_net_connect){.attachment=owner->options.demo?QA_NET_LOCAL_SEAT:QA_NET_REMOTE,.endpoint=*remote,
         .protocol=request->protocol,.seats=&owner->binding,.seat_count=1,.composition=view.descriptor->identity};
     qa_q2_codec codec; qa_q2_config_layout layout;
@@ -430,14 +431,16 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
         !options->download_stage ||
         options->physical_seat>=options->frontend->options.seats ||
         !qa_q2_codec_init(&codec,options->protocol,error) ||
-        (options->protocol.kind==QA_NET_Q2KEX_2023 && !options->lobby && !options->demo) ||
+        (options->protocol.kind==QA_NET_Q2KEX_2023 && !options->lobby && !options->demo &&
+            options->remote.kind!=QA_NET_LOOPBACK) ||
         (options->protocol.kind==QA_NET_Q2KEX_DEMO_2022 && !options->demo) ||
         (options->demo && options->remote.kind!=QA_NET_LOOPBACK))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT factory requires its actual one-seat raw transport and Source consumers");
     frontend_network_q2_client *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating Q2 CLIENT connection owner");
     *out=owner; owner->options=*options;
-    qa_frontend *f=options->frontend; uint32_t seat=qa_input_seat_context(f->seats[options->physical_seat].input).seat;
+    if (!owner->options.seat.owner) owner->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
+    qa_frontend *f=options->frontend;
     if(!frontend_config_store_neutral_pending_options(f->config_store,options->physical_seat,
         &owner->configuration,error)) return false;
     owner->configuration_owned=true;
@@ -445,8 +448,10 @@ bool frontend_network_q2_client_create(const frontend_network_q2_client_options 
         .physical_seat=options->physical_seat,.protocol=options->protocol,.catalog=qa_application_catalog(f->application)};
     frontend_remote_q2_source_options source=source_options(owner);
     qa_vfs *prepared=NULL;
-    if(!frontend_remote_q2_source_recipe(owner->domain.catalog,options->protocol,"remote-q2-client",seat,
+    if(!frontend_remote_q2_source_recipe(owner->domain.catalog,options->protocol,
+        options->profile,options->selected,"remote-q2-client",owner->options.seat.index,
         &source.metadata,&prepared,error)) return false;
+    owner->options.profile=source.metadata.profile; owner->options.selected=source.metadata.selected;
     owner->domain.product=source.metadata.profile; source.client.domain=owner->domain;
     bool created=frontend_remote_q2_source_create(f,&source,&owner->source,error); qa_vfs_destroy(prepared);
     if(!created) return false;

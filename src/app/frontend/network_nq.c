@@ -418,7 +418,8 @@ bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *clien
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing retained NetQuake source binding");
     for (size_t i = 0; i < NQ_CLIENTS; ++i)
         if (host->peers[i].occupied && qa_net_client_id_equal(host->peers[i].client, client->id)) peer = host->peers + i;
-    if (!peer || peer->host != host || client->attachment != QA_NET_REMOTE ||
+    if (!peer || peer->host != host ||
+        (client->attachment != QA_NET_REMOTE && client->attachment != QA_NET_LOCAL_SEAT) ||
         client->protocol.kind != host->frontend->options.network_protocol.kind ||
         client->protocol.flags != host->frontend->options.network_protocol.flags ||
         client->protocol.revision != host->frontend->options.network_protocol.revision || client->seat_count != 1 || client->seats[0].remote_index ||
@@ -514,16 +515,25 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         }
     }
     qa_actor_id actor; qa_application_network_q1_world world;
-    qa_application_network_q1_status_player players[255]; size_t count;
-    if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error) ||
-        !qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
-    bool occupied[256] = {0};
-    for (size_t i = 0; i < count; ++i) occupied[players[i].source_slot] = true;
+    qa_net_seat_id local_seat = {0}; uint32_t application_seat = 0;
+    bool local_player = frontend_network_local_seat(host->frontend, address, &local_seat, &application_seat);
+    if (!host_source(host, error) ||
+        !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
     uint32_t slot = 1;
-    while (slot <= world.max_clients && occupied[slot]) ++slot;
+    if (local_player) {
+        qa_actor_owner owner; qa_net_protocol_id source_protocol;
+        if (!qa_application_player_actor(host->frontend->application, application_seat, &actor) ||
+            !qa_application_network_q1_source(host->frontend->application, actor, &owner, &slot, &source_protocol, error)) return false;
+    } else {
+        qa_application_network_q1_status_player players[255]; size_t count;
+        if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
+        bool occupied[256] = {0};
+        for (size_t i = 0; i < count; ++i) occupied[players[i].source_slot] = true;
+        while (slot <= world.max_clients && occupied[slot]) ++slot;
+    }
     nq_frontend_peer *peer = NULL;
     for (size_t i = 0; i < NQ_CLIENTS; ++i) if (!host->peers[i].occupied) { peer = host->peers + i; break; }
-    if (!peer || slot > world.max_clients) {
+    if (!peer || (!local_player && slot > world.max_clients)) {
         *out = (qa_q1_connect_result){.decision = QA_Q1_CONNECT_REJECT, .reason = "Server is full.\n"}; return true;
     }
     if (host->next_admission_order == UINT64_MAX)
@@ -533,9 +543,9 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         source.owner != host->owner)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake connect lost its actual source admission");
     *peer = (nq_frontend_peer){.host = host, .source_slot = slot, .entered_ns = now,
-        .seat = {QA_NETWORK_COMMAND_OWNER, 128u + slot}};
+        .seat = local_player ? local_seat : (qa_net_seat_id){QA_NETWORK_COMMAND_OWNER, 128u + slot}};
     qa_net_seat_binding seat = {peer->seat, 0};
-    qa_net_connect request = {.attachment = QA_NET_REMOTE, .endpoint = *address,
+    qa_net_connect request = {.attachment = local_player ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE, .endpoint = *address,
         .protocol = host->frontend->options.network_protocol, .seats = &seat, .seat_count = 1, .composition = host->composition};
     qa_network_nq_server_policy policy = {.message_bytes = NQ_MESSAGE, .fragment_bytes = 1024,
         .queued_bytes = 16u * NQ_MESSAGE};
@@ -547,7 +557,10 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         .application_seat = peer->seat.index, .source_slot = slot, .name = "unconnected",
         .team = "", .skin = "", .userinfo = source.source_board_events ? "\\language\\english" : "",
         .defer_source_begin = true};
-    if (!qa_application_remote_player_attach(host->frontend->application, &player, &actor, error) ||
+    bool attached = local_player ? qa_application_network_local_bind(host->frontend->application,
+        qa_net_connections_get(qa_network_connections(host->runtime), peer->client), peer->seat, application_seat, error) :
+        qa_application_remote_player_attach(host->frontend->application, &player, &actor, error);
+    if (!attached ||
         !peer_actor(peer, &actor, error) || !qa_network_nq_server_start(host->runtime, peer->client, error)) {
         qa_error first = error ? *error : (qa_error){0};
         if (!qa_network_detach(host->runtime, peer->client, "NetQuake source reservation failed", error)) return false;
@@ -1172,7 +1185,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake cursor differs from its real protocol event owner");
         if (p->host != host || p->client.owner != QA_NETWORK_COMMAND_OWNER || !p->client.generation || p->client.slot >= NQ_CLIENTS ||
             p->seat.owner != QA_NETWORK_COMMAND_OWNER || !p->source_slot || p->source_slot > client_slots ||
-            p->seat.index != 128u + p->source_slot || p->baseline_count < client_slots || !player_model ||
+            p->baseline_count < client_slots || !player_model ||
             !p->admission_order || p->admission_order >= host->next_admission_order ||
             p->ping_count != (p->input_sequence < NQ_PINGS ? p->input_sequence : NQ_PINGS) ||
             (p->command_present && !p->input_sequence) ||
@@ -1199,8 +1212,9 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         const nq_pending_control *p = host->pending + i;
         if (p->size > sizeof(p->bytes) || (i < host->pending_count && !p->size) ||
             (p->size && (p->size < 5 || p->bytes[0] != 128 || p->bytes[1] != 0 ||
-                p->bytes[4] < QA_NQ_CONNECT_REQUEST || p->bytes[4] > QA_NQ_RULE_INFO_REQUEST || !p->address.port ||
-                (p->address.kind != QA_NET_IPV4 && p->address.kind != QA_NET_IPV6))) ||
+                p->bytes[4] < QA_NQ_CONNECT_REQUEST || p->bytes[4] > QA_NQ_RULE_INFO_REQUEST ||
+                (p->address.kind != QA_NET_LOOPBACK && !p->address.port) ||
+                (p->address.kind != QA_NET_IPV4 && p->address.kind != QA_NET_IPV6 && p->address.kind != QA_NET_LOOPBACK))) ||
             (complete_clock && p->received_ns > host->frontend->wall_time_ns))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake query queue differs from its actual receive producer");
     }
@@ -1245,7 +1259,7 @@ bool frontend_nq_qualified(const frontend_nq_host *host, bool complete_clock, qa
         size_t cursor = 0; qa_application_network_player row;
         while (qa_application_network_player_next(host->frontend->application, &cursor, &row))
             if (qa_net_client_id_equal(row.client, p->client) && row.seat.owner == p->seat.owner && row.seat.index == p->seat.index &&
-                !p->retiring && row.source_begin_pending != (state.stage < 3))
+                !p->retiring && client->attachment == QA_NET_REMOTE && row.source_begin_pending != (state.stage < 3))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake source begin differs from native signon stage");
     }
     uint32_t cursor = 0; const qa_net_client *client; size_t count = 0;

@@ -37,7 +37,8 @@ static bool profile_protocol(const qa_product *profile, qa_net_protocol_id proto
         profile->family == QA_GAME_Q2 && profile->edition == (rerelease ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC);
 }
 bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id protocol,
-    const char *instance, uint32_t seat, qa_launch_q2_client_metadata *out, qa_vfs **prepared, qa_error *error)
+    qa_product_id compiled, qa_product_id selected, const char *instance, uint32_t seat,
+    qa_launch_q2_client_metadata *out, qa_vfs **prepared, qa_error *error)
 {
     qa_q2_codec codec;
     if (!catalog || !instance || !*instance || !out || !prepared || *prepared ||
@@ -45,12 +46,14 @@ bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id pr
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT recipe requires its actual negotiated protocol and catalog");
     bool rerelease = protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2PRIVATE_4038 || protocol.kind == QA_NET_Q2KEX_2023 ||
         protocol.kind == QA_NET_Q2KEX_DEMO_2022;
-    const qa_product *profile = qa_catalog_find(catalog, rerelease ? "q2-rerelease-baseq2" : "q2-classic-baseq2");
+    const qa_product *profile = compiled ? qa_catalog_product(catalog, compiled) :
+        qa_catalog_find(catalog, rerelease ? "q2-rerelease-baseq2" : "q2-classic-baseq2");
     if (!profile || !profile->builtin || profile->family != QA_GAME_Q2 ||
         profile->edition != (rerelease ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC))
         return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 CLIENT wire profile has no installed compiled content owner");
-    if (!qa_catalog_open(catalog, profile->id, prepared, error)) return false;
-    *out = (qa_launch_q2_client_metadata){catalog, profile->id, profile->id, *prepared, instance, seat};
+    if (!selected) selected=profile->id;
+    if (!qa_catalog_open(catalog, selected, prepared, error)) return false;
+    *out = (qa_launch_q2_client_metadata){catalog, profile->id, selected, *prepared, instance, seat};
     return true;
 }
 static bool retain(void *context, qa_error *error)

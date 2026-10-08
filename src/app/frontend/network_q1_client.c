@@ -517,18 +517,21 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
     frontend_network_q1_client *o=calloc(1,sizeof(*o));
     if(!o) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q1 CLIENT factory");
     *out=o; o->options=*options; o->demo_forced_track=-1;
+    if (!o->options.selected) o->options.selected=profile->id;
+    if (!o->options.seat.owner) o->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
     o->input_clock_ns=options->frontend->wall_time_ns;
     if(!retain_policy(o,error)) return false;
     o->input.kind=qa_q1_is_qw(options->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE;
-    o->binding=(qa_net_seat_binding){{QA_NETWORK_COMMAND_OWNER,options->physical_seat},0};
+    o->binding=(qa_net_seat_binding){o->options.seat,0};
     qa_vfs *prepared=NULL;
-    if(!qa_catalog_open(catalog,profile->id,&prepared,error)) return false;
+    if(!qa_catalog_open(catalog,o->options.selected,&prepared,error)) return false;
     frontend_client_source_options source=physical_options(o);
     source.input_origin=qa_input_seat_context(options->frontend->seats[options->physical_seat].input);
+    source.input_origin.seat=o->options.seat.index;
     source.input_origin.owner=0; source.input_origin.actor=(qa_actor_id){0}; source.input_origin.client=0;
     source.input_origin.registry=source.input_origin.generation=0; source.input_origin.script=false;
     source.input_origin.dialect=qa_q1_is_qw(options->protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1;
-    source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=profile->id,
+    source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=o->options.selected,
         .prepared=prepared,.instance="remote-q1-client",.seat=source.input_origin.seat,
         .clock=qa_q1_is_qw(options->protocol)?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE};
     bool ok=frontend_client_source_create(options->frontend,&source,&o->physical,error);
@@ -615,7 +618,8 @@ static bool attach(frontend_network_q1_client *o,qa_error *error)
         policy.nq_identity.name=o->signon_name;
         policy.nq_identity.spawn_parameters=o->spawn_parameters;
         o->signon_color=(uint8_t)((uint32_t)color->integer&255u); policy.nq_identity.color=o->signon_color;
-        if (!o->options.demo_playback) o->attachment.endpoint.port=handshake(o).port;
+        if (!o->options.demo_playback && o->attachment.endpoint.kind!=QA_NET_LOOPBACK)
+            o->attachment.endpoint.port=handshake(o).port;
     }
     policy.qport=o->options.qport;
     o->admitting=true;
