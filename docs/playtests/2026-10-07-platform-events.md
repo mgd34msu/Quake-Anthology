@@ -72,3 +72,44 @@ remain open. The new packets are `qa-private-av-1c66d746` and
 reports. Both quit normally and preserved original settings and installed
 files. Previous work counters are recorded in
 [the CPU brush report](2026-10-07-cpu-brush-work.md).
+
+## Physical transport split
+
+`2f6c2f46` replaces the lower receive operations with physical collection and
+queued dispatch. SOCKS control, native IPX and KEX multicast reads now live in
+transport code. Protocol adapters decode copied records and run hooks during
+the common drain. An EMPTY boundary stays queued until saved logical deliveries
+finish. Q2 final acknowledgements use the same intake and consumer. Frontend
+clock reads use platform services.
+
+Strict executable/core builds and core tests passed. Actual-source fixtures
+passed copied localhost UDP/loopback payloads after physical storage overwrite,
+KEX negotiation and dispatch-only hooks, saved LAN deliveries, interrupted
+mDNS callback restore, timestamps and NULL continuation without fresh reads.
+The mDNS fixture substitutes native multicast I/O, not the protocol or save
+code. Clang is fully strict with ASan/UBSan. GCC ASan/UBSan retains one existing
+sign-conversion warning exception in `message.c`; other units stay strict.
+Real localhost SOCKS authentication/association and DOSBox registration,
+reserved probes and deferred local/remote deliveries passed strict GCC ASan
+and Clang ASan/UBSan. These fixtures launch no game.
+
+The exact candidate passed fresh copied-owner-profile CPU and NVIDIA GL
+Host/Ready/two-match/End/Close checks and normal public quit. It was built
+23:31:15 CDT and installed 23:36:46 CDT through the qualified installer.
+The receipt is `installed-u1-lower-intake-20261007.json`; all three installed
+files directly match the qualified sources.
+
+A new sequential pinned pair used the same stationary Q2 rerelease workload,
+settings and observer as above:
+
+| Installed source | CPU dimensions | Median, ms | p99, ms |
+| --- | --- | ---: | ---: |
+| Transport split `2f6c2f46` | 640 x 400 | 5.770822 | 15.030588 |
+| Transport split `2f6c2f46` | 320 x 200 | 3.847471 | 5.638609 |
+
+The packets are `qa-private-av-2nmkvpy5` and `qa-private-av-o6mly0ax`.
+Each uses 600 intervals after warm-up, public quit 0, unchanged original
+profile and installed files, and no remaining owned game. Results vary in
+opposite directions between resolutions; no speedup or isolated overhead claim
+is justified. CPU targets remain open. Installed per-game and combined checks
+are recorded separately when their captures finish.
