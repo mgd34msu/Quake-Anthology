@@ -36,33 +36,16 @@ bool qa_q3_presentation_renderer_parameters_set(qa_q3_presentation *p,float near
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Renderer parameters require the actual idle presentation and finite admitted values");
     p->options.near_clip=near_clip; p->options.identity_light=identity_light; return true;
 }
-static bool binding_observable(const qa_q3_presentation *p)
-{
-    const qa_q3_presentation_assets *a=p?p->options.assets:NULL;
-    if (!p || p->busy || !a || !a->users || a->codec_busy || (a->busy && !a->capturing)) return false;
-    if ((p->world && !qa_scene_world_observation_ready(p->world)) ||
-        (a->world && !qa_scene_world_observation_ready(a->world))) return false;
-    for (size_t i=0;i<a->model_count;++i) {
-        const q3p_model *model=a->models[i];
-        if (!model) continue;
-        if (model->world && !qa_scene_world_observation_ready(model->world)) return false;
-        for (unsigned j=0;j<3;++j)
-            if (model->scene[j] && !qa_scene_model_observation_ready(model->scene[j])) return false;
-    }
-    return true;
-}
 bool qa_q3_presentation_options_read(const qa_q3_presentation *p,qa_q3_presentation_options *out,qa_error *error)
 {
-    if (!out || !binding_observable(p))
-        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 options observation requires actual qualified idle owners");
+    if (!p || !out)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Invalid Q3 presentation options read");
     *out=p->options; return true;
 }
 bool qa_q3_presentation_binding_read(const qa_q3_presentation *p,qa_q3_presentation_binding *out,qa_error *error)
 {
-    if (!out || !binding_observable(p) || p->world!=p->options.assets->world ||
-        p->geometry!=p->options.assets->geometry || (!p->world!=!p->geometry) ||
-        (p->entity_text.size && !p->entity_text.data))
-        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 binding observation requires actual qualified idle owners");
+    if (!p || !out)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Invalid Q3 presentation binding read");
     *out=(qa_q3_presentation_binding){p->options,p->frame,p->world,p->geometry,p->entity_text}; return true;
 }
 bool qa_q3_presentation_prepare_restored(qa_q3_presentation *p,qa_scene_frame *frame,
