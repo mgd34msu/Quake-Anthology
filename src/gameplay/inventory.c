@@ -97,14 +97,34 @@ static item_group *group_for(inventory_store *store, qa_item_id item)
     return NULL;
 }
 
+typedef struct inventory_definition {
+    item_group *group;
+    const qa_item_definition *value;
+    bool ambiguous;
+} inventory_definition;
+
+static inventory_definition definition_lookup(const inventory_store *store, qa_item_id item,
+    const qa_actor_owner *owner)
+{
+    inventory_definition found = {0};
+    for (item_group *g = store->groups; g; g = g->next)
+        if (g->active && (!owner || g->owner == *owner)) for (size_t i = 0; i < g->count; ++i) {
+            const qa_item_definition *value = &g->items[i].definition;
+            if (value->item != item || (owner && value->owner != *owner)) continue;
+            if (found.group && found.group->definitions_only == g->definitions_only)
+                found.ambiguous = true;
+            if (!found.group || (found.group->definitions_only && !g->definitions_only)) {
+                found.group = g;
+                found.value = value;
+            }
+            if (!owner && !g->definitions_only) return found;
+        }
+    return found;
+}
+
 static item_group *definition_for(inventory_store *store, qa_item_id item)
 {
-    item_group *storage = group_for(store, item);
-    if (storage) return storage;
-    for (item_group *g = store->groups; g; g = g->next)
-        if (g->active && g->definitions_only) for (size_t i = 0; i < g->count; ++i)
-            if (g->items[i].definition.item == item) return g;
-    return NULL;
+    return definition_lookup(store, item, NULL).group;
 }
 
 static bool quantity(double value, qa_error *e)
@@ -971,11 +991,9 @@ bool qa_inventory_item_action(qa_inventory *table, qa_actor_id actor, qa_item_id
     if (action != QA_ITEM_USE && action != QA_ITEM_DROP) return fail(e, QA_ERROR_ARGUMENT, "Invalid item action");
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Item action storage retired");
-    item_group *group = definition_for(store, item);
-    bool declared = false;
-    if (group) for (size_t i = 0; i < group->count; ++i)
-        if (group->items[i].definition.item == item) declared = (group->items[i].definition.actions & action) != 0;
-    bool ok = declared ? group->invoke(group->action_context, item, action, e)
+    inventory_definition definition = definition_lookup(store, item, NULL);
+    bool declared = definition.value && (definition.value->actions & action) != 0;
+    bool ok = declared ? definition.group->invoke(definition.group->action_context, item, action, e)
                        : fail(e, QA_ERROR_NOT_FOUND, "Item action not declared");
     release_store(table, store); return ok;
 }
@@ -999,30 +1017,28 @@ bool qa_inventory_item_definitions(qa_inventory *table, qa_actor_id actor,
     return !out || total <= capacity || fail(e, QA_ERROR_ARGUMENT, "Item definition output buffer is too small");
 }
 
+bool qa_inventory_item_definition_find(const qa_inventory *table, qa_actor_id actor,
+    const qa_actor_owner *owner, qa_item_id item, qa_item_definition *out, bool *present, qa_error *e)
+{
+    if (!out || !present || !item)
+        return fail(e, QA_ERROR_ARGUMENT, "Missing source definition lookup output or item");
+    *present = false;
+    if (!qa_inventory_has(table, actor)) return true;
+    inventory_definition found = definition_lookup(table->stores[actor.slot], item, owner);
+    if (owner && found.ambiguous)
+        return fail(e, QA_ERROR_FORMAT, "Source definition has ambiguous admitted groups");
+    if (found.value) { *out = *found.value; *present = true; }
+    return true;
+}
+
 bool qa_inventory_source_definition_read(const qa_inventory *table, qa_actor_id actor,
     qa_actor_owner owner, qa_item_id item, qa_item_definition *out, qa_error *e)
 {
     if (!out || !item || !qa_inventory_has(table, actor))
         return fail(e, QA_ERROR_NOT_FOUND, "Source definition requires its actual inventory actor");
-    const inventory_store *store = table->stores[actor.slot];
-    const qa_item_definition *found = NULL;
-    bool storage = false;
-    for (const item_group *group = store->groups; group; group = group->next) {
-        if (!group->active || group->owner != owner) continue;
-        for (size_t i = 0; i < group->count; ++i) {
-            const qa_item_definition *definition = &group->items[i].definition;
-            if (definition->item != item || definition->owner != owner) continue;
-            if (found && storage == !group->definitions_only)
-                return fail(e, QA_ERROR_FORMAT, "Source definition has ambiguous admitted groups");
-            if (!found || !group->definitions_only) {
-                found = definition;
-                storage = !group->definitions_only;
-            }
-        }
-    }
-    if (!found) return fail(e, QA_ERROR_NOT_FOUND, "Source item has no admitted definition for this owner");
-    *out = *found;
-    return true;
+    bool found;
+    return qa_inventory_item_definition_find(table, actor, &owner, item, out, &found, e) &&
+        (found || fail(e, QA_ERROR_NOT_FOUND, "Source item has no admitted definition for this owner"));
 }
 
 typedef struct inventory_call {

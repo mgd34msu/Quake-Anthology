@@ -105,8 +105,14 @@ bool qa_inventory_item_action(qa_inventory *, qa_actor_id, qa_item_id, qa_item_a
 /* Returned definition labels are borrowed until the group closes or its actor
  * retires. Use source_items for an owned checkpoint snapshot. */
 bool qa_inventory_item_definitions(qa_inventory *, qa_actor_id, qa_item_definition *, size_t, size_t *, qa_error *);
-/* Pure observation of this exact owner's admitted definition. Labels remain
- * borrowed until that group closes. No source reader or storage mutation runs. */
+/* Pure observation of an admitted definition. Labels remain
+ * borrowed until that group closes. No source reader or storage mutation runs.
+ * Missing storage or a missing declaration returns found=false and leaves the
+ * definition output unchanged. A NULL owner selects the visible definition;
+ * otherwise the lookup uses that exact owner, including owner zero. */
+bool qa_inventory_item_definition_find(const qa_inventory *, qa_actor_id,
+    const qa_actor_owner *, qa_item_id, qa_item_definition *, bool *found, qa_error *);
+/* Required exact-owner lookup; missing storage or definition fails. */
 bool qa_inventory_source_definition_read(const qa_inventory *, qa_actor_id,
     qa_actor_owner, qa_item_id, qa_item_definition *, qa_error *);
 bool qa_inventory_give(qa_inventory *, qa_actor_id, qa_item_id, double, double *given, qa_error *);

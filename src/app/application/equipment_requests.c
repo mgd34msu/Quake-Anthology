@@ -9,7 +9,6 @@
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/application_equipment.h"
-#include <stdlib.h>
 
 static bool current(qa_application *app,application_provider *provider,qa_actor_id actor)
 {
@@ -60,29 +59,12 @@ bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_ac
         }
         if(!qa_application_qc_message_player_ui_current(app,&view))
             return application_fail(e,QA_ERROR_NOT_FOUND,"QC weapon request replaced its true declaration owner");
-    } else if(provider->kind==APPLICATION_PROVIDER_Q1) {
-        for(int i=0;i<QA_Q1_WEAPON_COUNT;++i) if(qa_q1_weapon_item(provider->state.q1,(qa_q1_weapon)i)==item) declared=true;
-    } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
-        const char *name=qa_strings_cstr(qa_session_strings(app->session),item);
-        for(int i=1;i<QA_Q2_WEAPON_COUNT;++i) {
-            const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(provider->state.q2,(qa_q2_weapon)i);
-            if(name&&definition&&definition->item&&!strcmp(definition->item,name)) declared=true;
-        }
-    } else if(provider->kind==APPLICATION_PROVIDER_Q3) {
-        for(int i=1;i<QA_Q3_WEAPON_COUNT;++i) if(qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)i,false)==item) declared=true;
     } else {
-    size_t count=0;
-    if(!qa_inventory_item_definitions(app->inventory,actor,NULL,0,&count,e)) return false;
-    if(count>SIZE_MAX/sizeof(qa_item_definition))
-        return application_fail(e,QA_ERROR_MEMORY,"Weapon declaration inventory exceeds native extent");
-    qa_item_definition *definitions=count?malloc(count*sizeof(*definitions)):NULL;
-    if(count&&!definitions) return application_fail(e,QA_ERROR_MEMORY,"Reading genuine weapon request declarations");
-    size_t written=0;
-    bool ok=qa_inventory_item_definitions(app->inventory,actor,definitions,count,&written,e);
-    if(ok&&written>count) ok=application_fail(e,QA_ERROR_ARGUMENT,"Weapon declaration extent changed during request");
-    for(size_t i=0;ok&&i<written;++i) if(definitions[i].item==item&&definitions[i].owner==owner&&definitions[i].weapon) declared=true;
-    free(definitions);
-    if(!ok) return false;
+        qa_item_definition definition;
+        bool native=provider->kind==APPLICATION_PROVIDER_Q1||provider->kind==APPLICATION_PROVIDER_Q2||
+            provider->kind==APPLICATION_PROVIDER_Q3;
+        if(!qa_inventory_item_definition_find(app->inventory,actor,native?&owner:NULL,item,&definition,&declared,e)) return false;
+        declared=declared&&definition.owner==owner&&definition.weapon;
     }
     if(!declared) return true;
     double quantity=0;
