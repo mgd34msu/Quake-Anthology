@@ -392,7 +392,7 @@ static bool event_primary(qa_frontend *frontend, const frontend_effects_primary 
     }
     if (!group_primary_current(group, primary, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect event changed its actual shared map binding");
-    if (group->event_generation == event->queue_generation && event->ordinal < group->event_cursor) return true;
+    if (group->event_generation == event->queue_generation && event->event_id < group->event_cursor) return true;
     owner->busy = true; group->active_source = &event->source; group->active_event = event; group->active_primary = primary;
     group->active_pose = pose;
     group->time = q3ne_word((uint32_t)(source_event->time_ns / UINT64_C(1000000)));
@@ -408,7 +408,7 @@ static bool event_primary(qa_frontend *frontend, const frontend_effects_primary 
             q3n_effect_smoke(&current, &smoke);
         } else q3n_effect_spawn(&current, pose->origin);
         okay = q3ne_current(&current, error) && primary_current(frontend, primary);
-        if (okay) { group->event_generation = event->queue_generation; group->event_cursor = event->ordinal + 1;
+        if (okay) { group->event_generation = event->queue_generation; group->event_cursor = event->event_id + 1;
             group->prepared = false; *admitted = true; }
     }
     group->active_source = NULL; group->active_event = NULL; group->active_primary = NULL;
@@ -665,7 +665,7 @@ bool frontend_selected_effects_round(qa_frontend *frontend, qa_error *error)
         q3n_events_round(group->view.events); group->ref_count = 0; group->sampled = false;
         group->prepared = false;
         group->prepared_application_frame = 0;
-        group->event_cursor = qa_application_event_count(frontend->application);
+        group->event_cursor = qa_application_events_next(frontend->application);
         group->event_generation = qa_application_protocol_events_generation(frontend->application);
     }
     return true;

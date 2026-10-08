@@ -2,6 +2,7 @@
 #define QA_FRONTEND_NETWORK_Q2_HOST_PRIVATE_H
 #include "network_q2_host.h"
 #include "qa/network_q2_unicast.h"
+#include "../../network/event_receipts.h"
 
 typedef struct q2_host_peer {
     frontend_network_q2_host *host;
@@ -17,8 +18,11 @@ typedef struct q2_host_peer {
     char **signon_configs;
     size_t signon_config_count;
     uint64_t event_generation;
-    size_t event_cursor;
-    size_t player_event_cursor;
+    uint64_t event_cursor;
+    uint64_t player_event_cursor;
+    qa_event_receipts event_receipts;
+    uint64_t event_pending_first, event_pending_after;
+    uint64_t event_transport_first, event_transport_after, event_transport_before;
     qa_buffer event_packet;
     bool event_pending,event_reliable,event_player;
     bool reserved,committed,retiring;
@@ -54,7 +58,8 @@ struct frontend_network_q2_host {
     qa_actor_id demo_actor;
     qa_q2_codec demo_codec;
     char **demo_configs;
-    size_t demo_config_count, demo_event_cursor, demo_player_event_cursor;
+    size_t demo_config_count;
+    uint64_t demo_event_cursor, demo_player_event_cursor;
     uint64_t demo_event_generation, demo_map_revision, demo_frame;
     bool demo_held, demo_frame_set;
 };

@@ -63,7 +63,8 @@ void qa_q2_channel_destroy(qa_q2_channel*c) {
 }
 bool qa_q2_channel_queue(qa_q2_channel*c,qa_bytes b,qa_error*e) {
     if(!c||(b.size&&!b.data)||b.size>c->capacity-c->queued_size) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 reliable queue exceeds capacity");
+        qa_error_set(e,c && (!b.size || b.data) ? QA_ERROR_CAPACITY : QA_ERROR_ARGUMENT,
+            0,"Q2 reliable queue exceeds capacity");
         return false;
     }
     if(b.size) {

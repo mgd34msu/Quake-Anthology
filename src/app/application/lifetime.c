@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "native_q2_delivery.h"
 #include "qa/map_sidecars.h"
 #include "bots_npc.h"
 #include "match_intents.h"
@@ -358,15 +359,9 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_map_sidecars_release(application->map_sidecars);
     qa_resource_release(application->map_resource);
     free(application->physics);
-    qa_arena_destroy(&application->event_arena);
-    free(application->events);
-    free(application->q2_map_events);
-    free(application->q3_map_events);
-    free(application->q2_player_events);
-    free(application->protocol_events);
-    application_unified_events_clear(application);
-    free(application->unified_events);
     application_unified_persistent_dispose(application);
+    application_native_q2_delivery_destroy(application);
+    application_event_pages_destroy(&application->event_pages);
     free(application->unified_event_owners);
     application_unified_events_resources_dispose(application);
     free(application->unified_world_text);

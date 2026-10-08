@@ -22,6 +22,7 @@ typedef struct nq_batch {
     qa_net_protocol_id protocol;
 } nq_batch;
 static char *copy_text(const char *, qa_error *);
+static bool reliable_emit(void *, qa_bytes, qa_error *);
 static bool peer_actor(nq_frontend_peer *peer, qa_actor_id *out, qa_error *error)
 {
     if (!peer->occupied || peer->retiring || !qa_application_remote_player_actor(peer->host->frontend->application,
@@ -284,7 +285,7 @@ static bool source_ping(nq_frontend_peer *sender, qa_error *error)
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
     return qa_nq_write(&writer, host->frontend->options.network_protocol,
         (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
-        qa_network_nq_server_reliable(host->runtime, sender->client,
+        reliable_emit(sender,
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 static bool source_status(nq_frontend_peer *sender, qa_error *error)
@@ -314,7 +315,7 @@ static bool source_status(nq_frontend_peer *sender, qa_error *error)
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
     return qa_nq_write(&writer, host->frontend->options.network_protocol,
         (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
-        qa_network_nq_server_reliable(host->runtime, sender->client,
+        reliable_emit(sender,
             (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 static bool source_command(void *context, qa_net_client_id id, const char *text, qa_error *error)
@@ -342,7 +343,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         for (size_t i = 0; ok && i < NQ_CLIENTS; ++i) {
             nq_frontend_peer *target = peer->host->peers + i;
             if (!target->occupied || target->retiring || (!changed && target != peer)) continue;
-            ok = qa_network_nq_server_reliable(peer->host->runtime, target->client,
+            ok = reliable_emit(target,
                 (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
         }
         return ok;
@@ -365,7 +366,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     uint8_t bytes[96]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = "Unknown client command\n"};
     return qa_nq_write(&writer, host->frontend->options.network_protocol, (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
-        qa_network_nq_server_reliable(peer->host->runtime, id, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+        reliable_emit(peer, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *client,
     qa_network_nq_server_policy *policy, qa_network_nq_server_hooks *hooks, qa_error *error)
@@ -501,6 +502,8 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake connect lost its actual source admission");
     *peer = (nq_frontend_peer){.host = host, .source_slot = slot, .entered_ns = now,
         .seat = local_player ? local_seat : (qa_net_seat_id){QA_NETWORK_COMMAND_OWNER, 128u + slot}};
+    peer->protocol_cursor = qa_application_events_local_first(host->frontend->application);
+    qa_event_receipts_reset(&peer->event_receipts, peer->protocol_cursor);
     qa_net_seat_binding seat = {peer->seat, 0};
     qa_net_connect request = {.attachment = local_player ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE, .endpoint = *address,
         .protocol = host->frontend->options.network_protocol, .seats = &seat, .seat_count = 1, .composition = host->composition};
@@ -605,6 +608,8 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
             peer->command_present = false; peer->impulse = 0;
             free(peer->baselines); peer->baselines = NULL; peer->baseline_count = 0;
             if (!peer_actor(peer, &actor, error) || !qa_network_restart(host->runtime, peer->client, &host->composition, error)) return false;
+            peer->protocol_cursor = qa_application_events_local_first(host->frontend->application);
+            qa_event_receipts_reset(&peer->event_receipts, peer->protocol_cursor);
         }
     }
     return true;
@@ -669,6 +674,12 @@ bool frontend_nq_idle(const frontend_nq_host *host)
 static bool reliable_emit(void *context, qa_bytes bytes, qa_error *error)
 {
     nq_frontend_peer *peer = context;
+    if (peer->retiring) return true;
+    qa_network_nq_server_state state; qa_network_nq_server_policy policy;
+    if (!qa_network_nq_server_state_read(peer->host->runtime, peer->client, &state, error) ||
+        !qa_network_nq_server_policy_read(peer->host->runtime, peer->client, &policy, error)) return false;
+    if (bytes.size <= policy.message_bytes && bytes.size > policy.queued_bytes - state.queued_bytes)
+        return source_drop(peer, peer->client, "Reliable message overflow", error);
     return qa_network_nq_server_reliable(peer->host->runtime, peer->client, bytes, error);
 }
 static bool broadcast_emit(void *context, qa_bytes bytes, qa_error *error)
@@ -793,26 +804,24 @@ static bool source_datagram_emit(void *context, qa_bytes bytes, qa_error *error)
     return true;
 }
 static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_net_protocol_id protocol,
-    const qa_q1_entity *baselines,size_t baseline_count,uint64_t *saved_generation,size_t *saved_cursor,
+    const qa_q1_entity *baselines,size_t baseline_count,uint64_t *saved_generation,uint64_t *saved_cursor,
     qa_net_writer *datagram,const qa_application_network_q1_world *world,qa_q1_emit_fn emit,void *context,qa_error *error)
 {
     nq_batch reliable = {.emit = emit, .context = context, .host = host, .protocol = protocol};
     qa_application *app = host->frontend->application;
     uint64_t generation = qa_application_protocol_events_generation(app);
-    size_t count = qa_application_protocol_event_count(app);
+    uint64_t first = qa_application_events_local_first(app);
+    uint64_t next = qa_application_events_next(app);
     if (*saved_generation != generation) {
         *saved_generation = generation;
-        *saved_cursor = 0;
     }
-    if (*saved_cursor > count)
-        return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake protocol cursor exceeds its actual retained event generation");
+    if (*saved_cursor < first) *saved_cursor = first;
     uint8_t source[NQ_DATAGRAM]; size_t source_size = 0; bool source_full = false;
     qa_nq_options options = {.standard_quake = world->standard_quake};
-    for (size_t i = *saved_cursor; i < count; ++i) {
+    for (uint64_t i = *saved_cursor; i < next; ++i) {
         qa_application_protocol_event event;
-        if (!qa_application_protocol_event_at(app, i, &event))
-            return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source protocol event disappeared before publication");
         *saved_cursor = i + 1;
+        if (!qa_application_protocol_event_at(app, i, &event)) continue;
         if (event.provider != host->owner || event.signon) continue;
         if (event.dialect != QA_CLOCK_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
             return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
@@ -841,12 +850,34 @@ static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_n
         ((generation == qa_application_protocol_events_generation(app)) ||
          frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake protocol publication replaced its retained source events"));
 }
+typedef struct nq_event_submission {
+    nq_frontend_peer *peer;
+    uint64_t first;
+} nq_event_submission;
+static bool event_reliable_emit(void *context, qa_bytes bytes, qa_error *error)
+{
+    nq_event_submission *submission = context;
+    nq_frontend_peer *peer = submission->peer;
+    qa_network_nq_server_state state;
+    if (!qa_network_nq_server_state_read(peer->host->runtime, peer->client, &state, error)) return false;
+    (void)qa_event_receipts_retired(&peer->event_receipts, state.reliable_acknowledged);
+    if (qa_event_receipts_full(&peer->event_receipts))
+        return source_drop(peer, peer->client, "Reliable event overflow", error);
+    if (!reliable_emit(peer, bytes, error)) return false;
+    if (peer->retiring) return true;
+    if (!qa_network_nq_server_state_read(peer->host->runtime, peer->client, &state, error)) return false;
+    return qa_event_receipts_submit(&peer->event_receipts, submission->first,
+        peer->protocol_cursor, state.reliable_queued);
+}
 static bool source_events(nq_frontend_peer *peer,qa_actor_id actor,qa_net_writer *datagram,
     const qa_application_network_q1_world *world,qa_error *error)
 {
+    uint64_t first = qa_application_events_local_first(peer->host->frontend->application);
+    nq_event_submission submission = {.peer = peer,
+        .first = peer->protocol_cursor < first ? first : peer->protocol_cursor};
     return source_event_payload(peer->host,actor,peer->host->frontend->options.network_protocol,
         peer->baselines,peer->baseline_count,&peer->protocol_generation,&peer->protocol_cursor,
-        datagram,world,reliable_emit,peer,error);
+        datagram,world,event_reliable_emit,&submission,error);
 }
 static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protocol_id protocol,
     const qa_q1_entity *baselines,size_t baseline_count,const qa_application_network_q1_world *world,
@@ -919,10 +950,48 @@ static bool publish_peer(nq_frontend_peer *peer,const qa_application_network_q1_
     qa_network_nq_server_state state;
     if(!qa_network_nq_server_state_read(host->runtime,peer->client,&state,error))return false;
     uint8_t bytes[NQ_DATAGRAM];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
-    if(state.stage!=4)return source_events(peer,actor,&writer,world,error);
-    return frame_payload(host,actor,host->frontend->options.network_protocol,peer->baselines,peer->baseline_count,world,&writer,error)&&
+    if(state.stage!=4) {
+        if (!source_events(peer,actor,&writer,world,error)) return false;
+        return qa_event_receipts_submit(&peer->event_receipts, peer->event_receipts.through,
+            peer->protocol_cursor, 0);
+    }
+    if (!(frame_payload(host,actor,host->frontend->options.network_protocol,peer->baselines,peer->baseline_count,world,&writer,error)&&
         source_events(peer,actor,&writer,world,error)&&
-        qa_network_nq_server_frame(host->runtime,peer->client,(qa_bytes){bytes,qa_net_writer_size(&writer)},error);
+        (peer->retiring || qa_network_nq_server_frame(host->runtime,peer->client,(qa_bytes){bytes,qa_net_writer_size(&writer)},error)))) return false;
+    return qa_event_receipts_submit(&peer->event_receipts, peer->event_receipts.through,
+        peer->protocol_cursor, 0);
+}
+uint64_t frontend_nq_events_retired(frontend_nq_host *host)
+{
+    if (!host) return UINT64_MAX;
+    uint64_t retired = qa_application_events_next(host->frontend->application);
+    for (size_t i = 0; i < NQ_CLIENTS; ++i) {
+        nq_frontend_peer *peer = host->peers + i;
+        if (!peer->occupied || peer->retiring) continue;
+        if (!peer->event_receipts.through)
+            qa_event_receipts_reset(&peer->event_receipts, qa_application_events_local_first(host->frontend->application));
+        qa_network_nq_server_state state = {0};
+        (void)qa_network_nq_server_state_read(host->runtime, peer->client, &state, NULL);
+        uint64_t first = qa_event_receipts_retired(&peer->event_receipts, state.reliable_acknowledged);
+        if (first < retired) retired = first;
+    }
+    return retired;
+}
+bool frontend_nq_events_pressure(frontend_nq_host *host,uint64_t minimum,bool *released,qa_error *error)
+{
+    *released = false;
+    if (!host) return true;
+    for (size_t i = 0; i < NQ_CLIENTS; ++i) {
+        nq_frontend_peer *peer = host->peers + i;
+        if (!peer->occupied || peer->retiring) continue;
+        qa_network_nq_server_state state;
+        if (!qa_network_nq_server_state_read(host->runtime,peer->client,&state,error)) return false;
+        uint64_t first = qa_event_receipts_retired(&peer->event_receipts,state.reliable_acknowledged);
+        if (first != minimum || !qa_event_receipts_count(&peer->event_receipts)) continue;
+        if (!qa_network_detach(host->runtime,peer->client,"Reliable event overflow",error)) return false;
+        *released = true; return true;
+    }
+    return true;
 }
 bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
 {
@@ -962,8 +1031,8 @@ typedef struct nq_demo_source {
     uint32_t seat,slot;
     qa_net_protocol_id protocol;
     qa_q1_entity *baselines;
-    size_t baseline_count,protocol_cursor;
-    uint64_t protocol_generation,last_frame;
+    size_t baseline_count;
+    uint64_t protocol_cursor,protocol_generation,last_frame;
     frontend_demo_sink sink;
     float angles[3];
     bool published;
@@ -1023,7 +1092,7 @@ static bool nq_demo_seed(void *context,const frontend_demo_sink *sink,qa_error *
     }
     if(!publish_status(host,&world,record->protocol,nq_demo_seed_status,NULL,error))return false;
     record->protocol_generation=qa_application_protocol_events_generation(host->frontend->application);
-    record->protocol_cursor=qa_application_protocol_event_count(host->frontend->application);
+    record->protocol_cursor=qa_application_events_next(host->frontend->application);
     return true;
 }
 static bool nq_demo_attach(void *context,const frontend_demo_sink *sink,bool *attached,qa_error *error)
@@ -1049,7 +1118,7 @@ static bool nq_demo_publish(void *context,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local NQ recording requires its completed Source frame");
     if(record->published&&record->last_frame==clock.frame.number&&
         record->protocol_generation==qa_application_protocol_events_generation(app)&&
-        record->protocol_cursor==qa_application_protocol_event_count(app)&&
+        record->protocol_cursor==qa_application_events_next(app)&&
         host->previous_pause==qa_application_q1_paused(app))return true;
     host->published_source_time_ns=clock.frame.time_ns;
     qa_application_network_q1_world world;
@@ -1136,10 +1205,8 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
                 return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake ping history differs from its received timestamp domain");
         if (!p->occupied) continue;
         uint64_t protocol_generation = qa_application_protocol_events_generation(host->frontend->application);
-        if (p->protocol_generation > protocol_generation ||
-            (p->protocol_generation == protocol_generation &&
-             p->protocol_cursor > qa_application_protocol_event_count(host->frontend->application)))
-            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake cursor differs from its real protocol event owner");
+        if (p->protocol_generation > protocol_generation)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake generation differs from its real protocol event owner");
         if (p->host != host || p->client.owner != QA_NETWORK_COMMAND_OWNER || !p->client.generation || p->client.slot >= NQ_CLIENTS ||
             p->seat.owner != QA_NETWORK_COMMAND_OWNER || !p->source_slot || p->source_slot > client_slots ||
             p->baseline_count < client_slots || !player_model ||

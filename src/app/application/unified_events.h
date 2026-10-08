@@ -3,6 +3,7 @@
 
 #include "network_unified.h"
 #include "qa/unified_frame_events.h"
+#include "event_pages.h"
 
 typedef struct application_unified_event_record {
     qa_unified_presentation_payload *presentation;
@@ -67,6 +68,7 @@ typedef struct application_persistent_key {
 typedef struct application_unified_persistent_event {
     application_unified_event_record event;
     application_persistent_key key;
+    application_event_lease *lease;
 } application_unified_persistent_event;
 
 bool application_unified_persistent_key(qa_application *,
@@ -144,14 +146,15 @@ typedef struct application_unified_world_text {
 bool application_unified_world_text_emit(qa_application *, qa_actor_owner,
     const qa_q2_map_event *, qa_error *);
 
-/* Actual Source records are cloned once into the journal before returning.
- * Absent records do not allocate that stream's sequence. */
+/* Views share the raw event's page lease. Absent views consume no wire sequence. */
 bool application_unified_event_emit(qa_application *, qa_actor_owner,
     const qa_unified_presentation_payload *presentation,
     const qa_unified_simulation_payload *simulation, qa_actor_id recipient,
     qa_actor_id simulation_recipient, uint64_t time_ns, int32_t source_entity,
     bool has_source_entity, bool link_presentation, qa_error *);
-void application_unified_event_record_dispose(application_unified_event_record *);
+/* Append to the current raw/import transaction without source revalidation. */
+bool application_unified_event_append(qa_application *,
+    const application_unified_event_record *, qa_error *);
 void application_unified_events_consume(qa_application *, uint64_t next);
 void application_unified_events_clear(qa_application *);
 bool application_unified_builtin_read(qa_application *, const qa_builtin_event *, qa_unified_builtin_event *, qa_error *);

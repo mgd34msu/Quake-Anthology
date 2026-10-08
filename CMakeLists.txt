@@ -912,6 +912,7 @@ add_library(qa_network STATIC
     src/network/browser/wire.c
     src/network/connections.c
     src/network/dosbox.c
+    src/network/event_receipts.c
     src/network/downloads/owner.c
     src/network/downloads/window.c
     src/network/ipx.c
@@ -1203,6 +1204,7 @@ add_library(qa_application STATIC
     src/app/application/control_frame.c
     src/app/application/commands.c
     src/app/application/events.c
+    src/app/application/event_pages.c
     src/app/application/events_save.c
     src/app/application/frame_prepare.c
     src/app/application/guest_admission.c

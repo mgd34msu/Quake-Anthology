@@ -9,6 +9,7 @@
 
 static bool demo_publish(frontend_network_q2_host *, qa_error *);
 static bool refresh_source(frontend_network_q2_host *, qa_error *);
+static bool event_drop(q2_host_peer *,qa_error *);
 
 static bool current(frontend_network_q2_host *host,qa_error *error)
 {
@@ -328,8 +329,9 @@ static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_c
     if(!peer || peer->host!=host || !peer->reserved || peer->committed || !current(host,error)) return false;
     peer->client=id; peer->committed=true;
     peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
-    peer->event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
-    peer->player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
+    peer->event_cursor=qa_application_events_local_first(host->options.frontend->application);
+    peer->player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
+    qa_event_receipts_reset(&peer->event_receipts,peer->event_cursor);
     for(size_t i=0;i<peer->admission.connection.seat_count;++i) {
         qa_actor_id actor;
         if(peer->admission.connection.attachment==QA_NET_LOCAL_SEAT) {
@@ -495,8 +497,10 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
         peer->admission.connection.composition=host->options.composition;
         configs_free(peer); qa_buffer_free(&peer->event_packet); peer->event_pending=false; peer->event_player=false;
         peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
-        peer->event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
-        peer->player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
+        peer->event_cursor=qa_application_events_local_first(host->options.frontend->application);
+        peer->player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
+        qa_event_receipts_reset(&peer->event_receipts,peer->event_cursor);
+        peer->event_transport_first=peer->event_transport_after=peer->event_transport_before=0;
         peer->travel_installed=false;
     }
     host->traveling=false; return current(host,error);
@@ -550,13 +554,64 @@ static bool publish_configs(q2_host_peer *peer,qa_error *error)
     return configs_publish(peer->source,peer->configs,peer->config_count,config_transport,peer,error);
 }
 
+static bool event_drop(q2_host_peer *peer,qa_error *error)
+{
+    frontend_network_q2_host *host=peer->host;
+    qa_q2_server_admission claim=peer->admission;
+    if(!retire_source(host,peer,error) ||
+        !qa_network_detach(host->options.runtime,peer->client,"Reliable event overflow",error)) return false;
+    return abort_claim(host,&claim,error);
+}
+static bool queue_pressure(const qa_error *error)
+{
+    return error->code==QA_ERROR_CAPACITY;
+}
+static uint64_t event_retired(q2_host_peer *peer,const qa_network_q2_state *transport)
+{
+    if(!peer->event_receipts.through)
+        qa_event_receipts_reset(&peer->event_receipts,
+            qa_application_events_local_first(peer->host->options.frontend->application));
+    if(peer->event_transport_after>peer->event_transport_first &&
+        transport->reliable_submitted>peer->event_transport_before) {
+        if(qa_event_receipts_submit(&peer->event_receipts,peer->event_transport_first,
+            peer->event_transport_after,transport->reliable_submitted))
+            peer->event_transport_first=peer->event_transport_after=peer->event_transport_before=0;
+    }
+    uint64_t retired=qa_event_receipts_retired(&peer->event_receipts,
+        transport->reliable_supported?transport->reliable.acknowledged:0);
+    if(peer->event_transport_after>peer->event_transport_first && peer->event_transport_first<retired)
+        retired=peer->event_transport_first;
+    if(peer->event_pending && peer->event_pending_first<retired) retired=peer->event_pending_first;
+    return retired;
+}
 static bool publish_event_packet(q2_host_peer *peer,qa_error *error)
 {
-    if(!publish_configs(peer,error) ||
-        !qa_network_q2_server_bytes(peer->host->options.runtime,peer->client,
-            (qa_bytes){peer->event_packet.data,peer->event_packet.size},0,peer->event_reliable,error)) return false;
+    qa_network_q2_state transport;
+    if(!qa_network_q2_state_read(peer->host->options.runtime,peer->client,&transport,error)) return false;
+    (void)event_retired(peer,&transport);
+    if(peer->event_reliable && qa_event_receipts_full(&peer->event_receipts)) return event_drop(peer,error);
+    qa_error submission={0};
+    if(!publish_configs(peer,&submission)) {
+        if(queue_pressure(&submission)) return event_drop(peer,error);
+        if(error) *error=submission;
+        return false;
+    }
+    if(!qa_network_q2_server_bytes(peer->host->options.runtime,peer->client,
+        (qa_bytes){peer->event_packet.data,peer->event_packet.size},0,peer->event_reliable,&submission)) {
+        if(queue_pressure(&submission)) return event_drop(peer,error);
+        if(error) *error=submission;
+        return false;
+    }
+    if(!qa_network_q2_state_read(peer->host->options.runtime,peer->client,&transport,error)) return false;
+    if(peer->event_reliable && peer->host->options.protocol.kind==QA_NET_Q2KEX_2023) {
+        if(peer->event_transport_after<=peer->event_transport_first) {
+            peer->event_transport_first=peer->event_pending_first;
+            peer->event_transport_before=transport.reliable_submitted;
+        }
+        peer->event_transport_after=peer->event_pending_after;
+    } else if(!qa_event_receipts_submit(&peer->event_receipts,peer->event_pending_first,
+        peer->event_pending_after,peer->event_reliable?transport.reliable.queued:0)) return event_drop(peer,error);
     qa_buffer_free(&peer->event_packet); peer->event_pending=false;
-    if(peer->event_player) ++peer->player_event_cursor; else ++peer->event_cursor;
     peer->event_player=false;
     return true;
 }
@@ -564,46 +619,80 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t
 {
     qa_application *app=peer->host->options.frontend->application;
     if(peer->event_pending && !publish_event_packet(peer,error)) return false;
+    if(!peer->committed || peer->retiring) return true;
     uint64_t generation=qa_application_protocol_events_generation(app);
-    size_t count=qa_application_protocol_event_count(app);
-    if(peer->event_generation!=generation) {
-        peer->event_generation=generation; peer->event_cursor=0; peer->player_event_cursor=0;
-    }
-    if(peer->event_cursor>count)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 event cursor exceeds its retained Source generation");
+    uint64_t first=qa_application_events_local_first(app),next=qa_application_events_next(app);
+    uint64_t cursor=peer->event_cursor<peer->player_event_cursor?peer->event_cursor:peer->player_event_cursor;
+    if(cursor<first) cursor=first;
+    peer->event_generation=generation;
+    peer->event_cursor=peer->player_event_cursor=cursor;
     const qa_q2_codec *codec;
     if(!qa_network_q2_server_codec(peer->host->options.runtime,peer->client,&codec,error)) return false;
-    while(peer->event_cursor<count) {
+    while(cursor<next) {
+        uint64_t event_id=cursor;
         qa_application_protocol_event event;
         qa_application_q2_protocol_delivery delivery;
-        if(!qa_application_protocol_event_at(app,peer->event_cursor,&event) ||
-            !qa_application_protocol_q2_delivery_at(app,peer->event_cursor,&delivery))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 Source event disappeared before publication");
-        if(event.signon || !delivery.original) { ++peer->event_cursor; continue; }
-        if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
-            &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
-            capacity,&peer->event_packet,error)) return false;
-        if(!peer->event_packet.size) { ++peer->event_cursor; continue; }
-        peer->event_reliable=event.reliable; peer->event_pending=true;
+        qa_application_q2_player_event player;
+        bool reliable=false,print=false;
+        if(qa_application_protocol_event_at(app,cursor,&event)) {
+            if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original) {
+                if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
+                    &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
+                    capacity,&peer->event_packet,error)) return false;
+                reliable=event.reliable;
+            }
+        } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT) {
+            if(!frontend_network_q2_print_packet(&player,client,
+                qa_network_epoch(peer->host->options.runtime,peer->client),codec,capacity,&peer->event_packet,error)) return false;
+            reliable=true; print=true;
+        }
+        ++cursor;
+        peer->event_cursor=peer->player_event_cursor=cursor;
+        if(!peer->event_packet.size) continue;
+        peer->event_reliable=reliable; peer->event_player=print; peer->event_pending=true;
+        peer->event_pending_first=event_id; peer->event_pending_after=cursor;
         if(!publish_event_packet(peer,error)) return false;
+        if(!peer->committed || peer->retiring) return true;
     }
-    size_t player_count=qa_application_q2_player_event_count(app);
-    if(peer->player_event_cursor>player_count)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 print cursor exceeds its retained Source generation");
-    while(peer->player_event_cursor<player_count) {
-        qa_application_q2_player_event event;
-        if(!qa_application_q2_player_event_at(app,peer->player_event_cursor,&event))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 Source print disappeared before publication");
-        if(event.event.kind!=QA_Q2_PLAYER_PRINT) { ++peer->player_event_cursor; continue; }
-        if(!frontend_network_q2_print_packet(&event,client,
-            qa_network_epoch(peer->host->options.runtime,peer->client),codec,capacity,&peer->event_packet,error)) return false;
-        if(!peer->event_packet.size) { ++peer->player_event_cursor; continue; }
-        peer->event_reliable=true; peer->event_pending=true; peer->event_player=true;
-        if(!publish_event_packet(peer,error)) return false;
-    }
+    (void)qa_event_receipts_submit(&peer->event_receipts,peer->event_receipts.through,cursor,0);
     return generation==qa_application_protocol_events_generation(app) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 publication replaced its retained Source event generation");
 }
+uint64_t frontend_network_q2_host_events_retired(frontend_network_q2_host *host)
+{
+    if(!host) return UINT64_MAX;
+    uint64_t retired=qa_application_events_next(host->options.frontend->application);
+    for(size_t i=0;i<host->capacity;++i) {
+        q2_host_peer *peer=host->peers+i;
+        if(!peer->committed || peer->retiring) continue;
+        qa_network_q2_state transport={0};
+        (void)qa_network_q2_state_read(host->options.runtime,peer->client,&transport,NULL);
+        uint64_t first=event_retired(peer,&transport);
+        if(first<retired) retired=first;
+    }
+    if(host->demo_held && host->demo_event_cursor<retired) retired=host->demo_event_cursor;
+    return retired;
+}
+bool frontend_network_q2_host_events_pressure(frontend_network_q2_host *host,uint64_t minimum,
+    bool *released,qa_error *error)
+{
+    *released=false;
+    if(!host) return true;
+    for(size_t i=0;i<host->capacity;++i) {
+        q2_host_peer *peer=host->peers+i;
+        if(!peer->committed || peer->retiring) continue;
+        qa_network_q2_state transport;
+        if(!qa_network_q2_state_read(host->options.runtime,peer->client,&transport,error)) return false;
+        uint64_t first=event_retired(peer,&transport);
+        bool outstanding=qa_event_receipts_count(&peer->event_receipts) ||
+            peer->event_transport_after>peer->event_transport_first;
+        if(first!=minimum || !outstanding) continue;
+        if(!event_drop(peer,error)) return false;
+        *released=true; return true;
+    }
+    return true;
+}
+
 bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t now,qa_error *error)
 {
     if(!host || host->calls || !current(host,error)) return false;
@@ -618,24 +707,25 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t no
         bool frame_ready=false;
         if(!qa_application_network_q2_client_frame_ready(peer->source,peer->client,&frame_ready,&publication)) {
             if(publication.code==QA_ERROR_UNSUPPORTED) {
-                if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,publication.message,error)) return false;
+                if(!event_drop(peer,error)) return false;
                 continue;
             }
             if(error) *error=publication;
             return false;
         }
         if(!publish_events(peer,client,transport.channel.capacity,&publication)) {
-            if(publication.code==QA_ERROR_UNSUPPORTED) {
-                if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,publication.message,error)) return false;
+            if(publication.code==QA_ERROR_UNSUPPORTED || queue_pressure(&publication)) {
+                if(!event_drop(peer,error)) return false;
                 continue;
             }
             if(error) *error=publication;
             return false;
         }
+        if(!peer->committed || peer->retiring) continue;
         if(!frame_ready) {
             if(!publish_configs(peer,&publication)) {
-                if(publication.code==QA_ERROR_UNSUPPORTED) {
-                    if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,publication.message,error)) return false;
+                if(publication.code==QA_ERROR_UNSUPPORTED || queue_pressure(&publication)) {
+                    if(!event_drop(peer,error)) return false;
                 } else { if(error) *error=publication; return false; }
             }
             continue;
@@ -644,8 +734,8 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t no
         if(!qa_application_network_q2_client_frame(peer->source,peer->client,&frame,&publication) ||
             !qa_application_network_q2_motion(peer->source,&motion,&publication) || !publish_configs(peer,&publication) ||
             !qa_network_q2_server_frame(host->options.runtime,peer->client,&frame,motion,now,&publication)) {
-            if(publication.code==QA_ERROR_UNSUPPORTED) {
-                if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,publication.message,error)) return false;
+            if(publication.code==QA_ERROR_UNSUPPORTED || queue_pressure(&publication)) {
+                if(!event_drop(peer,error)) return false;
                 continue;
             }
             if(error) *error=publication;
@@ -821,8 +911,8 @@ static bool demo_host_seed(void *context,const frontend_demo_sink *sink,qa_error
     host->demo_map_revision=host->source.source.map_revision;
     host->demo_frame=(uint32_t)frame.server_frame; host->demo_frame_set=true;
     host->demo_event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
-    host->demo_event_cursor=qa_application_protocol_event_count(host->options.frontend->application);
-    host->demo_player_event_cursor=qa_application_q2_player_event_count(host->options.frontend->application);
+    host->demo_event_cursor=qa_application_events_local_first(host->options.frontend->application);
+    host->demo_player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
     return true;
 }
 static bool demo_host_attach(void *context,const frontend_demo_sink *sink,bool *attached,qa_error *error)
@@ -889,30 +979,25 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     if(!client || !configs_publish(host->discovery,host->demo_configs,host->demo_config_count,demo_host_config,host,error)) return false;
     qa_application *app=host->options.frontend->application;
     uint64_t generation=qa_application_protocol_events_generation(app);
-    if(host->demo_event_generation!=generation) {
-        host->demo_event_generation=generation; host->demo_event_cursor=0; host->demo_player_event_cursor=0;
-    }
-    size_t count=qa_application_protocol_event_count(app);
-    while(host->demo_event_cursor<count) {
-        qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery; qa_buffer bytes={0};
-        if(!qa_application_protocol_event_at(app,host->demo_event_cursor,&event) ||
-            !qa_application_protocol_q2_delivery_at(app,host->demo_event_cursor,&delivery)) return false;
-        bool ok=event.signon || !delivery.original ||
-            (frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
-                client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,65535,&bytes,error) &&
-                demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error));
+    uint64_t first=qa_application_events_local_first(app),next=qa_application_events_next(app);
+    uint64_t cursor=host->demo_event_cursor<host->demo_player_event_cursor?host->demo_event_cursor:host->demo_player_event_cursor;
+    if(cursor<first) cursor=first;
+    host->demo_event_generation=generation;
+    host->demo_event_cursor=host->demo_player_event_cursor=cursor;
+    while(cursor<next) {
+        qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
+        qa_application_q2_player_event player; qa_buffer bytes={0}; bool ok=true;
+        if(qa_application_protocol_event_at(app,cursor,&event)) {
+            if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original)
+                ok=frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
+                    client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,65535,&bytes,error);
+        } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT)
+            ok=frontend_network_q2_print_packet(&player,client,qa_network_epoch(host->options.runtime,client->id),
+                &host->demo_codec,65535,&bytes,error);
+        if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);
         qa_buffer_free(&bytes); if(!ok) return false;
-        ++host->demo_event_cursor;
-    }
-    count=qa_application_q2_player_event_count(app);
-    while(host->demo_player_event_cursor<count) {
-        qa_application_q2_player_event event; qa_buffer bytes={0};
-        if(!qa_application_q2_player_event_at(app,host->demo_player_event_cursor,&event)) return false;
-        bool ok=event.event.kind!=QA_Q2_PLAYER_PRINT ||
-            (frontend_network_q2_print_packet(&event,client,qa_network_epoch(host->options.runtime,client->id),
-                &host->demo_codec,65535,&bytes,error) && demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error));
-        qa_buffer_free(&bytes); if(!ok) return false;
-        ++host->demo_player_event_cursor;
+        ++cursor;
+        host->demo_event_cursor=host->demo_player_event_cursor=cursor;
     }
     qa_q2_wire_frame frame;
     if(!qa_application_network_q2_frame(host->discovery,&host->demo_actor,1,&frame,error)) return false;

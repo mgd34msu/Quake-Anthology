@@ -2,6 +2,7 @@
 #define QA_FRONTEND_NETWORK_QW_PRIVATE_H
 #include "network_qw.h"
 #include "qa/network_q1_connection_save.h"
+#include "../../network/event_receipts.h"
 enum { QW_CLIENTS = 32, QW_PENDING = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400, QW_ACTIONS = 256 };
 typedef struct qw_source_action {
     struct qw_source_action *next;
@@ -17,6 +18,7 @@ typedef struct qw_frontend_peer {
     qa_net_client_id client;
     qa_net_seat_id seat;
     uint64_t input_sequence, connected_ns, command_time_ns, last_received_ns;
+    qa_event_receipts event_receipts;
     uint16_t qport, stat_mask;
     uint32_t rate;
     double stats[16];

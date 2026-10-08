@@ -167,57 +167,79 @@ static qa_game_family progress_family(const qa_launch_instance *instance)
     return QA_GAME_Q3;
 }
 
-static void *event_storage(void *storage, size_t count, size_t *capacity,
-                            size_t width, size_t initial, qa_error *error)
+bool application_event_stream_create(qa_application *app, size_t actors, qa_error *error)
 {
-    if (count < *capacity)
-        return storage;
-    size_t next = *capacity ? *capacity : initial;
-    if (*capacity && next > SIZE_MAX / 2) {
-        application_fail(error, QA_ERROR_MEMORY, "application event capacity is exhausted");
-        return NULL;
-    }
-    if (*capacity) next *= 2;
-    if (next > SIZE_MAX / width) {
-        application_fail(error, QA_ERROR_MEMORY, "application event extent overflows");
-        return NULL;
-    }
-    void *grown = realloc(storage, next * width);
-    if (!grown) {
-        application_fail(error, QA_ERROR_MEMORY, "cannot retain application event");
-        return NULL;
-    }
-    *capacity = next;
-    return grown;
-}
-
-static bool reserve_event(qa_application *application, qa_error *error)
-{
-    application_event_record *storage = event_storage(application->events,
-        application->event_count, &application->event_capacity, sizeof(*storage), 64, error);
-    if (!storage) return false;
-    application->events = storage;
+    if (actors > SIZE_MAX / 4096 || actors > SIZE_MAX / 4 /
+            sizeof(*app->unified_persistent))
+        return application_fail(error, QA_ERROR_MEMORY, "Application event load capacity overflows");
+    size_t records = actors * 4;
+    app->event_pages = application_event_pages_create(actors * 4096, 16384, records, error);
+    if (!app->event_pages) return false;
+    app->unified_persistent = calloc(records, sizeof(*app->unified_persistent));
+    if (!app->unified_persistent)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized persistent event slots");
+    app->unified_persistent_capacity = records;
+    app->event_local_cursor = 1;
+    app->event_peer_cursor = UINT64_MAX;
     return true;
 }
 
-static bool reserve_q2_map_event(qa_application *application, qa_error *error)
+bool application_event_stream_begin(qa_application *app, qa_application_event_kind kind,
+    application_event_write *write, qa_error *error)
 {
-    application_q2_map_event_record *storage = event_storage(application->q2_map_events,
-        application->q2_map_event_count, &application->q2_map_event_capacity,
-        sizeof(*storage), 32, error);
-    if (!storage) return false;
-    application->q2_map_events = storage;
+    *write = (application_event_write){.presentation_before = app->presentation_event_sequence,
+        .simulation_before = app->simulation_event_sequence};
+    if (!application_event_pages_begin(app->event_pages, &write->transaction)) return false;
+    write->envelope = application_event_pages_alloc(&write->transaction,
+        sizeof(*write->envelope), _Alignof(application_event_envelope), error);
+    if (!write->envelope) { application_event_pages_abort(&write->transaction); return false; }
+    *write->envelope = (application_event_envelope){
+        .id = application_event_pages_next(app->event_pages), .kind = kind};
+    app->event_write = write;
     return true;
 }
 
-static bool reserve_q3_map_event(qa_application *application, qa_error *error)
+void *application_event_stream_alloc(qa_application *app, size_t bytes, size_t alignment,
+    qa_error *error)
 {
-    qa_application_q3_map_event *storage = event_storage(application->q3_map_events,
-        application->q3_map_event_count, &application->q3_map_event_capacity,
-        sizeof(*storage), 32, error);
-    if (!storage) return false;
-    application->q3_map_events = storage;
+    return application_event_pages_alloc(&app->event_write->transaction, bytes, alignment, error);
+}
+
+void application_event_stream_abort(qa_application *app, application_event_write *write,
+    qa_error *error)
+{
+    bool blocked = write->transaction.blocked;
+    app->event_write = NULL;
+    app->presentation_event_sequence = write->presentation_before;
+    app->simulation_event_sequence = write->simulation_before;
+    application_event_pages_abort(&write->transaction);
+    if (blocked && error) *error = (qa_error){0};
+}
+
+bool application_event_stream_commit(qa_application *app, application_event_write *write,
+    qa_error *error)
+{
+    if (write->transaction.blocked ||
+        !application_unified_persistent_prepare(app, write->envelope, error)) {
+        application_event_stream_abort(app, write, error);
+        return false;
+    }
+    uint64_t id = application_event_pages_commit(&write->transaction, write->envelope);
+    app->event_write = NULL;
+    if (!id) {
+        app->presentation_event_sequence = write->presentation_before;
+        app->simulation_event_sequence = write->simulation_before;
+        if (error) *error = (qa_error){0};
+        return false;
+    }
+    application_unified_persistent_publish(app, write->envelope);
     return true;
+}
+
+const application_event_envelope *application_event_stream_at(const qa_application *app,
+    uint64_t id)
+{
+    return app && app->event_pages ? application_event_pages_at(app->event_pages, id) : NULL;
 }
 
 static bool valid_arguments(const qa_application *application,
@@ -290,30 +312,34 @@ bool application_emit_q2_map(application_provider *provider,
                 &(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,multicast_origin},
                 (qa_vec3){0},&audience,error)) return false;
     }
-    bool ready=reserve_q2_map_event(application,error) &&
-        application_native_q2_delivery_retain(application,&audience,&retained,error);
+    application_event_write write;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_MAP, &write, error)) {
+        application_native_q2_delivery_dispose(&audience);
+        return false;
+    }
+    bool ready = application_native_q2_delivery_retain(application, &audience, &retained, error);
     application_native_q2_delivery_dispose(&audience);
-    if (!ready) return false;
+    if (!ready) goto abort;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
         size_t bytes = event->argument_count * sizeof(*event->arguments);
-        arguments = qa_arena_alloc(&application->event_arena, bytes,
+        arguments = application_event_stream_alloc(application, bytes,
                                    _Alignof(qa_builtin_message_arg), error);
         if (arguments == NULL)
-            return false;
+            goto abort;
         memcpy(arguments, event->arguments, bytes);
     }
     qa_q2_campaign_level *levels = NULL;
     if (event->level_count) {
         size_t bytes = event->level_count * sizeof(*levels);
-        levels = qa_arena_alloc(&application->event_arena, bytes, _Alignof(qa_q2_campaign_level), error);
-        if (!levels) return false;
+        levels = application_event_stream_alloc(application, bytes, _Alignof(qa_q2_campaign_level), error);
+        if (!levels) goto abort;
         memcpy(levels, event->levels, bytes);
     }
     if (!application_unified_q2_native_map(provider, event, &retained, error) ||
-        (event->kind == QA_Q2_MAP_AUTOSAVE && !application_map_autosave_request(application, error))) return false;
+        (event->kind == QA_Q2_MAP_AUTOSAVE && !application_map_autosave_request(application, error))) goto abort;
     application_q2_map_event_record *record =
-        &application->q2_map_events[application->q2_map_event_count];
+        &write.envelope->raw.q2_map;
     *record = (application_q2_map_event_record){.audience=retained,.source={
         .provider = provider->owner,
         .time_ns = qa_session_elapsed(application->session),
@@ -321,8 +347,10 @@ bool application_emit_q2_map(application_provider *provider,
     }};
     record->source.event.arguments = arguments;
     record->source.event.levels = levels;
-    ++application->q2_map_event_count;
-    return true;
+    return application_event_stream_commit(application, &write, error);
+abort:
+    application_event_stream_abort(application, &write, error);
+    return false;
 }
 
 bool application_emit_q3_map(application_provider *provider,
@@ -340,16 +368,12 @@ bool application_emit_q3_map(application_provider *provider,
         !qa_vec_finite(event->destination) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid Q3 map event");
-    if (!reserve_q3_map_event(application, error))
+    application_event_write write;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q3_MAP, &write, error))
         return false;
-    application->q3_map_events[application->q3_map_event_count] =
-        (qa_application_q3_map_event){
-            .provider = provider->owner,
-            .time_ns = qa_session_elapsed(application->session),
-            .event = *event,
-        };
-    ++application->q3_map_event_count;
-    return true;
+    write.envelope->raw.q3_map = (qa_application_q3_map_event){
+        .provider = provider->owner, .time_ns = qa_session_elapsed(application->session), .event = *event};
+    return application_event_stream_commit(application, &write, error);
 }
 
 static bool record_progress(application_provider *provider,
@@ -460,38 +484,35 @@ bool application_record_level(application_provider *provider,
 static bool emit_event(qa_application *application, const qa_builtin_event *event,
     const qa_application_q2_audience *audience, qa_error *error)
 {
-    if (!application_q3_weapons_services_q2_muzzle(application, event, error) ||
-        !application_native_q1_wire_emit(application, event, error) ||
-        !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
-        !application_unified_q2_native_builtin(application, event, audience, error) ||
-        !reserve_event(application, error))
-        return false;
-
-    qa_builtin_message_arg *arguments = NULL;
-    if (event->argument_count != 0) {
-        size_t bytes = event->argument_count * sizeof(*event->arguments);
-        arguments = qa_arena_alloc(&application->event_arena, bytes,
-                                   _Alignof(qa_builtin_message_arg), error);
-        if (arguments == NULL)
-            return false;
-        memcpy(arguments, event->arguments, bytes);
-    }
-
-    qa_builtin_prompt_choice *choices = NULL;
-    if (event->prompt_choice_count) {
-        size_t bytes = event->prompt_choice_count * sizeof(*choices);
-        choices = qa_arena_alloc(&application->event_arena, bytes, _Alignof(qa_builtin_prompt_choice), error);
-        if (!choices) return false;
-        memcpy(choices, event->prompt_choices, bytes);
-    }
-    application_event_record *record =
-        &application->events[application->event_count];
-    if (!application_native_q2_delivery_retain(application,audience,&record->q2_audience,error)) return false;
+    application_event_write write;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_BUILTIN, &write, error)) return false;
+    application_event_record *record = &write.envelope->raw.builtin;
     record->event = *event;
-    record->event.arguments = arguments;
-    record->event.prompt_choices = choices;
-    ++application->event_count;
-    return true;
+    if (event->argument_count) {
+        size_t bytes = event->argument_count * sizeof(*event->arguments);
+        qa_builtin_message_arg *arguments = application_event_stream_alloc(application, bytes,
+            _Alignof(qa_builtin_message_arg), error);
+        if (!arguments) goto abort;
+        memcpy(arguments, event->arguments, bytes);
+        record->event.arguments = arguments;
+    }
+    if (event->prompt_choice_count) {
+        size_t bytes = event->prompt_choice_count * sizeof(*event->prompt_choices);
+        qa_builtin_prompt_choice *choices = application_event_stream_alloc(application, bytes,
+            _Alignof(qa_builtin_prompt_choice), error);
+        if (!choices) goto abort;
+        memcpy(choices, event->prompt_choices, bytes);
+        record->event.prompt_choices = choices;
+    }
+    if (!application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
+        !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
+        !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
+    if (!application_event_stream_commit(application, &write, error)) return false;
+    return application_q3_weapons_services_q2_muzzle(application, event, error) &&
+        application_native_q1_wire_emit(application, event, error);
+abort:
+    application_event_stream_abort(application, &write, error);
+    return false;
 }
 
 bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *error)
@@ -560,7 +581,7 @@ static bool event_text(qa_application *application, const char *source,
     size_t length = strlen(source);
     if (length == SIZE_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "application event text overflows");
-    char *copy = qa_arena_alloc(&application->event_arena, length + 1, 1, error);
+    char *copy = application_event_stream_alloc(application, length + 1, 1, error);
     if (!copy) return false;
     memcpy(copy, source, length + 1);
     *out = copy;
@@ -580,45 +601,44 @@ bool application_emit_q2_player(application_provider *provider,
         event->count > SIZE_MAX / sizeof(qa_q2_score_row) ||
         event->count > SIZE_MAX / sizeof(qa_inventory_entry))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
-    qa_application_q2_player_event *storage = event_storage(application->q2_player_events,
-        application->q2_player_event_count, &application->q2_player_event_capacity,
-        sizeof(*storage), 32, error);
-    if (!storage) return false;
-    application->q2_player_events = storage;
+    application_event_write write;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error)) return false;
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
-        !application_network_q2_print_recipients(provider, event->actor, &application->event_arena,
-            &recipients, &recipient_count, error)) return false;
-    if (!application_unified_q2_native_player(provider, event, error)) return false;
+        !application_network_q2_print_recipients(provider, event->actor,
+            &recipients, &recipient_count, error)) goto abort;
+    if (!application_unified_q2_native_player(provider, event, error)) goto abort;
     qa_q2_player_event copied = *event;
     if (!event_text(application, event->text, &copied.text, error) ||
         !event_text(application, event->skin, &copied.skin, error))
-        return false;
+        goto abort;
     copied.scores = NULL;
     copied.inventory = NULL;
     if (event->scores && event->count) {
-        qa_q2_score_row *scores = qa_arena_alloc(&application->event_arena,
+        qa_q2_score_row *scores = application_event_stream_alloc(application,
             event->count * sizeof(*scores), _Alignof(qa_q2_score_row), error);
-        if (!scores) return false;
+        if (!scores) goto abort;
         memcpy(scores, event->scores, event->count * sizeof(*scores));
         for (size_t i = 0; i < event->count; ++i)
             if (!event_text(application, event->scores[i].name, &scores[i].name, error))
-                return false;
+                goto abort;
         copied.scores = scores;
     }
     if (event->inventory && event->count) {
-        qa_inventory_entry *inventory = qa_arena_alloc(&application->event_arena,
+        qa_inventory_entry *inventory = application_event_stream_alloc(application,
             event->count * sizeof(*inventory), _Alignof(qa_inventory_entry), error);
-        if (!inventory) return false;
+        if (!inventory) goto abort;
         memcpy(inventory, event->inventory, event->count * sizeof(*inventory));
         copied.inventory = inventory;
     }
-    storage[application->q2_player_event_count] = (qa_application_q2_player_event){
+    write.envelope->raw.q2_player = (qa_application_q2_player_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied, .recipients = recipients, .recipient_count = recipient_count};
-    ++application->q2_player_event_count;
-    return true;
+    return application_event_stream_commit(application, &write, error);
+abort:
+    application_event_stream_abort(application, &write, error);
+    return false;
 }
 
 static bool emit_protocol(application_provider *provider,
@@ -648,34 +668,31 @@ static bool emit_protocol(application_provider *provider,
                 resource->resource_custody, &held, &view, &opening, error)) return false;
         }
     }
-    application_protocol_record *storage = event_storage(application->protocol_events,
-        application->protocol_event_count, &application->protocol_event_capacity,
-        sizeof(*storage), 32, error);
-    if (!storage) return false;
-    application->protocol_events = storage;
-    uint8_t *payload = event->payload.size ? qa_arena_alloc(&application->event_arena,
+    application_event_write write;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, &write, error)) return false;
+    uint8_t *payload = event->payload.size ? application_event_stream_alloc(application,
         event->payload.size, 1, error) : NULL;
-    if (event->payload.size && !payload) return false;
+    if (event->payload.size && !payload) goto abort;
     if (event->payload.size) memcpy(payload, event->payload.data, event->payload.size);
     qa_application_protocol_reference *references = event->reference_count ?
-        qa_arena_alloc(&application->event_arena, event->reference_count * sizeof(*references),
+        application_event_stream_alloc(application, event->reference_count * sizeof(*references),
                          _Alignof(qa_application_protocol_reference), error) : NULL;
-    if (event->reference_count && !references) return false;
+    if (event->reference_count && !references) goto abort;
     if (event->reference_count)
         memcpy(references, event->references, event->reference_count * sizeof(*references));
     qa_application_protocol_resource_reference *resources = event->resource_count ?
-        qa_arena_alloc(&application->event_arena, event->resource_count * sizeof(*resources),
+        application_event_stream_alloc(application, event->resource_count * sizeof(*resources),
             _Alignof(qa_application_protocol_resource_reference), error) : NULL;
-    if (event->resource_count && !resources) return false;
+    if (event->resource_count && !resources) goto abort;
     for (size_t i = 0; i < event->resource_count; ++i) {
         resources[i] = event->resources[i];
         size_t length = strlen(resources[i].name);
-        if (length == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Source resource spelling extent overflows");
-        char *name = qa_arena_alloc(&application->event_arena, length + 1, 1, error);
-        if (!name) return false;
+        char *name = application_event_stream_alloc(application, length + 1, 1, error);
+        if (!name) goto abort;
         memcpy(name, resources[i].name, length + 1); resources[i].name = name;
     }
     qa_application_protocol_event copied = *event;
+    copied.event_id = write.envelope->id;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;
     if (provider->kind != APPLICATION_PROVIDER_Q1) {
@@ -692,27 +709,27 @@ static bool emit_protocol(application_provider *provider,
             for (size_t i=0;entering && i<sizeof(engine->clients)/sizeof(*engine->clients);++i)
                 if (engine->clients[i].connected) entering=false;
             if (!entering)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol lost its genuine emission clock");
+                { application_fail(error, QA_ERROR_ARGUMENT, "Source protocol lost its genuine emission clock"); goto abort; }
         }
     }
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
     copied.resources = resources;
-    if (copied.signon &&
-        !application_q1_signon_retain(provider, &copied, error))
-        return false;
     application_protocol_record record = {.event = copied};
     if (delivery) {
         record.q2 = *delivery;
         if (!application_native_q2_delivery_retain(application, &delivery->audience,
-                &record.q2.audience, error)) return false;
+                &record.q2.audience, error)) goto abort;
         if (delivery->audience.captured) record.event.time_ns = delivery->audience.source_time_ns;
     }
     if (!application_unified_q2_protocol_event(provider, &record.event,
-            delivery ? &record.q2 : NULL, error)) return false;
-    storage[application->protocol_event_count] = record;
-    ++application->protocol_event_count;
-    return true;
+            delivery ? &record.q2 : NULL, error)) goto abort;
+    write.envelope->raw.protocol = record;
+    if (!application_event_stream_commit(application, &write, error)) return false;
+    return !copied.signon || application_q1_signon_retain(provider, &copied, error);
+abort:
+    application_event_stream_abort(application, &write, error);
+    return false;
 }
 
 bool application_emit_protocol(application_provider *provider,
@@ -730,105 +747,109 @@ bool application_emit_q2_protocol(application_provider *provider,
     return emit_protocol(provider, event, delivery, error);
 }
 
-size_t qa_application_q2_player_event_count(const qa_application *application)
+uint64_t qa_application_events_first(const qa_application *app)
+{ return app && app->event_pages ? application_event_pages_first(app->event_pages) : 1; }
+uint64_t qa_application_events_local_first(const qa_application *app)
+{ return app ? app->event_local_cursor : 1; }
+uint64_t qa_application_events_next(const qa_application *app)
+{ return app && app->event_pages ? application_event_pages_next(app->event_pages) : 1; }
+
+bool qa_application_events_admit(const qa_application *app, qa_application_event_headroom *out)
 {
-    return application ? application->q2_player_event_count : 0;
+    qa_application_event_headroom headroom = {0};
+    if (app && app->event_pages) {
+        application_event_pages_capacity capacity;
+        application_event_pages_capacity_read(app->event_pages, &capacity);
+        headroom = (qa_application_event_headroom){.available_bytes = capacity.available_bytes,
+            .available_records = capacity.available_records, .reserve_bytes = capacity.total_bytes / 2,
+            .reserve_records = capacity.total_records / 2};
+    }
+    if (out) *out = headroom;
+    return headroom.available_bytes >= headroom.reserve_bytes &&
+        headroom.available_records >= headroom.reserve_records;
 }
 
-bool qa_application_q2_player_event_at(const qa_application *application, size_t index,
-                                       qa_application_q2_player_event *out)
+bool qa_application_event_kind_at(const qa_application *app, uint64_t id,
+    qa_application_event_kind *out)
 {
-    if (!application || !out || index >= application->q2_player_event_count) return false;
-    *out = application->q2_player_events[index];
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out) return false;
+    *out = record->kind;
     return true;
 }
 
-size_t qa_application_protocol_event_count(const qa_application *application)
+bool qa_application_q2_player_event_at(const qa_application *app, uint64_t id,
+    qa_application_q2_player_event *out)
 {
-    return application ? application->protocol_event_count : 0;
-}
-
-uint64_t qa_application_protocol_events_generation(const qa_application *application)
-{
-    return application ? application->protocol_events_generation : 0;
-}
-
-bool qa_application_protocol_event_at(const qa_application *application, size_t index,
-                                      qa_application_protocol_event *out)
-{
-    if (!application || !out || index >= application->protocol_event_count) return false;
-    *out = application->protocol_events[index].event;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_PLAYER) return false;
+    *out = record->raw.q2_player;
     return true;
 }
 
-bool qa_application_protocol_q2_delivery_at(const qa_application *application,
-    size_t index, qa_application_q2_protocol_delivery *out)
+uint64_t qa_application_protocol_events_generation(const qa_application *app)
+{ return app ? app->protocol_events_generation : 0; }
+
+bool qa_application_protocol_event_at(const qa_application *app, uint64_t id,
+    qa_application_protocol_event *out)
 {
-    if (!application || !out || index >= application->protocol_event_count) return false;
-    *out = application->protocol_events[index].q2;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_PROTOCOL) return false;
+    *out = record->raw.protocol.event;
+    out->event_id = id;
     return true;
 }
 
-size_t qa_application_event_count(const qa_application *application)
+bool qa_application_protocol_q2_delivery_at(const qa_application *app, uint64_t id,
+    qa_application_q2_protocol_delivery *out)
 {
-    return application == NULL ? 0 : application->event_count;
-}
-
-bool qa_application_event_at(const qa_application *application, size_t index,
-                             qa_builtin_event *out)
-{
-    if (application == NULL || out == NULL ||
-        index >= application->event_count)
-        return false;
-    *out = application->events[index].event;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_PROTOCOL) return false;
+    *out = record->raw.protocol.q2;
     return true;
 }
 
-size_t qa_application_q2_map_event_count(const qa_application *application)
+bool qa_application_event_at(const qa_application *app, uint64_t id, qa_builtin_event *out)
 {
-    return application == NULL ? 0 : application->q2_map_event_count;
-}
-
-bool qa_application_q2_map_event_at(const qa_application *application,
-                                    size_t index,
-                                    qa_application_q2_map_event *out)
-{
-    if (application == NULL || out == NULL ||
-        index >= application->q2_map_event_count)
-        return false;
-    *out = application->q2_map_events[index].source;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
+    *out = record->raw.builtin.event;
     return true;
 }
 
-bool qa_application_event_q2_audience_at(const qa_application *app,size_t index,
+bool qa_application_q2_map_event_at(const qa_application *app, uint64_t id,
+    qa_application_q2_map_event *out)
+{
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_MAP) return false;
+    *out = record->raw.q2_map.source;
+    return true;
+}
+
+bool qa_application_event_q2_audience_at(const qa_application *app, uint64_t id,
     qa_application_q2_audience *out)
 {
-    if (!app || !out || index>=app->event_count) return false;
-    *out=app->events[index].q2_audience;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
+    *out = record->raw.builtin.q2_audience;
     return true;
 }
 
-bool qa_application_q2_map_event_audience_at(const qa_application *app,size_t index,
+bool qa_application_q2_map_event_audience_at(const qa_application *app, uint64_t id,
     qa_application_q2_audience *out)
 {
-    if (!app || !out || index>=app->q2_map_event_count) return false;
-    *out=app->q2_map_events[index].audience;
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_MAP) return false;
+    *out = record->raw.q2_map.audience;
     return true;
 }
 
-size_t qa_application_q3_map_event_count(const qa_application *application)
+bool qa_application_q3_map_event_at(const qa_application *app, uint64_t id,
+    qa_application_q3_map_event *out)
 {
-    return application == NULL ? 0 : application->q3_map_event_count;
-}
-
-bool qa_application_q3_map_event_at(const qa_application *application,
-                                    size_t index,
-                                    qa_application_q3_map_event *out)
-{
-    if (application == NULL || out == NULL ||
-        index >= application->q3_map_event_count)
-        return false;
-    *out = application->q3_map_events[index];
+    const application_event_envelope *record = application_event_stream_at(app, id);
+    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q3_MAP) return false;
+    *out = record->raw.q3_map;
     return true;
 }
 
@@ -843,12 +864,10 @@ static bool clear_events(qa_application *application, qa_error *error)
     application_equipment_events *gear = application_equipment_runtime_events(application->equipment_runtime);
     if (!application_equipment_events_clear_ready(gear, error)) return false;
     ++application->protocol_events_generation;
-    application->event_count = 0;
-    application->q2_map_event_count = 0;
-    application->q3_map_event_count = 0;
-    application->q2_player_event_count = 0;
-    application->protocol_event_count = 0;
-    qa_arena_reset(&application->event_arena);
+    application->event_local_cursor = qa_application_events_next(application);
+    uint64_t next = application->event_local_cursor < application->event_peer_cursor ?
+        application->event_local_cursor : application->event_peer_cursor;
+    application_event_pages_retire(application->event_pages, next);
     application_equipment_events_clear(gear);
     return true;
 }

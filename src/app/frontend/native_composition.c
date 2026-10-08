@@ -148,11 +148,10 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
         frame->application != owner->frontend->application ||
         !qa_application_native_q3_presentation_current(frame->application, &frame->source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects require their actual entered native frame");
-    size_t count = qa_application_event_count(frame->application);
-    for (size_t i = 0; i < count; ++i) {
+    uint64_t next = qa_application_events_next(frame->application);
+    for (uint64_t i = qa_application_events_local_first(frame->application); i < next; ++i) {
         qa_builtin_event event;
-        if (!qa_application_event_at(frame->application, i, &event))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect canonical queue changed during its native frame");
+        if (!qa_application_event_at(frame->application, i, &event)) continue;
         if (event.family != QA_GAME_Q3) continue;
         effect_pose_scope scope = {.owner = owner, .actor = event.actor}; bool found;
         if (!captured_origin(owner, event.actor, &scope.origin, &found, error)) return false;

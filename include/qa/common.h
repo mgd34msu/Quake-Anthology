@@ -12,7 +12,8 @@ typedef enum qa_status {
     QA_ERROR_MEMORY,
     QA_ERROR_FORMAT,
     QA_ERROR_UNSUPPORTED,
-    QA_ERROR_NOT_FOUND
+    QA_ERROR_NOT_FOUND,
+    QA_ERROR_CAPACITY
 } qa_status;
 
 typedef struct qa_error {

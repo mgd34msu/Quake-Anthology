@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "native_q2_delivery.h"
 #include "native_q1_console.h"
 #include "qa/application_startup_prepare.h"
 #include "q3_product.h"
@@ -115,7 +116,8 @@ bool application_composition_create(qa_application *application,
     application->actor_route_capacity = actor_capacity;
     application->control_capacity = actor_capacity;
     application->q2_visual_capacity = actor_capacity;
-    qa_arena_init(&application->event_arena, 16384);
+    if (!application_event_stream_create(application, actor_capacity, error)) return false;
+    if (!application_native_q2_delivery_create(application, actor_capacity, error)) return false;
 
     qa_target_options targets = application_target_options(application);
     application->targets = qa_targets_create(&targets, error);

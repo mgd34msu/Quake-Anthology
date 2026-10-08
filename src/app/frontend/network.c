@@ -6462,22 +6462,61 @@ bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id a
         (frontend_network_predictor_source_current(n->q3_predictor,&source) ||
          frontend_fail(error,QA_ERROR_FORMAT,"Paired prediction changed its retained physical source receipt"));
 }
+static uint64_t network_events_retired(qa_frontend_network *network)
+{
+    uint64_t next = frontend_network_unified_events_after(network ? network->unified : NULL);
+    uint64_t retired = frontend_nq_events_retired(network ? network->nq_host : NULL);
+    if (retired < next) next = retired;
+    retired = frontend_qw_events_retired(network ? network->qw_host : NULL);
+    if (retired < next) next = retired;
+    retired = frontend_network_q2_host_events_retired(network ? network->q2_host : NULL);
+    return retired < next ? retired : next;
+}
+
+static bool network_events_admit(qa_frontend *f, bool *ready, qa_error *error)
+{
+    qa_frontend_network *network = f->network;
+    for (;;) {
+        uint64_t minimum = network_events_retired(network);
+        application_unified_events_consume(f->application, minimum);
+        if (qa_application_events_admit(f->application, NULL)) {
+            *ready = true;
+            return true;
+        }
+        bool released = false;
+        if (!frontend_network_unified_release_pressure(network ? network->unified : NULL,
+            minimum, &released, error)) return false;
+        if (!released && !frontend_nq_events_pressure(network ? network->nq_host : NULL,
+            minimum, &released, error)) return false;
+        if (!released && !frontend_qw_events_pressure(network ? network->qw_host : NULL,
+            minimum, &released, error)) return false;
+        if (!released && !frontend_network_q2_host_events_pressure(network ? network->q2_host : NULL,
+            minimum, &released, error)) return false;
+        if (!released) {
+            *ready = false;
+            return true;
+        }
+    }
+}
+
 bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *error)
 {
     if(!source_ready) return frontend_fail(error,QA_ERROR_ARGUMENT,"Network Source step requires an admission output");
     *source_ready=true;
-    if(!f || !f->network) return true;
-    if(f->network->unified && !retiring_map) {
+    if(!f) return true;
+    if(f->network && f->network->unified && !retiring_map) {
         if(!frontend_network_unified_step_ready(f->network->unified,source_ready,error)) return false;
         if(!*source_ready) return true;
-        if(!frontend_network_unified_pre_frame(f->network->unified,error)) return false;
     }
+    if (!network_events_admit(f, source_ready, error)) return false;
+    if (!*source_ready || !f->network) return true;
+    if (f->network->unified && !retiring_map &&
+        !frontend_network_unified_pre_frame(f->network->unified,error)) return false;
     return frontend_nq_tick(f->network->nq_host,elapsed_ns,retiring_map,error);
 }
 void frontend_network_events_consume(qa_frontend *f)
 {
-    application_unified_events_consume(f->application,
-        frontend_network_unified_events_after(f->network ? f->network->unified : NULL));
+    application_unified_events_consume(f->application, network_events_retired(f->network));
 }
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {

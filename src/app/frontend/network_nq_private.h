@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_NETWORK_NQ_PRIVATE_H
 #define QA_FRONTEND_NETWORK_NQ_PRIVATE_H
 #include "network_nq.h"
+#include "../../network/event_receipts.h"
 
 enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32, NQ_PINGS = 16 };
 typedef struct nq_frontend_peer {
@@ -12,7 +13,8 @@ typedef struct nq_frontend_peer {
     qa_q1_command latest;
     uint64_t input_sequence, tick_sequence, entered_ns, admission_order;
     uint64_t protocol_generation;
-    size_t protocol_cursor;
+    uint64_t protocol_cursor;
+    qa_event_receipts event_receipts;
     double pings[NQ_PINGS];
     uint8_t ping_count;
     uint32_t source_slot;

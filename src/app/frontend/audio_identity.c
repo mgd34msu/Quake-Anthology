@@ -119,23 +119,20 @@ uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound requires its actual delivery boundary");
         return QA_AUDIO_NO_ACTOR;
     }
-    bool retained=false, referenced=false;
-    for (size_t i=0;i<qa_application_protocol_event_count(frontend->application);++i) {
-        qa_application_protocol_event queued;
-        if (!qa_application_protocol_event_at(frontend->application,i,&queued)) {
-            frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol queue changed during sound delivery");
+    qa_application_protocol_event queued;
+    const qa_application_protocol_event *retained=message;
+    if (message->event_id) {
+        if (!qa_application_protocol_event_at(frontend->application,message->event_id,&queued)) {
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its retained event ID");
             return QA_AUDIO_NO_ACTOR;
         }
-        if (queued.provider==message->provider && queued.time_ns==message->time_ns &&
-            queued.payload.data==message->payload.data && queued.payload.size==message->payload.size &&
-            queued.references==message->references && queued.reference_count==message->reference_count) {
-            retained=true; break;
-        }
+        retained=&queued;
     }
-    for (size_t i=0;retained && i<message->reference_count;++i)
-        if (qa_actor_id_equal(message->references[i].actor,actor)) { referenced=true; break; }
-    if (!retained || !referenced || !retained_event_source(frontend,message->provider,QA_GAME_Q2,error)) {
-        if (!retained || !referenced)
+    bool referenced=false;
+    for (size_t i=0;i<retained->reference_count;++i)
+        if (qa_actor_id_equal(retained->references[i].actor,actor)) { referenced=true; break; }
+    if (!referenced || !retained_event_source(frontend,retained->provider,QA_GAME_Q2,error)) {
+        if (!referenced)
             frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its captured actor reference");
         return QA_AUDIO_NO_ACTOR;
     }

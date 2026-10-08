@@ -519,22 +519,21 @@ bool application_unified_builtin_read(qa_application *app, const qa_builtin_even
         .ctf_capture_total = v->ctf_capture.total, .ctf_capture_blue = v->ctf_capture.blue,
         .q1_power = v->q1_powerup.power, .q1_power_expires = v->q1_powerup.expires};
     if (v->argument_count) {
-        out->arguments = calloc(v->argument_count, sizeof(*out->arguments));
-        if (!out->arguments) return application_fail(e, QA_ERROR_MEMORY, "Projecting Source message arguments");
+        out->arguments = application_event_stream_alloc(app, v->argument_count * sizeof(*out->arguments),
+            _Alignof(qa_unified_message_arg), e);
+        if (!out->arguments) return false;
         out->argument_count = v->argument_count;
         for (size_t i = 0; i < v->argument_count; ++i) {
             const qa_builtin_message_arg *arg = v->arguments + i;
-            out->arguments[i].kind = arg->kind;
+            out->arguments[i] = (qa_unified_message_arg){.kind = arg->kind};
             if (arg->kind == QA_BUILTIN_MESSAGE_STRING) out->arguments[i].text = event_alias(app, arg->value.text);
             else out->arguments[i].number = arg->value.number;
         }
     }
     if (v->prompt_choice_count) {
-        out->prompt_choices = calloc(v->prompt_choice_count, sizeof(*out->prompt_choices));
-        if (!out->prompt_choices) {
-            application_unified_builtin_read_dispose(out);
-            return application_fail(e, QA_ERROR_MEMORY, "Projecting Source prompt choices");
-        }
+        out->prompt_choices = application_event_stream_alloc(app, v->prompt_choice_count * sizeof(*out->prompt_choices),
+            _Alignof(qa_unified_prompt_choice), e);
+        if (!out->prompt_choices) return false;
         out->prompt_choice_count = v->prompt_choice_count;
         for (size_t i = 0; i < v->prompt_choice_count; ++i)
             out->prompt_choices[i] = (qa_unified_prompt_choice){
@@ -543,50 +542,56 @@ bool application_unified_builtin_read(qa_application *app, const qa_builtin_even
     return true;
 }
 void application_unified_builtin_read_dispose(qa_unified_builtin_event *v)
-{ free(v->arguments); free(v->prompt_choices); *v = (qa_unified_builtin_event){0}; }
+{ *v = (qa_unified_builtin_event){0}; }
 
-void application_unified_event_record_dispose(application_unified_event_record *r)
-{
-    if (r->presentation) { qa_unified_presentation_payload_dispose(r->presentation); free(r->presentation); }
-    if (r->simulation) { qa_unified_simulation_payload_dispose(r->simulation); free(r->simulation); }
-    *r = (application_unified_event_record){0};
-}
 void application_unified_events_consume(qa_application *app, uint64_t next)
 {
-    size_t retained = 0;
-    for (size_t i = 0; i < app->unified_event_count; ++i) {
-        application_unified_event_record *row = app->unified_events + i;
-        if (row->order < next) application_unified_event_record_dispose(row);
-        else {
-            if (retained != i) {
-                app->unified_events[retained] = *row;
-                *row = (application_unified_event_record){0};
-            }
-            ++retained;
-        }
-    }
-    app->unified_event_count = retained;
+    app->event_peer_cursor = next;
+    uint64_t retired = app->event_local_cursor < next ? app->event_local_cursor : next;
+    application_event_pages_retire(app->event_pages, retired);
 }
 void application_unified_events_clear(qa_application *app)
-{ application_unified_events_consume(app, UINT64_MAX); }
-static bool record_clone(const application_unified_event_record *source,
-    application_unified_event_record *out, qa_error *e)
 {
-    *out = *source; out->presentation = NULL; out->simulation = NULL;
-    bool ok = true;
+    app->event_local_cursor = qa_application_events_next(app);
+    application_unified_events_consume(app, UINT64_MAX);
+}
+
+bool application_unified_event_append(qa_application *app,
+    const application_unified_event_record *source, qa_error *error)
+{
+    application_event_write *write = app->event_write;
+    application_event_view *view = application_event_stream_alloc(app, sizeof(*view),
+        _Alignof(application_event_view), error);
+    if (!view) return false;
+    *view = (application_event_view){.event = *source};
+    application_unified_event_record *record = &view->event;
+    record->order = write->envelope->id;
+    record->presentation = NULL;
+    record->simulation = NULL;
     if (source->presentation) {
-        out->presentation = calloc(1, sizeof(*out->presentation));
-        ok = out->presentation && qa_unified_presentation_payload_clone(source->presentation, out->presentation, e);
-    }
-    if (ok && source->simulation) {
-        out->simulation = calloc(1, sizeof(*out->simulation));
-        ok = out->simulation && qa_unified_simulation_payload_clone(source->simulation, out->simulation, e);
-    }
-    if (!ok) {
-        application_unified_event_record_dispose(out);
-        if (!e || e->code == QA_OK) application_fail(e, QA_ERROR_MEMORY, "Retaining actual Source event record");
-    }
-    return ok;
+        record->presentation = application_event_stream_alloc(app, sizeof(*record->presentation),
+            _Alignof(qa_unified_presentation_payload), error);
+        if (!record->presentation) return false;
+        *record->presentation = (qa_unified_presentation_payload){0};
+        if (!qa_unified_record_clone_alloc(&qa_unified_presentation_payload_layout,
+            source->presentation, record->presentation, application_event_pages_alloc,
+            &write->transaction, error)) return false;
+        record->presentation_sequence = app->presentation_event_sequence++;
+    } else record->presentation_sequence = 0;
+    if (source->simulation) {
+        record->simulation = application_event_stream_alloc(app, sizeof(*record->simulation),
+            _Alignof(qa_unified_simulation_payload), error);
+        if (!record->simulation) return false;
+        *record->simulation = (qa_unified_simulation_payload){0};
+        if (!qa_unified_record_clone_alloc(&qa_unified_simulation_payload_layout,
+            source->simulation, record->simulation, application_event_pages_alloc,
+            &write->transaction, error)) return false;
+        record->simulation_sequence = app->simulation_event_sequence++;
+    } else record->simulation_sequence = 0;
+    if (write->envelope->last_view) write->envelope->last_view->next = view;
+    else write->envelope->views = view;
+    write->envelope->last_view = view;
+    return true;
 }
 
 typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE } persistent_domain;
@@ -641,7 +646,7 @@ bool application_unified_persistent_key_equal(const application_persistent_key *
 void application_unified_persistent_dispose(qa_application *app)
 {
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
-        application_unified_event_record_dispose(&app->unified_persistent[i].event);
+        application_event_lease_release(app->unified_persistent[i].lease);
     }
     free(app->unified_persistent); app->unified_persistent = NULL;
     app->unified_persistent_count = app->unified_persistent_capacity = 0;
@@ -662,82 +667,88 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
         application_unified_persistent_event row = app->unified_persistent[i];
         if (owner ? row.event.provider == owner : qa_actor_id_equal(row.event.recipient, recipient)) {
-            application_unified_event_record_dispose(&row.event);
+            application_event_lease_release(row.lease);
         } else app->unified_persistent[kept++] = row;
     }
     app->unified_persistent_count = kept;
     if (activation) activation->active = false;
     ++app->unified_persistent_revision; return true;
 }
-static bool persistent_record(qa_application *app, const application_unified_event_record *event, qa_error *e)
+bool application_unified_persistent_prepare(qa_application *app,
+    application_event_envelope *envelope, qa_error *error)
 {
-    application_persistent_key key = {0}; bool remove;
-    if (!application_unified_persistent_key(app, event, &key, &remove, e)) return false;
-    if (!key.domain) return true;
-    size_t index = 0;
-    while (index < app->unified_persistent_count) {
-        const application_persistent_key *candidate = &app->unified_persistent[index].key;
-        if (application_unified_persistent_key_equal(&key, candidate)) break;
-        ++index;
-    }
-    if (remove && index == app->unified_persistent_count) return true;
-    if (app->unified_persistent_revision == UINT64_MAX) return application_fail(e, QA_ERROR_FORMAT, "Presentation revision exhausted");
-    application_unified_event_record retained = {0};
-    if (!remove) {
-        application_unified_event_record presentation = *event;
-        presentation.simulation = NULL; presentation.simulation_sequence = 0; presentation.link_presentation = false;
-        if (!record_clone(&presentation, &retained, e)) return false;
-        if (index == app->unified_persistent_capacity) {
-            size_t capacity = index ? index * 2 : 32;
-            if (capacity < index || capacity > SIZE_MAX / sizeof(*app->unified_persistent)) {
-                application_unified_event_record_dispose(&retained);
-                return application_fail(e, QA_ERROR_MEMORY, "Persistent presentation extent exhausted");
-            }
-            void *rows = realloc(app->unified_persistent, capacity * sizeof(*app->unified_persistent));
-            if (!rows) { application_unified_event_record_dispose(&retained); return application_fail(e, QA_ERROR_MEMORY, "Retaining persistent presentation slots"); }
-            app->unified_persistent = rows; app->unified_persistent_capacity = capacity;
+    size_t count = app->unified_persistent_count;
+    for (application_event_view *view = envelope->views; view; view = view->next) {
+        if (!application_unified_persistent_key(app, &view->event, &view->persistent_key,
+            &view->persistent_remove, error)) return false;
+        if (!view->persistent_key.domain) continue;
+        bool present = false;
+        for (size_t i = 0; i < app->unified_persistent_count; ++i)
+            if (application_unified_persistent_key_equal(&view->persistent_key,
+                &app->unified_persistent[i].key)) { present = true; break; }
+        for (application_event_view *prior = envelope->views; prior != view; prior = prior->next)
+            if (application_unified_persistent_key_equal(&view->persistent_key,
+                &prior->persistent_key)) present = !prior->persistent_remove;
+        if (view->persistent_remove) { if (present) --count; }
+        else if (!present) ++count;
+        if (count > app->unified_persistent_capacity) {
+            app->event_write->transaction.blocked = true;
+            return false;
         }
     }
-    if (index < app->unified_persistent_count) {
-        application_unified_event_record_dispose(&app->unified_persistent[index].event);
-        memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
-            (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
+    return true;
+}
+
+void application_unified_persistent_publish(qa_application *app,
+    application_event_envelope *envelope)
+{
+    for (application_event_view *view = envelope->views; view; view = view->next) {
+        if (!view->persistent_key.domain) continue;
+        size_t index = 0;
+        while (index < app->unified_persistent_count &&
+            !application_unified_persistent_key_equal(&view->persistent_key,
+                &app->unified_persistent[index].key)) ++index;
+        if (view->persistent_remove && index == app->unified_persistent_count) continue;
+        if (index < app->unified_persistent_count) {
+            application_event_lease_release(app->unified_persistent[index].lease);
+            memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
+                (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
+        }
+        if (!view->persistent_remove) {
+            application_unified_event_record record = view->event;
+            record.simulation = NULL;
+            record.simulation_sequence = 0;
+            record.link_presentation = false;
+            app->unified_persistent[app->unified_persistent_count++] =
+                (application_unified_persistent_event){.event = record, .key = view->persistent_key,
+                    .lease = application_event_pages_retain(app->event_pages, envelope->id)};
+        }
+        ++app->unified_persistent_revision;
     }
-    if (!remove) app->unified_persistent[app->unified_persistent_count++] = (application_unified_persistent_event){.event = retained, .key = key};
-    ++app->unified_persistent_revision; return true;
 }
 static bool persistent_domain_equal(const application_persistent_key *a, const application_persistent_key *b, bool slot)
 {
     if (a->domain == PERSIST_UNIQUE || a->domain == PERSIST_SOUND || a->domain != b->domain || a->selector != b->selector) return false;
     return !slot || (a->recipient_registry == b->recipient_registry && a->recipient_generation == b->recipient_generation && a->recipient_slot == b->recipient_slot);
 }
-static bool journal_capacity(qa_application *app, size_t additions, qa_error *e)
-{
-    if (additions > SIZE_MAX - app->unified_event_count) return application_fail(e, QA_ERROR_MEMORY, "Source event extent overflows");
-    size_t needed = app->unified_event_count + additions;
-    if (needed <= app->unified_event_capacity) return true;
-    size_t capacity = app->unified_event_capacity ? app->unified_event_capacity : 64;
-    while (capacity < needed) {
-        if (capacity > SIZE_MAX / 2) { capacity = needed; break; }
-        capacity *= 2;
-    }
-    if (capacity > SIZE_MAX / sizeof(*app->unified_events)) return application_fail(e, QA_ERROR_MEMORY, "Source event extent overflows");
-    void *rows = realloc(app->unified_events, capacity * sizeof(*app->unified_events));
-    if (!rows) return application_fail(e, QA_ERROR_MEMORY, "Retaining Source event order");
-    app->unified_events = rows; app->unified_event_capacity = capacity; return true;
-}
 bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner owner,
-    const qa_source_frame *clock, qa_error *e)
+    const qa_source_frame *clock, qa_error *error)
 {
-    if (!app || !owner) return application_fail(e, QA_ERROR_ARGUMENT, "Presentation retirement requires its actual owner");
+    if (!app || !owner) return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires its actual owner");
     application_unified_event_owner *activation = NULL;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i)
-        if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active) activation = app->unified_event_owners + i;
-    if (!activation || !activation->generation) return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, e);
-    if (!clock || !clock->provider || (unsigned)clock->kind > QA_CLOCK_Q3) return application_fail(e, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
+        if (app->unified_event_owners[i].provider == owner && app->unified_event_owners[i].active)
+            activation = app->unified_event_owners + i;
+    if (!activation || !activation->generation)
+        return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
+    if (!clock || !clock->provider || (unsigned)clock->kind > QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
+    application_event_write write;
+    if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, error)) return false;
     size_t count = app->unified_persistent_count;
-    size_t *winners = count ? malloc(count * sizeof(*winners)) : NULL;
-    if (count && !winners) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual presentation replacement slots");
+    size_t *winners = count ? application_event_stream_alloc(app, count * sizeof(*winners),
+        _Alignof(size_t), error) : NULL;
+    if (count && !winners) goto abort;
     size_t winner_count = 0;
     for (size_t i = 0; i < count; ++i) {
         const application_unified_persistent_event *row = app->unified_persistent + i;
@@ -748,36 +759,35 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
                 affected = persistent_domain_equal(&row->key, &app->unified_persistent[n].key, false);
         if (!affected) continue;
         size_t match = 0;
-        while (match < winner_count && !persistent_domain_equal(&row->key, &app->unified_persistent[winners[match]].key, true)) ++match;
+        while (match < winner_count && !persistent_domain_equal(&row->key,
+            &app->unified_persistent[winners[match]].key, true)) ++match;
         if (match == winner_count) ++winner_count;
         winners[match] = i;
     }
     for (size_t i = 1; i < winner_count; ++i) {
         size_t value = winners[i], n = i;
-        while (n && app->unified_persistent[winners[n - 1]].event.presentation_sequence > app->unified_persistent[value].event.presentation_sequence) { winners[n] = winners[n - 1]; --n; }
+        while (n && app->unified_persistent[winners[n - 1]].event.presentation_sequence >
+            app->unified_persistent[value].event.presentation_sequence) {
+            winners[n] = winners[n - 1]; --n;
+        }
         winners[n] = value;
     }
-    size_t additions = winner_count + 1;
-    bool ok = additions <= UINT64_MAX - app->unified_event_sequence && additions <= UINT64_MAX - app->presentation_event_sequence && journal_capacity(app, additions, e);
-    if (!ok && (!e || e->code == QA_OK)) application_fail(e, QA_ERROR_FORMAT, "Presentation retirement sequence domain exhausted");
-    application_unified_event_record *prepared = ok ? calloc(additions, sizeof(*prepared)) : NULL;
-    if (ok && !prepared) ok = application_fail(e, QA_ERROR_MEMORY, "Preparing atomic Source presentation retirement");
     qa_unified_presentation_payload retired = {.kind = QA_UNIFIED_PRESENTATION_OWNER,
-        .value.owner = {.kind = QA_UNIFIED_OWNER_RETIRED, .owner = {.provider = event_alias(app, owner), .generation = activation->generation}}};
-    application_unified_event_record first = {.presentation = &retired, .provider = owner, .content = activation->content,
-        .family = clock->kind == QA_CLOCK_Q3 ? QA_GAME_Q3 :
-            clock->kind == QA_CLOCK_Q2_CLASSIC || clock->kind == QA_CLOCK_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1, .clock = clock->kind, .presentation_clock = clock->kind,
+        .value.owner = {.kind = QA_UNIFIED_OWNER_RETIRED,
+            .owner = {.provider = event_alias(app, owner), .generation = activation->generation}}};
+    application_unified_event_record first = {.presentation = &retired, .provider = owner,
+        .content = activation->content, .family = clock->kind == QA_CLOCK_Q3 ? QA_GAME_Q3 :
+            clock->kind == QA_CLOCK_Q2_CLASSIC || clock->kind == QA_CLOCK_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1,
+        .clock = clock->kind, .presentation_clock = clock->kind,
         .time_ns = clock->time_ns, .simulation_time_ns = clock->time_ns};
-    if (ok) ok = record_clone(&first, prepared, e);
-    for (size_t i = 0; ok && i < winner_count; ++i) ok = record_clone(&app->unified_persistent[winners[i]].event, prepared + i + 1, e);
-    if (ok) ok = application_unified_persistent_retire(app, owner, (qa_actor_id){0}, e);
-    if (ok) for (size_t i = 0; i < additions; ++i) {
-        prepared[i].order = app->unified_event_sequence++;
-        prepared[i].presentation_sequence = app->presentation_event_sequence++;
-        app->unified_events[app->unified_event_count++] = prepared[i]; prepared[i] = (application_unified_event_record){0};
-    }
-    for (size_t i = 0; prepared && i < additions; ++i) application_unified_event_record_dispose(prepared + i);
-    free(prepared); free(winners); return ok;
+    if (!application_unified_event_append(app, &first, error)) goto abort;
+    for (size_t i = 0; i < winner_count; ++i)
+        if (!application_unified_event_append(app, &app->unified_persistent[winners[i]].event, error)) goto abort;
+    if (!application_event_stream_commit(app, &write, error)) return false;
+    return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
+abort:
+    application_event_stream_abort(app, &write, error);
+    return false;
 }
 
 bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
@@ -789,7 +799,7 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     if (!app || !app->session || app->destroy_requested || !application_unified_event_source_read(app, owner, &source, e) ||
         !source.product->identity || (!presentation && !simulation) ||
         (link_presentation && (!presentation || !simulation || simulation->kind != QA_UNIFIED_SIMULATION_MESSAGE)) ||
-        app->unified_event_sequence == UINT64_MAX || (presentation && app->presentation_event_sequence == UINT64_MAX) ||
+        (presentation && app->presentation_event_sequence == UINT64_MAX) ||
         (simulation && app->simulation_event_sequence == UINT64_MAX))
         return application_fail(e, QA_ERROR_ARGUMENT, "Source emission lost its actual owner, payload or sequence domain");
     application_provider *provider = source_provider(app, owner);
@@ -833,17 +843,15 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     if (primary && qa_session_clock(app->session, primary->owner, &clock)) {
         borrowed.clock = clock.frame.kind; borrowed.simulation_time_ns = clock.frame.time_ns;
     }
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &borrowed.content, e) || !journal_capacity(app, 1, e)) return false;
-    borrowed.order = app->unified_event_sequence;
-    if (presentation) borrowed.presentation_sequence = app->presentation_event_sequence;
-    if (borrowed.simulation) borrowed.simulation_sequence = app->simulation_event_sequence;
-    application_unified_event_record retained = {0};
-    if (!record_clone(&borrowed, &retained, e)) return false;
-    if (!persistent_record(app, &retained, e)) { application_unified_event_record_dispose(&retained); return false; }
-    ++app->unified_event_sequence;
-    if (retained.presentation) ++app->presentation_event_sequence;
-    if (retained.simulation) ++app->simulation_event_sequence;
-    app->unified_events[app->unified_event_count++] = retained; return true;
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &borrowed.content, e)) return false;
+    application_event_write write;
+    bool own = app->event_write == NULL;
+    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
+    if (!application_unified_event_append(app, &borrowed, e)) {
+        if (own) application_event_stream_abort(app, &write, e);
+        return false;
+    }
+    return !own || application_event_stream_commit(app, &write, e);
 }
 
 static double source_time(uint64_t ns, qa_clock_kind clock, bool milliseconds)
@@ -872,6 +880,9 @@ bool application_unified_damage_emit(qa_application *app, const qa_damage_outcom
     if (!source || !source->launch) return application_fail(e, QA_ERROR_FORMAT, "Damage attack lost its genuine source weapon provider");
     qa_clock_kind clock = source->launch->selection.clock.kind;
     bool ms = clock == QA_CLOCK_Q2_RERELEASE || clock == QA_CLOCK_Q3;
+    application_event_write write;
+    bool own = app->event_write == NULL;
+    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
     qa_unified_simulation_payload payload = {.kind = QA_UNIFIED_SIMULATION_DAMAGE};
     qa_unified_damage_event *d = &payload.value.damage;
     *d = (qa_unified_damage_event){.stale = outcome->stale, .survived = outcome->survived,
@@ -888,12 +899,16 @@ bool application_unified_damage_emit(qa_application *app, const qa_damage_outcom
     /* The q1 text is the wire identity; its session-local ordinal has no wire meaning. */
     if (attack->cause.kind == QA_CAUSE_Q1) d->request.attack.cause.source.q1.death_type = 0;
     if (outcome->mutation_count) {
-        d->mutations = calloc(outcome->mutation_count, sizeof(*d->mutations));
-        if (!d->mutations) return application_fail(e, QA_ERROR_MEMORY, "Projecting genuine damage mutation journal");
+        d->mutations = application_event_stream_alloc(app, outcome->mutation_count * sizeof(*d->mutations),
+            _Alignof(qa_unified_damage_mutation), e);
+        if (!d->mutations) {
+            if (own) application_event_stream_abort(app, &write, e);
+            return false;
+        }
         d->mutation_count = outcome->mutation_count;
         for (size_t i = 0; i < outcome->mutation_count; ++i) {
             const qa_damage_mutation *m = outcome->mutations + i; qa_unified_damage_mutation *v = d->mutations + i;
-            v->kind = m->kind;
+            *v = (qa_unified_damage_mutation){.kind = m->kind};
             switch (m->kind) {
             case QA_MUTATION_HEALTH: v->health_before = m->value.health.before; v->health_after = m->value.health.after; break;
             case QA_MUTATION_ARMOR: v->armor_before = armor_read(app, &m->value.armor.before); v->armor_after = armor_read(app, &m->value.armor.after); break;
@@ -904,7 +919,9 @@ bool application_unified_damage_emit(qa_application *app, const qa_damage_outcom
     }
     bool ok = application_unified_event_emit(app, attack->weapon_provider, NULL, &payload,
         (qa_actor_id){0}, (qa_actor_id){0}, attack->time_ns, 0, false, false, e);
-    free(d->mutations); return ok;
+    if (!own) return ok;
+    if (!ok) { application_event_stream_abort(app, &write, e); return false; }
+    return application_event_stream_commit(app, &write, e);
 }
 
 typedef struct actor_check { qa_application *app; bool checkpoint, rebind; } actor_check;
@@ -934,40 +951,25 @@ bool application_unified_event_recipient(qa_application *app, const application_
     return qa_actors_reference_saved(qa_session_actors(app->session), simulation ?
         row->simulation_recipient_saved : row->recipient_saved, true, out, e);
 }
-bool application_unified_events_restore_finish(qa_application *app, qa_error *e)
+bool application_unified_events_restore_finish(qa_application *app, qa_error *error)
 {
-    if (!app || !app->session || app->unified_event_count > SIZE_MAX - app->unified_persistent_count)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Imported Source events lost their actual application owner");
-    size_t count = app->unified_event_count + app->unified_persistent_count;
-    if (!count) return true;
-    application_unified_event_record *staged = calloc(count, sizeof(*staged));
-    application_persistent_key *keys = app->unified_persistent_count ? calloc(app->unified_persistent_count, sizeof(*keys)) : NULL;
-    if (!staged || (app->unified_persistent_count && !keys)) { free(staged); free(keys); return application_fail(e, QA_ERROR_MEMORY, "Rebinding imported Source event actors"); }
-    actor_check check = {.app = app, .checkpoint = true, .rebind = true}; bool ok = true;
-    for (size_t i = 0; ok && i < count; ++i) {
-        const application_unified_event_record *row = i < app->unified_event_count ? app->unified_events + i : &app->unified_persistent[i - app->unified_event_count].event;
-        if (!row->payload_checkpoint) continue;
-        application_unified_event_record *r = staged + i;
-        ok = record_clone(row, r, e) && application_unified_event_recipient(app, row, false, &r->recipient, e) &&
-            application_unified_event_recipient(app, row, true, &r->simulation_recipient, e) &&
-            (!r->presentation || qa_unified_record_actor_remap(&qa_unified_presentation_payload_layout, r->presentation, actor_reference, &check, e)) &&
-            (!r->simulation || qa_unified_record_actor_remap(&qa_unified_simulation_payload_layout, r->simulation, actor_reference, &check, e));
-        r->payload_checkpoint = false; r->recipient_saved = r->simulation_recipient_saved = (qa_saved_actor_id){0};
-        if (ok && i >= app->unified_event_count) {
-            bool remove;
-            ok = application_unified_persistent_key(app, r, keys + i - app->unified_event_count, &remove, e) && keys[i - app->unified_event_count].domain && !remove;
-        }
+    actor_check check = {.app = app, .checkpoint = true, .rebind = true};
+    for (size_t i = 0; i < app->unified_persistent_count; ++i) {
+        application_unified_persistent_event *slot = app->unified_persistent + i;
+        application_unified_event_record *record = &slot->event;
+        if (!record->payload_checkpoint) continue;
+        if (!application_unified_event_recipient(app, record, false, &record->recipient, error) ||
+            !application_unified_event_recipient(app, record, true, &record->simulation_recipient, error) ||
+            (record->presentation && !qa_unified_record_actor_remap(&qa_unified_presentation_payload_layout,
+                record->presentation, actor_reference, &check, error)) ||
+            (record->simulation && !qa_unified_record_actor_remap(&qa_unified_simulation_payload_layout,
+                record->simulation, actor_reference, &check, error))) return false;
+        record->payload_checkpoint = false;
+        record->recipient_saved = record->simulation_recipient_saved = (qa_saved_actor_id){0};
+        bool remove;
+        if (!application_unified_persistent_key(app, record, &slot->key, &remove, error)) return false;
     }
-    if (ok) for (size_t i = 0; i < count; ++i) {
-        application_unified_event_record *row = i < app->unified_event_count ? app->unified_events + i : &app->unified_persistent[i - app->unified_event_count].event;
-        if (!row->payload_checkpoint) continue;
-        application_unified_event_record_dispose(row); *row = staged[i]; staged[i] = (application_unified_event_record){0};
-        if (i >= app->unified_event_count) {
-            app->unified_persistent[i - app->unified_event_count].key = keys[i - app->unified_event_count];
-        }
-    }
-    for (size_t i = 0; i < count; ++i) application_unified_event_record_dispose(staged + i);
-    free(staged); free(keys); return ok;
+    return true;
 }
 
 bool application_unified_world_text_read(qa_application *app, const application_unified_source *source,
@@ -1044,22 +1046,50 @@ static bool presentation_for(const application_unified_event_record *row, qa_net
     else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL && p->value.q2_protocol.kind == QA_Q2_SVC_COMMAND) return false;
     return true;
 }
+typedef struct event_iterator {
+    const qa_application *application;
+    const application_event_view *view;
+    uint64_t cursor, end;
+    size_t persistent;
+    bool initial;
+} event_iterator;
+
+static const application_unified_event_record *event_iterator_next(event_iterator *iterator)
+{
+    if (iterator->initial) {
+        if (iterator->persistent == iterator->application->unified_persistent_count) return NULL;
+        return &iterator->application->unified_persistent[iterator->persistent++].event;
+    }
+    while (!iterator->view) {
+        if (iterator->cursor == iterator->end) return NULL;
+        const application_event_envelope *envelope =
+            application_event_stream_at(iterator->application, iterator->cursor++);
+        if (envelope) iterator->view = envelope->views;
+    }
+    const application_unified_event_record *record = &iterator->view->event;
+    iterator->view = iterator->view->next;
+    return record;
+}
+
 static bool events_project(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
     uint64_t after, bool initial, application_unified_events *out, qa_error *e)
 {
-    if (!app || !source || !player || !out || !epoch || after > app->unified_event_sequence ||
+    if (!app || !source || !player || !out || !epoch || after > qa_application_events_next(app) ||
         !application_unified_source_current(app, source) || !application_unified_player_current(app, recipient, player))
         return application_fail(e, QA_ERROR_ARGUMENT, "Source event projection has no current physical recipient");
     application_unified_events result = {.application = app, .source = *source, .recipient = recipient, .player = *player,
-        .generation = app->protocol_events_generation, .through = app->unified_event_sequence, .count = app->unified_event_count,
+        .generation = app->protocol_events_generation, .through = qa_application_events_next(app),
+        .count = (size_t)(qa_application_events_next(app) - qa_application_events_first(app)),
         .resource_count = app->unified_event_resource_count, .registration_revision = app->unified_event_registration_revision,
         .persistent_revision = app->unified_persistent_revision, .world_text_revision = app->unified_world_text_revision};
-    size_t rows = initial ? app->unified_persistent_count : result.count;
+    uint64_t first = qa_application_events_first(app);
+    event_iterator begin = {.application = app, .cursor = after > first ? after : first,
+        .end = result.through, .initial = initial};
+    event_iterator iterator = begin;
+    const application_unified_event_record *r;
     size_t presentation_count = 0, simulation_count = 0;
-    for (size_t i = 0; i < rows; ++i) {
-        const application_unified_event_record *r = initial ? &app->unified_persistent[i].event : app->unified_events + i;
-        if (!initial && r->order < after) continue;
+    while ((r = event_iterator_next(&iterator))) {
         presentation_count += r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
         simulation_count += simulation_for(r, recipient, player->actor);
     }
@@ -1075,9 +1105,8 @@ static bool events_project(qa_application *app, const application_unified_source
     if (simulation_count) events->simulation = calloc(simulation_count, sizeof(*events->simulation));
     bool ok = (!presentation_count || events->presentation) && (!simulation_count || events->simulation);
     if (!ok) application_fail(e, QA_ERROR_MEMORY, "Projecting actual typed Source event arrays");
-    for (size_t i = 0; ok && i < rows; ++i) {
-        const application_unified_event_record *r = initial ? &app->unified_persistent[i].event : app->unified_events + i;
-        if (!initial && r->order < after) continue;
+    iterator = begin;
+    while (ok && (r = event_iterator_next(&iterator))) {
         if (r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor)) {
             qa_unified_presentation_event borrowed = {.sequence = r->presentation_sequence,
                 .seconds = source_time(r->time_ns, r->presentation_clock, false), .content = event_alias(app, r->content),
@@ -1128,8 +1157,8 @@ bool application_unified_events_current(const application_unified_events *events
 {
     return events && events->application && application_unified_source_current(events->application, &events->source) &&
         application_unified_player_current(events->application, events->recipient, &events->player) &&
-        events->generation == events->application->protocol_events_generation && events->through == events->application->unified_event_sequence &&
-        events->count == events->application->unified_event_count && events->resource_count == events->application->unified_event_resource_count &&
+        events->generation == events->application->protocol_events_generation && events->through == qa_application_events_next(events->application) &&
+        events->count == (size_t)(qa_application_events_next(events->application) - qa_application_events_first(events->application)) && events->resource_count == events->application->unified_event_resource_count &&
         events->registration_revision == events->application->unified_event_registration_revision &&
         events->persistent_revision == events->application->unified_persistent_revision && events->world_text_revision == events->application->unified_world_text_revision;
 }

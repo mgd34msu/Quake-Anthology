@@ -77,13 +77,13 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
 
 bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
 {
-    size_t count=qa_application_protocol_event_count(frontend->application);
+    uint64_t first=qa_application_events_local_first(frontend->application);
+    uint64_t next=qa_application_events_next(frontend->application);
     uint64_t generation=qa_application_protocol_events_generation(frontend->application);
-    for (size_t i=0;i<count;++i) {
+    for (uint64_t id=first;id<next;++id) {
         message_delivery context={.frontend=frontend};
-        if (!qa_application_protocol_event_at(frontend->application,i,&context.message) ||
-            !qa_application_protocol_q2_delivery_at(frontend->application,i,&context.delivery))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Q2 message queue changed during delivery");
+        if (!qa_application_protocol_event_at(frontend->application,id,&context.message)) continue;
+        if (!qa_application_protocol_q2_delivery_at(frontend->application,id,&context.delivery)) continue;
         if (!context.delivery.original || !context.delivery.audience.captured ||
             !context.delivery.audience.count) continue;
         qa_net_protocol_id protocol={.kind=context.delivery.profile==QA_NATIVE_Q2_GAME_API3 ?
@@ -106,7 +106,7 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
         free(context.selected);
         if (!ok) return false;
         if (generation!=qa_application_protocol_events_generation(frontend->application) ||
-            count!=qa_application_protocol_event_count(frontend->application))
+            first!=qa_application_events_local_first(frontend->application))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Original Q2 delivery retired its retained queue");
     }
     return true;

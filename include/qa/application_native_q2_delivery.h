@@ -52,11 +52,11 @@ typedef struct qa_application_q2_protocol_delivery {
 /* Borrows the actual emission-time recipients until queue clear.
  * captured=true with count=0 is a real delivery to no clients. These values
  * do not grant live source access or recompute visibility from a camera. */
-bool qa_application_event_q2_audience_at(const qa_application *, size_t,
+bool qa_application_event_q2_audience_at(const qa_application *, uint64_t,
     qa_application_q2_audience *);
-bool qa_application_q2_map_event_audience_at(const qa_application *, size_t,
+bool qa_application_q2_map_event_audience_at(const qa_application *, uint64_t,
     qa_application_q2_audience *);
-bool qa_application_protocol_q2_delivery_at(const qa_application *, size_t,
+bool qa_application_protocol_q2_delivery_at(const qa_application *, uint64_t,
     qa_application_q2_protocol_delivery *);
 
 #endif

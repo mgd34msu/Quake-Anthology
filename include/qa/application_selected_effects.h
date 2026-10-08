@@ -75,14 +75,14 @@ bool qa_application_selected_effects_q3_binding(qa_application *,
 typedef struct qa_application_effect_event {
     qa_application_selected_effects source;
     const qa_builtin_event *event;
-    size_t ordinal;
+    uint64_t event_id;
     uint64_t queue_generation;
 } qa_application_effect_event;
 
 /* A canonical event can outlive its emitter actor. This borrow qualifies the
  * actual retained queue row and its producer, without routing a retired actor
  * or granting a translation to another selected source. */
-bool qa_application_effect_event_read(qa_application *, size_t,
+bool qa_application_effect_event_read(qa_application *, uint64_t,
     qa_application_effect_event *, qa_error *);
 bool qa_application_effect_event_current(qa_application *,
     const qa_application_effect_event *);

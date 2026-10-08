@@ -707,7 +707,8 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
                 if (!application_network_q2_config(owner, owner->light_base + 256 + index, config, error)) return false;
             }
         }
-        for (size_t i = 0; i < qa_application_event_count(owner->app); ++i) {
+        uint64_t events_next = qa_application_events_next(owner->app);
+        for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_builtin_event event;
             if (!qa_application_event_at(owner->app, i, &event) || event.family != QA_GAME_Q2 ||
                 event.provider != owner->host.source.source_owner || event.time_ns != owner->host.source.server_time_ns) continue;
@@ -734,7 +735,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             } else if (binding.source_slot != slot)
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 retained event changed its physical Source edict");
         }
-        for (size_t i = 0; i < qa_application_q2_map_event_count(owner->app); ++i) {
+        for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_application_q2_map_event record;
             if (!qa_application_q2_map_event_at(owner->app, i, &record) ||
                 record.provider != owner->host.source.source_owner) continue;

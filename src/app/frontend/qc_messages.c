@@ -24,7 +24,8 @@ typedef struct qc_recipient {
     uint64_t native_map_revision;
     uint32_t native_seat;
     bool native;
-    size_t signon_index,signon_offset,event_index,event_offset;
+    size_t signon_index,signon_offset,event_offset;
+    uint64_t event_id;
     uint64_t generation,next_sequence;
     int32_t stats[32];
     uint32_t stat_present;
@@ -166,7 +167,7 @@ static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_
     if(baseline) {
         row->camera=baseline->camera; row->camera.recipient=recipient; row->camera.source_slot=slot;
         row->signon_index=baseline->signon_index; row->signon_offset=baseline->signon_offset; row->generation=baseline->generation;
-        row->event_index=baseline->event_index; row->event_offset=baseline->event_offset; row->next_sequence=baseline->next_sequence;
+        row->event_id=baseline->event_id; row->event_offset=baseline->event_offset; row->next_sequence=baseline->next_sequence;
         memcpy(row->stats,baseline->stats,sizeof(row->stats)); row->stat_present=baseline->stat_present;
     }
     bool okay;
@@ -353,15 +354,14 @@ static bool signon(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     ++row->signon_index; row->signon_offset=0;
     return true;
 }
-static bool event(frontend_qc_messages *owner,qc_recipient *row,size_t index,
+static bool event(frontend_qc_messages *owner,qc_recipient *row,uint64_t id,
     const qa_application_protocol_event *event,uint64_t generation,qa_error *error)
 {
-    if(row->generation!=generation) {
-        if(row->event_offset) return frontend_fail(error,QA_ERROR_ARGUMENT,"QC queue cleared a partially delivered packet");
-        row->generation=generation; row->event_index=0;
-    }
-    if(index<row->event_index) return true;
-    if(index!=row->event_index) return false;
+    row->generation=generation;
+    if(id<row->event_id) return true;
+    if(row->event_offset && id!=row->event_id)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC unfinished byte stream lost its retained event");
+    row->event_id=id;
     if(event->provider==row_provider(row) && !event->signon) {
         bool receives=!event->recipient.registry || qa_actor_id_equal(event->recipient,row_actor(row));
         if(row->native && qa_q1_is_qw(row_protocol(row))) {
@@ -371,9 +371,10 @@ static bool event(frontend_qc_messages *owner,qc_recipient *row,size_t index,
         } else if(event->multicast)receives=event->destination==0 || event->destination==3;
         if(receives && !packet(owner,row,event,&row->event_offset,error))return false;
     }
-    ++row->event_index; row->event_offset=0;
+    row->event_id=id+1; row->event_offset=0;
     return true;
 }
+
 static bool world_publish(frontend_qc_messages *owner,qa_error *error)
 {
     qa_frontend *f=owner->frontend;
@@ -461,17 +462,29 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
     }
     if(okay) okay=native_rows(owner,error);
     uint64_t generation=qa_application_protocol_events_generation(owner->application);
-    size_t count=qa_application_protocol_event_count(owner->application);
-    for(size_t i=0;okay && i<count;++i) {
-        qa_application_protocol_event retained;
-        okay=qa_application_protocol_event_at(owner->application,i,&retained);
-        /* The shared sky publication must precede recipient overrides for
-         * this same actual packet; all sources keep the original queue order. */
-        for(unsigned pass=0;okay && pass<2;++pass) for(qc_recipient *row=owner->recipients;okay && row;row=row->next)
-            if((row_actor(row).registry!=0)==(pass!=0)) okay=event(owner,row,i,&retained,generation,error);
-        okay=okay && generation==qa_application_protocol_events_generation(owner->application) &&
-            count==qa_application_protocol_event_count(owner->application);
+    uint64_t first=qa_application_events_local_first(owner->application);
+    uint64_t next=qa_application_events_next(owner->application),scan=first;
+    for(qc_recipient *row=owner->recipients;okay && row;row=row->next) {
+        row->generation=generation;
+        if(row->event_offset) {
+            qa_application_protocol_event retained;
+            if(!qa_application_protocol_event_at(owner->application,row->event_id,&retained))
+                okay=frontend_fail(error,QA_ERROR_ARGUMENT,"QC unfinished byte stream lost its retained event");
+            if(row->event_id<scan) scan=row->event_id;
+        } else if(row->event_id<first) row->event_id=first;
     }
+    for(uint64_t id=scan;okay && id<next;++id) {
+        qa_application_protocol_event retained;
+        if(!qa_application_protocol_event_at(owner->application,id,&retained)) continue;
+        /* The shared sky publication precedes recipient overrides for this
+         * packet; byte offsets belong to the packet, not its global ID. */
+        for(unsigned pass=0;okay && pass<2;++pass) for(qc_recipient *row=owner->recipients;okay && row;row=row->next)
+            if((row_actor(row).registry!=0)==(pass!=0)) okay=event(owner,row,id,&retained,generation,error);
+        okay=okay && generation==qa_application_protocol_events_generation(owner->application) &&
+            first==qa_application_events_local_first(owner->application);
+    }
+    if(okay) for(qc_recipient *row=owner->recipients;row;row=row->next)
+        if(!row->event_offset && row->event_id<next) row->event_id=next;
     if(okay) okay=world_publish(owner,error);
     owner->busy=false; return okay;
 }
@@ -668,10 +681,6 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
             while(*link && ((*link)->native || !recipient_current(owner,&(*link)->camera))) link=&(*link)->next;
             if(!*link) return false;
             saved=**link; row=&saved; link=&(*link)->next;
-            if(row->generation!=qa_application_protocol_events_generation(owner->application)) {
-                if(row->event_offset) return false;
-                row->generation=qa_application_protocol_events_generation(owner->application); row->event_index=0;
-            }
             if(row->camera.view_entity.registry &&
                 !qa_actors_get(qa_world_actors(qa_application_world(owner->application)),row->camera.view_entity))
                 row->camera.view_entity=(qa_actor_id){0};
@@ -706,16 +715,16 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
         size_t signon_count=0;
         if(!qa_application_qc_message_signon_count(owner->application,&camera->source,&signon_count,io->error) ||
             !qa_source_save_count(io,&row->signon_index,signon_count) ||
-            !qa_source_save_count(io,&row->signon_offset,SIZE_MAX) || !qa_source_save_u64(io,&row->generation) ||
-            row->generation!=qa_application_protocol_events_generation(owner->application) ||
-            !qa_source_save_count(io,&row->event_index,qa_application_protocol_event_count(owner->application)) ||
-            !qa_source_save_count(io,&row->event_offset,SIZE_MAX)) return false;
+            !qa_source_save_count(io,&row->signon_offset,SIZE_MAX)) return false;
         qa_application_protocol_event retained;
         if(row->signon_offset && (row->signon_index==signon_count ||
             !qa_application_qc_message_signon_at(owner->application,&camera->source,row->signon_index,&retained,io->error) ||
             row->signon_offset>=retained.payload.size)) return false;
-        if(row->event_offset && (!qa_application_protocol_event_at(owner->application,row->event_index,&retained) ||
-            row->event_offset>=retained.payload.size || retained.provider!=camera->source.provider || retained.signon)) return false;
+        if(reading) {
+            row->generation=qa_application_protocol_events_generation(owner->application);
+            row->event_id=qa_application_events_local_first(owner->application);
+            row->event_offset=0;
+        }
         qa_net_protocol_id protocol=reading?(qa_net_protocol_id){0}:decoder_protocol(row);
         uint32_t kind=protocol.kind;
         if(!qa_source_save_u32(io,&kind) || !qa_source_save_u32(io,&protocol.flags) ||

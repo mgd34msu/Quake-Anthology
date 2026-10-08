@@ -90,7 +90,7 @@ static bool output_valid(const application_unified_server *owner,
     if (!owner->pending.frame) return !owner->pending_capture && !owner->control_cursor &&
         !owner->pending_first && !owner->pending_last && !owner->pending.control_count;
     if (!player || !owner->pending_capture || !owner->admitted || !owner->preparing_frame ||
-        source->frame.phase != QA_FRAME_EXIT || source->frame.number != owner->published_frame ||
+        source->frame.phase != QA_FRAME_EXIT ||
         owner->published_frame <= owner->frame_before || owner->control_cursor > owner->pending.control_count ||
         owner->control_cursor > UINT32_MAX ||
         !application_unified_save_output_equal(&owner->pending,
@@ -109,7 +109,7 @@ static bool output_valid(const application_unified_server *owner,
             (qa_saved_actor_id){actor.generation,actor.slot},true,&actor,e)) return false;
     if (!frame || frame->epoch!=owner->epoch || frame->acknowledged_input!=owner->acknowledged ||
         !frame->player || !qa_actor_id_equal(actor,player->actor) ||
-        !frame->world || frame->world->source.number!=source->frame.number) return false;
+        !frame->world || frame->world->source.number!=owner->published_frame) return false;
     for (size_t i=0;i<owner->pending.control_count;++i) {
         uint32_t epoch;
         if (!qa_unified_document_epoch(owner->pending.controls[i],&epoch,e) || epoch!=owner->epoch) return false;
@@ -134,8 +134,6 @@ static bool continuation_valid(const application_unified_server *owner,
         (!obsolete || (!owner->pending_capture && !owner->pending.frame)) && owner->acknowledged >= -1 &&
         owner->acknowledged <= (int64_t)QA_UNIFIED_SAFE_INTEGER &&
         (!owner->inputs || owner->acknowledged <= owner->inputs->submitted) &&
-        owner->events_after <= owner->application->unified_event_sequence &&
-        owner->pending_events_through <= owner->application->unified_event_sequence &&
         output_valid(owner, source, player, e);
 }
 static bool receipts_valid(const application_unified_server *owner, const qa_unified_session *session, qa_error *e)
@@ -238,8 +236,11 @@ static bool fields(qa_source_save_io *io, application_unified_server *owner,
         !qa_source_save_count(io, &owner->control_cursor, owner->pending.control_count) ||
         !qa_source_save_u32(io, &owner->pending_first) || !qa_source_save_u32(io, &owner->pending_last) ||
         !qa_source_save_u64(io, &owner->frame_before) || !qa_source_save_u64(io, &owner->published_frame) ||
-        !qa_source_save_u64(io, &owner->events_after) || !qa_source_save_u64(io, &owner->pending_events_through) ||
         !qa_source_save_i64(io, &owner->acknowledged)) return false;
+    if (!writing) {
+        owner->events_after = qa_application_events_next(owner->application);
+        owner->pending_events_through = owner->events_after;
+    }
     bool capture = owner->pending_capture != NULL;
     if (!qa_source_save_bool(io, &capture) || capture != (owner->pending.frame != NULL)) return false;
     if (capture) {
@@ -334,13 +335,13 @@ bool application_unified_server_restore_bind(application_unified_server *owner,
         return bad(e, "Source import binding changed its retained physical player or output");
     owner->session = session; owner->restore_pending = false;
     uint32_t required = qa_unified_session_required(session);
+    uint64_t first = qa_application_events_first(owner->application);
+    qa_event_receipts_reset(&owner->event_receipts, owner->events_after);
     if (required > qa_unified_session_reliable_acknowledged(session) &&
-        owner->application->unified_event_count) {
-        uint64_t first = owner->application->unified_events[0].order;
+        first < qa_application_events_next(owner->application)) {
         if (first < owner->events_after) {
-            owner->event_receipts[0] = (application_unified_event_receipt){
-                .first = first, .reliable_last = required};
-            owner->event_receipt_count = 1;
+            (void)qa_event_receipts_submit(&owner->event_receipts,
+                first, owner->events_after, required);
         }
     }
     return true;

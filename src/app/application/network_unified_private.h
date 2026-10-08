@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NETWORK_UNIFIED_PRIVATE_H
 #include "network_unified.h"
 #include "unified_output_capture.h"
+#include "../../network/event_receipts.h"
 
 struct application_player_record;
 const struct application_player_record *application_players_connection_read(
@@ -30,11 +31,6 @@ struct application_unified_inputs {
     int64_t queued, submitted;
     bool advancing;
 };
-enum { APPLICATION_UNIFIED_EVENT_RECEIPTS = 64 };
-typedef struct application_unified_event_receipt {
-    uint64_t first;
-    uint32_t reliable_last;
-} application_unified_event_receipt;
 struct application_unified_server {
     qa_application *application;
     qa_network_runtime *runtime;
@@ -58,8 +54,10 @@ struct application_unified_server {
     uint32_t pending_first, pending_last;
     uint64_t frame_before, published_frame;
     uint64_t events_after, pending_events_through;
-    application_unified_event_receipt event_receipts[APPLICATION_UNIFIED_EVENT_RECEIPTS];
-    size_t event_receipt_head, event_receipt_count;
+    qa_event_receipts event_receipts;
+    uint64_t publication_overflows, resync_started_ns, resync_after;
+    uint32_t resync_sequence;
+    bool resync_pending, resync_prepared, resync_started;
     /* Derived setup receipts; a restored transport declares its dictionary again. */
     size_t declared_resources, pending_declared_resources;
     int64_t acknowledged;
@@ -71,4 +69,5 @@ struct application_unified_server {
     const qa_launch_instance *drop_source_launch;
     bool drop_player_detached;
 };
+void application_unified_server_resync(application_unified_server *);
 #endif

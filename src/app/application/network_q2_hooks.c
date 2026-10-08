@@ -387,10 +387,10 @@ bool qa_application_network_q2_recipient(qa_application *app, qa_actor_owner sou
 }
 
 bool application_network_q2_print_recipients(application_provider *provider, qa_actor_id actor,
-    qa_arena *arena, const qa_application_network_q2_recipient_view **out, size_t *count, qa_error *error)
+    const qa_application_network_q2_recipient_view **out, size_t *count, qa_error *error)
 {
     struct application_q2_recipient_binding *binding = provider ? provider->q2_recipient_binding : NULL;
-    if (!provider || !arena || !out || !count || !provider->constructed || !provider->attached ||
+    if (!provider || !out || !count || !provider->constructed || !provider->attached ||
         provider->close_pending ||
         !binding || binding->provider != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 print lost its actual Source recipient lifetime");
@@ -402,7 +402,7 @@ bool application_network_q2_print_recipients(application_provider *provider, qa_
         if (!qa_application_network_q2_recipient(provider->application, provider->owner,
             actor, &recipient, &present, error)) return false;
         if (!present) return true;
-        qa_application_network_q2_recipient_view *copy = qa_arena_alloc(arena, sizeof(*copy), _Alignof(qa_application_network_q2_recipient_view), error);
+        qa_application_network_q2_recipient_view *copy = application_event_stream_alloc(provider->application, sizeof(*copy), _Alignof(qa_application_network_q2_recipient_view), error);
         if (!copy) return false;
         *copy = recipient; *out = copy; *count = 1; return true;
     }
@@ -418,7 +418,7 @@ bool application_network_q2_print_recipients(application_provider *provider, qa_
         capacity += client->seat_count;
     }
     if (!capacity) return true;
-    qa_application_network_q2_recipient_view *copies = qa_arena_alloc(arena,
+    qa_application_network_q2_recipient_view *copies = application_event_stream_alloc(provider->application,
         capacity * sizeof(*copies), _Alignof(qa_application_network_q2_recipient_view), error);
     if (!copies) return false;
     cursor = 0;

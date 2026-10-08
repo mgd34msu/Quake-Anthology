@@ -505,9 +505,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             *link = entry->next; free(entry);
         } else link = &entry->next;
     }
-    for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "builtin queue changed during map presentation");
+        if (!qa_application_event_at(frontend->application, i, &event)) continue;
         bool handled;
         if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
         if (handled) continue;
@@ -556,9 +557,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             view->q1_style_owners[event.code]=event.provider;
         }
     }
-    for (size_t i = 0; i < qa_application_q2_map_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_application_q2_map_event source;
-        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 queue changed during map presentation");
+        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) continue;
         const qa_q2_map_event *event = &source.event;
         if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT) {
             frontend_retained_light *light = state->lights;

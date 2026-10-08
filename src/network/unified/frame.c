@@ -14,6 +14,8 @@ typedef struct record_reader {
     size_t at, allocated;
     qa_error *error;
     qa_unified_frame_lease *lease;
+    qa_unified_clone_alloc_fn clone_allocate;
+    void *clone_context;
 } record_reader;
 
 static bool fail(qa_error *e, const char *message)
@@ -103,8 +105,15 @@ static void *allocate(record_reader *r, size_t count, size_t size)
         fail(r->error, "Typed Unified state exceeds its owned memory bound"); return NULL;
     }
     size_t bytes = count * size;
-    void *out = r->lease ? qa_unified_frame_lease_alloc(r->lease, bytes ? bytes : 1, 1, _Alignof(max_align_t), r->error) :
-        calloc(bytes ? bytes : 1, 1);
+    void *out;
+    if (r->clone_allocate) {
+        out = r->clone_allocate(r->clone_context, bytes ? bytes : 1,
+            _Alignof(max_align_t), r->error);
+        if (out) memset(out, 0, bytes ? bytes : 1);
+    } else {
+        out = r->lease ? qa_unified_frame_lease_alloc(r->lease, bytes ? bytes : 1, 1, _Alignof(max_align_t), r->error) :
+            calloc(bytes ? bytes : 1, 1);
+    }
     if (!out) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Allocating typed Unified state"); return NULL; }
     r->allocated += bytes; return out;
 }
@@ -533,16 +542,23 @@ static bool field_clone(record_reader *r, const qa_unified_field *f, const void 
     default: return fail(r->error, "Unknown typed Unified field layout");
     }
 }
+bool qa_unified_record_clone_alloc(const qa_unified_record_layout *layout, const void *source,
+    void *out, qa_unified_clone_alloc_fn allocator, void *context, qa_error *error)
+{
+    if (!layout || !source || !out) return fail(error, "Typed Unified clone requires its fixed record owner");
+    record_reader reader = {.error = error, .clone_allocate = allocator, .clone_context = context};
+    for (size_t i = 0; i < layout->field_count; ++i)
+        if (!field_clone(&reader, layout->fields + i, source, out, 0)) return false;
+    return true;
+}
 bool qa_unified_record_clone(const qa_unified_record_layout *layout, const void *source,
     void *out, qa_error *error)
 {
-    if (!layout || !source || !out) return fail(error, "Typed Unified clone requires its fixed record owner");
-    record_reader reader = {.error = error};
-    for (size_t i = 0; i < layout->field_count; ++i)
-        if (!field_clone(&reader, layout->fields + i, source, out, 0)) {
-            qa_unified_record_dispose(layout, out); memset(out, 0, layout->size); return false;
-        }
-    return true;
+    if (qa_unified_record_clone_alloc(layout, source, out, NULL, NULL, error)) return true;
+    if (layout && source && out) {
+        qa_unified_record_dispose(layout, out); memset(out, 0, layout->size);
+    }
+    return false;
 }
 static bool record_read(record_reader *r, const qa_unified_record_layout *layout, const void *baseline, void *value, unsigned depth)
 {

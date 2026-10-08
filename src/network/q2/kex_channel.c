@@ -76,7 +76,7 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
        (queued_bytes>QA_KEX_MESSAGE_BYTES*2-c->pending_bytes||
         packet_count>32767u-c->pending_count)) {
         free(compressed);
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"KEX reliable queue full");
+        qa_error_set(e,QA_ERROR_CAPACITY,0,"KEX reliable queue full");
         return false;
     }
     struct pending *staged_head=NULL,*staged_tail=NULL;

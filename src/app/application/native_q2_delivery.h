@@ -3,8 +3,12 @@
 
 #include "internal.h"
 
+struct application_q2_audience_scratch;
+bool application_native_q2_delivery_create(qa_application *, size_t actors, qa_error *);
+void application_native_q2_delivery_destroy(qa_application *);
+
 /* Capture runs under the real executing GAME or canonical combat caller.
- * Temporary recipient storage is released by the caller after arena copy. */
+ * Recipients borrow load-sized scratch until copied into the event stream. */
 bool application_native_q2_delivery_capture(application_provider *, const qa_builtin_q2_multicast *,
     qa_vec3 line_end, qa_application_q2_audience *, qa_error *);
 struct application_native_q2;

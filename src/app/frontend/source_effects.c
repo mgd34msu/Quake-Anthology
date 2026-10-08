@@ -106,11 +106,12 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
         !qa_ui_preferences_read(qa_application_cvars(scope->application), seat, &scope->preferences, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects lost their physical map, preferences or audio binding");
     scope->admitted = true;
-    size_t count = qa_application_event_count(scope->application);
-    for (size_t i = 0; i < count; ++i) {
+    uint64_t next = qa_application_events_next(scope->application);
+    for (uint64_t i = qa_application_events_local_first(scope->application); i < next; ++i) {
         qa_builtin_event queued;
-        if (!qa_application_event_at(scope->application, i, &queued) || !frontend_source_effects_current(scope))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects canonical event queue changed during render entry");
+        if (!qa_application_event_at(scope->application, i, &queued)) continue;
+        if (!frontend_source_effects_current(scope))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects owner changed during render entry");
         if (queued.family != QA_GAME_Q3 || queued.kind != QA_BUILTIN_ANIMATION) continue;
         qa_application_effect_event event;
         if (!qa_application_effect_event_read(scope->application, i, &event, error)) return false;
@@ -122,8 +123,7 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
         bool admitted;
         if (!frontend_selected_effects_source_event(frontend, scope, &event, &pose, &admitted, error)) return false;
     }
-    if (qa_application_event_count(scope->application) != count ||
-        !frontend_selected_effects_source_prepare(frontend, scope, error) ||
+    if (!frontend_selected_effects_source_prepare(frontend, scope, error) ||
         !frontend_source_effects_current(scope)) return false;
     scope->groups = frontend_selected_effects_count(frontend);
     for (size_t i = 0; i < scope->groups; ++i) {

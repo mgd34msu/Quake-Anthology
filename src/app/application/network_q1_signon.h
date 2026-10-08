@@ -2,8 +2,8 @@
 #define APPLICATION_NETWORK_Q1_SIGNON_H
 #include "internal.h"
 
-/* Retain only actual Q1 signon emissions. The caller supplies the final source
- * stamp before publishing the transient event; this owner survives its drain. */
+/* Retain actual committed Q1 signon emissions by their page lease. Persistent
+ * views use event_id zero and survive retirement of the transient lookup. */
 bool application_q1_signon_retain(application_provider *, const qa_application_protocol_event *, qa_error *);
 void application_q1_signon_reset(qa_application *);
 void application_q1_signon_drop(qa_application *, qa_actor_owner);

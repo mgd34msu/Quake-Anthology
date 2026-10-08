@@ -55,7 +55,7 @@ static inline bool tool_save_error(qa_source_save_io *io, qa_error *value) {
     uint32_t status = (uint32_t)value->code;
     uint64_t offset = value->offset;
     char *message = io->direction == QA_SOURCE_SAVE_WRITE ? value->message : NULL;
-    if (!qa_source_save_u32(io, &status) || status > QA_ERROR_NOT_FOUND ||
+    if (!qa_source_save_u32(io, &status) || status > QA_ERROR_CAPACITY ||
         !qa_source_save_u64(io, &offset) || offset > SIZE_MAX) return tool_save_fail(io, "invalid private continuation error");
     bool ok = tool_save_text(io, &message);
     if (ok && (!message || strlen(message) >= sizeof value->message)) ok = tool_save_fail(io, "invalid private continuation error message");

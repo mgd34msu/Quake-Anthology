@@ -142,7 +142,7 @@ void application_network_q2_unbind(qa_application_network_q2 *);
 void application_network_q2_retire_bindings(struct application_native_q2 *);
 void application_network_q2_retire_source_bindings(application_provider *);
 bool application_network_q2_print_recipients(application_provider *, qa_actor_id,
-    qa_arena *, const qa_application_network_q2_recipient_view **, size_t *, qa_error *);
+    const qa_application_network_q2_recipient_view **, size_t *, qa_error *);
 bool application_network_q2_visual_resource(qa_application_network_q2 *,
     const qa_application_visual_view *, unsigned, uint32_t *, qa_error *);
 bool application_network_q2_download_resource(void *, const char *, const qa_vfs **,

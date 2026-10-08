@@ -1975,9 +1975,10 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     bool physical;
     if (!client_sample(frontend, &q2_sample, &server, &back_lerp, &physical, error)) return false;
     if (!frontend_native_q2_messages(frontend,error)) return false;
-    for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "particle event queue changed");
+        if (!qa_application_event_at(frontend->application, i, &event)) continue;
         if (event.family==QA_GAME_Q2 && (event.kind==QA_BUILTIN_TELEPORT ||
             (event.kind==QA_BUILTIN_Q2_ENTITY_EVENT && (event.code==6 || event.code==7))) &&
             frontend->particles && (size_t)event.actor.slot<frontend->particles->visual_sample_capacity) {
@@ -2019,9 +2020,10 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             }
         }
     }
-    for (size_t i = 0; i < qa_application_q2_map_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_application_q2_map_event source;
-        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) return frontend_fail(error, QA_ERROR_ARGUMENT, "steam event queue changed");
+        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) continue;
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;
         qa_application_q2_audience audience={0};
         (void)qa_application_q2_map_event_audience_at(frontend->application, i, &audience);

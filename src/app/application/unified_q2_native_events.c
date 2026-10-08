@@ -70,16 +70,16 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         .shield = v->shield, .first = v->first};
     bool ok = true;
     if (v->kind == QA_Q2_PLAYER_SCOREBOARD && v->count) {
-        r->scores = calloc(v->count, sizeof(*r->scores)); r->score_count = v->count;
-        if (!r->scores) ok = application_fail(e, QA_ERROR_MEMORY, "Projecting genuine Q2 score rows");
+        r->scores = application_event_stream_alloc(p->application, v->count * sizeof(*r->scores), _Alignof(qa_unified_q2_score_row), e); r->score_count = v->count;
+        if (!r->scores) ok = false;
         for (size_t i = 0; ok && i < v->count; ++i) {
             const qa_q2_score_row *a = v->scores + i;
             r->scores[i] = (qa_unified_q2_score_row){.slot = a->slot, .name = (char *)a->name,
                 .score = a->score, .ping = a->ping, .minutes = a->minutes, .spectator = a->spectator};
         }
     } else if (v->kind == QA_Q2_PLAYER_INVENTORY && v->count) {
-        r->inventory = calloc(v->count, sizeof(*r->inventory)); r->inventory_count = v->count;
-        if (!r->inventory) ok = application_fail(e, QA_ERROR_MEMORY, "Projecting genuine Q2 inventory rows");
+        r->inventory = application_event_stream_alloc(p->application, v->count * sizeof(*r->inventory), _Alignof(qa_unified_inventory_entry), e); r->inventory_count = v->count;
+        if (!r->inventory) ok = false;
         for (size_t i = 0; ok && i < v->count; ++i) {
             const qa_inventory_entry *a = v->inventory + i;
             r->inventory[i] = (qa_unified_inventory_entry){.item = alias(p->application, a->item),
@@ -107,15 +107,15 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         inventory = &simulation;
     }
     if (ok) ok = emit(p, &payload, inventory, v->actor, recipient, clock.frame.time_ns, NULL, e);
-    free(r->scores); free(r->inventory); return ok;
+    return ok;
 }
 
 static bool arguments(qa_application *app, const qa_builtin_message_arg *args, size_t count,
     qa_unified_message_arg **out, qa_error *e)
 {
     if (!count) return true;
-    *out = calloc(count, sizeof(**out));
-    if (!*out) return application_fail(e, QA_ERROR_MEMORY, "Projecting Q2 authored string arguments");
+    *out = application_event_stream_alloc(app, count * sizeof(**out), _Alignof(qa_unified_message_arg), e);
+    if (!*out) return false;
     for (size_t i = 0; i < count; ++i) {
         if (args[i].kind != QA_BUILTIN_MESSAGE_STRING)
             return application_fail(e, QA_ERROR_UNSUPPORTED, "Q2 localized Source event requires its authored string argument");
@@ -145,8 +145,8 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
         if (v->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT || !v->levels)
             ok = application_fail(e, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual campaign rows");
         else {
-            r->levels = calloc(v->level_count, sizeof(*r->levels));
-            if (!r->levels) ok = application_fail(e, QA_ERROR_MEMORY, "Projecting actual Q2 campaign report");
+            r->levels = application_event_stream_alloc(app, v->level_count * sizeof(*r->levels), _Alignof(qa_unified_q2_campaign_level), e);
+            if (!r->levels) ok = false;
             for (size_t i = 0; ok && i < v->level_count; ++i) {
                 const qa_q2_campaign_level *a = v->levels + i;
                 r->levels[i] = (qa_unified_q2_campaign_level){.map = alias(app, a->map), .name = alias(app, a->name),
@@ -156,7 +156,7 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
         }
     }
     if (ok) ok = emit(p, &payload, NULL, v->actor, v->recipient, clock.frame.time_ns, audience, e);
-    free(r->arguments); free(r->levels); return ok;
+    return ok;
 }
 
 static bool model(application_provider *p, qa_actor_id id, const qa_q2_visual *v,

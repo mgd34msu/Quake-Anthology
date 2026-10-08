@@ -57,10 +57,10 @@ void frontend_player_retire(frontend_seat *seat)
 }
 bool frontend_player_events(qa_frontend *frontend, qa_error *error)
 {
-    for (size_t i=0;i<qa_application_event_count(frontend->application);++i) {
+    for (uint64_t i=qa_application_events_local_first(frontend->application);
+        i<qa_application_events_next(frontend->application);++i) {
         qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application,i,&event))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Player event queue changed during presentation");
+        if (!qa_application_event_at(frontend->application,i,&event)) continue;
         if (event.kind==QA_BUILTIN_SOURCE_PROMPT || event.kind==QA_BUILTIN_CLEAR_PROMPT) {
             for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat)
                 if (!frontend_network_local_input_owned(frontend,seat) &&
@@ -85,10 +85,10 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             }
         }
     }
-    for (size_t i = 0; i < qa_application_q2_player_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_application_q2_player_event observed;
-        if (!qa_application_q2_player_event_at(frontend->application, i, &observed))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 player event queue changed during presentation");
+        if (!qa_application_q2_player_event_at(frontend->application, i, &observed)) continue;
         const qa_q2_player_event *event = &observed.event;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
             if (frontend_network_local_input_owned(frontend,j)) continue;
@@ -139,10 +139,10 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
         }
     }
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
-    for (size_t i = 0; i < qa_application_q2_map_event_count(frontend->application); ++i) {
+    for (uint64_t i = qa_application_events_local_first(frontend->application);
+        i < qa_application_events_next(frontend->application); ++i) {
         qa_application_q2_map_event observed;
-        if (!qa_application_q2_map_event_at(frontend->application, i, &observed))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 map event queue changed during presentation");
+        if (!qa_application_q2_map_event_at(frontend->application, i, &observed)) continue;
         const qa_q2_map_event *event = &observed.event;
         if (event->kind != QA_Q2_MAP_HELP && event->kind != QA_Q2_MAP_HELP_COMPUTER && event->kind != QA_Q2_MAP_STORY) continue;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {

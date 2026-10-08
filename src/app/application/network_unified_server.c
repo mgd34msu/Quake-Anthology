@@ -306,6 +306,8 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
                 commit->followups[i + prerequisite] = initial.controls[i]; initial.controls[i] = NULL;
             }
             commit->followup_count = initial.control_count + prerequisite;
+            (void)qa_event_receipts_submit(&owner->event_receipts,
+                owner->events_after, initial.through, 0);
             owner->events_after = initial.through;
             owner->declared_resources = resources;
         }
@@ -416,12 +418,13 @@ qa_unified_session_hooks application_unified_server_hooks(application_unified_se
 bool application_unified_server_pre_frame(application_unified_server *owner, qa_error *error)
 {
     application_unified_source source;
-    if (!owner || !owner->bound || owner->closed || owner->entered || owner->pending.frame ||
+    if (!owner || !owner->bound || owner->closed || owner->entered ||
         !owner->session || !qa_unified_session_idle(owner->session) ||
         !application_unified_source_read(owner->application, &source, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified pre-frame requires its returned physical Source peer");
     if (!owner->admitted || !qa_unified_session_active(owner->session)) return true;
     if (!application_unified_inputs_flush(owner->inputs, error)) return false;
+    if (owner->pending.frame || owner->resync_pending) return true;
     owner->frame_before = source.frame.number; owner->preparing_frame = true; return true;
 }
 
@@ -566,30 +569,32 @@ uint64_t application_unified_server_events_retired(application_unified_server *o
 {
     if (!owner) return UINT64_MAX;
     uint32_t acknowledged = qa_unified_session_reliable_acknowledged(owner->session);
-    while (owner->event_receipt_count) {
-        const application_unified_event_receipt *receipt = owner->event_receipts + owner->event_receipt_head;
-        if (acknowledged < receipt->reliable_last) return receipt->first;
-        owner->event_receipt_head = (owner->event_receipt_head + 1) % APPLICATION_UNIFIED_EVENT_RECEIPTS;
-        --owner->event_receipt_count;
-    }
-    return owner->events_after;
+    uint64_t retired = qa_event_receipts_retired(&owner->event_receipts, acknowledged);
+    return owner->resync_pending && owner->resync_after < retired ? owner->resync_after : retired;
 }
 
 static void event_receipt(application_unified_server *owner, uint64_t through)
 {
-    if (owner->pending_last && through != owner->events_after) {
-        size_t slot = (owner->event_receipt_head + owner->event_receipt_count) % APPLICATION_UNIFIED_EVENT_RECEIPTS;
-        owner->event_receipts[slot] = (application_unified_event_receipt){
-            .first = owner->events_after, .reliable_last = owner->pending_last};
-        ++owner->event_receipt_count;
-    }
+    (void)qa_event_receipts_submit(&owner->event_receipts,
+        owner->events_after, through, owner->pending_last);
     owner->events_after = through;
+}
+
+void application_unified_server_resync(application_unified_server *owner)
+{
+    if (!owner || owner->closed || owner->resync_pending) return;
+    ++owner->publication_overflows;
+    owner->resync_after = application_unified_server_events_retired(owner);
+    owner->resync_pending = true;
+    if (!owner->pending.frame) owner->preparing_frame = false;
 }
 
 bool application_unified_server_publish(application_unified_server *owner, qa_unified_world_frame *borrowed_world,
     const application_unified_output_external *external, qa_error *error)
 {
     if (owner && owner->source_dropped && !application_unified_server_source_drop_finish(owner,error)) return false;
+    if (owner && owner->closed) return true;
+    if (owner && owner->resync_pending && !owner->pending.frame) return true;
     if (owner && owner->bound && !owner->closed && !owner->admitted) return true;
     if (owner && owner->bound && !owner->closed && owner->session && !owner->preparing_frame &&
         !owner->pending.frame && !qa_unified_session_active(owner->session)) return true;
@@ -598,18 +603,18 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
     if (!owner || owner->closed || owner->entered || !owner->admitted || !owner->session ||
         !qa_unified_session_idle(owner->session) || !owner->preparing_frame ||
         !application_unified_source_read(owner->application, &source, error) ||
-        source.frame.phase != QA_FRAME_EXIT || source.frame.number <= owner->frame_before ||
-        !application_unified_player_read(owner->application, owner->client, owner->seat, &actual, error))
+        source.frame.phase != QA_FRAME_EXIT || source.frame.number <= owner->frame_before)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified publication lacks its genuinely completed Source frame");
     if (!owner->pending.frame) {
         (void)application_unified_server_events_retired(owner);
-        if (owner->event_receipt_count == APPLICATION_UNIFIED_EVENT_RECEIPTS) {
-            owner->preparing_frame = false;
+        if (qa_event_receipts_full(&owner->event_receipts)) {
+            application_unified_server_resync(owner);
             return true;
         }
         int64_t acknowledged = application_unified_inputs_submitted(owner->inputs);
         application_unified_output_capture *capture = NULL;
-        if (!application_unified_output_acquire(owner->application, &source, borrowed_world,
+        if (!application_unified_player_read(owner->application, owner->client, owner->seat, &actual, error) ||
+            !application_unified_output_acquire(owner->application, &source, borrowed_world,
             owner->recipient_pool, &owner->committed_metadata, owner->committed_source_metadata, owner->client,
             &actual, owner->epoch, acknowledged, owner->events_after, owner->components, external, &capture, error)) return false;
         const application_unified_output *observed = application_unified_output_capture_value(capture);
@@ -647,15 +652,17 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         owner->pending = candidate; owner->pending_events_through = through;
         owner->pending_declared_resources = resources;
         owner->acknowledged = acknowledged; owner->published_frame = source.frame.number;
-    } else if (source.frame.number != owner->published_frame)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified pending publication was overtaken by another Source frame");
+    }
     owner->entered = true;
     bool okay = true;
     while (okay && owner->control_cursor < owner->pending.control_count) {
         bool ready = false;
         okay = qa_unified_session_control_ready(owner->session,
             owner->pending.controls[owner->control_cursor], &ready, error);
-        if (!okay || !ready) { owner->entered = false; return okay; }
+        if (!okay || !ready) {
+            if (okay) application_unified_server_resync(owner);
+            owner->entered = false; return okay;
+        }
         okay = qa_unified_session_control(owner->session, owner->pending.controls[owner->control_cursor], error);
         if (okay) {
             uint32_t receipt=qa_unified_session_required(owner->session);

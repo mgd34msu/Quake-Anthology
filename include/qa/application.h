@@ -153,6 +153,7 @@ typedef struct qa_application_protocol_resource_reference {
     uint64_t resource_custody; /* Exact retained opening within this immutable key. */
 } qa_application_protocol_resource_reference;
 typedef struct qa_application_protocol_event {
+    uint64_t event_id;
     qa_actor_owner provider;
     qa_clock_kind dialect;
     uint64_t time_ns;
@@ -587,24 +588,41 @@ bool qa_application_control_camera(const qa_application *, qa_actor_id,
 bool qa_application_control_end_cutscene(qa_application *, qa_actor_id,
                                          qa_error *);
 
-/* Gameplay events are copied into one application-owned queue for scene,
- * audio and network consumers. Event arguments returned by event_at remain
- * valid until clear_events or successful application destruction. */
-size_t qa_application_event_count(const qa_application *);
-bool qa_application_event_at(const qa_application *, size_t,
+typedef enum qa_application_event_kind {
+    QA_APPLICATION_EVENT_UNIFIED,
+    QA_APPLICATION_EVENT_BUILTIN,
+    QA_APPLICATION_EVENT_Q2_MAP,
+    QA_APPLICATION_EVENT_Q3_MAP,
+    QA_APPLICATION_EVENT_Q2_PLAYER,
+    QA_APPLICATION_EVENT_PROTOCOL
+} qa_application_event_kind;
+
+/* Every consumer traverses the same monotonic record IDs. Typed accessors
+ * return false for another tag. A pointer remains valid until the record is
+ * retired by every consumer; persistent owners retain its page lease. */
+uint64_t qa_application_events_first(const qa_application *);
+uint64_t qa_application_events_local_first(const qa_application *);
+uint64_t qa_application_events_next(const qa_application *);
+typedef struct qa_application_event_headroom {
+    size_t available_bytes, available_records, reserve_bytes, reserve_records;
+} qa_application_event_headroom;
+/* O(1) admission for the next server phase, before game callbacks run. A false
+ * result is capacity pressure; retire an ACKed prefix or detach its blocking
+ * peer, then query again. Client/receive work can continue while a tick waits.
+ * This finite stock-tick reserve does not bound arbitrary guest output. */
+bool qa_application_events_admit(const qa_application *, qa_application_event_headroom *);
+bool qa_application_event_kind_at(const qa_application *, uint64_t,
+    qa_application_event_kind *);
+bool qa_application_event_at(const qa_application *, uint64_t,
                              qa_builtin_event *);
-size_t qa_application_q2_map_event_count(const qa_application *);
-bool qa_application_q2_map_event_at(const qa_application *, size_t,
+bool qa_application_q2_map_event_at(const qa_application *, uint64_t,
                                     qa_application_q2_map_event *);
-size_t qa_application_q3_map_event_count(const qa_application *);
-bool qa_application_q3_map_event_at(const qa_application *, size_t,
+bool qa_application_q3_map_event_at(const qa_application *, uint64_t,
                                     qa_application_q3_map_event *);
-size_t qa_application_q2_player_event_count(const qa_application *);
-bool qa_application_q2_player_event_at(const qa_application *, size_t,
+bool qa_application_q2_player_event_at(const qa_application *, uint64_t,
                                        qa_application_q2_player_event *);
-size_t qa_application_protocol_event_count(const qa_application *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);
-bool qa_application_protocol_event_at(const qa_application *, size_t,
+bool qa_application_protocol_event_at(const qa_application *, uint64_t,
                                       qa_application_protocol_event *);
 bool qa_application_clear_events(qa_application *, qa_error *);
 

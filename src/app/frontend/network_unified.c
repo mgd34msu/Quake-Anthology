@@ -67,7 +67,7 @@ uint64_t frontend_network_unified_events_after(const frontend_network_unified *o
     if (owner && owner->options.server) for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
         const unified_peer *peer = owner->peers + i;
         application_unified_server *server = peer->server;
-        if (server && server->admitted && !server->closed &&
+        if (server && (server->admitted || server->resync_pending) && !server->closed &&
             !qa_unified_session_retiring(peer->session)) {
             uint64_t retired = application_unified_server_events_retired(server);
             if (retired < next) next = retired;
@@ -94,6 +94,81 @@ static bool prune(frontend_network_unified *owner, qa_error *error)
     return true;
 }
 
+bool frontend_network_unified_release_pressure(frontend_network_unified *owner,
+    uint64_t minimum, bool *released, qa_error *error)
+{
+    *released = false;
+    if (!owner || !owner->options.server) return true;
+    ++owner->calls;
+    bool okay = true;
+    for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+        unified_peer *peer = owner->peers + i;
+        application_unified_server *server = peer->server;
+        if (!server || (!server->admitted && !server->resync_pending) || server->closed ||
+            qa_unified_session_retiring(peer->session) ||
+            application_unified_server_events_retired(server) != minimum) continue;
+        okay = qa_network_detach(owner->options.runtime, peer->client,
+            "Unified event backlog exceeded bounded tick headroom", error);
+        if (okay) {
+            *released = true;
+            okay = prune(owner, error);
+        }
+        break;
+    }
+    --owner->calls;
+    return okay;
+}
+
+static bool resync_peer(frontend_network_unified *owner, unified_peer *peer,
+    uint64_t now, qa_error *error)
+{
+    application_unified_server *server = peer->server;
+    if (!server || !server->resync_pending || server->closed ||
+        qa_unified_session_retiring(peer->session)) return true;
+    if (server->resync_sequence && server->admitted && qa_unified_session_active(peer->session) &&
+        qa_unified_session_reliable_acknowledged(peer->session) >= qa_unified_session_required(peer->session)) {
+        (void)application_unified_server_events_retired(server);
+        server->resync_pending = server->resync_prepared = server->resync_started = false;
+        server->resync_sequence = 0;
+        return true;
+    }
+    if (!server->resync_started) {
+        server->resync_started = true;
+        server->resync_started_ns = now;
+    }
+    if (now >= server->resync_started_ns &&
+        now - server->resync_started_ns >= UINT64_C(5000000000))
+        return qa_network_detach(owner->options.runtime, peer->client,
+            "Unified reliable backlog exceeded resync grace", error);
+    if (server->pending.frame || server->resync_sequence) return true;
+    bool ready = false, retiring = false;
+    qa_error deferred = {0};
+    bool okay = qa_unified_session_restart_prepare(peer->session, &ready, &retiring, &deferred);
+    if (okay && (!ready || retiring)) return true;
+    if (okay && !server->resync_prepared) {
+        uint32_t epoch = qa_unified_session_epoch(peer->session);
+        if (epoch == UINT32_MAX)
+            return qa_network_detach(owner->options.runtime, peer->client,
+                "Unified resync epoch exhausted", error);
+        qa_unified_document *offer = NULL;
+        okay = application_unified_server_offer(server, epoch + 1,
+            owner->options.sidecars, owner->options.sidecar_count, &offer, &deferred);
+        qa_unified_document_destroy(offer);
+        if (okay) server->resync_prepared = true;
+    }
+    if (okay) okay = qa_unified_session_offer_ready(peer->session, server->offer, &ready, &deferred);
+    if (okay && !ready) return true;
+    if (okay) okay = qa_network_restart(owner->options.runtime, peer->client,
+        application_unified_server_composition(server), &deferred);
+    if (okay) {
+        server->resync_sequence = qa_unified_session_required(peer->session);
+        return true;
+    }
+    if (deferred.code == QA_ERROR_MEMORY) return true;
+    return qa_network_detach(owner->options.runtime, peer->client,
+        "Unified resync could not retain its source", error);
+}
+
 bool frontend_network_unified_admit(frontend_network_unified *owner,
     const qa_net_connect *request, bool *recognized, qa_error *error)
 {
@@ -112,7 +187,9 @@ bool frontend_network_unified_admit(frontend_network_unified *owner,
             if (owner->options.server) {
                 application_unified_server *source_peer = peer->server;
                 application_unified_source source;
-                if (!owner->traveling || i != owner->travel_cursor || !peer->travel_prepared || !source_peer ||
+                bool prepared = (owner->traveling && i == owner->travel_cursor && peer->travel_prepared) ||
+                    (source_peer && source_peer->resync_pending && source_peer->resync_prepared);
+                if (!prepared || !source_peer ||
                     source_peer->runtime != owner->options.runtime || source_peer->application != owner->options.frontend->application ||
                     source_peer->session != peer->session || !source_peer->bound || source_peer->closed || source_peer->entered ||
                     !application_unified_source_read(source_peer->application, &source, error) ||
@@ -260,14 +337,21 @@ bool frontend_network_unified_tick(frontend_network_unified *owner, uint64_t now
 {
     if (!waiting || !parent(owner) || !frontend_network_unified_idle(owner))
         return fail(error, "Unified processing requires its returned Network and Source owners");
-    bool source_ready = false;
+    bool source_ready = false, okay = true;
     if (!frontend_network_unified_step_ready(owner, &source_ready, error)) return false;
     if (!source_ready) { *waiting = true; return true; }
-    if (owner->options.server && !frontend_network_unified_travel(owner,
-        owner->options.sidecars, owner->options.sidecar_count, error)) return false;
+    if (owner->options.server) {
+        ++owner->calls;
+        for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i)
+            okay = resync_peer(owner, owner->peers + i, now, error);
+        if (okay) okay = prune(owner, error);
+        --owner->calls;
+    }
+    if (!okay || (owner->options.server && !frontend_network_unified_travel(owner,
+        owner->options.sidecars, owner->options.sidecar_count, error))) return false;
     if (owner->traveling) { *waiting = true; return true; }
     ++owner->calls;
-    bool okay = prune(owner, error);
+    okay = prune(owner, error);
     if (okay && owner->options.server) {
         application_unified_source source;
         okay = application_unified_source_read(owner->options.frontend->application, &source, error) &&
@@ -330,7 +414,7 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
         !same_source(&source, &owner->source))
         return fail(error, "Unified output precedes its actual Source travel publication");
     if (!owner->frame_boundary || source.frame.phase != QA_FRAME_EXIT || source.frame.number <= owner->frame_before) return true;
-    ++owner->calls; bool okay = prune(owner, error), complete = true;
+    ++owner->calls; bool okay = prune(owner, error);
     qa_unified_world_frame *world = NULL;
     for (size_t i = 0; okay && i < UNIFIED_PEERS; ++i) {
         unified_peer *peer = owner->peers + i;
@@ -343,7 +427,8 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
             unified_output_receipts receipts = {.base = external, .qc = &receipt};
             application_unified_output_external observed = external ? *external : (application_unified_output_external){0};
             const application_unified_output_external *actual_external = external;
-            if (peer->server->admitted && peer->server->preparing_frame && !peer->server->pending_capture) {
+            if (peer->server->admitted && peer->server->preparing_frame &&
+                !peer->server->resync_pending && !peer->server->pending_capture) {
                 if (!world && !application_unified_output_world(owner->options.frontend->application,
                     &source, owner->world_frames, &world, error)) {
                     okay = false;
@@ -366,11 +451,10 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
             }
             if (okay) okay = application_unified_server_publish(peer->server, world, actual_external, error);
             if (okay) peer->frame_published = application_unified_server_publication_complete(peer->server);
-            if (okay && !peer->frame_published) complete = false;
         }
     }
     qa_unified_world_frame_destroy(world);
-    if (okay && complete) owner->frame_boundary = false;
+    if (okay) owner->frame_boundary = false;
     --owner->calls; return okay;
 }
 bool frontend_network_unified_travel(frontend_network_unified *owner,

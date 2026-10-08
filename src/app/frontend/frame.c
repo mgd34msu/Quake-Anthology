@@ -467,9 +467,10 @@ static bool platform_events(qa_frontend *frontend, qa_error *error)
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
-    for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
+    uint64_t next = qa_application_events_next(frontend->application);
+    for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {
         qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "event queue changed during consumption");
+        if (!qa_application_event_at(frontend->application, i, &event)) continue;
         if (event.kind == QA_BUILTIN_LOG) continue;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
@@ -572,8 +573,7 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
             (queued && !frontend_music_sources_flush(frontend->music_sources,error))) return false;
     }
     if (qa_application_launch(frontend->application) &&
-        (qa_application_event_count(frontend->application) ||
-         qa_application_protocol_event_count(frontend->application) ||
+        (qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) ||
          qa_application_equipment_event_count(frontend->application)) &&
         !frontend_events_flush(frontend,error)) return false;
     frontend->preparing=true;

@@ -48,8 +48,10 @@ static bool queue(void *context, qa_bytes bytes, qa_error *error)
         memcpy(peer->last->bytes.data + peer->last->bytes.size, bytes.data, bytes.size);
         peer->last->bytes.size = size; peer->queued_bytes += bytes.size; return true;
     }
-    if (peer->queued_messages >= peer->policy.queued_messages)
-        return qa_network_fail(error, "QuakeWorld reliable back buffers overflow");
+    if (peer->queued_messages >= peer->policy.queued_messages) {
+        qa_error_set(error, QA_ERROR_CAPACITY, 0, "QuakeWorld reliable back buffers overflow");
+        return false;
+    }
     qw_pending *pending = calloc(1, sizeof(*pending));
     if (pending) pending->bytes.data = malloc(bytes.size);
     if (!pending || !pending->bytes.data) {

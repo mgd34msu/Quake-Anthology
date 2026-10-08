@@ -7,6 +7,30 @@
 #include "qa/game_q2_wire.h"
 #include "qa/application_network_q2.h"
 
+struct application_q2_audience_scratch {
+    size_t capacity;
+    qa_application_q2_recipient recipients[];
+};
+
+bool application_native_q2_delivery_create(qa_application *app, size_t actors, qa_error *error)
+{
+    if (actors > (SIZE_MAX - sizeof(*app->event_q2_capture)) /
+            sizeof(qa_application_q2_recipient))
+        return application_fail(error, QA_ERROR_MEMORY, "Q2 audience load capacity overflows");
+    app->event_q2_capture = malloc(sizeof(*app->event_q2_capture) +
+        actors * sizeof(qa_application_q2_recipient));
+    if (!app->event_q2_capture)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized Q2 audience scratch");
+    app->event_q2_capture->capacity = actors;
+    return true;
+}
+
+void application_native_q2_delivery_destroy(qa_application *app)
+{
+    free(app->event_q2_capture);
+    app->event_q2_capture = NULL;
+}
+
 static bool roster_row_equal(const application_player_record *a,
     const application_player_record *b)
 {
@@ -161,32 +185,9 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     qa_collision_leaf from={0};
     if (positioned && !qa_collision_point_leaf(geometry,origin,&from,error)) return false;
     bool masked=delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS;
-    bool cached_areas=masked && !positional;
     bool before_begin=original && (message->reliable || delivery==QA_APPLICATION_Q2_UNICAST);
-    uint32_t area_count=qa_collision_area_count(geometry);
-    uint8_t *connected=cached_areas && area_count?malloc(area_count):NULL;
-    if (cached_areas && area_count && !connected)
-        return application_fail(error,QA_ERROR_MEMORY,"Retaining emission-time area connectivity");
-    for (uint32_t area=0;cached_areas && area<area_count;++area) {
-        bool present;
-        if (!qa_collision_areas_connected(geometry,(int32_t)from.area,(int32_t)area,&present,error)) {
-            free(connected); return false;
-        }
-        connected[area]=(uint8_t)present;
-    }
     size_t count=roster->count;
-    if (count>SIZE_MAX/sizeof(application_player_record) ||
-        count>SIZE_MAX/sizeof(qa_application_q2_recipient)) {
-        free(connected);
-        return application_fail(error,QA_ERROR_MEMORY,"Q2 recipient snapshot extent overflows");
-    }
-    application_player_record *rows=count?malloc(count*sizeof(*rows)):NULL;
-    qa_application_q2_recipient *recipients=count?malloc(count*sizeof(*recipients)):NULL;
-    if (count && (!rows || !recipients)) {
-        free(rows); free(recipients); free(connected);
-        return application_fail(error,QA_ERROR_MEMORY,"Retaining actual Q2 recipient snapshot");
-    }
-    if (count) memcpy(rows,roster->records,count*sizeof(*rows));
+    qa_application_q2_recipient *recipients=app->event_q2_capture->recipients;
     qa_application_q2_audience receipt={.source=source->owner,.world_source=physical->owner,
         .source_frame=clock.frame,.source_time_ns=now,.map_identity=qa_collision_map_identity(geometry),
         .multicast_origin=origin,.area=positioned?(int32_t)from.area:-1,
@@ -194,7 +195,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         .recipients=recipients,.captured=true};
     bool ok=true;
     for (size_t i=0;i<count && ok;++i) {
-        application_player_record row=rows[i];
+        application_player_record row=roster->records[i];
         qa_application_network_q2_recipient_view transport={0};
         bool has_transport=false;
         if (row.retiring || (row.source_begin_pending && !before_begin) || !row.actor.registry ||
@@ -262,14 +263,16 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
             ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 recipient changed during body observation");
             break;
         }
-        qa_collision_leaf to; bool pvs=false;
+        qa_collision_leaf to; bool pvs=false,connected=true;
         if (!qa_collision_point_leaf(geometry,body.origin,&to,error) ||
             (positional && !positional_visible(geometry,eye,origin,line_end,&pvs,error)) ||
-            (!positional && masked && !qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,
-                delivery==QA_APPLICATION_Q2_PHS,&pvs,error))) {
+            (!positional && masked &&
+                (!qa_collision_areas_connected(geometry,(int32_t)from.area,(int32_t)to.area,&connected,error) ||
+                 !qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,
+                    delivery==QA_APPLICATION_Q2_PHS,&pvs,error)))) {
             ok=false; break;
         }
-        if (!masked || (positional?pvs:(to.area<area_count && connected[to.area] && pvs))) {
+        if (!masked || (pvs && (positional || connected))) {
             for (size_t j=0;j<receipt.count;++j)
                 if (qa_actor_id_equal(recipients[j].actor,row.actor)) {
                     ok=application_fail(error,QA_ERROR_FORMAT,"Q2 audience repeats a full physical client");
@@ -285,9 +288,6 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     if (ok && (!source_current(app,source,world,roster,physical,publication,revision,geometry,routing,preparing) ||
             roster->count!=count))
         ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery retired its source snapshot");
-    for (size_t i=0;i<count && ok;++i)
-        if (!roster_row_equal(&roster->records[i],&rows[i]))
-            ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery changed its actual client roster");
     qa_clock_state final_clock;
     uint64_t final_now;
     if (ok && (!qa_session_clock(app->session,source->owner,&final_clock) ||
@@ -298,8 +298,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         (!original && (!qa_q2_bot_clock_read(source->state.q2,&final_now,&intermission,&started,error) ||
             final_now!=now))))
         ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery changed its genuine source clock");
-    free(rows); free(connected);
-    if (!ok) { free(recipients); return false; }
+    if (!ok) return false;
     *out=receipt;
     return true;
 }
@@ -341,7 +340,6 @@ bool application_native_q2_message_capture(struct application_native_q2 *engine,
 void application_native_q2_delivery_dispose(qa_application_q2_audience *receipt)
 {
     if (!receipt) return;
-    free((void *)receipt->recipients);
     *receipt=(qa_application_q2_audience){0};
 }
 
@@ -350,7 +348,7 @@ bool application_native_q2_delivery_retain(qa_application *app,
 {
     qa_application_q2_recipient *copy=NULL;
     if (receipt->count) {
-        copy=qa_arena_alloc(&app->event_arena,receipt->count*sizeof(*copy),
+        copy=application_event_stream_alloc(app,receipt->count*sizeof(*copy),
             _Alignof(qa_application_q2_recipient),error);
         if (!copy) return false;
         memcpy(copy,receipt->recipients,receipt->count*sizeof(*copy));

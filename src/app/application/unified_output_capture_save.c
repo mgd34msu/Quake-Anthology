@@ -24,9 +24,9 @@ static bool fields(qa_source_save_io *io, application_unified_output_capture *ca
         !application_unified_save_source(io, capture->application, source, &capture->source, false) ||
         !application_unified_save_client(io, capture->recipient) ||
         !application_unified_save_player(io, player) ||
-        !qa_source_save_u64(io, &capture->events.through) ||
         !application_unified_save_output(io, &capture->output) || !capture->output.frame ||
         !qa_source_save_bool(io, &has_components)) return false;
+    if (!writing) capture->events.through = qa_application_events_next(capture->application);
     if (has_components != (publisher != NULL) && !writing) return false;
     if (has_components) {
         qa_buffer saved = {0};

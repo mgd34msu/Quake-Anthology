@@ -10,26 +10,14 @@
 #include "guest_native_q2_private.h"
 #include "../../network/unified/frame_internal.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct event_store {
-    application_event_record *builtin;
-    application_q2_map_event_record *q2_map;
-    qa_application_q3_map_event *q3_map;
-    qa_application_q2_player_event *q2_player;
-    application_protocol_record *protocol;
-    size_t counts[5], capacities[5];
-    uint64_t protocol_generation;
-    uint64_t simulation_sequence;
-    application_unified_event_record *unified;
-    size_t unified_count, unified_capacity;
-    uint64_t unified_sequence, presentation_sequence;
+    application_event_pages *pages;
     application_unified_persistent_event *persistent;
     size_t persistent_count, persistent_capacity;
-    uint64_t persistent_revision;
     application_unified_event_owner *owners;
     size_t owner_count, owner_capacity;
     uint64_t owner_generation;
@@ -37,23 +25,13 @@ typedef struct event_store {
     size_t resource_count, resource_capacity;
     application_unified_event_registration *registrations;
     size_t registration_count, registration_capacity;
-    uint64_t registration_revision;
     application_unified_world_text *world_text;
     size_t world_text_count, world_text_capacity;
-    uint64_t world_text_revision, world_text_map;
+    uint64_t world_text_map;
     qa_application *application;
-    qa_arena arena;
 } event_store;
 
 static const uint8_t event_magic[8] = {'Q','A','E','V','T','S',0,0};
-static const size_t event_widths[5] = {
-    sizeof(application_event_record), sizeof(application_q2_map_event_record),
-    sizeof(qa_application_q3_map_event), sizeof(qa_application_q2_player_event),
-    sizeof(application_protocol_record)
-};
-/* Every record has at least an enum/clock, one provider value and timestamp.
- * These lower bounds reject truncated row counts before allocating storage. */
-static const size_t event_minimums[5] = {16, 13, 13, 13, 13};
 
 static bool event_fail(qa_source_save_io *io, qa_status status, const char *text)
 {
@@ -71,7 +49,7 @@ static bool signature(qa_source_save_io *io)
          event_fail(io, QA_ERROR_FORMAT, "Invalid application event signature"));
 }
 
-static bool queue_extent(qa_source_save_io *io, size_t *count, size_t *capacity, size_t width)
+static bool state_extent(qa_source_save_io *io, size_t *count, size_t *capacity, size_t width)
 {
     if (io->direction == QA_SOURCE_SAVE_WRITE && *count > *capacity)
         return event_fail(io, QA_ERROR_FORMAT, "Application event count exceeds its storage");
@@ -83,40 +61,21 @@ static bool queue_extent(qa_source_save_io *io, size_t *count, size_t *capacity,
 static bool prefix(qa_source_save_io *io, event_store *store)
 {
     if (!signature(io) ||
-        !qa_source_save_u64(io, &store->protocol_generation)) return false;
-    for (size_t i = 0; i < 5; ++i) {
-        if (!queue_extent(io, &store->counts[i], &store->capacities[i], event_widths[i])) return false;
-    }
-    if (!qa_source_save_u64(io, &store->simulation_sequence)) return false;
-    if (!qa_source_save_u64(io, &store->unified_sequence) ||
-        !qa_source_save_u64(io, &store->presentation_sequence) ||
-        !queue_extent(io, &store->unified_count, &store->unified_capacity, sizeof(*store->unified)) ||
-        store->unified_count > store->unified_sequence ||
-        !queue_extent(io, &store->persistent_count, &store->persistent_capacity, sizeof(*store->persistent)) ||
-        store->persistent_count > store->presentation_sequence ||
-        !qa_source_save_u64(io, &store->persistent_revision) ||
-        !queue_extent(io, &store->owner_count, &store->owner_capacity, sizeof(*store->owners)) ||
+        !state_extent(io, &store->persistent_count, &store->persistent_capacity, sizeof(*store->persistent)) ||
+        !state_extent(io, &store->owner_count, &store->owner_capacity, sizeof(*store->owners)) ||
         !qa_source_save_u64(io, &store->owner_generation) || store->owner_generation >= QA_UNIFIED_SAFE_INTEGER ||
-        !queue_extent(io, &store->resource_count, &store->resource_capacity, sizeof(*store->resources)) ||
-        !queue_extent(io, &store->registration_count, &store->registration_capacity, sizeof(*store->registrations)) ||
-        !qa_source_save_u64(io, &store->registration_revision) ||
-        !queue_extent(io, &store->world_text_count, &store->world_text_capacity, sizeof(*store->world_text)) ||
-        !qa_source_save_u64(io, &store->world_text_revision) || !qa_source_save_u64(io, &store->world_text_map))
-        return event_fail(io, QA_ERROR_FORMAT, "Invalid normalized Source continuation extent");
+        !state_extent(io, &store->resource_count, &store->resource_capacity, sizeof(*store->resources)) ||
+        !state_extent(io, &store->registration_count, &store->registration_capacity, sizeof(*store->registrations)) ||
+        !state_extent(io, &store->world_text_count, &store->world_text_capacity, sizeof(*store->world_text)) ||
+        !qa_source_save_u64(io, &store->world_text_map))
+        return event_fail(io, QA_ERROR_FORMAT, "Invalid retained Source state extent");
     if (io->direction == QA_SOURCE_SAVE_READ) {
         size_t remaining = io->input.size - io->offset;
-        for (size_t i = 0; i < 5; ++i) {
-            if (store->counts[i] > remaining / event_minimums[i])
-                return event_fail(io, QA_ERROR_FORMAT, "Truncated application event rows");
-            remaining -= store->counts[i] * event_minimums[i];
-        }
-        if (store->unified_count > remaining / 100)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated normalized Source events");
-        remaining -= store->unified_count * 100;
-        if (store->persistent_count > remaining / 100)
+        if (store->persistent_count > remaining / 60)
             return event_fail(io, QA_ERROR_FORMAT, "Truncated persistent Source presentation");
-        remaining -= store->persistent_count * 100;
-        if (store->owner_count > remaining / 27) return event_fail(io, QA_ERROR_FORMAT, "Truncated Source activation owners");
+        remaining -= store->persistent_count * 60;
+        if (store->owner_count > remaining / 27)
+            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source activation owners");
         remaining -= store->owner_count * 27;
         if (store->resource_count > remaining / 100)
             return event_fail(io, QA_ERROR_FORMAT, "Truncated Source resource dictionary");
@@ -136,25 +95,6 @@ static bool enum_field(qa_source_save_io *io, uint32_t *value, uint32_t maximum)
         (*value <= maximum || event_fail(io, QA_ERROR_FORMAT, "Invalid application event enum"));
 }
 
-static bool int_field(qa_source_save_io *io, int *value)
-{
-#if INT_MAX > INT32_MAX || INT_MIN < INT32_MIN
-    if (io->direction == QA_SOURCE_SAVE_WRITE &&
-        ((int64_t)*value < INT32_MIN || (int64_t)*value > INT32_MAX))
-        return event_fail(io, QA_ERROR_FORMAT, "Application event integer exceeds its source domain");
-#endif
-    int32_t number = io->direction == QA_SOURCE_SAVE_WRITE ? (int32_t)*value : 0;
-    if (!qa_source_save_i32(io, &number)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-#if INT_MAX < INT32_MAX || INT_MIN > INT32_MIN
-        if ((int64_t)number < INT_MIN || (int64_t)number > INT_MAX)
-            return event_fail(io, QA_ERROR_FORMAT, "Application event integer exceeds this host");
-#endif
-        *value = (int)number;
-    }
-    return true;
-}
-
 static bool finite_field(qa_source_save_io *io, float *value)
 {
     return qa_source_save_f32(io, value) &&
@@ -167,419 +107,12 @@ static bool vector_field(qa_source_save_io *io, qa_vec3 *value)
         (qa_vec_finite(*value) || event_fail(io, QA_ERROR_FORMAT, "Nonfinite application event vector"));
 }
 
-static bool actor_field(qa_source_save_io *io, qa_actor_id *value)
-{
-    if (io->direction == QA_SOURCE_SAVE_WRITE && !value->registry &&
-        (value->generation || value->slot))
-        return event_fail(io, QA_ERROR_FORMAT, "Absent application event actor has provenance");
-    return qa_source_save_actor(io, value);
-}
-
 static bool provider_field(qa_source_save_io *io, qa_actor_owner *value, bool required)
 {
     /* Names stay in the session table after a provider retires. This retains
      * that source identity without manufacturing an active provider binding. */
     return qa_source_save_string(io, value) &&
         (!required || *value || event_fail(io, QA_ERROR_FORMAT, "Application event has no source provider"));
-}
-
-static void *arena_array(qa_source_save_io *io, event_store *store,
-                         size_t count, size_t width, size_t alignment)
-{
-    if (!count) return NULL;
-    if (count > SIZE_MAX / width) {
-        event_fail(io, QA_ERROR_FORMAT, "Application event array overflows");
-        return NULL;
-    }
-    void *result = qa_arena_alloc(&store->arena, count * width, alignment, io->error);
-    if (!result) io->failed = true;
-    return result;
-}
-
-static bool text_field(qa_source_save_io *io, event_store *store, const char **value)
-{
-    bool present = io->direction == QA_SOURCE_SAVE_WRITE && *value != NULL;
-    if (!qa_source_save_bool(io, &present)) return false;
-    if (!present) {
-        if (io->direction == QA_SOURCE_SAVE_READ) *value = NULL;
-        return true;
-    }
-    size_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*value) : 0;
-    if (!qa_source_save_count(io, &length, SIZE_MAX - 1)) return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE)
-        return qa_source_save_bytes(io, (void *)*value, length);
-    if (length > io->input.size - io->offset)
-        return event_fail(io, QA_ERROR_FORMAT, "Truncated application event text");
-    char *text = arena_array(io, store, length + 1, 1, 1);
-    if (!text || !qa_source_save_bytes(io, text, length)) return false;
-    text[length] = 0;
-    if (memchr(text, 0, length))
-        return event_fail(io, QA_ERROR_FORMAT, "Application event text contains embedded NUL");
-    *value = text;
-    return true;
-}
-
-static bool arguments_field(qa_source_save_io *io, event_store *store,
-                            const qa_builtin_message_arg **value, size_t *count)
-{
-    if (!qa_source_save_count(io, count, SIZE_MAX / sizeof(**value))) return false;
-    qa_builtin_message_arg *decoded = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (*count > (io->input.size - io->offset) / 5)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated application event arguments");
-        decoded = arena_array(io, store, *count, sizeof(*decoded), _Alignof(qa_builtin_message_arg));
-        if (*count && !decoded) return false;
-        *value = decoded;
-    } else if (*count && !*value) {
-        return event_fail(io, QA_ERROR_FORMAT, "Application event arguments have no storage");
-    }
-    for (size_t i = 0; i < *count; ++i) {
-        qa_builtin_message_arg field = io->direction == QA_SOURCE_SAVE_WRITE ? (*value)[i] : (qa_builtin_message_arg){0};
-        uint32_t kind = field.kind;
-        if (!enum_field(io, &kind, QA_BUILTIN_MESSAGE_NUMBER)) return false;
-        field.kind = (qa_builtin_message_arg_kind)kind;
-        if (field.kind == QA_BUILTIN_MESSAGE_STRING) {
-            if (!qa_source_save_string(io, &field.value.text)) return false;
-        } else if (!qa_source_save_f64(io, &field.value.number) || !isfinite(field.value.number)) {
-            return event_fail(io, QA_ERROR_FORMAT, "Nonfinite application message argument");
-        }
-        if (decoded) decoded[i] = field;
-    }
-    return true;
-}
-
-static bool audience_field(qa_source_save_io *io,event_store *store,
-    qa_application_q2_audience *audience)
-{
-    if (!qa_source_save_bool(io,&audience->captured)) return false;
-    if (!audience->captured) {
-        if (io->direction==QA_SOURCE_SAVE_READ) *audience=(qa_application_q2_audience){0};
-        else if (audience->count || audience->recipients || audience->source || audience->world_source)
-            return event_fail(io,QA_ERROR_FORMAT,"Absent Q2 audience has retained provenance");
-        return true;
-    }
-    uint32_t kind=audience->source_frame.kind,phase=audience->source_frame.phase;
-    uint32_t delivery=audience->kind;
-    if (!provider_field(io,&audience->source,true) || !provider_field(io,&audience->world_source,true) ||
-        !provider_field(io,&audience->source_frame.provider,true) ||
-        !enum_field(io,&kind,QA_CLOCK_Q3) || !enum_field(io,&phase,QA_FRAME_EXIT) ||
-        !qa_source_save_u64(io,&audience->source_frame.number) ||
-        !qa_source_save_u64(io,&audience->source_frame.start_ns) ||
-        !qa_source_save_u64(io,&audience->source_frame.elapsed_ns) ||
-        !qa_source_save_u64(io,&audience->source_frame.time_ns) ||
-        !qa_source_save_u64(io,&audience->source_time_ns) ||
-        !qa_source_save_u64(io,&audience->map_identity) ||
-        !enum_field(io,&delivery,QA_APPLICATION_Q2_UNICAST) ||
-        !qa_source_save_bool(io,&audience->positioned) ||
-        !vector_field(io,&audience->multicast_origin) ||
-        !qa_source_save_i32(io,&audience->area) || !qa_source_save_i32(io,&audience->cluster) ||
-        !qa_source_save_count(io,&audience->count,SIZE_MAX/sizeof(*audience->recipients))) return false;
-    if (audience->source!=audience->source_frame.provider ||
-        (kind!=QA_CLOCK_Q2_CLASSIC && kind!=QA_CLOCK_Q2_RERELEASE) ||
-        audience->source_frame.elapsed_ns>UINT64_MAX-audience->source_frame.start_ns ||
-        audience->source_frame.time_ns<audience->source_frame.start_ns ||
-        audience->source_frame.time_ns>audience->source_frame.start_ns+audience->source_frame.elapsed_ns ||
-        audience->source_time_ns!=audience->source_frame.time_ns ||
-        audience->cluster< -1 || audience->area< -1 ||
-        ((delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS) &&
-            (!audience->positioned || audience->area<0)) ||
-        (!audience->positioned && (audience->area!=-1 || audience->cluster!=-1)) ||
-        (delivery==QA_APPLICATION_Q2_UNICAST && audience->count>1))
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 audience lost its actual emission source");
-    audience->source_frame.kind=(qa_clock_kind)kind;
-    audience->source_frame.phase=(qa_frame_phase)phase;
-    audience->kind=(qa_application_q2_delivery_kind)delivery;
-    qa_application_q2_recipient *decoded=NULL;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        if (audience->count>(io->input.size-io->offset)/21)
-            return event_fail(io,QA_ERROR_FORMAT,"Truncated Q2 recipient receipts");
-        decoded=arena_array(io,store,audience->count,sizeof(*decoded),_Alignof(qa_application_q2_recipient));
-        if (audience->count && !decoded) return false;
-        audience->recipients=decoded;
-    } else if (audience->count && !audience->recipients)
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 audience has no recipient storage");
-    for (size_t i=0;i<audience->count;++i) {
-        qa_application_q2_recipient value=decoded?(qa_application_q2_recipient){0}:audience->recipients[i];
-        if (!actor_field(io,&value.actor) ||
-            !vector_field(io,&value.origin) || !qa_source_save_i32(io,&value.area) ||
-            !qa_source_save_i32(io,&value.cluster) ||
-            !qa_source_save_bool(io,&value.has_connection) ||
-            !qa_source_save_u64(io,&value.connection.owner) ||
-            !qa_source_save_u64(io,&value.connection.generation) ||
-            !qa_source_save_u32(io,&value.connection.slot) ||
-            !qa_source_save_u64(io,&value.connection_seat.owner) ||
-            !qa_source_save_u32(io,&value.connection_seat.index) ||
-            !qa_source_save_u64(io,&value.connection_epoch) ||
-            !qa_source_save_u8(io,&value.remote_index)) return false;
-        if (!value.actor.registry || value.area<0 || value.cluster< -1)
-            return event_fail(io,QA_ERROR_FORMAT,"Q2 recipient has invalid source leaf provenance");
-        if (value.has_connection ? (!value.connection.owner || !value.connection.generation ||
-                !value.connection_seat.owner || !value.connection_epoch) :
-            (value.connection.owner || value.connection.generation || value.connection.slot ||
-                value.connection_seat.owner || value.connection_seat.index ||
-                value.connection_epoch || value.remote_index))
-            return event_fail(io,QA_ERROR_FORMAT,"Q2 recipient lost its historical transport admission");
-        for (size_t j=0;j<i;++j)
-            if (qa_actor_id_equal(audience->recipients[j].actor,value.actor))
-                return event_fail(io,QA_ERROR_FORMAT,"Q2 audience repeats a full client identity");
-        if (decoded) decoded[i]=value;
-    }
-    return true;
-}
-
-static bool prompt_field(qa_source_save_io *io, event_store *store, qa_builtin_event *event)
-{
-    if (!qa_source_save_count(io, &event->prompt_choice_count,
-            SIZE_MAX / sizeof(*event->prompt_choices))) return false;
-    qa_builtin_prompt_choice *decoded = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (event->prompt_choice_count > (io->input.size - io->offset) / 5)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated source prompt choices");
-        decoded = arena_array(io, store, event->prompt_choice_count, sizeof(*decoded),
-            _Alignof(qa_builtin_prompt_choice));
-        if (event->prompt_choice_count && !decoded) return false;
-        event->prompt_choices = decoded;
-    } else if (event->prompt_choice_count && !event->prompt_choices)
-        return event_fail(io, QA_ERROR_FORMAT, "Source prompt choices have no retained storage");
-    for (size_t i = 0; i < event->prompt_choice_count; ++i) {
-        qa_builtin_prompt_choice choice = io->direction == QA_SOURCE_SAVE_WRITE ?
-            event->prompt_choices[i] : (qa_builtin_prompt_choice){0};
-        if (!qa_source_save_string(io, &choice.label) || !choice.label ||
-            !qa_source_save_i32(io, &choice.impulse))
-            return event_fail(io, QA_ERROR_FORMAT, "Source prompt choice lost its label or impulse");
-        if (decoded) decoded[i] = choice;
-    }
-    return true;
-}
-
-enum {
-    BUILTIN_PROVIDER = 1u, BUILTIN_ACTOR = 2u, BUILTIN_OTHER = 4u, BUILTIN_RESOURCE = 8u,
-    BUILTIN_TEXT = 16u, BUILTIN_ORIGIN = 32u, BUILTIN_END = 64u, BUILTIN_DIRECTION = 128u,
-    BUILTIN_VOLUME = 256u, BUILTIN_ATTENUATION = 512u, BUILTIN_VALUE = 1024u, BUILTIN_CODE = 2048u,
-    BUILTIN_CHANNEL = 4096u, BUILTIN_COUNT = 8192u, BUILTIN_FRAME = 16384u, BUILTIN_FLAGS = 32768u,
-    BUILTIN_ARGUMENTS = 65536u
-};
-
-static bool float_present(float value)
-{
-    uint32_t bits; memcpy(&bits, &value, sizeof(bits));
-    return bits != 0;
-}
-
-static bool vector_present(qa_vec3 value)
-{ return float_present(value.x) || float_present(value.y) || float_present(value.z); }
-
-static bool builtin_common(qa_source_save_io *io, event_store *store, qa_builtin_event *event)
-{
-    uint32_t fields = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) {
-        if ((!event->actor.registry && (event->actor.generation || event->actor.slot)) ||
-            (!event->other.registry && (event->other.generation || event->other.slot)))
-            return event_fail(io, QA_ERROR_FORMAT, "Absent application event actor has provenance");
-        fields = (event->provider ? BUILTIN_PROVIDER : 0u) | (event->actor.registry ? BUILTIN_ACTOR : 0u) |
-            (event->other.registry ? BUILTIN_OTHER : 0u) | (event->resource ? BUILTIN_RESOURCE : 0u) |
-            (event->text ? BUILTIN_TEXT : 0u) | (vector_present(event->origin) ? BUILTIN_ORIGIN : 0u) |
-            (vector_present(event->end) ? BUILTIN_END : 0u) | (vector_present(event->direction) ? BUILTIN_DIRECTION : 0u) |
-            (float_present(event->volume) ? BUILTIN_VOLUME : 0u) |
-            (float_present(event->attenuation) ? BUILTIN_ATTENUATION : 0u) |
-            (float_present(event->value) ? BUILTIN_VALUE : 0u) | (event->code ? BUILTIN_CODE : 0u) |
-            (event->channel ? BUILTIN_CHANNEL : 0u) | (event->count ? BUILTIN_COUNT : 0u) |
-            (event->frame ? BUILTIN_FRAME : 0u) | (event->flags ? BUILTIN_FLAGS : 0u) |
-            (event->argument_count ? BUILTIN_ARGUMENTS : 0u);
-    }
-    if (!qa_source_save_u32(io, &fields) || (fields & ~UINT32_C(131071)))
-        return event_fail(io, QA_ERROR_FORMAT, "Unknown application event fields");
-    return (!(fields & BUILTIN_PROVIDER) || provider_field(io, &event->provider, false)) &&
-        (!(fields & BUILTIN_ACTOR) || actor_field(io, &event->actor)) &&
-        (!(fields & BUILTIN_OTHER) || actor_field(io, &event->other)) &&
-        (!(fields & BUILTIN_RESOURCE) || qa_source_save_string(io, &event->resource)) &&
-        (!(fields & BUILTIN_TEXT) || qa_source_save_string(io, &event->text)) &&
-        (!(fields & BUILTIN_ORIGIN) || vector_field(io, &event->origin)) &&
-        (!(fields & BUILTIN_END) || vector_field(io, &event->end)) &&
-        (!(fields & BUILTIN_DIRECTION) || vector_field(io, &event->direction)) &&
-        (!(fields & BUILTIN_VOLUME) || finite_field(io, &event->volume)) &&
-        (!(fields & BUILTIN_ATTENUATION) || finite_field(io, &event->attenuation)) &&
-        (!(fields & BUILTIN_VALUE) || finite_field(io, &event->value)) &&
-        (!(fields & BUILTIN_CODE) || qa_source_save_i32(io, &event->code)) &&
-        (!(fields & BUILTIN_CHANNEL) || qa_source_save_i32(io, &event->channel)) &&
-        (!(fields & BUILTIN_COUNT) || qa_source_save_i32(io, &event->count)) &&
-        (!(fields & BUILTIN_FRAME) || qa_source_save_i32(io, &event->frame)) &&
-        (!(fields & BUILTIN_FLAGS) || qa_source_save_u32(io, &event->flags)) &&
-        (!(fields & BUILTIN_ARGUMENTS) || arguments_field(io, store, &event->arguments, &event->argument_count));
-}
-
-static bool builtin_field(qa_source_save_io *io, event_store *store, application_event_record *record)
-{
-    qa_builtin_event *event=&record->event;
-    if (io->direction == QA_SOURCE_SAVE_READ) *event = (qa_builtin_event){0};
-    uint32_t kind = event->kind, family = event->family;
-    if (!enum_field(io, &kind, QA_BUILTIN_Q2_ENTITY_EVENT) || !enum_field(io, &family, QA_GAME_Q3) ||
-        !qa_source_save_u64(io, &event->time_ns) ||
-        !builtin_common(io, store, event)) return false;
-    event->kind = (qa_builtin_event_kind)kind;
-    event->family = (qa_game_family)family;
-    if (family == QA_GAME_Q2 && kind == QA_BUILTIN_MUZZLE) {
-        if (!qa_source_save_bool(io, &event->has_muzzle_pose)) return false;
-        if (event->has_muzzle_pose &&
-            (!vector_field(io, &event->muzzle_angles) || !finite_field(io, &event->muzzle_scale) ||
-             event->muzzle_scale <= 0 || !event->provider || !event->actor.registry))
-            return event_fail(io, QA_ERROR_FORMAT, "Q2 muzzle lost its append-time Source pose");
-    } else if (event->has_muzzle_pose)
-        return event_fail(io, QA_ERROR_FORMAT, "Non-Q2 muzzle has a Source pose receipt");
-    if (!event->has_muzzle_pose) {
-        if (io->direction == QA_SOURCE_SAVE_WRITE &&
-            (event->muzzle_scale != 0.0f || event->muzzle_angles.x != 0.0f || event->muzzle_angles.y != 0.0f || event->muzzle_angles.z != 0.0f))
-            return event_fail(io, QA_ERROR_FORMAT, "Absent muzzle pose has retained Source fields");
-        event->muzzle_angles = (qa_vec3){0}; event->muzzle_scale = 0;
-    }
-    if (family == QA_GAME_Q2 && kind == QA_BUILTIN_ITEM && event->code == 0) {
-        if (!qa_source_save_string(io, &event->item) || !event->item)
-            return event_fail(io, QA_ERROR_FORMAT, "Q2 pickup lost its authored canonical item");
-    } else if (io->direction == QA_SOURCE_SAVE_READ) event->item = 0;
-    else if (event->item)
-        return event_fail(io, QA_ERROR_FORMAT, "Non-pickup event has a Q2 pickup item");
-    if ((kind == QA_BUILTIN_Q2_PLAYER_ANIMATION || kind == QA_BUILTIN_Q2_ENTITY_EVENT) &&
-        (family != QA_GAME_Q2 || !event->provider || !event->actor.registry ||
-         (kind == QA_BUILTIN_Q2_PLAYER_ANIMATION && (event->code < 0 || event->code > 2))))
-        return event_fail(io, QA_ERROR_FORMAT, "Invalid source-qualified Q2 animation receipt");
-    if (kind == QA_BUILTIN_LOG &&
-        (family != QA_GAME_Q3 || !event->provider || !event->text || event->argument_count ||
-         event->actor.registry || event->other.registry))
-        return event_fail(io, QA_ERROR_FORMAT, "Invalid provider-owned Q3 log event");
-    if (kind == QA_BUILTIN_CTF_STATUS) {
-        qa_builtin_ctf_status *status = &event->ctf_status;
-        if (!qa_source_save_f64(io, &status->red) || !qa_source_save_f64(io, &status->blue) ||
-            !qa_source_save_f64(io, &status->flags) || !qa_source_save_f64(io, &status->rune_items))
-            return false;
-        if (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
-            event->argument_count || !isfinite(status->red) || !isfinite(status->blue) ||
-            !isfinite(status->flags) || !isfinite(status->rune_items))
-            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-addressed CTF status event");
-    } else if (io->direction == QA_SOURCE_SAVE_READ) event->ctf_status = (qa_builtin_ctf_status){0};
-    if (kind == QA_BUILTIN_SOURCE_LOG &&
-        (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
-         event->other.registry || !event->text || event->resource || event->argument_count))
-        return event_fail(io, QA_ERROR_FORMAT, "Invalid source-player action log");
-    if (kind == QA_BUILTIN_CTF_CAPTURE) {
-        qa_builtin_ctf_capture *capture = &event->ctf_capture;
-        if (!qa_source_save_bool(io, &capture->blue) ||
-            !qa_source_save_f64(io, &capture->total)) return false;
-        if (family != QA_GAME_Q1 || !event->provider || event->actor.registry ||
-            event->other.registry || event->text || event->resource || event->argument_count ||
-            !isfinite(capture->total))
-            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-wide CTF capture total");
-    } else if (io->direction == QA_SOURCE_SAVE_READ) event->ctf_capture = (qa_builtin_ctf_capture){0};
-    if (kind == QA_BUILTIN_Q1_POWERUP) {
-        if (!qa_source_save_u32(io, &event->q1_powerup.power) ||
-            !qa_source_save_f64(io, &event->q1_powerup.expires) ||
-            family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
-            event->other.registry || event->text || event->resource || event->argument_count ||
-            event->q1_powerup.power >= QA_Q1_POWER_COUNT || !isfinite(event->q1_powerup.expires))
-            return event_fail(io, QA_ERROR_FORMAT, "Invalid typed Q1 powerup continuation");
-    } else if (io->direction == QA_SOURCE_SAVE_READ) event->q1_powerup = (qa_builtin_q1_powerup){0};
-    if (kind == QA_BUILTIN_SOURCE_PROMPT || kind == QA_BUILTIN_CLEAR_PROMPT) {
-        if (family != QA_GAME_Q1 || !event->provider || !event->actor.registry ||
-            event->other.registry || event->resource || event->argument_count ||
-            (kind == QA_BUILTIN_SOURCE_PROMPT ? !event->text : event->text != 0))
-            return event_fail(io, QA_ERROR_FORMAT, "Invalid source-player prompt continuation");
-        if (kind == QA_BUILTIN_SOURCE_PROMPT && !prompt_field(io, store, event)) return false;
-    }
-    if (kind != QA_BUILTIN_SOURCE_PROMPT) {
-        if (io->direction == QA_SOURCE_SAVE_WRITE && event->prompt_choice_count)
-            return event_fail(io, QA_ERROR_FORMAT, "Non-prompt continuation has source prompt choices");
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            event->prompt_choices = NULL; event->prompt_choice_count = 0;
-        }
-    }
-    if (!audience_field(io,store,&record->q2_audience)) return false;
-    if (record->q2_audience.captured &&
-        (family!=QA_GAME_Q2 || event->provider!=record->q2_audience.source ||
-         record->q2_audience.kind>QA_APPLICATION_Q2_ALL || !record->q2_audience.positioned))
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 multicast audience differs from its source event");
-    return true;
-}
-
-static bool fog_field(qa_source_save_io *io, qa_q2_fog *fog)
-{
-    return finite_field(io, &fog->density) && finite_field(io, &fog->sky_factor) &&
-        vector_field(io, &fog->color) && vector_field(io, &fog->start_color) &&
-        vector_field(io, &fog->end_color) && finite_field(io, &fog->start_distance) &&
-        finite_field(io, &fog->end_distance) && finite_field(io, &fog->falloff) &&
-        finite_field(io, &fog->height_density);
-}
-
-static bool q2_map_field(qa_source_save_io *io, event_store *store,
-                         application_q2_map_event_record *retained)
-{
-    qa_application_q2_map_event *record=&retained->source;
-    qa_q2_map_event *event = &record->event;
-    uint32_t kind = event->kind;
-    if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
-        !enum_field(io, &kind, QA_Q2_MAP_HELP_COMPUTER) || !actor_field(io, &event->actor) ||
-        !actor_field(io, &event->recipient) || !actor_field(io, &event->target) ||
-        !qa_source_save_string(io, &event->text) || !qa_source_save_string(io, &event->resource) ||
-        !vector_field(io, &event->origin) || !vector_field(io, &event->direction) ||
-        !vector_field(io, &event->color) || !fog_field(io, &event->fog) ||
-        !finite_field(io, &event->value) || !finite_field(io, &event->duration) ||
-        !finite_field(io, &event->radius) || !finite_field(io, &event->alpha) ||
-        !finite_field(io, &event->intensity) || !finite_field(io, &event->fade_start) ||
-        !finite_field(io, &event->fade_end) || !finite_field(io, &event->cone_cosine) ||
-        !int_field(io, &event->count) || !int_field(io, &event->style) ||
-        !int_field(io, &event->slot) || !qa_source_save_u32(io, &event->flags) ||
-        !qa_source_save_u32(io, &event->resolution) || !qa_source_save_bool(io, &event->visible) ||
-        !arguments_field(io, store, &event->arguments, &event->argument_count)) return false;
-    event->kind = (qa_q2_map_event_kind)kind;
-    if (!qa_source_save_count(io,&event->level_count,QA_Q2_CAMPAIGN_LEVEL_LIMIT) ||
-        !qa_source_save_u64(io,&event->button_time_ns)) return false;
-    if (kind!=QA_Q2_MAP_END_UNIT && (event->level_count || event->button_time_ns))
-        return event_fail(io,QA_ERROR_FORMAT,"Non-report Q2 event retains campaign levels");
-    qa_q2_campaign_level *levels=NULL;
-    if (io->direction==QA_SOURCE_SAVE_READ) {
-        if (event->level_count>(io->input.size-io->offset)/30)
-            return event_fail(io,QA_ERROR_FORMAT,"Truncated Q2 campaign report");
-        levels=arena_array(io,store,event->level_count,sizeof(*levels),_Alignof(qa_q2_campaign_level));
-        if (event->level_count && !levels) return false;
-        event->levels=levels;
-    } else if (event->level_count && !event->levels)
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 campaign report has no retained rows");
-    for (size_t i=0;i<event->level_count;++i) {
-        qa_q2_campaign_level row=levels?(qa_q2_campaign_level){0}:event->levels[i];
-        if (!qa_source_save_string(io,&row.map) || !qa_source_save_string(io,&row.name) ||
-            !qa_source_save_u32(io,&row.visit_order) || !qa_source_save_u32(io,&row.total_secrets) ||
-            !qa_source_save_u32(io,&row.found_secrets) || !qa_source_save_u32(io,&row.total_monsters) ||
-            !qa_source_save_u32(io,&row.killed_monsters) || !qa_source_save_f64(io,&row.time_seconds)) return false;
-        if (!row.map || !isfinite(row.time_seconds) || row.time_seconds<0)
-            return event_fail(io,QA_ERROR_FORMAT,"Invalid Q2 campaign report row");
-        for (size_t j=0;j<i;++j)
-            if (event->levels[j].map==row.map)
-                return event_fail(io,QA_ERROR_FORMAT,"Q2 campaign report repeats its actual map");
-        if (levels) levels[i]=row;
-    }
-    if (!audience_field(io,store,&retained->audience)) return false;
-    if (retained->audience.captured &&
-        ((kind!=QA_Q2_MAP_STEAM && kind!=QA_Q2_MAP_FORCE_WALL) ||
-         record->provider!=retained->audience.source ||
-         retained->audience.kind!=QA_APPLICATION_Q2_PVS || !retained->audience.positioned))
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 map audience differs from its source effect");
-    return true;
-}
-
-static bool q3_map_field(qa_source_save_io *io, qa_application_q3_map_event *record)
-{
-    qa_q3_map_event *event = &record->event;
-    uint32_t kind = event->kind;
-    if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
-        !enum_field(io, &kind, QA_Q3_MAP_AREA_PORTAL) || !actor_field(io, &event->actor) ||
-        !actor_field(io, &event->other) || !qa_source_save_string(io, &event->name) ||
-        !qa_source_save_string(io, &event->text) || !vector_field(io, &event->origin) ||
-        !vector_field(io, &event->angles) || !vector_field(io, &event->direction) ||
-        !vector_field(io, &event->destination) || !finite_field(io, &event->value) ||
-        !qa_source_save_i32(io, &event->index) || !qa_source_save_i32(io, &event->points) ||
-        !qa_source_save_i32(io, &event->team) || !qa_source_save_i32(io, &event->sound_interval_tenths) ||
-        !qa_source_save_i32(io, &event->sound_random_tenths) || !qa_source_save_u32(io, &event->flags) ||
-        !qa_source_save_bool(io, &event->no_bots) || !qa_source_save_bool(io, &event->no_humans)) return false;
-    event->kind = (qa_q3_map_event_kind)kind;
-    return true;
 }
 
 static bool resource_key_field(qa_source_save_io *io,
@@ -590,249 +123,11 @@ static bool resource_key_field(qa_source_save_io *io,
         (!key[size - 1] || event_fail(io, QA_ERROR_FORMAT, "Unterminated Source resource key"));
 }
 
-static bool view_field(qa_source_save_io *io, qa_q2_player_view *view)
-{
-    return qa_source_save_vec3(io, &view->angles) && qa_source_save_vec3(io, &view->offset) &&
-        qa_source_save_vec3(io, &view->kick_angles) && qa_source_save_vec3(io, &view->gun_angles) &&
-        qa_source_save_vec3(io, &view->gun_offset) && qa_source_save_f32(io, &view->blend.x) &&
-        qa_source_save_f32(io, &view->blend.y) && qa_source_save_f32(io, &view->blend.z) &&
-        qa_source_save_f32(io, &view->blend.w) && qa_source_save_f32(io, &view->fov) &&
-        qa_source_save_f32(io, &view->health) && qa_source_save_f64(io, &view->armor) &&
-        qa_source_save_f32(io, &view->ammo) &&
-        qa_source_save_string(io, &view->ammo_icon) && qa_source_save_string(io, &view->armor_icon) &&
-        qa_source_save_i32(io, &view->ammo_count) && int_field(io, &view->score) &&
-        int_field(io, &view->flashes) && int_field(io, &view->layouts) &&
-        qa_source_save_i32(io, &view->hit_marker_damage) &&
-        view->hit_marker_damage >= INT16_MIN && view->hit_marker_damage <= INT16_MAX &&
-        qa_source_save_string(io, &view->selected_item) && qa_source_save_string(io, &view->timer_item) &&
-        int_field(io, &view->timer_seconds) && qa_source_save_bool(io, &view->underwater) &&
-        qa_source_save_bool(io, &view->spectator);
-}
-
-static bool inventory_field(qa_source_save_io *io, qa_inventory_entry *entry)
-{
-    uint32_t policy = entry->policy;
-    if (!qa_source_save_string(io, &entry->item) || !entry->item ||
-        !qa_source_save_f64(io, &entry->count) || !qa_source_save_f64(io, &entry->capacity) ||
-        !enum_field(io, &policy, QA_COUNT_SOURCE_DOUBLE)) return false;
-    entry->policy = (qa_inventory_count_policy)policy;
-    qa_inventory_entry normalized;
-    if (!qa_inventory_validate_entry(entry, &normalized, io->error)) {
-        io->failed = true;
-        return false;
-    }
-    return (normalized.count == entry->count && normalized.capacity == entry->capacity) ||
-        event_fail(io, QA_ERROR_FORMAT, "Application inventory event changes source arithmetic");
-}
-
-static bool player_arrays(qa_source_save_io *io, event_store *store, qa_q2_player_event *event)
-{
-    bool scores = io->direction == QA_SOURCE_SAVE_WRITE && event->scores != NULL;
-    bool inventory = io->direction == QA_SOURCE_SAVE_WRITE && event->inventory != NULL;
-    if (!qa_source_save_count(io, &event->count,
-            SIZE_MAX / (sizeof(qa_q2_score_row) > sizeof(qa_inventory_entry) ?
-                        sizeof(qa_q2_score_row) : sizeof(qa_inventory_entry))) ||
-        !qa_source_save_bool(io, &scores) || !qa_source_save_bool(io, &inventory)) return false;
-    if ((!event->count && (scores || inventory)) ||
-        (event->kind == QA_Q2_PLAYER_SCOREBOARD && event->count && !scores) ||
-        (event->kind == QA_Q2_PLAYER_INVENTORY && event->count && !inventory))
-        return event_fail(io, QA_ERROR_FORMAT, "Application player event array presence differs");
-    qa_q2_score_row *rows = NULL;
-    qa_inventory_entry *items = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        size_t minimum = (scores ? 17u : 0u) + (inventory ? 21u : 0u);
-        if (minimum && event->count > (io->input.size - io->offset) / minimum)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated application player event arrays");
-        if (scores) rows = arena_array(io, store, event->count, sizeof(*rows), _Alignof(qa_q2_score_row));
-        if (inventory) items = arena_array(io, store, event->count, sizeof(*items), _Alignof(qa_inventory_entry));
-        if ((scores && !rows) || (inventory && !items)) return false;
-        event->scores = rows;
-        event->inventory = items;
-    }
-    for (size_t i = 0; scores && i < event->count; ++i) {
-        qa_q2_score_row row = io->direction == QA_SOURCE_SAVE_WRITE ? event->scores[i] : (qa_q2_score_row){0};
-        if (!qa_source_save_u32(io, &row.slot) || !text_field(io, store, &row.name) ||
-            !int_field(io, &row.score) || !int_field(io, &row.ping) ||
-            !int_field(io, &row.minutes) || !qa_source_save_bool(io, &row.spectator)) return false;
-        if (rows) rows[i] = row;
-    }
-    for (size_t i = 0; inventory && i < event->count; ++i) {
-        qa_inventory_entry entry = io->direction == QA_SOURCE_SAVE_WRITE ? event->inventory[i] : (qa_inventory_entry){0};
-        if (!inventory_field(io, &entry)) return false;
-        if (items) items[i] = entry;
-    }
-    return true;
-}
-
-static bool q2_player_field(qa_source_save_io *io, event_store *store,
-                            qa_application_q2_player_event *record)
-{
-    qa_q2_player_event *event = &record->event;
-    uint32_t kind = event->kind, status = event->respawn_status, hand = event->hand;
-    if (!provider_field(io, &record->provider, true) || !qa_source_save_u64(io, &record->time_ns) ||
-        !enum_field(io, &kind, QA_Q2_PLAYER_ALPHA) || !actor_field(io, &event->actor) ||
-        !actor_field(io, &event->target) || !text_field(io, store, &event->text) ||
-        !text_field(io, store, &event->skin) || !view_field(io, &event->view)) return false;
-    event->kind = (qa_q2_player_event_kind)kind;
-    if (!player_arrays(io, store, event) || !vector_field(io, &event->origin) ||
-        !vector_field(io, &event->direction) || !qa_source_save_u64(io, &event->time_ns) ||
-        !qa_source_save_string(io, &event->selected_item) || !qa_source_save_u32(io, &event->slot) ||
-        !int_field(io, &event->level) || !int_field(io, &event->lives) ||
-        !finite_field(io, &event->damage) || !finite_field(io, &event->alpha) ||
-        !enum_field(io, &status, QA_Q2_RESPAWN_NO_LIVES) || !enum_field(io, &hand, QA_Q2_CENTER_HAND) ||
-        !qa_source_save_bool(io, &event->visible) || !qa_source_save_bool(io, &event->reliable) ||
-        !qa_source_save_bool(io, &event->health) || !qa_source_save_bool(io, &event->armor) ||
-        !qa_source_save_bool(io, &event->shield) || !qa_source_save_bool(io, &event->first)) return false;
-    event->respawn_status = (qa_q2_respawn_status)status;
-    event->hand = (qa_q2_hand)hand;
-    if (!qa_source_save_count(io, &record->recipient_count,
-        SIZE_MAX / sizeof(qa_application_network_q2_recipient_view))) return false;
-    if (record->recipient_count && event->kind != QA_Q2_PLAYER_PRINT)
-        return event_fail(io, QA_ERROR_FORMAT, "Non-print Q2 player event has transport recipients");
-    if (event->actor.registry && record->recipient_count > 1)
-        return event_fail(io, QA_ERROR_FORMAT, "Unicast Q2 print has multiple recipients");
-    qa_application_network_q2_recipient_view *decoded = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (record->recipient_count > (io->input.size - io->offset) / 41)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated Q2 print recipient receipts");
-        decoded = arena_array(io, store, record->recipient_count, sizeof(*decoded), _Alignof(qa_application_network_q2_recipient_view));
-        if (record->recipient_count && !decoded) return false;
-        record->recipients = decoded;
-    } else if (record->recipient_count && !record->recipients)
-        return event_fail(io, QA_ERROR_FORMAT, "Q2 print has no retained recipient storage");
-    for (size_t i = 0; i < record->recipient_count; ++i) {
-        qa_application_network_q2_recipient_view value = decoded ?
-            (qa_application_network_q2_recipient_view){0} : record->recipients[i];
-        if (!actor_field(io, &value.actor) || !qa_source_save_u64(io, &value.client.owner) ||
-            !qa_source_save_u64(io, &value.client.generation) || !qa_source_save_u32(io, &value.client.slot) ||
-            !qa_source_save_u64(io, &value.seat.owner) || !qa_source_save_u32(io, &value.seat.index) ||
-            !qa_source_save_u64(io, &value.connection_epoch) || !qa_source_save_u8(io, &value.remote_index)) return false;
-        if (!value.actor.registry || !value.client.owner || !value.client.generation || !value.seat.owner ||
-            !value.connection_epoch || value.remote_index >= QA_Q2_MAX_SEATS ||
-            (event->actor.registry && !qa_actor_id_equal(event->actor, value.actor)))
-            return event_fail(io, QA_ERROR_FORMAT, "Q2 print lost its historical transport admission");
-        for (size_t j = 0; j < i; ++j)
-            if (qa_actor_id_equal(record->recipients[j].actor, value.actor) ||
-                (qa_net_client_id_equal(record->recipients[j].client, value.client) &&
-                    (record->recipients[j].remote_index == value.remote_index ||
-                        (record->recipients[j].seat.owner == value.seat.owner && record->recipients[j].seat.index == value.seat.index))))
-                return event_fail(io, QA_ERROR_FORMAT, "Q2 print repeats its captured recipient");
-        if (decoded) decoded[i] = value;
-    }
-    return true;
-}
-
-static bool protocol_field(qa_source_save_io *io, event_store *store,
-                            application_protocol_record *record)
-{
-    qa_application_protocol_event *event=&record->event;
-    uint32_t dialect = event->dialect;
-    if (!provider_field(io, &event->provider, true) || !enum_field(io, &dialect, QA_CLOCK_Q3) ||
-        !qa_source_save_u64(io, &event->time_ns) || !actor_field(io, &event->recipient) ||
-        !vector_field(io, &event->origin)) return false;
-    size_t size = event->payload.size;
-    if (!qa_source_save_count(io, &size, SIZE_MAX)) return false;
-    uint8_t *payload = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (size > io->input.size - io->offset)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated application protocol payload");
-        payload = arena_array(io, store, size, 1, 1);
-        if (size && !payload) return false;
-        event->payload = (qa_bytes){payload, size};
-    } else if (size && !event->payload.data) {
-        return event_fail(io, QA_ERROR_FORMAT, "Application protocol payload has no storage");
-    }
-    if (!qa_source_save_bytes(io, (void *)event->payload.data, size) ||
-        !qa_source_save_count(io, &event->reference_count, SIZE_MAX / sizeof(*event->references))) return false;
-    qa_application_protocol_reference *references = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (event->reference_count > (io->input.size - io->offset) / 22)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated application protocol references");
-        references = arena_array(io, store, event->reference_count,
-            sizeof(*references), _Alignof(qa_application_protocol_reference));
-        if (event->reference_count && !references) return false;
-        event->references = references;
-    } else if (event->reference_count && !event->references) {
-        return event_fail(io, QA_ERROR_FORMAT, "Application protocol references have no storage");
-    }
-    for (size_t i = 0; i < event->reference_count; ++i) {
-        qa_application_protocol_reference reference = io->direction == QA_SOURCE_SAVE_WRITE ?
-            event->references[i] : (qa_application_protocol_reference){0};
-        if (!qa_source_save_count(io, &reference.offset, SIZE_MAX) ||
-            !actor_field(io, &reference.actor) || !qa_source_save_bool(io, &reference.packed_sound)) return false;
-        if (size < 2 || reference.offset > size - 2)
-            return event_fail(io, QA_ERROR_FORMAT, "Application protocol actor reference exceeds payload");
-        if (references) references[i] = reference;
-    }
-    if (!qa_source_save_count(io, &event->resource_count, SIZE_MAX / sizeof(*event->resources))) return false;
-    qa_application_protocol_resource_reference *resources = NULL;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        if (event->resource_count > (io->input.size - io->offset) / 95)
-            return event_fail(io, QA_ERROR_FORMAT, "Truncated Source protocol resource receipts");
-        resources = arena_array(io, store, event->resource_count, sizeof(*resources),
-            _Alignof(qa_application_protocol_resource_reference));
-        if (event->resource_count && !resources) return false;
-        event->resources = resources;
-    } else if (event->resource_count && !event->resources)
-        return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipts have no storage");
-    for (size_t i = 0; i < event->resource_count; ++i) {
-        qa_application_protocol_resource_reference resource = io->direction == QA_SOURCE_SAVE_WRITE ?
-            event->resources[i] : (qa_application_protocol_resource_reference){0};
-        uint32_t kind = (uint32_t)resource.kind;
-        if (!qa_source_save_count(io, &resource.record_ordinal, SIZE_MAX) ||
-            !enum_field(io, &kind, QA_NATIVE_HOST_IMAGE) || !qa_source_save_u32(io, &resource.source_index) ||
-            !text_field(io, store, &resource.name) ||
-            !resource_key_field(io, resource.resource_key) ||
-            !qa_source_save_u64(io, &resource.resource_custody)) return false;
-        resource.kind = (qa_native_host_resource_kind)kind;
-        if (!resource.name || resource.record_ordinal >= size || resource.resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
-            (resource.resource_key[0] && strncmp(resource.resource_key, "resource:unified:", sizeof("resource:unified:") - 1)) ||
-            (!resource.resource_key[0] && resource.resource_custody))
-            return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipt differs from its immutable registration");
-        if (resources) resources[i] = resource;
-    }
-    if (!qa_source_save_i32(io, &event->destination) || !qa_source_save_bool(io, &event->reliable) ||
-        !qa_source_save_bool(io, &event->multicast) || !qa_source_save_bool(io, &event->signon)) return false;
-    event->dialect = (qa_clock_kind)dialect;
-    if (!qa_source_save_bool(io,&record->q2.original)) return false;
-    if (record->q2.original) {
-        uint32_t profile=record->q2.profile;
-        if (!enum_field(io,&profile,QA_NATIVE_Q2_GAME_API2023) ||
-            !qa_source_save_u32(io,&record->q2.dupe_key) ||
-            !audience_field(io,store,&record->q2.audience)) return false;
-        record->q2.profile=(qa_native_profile)profile;
-        if (dialect!=(profile==QA_NATIVE_Q2_GAME_API3?QA_CLOCK_Q2_CLASSIC:QA_CLOCK_Q2_RERELEASE) ||
-            event->signon || (record->q2.dupe_key &&
-                (profile!=QA_NATIVE_Q2_GAME_API2023 || event->multicast)) ||
-            (event->multicast && (event->destination<0 || event->destination>2)) ||
-            (record->q2.audience.captured &&
-                (record->q2.audience.source!=event->provider ||
-                 record->q2.audience.source_time_ns!=event->time_ns ||
-                 record->q2.audience.source_frame.kind!=event->dialect ||
-                 (event->multicast && record->q2.audience.kind==QA_APPLICATION_Q2_UNICAST) ||
-                 (event->multicast && record->q2.audience.kind!=(event->destination==0 ?
-                    QA_APPLICATION_Q2_ALL:event->destination==1?QA_APPLICATION_Q2_PHS:QA_APPLICATION_Q2_PVS)) ||
-                 (!event->multicast && record->q2.audience.kind!=QA_APPLICATION_Q2_UNICAST) ||
-                 (!event->multicast && record->q2.audience.count &&
-                    !qa_actor_id_equal(record->q2.audience.recipients[0].actor,event->recipient)))))
-            return event_fail(io,QA_ERROR_FORMAT,"Original Q2 protocol differs from its retained delivery");
-    } else if (io->direction==QA_SOURCE_SAVE_READ) record->q2=(qa_application_q2_protocol_delivery){0};
-    else if (record->q2.audience.captured)
-        return event_fail(io,QA_ERROR_FORMAT,"Unqualified protocol has an original Q2 audience");
-    return true;
-}
-
 static event_store borrow_store(qa_application *app)
 {
     return (event_store){
-        .builtin = app->events, .q2_map = app->q2_map_events, .q3_map = app->q3_map_events,
-        .protocol_generation = app->protocol_events_generation,
-        .simulation_sequence = app->simulation_event_sequence,
-        .unified = app->unified_events, .unified_count = app->unified_event_count,
-        .unified_capacity = app->unified_event_capacity, .unified_sequence = app->unified_event_sequence,
-        .presentation_sequence = app->presentation_event_sequence,
         .persistent = app->unified_persistent, .persistent_count = app->unified_persistent_count,
-        .persistent_capacity = app->unified_persistent_capacity, .persistent_revision = app->unified_persistent_revision,
+        .persistent_capacity = app->unified_persistent_capacity,
         .owners = app->unified_event_owners, .owner_count = app->unified_event_owner_count,
         .owner_capacity = app->unified_event_owner_capacity, .owner_generation = app->unified_event_owner_generation,
         .resources = app->unified_event_resources, .resource_count = app->unified_event_resource_count,
@@ -840,33 +135,18 @@ static event_store borrow_store(qa_application *app)
         .registrations = app->unified_event_registrations,
         .registration_count = app->unified_event_registration_count,
         .registration_capacity = app->unified_event_registration_capacity,
-        .registration_revision = app->unified_event_registration_revision,
         .world_text = app->unified_world_text, .world_text_count = app->unified_world_text_count,
-        .world_text_capacity = app->unified_world_text_capacity,
-        .world_text_revision = app->unified_world_text_revision, .world_text_map = app->unified_world_text_map,
-        .application = app,
-        .q2_player = app->q2_player_events, .protocol = app->protocol_events,
-        .counts = {app->event_count, app->q2_map_event_count, app->q3_map_event_count,
-                   app->q2_player_event_count, app->protocol_event_count},
-        .capacities = {app->event_capacity, app->q2_map_event_capacity, app->q3_map_event_capacity,
-                       app->q2_player_event_capacity, app->protocol_event_capacity}
+        .world_text_capacity = app->unified_world_text_capacity, .world_text_map = app->unified_world_text_map,
+        .application = app
     };
 }
 
 static void dispose_store(event_store *store)
 {
-    free(store->builtin);
-    free(store->q2_map);
-    free(store->q3_map);
-    free(store->q2_player);
-    free(store->protocol);
-    for (size_t i = 0; store->unified && i < store->unified_count; ++i)
-        application_unified_event_record_dispose(store->unified + i);
-    free(store->unified);
-    for (size_t i = 0; store->persistent && i < store->persistent_count; ++i) {
-        application_unified_event_record_dispose(&store->persistent[i].event);
-    }
+    for (size_t i = 0; store->persistent && i < store->persistent_count && i < store->persistent_capacity; ++i)
+        if (store->persistent[i].lease) application_event_lease_release(store->persistent[i].lease);
     free(store->persistent);
+    application_event_pages_destroy(&store->pages);
     free(store->owners);
     for (size_t i = 0; store->resources && i < store->resource_count; ++i) {
         qa_buffer_free(&store->resources[i].key);
@@ -885,38 +165,28 @@ static void dispose_store(event_store *store)
     free(store->resources);
     free(store->registrations);
     free(store->world_text);
-    qa_arena_destroy(&store->arena);
     *store = (event_store){0};
 }
 
 static bool allocate_store(qa_source_save_io *io, event_store *store)
 {
-    qa_arena_init(&store->arena, 0);
-    void *arrays[5] = {0};
-    for (size_t i = 0; i < 5; ++i) {
-        if (store->capacities[i]) arrays[i] = calloc(store->capacities[i], event_widths[i]);
-        if (store->capacities[i] && !arrays[i]) {
-            for (size_t j = 0; j < i; ++j) free(arrays[j]);
-            return event_fail(io, QA_ERROR_MEMORY, "Allocating restored application event queues");
-        }
-    }
-    store->builtin = arrays[0];
-    store->q2_map = arrays[1];
-    store->q3_map = arrays[2];
-    store->q2_player = arrays[3];
-    store->protocol = arrays[4];
-    if (store->unified_capacity) store->unified = calloc(store->unified_capacity, sizeof(*store->unified));
-    if (store->persistent_capacity) store->persistent = calloc(store->persistent_capacity, sizeof(*store->persistent));
+    qa_application *staging = store->application;
+    bool created = application_event_stream_create(staging,
+        qa_actors_capacity(qa_session_actors(staging->session)), io->error);
+    store->pages = staging->event_pages;
+    store->persistent = staging->unified_persistent;
+    store->persistent_capacity = staging->unified_persistent_capacity;
+    if (!created) return false;
+    if (store->persistent_count > store->persistent_capacity)
+        return event_fail(io, QA_ERROR_FORMAT, "Persistent Source state exceeds its loaded slots");
     if (store->owner_capacity) store->owners = calloc(store->owner_capacity, sizeof(*store->owners));
     if (store->resource_capacity) store->resources = calloc(store->resource_capacity, sizeof(*store->resources));
     if (store->registration_capacity) store->registrations = calloc(store->registration_capacity, sizeof(*store->registrations));
     if (store->world_text_capacity) store->world_text = calloc(store->world_text_capacity, sizeof(*store->world_text));
-    if ((store->unified_capacity && !store->unified) || (store->resource_capacity && !store->resources) ||
-        (store->persistent_capacity && !store->persistent) ||
-        (store->owner_capacity && !store->owners) ||
+    if ((store->resource_capacity && !store->resources) || (store->owner_capacity && !store->owners) ||
         (store->registration_capacity && !store->registrations) ||
         (store->world_text_capacity && !store->world_text))
-        return event_fail(io, QA_ERROR_MEMORY, "Allocating genuine Source continuation owners");
+        return event_fail(io, QA_ERROR_MEMORY, "Allocating retained Source state");
     return true;
 }
 
@@ -983,39 +253,68 @@ static bool normalized_actor_field(qa_source_save_io *io, application_unified_ev
     return true;
 }
 
-static bool normalized_field(qa_source_save_io *io, event_store *store, application_unified_event_record *row)
+static bool persistent_field(qa_source_save_io *io, event_store *store, application_unified_event_record *row)
 {
     uint32_t clock = row->clock, presentation_clock = row->presentation_clock, family = row->family;
-    if (!qa_source_save_u64(io, &row->order) ||
-        !qa_source_save_u64(io, &row->presentation_sequence) || !qa_source_save_u64(io, &row->simulation_sequence) ||
-        !qa_source_save_u64(io, &row->owner_generation) ||
-        !qa_source_save_u8(io,&row->q2_source_profile) || row->q2_source_profile>2 ||
-        !qa_source_save_u64(io,&row->q2_source_interval_ns) ||
-        ((row->q2_source_profile!=0)!=(row->q2_source_interval_ns!=0)) ||
-        !qa_source_save_u64(io, &row->time_ns) || !qa_source_save_u64(io, &row->simulation_time_ns) ||
+    if (!qa_source_save_u64(io, &row->owner_generation) ||
+        !qa_source_save_u8(io, &row->q2_source_profile) || row->q2_source_profile > 2 ||
+        !qa_source_save_u64(io, &row->q2_source_interval_ns) ||
+        ((row->q2_source_profile != 0) != (row->q2_source_interval_ns != 0)) ||
+        !qa_source_save_u64(io, &row->time_ns) ||
         !enum_field(io, &clock, QA_CLOCK_Q3) || !enum_field(io, &presentation_clock, QA_CLOCK_Q3) ||
         !enum_field(io, &family, QA_GAME_Q3) ||
-        !normalized_actor_field(io, row, false) || !normalized_actor_field(io, row, true) ||
+        !normalized_actor_field(io, row, false) ||
         !provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
-        !qa_source_save_i32(io, &row->source_entity) || !qa_source_save_bool(io, &row->has_source_entity) ||
-        !qa_source_save_bool(io, &row->link_presentation) || !qa_source_save_u64(io, &row->client.owner) ||
-        !qa_source_save_u32(io, &row->client.slot) || !qa_source_save_u64(io, &row->client.generation)) return false;
+        !qa_source_save_i32(io, &row->source_entity) || !qa_source_save_bool(io, &row->has_source_entity)) return false;
     void *payload = row->presentation;
     bool ok = payload_field(io, &payload, &qa_unified_presentation_payload_layout, row->payload_checkpoint);
     row->presentation = payload;
     if (!ok) return false;
-    payload = row->simulation;
-    ok = payload_field(io, &payload, &qa_unified_simulation_payload_layout, row->payload_checkpoint);
-    row->simulation = payload;
-    if (!ok) return false;
     row->clock = clock; row->presentation_clock = presentation_clock; row->family = family;
-    if (row->q2_source_profile && presentation_clock!=(row->q2_source_profile==1 ?
-        QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE))
-        return event_fail(io,QA_ERROR_FORMAT,"Q2 Source profile differs from its retained emission clock");
     if (io->direction == QA_SOURCE_SAVE_READ) row->payload_checkpoint = true;
-    return row->content &&
-        (!row->link_presentation || (row->presentation && row->simulation && row->simulation->kind == QA_UNIFIED_SIMULATION_MESSAGE)) &&
+    return row->content && row->presentation &&
         application_unified_event_actors_valid(store->application, row, io->error);
+}
+
+static void decoded_payload_dispose(application_unified_event_record *row)
+{
+    if (!row->presentation) return;
+    qa_unified_record_dispose(&qa_unified_presentation_payload_layout, row->presentation);
+    free(row->presentation);
+    row->presentation = NULL;
+}
+
+static bool persistent_import(qa_source_save_io *io, event_store *store,
+    const application_unified_event_record *decoded, application_unified_persistent_event *out)
+{
+    qa_application *staging = store->application;
+    application_event_write write = {0};
+    if (!application_event_stream_begin(staging, QA_APPLICATION_EVENT_UNIFIED, &write, io->error))
+        return event_fail(io, QA_ERROR_MEMORY, "Restored persistent state exceeds its event pages");
+    if (!application_unified_event_append(staging, decoded, io->error)) {
+        bool blocked = write.transaction.blocked;
+        application_event_stream_abort(staging, &write, io->error);
+        if (blocked) return event_fail(io, QA_ERROR_MEMORY, "Restored persistent state exceeds its event pages");
+        return false;
+    }
+    application_event_view *view = write.envelope->views;
+    bool remove = false;
+    application_persistent_key key = {0};
+    if (!application_unified_persistent_key(staging, &view->event, &key, &remove, io->error) ||
+        !key.domain || remove) {
+        application_event_stream_abort(staging, &write, io->error);
+        return event_fail(io, QA_ERROR_FORMAT, "Saved presentation has no persistent state domain");
+    }
+    uint64_t id = application_event_pages_commit(&write.transaction, write.envelope);
+    staging->event_write = NULL;
+    if (!id) {
+        staging->presentation_event_sequence = write.presentation_before;
+        staging->simulation_event_sequence = write.simulation_before;
+        return event_fail(io, QA_ERROR_MEMORY, "Restored persistent state exceeds its event pages");
+    }
+    *out = (application_unified_persistent_event){.event = view->event, .key = key,
+        .lease = application_event_pages_retain(staging->event_pages, id)};
+    return true;
 }
 
 static bool derived_key_field(qa_source_save_io *io)
@@ -1030,22 +329,13 @@ static bool persistent_rows(qa_source_save_io *io, event_store *store)
 {
     for (size_t i = 0; i < store->persistent_count; ++i) {
         application_unified_persistent_event *row = store->persistent + i;
-        if (!normalized_field(io, store, &row->event)) return false;
-        if (!derived_key_field(io)) return false;
-        if (!row->event.presentation || row->event.simulation || row->event.link_presentation ||
-            row->event.simulation_sequence || row->event.order >= store->unified_sequence ||
-            row->event.presentation_sequence >= store->presentation_sequence ||
-            (i && row->event.presentation_sequence <= store->persistent[i - 1].event.presentation_sequence))
-            return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation lost its original emitted sequence");
-        if (io->direction == QA_SOURCE_SAVE_READ) {
-            bool remove = false;
-            if (!application_unified_persistent_key(store->application, &row->event, &row->key, &remove, io->error) ||
-                !row->key.domain || remove)
-                return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation has no actual source domain");
-            for (size_t n = 0; n < i; ++n)
-                if (application_unified_persistent_key_equal(&store->persistent[n].key, &row->key))
-                    return event_fail(io, QA_ERROR_FORMAT, "Persistent presentation repeats an owned domain");
-
+        if (io->direction == QA_SOURCE_SAVE_WRITE) {
+            if (!persistent_field(io, store, &row->event)) return false;
+        } else {
+            application_unified_event_record decoded = {0};
+            bool ok = persistent_field(io, store, &decoded) && persistent_import(io, store, &decoded, row);
+            decoded_payload_dispose(&decoded);
+            if (!ok) return false;
         }
     }
     for (size_t i = 0; i < store->owner_count; ++i) {
@@ -1093,39 +383,6 @@ static bool custody_field(qa_source_save_io *io, const qa_application_content_gr
 
 static bool normalized_rows(qa_source_save_io *io, event_store *store)
 {
-    uint64_t presentation_count = 0, simulation_count = 0;
-    for (size_t i = 0; i < store->unified_count; ++i) {
-        application_unified_event_record row = store->unified[i];
-        if (!normalized_field(io, store, &row)) {
-            if (io->direction == QA_SOURCE_SAVE_READ) application_unified_event_record_dispose(&row);
-            return false;
-        }
-        if (io->direction == QA_SOURCE_SAVE_READ) store->unified[i] = row;
-        if (row.order != store->unified_sequence - store->unified_count + i || !row.content ||
-            row.owner_generation > store->owner_generation ||
-            (!row.presentation && !row.simulation) ||
-            (row.link_presentation && (!row.presentation || !row.simulation)) ||
-            (!row.presentation && row.presentation_sequence) ||
-            (!row.simulation && row.simulation_sequence) ||
-            (!row.has_source_entity && row.source_entity) ||
-            (row.presentation && row.presentation_sequence >= store->presentation_sequence) ||
-            (row.simulation && row.simulation_sequence >= store->simulation_sequence))
-            return event_fail(io, QA_ERROR_FORMAT, "Source event continuation lost its actual payload or sequence");
-        if (row.presentation) {
-            if (presentation_count && row.presentation_sequence != presentation_count)
-                return event_fail(io, QA_ERROR_FORMAT, "Source presentation sequence is not contiguous");
-            presentation_count = row.presentation_sequence + 1;
-        }
-        if (row.simulation) {
-            if (simulation_count && row.simulation_sequence != simulation_count)
-                return event_fail(io, QA_ERROR_FORMAT, "Source simulation sequence is not contiguous");
-            simulation_count = row.simulation_sequence + 1;
-        }
-        if (io->direction == QA_SOURCE_SAVE_READ) store->unified[i] = row;
-    }
-    if ((presentation_count && presentation_count != store->presentation_sequence) ||
-        (simulation_count && simulation_count != store->simulation_sequence))
-        return event_fail(io, QA_ERROR_FORMAT, "Source continuation omits its latest emitted sequence");
     const qa_application_content_graph *graph = store->application ?
         qa_application_content_graph_read(store->application) : NULL;
     uint64_t previous_serial = 0;
@@ -1156,7 +413,7 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         if (io->direction == QA_SOURCE_SAVE_READ) {
             row->saved_pool = pool; row->saved_resource = resource; row->saved_view = view;
         }
-        if (!queue_extent(io, &row->custody_count, &row->custody_capacity, sizeof(*row->custodies))) return false;
+        if (!state_extent(io, &row->custody_count, &row->custody_capacity, sizeof(*row->custodies))) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
             if (row->custody_count > (io->input.size - io->offset) / 34)
                 return event_fail(io, QA_ERROR_FORMAT, "Truncated Source opening receipts");
@@ -1286,51 +543,7 @@ static bool resource_bindings(event_store *store, qa_application *app, qa_error 
 
 static bool rows(qa_source_save_io *io, event_store *store)
 {
-    if (io->direction == QA_SOURCE_SAVE_WRITE) {
-        const void *arrays[5] = {store->builtin, store->q2_map, store->q3_map, store->q2_player, store->protocol};
-        for (size_t i = 0; i < 5; ++i)
-            if ((store->capacities[i] != 0) != (arrays[i] != NULL))
-                return event_fail(io, QA_ERROR_FORMAT, "Application event queue allocation differs");
-    }
-    for (size_t i = 0; i < store->counts[0]; ++i) {
-        application_event_record event = store->builtin[i];
-        if (!builtin_field(io, store, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->builtin[i] = event;
-    }
-    for (size_t i = 0; i < store->counts[1]; ++i) {
-        application_q2_map_event_record event = store->q2_map[i];
-        if (!q2_map_field(io, store, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->q2_map[i] = event;
-    }
-    for (size_t i = 0; i < store->counts[2]; ++i) {
-        qa_application_q3_map_event event = store->q3_map[i];
-        if (!q3_map_field(io, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->q3_map[i] = event;
-    }
-    for (size_t i = 0; i < store->counts[3]; ++i) {
-        qa_application_q2_player_event event = store->q2_player[i];
-        if (!q2_player_field(io, store, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->q2_player[i] = event;
-    }
-    for (size_t i = 0; i < store->counts[4]; ++i) {
-        application_protocol_record event = store->protocol[i];
-        if (!protocol_field(io, store, &event)) return false;
-        if (io->direction == QA_SOURCE_SAVE_READ) store->protocol[i] = event;
-    }
-    if (!normalized_rows(io, store) || !persistent_rows(io, store)) return false;
-    for (size_t i = 0; i < store->counts[4]; ++i) {
-        const qa_application_protocol_event *event = &store->protocol[i].event;
-        for (size_t j = 0; j < event->resource_count; ++j) {
-            const char *key = event->resources[j].resource_key;
-            if (!*key) continue;
-            bool found = false;
-            for (size_t r = 0; r < store->resource_count; ++r)
-                found = found || (!strcmp(key, store->resources[r].id) &&
-                    event->resources[j].resource_custody <= store->resources[r].custody_count);
-            if (!found) return event_fail(io, QA_ERROR_FORMAT, "Source protocol resource receipt is outside its retained dictionary");
-        }
-    }
-    return true;
+    return normalized_rows(io, store) && persistent_rows(io, store);
 }
 
 static bool leased(qa_application *app, qa_error *error)
@@ -1380,16 +593,8 @@ static bool retained_resources(event_store *store, qa_error *error)
         return application_fail(error, QA_ERROR_MEMORY, "Retaining referenced Source event openings");
     }
     bool ok = true;
-    for (size_t i = 0; i < store->unified_count; ++i)
-        record_resource_uses(store, store->unified + i, used);
     for (size_t i = 0; i < store->persistent_count; ++i)
         record_resource_uses(store, &store->persistent[i].event, used);
-    for (size_t i = 0; i < store->counts[4]; ++i) {
-        const qa_application_protocol_event *event = &store->protocol[i].event;
-        for (size_t j = 0; j < event->resource_count; ++j)
-            for (size_t n = 0; n < store->resource_count; ++n)
-                if (!strcmp(event->resources[j].resource_key, store->resources[n].id)) used[n] = true;
-    }
     size_t registration_count = 0, resource_count = 0;
     for (size_t i = 0; ok && i < store->registration_count; ++i) {
         const application_unified_event_registration *row = store->registrations + i;
@@ -1463,43 +668,23 @@ bool application_events_save_content_visit(qa_application *app,
     return ok;
 }
 
-static bool queues_empty(const qa_application *app)
-{
-    return !app->event_count && !app->q2_map_event_count && !app->q3_map_event_count &&
-        !app->q2_player_event_count && !app->protocol_event_count && !app->unified_event_count;
-}
-
 static void install_store(qa_application *app, event_store *store)
 {
-    free(app->events);
-    free(app->q2_map_events);
-    free(app->q3_map_events);
-    free(app->q2_player_events);
-    free(app->protocol_events);
-    application_unified_events_clear(app);
-    free(app->unified_events);
     application_unified_persistent_dispose(app);
+    application_event_pages_destroy(&app->event_pages);
     free(app->unified_event_owners);
     application_unified_events_resources_dispose(app);
     free(app->unified_world_text);
-    qa_arena_destroy(&app->event_arena);
-    app->events = store->builtin;
-    app->q2_map_events = store->q2_map;
-    app->q3_map_events = store->q3_map;
-    app->q2_player_events = store->q2_player;
-    app->protocol_events = store->protocol;
-    app->event_count = store->counts[0];
-    app->q2_map_event_count = store->counts[1];
-    app->q3_map_event_count = store->counts[2];
-    app->q2_player_event_count = store->counts[3];
-    app->protocol_event_count = store->counts[4];
-    app->protocol_events_generation = store->protocol_generation;
-    app->simulation_event_sequence = store->simulation_sequence;
-    app->unified_events = store->unified; app->unified_event_count = store->unified_count;
-    app->unified_event_capacity = store->unified_capacity; app->unified_event_sequence = store->unified_sequence;
-    app->presentation_event_sequence = store->presentation_sequence;
+    app->event_pages = store->pages;
+    app->event_write = NULL;
+    app->event_local_cursor = application_event_pages_next(store->pages);
+    app->event_peer_cursor = UINT64_MAX;
+    application_event_pages_retire(store->pages, app->event_local_cursor);
+    ++app->protocol_events_generation;
+    app->simulation_event_sequence = store->application->simulation_event_sequence;
+    app->presentation_event_sequence = store->application->presentation_event_sequence;
     app->unified_persistent = store->persistent; app->unified_persistent_count = store->persistent_count;
-    app->unified_persistent_capacity = store->persistent_capacity; app->unified_persistent_revision = store->persistent_revision;
+    app->unified_persistent_capacity = store->persistent_capacity; ++app->unified_persistent_revision;
     app->unified_event_owners = store->owners; app->unified_event_owner_count = store->owner_count;
     app->unified_event_owner_capacity = store->owner_capacity; app->unified_event_owner_generation = store->owner_generation;
     app->unified_event_resources = store->resources; app->unified_event_resource_count = store->resource_count;
@@ -1507,25 +692,23 @@ static void install_store(qa_application *app, event_store *store)
     app->unified_event_registrations = store->registrations;
     app->unified_event_registration_count = store->registration_count;
     app->unified_event_registration_capacity = store->registration_capacity;
-    app->unified_event_registration_revision = store->registration_revision;
+    ++app->unified_event_registration_revision;
     app->unified_world_text = store->world_text; app->unified_world_text_count = store->world_text_count;
     app->unified_world_text_capacity = store->world_text_capacity;
-    app->unified_world_text_revision = store->world_text_revision; app->unified_world_text_map = store->world_text_map;
-    app->event_capacity = store->capacities[0];
-    app->q2_map_event_capacity = store->capacities[1];
-    app->q3_map_event_capacity = store->capacities[2];
-    app->q2_player_event_capacity = store->capacities[3];
-    app->protocol_event_capacity = store->capacities[4];
-    /* Move the one arena owner with every array pointing into its blocks. */
-    app->event_arena = store->arena;
+    ++app->unified_world_text_revision; app->unified_world_text_map = store->world_text_map;
     *store = (event_store){0};
 }
 
 bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
-    if (!leased(app, error) || !queues_empty(app))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Application event import requires empty candidate queues");
-    event_store store = {.application = app};
+    if (!leased(app, error)) return false;
+    qa_application staging = *app;
+    staging.event_pages = NULL;
+    staging.event_write = NULL;
+    staging.unified_persistent = NULL;
+    staging.unified_persistent_count = staging.unified_persistent_capacity = 0;
+    staging.presentation_event_sequence = staging.simulation_event_sequence = 0;
+    event_store store = {.application = &staging};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, app->session, bytes, error) && prefix(&io, &store) &&
         allocate_store(&io, &store) && rows(&io, &store) && qa_source_save_finish(&io, NULL);
@@ -1576,20 +759,5 @@ bool qa_application_events_restore(qa_application *app, qa_bytes bytes, qa_error
     }
     if (ok) ok = application_unified_events_restore_finish(app, error);
     app->operation = APPLICATION_IDLE;
-    return ok;
-}
-
-bool qa_application_events_saved_counts_read(qa_bytes bytes,
-    qa_application_saved_event_counts *out, qa_error *error)
-{
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Application event extent output is absent");
-    qa_source_save_io io = {0};
-    event_store store = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && prefix(&io, &store);
-    qa_source_save_dispose(&io);
-    if (ok) *out = (qa_application_saved_event_counts){
-        .builtin = store.counts[0], .q2_map = store.counts[1],
-        .q3_map = store.counts[2], .q2_player = store.counts[3],
-        .protocol = store.counts[4], .protocol_generation = store.protocol_generation};
     return ok;
 }

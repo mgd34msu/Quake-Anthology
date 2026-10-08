@@ -95,6 +95,12 @@ bool qa_unified_record_actor_remap(const qa_unified_record_layout *, void *,
 void qa_unified_record_dispose(const qa_unified_record_layout *, void *);
 bool qa_unified_record_equal(const qa_unified_record_layout *, const void *, const void *);
 bool qa_unified_record_clone(const qa_unified_record_layout *, const void *, void *, qa_error *);
+typedef void *(*qa_unified_clone_alloc_fn)(void *, size_t, size_t, qa_error *);
+/* Caller supplies zeroed output. The callback returns aligned storage, which this
+ * traversal zeroes. NULL selects heap storage. Failure leaves a partial output;
+ * custom owners rewind their allocation and clear it, never call dispose. */
+bool qa_unified_record_clone_alloc(const qa_unified_record_layout *, const void *,
+    void *zeroed_output, qa_unified_clone_alloc_fn, void *, qa_error *);
 bool qa_unified_record_delta_encode(const qa_unified_record_layout *, const void *,
     const void *baseline, size_t maximum, qa_buffer *, qa_error *);
 bool qa_unified_record_delta_write(const qa_unified_record_layout *, const void *,

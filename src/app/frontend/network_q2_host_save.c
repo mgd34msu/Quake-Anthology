@@ -58,11 +58,6 @@ bool frontend_network_q2_host_qualified(const frontend_network_q2_host *h,const 
             if(!qa_network_q2_server_codec((qa_network_runtime *)runtime,client->id,&codec,e) ||
                 !qa_q2_config_layout_read(codec,&layout,e) || (peer->config_count && peer->config_count!=layout.max_configs))
                 return bad(e,"Q2 issued config beforeimages differ from the actual negotiated namespace");
-            uint64_t generation=qa_application_protocol_events_generation(h->options.frontend->application);
-            if(peer->event_generation>generation || (peer->event_generation==generation &&
-                (peer->event_cursor>qa_application_protocol_event_count(h->options.frontend->application) ||
-                    peer->player_event_cursor>qa_application_q2_player_event_count(h->options.frontend->application))))
-                return bad(e,"Q2 event cursor exceeds its real retained journal generation");
             ++found;
         }
         if(found!=1) return bad(e,"Q2 HOST runtime differs from its exact Source claim inventory");

@@ -26,6 +26,7 @@
 #include "qa/persistence_content.h"
 #include "qa/save.h"
 #include "unified_events.h"
+#include "event_stream.h"
 
 typedef enum application_operation {
     APPLICATION_IDLE,
@@ -130,21 +131,6 @@ typedef struct application_provider_admission {
     qa_combat_policy_admission *policy;
     bool constructed;
 } application_provider_admission;
-
-typedef struct application_event_record {
-    qa_builtin_event event;
-    qa_application_q2_audience q2_audience;
-} application_event_record;
-
-typedef struct application_q2_map_event_record {
-    qa_application_q2_map_event source;
-    qa_application_q2_audience audience;
-} application_q2_map_event_record;
-
-typedef struct application_protocol_record {
-    qa_application_protocol_event event;
-    qa_application_q2_protocol_delivery q2;
-} application_protocol_record;
 
 typedef struct application_motion_record {
     qa_actor_id actor;
@@ -358,22 +344,13 @@ struct qa_application {
     application_provider *pending_close;
     application_provider *live_providers;
     size_t provider_states;
-    application_event_record *events;
-    size_t event_count, event_capacity;
-    application_q2_map_event_record *q2_map_events;
-    size_t q2_map_event_count, q2_map_event_capacity;
-    qa_application_q3_map_event *q3_map_events;
-    size_t q3_map_event_count, q3_map_event_capacity;
-    qa_application_q2_player_event *q2_player_events;
-    size_t q2_player_event_count, q2_player_event_capacity;
-    application_protocol_record *protocol_events;
-    size_t protocol_event_count, protocol_event_capacity;
+    application_event_pages *event_pages;
+    struct application_q2_audience_scratch *event_q2_capture;
+    application_event_write *event_write;
+    uint64_t event_local_cursor, event_peer_cursor;
     uint64_t protocol_events_generation;
     uint64_t simulation_event_sequence;
-    application_unified_event_record *unified_events;
-    size_t unified_event_count, unified_event_capacity;
     uint64_t presentation_event_sequence;
-    uint64_t unified_event_sequence;
     application_unified_persistent_event *unified_persistent;
     size_t unified_persistent_count, unified_persistent_capacity;
     uint64_t unified_persistent_revision;
@@ -388,7 +365,6 @@ struct qa_application {
     application_unified_world_text *unified_world_text;
     size_t unified_world_text_count, unified_world_text_capacity;
     uint64_t unified_world_text_revision, unified_world_text_map;
-    qa_arena event_arena;
     application_motion_record *motion;
     uint32_t motion_capacity;
     application_actor_routes *actor_routes;

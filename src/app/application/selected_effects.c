@@ -215,14 +215,16 @@ bool qa_application_effects_retained_read(qa_application *app, qa_actor_owner ow
     return observe(app, event_provider(app, owner), (qa_actor_id){0}, true, out, error);
 }
 
-bool qa_application_effect_event_read(qa_application *app, size_t ordinal,
+bool qa_application_effect_event_read(qa_application *app, uint64_t event_id,
     qa_application_effect_event *out, qa_error *error)
 {
-    if (!out || !ready(app) || ordinal >= app->event_count)
+    if (!out || !ready(app))
         return application_fail(error, QA_ERROR_ARGUMENT, "Effect event requires its completed canonical queue row");
-    const qa_builtin_event *event = &app->events[ordinal].event;
+    const application_event_envelope *record = application_event_stream_at(app, event_id);
+    if (!record || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
+    const qa_builtin_event *event = &record->raw.builtin.event;
     application_provider *provider = event_provider(app, event->provider);
-    qa_application_effect_event view = {.event = event, .ordinal = ordinal,
+    qa_application_effect_event view = {.event = event, .event_id = event_id,
         .queue_generation = app->protocol_events_generation};
     if (!observe(app, provider, event->actor, false, &view.source, error)) return false;
     if (view.source.family != event->family)
@@ -233,11 +235,10 @@ bool qa_application_effect_event_read(qa_application *app, size_t ordinal,
 bool qa_application_effect_event_current(qa_application *app,
     const qa_application_effect_event *saved)
 {
-    if (!saved || !ready(app) || saved->queue_generation != app->protocol_events_generation ||
-        saved->ordinal >= app->event_count || saved->event != &app->events[saved->ordinal].event)
+    if (!saved || !ready(app) || saved->queue_generation != app->protocol_events_generation)
         return false;
     qa_application_effect_event actual;
-    return qa_application_effect_event_read(app, saved->ordinal, &actual, NULL) &&
+    return qa_application_effect_event_read(app, saved->event_id, &actual, NULL) &&
         qa_actor_id_equal(actual.source.actor, saved->source.actor) && same_source(&actual.source, &saved->source);
 }
 

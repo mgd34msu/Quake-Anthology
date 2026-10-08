@@ -186,11 +186,15 @@ bool qa_network_receive(qa_network_runtime *runtime, const qa_net_datagram *pack
             qa_error issue={0};
             if (!target->ops.receive(target->state, runtime, target->id, packet, &issue)) {
                 runtime->callback = false;
-                bool pending=retirement_pending(target);
-                if(!pending || issue.code!=QA_OK) {
-                    if(!pending && !qa_network_q2_delivery_pending(target)) retire(runtime, target, "receive failed");
-                    if(error) *error=issue;
-                    ok = false;
+                if(issue.code==QA_ERROR_CAPACITY && qa_network_q2_peer(target)) {
+                    retire(runtime,target,"reliable queue overflow");
+                } else {
+                    bool pending=retirement_pending(target);
+                    if(!pending || issue.code!=QA_OK) {
+                        if(!pending && !qa_network_q2_delivery_pending(target)) retire(runtime, target, "receive failed");
+                        if(error) *error=issue;
+                        ok = false;
+                    }
                 }
             }
         } else if (runtime->options.hooks.connectionless &&
@@ -223,6 +227,9 @@ bool qa_network_tick(qa_network_runtime *runtime, uint64_t now, qa_error *error)
                     qa_network_q2_timeout(peer,"connection timed out",&issue);
                 runtime->callback=false;
                 if(!complete) {
+                    if(issue.code==QA_ERROR_CAPACITY && qa_network_q2_peer(peer)) {
+                        retire(runtime,peer,"connection timed out"); continue;
+                    }
                     if(issue.code!=QA_OK) { if(error) *error=issue; ok=false; }
                     continue;
                 }
@@ -234,6 +241,9 @@ bool qa_network_tick(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         bool sent = peer->ops.flush(peer->state, runtime, peer->id, now, &issue);
         runtime->callback = false;
         if (!sent) {
+            if(issue.code==QA_ERROR_CAPACITY && qa_network_q2_peer(peer)) {
+                retire(runtime,peer,"reliable queue overflow"); continue;
+            }
             bool pending=retirement_pending(peer);
             if(pending && issue.code==QA_OK) continue;
             if(!pending && !qa_network_q2_delivery_pending(peer)) retire(runtime, peer, "send failed");
