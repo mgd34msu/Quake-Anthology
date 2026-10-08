@@ -298,12 +298,16 @@ bool frontend_restart_register(frontend_restart *owner,qa_console *console,qa_er
 }
 static bool drain(frontend_restart *owner,bool frame,qa_error *error)
 {
-    qa_frontend *f=owner?owner->options.frontend:NULL;
-    if (!f || owner->running || f->stepping!=frame || f->preparing || f->capture || f->source_restoring ||
+    if (!owner->attempt && !owner->video_requested &&
+        !qa_restart_pending(owner->controls,QA_RESTART_VIDEO) &&
+        !qa_restart_pending(owner->controls,QA_RESTART_INPUT) &&
+        !qa_restart_pending(owner->controls,QA_RESTART_AUDIO)) return true;
+    qa_frontend *f=owner->options.frontend;
+    if (owner->running || f->stepping!=frame || f->preparing || f->capture || f->source_restoring ||
         !frontend_seat_callbacks_returned(f) || (!owner->attempt &&
         (!frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
             !qa_cvars_observer_idle(owner->options.cvars))))
-        return fail(error,QA_ERROR_ARGUMENT,"Restart drain requires returned physical frontend and source callbacks");
+        return true;
     owner->running=true;
     bool ok=true;
     if (owner->attempt) ok=!owner->attempt->native_started?video_continue(owner,error):
