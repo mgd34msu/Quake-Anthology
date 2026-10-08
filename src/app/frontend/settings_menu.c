@@ -12,6 +12,7 @@
 #include "qa/text.h"
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef enum setting_operation {
     SET_CVAR, SET_MASK, SET_DESTINATION, SET_CLOSE, SET_RENDERER, SET_RENDERER_APPLY,
@@ -512,10 +513,13 @@ static bool audio_controls(frontend_seat *seat,qa_error *error)
     if(!output_rates || !output_labels) return false;
     memcpy(output_rates,rates,sizeof(rates)); memcpy(output_labels,rate_labels,sizeof(rate_labels));
     size_t rate_count=4; const qa_cvar_view *rate=qa_cvars_find(cvars,"s_outputRate");
+    double sample_rate=rate ? strtod(value_text(rate),NULL) : 0;
     bool rate_found=false;
-    for(size_t i=0;rate && i<4;++i) if(!strcmp(value_text(rate),rates[i])) rate_found=true;
+    for(size_t i=0;rate && i<4;++i) if(sample_rate==strtod(rates[i],NULL)) {
+        output_rates[i]=copy_text(owner,value_text(rate)); rate_found=true; break;
+    }
     if(rate && !rate_found) { output_rates[4]=copy_text(owner,value_text(rate));
-        char text[48]; snprintf(text,sizeof(text),"%s Hz",value_text(rate)); output_labels[4]=copy_text(owner,text); rate_count=5; }
+        char text[48]; snprintf(text,sizeof(text),"%.0f Hz",sample_rate); output_labels[4]=copy_text(owner,text); rate_count=5; }
     qa_ui_control *item=cvar_choice(seat,cvars,"s_outputRate","Output sample rate",output_labels,output_rates,rate_count);
     if(item) binding_of(item)->restart_audio=true;
     item=cvar_choice(seat,cvars,"s_outputBits","Output sample bits",bit_labels,bits,2);

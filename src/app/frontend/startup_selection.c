@@ -566,9 +566,10 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
             append(s, "offhand", "Offhand", found ? NULL : "Install a game or mod that provides a hook", e); break;
     }
     case QA_UI_LIBRARY_GRAPPLE_STYLE: {
+        *selected = gear ? hook_id(gear->selection.grapple) : "native";
+        if (!gear || gear->selection.grapple == QA_GRAPPLE_DISABLED) break;
         const qa_grapple_mechanic mechanics[] = {QA_GRAPPLE_THREEWAVE, QA_GRAPPLE_Q2_CTF, QA_GRAPPLE_LMCTF};
         const char *labels[] = {"Threewave CTF (Quake 1)", "Threewave CTF (Quake 2)", "LMCTF (Quake 2)"};
-        *selected = gear ? hook_id(gear->selection.grapple) : "native";
         for (size_t i = 0; ok && i < 3; ++i) {
             const qa_product *p = hook_source(library, mechanics[i]);
             if (p) ok = append(s, hook_id(mechanics[i]), labels[i], unavailable(p), e);
