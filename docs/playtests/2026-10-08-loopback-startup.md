@@ -1,0 +1,68 @@
+# Loopback startup and control checks
+
+THE-913, THE-907 and THE-868 remain in progress. The candidate is
+`dee3546e270afe4d04236027ef61f76281b791c1`, built October 8 at
+10:58:39 CDT. These checks used private displays and copied owner settings.
+They do not establish release readiness or frame-time performance.
+
+## Delayed connection
+
+The shared server discarded pending challenges after ten seconds. The client
+retained its token and retried CONNECT, so a slow client startup could leave it
+waiting indefinitely. The fix removes age expiration and replaces the oldest
+entry only when the existing 256-entry table is full. Original Q3 uses this
+bounded replacement in `code/server/sv_client.c`, `SV_GetChallenge`.
+
+A focused check through the actual loopback transport separately delayed
+CONNECT delivery and pending attachment by eleven seconds. Before the fix,
+neither reached the attachment callback; both do afterward, including against
+the rebuilt SDK. A 257th distinct HELLO also receives a challenge afterward.
+The fixture stops at attachment and does not pretend to prove gameplay.
+
+Native Q3 `q3dm0` GL then reached the world and original HUD. The late diagnostic
+read epoch 1, admitted and received state, live frame/media, and one peer at
+both bootstraps. The last handshake was 12.94 seconds after launch. A private
+window-close request exited normally with code zero. This diagnostic attached
+a debugger briefly and supplies no timing or control proof.
+
+## Actual controls
+
+| Scope | Observed result | Remaining gap |
+| --- | --- | --- |
+| Original Q1 classic `start`, CPU and GL | Retail world/status bar, forward movement, jump and landing, shotgun flash and shells 25 to 24, released idle weapon, public quit 0 | Mouse turning was not established by the single small motion event |
+| Native Q3 `q3dm0`, GL | Real mouse turn, later forward displacement, ammo 100 to 96, original HUD, public quit 0 | Jump/crouch phase captures do not establish each release; the final status query was queued |
+| Mixed Q1 classic `start`, Q3 movement/ranger/weapons, Q2 rerelease monsters, CPU and GL | Real world, admitted/received seat, normal private window close 0 | Selected Q3 weapon is not visible; ammo stays 25; individual control responses remain unqualified |
+
+Original Q1's public frame information advanced on both renderers:
+
+| Renderer | Frame | Received source milliseconds | Input acknowledgment |
+| --- | --- | --- | --- |
+| CPU | 774 to 1170 | 10362 to 15130 | 762 to 1156 |
+| GL | 373 to 838 | 5454 to 11325 | 340 to 825 |
+
+Each row reports seat 0, epoch 1, admitted 1 and received 1. The Q3 GL console
+response reports input acknowledgment 94; mixed CPU and GL report 20 and 16.
+Those single endpoints do not prove acknowledgment advancement or associate
+an acknowledgment with a particular key.
+
+## Evidence bounds
+
+The coordinator inspected the Q3 world, mouse, forward and console images,
+the mixed CPU console, and original Q1 world, firing and GL console images.
+Workers inspected every phase image in their own packets. Q1 and mixed
+checks captured actual private audio output, but these records do not identify
+individual sound cues. GL used software rendering where reported, so no
+hardware GPU speed claim follows.
+
+Local evidence indexes are `qa-the913-q3dm0-challenge-state-diagnostic.json`,
+`qa-the913-q3dm0-dee3546e-control-observation.json`,
+`qa-the913-challenge-combined-proof-20261008/result-index.json`, and original
+Q1 packet reviews `tzsw5r59/worker-original-review.json` and
+`mhg6ldo3/worker-original-gl-review.json`. The delayed-handshake fixture retains
+`before.json` and `built.json` in `qa-the913-delayed-challenge-20261008`.
+
+The original 34 profile files and five candidate application files stayed
+unchanged in the completed runs. Recorded owned processes were cleaned up.
+The candidate has not yet replaced the qualified installed executable;
+Wayland installation qualification is still running. No Slack retest note
+has been posted for this candidate.
