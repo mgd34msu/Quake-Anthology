@@ -1,6 +1,6 @@
 # Loopback startup and control checks
 
-THE-913, THE-907 and THE-868 remain in progress. The candidate is
+THE-913 is in review; THE-907 and THE-868 remain in progress. The candidate is
 `dee3546e270afe4d04236027ef61f76281b791c1`, built October 8 at
 10:58:39 CDT. These checks used private displays and copied owner settings.
 They do not establish release readiness or frame-time performance.
@@ -63,6 +63,18 @@ Q1 packet reviews `tzsw5r59/worker-original-review.json` and
 
 The original 34 profile files and five candidate application files stayed
 unchanged in the completed runs. Recorded owned processes were cleaned up.
-The candidate has not yet replaced the qualified installed executable;
-Wayland installation qualification is still running. No Slack retest note
-has been posted for this candidate.
+All sixteen private Wayland startup scopes reached the intended menu or
+world and exited normally. The coordinator inspected every final capture.
+The original 34 settings files are the complete current set of saved CFG/JSON
+settings, and none was omitted from the copies. Both Q3 renderers show the
+original HUD without generic tiles. The separate `q3dm1` CPU/GL regression
+pair also reached gameplay and quit normally.
+
+Installation through `tools/install_qualified_build.py` completed at
+11:25:29 CDT using the exact copied-profile gameplay and Wayland receipts.
+All five installed application files directly byte-match the candidate.
+A Slack retest note was posted after installation. The receipt is
+`installed-m0-loopback-startup-20261008.json`; the Wayland evidence is indexed
+by `the913-dee3546e-wayland-20261008/qualification-reviewed.json`.
+The mixed view-weapon fix is a subsequent change and is not included in this
+installation.

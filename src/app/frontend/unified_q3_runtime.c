@@ -696,7 +696,7 @@ static bool draw(frontend_unified_q3_runtime *o,bool gather,bool *rendered,qa_er
         .xy_speed=camera->xy_speed,.bob_fraction_sin=camera->bob_fraction_sin,.land_time=events->land_time,
         .land_change=events->land_change,.test_gun=camera->test_gun};
     const qa_q3_player *snapshot=q3n_frame_snapshot_player(&f);
-    if(okay && !o->options.scene_only) {
+    if(okay) {
         o->view_weapon_replaced=false;o->view_weapon_handled=false;
         okay=q3n_weapons_view(&f,&weapon,e);
         if(okay)o->view_weapon_handled=!o->view_weapon_replaced;
@@ -815,7 +815,7 @@ bool frontend_unified_q3_runtime_scene_view_weapon(const frontend_unified_q3_run
     if(!out || !owned || !frontend_unified_q3_runtime_current(o) || !o->prepared || !o->scene_prepared)
         return fail(e,"Compiled view weapon ownership requires its actual admitted scene");
     *owned=false;
-    if(o->options.scene_only || !o->supplement || !o->view_weapon_handled)return true;
+    if(!o->supplement || !o->view_weapon_handled)return true;
     qa_q3_presentation_binding binding;q3n_compiled_frame r;q3n_compiled_entity predicted;
     if(!qa_q3_presentation_binding_read(o->children.presentation,&binding,e) ||
        !qa_q3_presentation_supplement_current(o->supplement,binding.frame) ||
