@@ -26,12 +26,6 @@ typedef struct q2_side {
     int64_t texture;
 } q2_side;
 
-typedef struct q2_frame {
-    int32_t child;
-    float first, last;
-    qa_vec3 start, end;
-} q2_frame;
-
 typedef struct q2_interval {
     float first, last;
     bool solid;
@@ -58,7 +52,7 @@ typedef struct q2_collision {
 
     /* Queries have one owner; retain scratch instead of allocating per sweep. */
     int32_t *node_stack;
-    q2_frame *trace_stack;
+    qa_collision_trace_frame *trace_stack;
     uint32_t *brush_stamps;
     q2_plane_support *expanded_planes;
     uint32_t *expanded_stamps;
@@ -173,13 +167,6 @@ static bool q2_validate_trees(q2_collision *collision, qa_error *error)
     return true;
 }
 
-static float q2_plane_distance(qa_vec3 point, const qa_collision_plane *plane)
-{
-    float distance = plane->type >= 0 && plane->type < 3
-        ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal);
-    return distance - plane->distance;
-}
-
 static qa_bounds q2_shape_bounds(const qa_trace_shape *shape)
 {
     return shape->kind == QA_SHAPE_POINT
@@ -281,7 +268,7 @@ static bool q2_point_contents(void *opaque, const qa_point_query *query,
     int32_t child = collision->headnodes[model];
     while (child >= 0) {
         const qa_collision_node *node = &collision->nodes[(size_t)child];
-        float distance = q2_plane_distance(point, &collision->planes[node->plane]);
+        float distance = qa_collision_plane_distance(point, &collision->planes[node->plane]);
         child = node->children[distance < 0 ? 1 : 0];
     }
     const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
@@ -291,73 +278,38 @@ static bool q2_point_contents(void *opaque, const qa_point_query *query,
     return true;
 }
 
+static qa_collision_side_distances q2_brush_distances(void *context, size_t index, bool need_last)
+{
+    q2_work *work = context;
+    const q2_side *side = &work->collision->sides[index];
+    const q2_plane_support *sample = q2_endpoint_distances(work, side->plane, need_last);
+    return (qa_collision_side_distances){sample->first, need_last ? sample->last : 0};
+}
+
 static void q2_trace_brush(q2_work *work, uint32_t index)
 {
     q2_collision *collision = work->collision;
     if (!q2_visit_brush(collision, index)) return;
     const qa_bsp_brush *brush = &collision->brushes[index];
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
-    float enter = -1, second_enter = -1, leave = 1;
-    bool start_out = false, get_out = false;
-    const q2_side *lead = NULL;
-    const qa_collision_plane *second = NULL;
-    for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
-        const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
-        const qa_collision_plane *plane = &collision->planes[side->plane];
-        const q2_plane_support *distances =
-            q2_endpoint_distances(work, side->plane, !work->stationary);
-        float first = distances->first;
-        if (work->stationary) {
-            if (first > 0) return;
-            continue;
-        }
-        float last = distances->last;
-        if (first > 0) start_out = true;
-        if (last > 0) get_out = true;
-        if (first > 0 && (last >= first || (work->merged && last >= Q2_DISTANCE_EPSILON))) return;
-        if (first <= 0 && last <= 0) continue;
-        if (first > last) {
-            float fraction = (first - Q2_DISTANCE_EPSILON) / (first - last);
-            if (work->merged) fraction = fmaxf(0, fraction);
-            if (fraction > enter) {
-                enter = fraction;
-                lead = side;
-            } else if (work->merged && fraction > second_enter) {
-                second_enter = fraction;
-                second = plane;
-            }
-        } else {
-            float fraction = (first + Q2_DISTANCE_EPSILON) / (first - last);
-            if (work->merged) fraction = fminf(1, fraction);
-            leave = fminf(leave, fraction);
-        }
-    }
-    if (!start_out) {
-        work->result.start_solid = true;
-        if (!get_out) {
-            work->result.all_solid = true;
-            if (work->stationary || work->merged) {
-                work->result.fraction = 0;
-                work->result.contents = brush->contents;
-            }
-        }
-        return;
-    }
-    if (enter < leave && enter > -1 && enter < work->result.fraction && lead != NULL) {
-        work->result.fraction = enter < 0 ? 0 : enter;
-        work->result.plane = collision->planes[lead->plane];
-        work->result.has_surface = lead->texture >= 0;
-        work->result.surface = lead->texture >= 0 ? collision->surfaces[(size_t)lead->texture]
-                                                 : (qa_collision_surface){0};
-        work->result.surface_flags = work->result.surface.flags;
-        work->result.contents = brush->contents;
-        /* q2repro pairs the secondary plane with the primary surface. */
-        if (second != NULL) {
-            work->result.has_secondary = true;
-            work->result.secondary_plane = *second;
-            work->result.secondary_has_surface = work->result.has_surface;
-            work->result.secondary_surface = work->result.surface;
-        }
+    const qa_collision_brush_rules rules = {
+        Q2_DISTANCE_EPSILON, work->merged, work->merged, work->merged};
+    qa_collision_brush_contact contact;
+    if (!qa_collision_trace_brush(work, q2_brush_distances,
+            brush->sides.first, brush->sides.count, work->stationary,
+            &rules, brush->contents, &work->result, &contact)) return;
+    const q2_side *lead = &collision->sides[contact.side];
+    work->result.plane = collision->planes[lead->plane];
+    work->result.has_surface = lead->texture >= 0;
+    work->result.surface = lead->texture >= 0 ? collision->surfaces[(size_t)lead->texture]
+                                             : (qa_collision_surface){0};
+    work->result.surface_flags = work->result.surface.flags;
+    /* q2repro pairs the secondary plane with the primary surface. */
+    if (contact.secondary != SIZE_MAX) {
+        work->result.has_secondary = true;
+        work->result.secondary_plane = collision->planes[collision->sides[contact.secondary].plane];
+        work->result.secondary_has_surface = work->result.has_surface;
+        work->result.secondary_surface = work->result.surface;
     }
 }
 
@@ -419,56 +371,24 @@ static void q2_position_test(q2_work *work, int32_t headnode)
     }
 }
 
+static float q2_tree_extent(void *context, uint32_t plane)
+{
+    return q2_expanded_plane(context, plane)->extent;
+}
+
+static void q2_tree_leaf(void *context, uint32_t leaf)
+{
+    q2_trace_leaf(context, leaf);
+}
+
 static void q2_sweep(q2_work *work, int32_t headnode)
 {
     q2_collision *collision = work->collision;
-    size_t depth = 0;
-    q2_frame frame = {headnode, 0, 1, work->start, work->end};
-    for (;;) {
-        if (work->result.fraction <= frame.first) goto next_frame;
-        if (frame.child < 0) {
-            q2_trace_leaf(work, q2_leaf_index(frame.child));
-            goto next_frame;
-        }
-        const qa_collision_node *node = &collision->nodes[(size_t)frame.child];
-        const qa_collision_plane *plane = &collision->planes[node->plane];
-        float first = q2_plane_distance(frame.start, plane);
-        float last = q2_plane_distance(frame.end, plane);
-        float offset = q2_expanded_plane(work, node->plane)->extent;
-        if (first >= offset && last >= offset) {
-            frame.child = node->children[0];
-            continue;
-        }
-        if (first < -offset && last < -offset) {
-            frame.child = node->children[1];
-            continue;
-        }
-        unsigned side = 0;
-        float near_fraction = 1, far_fraction = 0;
-        if (first < last) {
-            float inverse = 1 / (first - last);
-            side = 1;
-            far_fraction = (first + offset + Q2_DISTANCE_EPSILON) * inverse;
-            near_fraction = (first - offset + Q2_DISTANCE_EPSILON) * inverse;
-        } else if (first > last) {
-            float inverse = 1 / (first - last);
-            far_fraction = (first - offset - Q2_DISTANCE_EPSILON) * inverse;
-            near_fraction = (first + offset + Q2_DISTANCE_EPSILON) * inverse;
-        }
-        near_fraction = qa_collision_clamp_fraction(near_fraction);
-        far_fraction = qa_collision_clamp_fraction(far_fraction);
-        float span = frame.last - frame.first;
-        collision->trace_stack[depth++] = (q2_frame){node->children[side ^ 1u],
-            frame.first + span * far_fraction, frame.last,
-            qa_vec_lerp(frame.start, frame.end, far_fraction), frame.end};
-        frame = (q2_frame){node->children[side],
-            frame.first, frame.first + span * near_fraction,
-            frame.start, qa_vec_lerp(frame.start, frame.end, near_fraction)};
-        continue;
-next_frame:
-        if (depth == 0) break;
-        frame = collision->trace_stack[--depth];
-    }
+    const qa_collision_tree_trace trace = {
+        collision->planes, collision->nodes, collision->trace_stack,
+        work->start, work->end, {Q2_DISTANCE_EPSILON, 0, true},
+        &work->result, work, q2_tree_extent, q2_tree_leaf};
+    qa_collision_trace_tree(&trace, headnode);
 }
 
 static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)

@@ -19,7 +19,6 @@ typedef struct q3_model {
     uint32_t *brushes, *surfaces;
     size_t brush_count, surface_count;
 } q3_model;
-typedef struct q3_step { int32_t node; float first, last; qa_vec3 start, end; } q3_step;
 typedef struct q3_interval { float first, last; } q3_interval;
 typedef struct q3_map {
     const qa_collision_plane *planes;
@@ -32,7 +31,7 @@ typedef struct q3_map {
     q3_model *models;
     size_t plane_count, side_count, brush_count, patch_count, node_count, leaf_count, model_count;
     uint32_t generation;
-    q3_step *steps;
+    qa_collision_trace_frame *steps;
     int32_t *pending;
     q3_interval *intervals;
 } q3_map;
@@ -79,11 +78,6 @@ static void q3_next_generation(q3_map *map) {
     map->generation = 1;
 }
 
-static float q3_plane_distance(qa_collision_plane plane, qa_vec3 point) {
-    return (plane.type < 3 ? qa_vec_component(point, (unsigned)plane.type)
-                          : qa_vec_dot(point, plane.normal)) - plane.distance;
-}
-
 static unsigned q3_box_side(qa_bounds bounds, qa_collision_plane plane) {
     if (plane.type < 3) {
         unsigned axis = (unsigned)plane.type;
@@ -119,6 +113,13 @@ static void q3_visit_box(q3_map *map, qa_bounds bounds, q3_leaf_visit visit, voi
     }
 }
 
+static qa_collision_side_distances q3_brush_distances(void *context, size_t index, bool need_last) {
+    q3_work *work = context;
+    qa_collision_plane plane = work->map->planes[work->map->sides[index].plane];
+    return (qa_collision_side_distances){q3_shape_distance(&work->shape, work->start, plane),
+        need_last ? q3_shape_distance(&work->shape, work->end, plane) : 0};
+}
+
 static void q3_trace_brush(q3_work *work, uint32_t index) {
     q3_map *map = work->map;
     q3_brush *brush = &map->brushes[index];
@@ -126,37 +127,15 @@ static void q3_trace_brush(q3_work *work, uint32_t index) {
     brush->visited = map->generation;
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
     if (work->stationary && !qa_bounds_overlap(work->position_bounds, brush->bounds)) return;
-    float enter = -1.0f, leave = 1.0f;
-    bool start_out = false, get_out = false;
-    const q3_side *lead = NULL;
-    for (uint32_t i = work->stationary && brush->sides.count >= 6 ? 6u : 0u; i < brush->sides.count; ++i) {
-        const q3_side *side = &map->sides[brush->sides.first + i];
-        qa_collision_plane plane = map->planes[side->plane];
-        float first = q3_shape_distance(&work->shape, work->start, plane);
-        if (work->stationary) { if (first > 0) return; continue; }
-        float last = q3_shape_distance(&work->shape, work->end, plane);
-        if (first > 0) start_out = true;
-        if (last > 0) get_out = true;
-        if (first > 0 && (last >= 0.125f || last >= first)) return;
-        if (first <= 0 && last <= 0) continue;
-        if (first > last) {
-            float fraction = fmaxf(0, (first - 0.125f) / (first - last));
-            if (fraction > enter) { enter = fraction; lead = side; }
-        } else leave = fminf(leave, fminf(1, (first + 0.125f) / (first - last)));
-    }
-    if (!start_out) {
-        work->result.start_solid = true;
-        if (!get_out) {
-            work->result.all_solid = true;
-            work->result.fraction = 0;
-            work->result.contents = brush->contents;
-        }
-    } else if (enter < leave && enter > -1 && enter < work->result.fraction && lead != NULL) {
-        work->result.fraction = fmaxf(0, enter);
-        work->result.plane = map->planes[lead->plane];
-        work->result.contents = brush->contents;
-        work->result.surface_flags = lead->flags;
-    }
+    const qa_collision_brush_rules rules = {0.125f, true, false, true};
+    uint32_t skipped = work->stationary && brush->sides.count >= 6 ? 6u : 0u;
+    qa_collision_brush_contact contact;
+    if (!qa_collision_trace_brush(work, q3_brush_distances,
+            (size_t)brush->sides.first + skipped, brush->sides.count - skipped,
+            work->stationary, &rules, brush->contents, &work->result, &contact)) return;
+    const q3_side *lead = &map->sides[contact.side];
+    work->result.plane = map->planes[lead->plane];
+    work->result.surface_flags = lead->flags;
 }
 
 static void q3_trace_patch(q3_work *work, uint32_t index) {
@@ -197,45 +176,23 @@ static bool q3_trace_leaf(void *context, uint32_t index) {
     return true;
 }
 
+static float q3_tree_extent(void *context, uint32_t index) {
+    q3_work *work = context;
+    if (work->point_trace || work->shape.kind == QA_SHAPE_POINT) return 0;
+    const qa_collision_plane *plane = &work->map->planes[index];
+    return plane->type < 3 ? qa_vec_component(work->shape.extents, (unsigned)plane->type) : 2048.0f;
+}
+
+static void q3_tree_leaf(void *context, uint32_t leaf) {
+    (void)q3_trace_leaf(context, leaf);
+}
+
 static void q3_trace_tree(q3_work *work) {
     q3_map *map = work->map;
-    size_t count = 0;
-    map->steps[count++] = (q3_step){map->node_count != 0 ? 0 : -1, 0, 1, work->start, work->end};
-    while (count != 0) {
-        q3_step step = map->steps[--count];
-        if (work->result.fraction <= step.first) continue;
-        if (step.node < 0) { (void)q3_trace_leaf(work, (uint32_t)(-1 - step.node)); continue; }
-        const qa_collision_node *node = &map->nodes[step.node];
-        qa_collision_plane plane = map->planes[node->plane];
-        float first = q3_plane_distance(plane, step.start), last = q3_plane_distance(plane, step.end);
-        float offset = 0;
-        if (!work->point_trace && work->shape.kind != QA_SHAPE_POINT)
-            offset = plane.type < 3 ? qa_vec_component(work->shape.extents, (unsigned)plane.type) : 2048.0f;
-        if (first >= offset + 1 && last >= offset + 1) {
-            step.node = node->children[0]; map->steps[count++] = step; continue;
-        }
-        if (first < -offset - 1 && last < -offset - 1) {
-            step.node = node->children[1]; map->steps[count++] = step; continue;
-        }
-        unsigned side = 0;
-        float near_fraction = 1, far_fraction = 0;
-        if (first < last) {
-            side = 1;
-            far_fraction = (first + offset + 0.125f) / (first - last);
-            near_fraction = (first - offset + 0.125f) / (first - last);
-        } else if (first > last) {
-            far_fraction = (first - offset - 0.125f) / (first - last);
-            near_fraction = (first + offset + 0.125f) / (first - last);
-        }
-        near_fraction = qa_collision_clamp_fraction(near_fraction);
-        far_fraction = qa_collision_clamp_fraction(far_fraction);
-        map->steps[count++] = (q3_step){node->children[side ^ 1u],
-            step.first + (step.last - step.first) * far_fraction, step.last,
-            qa_vec_lerp(step.start, step.end, far_fraction), step.end};
-        map->steps[count++] = (q3_step){node->children[side], step.first,
-            step.first + (step.last - step.first) * near_fraction,
-            step.start, qa_vec_lerp(step.start, step.end, near_fraction)};
-    }
+    const qa_collision_tree_trace trace = {
+        map->planes, map->nodes, map->steps, work->start, work->end,
+        {0.125f, 1, false}, &work->result, work, q3_tree_extent, q3_tree_leaf};
+    qa_collision_trace_tree(&trace, map->node_count != 0 ? 0 : -1);
 }
 
 typedef struct q3_position_visit { q3_work *work; size_t count; } q3_position_visit;
@@ -444,7 +401,7 @@ static bool q3_point_contents(void *state, const qa_point_query *query, qa_point
         int32_t index = map->node_count != 0 ? 0 : -1;
         while (index >= 0) {
             const qa_collision_node *node = &map->nodes[index];
-            index = node->children[q3_plane_distance(map->planes[node->plane], point) < 0 ? 1 : 0];
+            index = node->children[qa_collision_plane_distance(point, &map->planes[node->plane]) < 0 ? 1 : 0];
         }
         const q3_leaf *leaf = &map->leaves[-1 - index];
         for (uint32_t i = 0; i < leaf->brushes.count; ++i)

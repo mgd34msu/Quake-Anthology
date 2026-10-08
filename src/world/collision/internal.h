@@ -25,6 +25,37 @@ typedef struct qa_collision_topology {
     const qa_collision_node *nodes;
     size_t plane_count, node_count;
 } qa_collision_topology;
+typedef struct qa_collision_brush_rules {
+    float epsilon;
+    bool clamp_fractions, secondary_plane, zero_all_solid;
+} qa_collision_brush_rules;
+typedef struct qa_collision_side_distances { float first, last; } qa_collision_side_distances;
+typedef qa_collision_side_distances (*qa_collision_side_distances_fn)(void *, size_t, bool);
+typedef struct qa_collision_brush_contact { size_t side, secondary; } qa_collision_brush_contact;
+/* Format readers supply shape distances; one clipper keeps native contact rules. */
+bool qa_collision_trace_brush(void *, qa_collision_side_distances_fn,
+    size_t first_side, size_t side_count, bool stationary,
+    const qa_collision_brush_rules *, int32_t contents,
+    qa_trace_result *, qa_collision_brush_contact *);
+
+typedef struct qa_collision_trace_frame {
+    int32_t child;
+    float first, last;
+    qa_vec3 start, end;
+} qa_collision_trace_frame;
+typedef struct qa_collision_tree_rules { float epsilon, margin; bool reciprocal; } qa_collision_tree_rules;
+typedef struct qa_collision_tree_trace {
+    const qa_collision_plane *planes;
+    const qa_collision_node *nodes;
+    qa_collision_trace_frame *stack;
+    qa_vec3 start, end;
+    qa_collision_tree_rules rules;
+    qa_trace_result *result;
+    void *context;
+    float (*extent)(void *, uint32_t plane);
+    void (*leaf)(void *, uint32_t leaf);
+} qa_collision_tree_trace;
+void qa_collision_trace_tree(const qa_collision_tree_trace *, int32_t headnode);
 bool qa_q1_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 bool qa_q2_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 bool qa_q2_collision_set_material(void *, uint32_t texinfo, qa_bytes, qa_error *);
@@ -52,6 +83,10 @@ static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, 
     result.contents=family==QA_COLLISION_Q1?-1:0; result.model=q->target.inline_model?q->target.model:0; return result;
 }
 static inline float qa_vec_component(qa_vec3 v, unsigned axis) { return axis==0?v.x:axis==1?v.y:v.z; }
+static inline float qa_collision_plane_distance(qa_vec3 point, const qa_collision_plane *plane) {
+    return (plane->type >= 0 && plane->type < 3
+        ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal)) - plane->distance;
+}
 static inline void qa_vec_set_component(qa_vec3 *v, unsigned axis, float value) { if(axis==0)v->x=value;else if(axis==1)v->y=value;else v->z=value; }
 static inline float qa_collision_clamp_fraction(float fraction) { return fmaxf(0, fminf(1, fraction)); }
 /* Quake angle basis: forward, negative-right, up. */

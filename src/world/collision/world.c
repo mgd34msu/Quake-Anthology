@@ -2,6 +2,123 @@
 
 #include <stdlib.h>
 
+bool qa_collision_trace_brush(void *context, qa_collision_side_distances_fn distances,
+    size_t first_side, size_t side_count, bool stationary,
+    const qa_collision_brush_rules *rules, int32_t contents,
+    qa_trace_result *result, qa_collision_brush_contact *contact)
+{
+    float enter = -1, second_enter = -1, leave = 1;
+    bool start_out = false, get_out = false;
+    size_t lead = SIZE_MAX, second = SIZE_MAX;
+    for (size_t i = 0; i < side_count; ++i) {
+        size_t side = first_side + i;
+        qa_collision_side_distances sample = distances(context, side, !stationary);
+        float first = sample.first;
+        if (stationary) {
+            if (first > 0) return false;
+            continue;
+        }
+        float last = sample.last;
+        if (first > 0) start_out = true;
+        if (last > 0) get_out = true;
+        if (first > 0 && (last >= first || (rules->clamp_fractions && last >= rules->epsilon))) return false;
+        if (first <= 0 && last <= 0) continue;
+        if (first > last) {
+            float fraction = (first - rules->epsilon) / (first - last);
+            if (rules->clamp_fractions) fraction = fmaxf(0, fraction);
+            if (fraction > enter) {
+                enter = fraction;
+                lead = side;
+            } else if (rules->secondary_plane && fraction > second_enter) {
+                second_enter = fraction;
+                second = side;
+            }
+        } else {
+            float fraction = (first + rules->epsilon) / (first - last);
+            if (rules->clamp_fractions) fraction = fminf(1, fraction);
+            leave = fminf(leave, fraction);
+        }
+    }
+    if (!start_out) {
+        result->start_solid = true;
+        if (!get_out) {
+            result->all_solid = true;
+            if (stationary || rules->zero_all_solid) {
+                result->fraction = 0;
+                result->contents = contents;
+            }
+        }
+        return false;
+    }
+    if (enter < leave && enter > -1 && enter < result->fraction && lead != SIZE_MAX) {
+        result->fraction = enter < 0 ? 0 : enter;
+        result->contents = contents;
+        *contact = (qa_collision_brush_contact){lead, second};
+        return true;
+    }
+    return false;
+}
+
+void qa_collision_trace_tree(const qa_collision_tree_trace *trace, int32_t headnode)
+{
+    size_t depth = 0;
+    qa_collision_trace_frame frame = {headnode, 0, 1, trace->start, trace->end};
+    for (;;) {
+        if (trace->result->fraction <= frame.first) goto next_frame;
+        if (frame.child < 0) {
+            trace->leaf(trace->context, (uint32_t)(-(int64_t)frame.child - 1));
+            goto next_frame;
+        }
+        const qa_collision_node *node = &trace->nodes[(size_t)frame.child];
+        const qa_collision_plane *plane = &trace->planes[node->plane];
+        float first = qa_collision_plane_distance(frame.start, plane);
+        float last = qa_collision_plane_distance(frame.end, plane);
+        float offset = trace->extent(trace->context, node->plane);
+        if (first >= offset + trace->rules.margin && last >= offset + trace->rules.margin) {
+            frame.child = node->children[0];
+            continue;
+        }
+        if (first < -offset - trace->rules.margin && last < -offset - trace->rules.margin) {
+            frame.child = node->children[1];
+            continue;
+        }
+        unsigned side = 0;
+        float near_fraction = 1, far_fraction = 0;
+        if (first != last) {
+            float near_distance, far_distance;
+            if (first < last) {
+                side = 1;
+                far_distance = first + offset + trace->rules.epsilon;
+                near_distance = first - offset + trace->rules.epsilon;
+            } else {
+                far_distance = first - offset - trace->rules.epsilon;
+                near_distance = first + offset + trace->rules.epsilon;
+            }
+            if (trace->rules.reciprocal) {
+                float inverse = 1 / (first - last);
+                far_fraction = far_distance * inverse;
+                near_fraction = near_distance * inverse;
+            } else {
+                far_fraction = far_distance / (first - last);
+                near_fraction = near_distance / (first - last);
+            }
+        }
+        near_fraction = qa_collision_clamp_fraction(near_fraction);
+        far_fraction = qa_collision_clamp_fraction(far_fraction);
+        float span = frame.last - frame.first;
+        trace->stack[depth++] = (qa_collision_trace_frame){node->children[side ^ 1u],
+            frame.first + span * far_fraction, frame.last,
+            qa_vec_lerp(frame.start, frame.end, far_fraction), frame.end};
+        frame = (qa_collision_trace_frame){node->children[side], frame.first,
+            frame.first + span * near_fraction, frame.start,
+            qa_vec_lerp(frame.start, frame.end, near_fraction)};
+        continue;
+next_frame:
+        if (depth == 0) break;
+        frame = trace->stack[--depth];
+    }
+}
+
 static bool fail(qa_error *error,qa_status code,const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 
