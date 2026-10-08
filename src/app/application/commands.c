@@ -311,6 +311,61 @@ static bool provider_command(application_provider *provider, const qa_command_in
     return application_fail(error, QA_ERROR_ARGUMENT, "unknown source command provider");
 }
 
+static qa_command_result chat_command(qa_application *application,
+    const qa_command_invocation *invocation, qa_command_invocation *command,
+    qa_q1_chat_mode mode, qa_error *error)
+{
+    qa_actor_id actor = command->context.actor;
+    application_provider *provider = command->context.owner
+        ? command_owner(application, command->context.owner)
+        : application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!command->context.owner && actor.registry) {
+        qa_actor_owner owner;
+        const qa_cvars *variables;
+        if (!qa_application_control_source_read(application, actor, &owner, &variables, error))
+            return QA_COMMAND_FAILED;
+        provider = command_owner(application, owner);
+    }
+    if (!provider || provider->client_only_owned) return QA_COMMAND_UNHANDLED;
+    bool handled = false;
+    if (provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_application_startup_source source;
+        bool present;
+        if (!application_provider_startup_source_at(provider, 0, &source, &present, error))
+            return QA_COMMAND_FAILED;
+        if (!present) return QA_COMMAND_UNHANDLED;
+        if (!actor.registry && (mode == QA_Q1_CHAT_TELL ||
+            (source.command.dialect == QA_CONSOLE_QW && mode != QA_Q1_CHAT_ALL) ||
+            command->context.origin != QA_COMMAND_SERVER)) return QA_COMMAND_UNHANDLED;
+        if (source.command.dialect == QA_CONSOLE_QW && mode == QA_Q1_CHAT_TELL)
+            return QA_COMMAND_UNHANDLED;
+        const qa_command_invocation *delivered = invocation;
+        if (command->context.owner != source.command.owner ||
+            command->context.dialect != source.command.dialect) {
+            command->context.owner = source.command.owner;
+            command->context.cvar_view = source.command.cvar_view;
+            command->context.dialect = source.command.dialect;
+            delivered = command;
+        }
+        return application_native_q1_chat(provider, delivered, mode, error)
+            ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
+    if (provider->kind == APPLICATION_PROVIDER_Q3 && actor.registry) {
+        if (!application_native_q3_client_command(provider, actor, command, &handled, error))
+            return QA_COMMAND_FAILED;
+    } else {
+        if (provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified) {
+            const struct application_qc_profile *profile = provider->state.qc.qualified;
+            for (size_t i = 0; i < profile->command_count; ++i)
+                if (application_qc_command_name_equal(profile->commands[i].name, command->argv[0]))
+                    return application_qc_declared_command(provider->state.qc.engine, invocation, error)
+                        ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        }
+        if (!provider_command(provider, command, &handled, error)) return QA_COMMAND_FAILED;
+    }
+    return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
 static qa_command_result command_dispatch(qa_application *application,
     const qa_command_invocation *invocation, qa_error *error)
 {
@@ -319,6 +374,9 @@ static qa_command_result command_dispatch(qa_application *application,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
     application_snapshot_mutated(application);
+    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_CONSOLE_Q1, command.argv[0], true);
+    if (chat != QA_Q1_CHAT_UNKNOWN)
+        return chat_command(application, invocation, &command, chat, error);
     qa_command_result flight = application_native_engine_fly(application, invocation,
         &command.context, error);
     if (flight != QA_COMMAND_UNHANDLED) return flight;
@@ -338,17 +396,6 @@ static qa_command_result command_dispatch(qa_application *application,
     }
     qa_actor_id actor = command.context.actor;
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    qa_q1_chat_mode chat = qa_q1_chat_command_read(command.context.dialect, command.argv[0], true);
-    if (game && game->kind == APPLICATION_PROVIDER_Q1 &&
-        (command.context.dialect == QA_CONSOLE_Q1 || command.context.dialect == QA_CONSOLE_QW) &&
-        (!command.context.owner || command.context.owner == game->owner) &&
-        (actor.registry || (command.context.owner == game->owner &&
-         command.context.origin == QA_COMMAND_SERVER)) &&
-        chat != QA_Q1_CHAT_UNKNOWN &&
-        (chat != QA_Q1_CHAT_TEAM || command.context.dialect == QA_CONSOLE_Q1 || actor.registry)) {
-        return application_native_q1_chat(game, invocation, chat, error)
-            ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
-    }
     uint32_t source_slot;
     if (!actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
         command.context.dialect == QA_CONSOLE_Q3 &&

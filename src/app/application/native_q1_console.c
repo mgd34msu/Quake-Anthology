@@ -176,9 +176,7 @@ bool application_native_q1_chat(application_provider *provider,
         okay = application_emit(provider->application, &event, error);
     }
     if (okay && !denied && mode != QA_Q1_CHAT_TELL && (!qw || sender.player)) {
-        qa_command_context context = command->context;
-        context.owner = provider->owner; context.origin = QA_COMMAND_SERVER; context.actor = (qa_actor_id){0};
-        application_console_print(provider->application, &context, qw?line:line+1);
+        fputs(qw?line:line+1, stdout);
     }
     if (okay && (!qa_q1_wire_receipt_current(&source.receipt) || provider->close_pending ||
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider))

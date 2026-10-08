@@ -1,7 +1,6 @@
 #include "chat.h"
 #include "network_recipient.h"
 #include "qa/application_startup_prepare.h"
-#include "qa/q1_chat_commands.h"
 #include <stdio.h>
 
 bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
@@ -32,32 +31,29 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
         if (seat->id != 0 || frontend->options.seats != 1 || !frontend_network_client_ready(frontend))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the admitted remote Q3 client seat");
     } else {
-        qa_actor_owner owner;
-        const qa_cvars *source_variables;
         if (!frontend_seat_launch_id_read(frontend,seat->id,&context.seat) ||
             !qa_application_player_actor(frontend->application, context.seat, &context.actor))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the current admitted player actor");
-        if (!qa_application_control_source_read(frontend->application,context.actor,
-            &owner,&source_variables,error)) return false;
-        const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
-        const char *instance=qa_application_provider_instance(frontend->application,owner);
-        const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
-        if (!source)
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat lost its current GAME command recipient");
-        qa_application_startup_source game;
-        if (!qa_application_startup_source_read(frontend->application,publication,
-            source,&game,error)) return false;
-        source_console=game.console;
-        qa_command_context command=game.command;
-        command.seat=context.seat; command.actor=context.actor;
-        command.origin=QA_COMMAND_SEAT; command.direct=true;
-        context=command; dialect=context.dialect;
+        context.dialect=qa_seat_console_context_read(seat->console).dialect;
+        if (targeted) {
+            qa_actor_owner owner;
+            const qa_cvars *source_variables;
+            if (!qa_application_control_source_read(frontend->application,context.actor,
+                &owner,&source_variables,error)) return false;
+            const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
+            const char *instance=qa_application_provider_instance(frontend->application,owner);
+            const qa_launch_instance *source=instance?qa_launch_snapshot_find(publication,instance):NULL;
+            if (!source)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Chat lost its current GAME command recipient");
+            qa_application_startup_source game;
+            if (!qa_application_startup_source_read(frontend->application,publication,
+                source,&game,error)) return false;
+            dialect=game.command.dialect;
+        }
     }
     if (targeted && dialect != QA_CONSOLE_Q3)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Selected source has no numeric client tell command");
-    const char *name = dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW ?
-        qa_q1_chat_command_name(dialect,team?QA_Q1_CHAT_TEAM:QA_Q1_CHAT_ALL) :
-        targeted ? "tell" : team ? "say_team" : "say";
+    const char *name = targeted ? "tell" : team ? "say_team" : "say";
     char target_text[16];
     snprintf(target_text, sizeof(target_text), "%d", target);
     size_t prefix = strlen(name) + 1 + (targeted ? strlen(target_text) + 1 : 0), size = strlen(text);

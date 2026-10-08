@@ -553,9 +553,9 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
                 char localized[1024]; const char *recipient_text;
                 if (!frontend_ui_source_message(frontend,seat,&event,localized,&recipient_text,error)) return false;
                 bool ok = center ? qa_hud_center_print(frontend->seats[seat].hud,
-                    recipient_text, frontend->time_ns, center_duration, true, 0, error) : qa_hud_notify(frontend->seats[seat].hud,
-                    recipient_text, false, event.time_ns, UINT64_C(4000000000), error);
-                if (!ok || (!center && !qa_seat_console_print(frontend->seats[seat].console, recipient_text, error))) return false;
+                    recipient_text, frontend->time_ns, center_duration, true, 0, error) :
+                    qa_seat_console_print(frontend->seats[seat].console, recipient_text, error);
+                if (!ok) return false;
                 if (!printed) { fputs(recipient_text,stdout); printed=true; }
             }
             if (!printed && frontend->options.dedicated) {
