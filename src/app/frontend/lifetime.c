@@ -26,6 +26,7 @@
 #include "internal.h"
 #include "settings_devices.h"
 #include "startup_menus.h"
+#include "local_lobby.h"
 #include "demo_dispatch.h"
 #include "content_library_services.h"
 #include "menu_art.h"
@@ -71,8 +72,10 @@
 #include "qa/input_release.h"
 #include <signal.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 static volatile sig_atomic_t interrupted;
+static uint64_t local_frontend_serial;
 typedef enum frontend_shutdown_phase {
     SHUTDOWN_CANDIDATE, SHUTDOWN_RETIRE_CANDIDATE, SHUTDOWN_ABORT_CANDIDATE,
     SHUTDOWN_CLIENTS, SHUTDOWN_PREPARE, SHUTDOWN_FAILED_PREPARE, SHUTDOWN_RELEASE,
@@ -650,9 +653,19 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     qa_frontend *frontend = calloc(1, sizeof(*frontend));
     if (!frontend) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend owner");
     frontend->options = *options;
+    if (options->network_connect) {
+        frontend->network_connect_text = malloc(strlen(options->network_connect) + 1);
+        if (!frontend->network_connect_text) {
+            free(frontend);
+            return frontend_fail(error,QA_ERROR_MEMORY,"Retaining frontend connection address");
+        }
+        strcpy(frontend->network_connect_text,options->network_connect);
+        frontend->options.network_connect = frontend->network_connect_text;
+    }
     frontend->seats = calloc(QA_INPUT_LOCAL_SEATS, sizeof(*frontend->seats));
     if (!frontend->seats) {
-        free(frontend); return frontend_fail(error, QA_ERROR_MEMORY, "allocating stable local seat contexts");
+        free(frontend->network_connect_text); free(frontend);
+        return frontend_fail(error, QA_ERROR_MEMORY, "allocating stable local seat contexts");
     }
     for (unsigned i=0;i<options->seats;++i) {
         frontend->seats[i].frontend=frontend; frontend->seats[i].id=i;
@@ -684,6 +697,20 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->audio_output_format=device.format;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
+    {
+        uint64_t serial = ++local_frontend_serial;
+        char id[64];
+        snprintf(id,sizeof(id),"local-%" PRIu64,serial);
+        qa_local_account account = options->local_account.id ? options->local_account :
+            (qa_local_account){id,"Local player"};
+        frontend->lobbies = options->local_lobbies;
+        if (!frontend->lobbies) {
+            if (!qa_lobbies_create(serial,&frontend->lobbies,error)) goto fail;
+            frontend->lobbies_owned = true;
+        }
+        if (!frontend_local_lobby_create(frontend,frontend->lobbies,account,
+            &frontend->local_lobby,error)) goto fail;
+    }
     {
         const qa_console_dialect *source=NULL; qa_console_dialect dialect;
         if(options->game) {
@@ -774,6 +801,10 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
             !frontend_restart_binding_destroy(frontend,error)) return false;
     }
     if (!shutdown_admitted(frontend,error)) return false;
+    if (!frontend_local_lobby_destroy(&frontend->local_lobby,error)) return false;
+    if (frontend->lobbies_owned) qa_lobbies_destroy(frontend->lobbies);
+    frontend->lobbies = NULL;
+    frontend->lobbies_owned = false;
     if (!frontend->input_settings && !frontend_settings_devices_destroy(frontend,error)) return false;
     frontend_player_sources_discard(frontend);
     if (!qa_save_image_destroy_checked(&frontend->save_image_pending,error)) return false;
@@ -881,6 +912,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!qa_display_restore_cleanup(frontend->display,error)) return false;
     qa_display_destroy(frontend->display); frontend->display=NULL;
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
+    free(frontend->network_connect_text);
     free(frontend->constructor); free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend->shutdown); free(frontend);
     return true;
 }

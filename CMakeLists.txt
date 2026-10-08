@@ -550,7 +550,7 @@ add_library(qa_player_services STATIC
     src/player_services/progress.c
     src/player_services/progress_save.c
     src/player_services/progress_file.c)
-target_link_libraries(qa_player_services PUBLIC qa_core qa_console qa_network qa_persistence)
+target_link_libraries(qa_player_services PUBLIC qa_core qa_console qa_network qa_persistence qa_configuration)
 
 add_library(qa_campaign STATIC
     src/campaign/travel.c
@@ -1623,6 +1623,7 @@ foreach(index RANGE 0 3)
 endforeach()
 add_library(qa_frontend STATIC
     src/app/frontend/startup_menus.c
+    src/app/frontend/local_lobby.c
     src/app/frontend/startup_server_profile.c
     src/app/frontend/seats_resize.c
     src/app/frontend/demo_service.c

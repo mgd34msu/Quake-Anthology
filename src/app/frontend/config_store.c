@@ -3690,7 +3690,7 @@ bool frontend_config_store_client_profile(const frontend_config_store *manager,q
     if (family!=QA_GAME_Q1 && family!=QA_GAME_Q2 && family!=QA_GAME_Q3)
         return fail(error,QA_ERROR_UNSUPPORTED,"Neutral CLIENT configuration requires a genuine Quake profile");
     qa_frontend *f=manager->frontend;
-    const qa_product *product=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
+    const qa_product *product=frontend_product_current(f);
     if (!product || product->family!=family || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
         product->availability!=QA_CONTENT_INSTALLED)
         return fail(error,QA_ERROR_ARGUMENT,"Remote CLIENT needs an explicitly selected installed compiled profile");

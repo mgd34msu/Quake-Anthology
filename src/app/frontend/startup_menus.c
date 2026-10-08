@@ -3,6 +3,7 @@
 #include "startup_selection.h"
 #include "startup_arena.h"
 #include "host_menu.h"
+#include "local_lobby.h"
 #include "content_library_services.h"
 #include "settings_menu.h"
 #include "demo_dispatch.h"
@@ -24,6 +25,9 @@ struct frontend_startup_launch {
     uint32_t seat;
     bool arena, team, begun, end_game;
     bool local_players, drop, admitted;
+    bool lobby, join;
+    qa_net_address endpoint;
+    qa_net_protocol_id protocol;
     uint32_t logical;
     uint64_t generation;
     unsigned first;
@@ -36,7 +40,7 @@ static char *retain_text(const char *text, qa_error *error)
     size_t size = strlen(text) + 1;
     char *copy = malloc(size);
     if (copy) memcpy(copy, text, size);
-    else frontend_fail(error, QA_ERROR_MEMORY, "Retaining authored arena settings");
+    else frontend_fail(error, QA_ERROR_MEMORY, "Retaining game launch text");
     return copy;
 }
 static void launch_free(struct frontend_startup_launch *request)
@@ -95,7 +99,8 @@ static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft,
     qa_frontend *f = seat->frontend;
     if (f->startup_launch || qa_application_startup_pending(f->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "A game is already loading");
-    if (!frontend_startup_selection_complete(library, error)) return false;
+    if (draft == qa_ui_library_draft(library) &&
+        !frontend_startup_selection_complete(library, error)) return false;
     struct frontend_startup_launch *request = calloc(1, sizeof(*request));
     if (!request) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing game selection");
     request->seat = seat->id;
@@ -131,6 +136,43 @@ static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft,
     f->startup_launch = request;
     return true;
 }
+bool frontend_startup_lobby_host_stage(frontend_seat *seat, qa_lobby_session *session,
+    const char *name, uint32_t capacity, uint32_t local, qa_error *error)
+{
+    qa_launch_draft *draft = qa_ui_library_draft(seat->library);
+    frontend_host_settings hosting;
+    if (!frontend_startup_selection_complete(seat->library,error) ||
+        !frontend_host_menu_read(seat->host_menu,draft,&hosting,error)) return false;
+    if (hosting.kind == FRONTEND_HOST_OFFLINE)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Choose hosting connections before creating a lobby");
+    if (!qa_lobby_session_host(session,name,capacity,
+        &(qa_lobby_selection){.launch=draft},local,error)) return false;
+    frontend_local_lobby_hosting(seat->frontend->local_lobby,seat->id,&hosting);
+    return true;
+}
+bool frontend_startup_lobby_launch_stage(frontend_seat *seat, const qa_lobby_view *room,
+    const frontend_host_settings *hosting, bool join, qa_error *error)
+{
+    qa_frontend *f = seat->frontend;
+    qa_launch_draft *draft = NULL;
+    bool staged = qa_launch_draft_rebase(room->selection.launch,
+        qa_application_catalog(f->application),&draft,error) &&
+        stage(seat,seat->library,draft,false,NULL,0,error);
+    qa_launch_draft_destroy(draft);
+    if (!staged) return false;
+    struct frontend_startup_launch *request = f->startup_launch;
+    request->lobby = true;
+    request->join = join;
+    if (join) {
+        request->endpoint = room->endpoint;
+        request->protocol = room->wire.protocol;
+    } else request->hosting = *hosting;
+    if (!qa_ui_close_all(seat->ui,(double)f->time_ns/1000000.0,error)) {
+        frontend_startup_launch_discard(f);
+        return false;
+    }
+    return true;
+}
 static bool addon(void *context, const char *product, const char *map, qa_error *error)
 {
     frontend_seat *seat = context;
@@ -145,6 +187,7 @@ bool frontend_startup_menus_create(frontend_seat *seat, qa_error *error)
     if (!frontend_startup_selection_create(&seat->startup_selection, error) ||
         !frontend_startup_arena_create(seat->frontend, &seat->startup_arena, error) ||
         !frontend_host_menu_create(seat, seat->library, 260, &seat->host_menu, error) ||
+        !frontend_local_lobby_menu_create(seat->frontend->local_lobby,seat,261,error) ||
         !frontend_content_library_services_create(seat, &seat->library_services, error) ||
         !frontend_content_library_services_bind_selection(seat->library_services,
             &(frontend_content_library_selection){.context = seat, .play_addon = addon,
@@ -159,7 +202,8 @@ bool frontend_startup_menus_create(frontend_seat *seat, qa_error *error)
     }
     if (!frontend_content_library_menu_create(seat,services,&seat->content_library,error)) return false;
     return qa_ui_library_bind_services(seat->library, &(qa_ui_library_services){
-        .context = seat, .hosting_menu = 260, .browser_menu = 200, .mods_menu = FRONTEND_MODS,
+        .context = seat, .hosting_menu = 260, .browser_menu = 200, .lobby_menu = 261,
+        .mods_menu = FRONTEND_MODS,
         .hosting_label = hosting_label, .play = stage, .choices = choices, .select = select_choice,
         .roster = roster, .prepare_arenas = prepare_arenas, .arenas = arenas,
         .weapon_bindings = frontend_startup_selection_weapon_bindings}, error);
@@ -168,6 +212,7 @@ bool frontend_startup_menus_pump(qa_frontend *f, qa_error *error)
 {
     /* Source command callbacks return before invoking presentation or UI factories. */
     if (!frontend_commands_menus_pump(f,error)) return false;
+    if (!frontend_local_lobby_pump(f->local_lobby,error)) return false;
     for (unsigned i = 0; i < f->options.seats; ++i)
         if (f->seats[i].library_services &&
             !frontend_content_library_services_pump(f->seats[i].library_services, error)) return false;
@@ -192,8 +237,15 @@ bool frontend_startup_end_stage(frontend_seat *seat, qa_error *error)
     if (!request) return frontend_fail(error, QA_ERROR_MEMORY, "Returning to the startup menu");
     request->seat = seat->id;
     request->end_game = true;
+    request->lobby = frontend_local_lobby_owns_match(f->local_lobby);
     f->startup_launch = request;
     return qa_ui_close_all(seat->ui, (double)f->time_ns / 1000000.0, error);
+}
+bool frontend_startup_lobby_end_stage(qa_frontend *f, uint32_t physical, qa_error *error)
+{
+    if (!frontend_local_lobby_owns_match(f->local_lobby) ||
+        f->startup_launch || qa_application_startup_pending(f->application)) return true;
+    return frontend_startup_end_stage(f->seats + (physical < f->options.seats ? physical : 0),error);
 }
 static bool local_id(qa_frontend *f,const qa_launch_choices *choices,uint32_t *out,qa_error *error)
 {
@@ -359,7 +411,13 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
         }
         if (!frontend_startup_menus_bind(f,error)) return false;
     }
-    frontend_startup_launch_discard(f); return true;
+    bool lobby = request->lobby, end = request->end_game, local_players = request->local_players;
+    frontend_startup_launch_discard(f);
+    if (lobby) {
+        if (end) frontend_local_lobby_end_complete(f->local_lobby);
+        else frontend_local_lobby_launch_started(f->local_lobby);
+    } else if (!end && !local_players) frontend_local_lobby_match_replaced(f->local_lobby);
+    return true;
 }
 static bool desired_setting(void *context, const char *name, const char **out, qa_error *error)
 {
@@ -390,6 +448,8 @@ bool frontend_startup_launch_settings(qa_frontend *f, const qa_launch_snapshot *
 }
 bool frontend_startup_menus_destroy(frontend_seat *seat, qa_error *error)
 {
+    if (seat->frontend && seat->frontend->local_lobby &&
+        !frontend_local_lobby_menu_destroy(seat->frontend->local_lobby,seat->id,error)) return false;
     if (!frontend_content_library_menu_destroy(&seat->content_library, error) ||
         !frontend_content_library_services_destroy(&seat->library_services, error) ||
         !frontend_host_menu_destroy(&seat->host_menu, error)) return false;
@@ -449,24 +509,40 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
         selected->world.preset,&failure);
     if (ok) {
         f->options.network_connect = NULL;
-        f->options.network_host = request->hosting.kind == FRONTEND_HOST_OFFLINE ? NULL : "0.0.0.0";
-        f->options.network_port = request->hosting.port;
+        f->options.network_host = request->join || request->hosting.kind == FRONTEND_HOST_OFFLINE ? NULL : "0.0.0.0";
+        f->options.network_port = request->join ? request->endpoint.port : request->hosting.port;
         const qa_product *product = qa_catalog_product(qa_launch_draft_catalog(request->draft), selected->world.preset);
-        f->options.network_protocol = request->hosting.kind == FRONTEND_HOST_UNIFIED ?
+        f->options.network_protocol = request->join ? request->protocol : request->hosting.kind == FRONTEND_HOST_UNIFIED ?
             (qa_net_protocol_id){.kind = QA_NET_UNIFIED_1} :
             product->family == QA_GAME_Q1 ? request->hosting.q1_protocol :
             product->family == QA_GAME_Q2 ? (qa_net_protocol_id){.kind =
                 product->edition == QA_EDITION_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34} :
             (qa_net_protocol_id){.kind = QA_NET_Q3_68};
-        request->begun = true;
-        ok = request->arena ? qa_application_q3_campaign_start(f->application, request->draft,
+        if (request->join) {
+            char address[256];
+            ok = qa_net_address_format(&request->endpoint,address,sizeof(address),&failure);
+            char *connect = ok ? retain_text(address,&failure) : NULL;
+            if (ok) ok = connect != NULL;
+            if (ok) {
+                free(f->network_connect_text);
+                f->network_connect_text = connect;
+                f->options.network_connect = connect;
+            }
+        }
+        request->begun = ok;
+        if (ok) ok = request->arena ? qa_application_q3_campaign_start(f->application, request->draft,
             request->settings, request->source_setting_count, &failure) :
             qa_application_apply(f->application, request->draft, &failure);
     }
     uint32_t seat = request->seat < f->options.seats ? request->seat : 0;
     if (!ok) {
+        bool lobby = request->lobby;
         frontend_startup_launch_discard(f);
         frontend_print(f, failure.message);
+        if (lobby) {
+            frontend_local_lobby_launch_failed(f->local_lobby,&failure);
+            return true;
+        }
         return qa_ui_library_launch_failed(f->seats[seat].library,
             failure.code == QA_OK ? "Game selection has no local players" : failure.message, error);
     }

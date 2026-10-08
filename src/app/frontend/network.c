@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/application_network.h"
+#include "qa/local_lobby.h"
 #include "qa/application_network_qw.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_q3_factory.h"
@@ -1634,6 +1635,33 @@ bool frontend_network_q2_configs(qa_frontend *f,const qa_q2_config_entry **entri
 bool frontend_network_remote(const qa_frontend *f)
 { return f && ((f->network&&f->network->demo_playback&&f->network->demo_format==FRONTEND_DEMO_Q3)||
     (f->options.network_connect && f->options.network_protocol.kind == QA_NET_Q3_68)); }
+bool frontend_network_lobby_host_read(const qa_frontend *f, bool *ready,
+    qa_net_address *endpoint, qa_lobby_wire *wire, qa_error *error)
+{
+    (void)error;
+    *ready = false;
+    const qa_frontend_network *n = f->network;
+    if (!n || !n->runtime || !f->options.network_host || f->options.network_connect ||
+        qa_application_startup_pending(f->application) ||
+        qa_application_get_state(f->application) != QA_APPLICATION_RUNNING) return true;
+    const qa_net_address *bound = qa_network_local_address(n->runtime);
+    if (!bound || !bound->port) return true;
+    *endpoint = *bound;
+    if (endpoint->kind == QA_NET_IPV4 && !endpoint->host.ipv4[0] &&
+        !endpoint->host.ipv4[1] && !endpoint->host.ipv4[2] && !endpoint->host.ipv4[3]) {
+        endpoint->host.ipv4[0] = 127;
+        endpoint->host.ipv4[3] = 1;
+    } else if (endpoint->kind == QA_NET_IPV6) {
+        bool wildcard = true;
+        for (size_t i = 0; i < sizeof(endpoint->host.ipv6.bytes); ++i)
+            wildcard &= endpoint->host.ipv6.bytes[i] == 0;
+        if (wildcard) endpoint->host.ipv6.bytes[15] = 1;
+    }
+    *wire = (qa_lobby_wire){.protocol = f->options.network_protocol,
+        .generation = n->composition};
+    *ready = true;
+    return true;
+}
 bool frontend_network_client_only(const qa_frontend *f)
 {
     const qa_frontend_network *n=f?f->network:NULL;
@@ -3983,7 +4011,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
     if(f->options.network_connect && q1_client_protocol(f->options.network_protocol) &&
         !q1_client_create(n,&q2_remote,error)) goto failed;
     if(f->options.network_connect && f->options.network_protocol.kind==QA_NET_UNIFIED_1) {
-        const qa_product *selected=frontend_product_selection(qa_application_catalog(f->application),f->options.game);
+        const qa_product *selected=frontend_product_current(f);
         if(!selected) {
             frontend_fail(error,QA_ERROR_ARGUMENT,
                 "Unified connection requires --game PRODUCT selecting an installed local client profile");

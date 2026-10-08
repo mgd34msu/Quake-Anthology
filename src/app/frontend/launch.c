@@ -156,6 +156,14 @@ const qa_product *frontend_product_selection(qa_catalog *catalog, const char *na
     }
     return NULL;
 }
+const qa_product *frontend_product_current(const qa_frontend *f)
+{
+    const qa_launch_snapshot *launch = qa_application_startup_candidate(f->application);
+    if (!launch) launch = qa_application_launch(f->application);
+    if (launch) return qa_catalog_product(qa_launch_snapshot_catalog(launch),
+        qa_launch_snapshot_choices(launch)->world.preset);
+    return frontend_product_selection(qa_application_catalog(f->application),f->options.game);
+}
 bool frontend_launch_overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance,
     qa_launch_scope scope, qa_error *error)
 {

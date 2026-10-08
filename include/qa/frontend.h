@@ -4,6 +4,7 @@
 #include "qa/application.h"
 #include "qa/display.h"
 #include "qa/network.h"
+#include "qa/local_lobby.h"
 #include <stdio.h>
 
 #define QA_FRONTEND_COMMAND_OWNER UINT64_C(0x716166726f6e7401)
@@ -38,6 +39,10 @@ typedef struct qa_frontend_options {
     /* Actual installed backend/file resolver capabilities stay borrowed for
      * the frontend lifetime and any retained restore operation. */
     const struct qa_application_persistence_ops *persistence_services;
+    /* Optional shared local registry; the caller keeps it alive for every
+     * borrowing frontend. Account values are copied at construction. */
+    qa_lobbies *local_lobbies;
+    qa_local_account local_account;
 } qa_frontend_options;
 
 void qa_frontend_options_default(qa_frontend_options *);

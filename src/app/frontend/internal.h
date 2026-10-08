@@ -244,6 +244,10 @@ struct qa_frontend {
     frontend_input_settings *input_settings;
     struct frontend_settings_devices *settings_devices;
     struct frontend_startup_launch *startup_launch;
+    qa_lobbies *lobbies;
+    struct frontend_local_lobby *local_lobby;
+    bool lobbies_owned;
+    char *network_connect_text;
     struct frontend_demo_dispatch *demos;
     frontend_input_shutdown *input_shutdown;
     frontend_shutdown *shutdown;
@@ -327,6 +331,7 @@ bool frontend_player_source_select(qa_frontend *, uint32_t physical_seat,
 bool frontend_player_sources_drain(qa_frontend *, qa_error *);
 void frontend_player_sources_discard(qa_frontend *);
 const qa_product *frontend_product_selection(qa_catalog *,const char *);
+const qa_product *frontend_product_current(const qa_frontend *);
 bool frontend_present(qa_frontend *, qa_error *);
 bool frontend_frame_cancel(qa_frontend *, qa_error *);
 bool frontend_display_ready(qa_frontend *, bool *ready, qa_error *);
@@ -411,6 +416,8 @@ uint32_t frontend_network_client_time(const qa_frontend *);
 bool frontend_network_client_services(qa_frontend *, qa_application *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
 bool frontend_network_client_command(qa_frontend *, const char *, qa_error *);
 bool frontend_network_create(qa_frontend *, qa_error *);
+bool frontend_network_lobby_host_read(const qa_frontend *, bool *, qa_net_address *,
+    qa_lobby_wire *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
 bool frontend_network_stop_server(qa_frontend *, bool *, qa_error *);
 bool frontend_network_retire_connections(qa_frontend *, bool *, qa_error *);

@@ -10,7 +10,7 @@ struct qa_lobby_session {
     qa_lobby_transitions transitions;
     qa_lobby_id membership;
     const qa_lobby *last;
-    uint64_t launched, completed;
+    uint64_t launched, completed, hosting;
     bool busy;
     char names[];
 };
@@ -134,6 +134,38 @@ bool qa_lobby_session_ready(qa_lobby_session *session, bool ready, qa_error *err
                                                           session->account.id, ready, error);
     return finish(session, ok);
 }
+static bool publish_host(qa_lobby_session *session, const qa_lobby *room, bool okay, bool bound,
+                         const qa_net_address *endpoint, const qa_lobby_wire *wire,
+                         qa_error *primary, qa_error *error) {
+    qa_lobby_retain(room);
+    const qa_lobby_view *view = qa_lobby_read(room);
+    const qa_lobby *published;
+    bool ok = okay && qa_lobbies_publish(session->service, view->id, session->account.id,
+                                         view->match_generation, endpoint, wire, &published, primary);
+    session->hosting = 0;
+    if (ok) {
+        remember(session, published);
+        session->launched = view->match_generation;
+    } else {
+        if (primary->code == QA_OK)
+            fail(primary, "Local lobby host transition failed");
+        qa_error cleanup = {0};
+        if (qa_lobbies_find(session->service, view->id) &&
+            !qa_lobbies_complete(session->service, view->id, session->account.id,
+                                 view->match_generation, NULL, &cleanup))
+            failure(primary, &cleanup);
+        cleanup = (qa_error){0};
+        if (bound && !session->transitions.leave(session->transitions.context, view, &cleanup)) {
+            if (cleanup.code == QA_OK)
+                fail(&cleanup, "Bound host teardown failed");
+            failure(primary, &cleanup);
+        }
+        if (error)
+            *error = *primary;
+    }
+    qa_lobby_release(room);
+    return ok;
+}
 bool qa_lobby_session_start(qa_lobby_session *session, qa_error *error) {
     if (!begin(session, error))
         return false;
@@ -149,30 +181,12 @@ bool qa_lobby_session_start(qa_lobby_session *session, qa_error *error) {
     qa_error primary = {0};
     bool bound =
         session->transitions.host(session->transitions.context, view, &endpoint, &wire, &primary);
-    const qa_lobby *published;
-    ok =
-        bound && qa_lobbies_publish(session->service, view->id, session->account.id,
-                                    view->match_generation, &endpoint, &wire, &published, &primary);
-    if (ok) {
-        remember(session, published);
-        session->launched = view->match_generation;
-    } else {
-        if (primary.code == QA_OK)
-            fail(&primary, "Local lobby host transition failed");
-        qa_error cleanup = {0};
-        if (qa_lobbies_find(session->service, view->id) &&
-            !qa_lobbies_complete(session->service, view->id, session->account.id,
-                                 view->match_generation, NULL, &cleanup))
-            failure(&primary, &cleanup);
-        cleanup = (qa_error){0};
-        if (bound && !session->transitions.leave(session->transitions.context, view, &cleanup)) {
-            if (cleanup.code == QA_OK)
-                fail(&cleanup, "Bound host teardown failed");
-            failure(&primary, &cleanup);
-        }
-        if (error)
-            *error = primary;
-    }
+    if (bound && session->transitions.host_ready) {
+        remember(session, room);
+        session->hosting = view->match_generation;
+        ok = true;
+    } else
+        ok = publish_host(session, room, bound, bound, &endpoint, &wire, &primary, error);
     qa_lobby_release(room);
     return finish(session, ok);
 }
@@ -187,6 +201,7 @@ bool qa_lobby_session_poll(qa_lobby_session *session, qa_error *error) {
         const qa_lobby *previous = session->last;
         session->last = NULL;
         session->membership = (qa_lobby_id){0};
+        session->hosting = 0;
         if (previous)
             ok = session->transitions.leave(session->transitions.context, qa_lobby_read(previous),
                                             error);
@@ -194,7 +209,16 @@ bool qa_lobby_session_poll(qa_lobby_session *session, qa_error *error) {
     } else {
         remember(session, room); /* This retained version protects callback arguments. */
         const qa_lobby_view *view = qa_lobby_read(room);
-        if (view->phase == QA_LOBBY_PLAYING && view->match_generation > session->launched) {
+        if (view->phase == QA_LOBBY_STARTING && session->hosting) {
+            bool ready = false;
+            qa_net_address endpoint = {0};
+            qa_lobby_wire wire = {0};
+            qa_error primary = {0};
+            ok = session->transitions.host_ready(session->transitions.context, view, &ready,
+                                                 &endpoint, &wire, &primary);
+            if (!ok || ready)
+                ok = publish_host(session, room, ok, true, &endpoint, &wire, &primary, error);
+        } else if (view->phase == QA_LOBBY_PLAYING && view->match_generation > session->launched) {
             ok = session->transitions.join(session->transitions.context, view, error);
             if (ok)
                 session->launched = view->match_generation;
@@ -230,6 +254,7 @@ static bool leave(qa_lobby_session *session, qa_error *error) {
     qa_lobby_retain(room);
     remember(session, NULL);
     session->membership = (qa_lobby_id){0};
+    session->hosting = 0;
     if (!room)
         return true;
     const qa_lobby_view *view = qa_lobby_read(room);

@@ -1,7 +1,8 @@
 #ifndef QA_LOCAL_LOBBY_H
 #define QA_LOCAL_LOBBY_H
 
-#include "qa/network_unified.h"
+#include "qa/network.h"
+#include "qa/launch.h"
 
 typedef struct qa_lobbies qa_lobbies;
 typedef struct qa_lobby qa_lobby;
@@ -20,14 +21,10 @@ typedef struct qa_lobby_member {
 typedef enum qa_lobby_phase { QA_LOBBY_OPEN, QA_LOBBY_STARTING, QA_LOBBY_PLAYING } qa_lobby_phase;
 typedef struct qa_lobby_wire {
     qa_net_protocol_id protocol;
-    uint64_t composition;
-    qa_bytes composition_bytes; /* Canonical selection returned by the host. */
-    const char *snapshot_schema; /* Required only for the unified wire. */
+    uint64_t generation;
 } qa_lobby_wire;
 typedef struct qa_lobby_selection {
-    /* Already admitted full composition, including the snapshot schema. */
-    const qa_unified_composition *composition;
-    const char *snapshot_schema;
+    const qa_launch_draft *launch;
 } qa_lobby_selection;
 typedef struct qa_lobby_view {
     qa_lobby_id id;
@@ -54,7 +51,7 @@ const qa_lobby *qa_lobbies_at(const qa_lobbies *, size_t);
 const qa_lobby *qa_lobbies_find(const qa_lobbies *, qa_lobby_id);
 /* Borrowed snapshots survive until a registry mutation. Retain explicitly to
  * preserve an immutable snapshot across transitions or service destruction.
- * Room definitions, composition bytes and strings are shared between versions. */
+ * Room definitions, launch drafts and strings are shared between snapshots. */
 const qa_lobby_view *qa_lobby_read(const qa_lobby *);
 void qa_lobby_retain(const qa_lobby *);
 void qa_lobby_release(const qa_lobby *);
@@ -77,8 +74,10 @@ typedef struct qa_lobby_transitions {
     bool (*join)(void *, const qa_lobby_view *, qa_error *);
     bool (*leave)(void *, const qa_lobby_view *, qa_error *);
     bool (*completed)(void *, const qa_lobby_view *, qa_error *);
+    bool (*host_ready)(void *, const qa_lobby_view *, bool *, qa_net_address *, qa_lobby_wire *, qa_error *);
 } qa_lobby_transitions;
-/* Call from the application transition queue. Callbacks complete synchronously,
+/* Call from the application transition queue. Callbacks return synchronously;
+ * an optional host_ready callback observes a queued host until it is listening.
  * may mutate the shared registry, and must not reenter or destroy this session.
  * The service outlives sessions; retained room views outlive callback changes.
  * A failed host callback owns its partial-launch cleanup. After host success,

@@ -11,7 +11,7 @@ typedef struct lobby_strings {
 typedef struct lobby_definition {
     size_t references;
     lobby_strings *strings;
-    qa_unified_composition composition;
+    qa_launch_draft *launch;
 } lobby_definition;
 struct qa_lobby {
     size_t references, member_capacity;
@@ -65,7 +65,7 @@ static void definition_release(lobby_definition *definition) {
     if (!definition || --definition->references)
         return;
     strings_release(definition->strings);
-    qa_unified_composition_free(&definition->composition);
+    qa_launch_draft_destroy(definition->launch);
     free(definition);
 }
 const qa_lobby_view *qa_lobby_read(const qa_lobby *room) { return room ? &room->view : NULL; }
@@ -190,17 +190,12 @@ bool qa_lobbies_host(qa_lobbies *service, qa_local_account account, const char *
                      uint32_t capacity, const qa_lobby_selection *selection, uint32_t seats,
                      const qa_lobby **out, qa_error *error) {
     if (!service || !account_valid(account) || !text_valid(name, true) || !capacity || !seats ||
-        seats > capacity || !selection || !selection->composition ||
-        !selection->composition->canonical.data || !selection->composition->canonical.size ||
-        !text_valid(selection->snapshot_schema, true) || service->serial == UINT64_MAX)
+        seats > capacity || !selection || !selection->launch || service->serial == UINT64_MAX)
         return fail(error, "Invalid local lobby settings");
-    qa_bytes bytes = {selection->composition->canonical.data,
-                      selection->composition->canonical.size};
-    const char *owner, *owner_name, *room_name, *schema;
+    const char *owner, *owner_name, *room_name;
     if (!intern(service, account.id, &owner, error) ||
         !intern(service, account.name, &owner_name, error) ||
-        !intern(service, name, &room_name, error) ||
-        !intern(service, selection->snapshot_schema, &schema, error))
+        !intern(service, name, &room_name, error))
         return false;
     if (service->count == service->capacity) {
         size_t next = service->capacity ? service->capacity * 2 : 8;
@@ -217,20 +212,22 @@ bool qa_lobbies_host(qa_lobbies *service, qa_local_account account, const char *
     qa_lobby *room = calloc(1, sizeof(*room));
     lobby_definition *definition = calloc(1, sizeof(*definition));
     qa_lobby_member *members = malloc(sizeof(*members));
-    uint8_t *composition = malloc(bytes.size);
-    if (!room || !definition || !members || !composition) {
+    if (!room || !definition || !members) {
         free(room);
         free(definition);
         free(members);
-        free(composition);
-        qa_error_set(error, QA_ERROR_MEMORY, bytes.size, "Retaining prepared local lobby");
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining prepared local lobby");
         return false;
     }
-    memcpy(composition, bytes.data, bytes.size);
+    if (!qa_launch_draft_copy(selection->launch, &definition->launch, error)) {
+        free(room);
+        free(definition);
+        free(members);
+        return false;
+    }
     definition->references = 1;
     definition->strings = service->strings;
     ++service->strings->references;
-    definition->composition = (qa_unified_composition){{composition, bytes.size}};
     room->references = room->member_capacity = 1;
     room->definition = definition;
     room->members = members;
@@ -239,7 +236,7 @@ bool qa_lobbies_host(qa_lobbies *service, qa_local_account account, const char *
                                  .owner = owner,
                                  .name = room_name,
                                  .capacity = capacity,
-                                 .selection = {&definition->composition, schema},
+                                 .selection = {definition->launch},
                                  .members = members,
                                  .member_count = 1,
                                  .phase = QA_LOBBY_OPEN};
@@ -331,18 +328,8 @@ bool qa_lobbies_publish(qa_lobbies *service, qa_lobby_id id, const char *owner, 
     char address[256];
     if (!qa_net_address_format(endpoint, address, sizeof(address), error))
         return false;
-    bool unified = wire->protocol.kind == QA_NET_UNIFIED_1;
-    const qa_buffer *prepared = &room->definition->composition.canonical;
-    if (unified && (!wire->composition || !wire->composition_bytes.data ||
-                    wire->composition_bytes.size != prepared->size ||
-                    memcmp(wire->composition_bytes.data, prepared->data, prepared->size) ||
-                    !wire->snapshot_schema ||
-                    strcmp(wire->snapshot_schema, room->view.selection.snapshot_schema)))
-        return fail(error, "Bound lobby wire differs from its prepared composition");
     qa_net_address bound = *endpoint;
     qa_lobby_wire selected = *wire;
-    selected.composition_bytes = unified ? (qa_bytes){prepared->data, prepared->size} : (qa_bytes){0};
-    selected.snapshot_schema = unified ? room->view.selection.snapshot_schema : NULL;
     room = edit(service, index, room->view.member_count, error);
     if (!room)
         return false;
