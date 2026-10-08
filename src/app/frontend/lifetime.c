@@ -449,7 +449,7 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
                 if (!qa_application_console_source_at(application,i,&candidate,&present,error)) return false;
                 if (!present) break;
                 if (candidate.scope.kind==QA_APPLICATION_CONSOLE_ENGINE) { root=candidate; continue; }
-                if (neutral_primary && candidate.command.cvar_view==context.cvar_view) continue;
+                if (neutral_primary) continue;
                 bool primary=false;
                 if (!qa_application_startup_source_primary(application,&candidate,&primary,error)) return false;
                 if (!primary) continue;
