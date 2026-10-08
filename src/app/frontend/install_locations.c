@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "install_locations.h"
 #include "qa/filesystem.h"
 #include "qa/platform_events.h"
@@ -118,8 +119,10 @@ static bool save_settings(qa_fs_root *root,char *const *paths,size_t count,qa_er
             append(&bytes,(qa_bytes){quoted.data,quoted.size},error);
         qa_buffer_free(&quoted);
     }
+    uint64_t nonce;
     if (ok) ok=append_text(&bytes,"\n  ]\n}\n",error) &&
-        qa_fs_root_replace(root,settings_file,(qa_bytes){bytes.data,bytes.size},qa_platform_time_ns(),error);
+        qa_platform_entropy_u64(&nonce,error) &&
+        qa_fs_root_replace(root,settings_file,(qa_bytes){bytes.data,bytes.size},nonce,error);
     qa_buffer_free(&bytes); return ok;
 }
 static bool optional_directory(frontend_install_locations *owner,const char *path,qa_error *error)

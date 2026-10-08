@@ -2,6 +2,7 @@
 #define QA_PLATFORM_EVENTS_H
 
 #include "qa/common.h"
+#include "qa/platform_services.h"
 
 enum {
     QA_PLATFORM_EVENT_CAPACITY = 1024,
@@ -55,14 +56,5 @@ uint64_t qa_platform_events_dropped(const qa_platform_events *);
  * native settings. Reset clears the request. */
 bool qa_platform_events_quit_requested(const qa_platform_events *);
 void qa_platform_events_frame(qa_platform_events *, uint64_t time_ns);
-
-/* SDL's monotonic performance clock, expressed in nanoseconds. Sleep retains
- * SDL2's whole-millisecond resolution and rounds fractional milliseconds down. */
-uint64_t qa_platform_time_ns(void);
-/* Converts existing renderer performance-counter totals to milliseconds. */
-double qa_platform_tick_ms(void);
-void qa_platform_sleep_ns(uint64_t);
-/* UTC milliseconds for external protocol expiry, independent of game time. */
-double qa_platform_utc_ms(void);
 
 #endif

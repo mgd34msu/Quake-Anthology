@@ -1,8 +1,8 @@
+#include "qa/platform_services.h"
 #include "guest_q3_components_private.h"
 #include "guest_q3_component_private.h"
 #include "unified_q3_events.h"
 #include <limits.h>
-#include <time.h>
 
 static qa_collision_geometry *geometry(void *context)
 { component_game_row *row=context; return qa_world_geometry(row->roster->options.world); }
@@ -48,10 +48,18 @@ static void print(void *context,const char *text)
 }
 static int32_t calendar(void *context,qa_q3_host_calendar *out)
 {
-    (void)context; time_t now=time(NULL); const struct tm *value=localtime(&now);
-    if(!value) return -1;
-    if(out) *out=(qa_q3_host_calendar){value->tm_sec,value->tm_min,value->tm_hour,value->tm_mday,value->tm_mon,value->tm_year,value->tm_wday,value->tm_yday,value->tm_isdst};
-    uint32_t bits=(uint32_t)now; int32_t result; memcpy(&result,&bits,4); return result;
+    (void)context;
+    qa_platform_timespec now;
+    qa_platform_calendar_fields date;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
+        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
+        if (out) *out=(qa_q3_host_calendar){0};
+        return -1;
+    }
+    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
+        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
+    uint32_t bits=(uint32_t)now.seconds; int32_t result;
+    memcpy(&result,&bits,sizeof(result)); return result;
 }
 static bool match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
 {

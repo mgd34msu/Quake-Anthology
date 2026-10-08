@@ -58,7 +58,7 @@ target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
 add_library(qa_platform_events STATIC src/platform/events.c)
-target_link_libraries(qa_platform_events PUBLIC qa_core PRIVATE SDL2::SDL2)
+target_link_libraries(qa_platform_events PUBLIC qa_core)
 
 add_library(qa_script STATIC
     src/core/script/checkpoint.c
@@ -1042,7 +1042,7 @@ add_library(qa_network STATIC
 )
 target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http qa_platform_events PRIVATE ZLIB::ZLIB)
 if(WIN32)
-    target_link_libraries(qa_network PRIVATE iphlpapi ws2_32 bcrypt)
+    target_link_libraries(qa_network PRIVATE iphlpapi ws2_32)
 endif()
 
 add_library(qa_qvm STATIC
@@ -1496,9 +1496,6 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_mod_pickups.c
 )
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host qa_text qa_settings PRIVATE qa_tools)
-if(WIN32)
-    target_link_libraries(qa_application PRIVATE bcrypt)
-endif()
 
 add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/pose.c
@@ -1896,7 +1893,7 @@ target_compile_definitions(qa_frontend PRIVATE
     QA_NATIVE_RUNTIME_RELATIVE_ROOT="${QA_NATIVE_RUNTIME_RELATIVE_ROOT}")
 
 if(WIN32)
-    target_link_libraries(qa_tools PRIVATE bcrypt ws2_32 Psapi)
+    target_link_libraries(qa_tools PRIVATE ws2_32 Psapi)
 endif()
 
 add_executable(quake-anthology src/main.c)
@@ -1909,6 +1906,10 @@ target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(platform_services_test tests/platform_services_test.c)
+    target_link_libraries(platform_services_test PRIVATE qa_data)
+    add_test(NAME platform_services COMMAND platform_services_test)
+
     if(UNIX)
         add_executable(core_test tests/core_test.c tests/q1_gameplay_test.c tests/guest_test.c tests/recovery_test.c)
         target_link_libraries(core_test PRIVATE qa_core qa_game_q1 qa_qc qa_frontend)

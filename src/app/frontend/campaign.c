@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "campaign.h"
 #include "capture.h"
 #include "campaign_ui.h"
@@ -10,17 +11,6 @@
 #include <SDL.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <errno.h>
-#ifdef _WIN32
-#include <windows.h>
-#include <bcrypt.h>
-#else
-#include <unistd.h>
-#include <fcntl.h>
-#ifdef __linux__
-#include <sys/random.h>
-#endif
-#endif
 
 typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
@@ -50,7 +40,6 @@ struct frontend_campaign {
     size_t player_count;
     int32_t player_client;
     qa_team_arena_score_result team_result;
-    uint64_t result_counter,result_frequency;
     bool result,announced,movie_played,music_attached,draining;
     bool ui_pending;
     frontend_campaign_ui_action ui_action;
@@ -86,29 +75,8 @@ static int32_t campaign_number(const campaign_request *request,size_t index)
 }
 static bool campaign_uuid(char out[37],qa_error *error)
 {
-    uint8_t bytes[16]; bool ready=false;
-#ifdef _WIN32
-    ready=BCryptGenRandom(NULL,bytes,sizeof(bytes),BCRYPT_USE_SYSTEM_PREFERRED_RNG)==0;
-#else
-    size_t count=0;
-#ifdef __linux__
-    while (count<sizeof(bytes)) {
-        ssize_t got=getrandom(bytes+count,sizeof(bytes)-count,0);
-        if (got>0) count+=(size_t)got; else if (got<0 && errno==EINTR) continue; else break;
-    }
-#else
-    int descriptor=open("/dev/urandom",O_RDONLY);
-    if (descriptor>=0) {
-        while (count<sizeof(bytes)) {
-            ssize_t got=read(descriptor,bytes+count,sizeof(bytes)-count);
-            if (got>0) count+=(size_t)got; else if (got<0 && errno==EINTR) continue; else break;
-        }
-        close(descriptor);
-    }
-#endif
-    ready=count==sizeof(bytes);
-#endif
-    if (!ready) return frontend_fail(error,QA_ERROR_IO,"Source round identity requires operating-system entropy");
+    uint8_t bytes[16];
+    if (!qa_platform_entropy(bytes,sizeof(bytes),error)) return false;
     bytes[6]=(uint8_t)((bytes[6]&15u)|64u); bytes[8]=(uint8_t)((bytes[8]&63u)|128u);
     static const char hex[]="0123456789abcdef"; size_t at=0;
     for (size_t i=0;i<16;++i) {
@@ -330,7 +298,6 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     owner->base_game=game; owner->base_result=result; memcpy(owner->players,players,sizeof(players));
     owner->player_count=player_count; owner->player_client=player; owner->result=true;
     owner->announced=duplicate; owner->movie_played=duplicate;
-    if (!duplicate) { owner->result_counter=qa_platform_time_ns(); owner->result_frequency=UINT64_C(1000000000); }
     return duplicate || campaign_music(f,view,result.rank==1?"music/win":"music/loss",error);
 }
 static bool campaign_base_action(qa_frontend *f,const qa_application_q3_campaign *view,const char *name,qa_error *error)
@@ -342,7 +309,6 @@ static bool campaign_base_action(qa_frontend *f,const qa_application_q3_campaign
         qa_arena_progress_unlock_medals(&owner->progression,error);
     if (!strcmp(name,"arena-reset") && ok) {
         owner->result=false; owner->announced=owner->movie_played=false;
-        owner->result_counter=owner->result_frequency=0;
     }
     return ok && campaign_archive(f,view,error);
 }
@@ -382,7 +348,6 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
         free(saved); if (!ok) return false;
     }
     owner->team_result=result; owner->result=true;
-    owner->result_counter=qa_platform_time_ns(); owner->result_frequency=UINT64_C(1000000000);
     if (result.new_high_score) {
         char message[96]; (void)snprintf(message,sizeof(message),"New Team Arena high score: %" PRId32 "\n",result.current.score);
         frontend_print(f,message);

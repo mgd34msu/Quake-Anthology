@@ -8,6 +8,7 @@
 #define _DARWIN_C_SOURCE 1
 #endif
 #include "qa/native_process_platform.h"
+#include "qa/platform_services.h"
 #include "qa/source_save.h"
 #include "qa/native_windows_locale_save.h"
 
@@ -18,7 +19,6 @@
 #include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
-#include <bcrypt.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
@@ -29,7 +29,6 @@
 #include <pthread.h>
 #include <signal.h>
 #if defined(__linux__)
-#include <sys/random.h>
 #include <sys/utsname.h>
 #endif
 #include <sys/stat.h>
@@ -269,16 +268,14 @@ bool qa_native_process_platform_create(const qa_native_process_platform_options 
     for (size_t i = 0; i < 3; ++i) owner->streams[i].closed = true;
     *out = owner;
     if (!acquire_locale(owner,error)) return false;
+    int64_t counter; qa_error clock_failure={0};
+    if (!qa_platform_performance_read(&counter,&owner->frequency,&clock_failure)) {
 #if defined(_WIN32)
-    LARGE_INTEGER frequency;
-    if (!QueryPerformanceFrequency(&frequency))
-        return platform_fail_windows(owner, GetLastError(), error, "Reading actual performance-counter frequency");
-    if (frequency.QuadPart <= 0)
-        return fail(error, QA_ERROR_IO, "Actual performance-counter frequency is invalid");
-    owner->frequency = frequency.QuadPart;
+        return platform_fail_windows(owner,(DWORD)clock_failure.offset,error,"Reading actual performance-counter frequency");
 #else
-    owner->frequency = INT64_C(1000000000);
+        return platform_fail_errno(owner,(int)clock_failure.offset,error,"Reading actual performance-counter frequency");
 #endif
+    }
     for (size_t i = 0; i < 3; ++i) {
         platform_stream *stream = owner->streams + i;
         stream->owner = owner; stream->id = options->standard_ids[i];
@@ -339,50 +336,31 @@ bool qa_native_process_platform_entropy(void *context, void *out, size_t bytes, 
 {
     qa_native_process_platform *owner = context;
     if ((!out && bytes) || !qa_native_process_platform_current(owner, error)) return false;
+    qa_error failure={0};
+    if (qa_platform_entropy(out,bytes,&failure)) return true;
 #if defined(_WIN32)
-    size_t offset = 0;
-    while (offset < bytes) {
-        ULONG count = bytes - offset > ULONG_MAX ? ULONG_MAX : (ULONG)(bytes - offset);
-        if (BCryptGenRandom(NULL, (PUCHAR)out + offset, count, BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
-            return fail(error, QA_ERROR_IO, "Reading actual platform entropy");
-        offset += count;
-    }
-#elif defined(__APPLE__)
-    if (bytes) arc4random_buf(out, bytes);
-#elif defined(__linux__)
-    size_t offset = 0;
-    while (offset < bytes) {
-        size_t count = bytes - offset > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes - offset;
-        ssize_t received = getrandom((uint8_t *)out + offset, count, 0);
-        if (received < 0 && errno == EINTR) continue;
-        if (received < 0) return platform_fail_errno(owner, errno, error, "Reading actual platform entropy");
-        if (!received) return fail(error, QA_ERROR_IO, "Actual platform entropy made no progress");
-        offset += (size_t)received;
-    }
+    if (error) *error=failure;
+    return false;
 #else
-    return fail(error, QA_ERROR_UNSUPPORTED, "Native platform entropy producer is unavailable on this operating system");
+    return platform_fail_errno(owner,(int)failure.offset,error,"Reading actual platform entropy");
 #endif
-    return true;
 }
 bool qa_native_process_platform_milliseconds(void *context, int64_t *out, qa_error *error)
 {
     if (!out || !qa_native_process_platform_current(context, error)) return false;
+    qa_platform_timespec time; qa_error failure={0};
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&time,&failure)) {
 #if defined(_WIN32)
-    FILETIME time; GetSystemTimeAsFileTime(&time);
-    uint64_t ticks = (uint64_t)time.dwHighDateTime << 32 | time.dwLowDateTime;
-    uint64_t epoch = UINT64_C(116444736000000000);
-    uint64_t delta = ticks >= epoch ? ticks - epoch : epoch - ticks;
-    if (delta / 10000 > INT64_MAX) return fail(error, QA_ERROR_UNSUPPORTED, "Platform wall clock exceeds signed milliseconds");
-    *out = ticks >= epoch ? (int64_t)(delta / 10000) : -(int64_t)((delta + 9999) / 10000);
+        return platform_fail_windows(context,(DWORD)failure.offset,error,"Reading actual platform wall clock");
 #else
-    struct timespec time;
-    if (clock_gettime(CLOCK_REALTIME, &time)) return platform_fail_errno(context, errno, error, "Reading actual platform wall clock");
-    if (time.tv_sec > INT64_MAX / 1000 || time.tv_sec < INT64_MIN / 1000)
+        return platform_fail_errno(context,(int)failure.offset,error,"Reading actual platform wall clock");
+#endif
+    }
+    if (time.seconds > INT64_MAX / 1000 || time.seconds < INT64_MIN / 1000)
         return fail(error, QA_ERROR_UNSUPPORTED, "Platform wall clock exceeds signed milliseconds");
-    int64_t base = (int64_t)time.tv_sec * 1000, fraction = time.tv_nsec / 1000000;
+    int64_t base = time.seconds * 1000, fraction = time.nanoseconds / 1000000;
     if (base > INT64_MAX - fraction) return fail(error, QA_ERROR_UNSUPPORTED, "Platform wall clock exceeds signed milliseconds");
     *out = base + fraction;
-#endif
     return true;
 }
 bool qa_native_process_platform_seconds(void *context, int64_t *out, qa_error *error)
@@ -394,19 +372,13 @@ bool qa_native_process_platform_seconds(void *context, int64_t *out, qa_error *e
 bool qa_native_process_platform_performance(void *context, int64_t *out, qa_error *error)
 {
     if (!out || !qa_native_process_platform_current(context, error)) return false;
+    int64_t frequency; qa_error failure={0};
+    if (qa_platform_performance_read(out,&frequency,&failure)) return true;
 #if defined(_WIN32)
-    LARGE_INTEGER value;
-    if (!QueryPerformanceCounter(&value)) return fail(error, QA_ERROR_IO, "Reading actual performance counter");
-    *out = value.QuadPart;
+    return platform_fail_windows(context,(DWORD)failure.offset,error,"Reading actual performance counter");
 #else
-    struct timespec time;
-    if (clock_gettime(CLOCK_MONOTONIC, &time)) return platform_fail_errno(context, errno, error, "Reading actual performance counter");
-    if (time.tv_sec < 0 || time.tv_sec > INT64_MAX / INT64_C(1000000000) ||
-        (int64_t)time.tv_sec * INT64_C(1000000000) > INT64_MAX - time.tv_nsec)
-        return fail(error, QA_ERROR_UNSUPPORTED, "Actual performance counter exceeds signed native value");
-    *out = (int64_t)time.tv_sec * INT64_C(1000000000) + time.tv_nsec;
+    return platform_fail_errno(context,(int)failure.offset,error,"Reading actual performance counter");
 #endif
-    return true;
 }
 int64_t qa_native_process_platform_frequency(const qa_native_process_platform *owner)
 { return owner ? owner->frequency : 0; }
@@ -491,45 +463,14 @@ bool qa_native_process_platform_compare_string(void *context, uint32_t locale, u
     return fail(error,QA_ERROR_UNSUPPORTED,"Native platform has no Windows NLS provider");
 #endif
 }
-/* Date arithmetic is used only to compare the actual libc local/UTC calendar
- * rows; timezone and daylight values are never chosen from a fixed locale. */
-static int64_t civil_days(int64_t year, unsigned month, unsigned day)
-{
-    int64_t y = year; y -= month <= 2;
-    int64_t era = (y >= 0 ? y : y - 399) / 400;
-    unsigned within = (unsigned)(y - era * 400);
-    unsigned shifted = month > 2 ? month - 3 : month + 9;
-    unsigned days = (153 * shifted + 2) / 5 + day - 1;
-    return era * 146097 + within * 365 + within / 4 - within / 100 + days;
-}
-static int64_t calendar_seconds(const struct tm *value)
-{
-    return civil_days((int64_t)value->tm_year + 1900, (unsigned)value->tm_mon + 1,
-        (unsigned)value->tm_mday) * 86400 + value->tm_hour * 3600 + value->tm_min * 60 + value->tm_sec;
-}
 bool qa_native_process_platform_calendar(void *context, int64_t milliseconds, bool local,
     qa_native_windows_calendar *out, qa_error *error)
 {
     if (!out || !qa_native_process_platform_current(context, error)) return false;
-    int64_t seconds = milliseconds / 1000 - (milliseconds % 1000 < 0);
-    struct tm date, utc;
-#if defined(_WIN32)
-    __time64_t stamp = seconds;
-    if (_gmtime64_s(&utc, &stamp) || (local ? _localtime64_s(&date, &stamp) : _gmtime64_s(&date, &stamp)))
-        return fail(error, QA_ERROR_UNSUPPORTED, "Actual platform calendar cannot represent source time");
-#else
-    time_t stamp = (time_t)seconds;
-    if ((int64_t)stamp != seconds || !gmtime_r(&stamp, &utc) ||
-        !(local ? localtime_r(&stamp, &date) : gmtime_r(&stamp, &date)))
-        return fail(error, QA_ERROR_UNSUPPORTED, "Actual platform calendar cannot represent source time");
-#endif
-    int64_t timezone_minutes = (calendar_seconds(&utc) - calendar_seconds(&date)) / 60;
-    if (timezone_minutes < INT32_MIN || timezone_minutes > INT32_MAX || date.tm_year > INT32_MAX - 1900)
-        return fail(error, QA_ERROR_UNSUPPORTED, "Actual platform calendar exceeds native fields");
-    int64_t fraction = milliseconds % 1000; if (fraction < 0) fraction += 1000;
-    *out = (qa_native_windows_calendar){date.tm_year + 1900, date.tm_mon + 1,
-        date.tm_wday, date.tm_mday, date.tm_hour, date.tm_min, date.tm_sec, (int32_t)fraction,
-        date.tm_yday, date.tm_isdst, (int32_t)timezone_minutes};
+    qa_platform_calendar_fields date;
+    if (!qa_platform_calendar(milliseconds,local,&date,error)) return false;
+    *out=(qa_native_windows_calendar){date.year,date.month,date.weekday,date.day,
+        date.hour,date.minute,date.second,date.millisecond,date.yearday,date.daylight,date.timezone_minutes};
     return true;
 }
 bool qa_native_process_platform_linux_identity_read(qa_native_process_platform *owner,
@@ -538,7 +479,7 @@ bool qa_native_process_platform_linux_identity_read(qa_native_process_platform *
     if (!out || !qa_native_process_platform_current(owner, error)) return false;
 #if defined(__linux__)
     struct utsname native;
-    long ticks = sysconf(_SC_CLK_TCK);
+    int64_t ticks = qa_platform_clock_ticks_per_second();
     if (ticks <= 0) return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux clock tick policy is unavailable");
     if (uname(&native)) return platform_fail_errno(owner, errno, error, "Reading actual Linux kernel identity");
     qa_native_process_linux_identity value = {.uid = (uint32_t)getuid(), .effective_uid = (uint32_t)geteuid(),
@@ -561,42 +502,40 @@ bool qa_native_process_platform_linux_clock_read(qa_native_process_platform *own
 {
     if (!seconds || !nanoseconds || !qa_native_process_platform_current(owner, error)) return false;
 #if defined(__linux__)
+    qa_platform_clock_kind kind;
     switch (id) {
-    case CLOCK_REALTIME: case CLOCK_MONOTONIC:
+    case CLOCK_REALTIME: kind=QA_PLATFORM_CLOCK_REALTIME; break;
+    case CLOCK_MONOTONIC: kind=QA_PLATFORM_CLOCK_MONOTONIC; break;
 #if defined(CLOCK_MONOTONIC_RAW)
-    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_RAW: kind=QA_PLATFORM_CLOCK_MONOTONIC_RAW; break;
 #endif
 #if defined(CLOCK_REALTIME_COARSE)
-    case CLOCK_REALTIME_COARSE:
+    case CLOCK_REALTIME_COARSE: kind=QA_PLATFORM_CLOCK_REALTIME_COARSE; break;
 #endif
 #if defined(CLOCK_MONOTONIC_COARSE)
-    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_MONOTONIC_COARSE: kind=QA_PLATFORM_CLOCK_MONOTONIC_COARSE; break;
 #endif
 #if defined(CLOCK_BOOTTIME)
-    case CLOCK_BOOTTIME:
+    case CLOCK_BOOTTIME: kind=QA_PLATFORM_CLOCK_BOOTTIME; break;
 #endif
 #if defined(CLOCK_REALTIME_ALARM)
-    case CLOCK_REALTIME_ALARM:
+    case CLOCK_REALTIME_ALARM: kind=QA_PLATFORM_CLOCK_REALTIME_ALARM; break;
 #endif
 #if defined(CLOCK_BOOTTIME_ALARM)
-    case CLOCK_BOOTTIME_ALARM:
+    case CLOCK_BOOTTIME_ALARM: kind=QA_PLATFORM_CLOCK_BOOTTIME_ALARM; break;
 #endif
 #if defined(CLOCK_TAI)
-    case CLOCK_TAI:
+    case CLOCK_TAI: kind=QA_PLATFORM_CLOCK_TAI; break;
 #endif
-        break;
     case CLOCK_PROCESS_CPUTIME_ID: case CLOCK_THREAD_CPUTIME_ID:
         return fail(error, QA_ERROR_UNSUPPORTED, "Source CPU clock requires its actual task owner");
     default:
         return fail(error, QA_ERROR_UNSUPPORTED, "Linux clock ID is outside the retained global-clock capability");
     }
-    struct timespec time;
-    if (clock_gettime((clockid_t)id, &time))
-        return platform_fail_errno(owner, errno, error, "Reading actual Linux global clock");
-    if (time.tv_nsec < 0 || time.tv_nsec >= 1000000000L)
-        return fail(error, QA_ERROR_IO, "Actual Linux clock nanoseconds exceed their native domain");
-    if (!qa_native_process_platform_current(owner, error)) return false;
-    *seconds = (int64_t)time.tv_sec; *nanoseconds = (int32_t)time.tv_nsec;
+    qa_platform_timespec time; qa_error failure={0};
+    if (!qa_platform_clock_read(kind,&time,&failure))
+        return platform_fail_errno(owner,(int)failure.offset,error,"Reading actual Linux global clock");
+    *seconds=time.seconds; *nanoseconds=time.nanoseconds;
     return true;
 #else
     (void)id;

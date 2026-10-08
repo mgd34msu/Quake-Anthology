@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "surface_cache.h"
 #include <SDL_timer.h>
@@ -408,9 +409,9 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
     slot->block->owner = slot;
     slot->width = width;
     slot->height = height;
-    uint64_t start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
+    uint64_t start = renderer->statistics_enabled ? qa_platform_time_ns() : 0;
     surface_build(draw, mip, &base, &light, slot);
-    CPU_STATS_ADD(renderer, surface_build_ticks, SDL_GetPerformanceCounter() - start);
+    CPU_STATS_ADD(renderer, surface_build_ticks, qa_platform_time_ns() - start);
     CPU_STATS_ADD(renderer, surface_builds, 1);
     slot->stamp = stamp;
     ++cache->builds;

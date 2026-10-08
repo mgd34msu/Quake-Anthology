@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "source_admin.h"
 #include "internal.h"
 #include "config_store.h"
@@ -178,7 +179,8 @@ bool frontend_source_admin_create(qa_frontend *frontend,qa_application *applicat
         return fail(error,QA_ERROR_ARGUMENT,"Early administration requires the real Source constructor");
     frontend_source_admin *owner=calloc(1,sizeof(*owner));
     if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating early Source administration owner");
-    owner->frontend=frontend; owner->nonce=qa_platform_time_ns();
+    owner->frontend=frontend;
+    if (!qa_platform_entropy_u64(&owner->nonce,error)) { free(owner); return false; }
     owner->random=(uint32_t)owner->nonce^(uint32_t)(owner->nonce>>32);
     qa_admin_options options=admin_options(owner,command->dialect);
     bool ok=qa_server_admin_create(&options,&owner->admin,error) &&

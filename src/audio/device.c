@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "qa/audio.h"
 #include "qa/audio_device_save.h"
 #include "qa/source_save.h"
@@ -200,7 +201,7 @@ static bool encoded_reserve(qa_audio_device *device, size_t bytes, qa_error *err
 static uint64_t playing_ticks(qa_audio_device *device) {
     if (!device->playing)
         return device->elapsed_ticks;
-    uint64_t now = SDL_GetPerformanceCounter();
+    uint64_t now = qa_platform_time_ns();
     if (now >= device->playing_since) {
         uint64_t elapsed = now - device->playing_since;
         device->elapsed_ticks = elapsed > UINT64_MAX - device->elapsed_ticks
@@ -221,7 +222,7 @@ static void stop_playback(qa_audio_device *device) {
 static void start_playback(qa_audio_device *device) {
     if (device->id == 0 || device->playing || device->paused)
         return;
-    device->playing_since = SDL_GetPerformanceCounter();
+    device->playing_since = qa_platform_time_ns();
     SDL_PauseAudioDevice(device->id, 0);
     device->playing = true;
 }
@@ -389,11 +390,7 @@ bool qa_audio_device_open(const qa_audio_device_options *options, qa_audio_devic
         !qa_audio_raw_create(selected.format.sample_rate, &device->conversion, error))
         goto failed;
     device->options.name = device->name;
-    device->frequency = SDL_GetPerformanceFrequency();
-    if (device->frequency == 0) {
-        device_error(error, QA_ERROR_IO, "SDL returned a zero performance-counter frequency");
-        goto failed;
-    }
+    device->frequency = UINT64_C(1000000000);
     if (!open_native(&device->options, &device->id, &device->options.buffer_frames, &unavailable,
                      error))
         goto failed;
@@ -1169,6 +1166,11 @@ static bool saved_device_fields(qa_source_save_io *io,qa_audio_device *device,
         !qa_source_save_bool(io,&device->have_previous_pump) || !qa_source_save_bool(io,&device->output_started) ||
         !qa_source_save_bool(io,&device->handoff_pending) || (device->playing && (!*attached || device->paused))) return false;
     if (!device->have_pump_engine && device->have_previous_pump) return false;
+    if (reading && device->frequency != UINT64_C(1000000000)) {
+        long double duration=(long double)device->elapsed_ticks * 1000000000.0L / device->frequency;
+        device->elapsed_ticks=duration >= (long double)UINT64_MAX ? UINT64_MAX : (uint64_t)duration;
+        device->frequency=UINT64_C(1000000000);
+    }
     return true;
 }
 bool qa_audio_device_checkpoint(qa_audio_device *device,const qa_audio_engine *engine,qa_buffer *out,qa_error *error)
@@ -1189,7 +1191,7 @@ bool qa_audio_device_checkpoint(qa_audio_device *device,const qa_audio_engine *e
     /* The actual endpoint was paused only for this capture. Preserve its
      * unpaused playback coordinate while excluding time spent in the cut. */
     device->elapsed_ticks=state.elapsed_ticks;
-    if (device->playing) device->playing_since=SDL_GetPerformanceCounter();
+    if (device->playing) device->playing_since=qa_platform_time_ns();
     if (device->id) SDL_PauseAudioDevice(device->id,device->playing?0:1);
     device->capturing=false;
     if (!ok && (!error || error->code==QA_OK)) device_error(error,QA_ERROR_FORMAT,"Invalid genuine audio device continuation");
@@ -1326,7 +1328,7 @@ void qa_audio_device_handoff(qa_audio_device_restore_guard *guard)
     if (guard->endpoint) SDL_PauseAudioDevice(guard->endpoint,1);
     active->playing=false;
     candidate->playing=guard->saved_playing;
-    candidate->playing_since=candidate->playing?SDL_GetPerformanceCounter():0;
+    candidate->playing_since=candidate->playing?qa_platform_time_ns():0;
     if (candidate->id) SDL_PauseAudioDevice(candidate->id,candidate->playing?0:1);
     guard->transferred=true;
 }

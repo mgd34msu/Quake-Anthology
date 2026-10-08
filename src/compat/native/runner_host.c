@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "qa/platform_services.h"
 
 #include <math.h>
 
@@ -10,7 +11,6 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -426,11 +426,7 @@ static bool close_runner_process(native_runner_connection *connection, qa_error 
                 qa_error_set(error, QA_ERROR_IO, (size_t)errno, "terminating native runner: %s", strerror(errno));
                 return false;
             }
-            struct timespec start;
-            if (clock_gettime(CLOCK_MONOTONIC, &start)) {
-                qa_error_set(error, QA_ERROR_IO, (size_t)errno, "timing native runner retirement: %s", strerror(errno));
-                return false;
-            }
+            uint64_t start=qa_platform_time_ns();
             for (;;) {
                 do { result = waitpid((pid_t)connection->process, &status, WNOHANG); }
                 while (result < 0 && errno == EINTR);
@@ -442,17 +438,10 @@ static bool close_runner_process(native_runner_connection *connection, qa_error 
                     qa_error_set(error, QA_ERROR_IO, (size_t)errno, "waiting for native runner retirement: %s", strerror(errno));
                     return false;
                 }
-                struct timespec now;
-                if (clock_gettime(CLOCK_MONOTONIC, &now)) {
-                    qa_error_set(error, QA_ERROR_IO, (size_t)errno, "timing native runner retirement: %s", strerror(errno));
-                    return false;
-                }
-                if (now.tv_sec - start.tv_sec > 5 ||
-                    (now.tv_sec - start.tv_sec == 5 && now.tv_nsec >= start.tv_nsec))
+                if (qa_platform_time_ns()-start >= UINT64_C(5000000000))
                     return native_fail(error, QA_ERROR_IO, 0,
                         "native runner process has not retired after termination");
-                struct timespec interval = {.tv_nsec = 10000000};
-                nanosleep(&interval, NULL);
+                qa_platform_sleep_ns(UINT64_C(10000000));
             }
         }
     }

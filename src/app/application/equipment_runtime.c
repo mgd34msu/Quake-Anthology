@@ -1,10 +1,10 @@
+#include "qa/platform_services.h"
 #include "equipment_runtime.h"
 #include "guest_q3_private.h"
 #include "guest_q3_gear_private.h"
 #include "native_q3_wire_state.h"
 #include "control_frame.h"
 #include "qa/game_q3_clients.h"
-#include <time.h>
 
 typedef struct equipment_source {
     struct application_equipment_runtime *runtime;
@@ -522,11 +522,18 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
 
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
 {
-    (void)context; time_t now = time(NULL); const struct tm *value = localtime(&now);
-    if (!value) { if (out) *out = (qa_q3_host_calendar){0}; return -1; }
-    if (out) *out = (qa_q3_host_calendar){value->tm_sec, value->tm_min, value->tm_hour,
-        value->tm_mday, value->tm_mon, value->tm_year, value->tm_wday, value->tm_yday, value->tm_isdst};
-    uint32_t bits = (uint32_t)now; int32_t result; memcpy(&result, &bits, sizeof(result)); return result;
+    (void)context;
+    qa_platform_timespec now;
+    qa_platform_calendar_fields date;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
+        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
+        if (out) *out=(qa_q3_host_calendar){0};
+        return -1;
+    }
+    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
+        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
+    uint32_t bits=(uint32_t)now.seconds; int32_t result;
+    memcpy(&result,&bits,sizeof(result)); return result;
 }
 static bool names(equipment_source *source, const saved_source *saved, qa_error *error)
 {

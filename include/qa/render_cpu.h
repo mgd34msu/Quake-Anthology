@@ -17,6 +17,7 @@ typedef struct qa_cpu_statistics {
   uint64_t generic_covered, generic_fragments, generic_written;
   uint64_t worker_dispatches, worker_posts, worker_joins;
   uint64_t skin_jobs, skin_vertices, skin_cached_draws;
+  /* Timing fields named *_ticks are nanoseconds. */
   uint64_t brush_sort_ticks, brush_generate_ticks, brush_shade_ticks;
   uint64_t surface_build_ticks, surface_builds, present_copy_ticks, presents;
 } qa_cpu_statistics;

@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "brush_spans.h"
 #include "surface_cache.h"
@@ -704,10 +705,10 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   bool ok = true;
   if (renderer->options.present) {
     qa_bytes pixels = qa_cpu_pixels(renderer);
-    uint64_t start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
+    uint64_t start = renderer->statistics_enabled ? qa_platform_time_ns() : 0;
     ok = renderer->options.present(renderer->options.present_context, pixels,
         renderer->display.width, renderer->display.height, error);
-    CPU_STATS_ADD(renderer, present_copy_ticks, SDL_GetPerformanceCounter() - start);
+    CPU_STATS_ADD(renderer, present_copy_ticks, qa_platform_time_ns() - start);
     CPU_STATS_ADD(renderer, presents, 1);
   }
   renderer->presenting=false;
@@ -1888,7 +1889,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
   clear.clear_color=renderer->pipeline.color_write; clear.clear_depth=clear.clear_stencil=false;
   clear.color=renderer->clear_color;
   clear_view(renderer,&clear);
-  uint64_t start=SDL_GetTicks64();
+  uint64_t start=(qa_platform_time_ns() / UINT64_C(1000000));
   qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
   bool ok=true;
   for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
@@ -1919,7 +1920,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
   }
   qa_scene_frame_destroy(&frame);
   if (ok && controls->source_print) {
-    char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)(SDL_GetTicks64()-start));
+    char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)((qa_platform_time_ns() / UINT64_C(1000000))-start));
     controls->source_print(controls->source_print_context,text);
   }
   return ok;

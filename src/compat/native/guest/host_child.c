@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "host_child.h"
 #include "qa/binary.h"
+#include "qa/platform_services.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -352,20 +353,16 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
             (qa_load_u32le(data)!=2 && qa_load_u32le(data)!=3)) {
             okay=fail(&failure,QA_ERROR_FORMAT,0,"child CPU clock request is invalid");break;
         }
-        struct timespec value;
-        clockid_t clock=qa_load_u32le(data)==2?CLOCK_PROCESS_CPUTIME_ID:CLOCK_THREAD_CPUTIME_ID;
-        if(clock_gettime(clock,&value)!=0) {
-            int code=errno;
-            qa_error_set(&failure,QA_ERROR_IO,(size_t)code,"reading actual child CPU clock failed: %s",strerror(code));
-            okay=false;break;
-        }
+        qa_platform_timespec value;
+        qa_platform_clock_kind clock=qa_load_u32le(data)==2?QA_PLATFORM_CLOCK_PROCESS_CPU:QA_PLATFORM_CLOCK_THREAD_CPU;
+        if (!qa_platform_clock_read(clock,&value,&failure)) { okay=false; break; }
         long thread=syscall(SYS_gettid);
-        if(thread<=0 || value.tv_sec<0 || value.tv_nsec<0 || value.tv_nsec>=1000000000L) {
+        if(thread<=0 || value.seconds<0 || value.nanoseconds<0 || value.nanoseconds>=1000000000L) {
             okay=fail(&failure,QA_ERROR_IO,0,"actual child CPU clock identity or value is invalid");break;
         }
         uint8_t reply[28];
         qa_store_u64le(reply,(uint64_t)getpid());qa_store_u64le(reply+8,(uint64_t)thread);
-        qa_store_u64le(reply+16,(uint64_t)value.tv_sec);qa_store_u32le(reply+24,(uint32_t)value.tv_nsec);
+        qa_store_u64le(reply+16,(uint64_t)value.seconds);qa_store_u32le(reply+24,(uint32_t)value.nanoseconds);
         return packet_send(server->descriptor,HOST_CPU_CLOCK|HOST_REPLY,0,packet->sequence,(qa_bytes){reply,sizeof(reply)},-1,error);
     }
     case HOST_BACKING: {

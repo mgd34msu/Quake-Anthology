@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "network_qw_private.h"
 #include "qa/application_network.h"
 #include "qa/application_language.h"
@@ -464,7 +465,9 @@ bool frontend_qw_create(qa_frontend *frontend, qa_network_runtime *runtime, qa_s
     if (!host) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating QuakeWorld physical factory owner");
     host->frontend = frontend; host->runtime = runtime; host->admin = admin; host->composition = *composition;
     host->owner = source.owner; host->generation = qa_application_configuration_generation(frontend->application);
-    host->server_count = 1; host->random = (uint32_t)qa_platform_time_ns();
+    uint64_t seed;
+    if (!qa_platform_entropy_u64(&seed,error)) { frontend_qw_destroy(host); return false; }
+    host->server_count = 1; host->random = (uint32_t)seed;
     const qa_cvar_view *maximum = qa_cvars_find(source.cvars, "maxclients");
     if (!maximum || !isfinite(maximum->number) || maximum->number < 1 || maximum->number > 32) {
         frontend_qw_destroy(host);

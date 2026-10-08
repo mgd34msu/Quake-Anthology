@@ -1,5 +1,5 @@
 #include "sysv_program_private.h"
-#include <time.h>
+#include "qa/platform_services.h"
 
 static bool physical_clock(qa_native_sysv_program *owner, int32_t clock_id,
     int64_t *seconds, int32_t *nanoseconds, qa_error *error)
@@ -10,10 +10,9 @@ static bool physical_clock(qa_native_sysv_program *owner, int32_t clock_id,
     /* The emulated task executes synchronously on this exclusive strand.
      * Count only its entered execution interval, including its kernel work;
      * other controller threads and stopped construction are not source tasks. */
-    struct timespec value;
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value))
-        return guest_fail(error, QA_ERROR_IO, 0, "observing the actual emulated task execution clock");
-    *seconds = (int64_t)value.tv_sec; *nanoseconds = (int32_t)value.tv_nsec; return true;
+    qa_platform_timespec value;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_THREAD_CPU,&value,error)) return false;
+    *seconds=value.seconds; *nanoseconds=value.nanoseconds; return true;
 #else
     (void)clock_id; (void)seconds; (void)nanoseconds;
     return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "emulated task CPU accounting requires its actual platform execution clock");

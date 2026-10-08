@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "qa/render_workers.h"
 #include "particles.h"
@@ -2207,7 +2208,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
     }
     renderer->gl.Clear(GL_COLOR_BUFFER_BIT);
     renderer->gl.Finish();
-    uint64_t start=SDL_GetTicks64();
+    uint64_t start=(qa_platform_time_ns() / UINT64_C(1000000));
     qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
     bool ok=true;
     for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
@@ -2246,7 +2247,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
     renderer->gl.Finish();
     if (ok) ok=gl_check(renderer,"Source image grid",error);
     if (ok && controls->source_print) {
-        char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)(SDL_GetTicks64()-start));
+        char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)((qa_platform_time_ns() / UINT64_C(1000000))-start));
         controls->source_print(controls->source_print_context,text);
     }
     return ok;

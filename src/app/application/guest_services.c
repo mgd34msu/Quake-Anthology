@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
@@ -8,7 +9,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 void application_console_print(void *context, const qa_command_context *command,
                                  const char *text)
@@ -101,19 +101,17 @@ static uint32_t guest_milliseconds(void *context)
 static int32_t guest_calendar(void *context, qa_q3_host_calendar *out)
 {
     (void)context;
-    time_t now = time(NULL);
-    const struct tm *calendar = localtime(&now);
-    if (calendar == NULL) {
-        if (out != NULL) *out = (qa_q3_host_calendar){0};
+    qa_platform_timespec now;
+    qa_platform_calendar_fields date;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
+        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
+        if (out) *out=(qa_q3_host_calendar){0};
         return -1;
     }
-    if (out != NULL) *out = (qa_q3_host_calendar){calendar->tm_sec, calendar->tm_min,
-        calendar->tm_hour, calendar->tm_mday, calendar->tm_mon,
-        calendar->tm_year, calendar->tm_wday, calendar->tm_yday, calendar->tm_isdst};
-    uint32_t bits = (uint32_t)now;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
+    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
+        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
+    uint32_t bits=(uint32_t)now.seconds; int32_t result;
+    memcpy(&result,&bits,sizeof(result)); return result;
 }
 
 static qa_collision_geometry *guest_geometry(void *context)

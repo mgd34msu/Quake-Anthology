@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "brush_spans.h"
 #include "surface_cache.h"
 #include <SDL_timer.h>
@@ -486,9 +487,9 @@ static bool generate_spans(qa_cpu_renderer *renderer, struct cpu_brush_context *
                context->surface_count, sizeof(*context->active_surfaces), error) ||
       row_count == SIZE_MAX || !reserve((void **)&context->rows, &context->row_capacity,
                row_count + 1, sizeof(*context->rows), error)) return false;
-  uint64_t sort_start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
+  uint64_t sort_start = renderer->statistics_enabled ? qa_platform_time_ns() : 0;
   qsort(context->edges, context->edge_count, sizeof(*context->edges), edge_order);
-  CPU_STATS_ADD(renderer, brush_sort_ticks, SDL_GetPerformanceCounter() - sort_start);
+  CPU_STATS_ADD(renderer, brush_sort_ticks, qa_platform_time_ns() - sort_start);
   size_t next = 0, edge_count = 0;
   int64_t x0 = renderer->view.viewport.x > 0 ? renderer->view.viewport.x : 0;
   int64_t x1 = (int64_t)renderer->view.viewport.x + renderer->view.viewport.width;
@@ -704,13 +705,13 @@ static void shade_span(qa_cpu_renderer *renderer, const brush_surface *surface,
 static void shade_rows(qa_cpu_renderer *renderer, void *owner,
                         int64_t first, int64_t last) {
   qa_cpu_statistics *statistics = cpu_row_statistics;
-  uint64_t start = statistics ? SDL_GetPerformanceCounter() : 0;
+  uint64_t start = statistics ? qa_platform_time_ns() : 0;
   const struct cpu_brush_context *context = owner;
   size_t begin = context->rows[(size_t)(first - context->first)];
   size_t end = context->rows[(size_t)(last - context->first + 1)];
   for (size_t i = begin; i < end; ++i)
     shade_span(renderer, &context->surfaces[context->spans[i].surface], &context->spans[i]);
-  if (statistics) statistics->brush_shade_ticks += SDL_GetPerformanceCounter() - start;
+  if (statistics) statistics->brush_shade_ticks += qa_platform_time_ns() - start;
 }
 static void retire_brush(qa_cpu_renderer *renderer, void *owner) {
   struct cpu_brush_context *context = owner;
@@ -729,9 +730,9 @@ bool cpu_brush_flush(qa_cpu_renderer *renderer, qa_error *error) {
   struct cpu_brush_context *context = renderer->brush_spans;
   while (context && context->queued) context = context->next;
   if (!context || !context->surface_count) { cpu_brush_clear(renderer); return true; }
-  uint64_t start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
+  uint64_t start = renderer->statistics_enabled ? qa_platform_time_ns() : 0;
   bool okay = generate_spans(renderer, context, error);
-  CPU_STATS_ADD(renderer, brush_generate_ticks, SDL_GetPerformanceCounter() - start);
+  CPU_STATS_ADD(renderer, brush_generate_ticks, qa_platform_time_ns() - start);
   CPU_STATS_ADD(renderer, brush_batches, 1);
   CPU_STATS_ADD(renderer, brush_spans, context->span_count);
   if (renderer->statistics_enabled) {

@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "llm_internal.h"
 #include "qa/text.h"
 #include <math.h>
@@ -9,7 +10,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-#include <bcrypt.h>
 typedef SOCKET auth_socket;
 #define AUTH_INVALID INVALID_SOCKET
 #define auth_close closesocket
@@ -21,9 +21,6 @@ static bool nonblocking(auth_socket fd) { u_long value = 1; return ioctlsocket(f
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#ifdef __linux__
-#include <sys/random.h>
-#endif
 typedef int auth_socket;
 #define AUTH_INVALID (-1)
 #define auth_close close
@@ -53,20 +50,6 @@ struct llm_auth {
     qa_error error;
     bool refresh, active, result, committed, winsock;
 };
-static bool entropy(uint8_t *bytes, size_t count, qa_error *error) {
-#ifdef _WIN32
-    if (count <= ULONG_MAX && BCryptGenRandom(NULL, bytes, (ULONG)count, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0) return true;
-#elif defined(__linux__)
-    size_t n = 0;
-    while (n < count) { ssize_t got = getrandom(bytes + n, count - n, 0); if (got > 0) n += (size_t)got; else if (got < 0 && errno == EINTR) continue; else break; }
-    if (n == count) return true;
-#else
-    int fd = open("/dev/urandom", O_RDONLY); size_t n = 0;
-    if (fd >= 0) { while (n < count) { ssize_t got = read(fd, bytes + n, count - n); if (got > 0) n += (size_t)got; else if (got < 0 && errno == EINTR) continue; else break; } close(fd); }
-    if (n == count) return true;
-#endif
-    return llm_fail(error, "secure operating-system randomness is unavailable");
-}
 static size_t encode64(const uint8_t *in, size_t n, char *out) {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     size_t j = 0; unsigned value = 0, bits = 0;
@@ -138,7 +121,7 @@ static void pkce_challenge(const char verifier[43], char challenge[44]) {
     encode64(digest, sizeof digest, challenge);
 }
 bool llm_session_id(char out[37], qa_error *error) {
-    uint8_t bytes[16]; if (!entropy(bytes, sizeof bytes, error)) return false;
+    uint8_t bytes[16]; if (!qa_platform_entropy(bytes, sizeof bytes, error)) return false;
     bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
     size_t pos = 0; static const char hex[] = "0123456789abcdef";
     for (size_t i = 0; i < 16; ++i) { if (i == 4 || i == 6 || i == 8 || i == 10) out[pos++] = '-'; out[pos++] = hex[bytes[i] >> 4]; out[pos++] = hex[bytes[i] & 15]; }
@@ -236,9 +219,9 @@ bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
     double now = llm_wall_milliseconds(s);
     if (!isfinite(now) || !isfinite(now + s->options.callback_timeout_ms)) { llm_fail(error, "invalid subscription clock"); goto done; }
     a->deadline = now + s->options.callback_timeout_ms;
-    if (!entropy(bytes, sizeof bytes, error)) goto done;
+    if (!qa_platform_entropy(bytes, sizeof bytes, error)) goto done;
     encode64(bytes, sizeof bytes, a->state);
-    if (!entropy(bytes, sizeof bytes, error)) goto done;
+    if (!qa_platform_entropy(bytes, sizeof bytes, error)) goto done;
     encode64(bytes, sizeof bytes, a->verifier);
     pkce_challenge(a->verifier, challenge);
 #ifdef _WIN32

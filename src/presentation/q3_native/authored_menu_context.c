@@ -3,6 +3,7 @@
 #endif
 #define CGAME 1
 #define MISSIONPACK 1
+#include "qa/platform_services.h"
 #include "authored_menu_context.h"
 #include "qa/text.h"
 
@@ -103,21 +104,17 @@ void *q3menu_alloc(int native_size,int source_size,q3menu_allocation_kind kind)
 int q3menu_source_open(const char *path)
 {
     q3menu_context *context = q3menu_active();
-    time_t now=time(NULL); struct tm local_time;
-#ifdef _WIN32
-    bool have_time=localtime_s(&local_time,&now)==0;
-#else
-    bool have_time=localtime_r(&now,&local_time)!=NULL;
-#endif
-    if(!have_time || local_time.tm_mon<0 || local_time.tm_mon>=12 ||
-        local_time.tm_mday<1 || local_time.tm_mday>31 ||
-        local_time.tm_year<-1900 || local_time.tm_year>8099) {
+    qa_platform_timespec now;
+    qa_platform_calendar_fields local_time;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
+        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&local_time,NULL) ||
+        local_time.year<0 || local_time.year>9999) {
         q3menu_error(0,"Cannot capture authored source builtin date and time"); return 0;
     }
     static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
-    unsigned day = (unsigned)local_time.tm_mday;
-    unsigned year = (unsigned)(local_time.tm_year + 1900);
-    memcpy(context->script_date, months[local_time.tm_mon], 3);
+    unsigned day = (unsigned)local_time.day;
+    unsigned year = (unsigned)local_time.year;
+    memcpy(context->script_date, months[local_time.month-1], 3);
     context->script_date[3] = ' ';
     context->script_date[4] = day < 10 ? ' ' : (char)('0' + day / 10);
     context->script_date[5] = (char)('0' + day % 10);
@@ -125,7 +122,7 @@ int q3menu_source_open(const char *path)
     for (unsigned i = 0, divisor = 1000; i < 4; ++i, divisor /= 10)
         context->script_date[7 + i] = (char)('0' + year / divisor % 10);
     context->script_date[11] = 0;
-    snprintf(context->script_time,sizeof(context->script_time),"%02d:%02d:%02d",local_time.tm_hour,local_time.tm_min,local_time.tm_sec);
+    snprintf(context->script_time,sizeof(context->script_time),"%02d:%02d:%02d",local_time.hour,local_time.minute,local_time.second);
     context->scripts.date=context->script_date; context->scripts.time=context->script_time;
     for (unsigned i = 0; i < 64; ++i) if (!context->sources[i]) {
         qa_error local = {0};

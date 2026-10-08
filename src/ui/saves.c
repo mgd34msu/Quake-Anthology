@@ -1,7 +1,7 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "qa/ui_saves.h"
 #include <stdio.h>
-#include <time.h>
 
 typedef struct save_page { struct qa_ui_saves *owner; qa_ui_id id; } save_page;
 struct qa_ui_saves {
@@ -123,8 +123,9 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *e) 
             snprintf(o->labels[i],sizeof(o->labels[i]),saving?"%s - %s":"%s  -  %s",entry->label,saving && entry->unavailable?"unavailable":entry->map);
             snprintf(o->details[i],sizeof(o->details[i]),"%s",entry->game?entry->game:"");
             if(entry->saved_at_ms>0) {
-                time_t seconds=(time_t)(entry->saved_at_ms/1000);struct tm *stamp=localtime(&seconds);char date[96]={0};
-                if(stamp && strftime(date,sizeof(date),"%x %X",stamp))snprintf(o->details[i],sizeof(o->details[i]),"%s  -  %s",entry->game?entry->game:"",date);
+                char date[96]={0};
+                if(qa_platform_calendar_format((int64_t)entry->saved_at_ms,"%x %X",date,sizeof(date)))
+                    snprintf(o->details[i],sizeof(o->details[i]),"%s  -  %s",entry->game?entry->game:"",date);
             }
             qa_scene_rect_f rect=saving?row((unsigned)i+1):(qa_scene_rect_f){64,118+(float)i*46,512,42};
             o->controls[n++]=button(p,SLOT+i,o->labels[i],rect,reason(o,saving)==NULL && (saving || !entry->unavailable));

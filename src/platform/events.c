@@ -1,9 +1,5 @@
 #include "qa/platform_events.h"
 
-#include <SDL.h>
-#include <limits.h>
-#include <math.h>
-#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -107,33 +103,4 @@ uint64_t qa_platform_events_dropped(const qa_platform_events *events)
 bool qa_platform_events_quit_requested(const qa_platform_events *events)
 {
     return events->quit_requested;
-}
-
-uint64_t qa_platform_time_ns(void)
-{
-    uint64_t frequency = SDL_GetPerformanceFrequency(), ticks = SDL_GetPerformanceCounter();
-    return ticks / frequency * UINT64_C(1000000000) +
-        (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
-}
-
-void qa_platform_sleep_ns(uint64_t duration)
-{
-    uint64_t milliseconds = duration / UINT64_C(1000000);
-    while (milliseconds > UINT32_MAX) {
-        SDL_Delay(UINT32_MAX);
-        milliseconds -= UINT32_MAX;
-    }
-    if (milliseconds) SDL_Delay((uint32_t)milliseconds);
-}
-
-double qa_platform_utc_ms(void)
-{
-    struct timespec now;
-    if(timespec_get(&now,TIME_UTC)!=TIME_UTC) return NAN;
-    return (double)now.tv_sec*1000 + (double)now.tv_nsec/1000000;
-}
-
-double qa_platform_tick_ms(void)
-{
-    return 1000.0/(double)SDL_GetPerformanceFrequency();
 }

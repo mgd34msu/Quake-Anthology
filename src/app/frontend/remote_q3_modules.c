@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "remote_q3_modules_private.h"
 #include "remote_q3_video_media.h"
 #include "equipment_source.h"
@@ -20,7 +21,6 @@
 #include <SDL.h>
 #include <limits.h>
 #include <stdio.h>
-#include <time.h>
 
 const qa_application_q3_remote_source *frontend_remote_modules_source(const frontend_remote_q3_modules *owner)
 { return owner->kind == REMOTE_MODULE_INITIAL ? &owner->basis.initial.view.attempt.source : &owner->basis.decoded.view.domain.source; }
@@ -345,14 +345,18 @@ static void print(void *context, const char *text)
 }
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
 {
-    if (out) *out = (qa_q3_host_calendar){0};
-    if (!entered(context, NULL, NULL, NULL)) return 0;
-    time_t now = time(NULL);
-    struct tm *calendar = out ? localtime(&now) : NULL;
-    if (calendar) *out = (qa_q3_host_calendar){calendar->tm_sec, calendar->tm_min, calendar->tm_hour,
-        calendar->tm_mday, calendar->tm_mon, calendar->tm_year, calendar->tm_wday,
-        calendar->tm_yday, calendar->tm_isdst};
-    return (int32_t)now;
+    if (!entered(context,NULL,NULL,NULL)) return 0;
+    qa_platform_timespec now;
+    qa_platform_calendar_fields date;
+    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
+        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
+        if (out) *out=(qa_q3_host_calendar){0};
+        return -1;
+    }
+    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
+        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
+    uint32_t bits=(uint32_t)now.seconds; int32_t result;
+    memcpy(&result,&bits,sizeof(result)); return result;
 }
 static bool arguments(void *context, qa_native_host_command_view *out, qa_error *error)
 {

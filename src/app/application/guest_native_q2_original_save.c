@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "guest_native_q2_original_save.h"
 #include "guest_native_q2_private.h"
 #include "native_q2_console.h"
@@ -12,7 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 struct application_q2_original_save {
     qa_q2_save_data *save;
@@ -157,10 +157,11 @@ static bool capture_server(qa_application *app,application_provider *source,
     if (ok && purpose==QA_SAVE_LEVEL_ENTRY)
         (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"ENTERING %s",name?name:"");
     else if (ok) {
-        time_t now=time(NULL); struct tm *local=localtime(&now);
-        if (!local) ok=application_fail(error,QA_ERROR_IO,"Reading original Q2 save time");
-        else (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"%2i:%02i %2i/%2i  %s",
-            local->tm_hour,local->tm_min,local->tm_mon+1,local->tm_mday,name?name:"");
+        qa_platform_timespec now; qa_platform_calendar_fields local;
+        ok=qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,error) &&
+            qa_platform_calendar(now.seconds*INT64_C(1000),true,&local,error);
+        if (ok) (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"%2i:%02i %2i/%2i  %s",
+            local.hour,local.minute,local.month,local.day,name?name:"");
     }
     size_t text_size=0;
     for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row)) {
