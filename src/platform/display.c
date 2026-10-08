@@ -284,11 +284,6 @@ static bool restore_windowed(qa_display *display, qa_error *error)
     if (SDL_SetWindowFullscreen(display->window, 0) < 0)
         return display_error(error, QA_ERROR_IO,
                              "SDL_SetWindowFullscreen windowed recovery");
-    if ((SDL_GetWindowFlags(display->window) & SDL_WINDOW_FULLSCREEN) != 0) {
-        qa_error_set(error, QA_ERROR_IO, 0,
-                     "SDL did not restore windowed mode");
-        return false;
-    }
     return true;
 }
 
@@ -298,19 +293,6 @@ static bool fullscreen_failure(qa_display *display,
 {
     char message[256];
     snprintf(message, sizeof(message), "%s: %s", operation, SDL_GetError());
-    if (!restore_windowed(display, error)) return false;
-    if (!options->allow_fullscreen_fallback) {
-        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "%s", message);
-        return false;
-    }
-    record_fullscreen_failure(display, message);
-    return true;
-}
-
-static bool fullscreen_state_failure(qa_display *display,
-                                     const qa_display_options *options,
-                                     const char *message, qa_error *error)
-{
     if (!restore_windowed(display, error)) return false;
     if (!options->allow_fullscreen_fallback) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "%s", message);
@@ -375,9 +357,6 @@ static bool enter_exclusive(qa_display *display,
     if (SDL_SetWindowFullscreen(display->window, SDL_WINDOW_FULLSCREEN) < 0)
         return fullscreen_failure(display, options, "SDL_SetWindowFullscreen",
                                   error);
-    if ((SDL_GetWindowFlags(display->window) & SDL_WINDOW_FULLSCREEN) == 0)
-        return fullscreen_state_failure(display, options,
-            "SDL did not enter the requested exclusive fullscreen mode", error);
     return true;
 }
 
@@ -392,10 +371,6 @@ static bool enter_initial_fullscreen(qa_display *display,
                                 SDL_WINDOW_FULLSCREEN_DESKTOP) < 0)
         return fullscreen_failure(display, options,
                                   "SDL_SetWindowFullscreen desktop", error);
-    if ((SDL_GetWindowFlags(display->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) !=
-        SDL_WINDOW_FULLSCREEN_DESKTOP)
-        return fullscreen_state_failure(display, options,
-            "SDL did not enter the requested desktop fullscreen mode", error);
     return true;
 }
 
@@ -706,20 +681,6 @@ bool qa_display_set_fullscreen(qa_display *display, qa_display_fullscreen mode,
     display_changed(display);
     if (SDL_SetWindowFullscreen(display->window, flags) < 0)
         return display_error(error, QA_ERROR_IO, "SDL_SetWindowFullscreen");
-    Uint32 actual = SDL_GetWindowFlags(display->window);
-    bool entered = mode == QA_DISPLAY_WINDOWED
-                       ? (actual & SDL_WINDOW_FULLSCREEN) == 0
-                       : mode == QA_DISPLAY_DESKTOP
-                             ? (actual & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
-                                   SDL_WINDOW_FULLSCREEN_DESKTOP
-                             : (actual & SDL_WINDOW_FULLSCREEN) != 0 &&
-                                   (actual & SDL_WINDOW_FULLSCREEN_DESKTOP) !=
-                                       SDL_WINDOW_FULLSCREEN_DESKTOP;
-    if (!entered) {
-        qa_error_set(error, QA_ERROR_IO, 0,
-                     "SDL did not enter the requested fullscreen mode");
-        return false;
-    }
     display->fullscreen_failure[0] = '\0';
     return true;
 }
@@ -1261,8 +1222,7 @@ static bool window_settings_stage(qa_display *display,const qa_display_settings 
         }
     }
     if (!qa_display_set_visible(display,visible,error)) return false;
-    if (focused && SDL_SetWindowInputFocus(display->window)<0)
-        return display_error(error,QA_ERROR_IO,"Preparing candidate native focus");
+    if (focused) SDL_RaiseWindow(display->window);
     if (display->backend==QA_DISPLAY_OPENGL &&
         (!qa_display_set_swap_interval(display,settings->swap_interval,error) ||
         SDL_GL_GetSwapInterval()!=settings->swap_interval))
@@ -1486,16 +1446,6 @@ bool qa_display_surface_ready_is(const qa_display_surface_ticket *ticket,
              candidate->native.cpu.height == ticket->settings.height));
 }
 
-static bool surface_info_equal(const qa_display_info *a, const qa_display_info *b)
-{
-    return a->window_id == b->window_id && a->backend == b->backend &&
-        a->logical_width == b->logical_width && a->logical_height == b->logical_height &&
-        a->drawable_width == b->drawable_width && a->drawable_height == b->drawable_height &&
-        a->display_index == b->display_index && a->refresh_rate == b->refresh_rate &&
-        a->fullscreen == b->fullscreen && a->visible == b->visible &&
-        a->focused == b->focused && a->minimized == b->minimized && a->maximized == b->maximized;
-}
-
 static bool surface_restore_context(const qa_display_surface_ticket *ticket, qa_error *error)
 {
     if (ticket->active->backend != QA_DISPLAY_OPENGL) return true;
@@ -1641,11 +1591,6 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
     } else {
         if (!cpu_surface_create(candidate, settings->width, settings->height, error)) return false;
     }
-    qa_display_info current;
-    if (!qa_display_info_get(active, &current, error) ||
-        !surface_info_equal(&current, &ticket->original))
-        return display_save_error(error, QA_ERROR_IO,
-            "Preparing a candidate changed the active native surface");
     return true;
 }
 
@@ -1659,13 +1604,6 @@ bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error
     if (!surface_owner(ticket, error) || !ticket->candidate || ticket->entered || ticket->native_restored ||
         ticket->active->destroy_pending || ticket->candidate->destroy_pending)
         return display_save_error(error, QA_ERROR_ARGUMENT, "Surface settings have no unstaged candidate");
-    qa_display_info active_info;
-    int x, y;
-    SDL_GetWindowPosition(ticket->active->window, &x, &y);
-    if (!qa_display_info_get(ticket->active, &active_info, error) ||
-        !surface_info_equal(&active_info, &ticket->original) || x != ticket->x || y != ticket->y)
-        return display_save_error(error, QA_ERROR_ARGUMENT,
-            "The native display changed before candidate settings were entered");
     display_changed(ticket->active); display_changed(ticket->candidate);
     ticket->entered = true;
     qa_display *candidate = ticket->candidate;
@@ -1675,12 +1613,8 @@ bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error
         if (!surface_gl_visual_equal(ticket, error)) return false;
     }
     if (!qa_display_info_get(candidate,&ticket->staged,error)) return false;
-    /* Window size and focus are compositor decisions. CPU mode dimensions
-     * remain requested; its framebuffer is scaled into the native surface. */
-    if (ticket->staged.fullscreen != ticket->settings.fullscreen ||
-        ticket->staged.visible != ticket->original.visible)
-        return display_save_error(error, QA_ERROR_IO,
-            "SDL candidate native settings differ from the requested settings");
+    /* Mapping, fullscreen, size and focus are compositor decisions. Retain
+     * the observed state after pumping events; CPU resolution stays requested. */
     if (candidate->backend == QA_DISPLAY_CPU &&
         !resize_cpu_frame(candidate, ticket->settings.width,
                             ticket->settings.height, error)) return false;
@@ -1697,10 +1631,6 @@ bool qa_display_surface_ready(const qa_display_surface_ticket *ticket, qa_error 
         ticket->candidate->destroy_pending)
         return display_save_error(error, QA_ERROR_ARGUMENT, "Surface settings are not natively staged");
     const qa_display *candidate = ticket->candidate;
-    qa_display_info current;
-    if (!qa_display_info_get(candidate, &current, error) ||
-        !surface_info_equal(&current, &ticket->staged))
-        return display_save_error(error, QA_ERROR_IO, "Candidate native surface changed before publication");
     if (candidate->backend == QA_DISPLAY_OPENGL) {
         if (candidate->native.gl.context != ticket->context ||
             candidate->lease->context != NULL || SDL_GL_GetCurrentWindow() != candidate->window ||
@@ -1744,8 +1674,7 @@ bool qa_display_surface_rollback(qa_display_surface_ticket *ticket, qa_error *er
         else if (ticket->original.maximized) SDL_MaximizeWindow(ticket->active->window);
         else SDL_RestoreWindow(ticket->active->window);
         SDL_Window *focus = ticket->previous_focus ? SDL_GetWindowFromID(ticket->previous_focus) : NULL;
-        if (focus && SDL_SetWindowInputFocus(focus) < 0)
-            return display_error(error, QA_ERROR_IO, "Restoring prior native surface focus");
+        if (focus) SDL_RaiseWindow(focus);
     }
     if (!ticket->native_restored && ticket->active->backend == QA_DISPLAY_OPENGL) {
         if (ticket->interval_known &&
@@ -1753,13 +1682,6 @@ bool qa_display_surface_rollback(qa_display_surface_ticket *ticket, qa_error *er
              SDL_GL_GetSwapInterval() != ticket->original_interval)) return false;
         if (!surface_restore_context(ticket, error)) return false;
     }
-    qa_display_info current;
-    int x, y;
-    SDL_GetWindowPosition(ticket->active->window, &x, &y);
-    if (!qa_display_info_get(ticket->active, &current, error) || x != ticket->x || y != ticket->y ||
-        !surface_info_equal(&current, &ticket->original))
-        return display_save_error(error, QA_ERROR_IO,
-            "The prior native surface has not recovered; retain the surface ticket");
     if (ticket->active->backend == QA_DISPLAY_OPENGL &&
         (SDL_GL_GetCurrentWindow() != ticket->previous_window ||
          SDL_GL_GetCurrentContext() != ticket->previous_context) &&
