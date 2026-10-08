@@ -85,25 +85,20 @@ static bool send_handshake(qa_unified_bootstrap *b, const qa_net_address *addres
     qa_buffer_free(&wire); return ok;
 }
 
-static void expire_pending(qa_unified_bootstrap *b, uint64_t now)
-{
-    for (size_t i = 0; i < b->pending_count; ) {
-        if (now >= b->pending[i].created && now - b->pending[i].created > UINT64_C(10000000000)) {
-            memmove(b->pending + i, b->pending + i + 1, (--b->pending_count - i) * sizeof(b->pending[0]));
-        } else ++i;
-    }
-}
-
 static bool server_receive(qa_unified_bootstrap *b, const qa_net_datagram *packet,
     const qa_unified_handshake *h, qa_error *e)
 {
     if (h->kind == QA_UNIFIED_CHALLENGE) return true;
-    expire_pending(b, packet->received_ns);
     size_t at = 0;
     while (at < b->pending_count && !qa_net_address_equal(&b->pending[at].address, &packet->from, true)) ++at;
     if (h->kind == QA_UNIFIED_HELLO) {
-        if (at == b->pending_count && b->pending_count == 256) return true;
-        if (at == b->pending_count || !token_equal(b->pending[at].nonce, h->nonce)) {
+        bool new_address = at == b->pending_count;
+        if (new_address && b->pending_count == 256) {
+            at = 0;
+            for (size_t i = 1; i < b->pending_count; ++i)
+                if (b->pending[i].created < b->pending[at].created) at = i;
+        }
+        if (new_address || !token_equal(b->pending[at].nonce, h->nonce)) {
             qa_unified_pending pending = {.address = packet->from, .nonce = h->nonce, .created = packet->received_ns};
             if (!qa_unified_token_random(&pending.token, e)) return false;
             b->pending[at] = pending;
@@ -184,7 +179,7 @@ bool qa_unified_bootstrap_process(qa_unified_bootstrap *b, uint64_t now, bool *w
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production handshake processing requires its idle monotonic runtime");
     *waiting = false; b->entered = true; b->now_ns = now;
     if (!b->started) { b->started = true; b->handshake_started = now; }
-    prune_peers(b); expire_pending(b, now);
+    prune_peers(b);
     if (b->closed) { b->entered = false; return true; }
     bool ok = true;
     if (b->options.server) {
