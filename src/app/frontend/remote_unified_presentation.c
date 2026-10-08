@@ -658,6 +658,22 @@ static bool status_replacement(void *context,bool *out,qa_error *error)
         !frontend_unified_q2_status_replacement(p->q2,&q2,error)) return false;
     *out=components || q2; return true;
 }
+static bool render_status_replacement(void *context,bool *out,qa_error *error)
+{
+    unified_presentation *p=context;
+    if (!status_replacement(p,out,error)) return false;
+    if (*out) return true;
+    for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
+        if (!row->primary_view || !row->cg_prepared) continue;
+        frontend_unified_q3_source_view source;
+        qa_application_camera_view camera;qa_hud_value vitals[2];bool has_view=false,has_vitals=false;
+        if (!q3_row_source(row,false,&source,error) ||
+            !frontend_unified_render_client_presentation_read(p->render,source.viewer,
+                &camera,vitals,&has_view,&has_vitals,error)) return false;
+        *out=!has_vitals; return true;
+    }
+    return true;
+}
 static bool q3_camera_override(void *context,const q3n_frame *frame,
     qa_application_camera_view *out,bool *found,qa_error *error)
 {
@@ -1205,7 +1221,7 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified drawing awaits its actual received frame");
     frontend_unified_prediction_view prediction;
     bool source_listener=false;
-    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.entity_beam=entity_beam,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
+    frontend_unified_render_children children = {.context=p,.camera=camera,.status_replacement=render_status_replacement,.source_model=source_model,.equipment_model=equipment_model,.view_origin=view_origin,.entity_effects=entity_effects,.entity_beam=entity_beam,.world_input=world_input,.lights=lights,.reflected_lights=reflected_lights,
         .world=world,.reflected_world=reflected_world,.world_models=world_models,.particles=particles,.dlights=dlights,.blend=blend,
         .player_blend=player_blend,.hud=hud,.model=model,.model_after=model_after};
     bool okay=frontend_remote_unified_prediction_read(p->prediction,&prediction,error) &&
