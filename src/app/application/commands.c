@@ -328,7 +328,20 @@ static qa_command_result chat_command(qa_application *application,
     }
     if (!provider || provider->client_only_owned) return QA_COMMAND_UNHANDLED;
     bool handled = false;
-    if (provider->kind == APPLICATION_PROVIDER_Q1) {
+    if (provider->kind == APPLICATION_PROVIDER_QC) {
+        if (provider->state.qc.qualified) {
+            const struct application_qc_profile *profile = provider->state.qc.qualified;
+            for (size_t i = 0; i < profile->command_count; ++i)
+                if (application_qc_command_name_equal(profile->commands[i].name, command->argv[0]))
+                    return application_qc_declared_command(provider->state.qc.engine, invocation, error)
+                        ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        }
+        if (!provider_command(provider, command, &handled, error)) return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+    }
+    if (provider->kind == APPLICATION_PROVIDER_Q1 ||
+        (provider->kind == APPLICATION_PROVIDER_QC &&
+         provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE)) {
         qa_application_startup_source source;
         bool present;
         if (!application_provider_startup_source_at(provider, 0, &source, &present, error))
@@ -347,20 +360,13 @@ static qa_command_result chat_command(qa_application *application,
             command->context.dialect = source.command.dialect;
             delivered = command;
         }
-        return application_native_q1_chat(provider, delivered, mode, error)
+        return application_q1_chat(provider, delivered, mode, error)
             ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     if (provider->kind == APPLICATION_PROVIDER_Q3 && actor.registry) {
         if (!application_native_q3_client_command(provider, actor, command, &handled, error))
             return QA_COMMAND_FAILED;
-    } else {
-        if (provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified) {
-            const struct application_qc_profile *profile = provider->state.qc.qualified;
-            for (size_t i = 0; i < profile->command_count; ++i)
-                if (application_qc_command_name_equal(profile->commands[i].name, command->argv[0]))
-                    return application_qc_declared_command(provider->state.qc.engine, invocation, error)
-                        ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
-        }
+    } else if (provider->kind != APPLICATION_PROVIDER_QC) {
         if (!provider_command(provider, command, &handled, error)) return QA_COMMAND_FAILED;
     }
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
