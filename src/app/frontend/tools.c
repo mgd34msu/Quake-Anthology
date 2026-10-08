@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "tools_restore.h"
+#include "remote_unified.h"
 #include "save_private.h"
 #include "qa/http_save.h"
 #include "qa/vfs_view_save.h"
@@ -268,6 +269,17 @@ static bool diagnostic(void *context, const qa_command_invocation *call, qa_buff
         qa_application_map_view map; bool mapped = qa_application_map_read(f->application, &map);
         ok = append(&text, error, "frame=%" PRIu64 " milliseconds=%.3f map=%s renderer=%s clients=%zu configuration=%" PRIu64 "\n",
             f->frame_number, milliseconds(f), mapped ? map.name : "", f->gl ? "opengl" : f->cpu ? "cpu" : "dedicated", qa_application_player_count(f->application), qa_application_configuration_generation(f->application));
+        for (size_t i=0;ok && i<frontend_remote_unified_count(f);++i) {
+            const frontend_remote_unified *client=frontend_remote_unified_at(f,i);
+            if (frontend_remote_unified_retired(client)) continue;
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(client);
+            const qa_unified_frame *received=qa_unified_document_frame(frontend_remote_unified_frame(client));
+            qa_actor_id actor; uint32_t entity;
+            bool admitted=frontend_remote_unified_player(client,&actor,&entity);
+            ok=append(&text,error,"seat=%u epoch=%u admitted=%u received=%u source_ms=%" PRId64 " input_ack=%" PRId64 "\n",
+                domain->physical_seat,frontend_remote_unified_epoch(client),(unsigned)admitted,(unsigned)(received!=NULL),
+                received?qa_unified_world_frame_milliseconds(received->world):0,received?received->acknowledged_input:-1);
+        }
     } else if (!strcmp(name, "imagelist")) ok = images_report(f, &text, &scratch, error);
     else if (!strcmp(name, "shaderlist")) ok = shaders_report(f, call->argc > 1, &text, &scratch, error);
     else if (!strcmp(name, "modellist") || !strcmp(name, "skinlist")) ok = model_report(f, &call->context, !strcmp(name, "skinlist"), &text, &scratch, error);
