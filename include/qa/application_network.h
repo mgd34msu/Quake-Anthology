@@ -98,10 +98,6 @@ typedef struct qa_application_network_q1_status_player {
  * Names borrow actual QC strings until source mutation. */
 bool qa_application_network_q1_status(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *);
-/* Actual connected source clients selected by the source teamplay/team values.
- * The sender name borrows its QC string until source mutation. */
-bool qa_application_network_q1_chat_recipients(qa_application *, qa_actor_id sender,
-    bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *);
 /* Invoke the real ClientKill callback for a healthy spawned nonspectator.
  * Reserved, spectator and already-dead source clients remain unchanged. */
 bool qa_application_network_q1_kill(qa_application *, qa_actor_id, qa_error *);

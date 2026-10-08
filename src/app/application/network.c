@@ -386,45 +386,6 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
     memcpy(players, values, extent * sizeof(*values)); *count = extent; return true;
 }
 
-bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id sender,
-    bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *error)
-{
-    if (q1_native(app)) {
-        if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source chat sender output");
-        application_native_q1_wire_source source = {0};
-        if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
-        application_native_q1_chat_sender actual;
-        bool okay = application_native_q1_wire_chat(&source, sender, team_only, NULL, &actual, recipients, count, error);
-        if (okay) *name = actual.name;
-        application_native_q1_wire_end(&source);
-        return okay;
-    }
-    if (!name || !recipients || !count)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source chat outputs");
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, sender, &slot, error);
-    if (!engine) return false;
-    int32_t reference; const char *sender_name; float sender_team = 0;
-    const qa_cvar_view *teamplay = qa_cvars_find(engine->cvars, "teamplay");
-    bool filtered = team_only && teamplay && teamplay->number != 0;
-    if (!q1_entity_reference(engine, sender, &reference, error) ||
-        !q1_wire_string(engine, reference, "netname", &sender_name, error) ||
-        (filtered && !application_qc_float(engine, reference, "team", &sender_team, error))) return false;
-    qa_actor_id values[255]; size_t extent = 0;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-        const application_qc_client *client = engine->clients + i;
-        if (!client->connected) continue;
-        if (!q1_entity_reference(engine, client->actor, &reference, error)) return false;
-        if (filtered) {
-            float team;
-            if (!application_qc_float(engine, reference, "team", &team, error)) return false;
-            if (team != sender_team) continue;
-        }
-        values[extent++] = client->actor;
-    }
-    memcpy(recipients, values, extent * sizeof(*values)); *name = sender_name; *count = extent;
-    return true;
-}
-
 bool qa_application_network_q1_kill(qa_application *app, qa_actor_id player, qa_error *error)
 {
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);

@@ -82,6 +82,7 @@ static bool recipient_current(const frontend_qc_messages *owner,const frontend_q
 static bool row_current(const frontend_qc_messages *owner, const qc_recipient *row)
 {
     if (!row->native) return recipient_current(owner, &row->camera);
+    if (frontend_network_local_input_owned(owner->frontend,row->physical_seat)) return false;
     frontend_config_legacy_view source; bool present=false; qa_actor_id actor;
     if (!current(owner) || owner->frontend->map_revision != row->native_map_revision ||
         !qa_application_player_actor(owner->application,row->native_seat,&actor) || !qa_actor_id_equal(actor,row->native_actor) ||
@@ -113,13 +114,14 @@ static bool native_rows(frontend_qc_messages *owner, qa_error *error)
              source.descriptor->selection.clock.kind != QA_CLOCK_QUAKEWORLD)) continue;
         bool qw=source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
         admitted_qw=admitted_qw || qw;
+        if (frontend_network_local_input_owned(owner->frontend,seat)) continue;
         bool retained=false;
         for (qc_recipient *row=owner->recipients;row;row=row->next)
             if (row->native && row->native_seat==logical && qa_actor_id_equal(row->native_actor,actor)) { retained=true;break; }
         if (retained) continue;
         qc_recipient *row=calloc(1,sizeof(*row));
         if (!row) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native Q1 local service recipient");
-        row->native=true;row->native_actor=actor;row->native_seat=logical;
+        row->native=true;row->native_actor=actor;row->native_seat=logical;row->physical_seat=seat;
         row->native_map_revision=owner->frontend->map_revision;
         bool okay;
         if (qw) {
@@ -228,11 +230,20 @@ static bool captured_target(const qa_nq_message *message,const qa_application_pr
 static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_message *message,
     const qa_application_protocol_event *event,size_t start,qa_error *error)
 {
+    bool local=true;
+    for(uint32_t seat=0;seat<owner->frontend->options.seats;++seat) {
+        qa_actor_id actor;
+        if(frontend_network_local_input_owned(owner->frontend,seat) &&
+            frontend_seat_actor_read(owner->frontend,seat,&actor) && qa_actor_id_equal(actor,row_actor(row))) {
+            local=false;break;
+        }
+    }
     if(message->op==QA_NQ_STUFFTEXT)
-        return frontend_view_q1_local_bonus_commands(owner->frontend,row_actor(row),message->data.text,error);
+        return !local || frontend_view_q1_local_bonus_commands(owner->frontend,row_actor(row),message->data.text,error);
     if(message->op==QA_NQ_BONUSFLASH)
-        return frontend_view_q1_local_bonus(owner->frontend,row_actor(row),error);
+        return !local || frontend_view_q1_local_bonus(owner->frontend,row_actor(row),error);
     if(message->op==QA_NQ_DAMAGE) {
+        if(!local) return true;
         if(row->native && !qa_q1_is_qw(row_protocol(row))) return true;
         return frontend_view_q1_local_damage(owner->frontend,row_actor(row),message->data.damage.armor,message->data.damage.blood,
             qa_v3(message->data.damage.origin[0],message->data.damage.origin[1],message->data.damage.origin[2]),error);
@@ -247,16 +258,18 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
         if((broadcast && !recipient.registry) || (!broadcast && recipient.registry))
             if(!qa_application_qc_message_music(owner->application,&row->camera.source,
                 recipient,event->time_ns,message->data.cd.track,error)) return false;
-        bool local=broadcast && !recipient.registry;
-        for(uint32_t seat=0;!local && seat<owner->frontend->options.seats;++seat) {
+        bool music_local=broadcast && !recipient.registry;
+        for(uint32_t seat=0;!music_local && seat<owner->frontend->options.seats;++seat) {
+            if(frontend_network_local_input_owned(owner->frontend,seat)) continue;
             uint32_t logical;qa_actor_id actor;
             if(frontend_seat_launch_id_read(owner->frontend,seat,&logical) &&
                 qa_application_player_actor(owner->application,logical,&actor))
-                local=qa_actor_id_equal(actor,recipient);
+                music_local=qa_actor_id_equal(actor,recipient);
         }
-        return !local || frontend_music_sources_world_cd(owner->frontend->music_sources,message->data.cd.track,error);
+        return !music_local || frontend_music_sources_world_cd(owner->frontend->music_sources,message->data.cd.track,error);
     }
     if(message->op==QA_NQ_TEMPENTITY && row->camera.recipient.registry) {
+        if(!local) return true;
         qa_actor_id beam_actor={0};
         if(message->data.temporary.kind==QA_Q1_TEMP_BEAM) {
             for(size_t i=0;i<event->reference_count;++i)
@@ -279,6 +292,7 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
         message->op!=QA_NQ_INTERMISSION && message->op!=QA_NQ_FINALE && message->op!=QA_NQ_CUTSCENE) return true;
     if(!row->next_sequence) return frontend_fail(error,QA_ERROR_MEMORY,"Local QC camera receipt sequence is exhausted");
     if(message->op==QA_NQ_SKYBOX) {
+        if(!local) return true;
         if(!event->recipient.registry && row->camera.recipient.registry) return true;
         if(owner->frontend->q1_sky) {
             if(!frontend_q1_sky_receive(owner->frontend->q1_sky,row->camera.source.provider,
@@ -379,6 +393,7 @@ static bool world_publish(frontend_qc_messages *owner,qa_error *error)
     const qa_unified_q1_world_state metadata={.level=(char *)world.level,.total_secrets=world.total_secrets,
         .total_monsters=world.total_monsters,.found_secrets=world.found_secrets,.killed_monsters=world.killed_monsters};
     for(uint32_t seat=0;seat<f->options.seats;++seat) {
+        if(frontend_network_local_input_owned(f,seat)) continue;
         uint32_t logical;qa_actor_id actor;
         if(!frontend_seat_launch_id_read(f,seat,&logical) ||
             !qa_application_player_actor(owner->application,logical,&actor)) continue;

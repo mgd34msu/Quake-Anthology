@@ -245,49 +245,6 @@ static int32_t color_number(const char *text)
 {
     return (int32_t)((uint32_t)strtol(text, NULL, 10) & 15u);
 }
-static bool source_chat(nq_frontend_peer *sender, qa_actor_id actor, bool team_only,
-    const char *cursor, qa_error *error)
-{
-    char argument[NQ_MESSAGE], body[127]; size_t used = 0; bool first = true, present;
-    for (;;) {
-        if (!qa_q1_token(&cursor, true, argument, sizeof(argument), &present, error)) return false;
-        if (!present) break;
-        if (!first && used < sizeof(body) - 1) body[used++] = ' ';
-        size_t length = strlen(argument), remaining = sizeof(body) - 1 - used;
-        if (length > remaining) length = remaining;
-        memcpy(body + used, argument, length); used += length; first = false;
-    }
-    body[used] = 0;
-    qa_actor_id recipients[255]; size_t count; const char *name;
-    frontend_nq_host *host = sender->host;
-    if (!qa_application_network_q1_chat_recipients(host->frontend->application, actor,
-        team_only, &name, recipients, &count, error)) return false;
-    char text[NQ_MESSAGE]; size_t name_length = strlen(name);
-    if (name_length > sizeof(text) - used - 6)
-        return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source chat exceeds native reliable message extent");
-    text[0] = 1; memcpy(text + 1, name, name_length);
-    size_t offset = name_length + 1; text[offset++] = ':'; text[offset++] = ' ';
-    memcpy(text + offset, body, used); offset += used; text[offset++] = '\n'; text[offset] = 0;
-    uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text};
-    if (!qa_nq_write(&writer, host->frontend->options.network_protocol,
-        (qa_nq_options){.standard_quake = true}, &message, NULL, 0)) return false;
-    qa_net_client_id selected[NQ_CLIENTS]; size_t selected_count = 0;
-    for (size_t i = 0; i < NQ_CLIENTS; ++i) {
-        nq_frontend_peer *peer = host->peers + i;
-        if (!peer->occupied || peer->retiring) continue;
-        qa_actor_id recipient;
-        if (!peer_actor(peer, &recipient, error)) return false;
-        for (size_t j = 0; j < count; ++j) if (qa_actor_id_equal(recipient, recipients[j])) {
-            selected[selected_count++] = peer->client;
-            break;
-        }
-    }
-    for (size_t i = 0; i < selected_count; ++i)
-        if (!qa_network_nq_server_reliable(host->runtime, selected[i],
-            (qa_bytes){bytes, qa_net_writer_size(&writer)}, error)) return false;
-    return true;
-}
 static size_t ordered_peers(frontend_nq_host *host, nq_frontend_peer *ordered[NQ_CLIENTS])
 {
     size_t count = 0;
@@ -370,8 +327,8 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!strcmp(command, "ping")) return source_ping(peer, error);
     if (!strcmp(command, "status")) return source_status(peer, error);
     qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_CONSOLE_Q1, command, false);
-    if (chat == QA_Q1_CHAT_ALL || chat == QA_Q1_CHAT_TEAM)
-        return source_chat(peer, actor, chat == QA_Q1_CHAT_TEAM, cursor, error);
+    if (chat != QA_Q1_CHAT_UNKNOWN)
+        return qa_application_actor_command(host->frontend->application, actor, text, error);
     if (!strcmp(command, "kill"))
         return qa_application_network_q1_kill(peer->host->frontend->application, actor, error);
     if (!strcmp(command, "pause")) {

@@ -63,12 +63,14 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player event queue changed during presentation");
         if (event.kind==QA_BUILTIN_SOURCE_PROMPT || event.kind==QA_BUILTIN_CLEAR_PROMPT) {
             for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat)
-                if (!frontend_source_prompt_receive(frontend->seats[seat].source_prompt,&event,error)) return false;
+                if (!frontend_network_local_input_owned(frontend,seat) &&
+                    !frontend_source_prompt_receive(frontend->seats[seat].source_prompt,&event,error)) return false;
             continue;
         }
         if ((event.kind!=QA_BUILTIN_CTF_STATUS && event.kind!=QA_BUILTIN_CTF_CAPTURE) ||
             !qa_application_provider_instance(frontend->application,event.provider)) continue;
         for (unsigned seat=0;seat<frontend->options.seats && !frontend->options.dedicated;++seat) {
+            if (frontend_network_local_input_owned(frontend,seat)) continue;
             qa_actor_id actor; uint32_t launch_seat;
             if (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
                 !qa_application_player_actor(frontend->application,launch_seat,&actor)) continue;
@@ -89,6 +91,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 player event queue changed during presentation");
         const qa_q2_player_event *event = &observed.event;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
+            if (frontend_network_local_input_owned(frontend,j)) continue;
             frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor; uint32_t launch_seat;
             if (!frontend_seat_launch_id_read(frontend,j,&launch_seat) ||
                 !qa_application_player_actor(frontend->application,launch_seat,&actor) ||
@@ -143,6 +146,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
         const qa_q2_map_event *event = &observed.event;
         if (event->kind != QA_Q2_MAP_HELP && event->kind != QA_Q2_MAP_HELP_COMPUTER && event->kind != QA_Q2_MAP_STORY) continue;
         for (unsigned j = 0; j < frontend->options.seats; ++j) {
+            if (frontend_network_local_input_owned(frontend,j)) continue;
             frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor;
             if (!frontend_seat_actor_read(frontend,j,&actor) ||
                 (event->recipient.registry && !qa_actor_id_equal(actor, event->recipient))) continue;

@@ -283,13 +283,29 @@ static bool audio_projection_append(frontend_event_state *state, qa_actor_id act
     else state->audio_head = entry;
     state->audio_tail = entry; return true;
 }
+static bool audio_receives(qa_frontend *frontend, uint32_t audience, uint32_t seat)
+{
+    return !frontend_network_local_input_owned(frontend,seat) &&
+        (audience == QA_AUDIO_WORLD || audience == seat);
+}
+static bool audio_play_receivers(qa_frontend *frontend, const qa_audio_play *sound,
+    int32_t milliseconds, qa_error *error)
+{
+    for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+        if (!audio_receives(frontend,sound->audience,seat)) continue;
+        qa_audio_play delivered = *sound;
+        delivered.audience = seat;
+        if (!qa_audio_engine_play(frontend->audio,&delivered,milliseconds,error)) return false;
+    }
+    return true;
+}
 static bool audio_play(qa_frontend *frontend, frontend_event_state *state,
     qa_actor_id actor, const qa_audio_play *sound, qa_error *error)
 {
     int32_t milliseconds = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX);
     if (state->audio_deferred || state->audio_head)
         return audio_projection_append(state, actor, (qa_actor_id){0}, sound, FRONTEND_AUDIO_PLAY, milliseconds, error);
-    return qa_audio_engine_play(frontend->audio, sound, milliseconds, error);
+    return audio_play_receivers(frontend, sound, milliseconds, error);
 }
 static bool audio_stop_channel(qa_frontend *frontend, frontend_event_state *state,
     qa_actor_id actor, uint64_t identity, qa_actor_owner owner,
@@ -321,7 +337,7 @@ static bool audio_projection_publish(qa_frontend *frontend, frontend_event_state
             (frontend_seat_actor_read(frontend, entry->sound.audience, &recipient) &&
                 qa_actor_id_equal(recipient, entry->recipient));
         if (entry->kind == FRONTEND_AUDIO_PLAY && delivered)
-            ok = qa_audio_engine_play(frontend->audio, &entry->sound, entry->milliseconds, error);
+            ok = audio_play_receivers(frontend, &entry->sound, entry->milliseconds, error);
         else if (entry->kind == FRONTEND_AUDIO_STOP_CHANNEL) qa_audio_engine_stop_channel(frontend->audio, entry->sound.actor,
             entry->sound.owner, entry->sound.family, entry->sound.channel);
         audio_projection_free(entry);
@@ -442,8 +458,9 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
 static bool seat_receives(qa_frontend *frontend, unsigned seat, qa_actor_id recipient)
 {
     qa_actor_id actor;
-    return !recipient.registry || (frontend_seat_actor_read(frontend,seat,&actor) &&
-        qa_actor_id_equal(actor, recipient));
+    return !frontend_network_local_input_owned(frontend,seat) &&
+        (!recipient.registry || (frontend_seat_actor_read(frontend,seat,&actor) &&
+            qa_actor_id_equal(actor, recipient)));
 }
 static bool pattern_set(char **out, const char *pattern, qa_error *error)
 {
@@ -477,7 +494,8 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     if (!state_read(frontend, &state, error)) return false;
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     for (unsigned seat = 0; seat < frontend->options.seats; ++seat)
-        if (!q1_fog_initialize(frontend, seat, &state->views[seat].q1_fog, error)) return false;
+        if (!frontend_network_local_input_owned(frontend,seat) &&
+            !q1_fog_initialize(frontend, seat, &state->views[seat].q1_fog, error)) return false;
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     frontend_retained_bounds **link = &state->bounds;
     while (*link) {
@@ -508,6 +526,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                     event.time_ns > clock.frame.time_ns)
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 fog has no matching source clock");
                 for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
+                    if (frontend_network_local_input_owned(frontend,seat)) continue;
                     frontend_q1_fog *fog = &state->views[seat].q1_fog;
                     if (fog->owner != event.provider || !qa_actor_id_equal(fog->recipient, event.actor)) continue;
                     q1_fog_sample(fog, event.time_ns, &fog->start_density, &fog->start_color);
@@ -531,6 +550,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         }
         if (event.kind != QA_BUILTIN_LIGHT || event.family != QA_GAME_Q1 || event.code < 0 || event.code >= FRONTEND_STYLES) continue;
         for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
+            if (frontend_network_local_input_owned(frontend,seat)) continue;
             frontend_event_view *view=&state->views[seat];
             if (!pattern_set(&view->q1_patterns[event.code], qa_strings_cstr(strings, event.resource), error)) return false;
             view->q1_style_owners[event.code]=event.provider;
@@ -853,7 +873,7 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
         !recipient.registry || seat >= frontend->options.seats ||
         !frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound requires its actual delivered physical client");
-    if (!frontend->audio) return true;
+    if (!frontend->audio || frontend_network_local_input_owned(frontend,seat)) return true;
     const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
     if (!name || !*name) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound has no source resource name");
     qa_audio_family family=event->family==QA_GAME_Q1?QA_AUDIO_Q1:QA_AUDIO_Q2;
@@ -890,7 +910,7 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     if (ok && (state->audio_deferred || state->audio_head))
         ok = audio_projection_append(state, event->actor, recipient, &sound,
             FRONTEND_AUDIO_PLAY, milliseconds, error);
-    else if (ok) ok = qa_audio_engine_play(frontend->audio, &sound, milliseconds, error);
+    else if (ok) ok = audio_play_receivers(frontend, &sound, milliseconds, error);
     qa_audio_asset_release(asset); return ok;
 }
 typedef struct builtin_muzzle_audio {
@@ -942,6 +962,7 @@ static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *eve
     frontend_event_state *state;
     if (!state_read(frontend,&state,error)) return false;
     for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+        if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_actor_id recipient;
         if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
         if (audience && audience->captured) {
@@ -1012,6 +1033,7 @@ bool frontend_audio_actor_position(qa_frontend *frontend, qa_actor_id actor, uin
     qa_vec3 mins = qa_vec_add(body->origin, body->bounds.mins);
     qa_vec3 maxs = qa_vec_add(body->origin, body->bounds.maxs);
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+        if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_audio_mixer *mixer = qa_audio_engine_seat_mixer(frontend->audio, seat);
         if (!mixer) continue;
         qa_vec3 listener = qa_audio_mixer_listener_origin(mixer);
@@ -1152,6 +1174,12 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
         if (entry->static_key) {
             for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
                 qa_audio_mixer *mixer = qa_audio_engine_seat_mixer(frontend->audio, seat);
+                if (!audio_receives(frontend,entry->loop.sound.audience,seat)) {
+                    if (mixer && entry->static_mixers[seat] == mixer)
+                        qa_audio_mixer_remove_static(mixer,entry->static_key);
+                    entry->static_mixers[seat] = NULL;
+                    continue;
+                }
                 if (!mixer) { entry->static_mixers[seat] = NULL; continue; }
                 if (entry->static_mixers[seat] == mixer) continue;
                 const qa_audio_play *sound = &entry->loop.sound;
@@ -1177,7 +1205,12 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
                 }
             }
             entry->loop.frame_number = (int32_t)(frontend->frame_number & INT32_MAX);
-            if (!qa_audio_engine_loop(frontend->audio, &entry->loop, error)) return false;
+            for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+                if (!audio_receives(frontend,entry->loop.sound.audience,seat)) continue;
+                qa_audio_loop delivered = entry->loop;
+                delivered.sound.audience = seat;
+                if (!qa_audio_engine_loop(frontend->audio,&delivered,error)) return false;
+            }
         }
         link = &entry->next;
     }

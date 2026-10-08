@@ -1,5 +1,6 @@
 #include "native_q1_wire.h"
 #include "native_q1_console.h"
+#include "guest_qc_internal.h"
 #include "qa/application_startup_prepare.h"
 #include "native_q1_wire_qw.h"
 #include "map_players_private.h"
@@ -934,12 +935,16 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
         return application_native_q1_qw_emit(p, event, message, recipient, reliable, signon, reference, error);
     uint8_t bytes[8192]; qa_net_writer writer;
     qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    qa_q1_options options;
-    double seconds;
-    if (!qa_q1_source_respawn_options_read(p->state.q1, &options, &seconds, error)) return false;
-    bool standard = options.program != QA_Q1_HIPNOTIC && options.program != QA_Q1_ROGUE &&
-        options.program != QA_Q1_MG3;
-    if (!qa_nq_write(&writer, protocol(), (qa_nq_options){.standard_quake = standard},
+    bool standard = true;
+    qa_net_protocol_id selected_protocol = protocol();
+    if (p->kind == APPLICATION_PROVIDER_QC) selected_protocol = p->state.qc.engine->protocol;
+    else {
+        qa_q1_options options; double seconds;
+        if (!qa_q1_source_respawn_options_read(p->state.q1, &options, &seconds, error)) return false;
+        standard = options.program != QA_Q1_HIPNOTIC && options.program != QA_Q1_ROGUE &&
+            options.program != QA_Q1_MG3;
+    }
+    if (!qa_nq_write(&writer, selected_protocol, (qa_nq_options){.standard_quake = standard},
                     message, NULL, 0)) return false;
     qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_CLOCK_NETQUAKE,
         .time_ns = event->time_ns, .recipient = recipient, .origin = event->origin,
@@ -1012,6 +1017,12 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
     qa_error *error) {
     if (!event || event->family != QA_GAME_Q1) return true;
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
+        p->launch->selection.clock.kind == QA_CLOCK_NETQUAKE && event->provider == p->owner &&
+        event->kind == QA_BUILTIN_MESSAGE && (event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL)) {
+        qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text(app, event->text)};
+        return emit_message(p, event, &message, event->actor, true, false, NULL, error);
+    }
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
         p->close_pending || !p->launch || (p->launch->selection.clock.kind != QA_CLOCK_NETQUAKE &&
          p->launch->selection.clock.kind != QA_CLOCK_QUAKEWORLD) ||

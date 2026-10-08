@@ -510,6 +510,7 @@ static bool particle_client_current(qa_frontend *frontend, const frontend_partic
 {
     if (!delivery_world_current(frontend, owner->world_source, owner->map_identity)) return false;
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+        if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_actor_id actor;
         if (frontend_seat_actor_read(frontend, seat, &actor) &&
             qa_actor_id_equal(actor, owner->recipient)) return true;
@@ -813,6 +814,7 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     const frontend_q2_controls *controls,frontend_particle_owner **out,qa_error *error)
 {
     *out=NULL;
+    if (frontend_network_local_input_owned(frontend,seat)) return true;
     if (view->family!=QA_GAME_Q2) return true;
     qa_actor_id recipient;
     if (!frontend_seat_actor_read(frontend,seat,&recipient)) return true;
@@ -1191,6 +1193,7 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
             .origin = {event->origin[0], event->origin[1], event->origin[2]}, .volume = 1, .attenuation = 1};
         if (!received) return frontend_event_sound(frontend, &sound, error);
         for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+            if (frontend_network_local_input_owned(frontend,seat)) continue;
             qa_actor_id recipient;
             if (frontend_seat_actor_read(frontend, seat, &recipient) && qa_actor_id_equal(recipient, owner->recipient))
                 return frontend_particle_sound(frontend, &sound, seat, recipient, error);
@@ -1768,6 +1771,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     uint64_t sample,server; float back_lerp; bool physical;
     if (!client_sample(frontend,&sample,&server,&back_lerp,&physical,error)) return false;
     for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+        if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_actor_id recipient;
         if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
         bool received=false;
@@ -1944,6 +1948,7 @@ static bool q2_builtin_beam(qa_frontend *frontend,const qa_builtin_event *event,
 {
     if (!q2_delivery_admit(frontend,event->provider,audience)) return true;
     for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+        if (frontend_network_local_input_owned(frontend,seat)) continue;
         qa_actor_id recipient;if (!frontend_seat_actor_read(frontend,seat,&recipient)) continue;
         bool received=false;
         for (size_t i=0;i<audience->count;++i)
@@ -2000,6 +2005,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             (void)qa_application_event_q2_audience_at(frontend->application, i, &audience);
             if (!q2_delivery_admit(frontend,event.provider,&audience)) continue;
             for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+                if (frontend_network_local_input_owned(frontend,seat)) continue;
                 qa_actor_id recipient;
                 if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
                 bool received = false;
@@ -2021,6 +2027,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
         (void)qa_application_q2_map_event_audience_at(frontend->application, i, &audience);
         if (!q2_delivery_admit(frontend,source.provider,&audience)) continue;
         for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
+            if (frontend_network_local_input_owned(frontend,seat)) continue;
             qa_actor_id recipient;
             if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
             bool received = false;
@@ -2075,6 +2082,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
 {
     if (!frontend || !world || seat>=frontend->options.seats || frontend->resource_inventory)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 explosion lights require their actual physical seat");
+    if (frontend_network_local_input_owned(frontend,seat)) return true;
     if (!particle_state(frontend,error)) return false;
     qa_actor_id recipient;
     if (!frontend_seat_actor_read(frontend,seat,&recipient)) return true;
@@ -2216,6 +2224,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
 {
     if (!frontend || !world || seat >= frontend->options.seats)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Particle draw requires its actual physical seat");
+    if (frontend_network_local_input_owned(frontend,seat)) return true;
     const qa_scene_view *view = &world->view;
     if (!frontend->particles && !particle_state(frontend,error)) return false;
     frontend_q2_controls controls;
