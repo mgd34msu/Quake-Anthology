@@ -47,9 +47,13 @@ typedef struct cpu_triangle {
   cpu_triangle_attributes attributes;
 } cpu_triangle;
 static const double unit_color[4] = {1, 1, 1, 1};
+typedef struct cpu_projection {
+  double x, y, z, q, scale;
+  bool ready;
+} cpu_projection;
 typedef struct cpu_triangle_output {
   struct qa_render_workers *pool;
-  size_t *projected;
+  cpu_projection *projected;
   size_t projected_count;
   bool failed;
 } cpu_triangle_output;
@@ -103,7 +107,7 @@ struct qa_render_workers {
   size_t triangle_count, triangle_capacity;
   cpu_raster_command *commands;
   size_t command_count, command_capacity;
-  size_t *projected;
+  cpu_projection *projected;
   size_t projected_capacity;
   cpu_raster_slice *slices;
   size_t slice_count, slice_capacity;
@@ -771,14 +775,16 @@ static screen_vertex project(const cpu_vertex *vertex,
   double subpixel = (double)(UINT32_C(1) << renderer->options.subpixel_bits),
          w = vertex->clip[3];
   bool retained = output && output->projected && index < output->projected_count;
-  if (retained && output->projected[index] != SIZE_MAX) {
-    size_t location = output->projected[index];
-    const screen_vertex *previous =
-        &output->pool->triangles[location / 3].vertices[location % 3];
+  if (retained && output->projected[index].ready) {
+    cpu_projection *previous = &output->projected[index];
+    if (previous->scale != scale) {
+      previous->q = scale / w;
+      previous->scale = scale;
+    }
     return (screen_vertex){previous->x, previous->y, previous->z,
-        previous->scale == scale ? previous->q : scale / w, scale, vertex, index};
+        previous->q, scale, vertex, index};
   }
-  return (screen_vertex){
+  screen_vertex result = {
       snap(view.x + (vertex->clip[0] / w + 1) * view.width * 0.5, subpixel),
       snap(view.y + (1 - vertex->clip[1] / w) * view.height * 0.5, subpixel),
       vertex->clip[2] / w,
@@ -786,6 +792,10 @@ static screen_vertex project(const cpu_vertex *vertex,
       scale,
       vertex,
       retained ? index : SIZE_MAX};
+  if (retained)
+    output->projected[index] = (cpu_projection){result.x, result.y, result.z,
+        result.q, scale, true};
+  return result;
 }
 static edge_equation edge(screen_vertex a, screen_vertex b) {
   return (edge_equation){a.y - b.y, b.x - a.x, a.x * b.y - a.y * b.x,
@@ -997,10 +1007,6 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
   size_t first = pool->triangle_count++;
   pool->triangles[first] = prepared;
-  if (output->projected)
-    for (size_t i = 0; i < 3; ++i)
-      if (prepared.vertices[i].source_index != SIZE_MAX)
-        output->projected[prepared.vertices[i].source_index] = first * 3 + i;
 }
 static cpu_vertex interpolate_line(const cpu_vertex *a, const cpu_vertex *b,
                                    double t) {
@@ -1298,7 +1304,7 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
     output->projected_count = 0;
     if (count && count <= SIZE_MAX / sizeof(*pool->projected)) {
       if (pool->projected_capacity < count) {
-        size_t *projected = realloc(pool->projected, count * sizeof(*projected));
+        cpu_projection *projected = realloc(pool->projected, count * sizeof(*projected));
         if (projected) {
           pool->projected = projected;
           pool->projected_capacity = count;
@@ -1307,7 +1313,7 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
       if (pool->projected_capacity >= count) {
         output->projected = pool->projected;
         output->projected_count = count;
-        memset(output->projected, 0xff, count * sizeof(*output->projected));
+        for (size_t i = 0; i < count; ++i) output->projected[i].ready = false;
       }
     }
   }

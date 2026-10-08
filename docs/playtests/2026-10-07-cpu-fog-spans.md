@@ -531,3 +531,56 @@ PNGs, parent `qualification-result.json` and `root-owned-cleanup.json`.
 THE-843 remains open for retail Q1 classic/rerelease and Q2 classic CPU/GL
 checks, actual skin samples, and the other unqualified paths. This run
 does not close THE-196's CPU frame-time targets.
+
+## Retain indexed projections before triangle rejection
+
+The shared raster path previously remembered an indexed vertex projection
+only through an accepted triangle. A culled, degenerate or scissor-rejected
+triangle left nothing reusable, and a cache hit borrowed coordinates from
+the prepared-triangle array. The new per-draw scratch records numeric
+x/y/z/q/scale on first projection. It retains current vertex attributes,
+recomputes q when the triangle scale changes, resets at the next draw and
+leaves generated clipped vertices on the existing uncached path.
+
+The bounded actual-renderer comparison passed 324 cases in each SSE2 and
+portable raster wrapper. Prepared numeric triangle values, coverage and
+attribute planes match, as do immediate/queued RGBA, native float depth,
+stencil and floating-point state. Cases include ordinary, Source array
+and discrete primitives, clipping, culling, unequal W, changing scales,
+four rounding modes and a second draw with reused indices and a cropped
+viewport. Linked production libraries retain their normal build policy;
+this is not a whole portable application build or allocator-failure proof.
+
+Strict build and six configured CTests passed. The exact candidate matched
+3,054 committed SDK inputs apart from this explicit raster change, excluding
+the 17 inherited save/Q1 edits. A fresh copy of the 34 owner settings reached
+retail base1, changed and restored filtering, captured three completed PNGs
+and quit with zero. All three images were viewed; original settings and
+candidate pins were unchanged, and all 15 owned PID/start tokens were absent.
+
+The quiet sequential pair used installed `98225ced`, affinity `0-7,12-19`,
+600 presentation intervals after warm-up, identical texture/fog settings,
+40 Hz, FOV 120, `r_smp` zero and uncapped output. No debugger, profiler,
+compiler, audio or other game ran during measurement.
+
+| Drawable | Baseline median ms | Candidate median ms | Baseline p99 ms | Candidate p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 640×400 | 5.837982 | 5.384437 | 15.266607 | 14.770907 |
+| 320×200 | 4.230093 | 3.864980 | 5.868992 | 5.591746 |
+
+Separate warmed renderer means were 4.719669 → 4.305289 ms and
+3.294314 → 2.846035 ms. Span coverage/writes and worker dispatch counts
+matched within each pair. Animated model/particle triangle and skin-job
+counts varied, so the retail pair is not an identical full-frame pixel
+comparison. Every run quit with zero, preserved build/profile pins and
+left no owned processes.
+
+The scratch grows from 8 to 48 bytes per declared vertex and uses the
+existing capacity-growth allocation. There is no new per-frame allocation
+or identity mechanism. The consistent frame improvement justifies this
+tradeoff for the measured workload; both CPU targets remain open.
+
+Evidence: `qa-the196-indexed-projection-20261007/root-build-result.json`,
+the before/after raw component references and logs,
+`qa-private-av-0hjrgbxc/installer-shaped-qualification.json`, and
+`qa-the196-vector-return-plan-qxnth4kt/paired-result.json`.
