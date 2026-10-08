@@ -124,6 +124,11 @@ bool qa_hud_ctf_status(qa_hud *, const qa_builtin_event *, qa_error *);
  * physical-seat dispatcher. The three-second deadline uses Q1 GAME time. */
 bool qa_hud_ctf_capture(qa_hud *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_hud_draw(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
+/* Layout providers borrow the physical player's state for this draw. Content
+ * leaves retained messages untouched; the messages phase draws/expires them once. */
+bool qa_hud_draw_content(qa_hud *, const qa_hud_options *, const qa_hud_frame *,
+    qa_scene_frame *, qa_error *);
+bool qa_hud_draw_messages(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
 /* Literal already-localized captions use the actual seat UI fonts/preferences.
  * Area is a caller-owned display-pixel region; scale is its viewport fit.
  * This draws only the bounded caption panel between completed UI callbacks. */

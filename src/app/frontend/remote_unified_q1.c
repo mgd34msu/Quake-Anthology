@@ -470,8 +470,8 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->frontend=f;o->replica=r;o->media=m;o->options=*options;o->epoch=frontend_remote_unified_epoch(r);
     qa_builtin_random_seed(&o->random,1);
     o->localizations=qa_localization_pool_create(e);const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
-    bool ok=o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o)) && qa_hud_create(&(qa_hud_options){.ui=f->seats[d->physical_seat].ui,
-        .application=d->application,.seat=d->physical_seat,.context=o,.read=hud_read},&o->hud,e);
+    bool ok=o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o));
+    if(ok)o->hud=f->seats[d->physical_seat].hud;
     if(!ok) {qa_localization_pool_destroy(o->localizations);free(o);return false;}
     o->ctf[0].label="Red";o->ctf[1].label="Blue";o->ctf[2].label="Flags";o->ctf[3].label="Runes";*out=o;return true;
 }
@@ -999,7 +999,8 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
         uint32_t width=(uint32_t)((float)o->finale_image->logical_width*scale),height=(uint32_t)((float)o->finale_image->logical_height*scale);
         qa_scene_rect rectangle={.x=viewport.x+(int32_t)(((int64_t)viewport.width-width)/2),.y=viewport.y+(int32_t)(16*scale),.width=width,.height=height};
         ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},e);}
-    if(ok)ok=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
+    if(ok)ok=qa_hud_draw_content(o->hud,&(qa_hud_options){.ui=ui,.application=d->application,
+        .seat=d->physical_seat,.context=o,.read=hud_read},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
         .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=o->frontend->seats[d->physical_seat].scores},frame,e);
     o->busy=false;return ok && mutable(o,e);
 }
@@ -1023,7 +1024,6 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     for(q1_group *g=o->groups;g;g=g->next)if(!frontend_received_music_destroy(&g->music,e)){o->music_retiring=false;return false;}
     o->music_retiring=false;
     for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->mixer){qa_audio_mixer_remove_static(a->mixer,a->identity);a->mixer=NULL;}
-    if(o->hud && !qa_hud_destroy(o->hud,e))return false;
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}

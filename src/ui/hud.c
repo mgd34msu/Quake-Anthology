@@ -846,185 +846,193 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
     return q1_number(hud, status, frame, place, 248, (int32_t)status->ammo_count,
         status->ammo_count <= 10, scene, error);
 }
-static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
+static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
+    bool content, bool messages, qa_error *error) {
     qa_ui *ui = hud->options.ui;
     ui->scale = hud_scale(frame->safe_area, frame->scale);
     if (!isfinite(ui->scale) || ui->scale <= 0) return ui_fail(error, "HUD scale overflow");
     ui->bias_x = (float)frame->safe_area.x + ((float)frame->safe_area.width - 640 * ui->scale) * .5f;
     ui->bias_y = (float)frame->safe_area.y + ((float)frame->safe_area.height - 480 * ui->scale) * .5f;
     qa_hud_data data = {.crosshair_visible = true, .crosshair_color = {1, 1, 1, 1}};
-    if (hud->options.read && !hud->options.read(hud->options.context, frame, &data, error)) return false;
-    if ((data.vital_count && !data.vitals) || (data.bar_count && !data.bars) ||
-        (data.timer_count && !data.timers) || (data.score_count && !data.scores) ||
-        (data.help_count && !data.help_lines) || (data.caption_count && !data.captions))
-        return ui_fail(error, "HUD source returned invalid spans");
     qa_scene_rect target = frame->safe_area;
-    if (frame->weapon_only) return weapon_draw(hud, frame, &data, scene, error);
-    if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
-        frame, scene, error)) return false;
-    qa_combat_state combat;
-    if (frame->actor.registry && !data.source_vitals && !data.q1.present && !qa_combat_read(qa_application_combat(hud->options.application),
-        frame->actor, &combat, error)) return false;
-    qa_hud_value canonical[2];
-    if (frame->actor.registry && !data.source_vitals && !data.q1.present) {
-        canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = data.health_icon};
-        canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
-        data.vitals = canonical; data.vital_count = 2;
-    }
-    qa_inventory *inventory = qa_application_inventory(hud->options.application);
-    qa_item_definition *definitions = NULL;
-    size_t definition_count = 0;
-    if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals) ||
-        (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
-        if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
-        if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
-        if (definition_count) {
-            definitions = qa_arena_alloc(&scene->storage, definition_count * sizeof(*definitions),
-                                          _Alignof(qa_item_definition), error);
-            if (!definitions || !qa_inventory_item_definitions(inventory, frame->actor,
-                definitions, definition_count, &definition_count, error)) return false;
+    if (content) {
+        if (hud->options.read && !hud->options.read(hud->options.context, frame, &data, error)) return false;
+        if ((data.vital_count && !data.vitals) || (data.bar_count && !data.bars) ||
+            (data.timer_count && !data.timers) || (data.score_count && !data.scores) ||
+            (data.help_count && !data.help_lines) || (data.caption_count && !data.captions))
+            return ui_fail(error, "HUD source returned invalid spans");
+        if (frame->weapon_only) return weapon_draw(hud, frame, &data, scene, error);
+        if (hud->options.source_draw && !hud->options.source_draw(hud->options.context,
+            frame, scene, error)) return false;
+        qa_combat_state combat;
+        if (frame->actor.registry && !data.source_vitals && !data.q1.present && !qa_combat_read(qa_application_combat(hud->options.application),
+            frame->actor, &combat, error)) return false;
+        qa_hud_value canonical[2];
+        if (frame->actor.registry && !data.source_vitals && !data.q1.present) {
+            canonical[0] = (qa_hud_value){.label = "Health", .value = combat.health, .warning = combat.health <= 25, .icon = data.health_icon};
+            canonical[1] = (qa_hud_value){.label = "Armor", .value = combat.armor.regular.points};
+            data.vitals = canonical; data.vital_count = 2;
+        }
+        qa_inventory *inventory = qa_application_inventory(hud->options.application);
+        qa_item_definition *definitions = NULL;
+        size_t definition_count = 0;
+        if (frame->actor.registry && ((frame->show_inventory && !data.source_vitals) ||
+            (data.selected_weapon && !data.source_vitals && !data.weapon.present))) {
+            if (!qa_inventory_item_definitions(inventory, frame->actor, NULL, 0, &definition_count, error)) return false;
+            if (definition_count > SIZE_MAX / sizeof(*definitions)) return ui_fail(error, "HUD item definition overflow");
+            if (definition_count) {
+                definitions = qa_arena_alloc(&scene->storage, definition_count * sizeof(*definitions),
+                                              _Alignof(qa_item_definition), error);
+                if (!definitions || !qa_inventory_item_definitions(inventory, frame->actor,
+                    definitions, definition_count, &definition_count, error)) return false;
+                for (size_t i = 0; i < definition_count; ++i) {
+                    const char *label = definitions[i].label ? definitions[i].label : "";
+                    size_t length = strlen(label);
+                    char *copy = qa_arena_alloc(&scene->storage, length + 1, 1, error);
+                    if (!copy) return false;
+                    memcpy(copy, label, length + 1); definitions[i].label = copy;
+                }
+            }
+        }
+        if (frame->actor.registry && data.selected_weapon && !data.source_vitals && !data.weapon.present) {
             for (size_t i = 0; i < definition_count; ++i) {
-                const char *label = definitions[i].label ? definitions[i].label : "";
-                size_t length = strlen(label);
-                char *copy = qa_arena_alloc(&scene->storage, length + 1, 1, error);
-                if (!copy) return false;
-                memcpy(copy, label, length + 1); definitions[i].label = copy;
+                const qa_item_definition *weapon = definitions + i;
+                if (weapon->item != data.selected_weapon || !weapon->ammo) continue;
+                qa_inventory_entry ammo;
+                if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error)) return false;
+                data.weapon = (qa_hud_weapon){.present = true, .label = weapon->label,
+                    .ammo_count = ammo.count, .finite_ammo = true, .has_ammo_to_start = ammo.count > 0};
+                break;
+            }
+        }
+        if (data.q1.present && !frame->source_status_native) {
+            if (!q1_status_draw(hud, frame, &data, scene, error)) return false;
+        } else if (!weapon_draw(hud, frame, &data, scene, error)) return false;
+        size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
+        for (size_t i = 0; !data.q1.present && i < data.vital_count; ++i)
+            if (!status_vital(hud, frame, data.vitals + i,i==0?&data.health_team_face:NULL,
+                status_count, i, scene, error)) return false;
+        for (size_t i = 0; i < data.bar_count; ++i) {
+            const qa_hud_value *bar = &data.bars[i];
+            float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;
+            float y = 90 + (float)i * 24;
+            if (!ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, 240, 16},
+                           (qa_scene_vec4){.1f, .1f, .1f, .8f}, error) ||
+                !ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, width, 16},
+                           (qa_scene_vec4){.7f, .2f, .1f, .9f}, error) ||
+                !text(hud, scene, target, 320, y + 2, bar->label, (qa_scene_vec4){1, 1, 1, 1},
+                        .9f, QA_FONT_ALIGN_CENTER, error)) return false;
+        }
+        for (size_t i = 0; i < data.timer_count; ++i) {
+            const qa_hud_timer *timer = &data.timers[i];
+            if (timer->until_ns <= frame->time_ns) continue;
+            double seconds = ceil((double)(timer->until_ns - frame->time_ns) / 1e9);
+            float y = 120 + (float)i * 40;
+            if (!icon(hud, scene, target, timer->icon, (qa_scene_rect_f){544, y, 28, 28},
+                (qa_scene_vec4){1, 1, 1, 1}, error) ||
+                !number(hud, scene, target, 590, y, timer->label, seconds, seconds <= 5, error)) return false;
+        }
+        if (data.crosshair_visible && !frame->show_scores && !frame->show_inventory) {
+            float size=data.crosshair_size>0?data.crosshair_size:8;
+            if (!isfinite(size) || size<2 || size>32) return ui_fail(error,"Invalid HUD crosshair size");
+            qa_scene_rect view = frame->viewport.width && frame->viewport.height ? frame->viewport : target;
+            float center_x = ((float)view.x + (float)view.width * .5f - ui->bias_x) / ui->scale;
+            float center_y = ((float)view.y + (float)view.height * .5f - ui->bias_y) / ui->scale;
+            if (data.crosshair) {
+                float picture_size=data.crosshair_size>0?size:16;
+                qa_scene_rect_f pixels = {ui->bias_x + (center_x-picture_size*.5f) * ui->scale,
+                    ui->bias_y + (center_y-picture_size*.5f) * ui->scale,
+                    picture_size * ui->scale, picture_size * ui->scale};
+                if (!qa_scene_frame_picture_f(scene, data.crosshair, target, pixels,
+                    (qa_scene_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
+            } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
+                       !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
+        }
+        if (frame->show_inventory && !data.source_vitals && frame->actor.registry) {
+            size_t count = 0;
+            if (!qa_inventory_entries(inventory, frame->actor, NULL, 0, &count, error)) return false;
+            if (count > SIZE_MAX / sizeof(qa_inventory_entry)) return ui_fail(error, "HUD inventory overflow");
+            qa_inventory_entry *entries = count ? qa_arena_alloc(&scene->storage, count * sizeof(*entries),
+                _Alignof(qa_inventory_entry), error) : NULL;
+            if (count && (!entries || !qa_inventory_entries(inventory, frame->actor, entries, count, &count, error))) return false;
+            float y = 110;
+            for (size_t i = 0; i < count; ++i) {
+                if (entries[i].count <= 0) continue;
+                for (size_t j = 0; j < definition_count; ++j) {
+                    if (definitions[j].item != entries[i].item) continue;
+                    if (!number(hud, scene, target, 320, y, definitions[j].label, entries[i].count, false, error)) return false;
+                    y += 30; break;
+                }
+            }
+        }
+        if (frame->show_scores) {
+            for (size_t i = 0; i < data.score_count; ++i) {
+                char row[256];
+                const qa_hud_score *score = &data.scores[i];
+                snprintf(row, sizeof(row), "%s  %s  %d  %d%s", score->name ? score->name : "",
+                    score->team ? score->team : "", score->score, score->ping, score->spectator ? "  spectator" : "");
+                if (!text(hud, scene, target, 64, 110 + (float)i * 20, row,
+                    score->local ? (qa_scene_vec4){1, .8f, .3f, 1} : (qa_scene_vec4){1, 1, 1, 1},
+                    1, QA_FONT_ALIGN_LEFT, error)) return false;
             }
         }
     }
-    if (frame->actor.registry && data.selected_weapon && !data.source_vitals && !data.weapon.present) {
-        for (size_t i = 0; i < definition_count; ++i) {
-            const qa_item_definition *weapon = definitions + i;
-            if (weapon->item != data.selected_weapon || !weapon->ammo) continue;
-            qa_inventory_entry ammo;
-            if (!qa_inventory_entry_read(inventory, frame->actor, weapon->ammo, &ammo, error)) return false;
-            data.weapon = (qa_hud_weapon){.present = true, .label = weapon->label,
-                .ammo_count = ammo.count, .finite_ammo = true, .has_ammo_to_start = ammo.count > 0};
-            break;
-        }
-    }
-    if (data.q1.present && !frame->source_status_native) {
-        if (!q1_status_draw(hud, frame, &data, scene, error)) return false;
-    } else if (!weapon_draw(hud, frame, &data, scene, error)) return false;
-    size_t status_count = data.vital_count + (data.weapon.present && !data.weapon.native_status ? 1 : 0);
-    for (size_t i = 0; !data.q1.present && i < data.vital_count; ++i)
-        if (!status_vital(hud, frame, data.vitals + i,i==0?&data.health_team_face:NULL,
-            status_count, i, scene, error)) return false;
-    for (size_t i = 0; i < data.bar_count; ++i) {
-        const qa_hud_value *bar = &data.bars[i];
-        float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;
-        float y = 90 + (float)i * 24;
-        if (!ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, 240, 16},
-                       (qa_scene_vec4){.1f, .1f, .1f, .8f}, error) ||
-            !ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, width, 16},
-                       (qa_scene_vec4){.7f, .2f, .1f, .9f}, error) ||
-            !text(hud, scene, target, 320, y + 2, bar->label, (qa_scene_vec4){1, 1, 1, 1},
-                    .9f, QA_FONT_ALIGN_CENTER, error)) return false;
-    }
-    for (size_t i = 0; i < data.timer_count; ++i) {
-        const qa_hud_timer *timer = &data.timers[i];
-        if (timer->until_ns <= frame->time_ns) continue;
-        double seconds = ceil((double)(timer->until_ns - frame->time_ns) / 1e9);
-        float y = 120 + (float)i * 40;
-        if (!icon(hud, scene, target, timer->icon, (qa_scene_rect_f){544, y, 28, 28},
-            (qa_scene_vec4){1, 1, 1, 1}, error) ||
-            !number(hud, scene, target, 590, y, timer->label, seconds, seconds <= 5, error)) return false;
-    }
-    if (data.crosshair_visible && !frame->show_scores && !frame->show_inventory) {
-        float size=data.crosshair_size>0?data.crosshair_size:8;
-        if (!isfinite(size) || size<2 || size>32) return ui_fail(error,"Invalid HUD crosshair size");
-        qa_scene_rect view = frame->viewport.width && frame->viewport.height ? frame->viewport : target;
-        float center_x = ((float)view.x + (float)view.width * .5f - ui->bias_x) / ui->scale;
-        float center_y = ((float)view.y + (float)view.height * .5f - ui->bias_y) / ui->scale;
-        if (data.crosshair) {
-            float picture_size=data.crosshair_size>0?size:16;
-            qa_scene_rect_f pixels = {ui->bias_x + (center_x-picture_size*.5f) * ui->scale,
-                ui->bias_y + (center_y-picture_size*.5f) * ui->scale,
-                picture_size * ui->scale, picture_size * ui->scale};
-            if (!qa_scene_frame_picture_f(scene, data.crosshair, target, pixels,
-                (qa_scene_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
-        } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
-                   !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
-    }
-    if (frame->show_inventory && !data.source_vitals && frame->actor.registry) {
-        size_t count = 0;
-        if (!qa_inventory_entries(inventory, frame->actor, NULL, 0, &count, error)) return false;
-        if (count > SIZE_MAX / sizeof(qa_inventory_entry)) return ui_fail(error, "HUD inventory overflow");
-        qa_inventory_entry *entries = count ? qa_arena_alloc(&scene->storage, count * sizeof(*entries),
-            _Alignof(qa_inventory_entry), error) : NULL;
-        if (count && (!entries || !qa_inventory_entries(inventory, frame->actor, entries, count, &count, error))) return false;
-        float y = 110;
-        for (size_t i = 0; i < count; ++i) {
-            if (entries[i].count <= 0) continue;
-            for (size_t j = 0; j < definition_count; ++j) {
-                if (definitions[j].item != entries[i].item) continue;
-                if (!number(hud, scene, target, 320, y, definitions[j].label, entries[i].count, false, error)) return false;
-                y += 30; break;
-            }
-        }
-    }
-    if (frame->show_scores) {
-        for (size_t i = 0; i < data.score_count; ++i) {
-            char row[256];
-            const qa_hud_score *score = &data.scores[i];
-            snprintf(row, sizeof(row), "%s  %s  %d  %d%s", score->name ? score->name : "",
-                score->team ? score->team : "", score->score, score->ping, score->spectator ? "  spectator" : "");
-            if (!text(hud, scene, target, 64, 110 + (float)i * 20, row,
-                score->local ? (qa_scene_vec4){1, .8f, .3f, 1} : (qa_scene_vec4){1, 1, 1, 1},
+    if (messages && !frame->weapon_only) {
+        for (size_t i = 0; i < hud->notice_count; ++i) {
+            const hud_message *notice = &hud->notices[i];
+            if (notice->starts > frame->time_ns) continue;
+            if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
+                notice->chat ? (qa_scene_vec4){.6f, 1, .6f, 1} : (qa_scene_vec4){1, 1, 1, 1},
                 1, QA_FONT_ALIGN_LEFT, error)) return false;
         }
-    }
-    for (size_t i = 0; i < hud->notice_count; ++i) {
-        const hud_message *notice = &hud->notices[i];
-        if (notice->starts > frame->time_ns) continue;
-        if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
-            notice->chat ? (qa_scene_vec4){.6f, 1, .6f, 1} : (qa_scene_vec4){1, 1, 1, 1},
-            1, QA_FONT_ALIGN_LEFT, error)) return false;
-    }
-    if (hud->center_count && hud->centers[0].starts <= frame->time_ns) {
-        const hud_message *center = &hud->centers[0];
-        const char *value = center->text;
-        if (!center->instant && center->character_ns) {
-            uint64_t characters = (frame->time_ns - center->starts) / center->character_ns;
-            qa_bytes bytes = {(const uint8_t *)value, strlen(value)};
-            size_t offset = 0; uint32_t scalar;
-            while (characters && qa_utf8_next(bytes, &offset, &scalar)) --characters;
-            char *shown = qa_arena_alloc(&scene->storage, offset + 1, 1, error);
-            if (!shown) return false;
-            memcpy(shown, value, offset); shown[offset] = 0; value = shown;
+        if (hud->center_count && hud->centers[0].starts <= frame->time_ns) {
+            const hud_message *center = &hud->centers[0];
+            const char *value = center->text;
+            if (!center->instant && center->character_ns) {
+                uint64_t characters = (frame->time_ns - center->starts) / center->character_ns;
+                qa_bytes bytes = {(const uint8_t *)value, strlen(value)};
+                size_t offset = 0; uint32_t scalar;
+                while (characters && qa_utf8_next(bytes, &offset, &scalar)) --characters;
+                char *shown = qa_arena_alloc(&scene->storage, offset + 1, 1, error);
+                if (!shown) return false;
+                memcpy(shown, value, offset); shown[offset] = 0; value = shown;
+            }
+            float center_x = ((float)target.x + (float)target.width * .5f - ui->bias_x) / ui->scale;
+            float center_y = ((float)target.y + (center->lines <= 4 ? (float)target.height * .35f : 48) - ui->bias_y) / ui->scale;
+            if (!ui_draw_source_text(ui, scene, target, center_x, center_y, value, (qa_scene_vec4){1, 1, 1, 1}, 1,
+                QA_FONT_ALIGN_CENTER, error)) return false;
         }
-        float center_x = ((float)target.x + (float)target.width * .5f - ui->bias_x) / ui->scale;
-        float center_y = ((float)target.y + (center->lines <= 4 ? (float)target.height * .35f : 48) - ui->bias_y) / ui->scale;
-        if (!ui_draw_source_text(ui, scene, target, center_x, center_y, value, (qa_scene_vec4){1, 1, 1, 1}, 1,
-            QA_FONT_ALIGN_CENTER, error)) return false;
+        if (hud->pickup && hud->pickup_until > frame->time_ns &&
+            (!icon(hud, scene, target, hud->pickup_icon, (qa_scene_rect_f){304, 328, 32, 32},
+                (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup, (qa_scene_vec4){1, 1, .5f, 1},
+                   1, QA_FONT_ALIGN_CENTER, error))) return false;
+        if (hud->hit_damage > 0 && hud->hit_until > frame->time_ns &&
+            !text(hud, scene, target, 320, 256, "X", (qa_scene_vec4){1, 1, 1, 1}, 1,
+                   QA_FONT_ALIGN_CENTER, error)) return false;
     }
-    if (hud->pickup && hud->pickup_until > frame->time_ns &&
-        (!icon(hud, scene, target, hud->pickup_icon, (qa_scene_rect_f){304, 328, 32, 32},
-            (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup, (qa_scene_vec4){1, 1, .5f, 1},
-               1, QA_FONT_ALIGN_CENTER, error))) return false;
-    if (hud->hit_damage > 0 && hud->hit_until > frame->time_ns &&
-        !text(hud, scene, target, 320, 256, "X", (qa_scene_vec4){1, 1, 1, 1}, 1,
-               QA_FONT_ALIGN_CENTER, error)) return false;
-    if (data.help_title && !text(hud, scene, target, 24, 90, data.help_title,
+    if (content && data.help_title && !text(hud, scene, target, 24, 90, data.help_title,
         (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
-    for (size_t i = 0; i < data.help_count; ++i)
+    for (size_t i = 0; content && i < data.help_count; ++i)
         if (!text(hud, scene, target, 24, 108 + (float)i * 16, data.help_lines[i],
             (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
-    if (!ctf_draw(hud, frame, scene, error)) return false;
+    if (messages && !frame->weapon_only && !ctf_draw(hud, frame, scene, error)) return false;
     float fit=fminf((float)target.width/640,(float)target.height/480);
-    return caption_draw(ui,data.captions,data.caption_count,target,
+    return !content || caption_draw(ui,data.captions,data.caption_count,target,
         (qa_scene_rect_f){(float)target.x+8,(float)target.y+(float)target.height*.60f,
             (float)target.width-16,(float)target.height*.22f},fit,scene,error);
 }
-bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
+static bool draw_frame(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
+    bool content, bool messages, qa_error *error) {
     if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing ||
         hud->options.ui->handling ||
         !frame->safe_area.width || !frame->safe_area.height || !isfinite(frame->scale) || frame->scale <= 0 ||
         (double)frame->safe_area.x + frame->safe_area.width > INT32_MAX ||
         (double)frame->safe_area.y + frame->safe_area.height > INT32_MAX)
         return ui_fail(error, "invalid or reentrant seat HUD draw");
-    expire(hud->notices, &hud->notice_count, frame->time_ns);
-    expire(hud->centers, &hud->center_count, frame->time_ns);
+    if (messages) {
+        expire(hud->notices, &hud->notice_count, frame->time_ns);
+        expire(hud->centers, &hud->center_count, frame->time_ns);
+    }
     if (!frame->visible) return true;
     qa_ui *ui = hud->options.ui;
     float scale = ui->scale, x = ui->bias_x, y = ui->bias_y;
@@ -1044,11 +1052,30 @@ bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             ui->color_mode = presentation.color_mode;
         }
     }
-    if (ok) ok = draw(hud, frame, scene, error);
+    if (ok) ok = draw(hud, frame, scene, content, messages, error);
     hud->drawing = false;
     ui->handling = false;
     ui->drawing = false;
     ui->scale = scale; ui->bias_x = x; ui->bias_y = y;
     ui->options.fonts = prior.fonts; ui->text_scale = prior.text_scale; ui->color_mode = prior.color_mode;
     return ok;
+}
+bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error)
+{
+    return draw_frame(hud, frame, scene, true, true, error);
+}
+bool qa_hud_draw_content(qa_hud *hud, const qa_hud_options *options,
+    const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error)
+{
+    if (!hud || !options) return ui_fail(error, "invalid or reentrant seat HUD draw");
+    qa_hud_options prior = hud->options;
+    hud->options = *options;
+    bool okay = draw_frame(hud, frame, scene, true, false, error);
+    hud->options = prior;
+    return okay;
+}
+bool qa_hud_draw_messages(qa_hud *hud, const qa_hud_frame *frame,
+    qa_scene_frame *scene, qa_error *error)
+{
+    return draw_frame(hud, frame, scene, false, true, error);
 }

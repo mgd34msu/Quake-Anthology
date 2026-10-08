@@ -43,9 +43,6 @@ struct frontend_unified_events {
     unified_event_link *links;
     size_t link_count, link_capacity;
     qa_hud *hud;
-    qa_ui *hud_ui;
-    qa_application *hud_application;
-    uint32_t hud_seat;
     uint32_t epoch;
     uint64_t frame, prepared_frame;
     qa_unified_document *prepared_document;
@@ -152,30 +149,6 @@ static uint64_t clock_ns(double seconds)
     long double n=(long double)seconds*1e9L;
     return n<=0?0:n>=(long double)UINT64_MAX?UINT64_MAX:(uint64_t)n;
 }
-static bool hud_read(void *ctx,const qa_hud_frame *f,qa_hud_data *out,qa_error *e)
-{
-    frontend_unified_events *o=ctx;
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if (!o->busy || !d || f->seat!=d->physical_seat)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified message HUD lost its physical CLIENT seat");
-    *out=(qa_hud_data){.source_vitals=true}; return true;
-}
-static qa_hud_options hud_options(frontend_unified_events *o)
-{
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    o->hud_ui=o->frontend->seats[d->physical_seat].ui;
-    o->hud_application=d->application; o->hud_seat=d->physical_seat;
-    return (qa_hud_options){.ui=o->hud_ui,
-        .application=d->application,.seat=d->physical_seat,.context=o,.read=hud_read};
-}
-static bool hud_current(frontend_unified_events *o,qa_error *e)
-{
-    if (!execution_current(o,e)) return false;
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    return (d && d->physical_seat==o->hud_seat && d->application==o->hud_application &&
-        o->frontend->seats[d->physical_seat].ui==o->hud_ui) ||
-        frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print changed its actual CLIENT HUD or UI");
-}
 static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified *r,
     frontend_unified_media *m,const frontend_unified_event_options *opts,qa_error *e)
 {
@@ -186,6 +159,8 @@ static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified 
     frontend_unified_events *o=calloc(1,sizeof(*o));
     if (!o) { frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating private unified event ledger"); return NULL; }
     o->frontend=f; o->replica=r; o->media=m; o->options=*opts;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
+    o->hud=f->seats[domain->physical_seat].hud;
     o->epoch=frontend_remote_unified_epoch(r); o->tail=&o->pending;
     o->families_ready=true;
     return o;
@@ -196,8 +171,7 @@ bool frontend_unified_events_create(qa_frontend *f,frontend_remote_unified *r,
     if (!out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event output must be empty");
     frontend_unified_events *o=allocate(f,r,m,opts,e);
     if (!o) return false;
-    qa_hud_options h=hud_options(o);
-    if (!current(o,e) || !qa_hud_create(&h,&o->hud,e)) { free(o); return false; }
+    if (!current(o,e)) { free(o); return false; }
     o->owns_audio=true; *out=o; return true;
 }
 static void batch_free(unified_event_batch *b)
@@ -500,22 +474,22 @@ bool frontend_unified_events_center_print(frontend_unified_events *o,const char 
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print requires finite Source clocks and text");
     if (o->busy || o->prepared || !o->has_frame || !o->hud || !qa_hud_idle(o->hud))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print overlaps a CLIENT callback or unpublished frame");
-    if (!hud_current(o,e)) return false;
+    if (!execution_current(o,e)) return false;
     o->busy=true;
     bool okay=qa_hud_center_print(o->hud,text_value,clock_ns(source_milliseconds/1000),
         clock_ns(duration_milliseconds/1000),true,0,e);
     o->busy=false;
-    return okay && qa_hud_idle(o->hud) && hud_current(o,e);
+    return okay && qa_hud_idle(o->hud) && execution_current(o,e);
 }
-bool frontend_unified_events_draw(frontend_unified_events *o,const qa_scene_view *view,qa_scene_frame *frame,qa_error *e)
+bool frontend_unified_events_draw(frontend_unified_events *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
-    if (!o || !view || !frame || o->busy || !o->has_frame || !execution_current(o,e)) return false;
+    if (!o || !frame || o->busy || !o->has_frame || !execution_current(o,e)) return false;
     qa_actor_id player; uint32_t source;
     if (!frontend_remote_unified_player(o->replica,&player,&source)) return false;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     o->busy=true;
-    bool okay=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=clock_ns(o->seconds),.viewport=view->viewport,.safe_area=view->viewport,.scale=1,.visible=true},frame,e);
+    bool okay=qa_hud_draw_messages(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
+        .time_ns=clock_ns(o->seconds),.viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
     o->busy=false; return okay;
 }
 bool frontend_unified_events_checkpoint_ready(const frontend_unified_events *o)
@@ -529,7 +503,6 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     if (!frontend_unified_events_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event owner still has a live callback");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (o->owns_audio && o->frontend->audio && !qa_audio_engine_stop_owner(o->frontend->audio,o->options.audio_owner,d->physical_seat,e)) return false;
-    if (o->hud && !qa_hud_destroy(o->hud,e)) return false;
     while (o->pending) { unified_event_batch *b=o->pending; o->pending=b->next; batch_free(b); }
     while (o->resources) { unified_event_resource *r=o->resources; o->resources=r->next; resource_free(r); }
     while (o->components) { unified_component_owner *c=o->components; o->components=c->next; component_free(c); }

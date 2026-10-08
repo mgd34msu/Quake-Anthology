@@ -1007,8 +1007,7 @@ static bool world(void *context, const qa_scene_view *view, const qa_scene_world
 {
     unified_presentation *p = context;
     return frontend_unified_q2_world(p->q2,view,input,frame,error) && frontend_unified_q3_world(p->q3,view,input,frame,error) &&
-        frontend_unified_components_world(p->components,view,input,frame,error) &&
-        frontend_unified_events_draw(p->events,view,frame,error);
+        frontend_unified_components_world(p->components,view,input,frame,error);
 }
 static bool reflected_world(void *context,const qa_scene_world_input *input_value,
     qa_scene_frame *frame_value,qa_error *error)
@@ -1144,7 +1143,7 @@ static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame
         bool rendered=false;
         if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_hud(row->factory,&rendered,error)) return false;
     }
-    return true;
+    return frontend_unified_events_draw(p->events,viewport,frame,error);
 }
 static bool entity_beam(void *context,const char *content,const qa_scene_view *view,
     qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,qa_scene_frame *frame,qa_error *error)

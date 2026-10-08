@@ -760,8 +760,9 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     *out=o;
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
-    qa_hud_options h=hud_options(o);
-    if (!o->localizations || !current(o,e) || !qa_hud_create(&h,&o->hud,e) ||
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
+    o->hud=f->seats[domain->physical_seat].hud;
+    if (!o->localizations || !current(o,e) ||
         !frontend_unified_q2_rr_create(f,r,media,events,&o->rr_hud,e)) {
         qa_error cleanup={0}; frontend_unified_q2_destroy(out,&cleanup); return false;
     }
@@ -1843,7 +1844,8 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
         if (!status_draw(o,v,row->hud,v->inventory,v->layout,v->player_number,viewport,frame,e)) return false;
     }
     ++o->busy;
-    bool okay=qa_hud_draw(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=nanoseconds(o->seconds),
+    qa_hud_options options=hud_options(o);
+    bool okay=qa_hud_draw_content(o->hud,&options,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=nanoseconds(o->seconds),
         .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
     --o->busy;
     if (okay) okay=marker_draw(o,viewport,frame,e);
@@ -1895,7 +1897,6 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
         for (size_t i=0;i<256;++i) free(b->styles[i]);
         o->banks=b->next; free(b->aliases); free(b->source_provider); free(b->content); free(b);
     }
-    if (o->hud && !qa_hud_destroy(o->hud,e)) return false;
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);

@@ -481,18 +481,6 @@ bool frontend_unified_q2_rr_overlay(frontend_unified_q2_rr_hud *o,
     default: return fail(e,"RR help interlock received an unsupported actual player overlay");
     }
 }
-static bool empty_hud(void *ctx, const qa_hud_frame *frame, qa_hud_data *out, qa_error *e)
-{
-    frontend_unified_q2_rr_hud *o=ctx; (void)frame;
-    if (!current(o,e)) return false;
-    *out=(qa_hud_data){.source_vitals=true}; return true;
-}
-static qa_hud_options print_options(frontend_unified_q2_rr_hud *o)
-{
-    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    return (qa_hud_options){.ui=o->frontend->seats[d->physical_seat].ui,.application=d->application,
-        .seat=d->physical_seat,.context=o,.read=empty_hud};
-}
 bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *replica,
     frontend_unified_media *media, frontend_unified_events *events, frontend_unified_q2_rr_hud **out, qa_error *e)
 {
@@ -501,8 +489,10 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     frontend_unified_q2_rr_hud *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Creating actual received RR HUD owner");
     o->frontend=f; o->replica=replica; o->media=media; o->events=events;
-    o->localizations=qa_localization_pool_create(e); qa_hud_options options=print_options(o);
-    if (!o->localizations || !current(o,e) || !qa_hud_create(&options,&o->prints,e)) {
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
+    o->prints=f->seats[domain->physical_seat].hud;
+    o->localizations=qa_localization_pool_create(e);
+    if (!o->localizations || !current(o,e)) {
         qa_localization_pool_destroy(o->localizations); free(o); return false;
     }
     *out=o; return true;
@@ -517,7 +507,6 @@ bool frontend_unified_q2_rr_destroy(frontend_unified_q2_rr_hud **slot, qa_error 
     frontend_unified_q2_rr_hud *o=*slot;
     if (o->busy || (o->prints && !qa_hud_idle(o->prints)))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD still owns active callbacks");
-    if (o->prints && !qa_hud_destroy(o->prints,e)) return false;
     for (size_t i=0; i<o->poi_count; ++i) record_clear(o->pois+i);
     for (size_t i=0; i<o->damage_count; ++i) record_clear(&o->damage[i].row);
     while (o->bars) { rr_bar *row=o->bars; o->bars=row->next; record_clear(&row->row); free(row); }
@@ -766,10 +755,6 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     if (content) { frontend_unified_bank_view bank={0};
         okay=media_bank(o,content,false,&bank,e); if (okay) draw.white=qa_scene_white(bank.images); }
     o->busy=true;
-    if (okay && ((o->objective.event && qa_actor_id_equal(o->objective.actor,viewer)) ||
-        (o->pending_objective.event && qa_actor_id_equal(o->pending_objective.actor,viewer))))
-        okay=qa_hud_draw(o->prints,&(qa_hud_frame){.seat=domain->physical_seat,.actor=viewer,
-        .time_ns=nanoseconds(o->seconds),.viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
     bool show_pois=false,show_damage=false; double lifetime=0,edge=0,maximum=1;
     if (okay && (o->poi_count || o->damage_count)) okay=controls(o,&show_pois,&show_damage,&lifetime,&edge,&maximum,e);
     if (okay && o->have_view && show_pois) okay=draw_pois(o,viewer,&draw,edge,maximum,e);

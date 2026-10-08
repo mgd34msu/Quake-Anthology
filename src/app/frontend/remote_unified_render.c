@@ -360,9 +360,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     if (okay && count) { r->models=calloc(count,sizeof(*r->models)); okay=r->models!=NULL;
         if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received unified model bindings"); }
     for (size_t i=0;okay && i<count;++i) { r->model_count=i+1; okay=model_read(r,received->visuals->models+i,r->models+i,e); }
-    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
-    if (okay) okay=domain && qa_hud_create(&(qa_hud_options){.ui=f->seats[domain->physical_seat].ui,
-        .application=domain->application,.seat=domain->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&r->hud,e);
+    if (okay) r->hud=f->seats[hud_domain->physical_seat].hud;
     if (!okay) { (void)frontend_unified_render_destroy(&r,NULL); return false; }
     *out=r; return true;
 }
@@ -672,7 +670,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
             r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&
             unified_scene_current(&context);
-    if (okay) okay=qa_hud_draw(r->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
+    if (okay) okay=qa_hud_draw_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
+        .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
         .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
         .source_status_native=source_status},&r->frontend->frame,e);
     if (okay && children && children->hud)
@@ -691,7 +690,6 @@ bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
     frontend_unified_render *r=*slot;
     if (r->busy || (r->hud && !qa_hud_idle(r->hud)))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified received render frame still has callbacks");
-    if (r->hud && !qa_hud_destroy(r->hud,e)) return false;
     for (size_t i=0;i<r->model_count;++i) {
         free(r->models[i].path); free(r->models[i].source_instance); free(r->models[i].equipment_instance);
     }
