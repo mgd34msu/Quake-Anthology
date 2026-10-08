@@ -176,7 +176,10 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
     for (size_t i = 1; okay && i < receipt.model_count; ++i) {
         const char *path = qa_strings_cstr(strings, receipt.models[i]);
         if (!path) { okay = application_fail(error, QA_ERROR_FORMAT, "Q1 model declaration lost its source path"); break; }
-        if (*path != '*') okay = qa_vfs_acquire(content, path, &models[i], NULL, error);
+        if (receipt.models[i] == receipt.map_path && p->application->map_resource) {
+            models[i] = p->application->map_resource;
+            qa_resource_retain(models[i]);
+        } else if (*path != '*') okay = qa_vfs_acquire(content, path, &models[i], NULL, error);
     }
     for (size_t i = 1; okay && i < receipt.sound_count; ++i) {
         const char *path = qa_strings_cstr(strings, receipt.sounds[i]);
