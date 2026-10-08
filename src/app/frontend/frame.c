@@ -453,8 +453,7 @@ static bool platform_collect(qa_frontend *frontend, qa_error *error)
     qa_input_platform_collect(frontend->input,frontend->platform_events,frontend->wall_time_ns);
     if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
         0,65536,frontend->wall_time_ns,error)) return false;
-    return frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,
-        QA_NET_COLLECT_ALL,error);
+    return frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,error);
 }
 static bool platform_events(qa_frontend *frontend, qa_error *error)
 {
@@ -905,8 +904,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
                         frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
                 }
                 if(ok && !replay)
-                    ok=frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,
-                        QA_NET_COLLECT_LOCAL,error);
+                    ok=platform_collect(frontend,error);
                 if(ok) ok=frontend_platform_drain(frontend,error);
                 /* Existing journal tails recorded one command-buffer drain per
                  * frame. Their saved wait counts retain that cadence. */

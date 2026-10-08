@@ -154,10 +154,10 @@ bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
 }
 
 bool qa_net_dosbox_collect(qa_net_dosbox *network, uint64_t now_ns,
-    qa_net_collect_policy policy, qa_net_transport_event *out, qa_error *error) {
+    qa_net_transport_event *out, qa_error *error) {
     if (network->phase == DOSBOX_FAILED || network->phase == DOSBOX_CLOSED)
         return dosbox_ready(network, error);
-    if (!qa_net_transport_collect(network->udp, now_ns, policy, out, error))
+    if (!qa_net_transport_collect(network->udp, now_ns, out, error))
         return dosbox_fail(network, QA_ERROR_IO, "DOSBox IPX UDP transport failed", error);
     return true;
 }
@@ -249,8 +249,7 @@ static bool dosbox_take(dosbox_socket *socket, uint64_t now_ns, qa_net_datagram 
     return true;
 }
 
-static bool dosbox_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy policy,
-    qa_net_transport_event *out, qa_error *error) {
+static bool dosbox_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *out, qa_error *error) {
     dosbox_socket *socket = opaque;
     *out = (qa_net_transport_event){0};
     if (socket->dropped || socket->count) {
@@ -258,7 +257,7 @@ static bool dosbox_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy 
         out->source = 1;
         return true;
     }
-    if (!qa_net_dosbox_collect(socket->network, now_ns, policy, out, error)) return false;
+    if (!qa_net_dosbox_collect(socket->network, now_ns, out, error)) return false;
     out->source <<= 2;
     return true;
 }

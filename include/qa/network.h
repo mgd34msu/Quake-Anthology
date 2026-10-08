@@ -119,16 +119,9 @@ typedef struct qa_net_transport_event {
      * wrapper shifts the child's route left on collect and right on dispatch. */
     uint32_t route;
 } qa_net_transport_event;
-/* ALL is the frame-start OS intake. LOCAL collects queued in-process input
- * after server work without reading a socket again. Both preserve logical
- * EMPTY boundaries for the common deferred dispatch. */
-typedef enum qa_net_collect_policy {
-    QA_NET_COLLECT_ALL,
-    QA_NET_COLLECT_LOCAL
-} qa_net_collect_policy;
 typedef struct qa_net_transport_ops {
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
-    bool (*collect)(void *, uint64_t now_ns, qa_net_collect_policy, qa_net_transport_event *, qa_error *);
+    bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
     void (*close)(void *);
     bool (*ready)(const void *);
     /* Decode one copied physical event. NULL drains saved logical deliveries.
@@ -161,7 +154,7 @@ const qa_net_address *qa_net_transport_address(const qa_net_transport *);
 size_t qa_net_transport_limit(const qa_net_transport *);
 bool qa_net_transport_ready(const qa_net_transport *);
 bool qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);
-bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_collect_policy, qa_net_transport_event *, qa_error *);
+bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_transport_event *, qa_error *);
 bool qa_net_transport_dispatch(qa_net_transport *, const qa_net_transport_event *, qa_net_datagram *, bool *, qa_error *);
 bool qa_net_transport_maintenance(qa_net_transport *, uint64_t, qa_error *);
 void qa_net_transport_close(qa_net_transport *);
@@ -193,7 +186,7 @@ typedef struct qa_net_dosbox qa_net_dosbox;
 bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
                            uint64_t now_ns, uint64_t timeout_ns,
                            qa_net_dosbox **, qa_error *);
-bool qa_net_dosbox_collect(qa_net_dosbox *, uint64_t now_ns, qa_net_collect_policy, qa_net_transport_event *, qa_error *);
+bool qa_net_dosbox_collect(qa_net_dosbox *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
 bool qa_net_dosbox_dispatch(qa_net_dosbox *, const qa_net_transport_event *, bool *registered, qa_error *);
 bool qa_net_dosbox_maintenance(qa_net_dosbox *, uint64_t now_ns, qa_error *);
 bool qa_net_dosbox_bind(qa_net_dosbox *, uint16_t port, uint8_t packet_type,

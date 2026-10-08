@@ -18,7 +18,7 @@ bool qa_kex_mdns_owner_query(qa_kex_mdns_owner *, qa_error *);
  * event queue; NULL resumes unfinished found callbacks without reading.
  * Maintenance sends pending announcements without reading. */
 bool qa_kex_mdns_owner_collect(qa_kex_mdns_owner *, uint64_t now_ns,
-                               qa_net_collect_policy, qa_net_transport_event *, qa_error *);
+                               qa_net_transport_event *, qa_error *);
 bool qa_kex_mdns_owner_dispatch(qa_kex_mdns_owner *, const qa_net_transport_event *, qa_error *);
 bool qa_kex_mdns_owner_maintenance(qa_kex_mdns_owner *, uint64_t now_ns, qa_error *);
 bool qa_kex_mdns_owner_shutdown(qa_kex_mdns_owner *, qa_error *);

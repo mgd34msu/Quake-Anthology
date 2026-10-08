@@ -731,13 +731,11 @@ bool frontend_network_q2_host_stop(frontend_network_q2_host *host,uint64_t now,
         if(!qa_network_q2_server_request_drop(host->options.runtime,peer->client,"Server was killed.",error)) return false;
         channels=true;
     }
-    /* Physical acknowledgements come from the host or shutdown intake phase.
-     * Retiring channels collect only queued local replies here, without
-     * dispatching new gameplay input. Their Source publisher stays retained
-     * until both the final delivery and its drop callback have returned. */
+    /* Physical intake belongs to the host or standalone shutdown phase.
+     * Retirement only drains queued acknowledgements and advances channels.
+     * Retain the Source publisher until final delivery and drop return. */
     if(channels) {
         qa_frontend *f=host->options.frontend;
-        if(!frontend_network_intake(f,f->platform_events,now,QA_NET_COLLECT_LOCAL,error)) return false;
         if(!frontend_platform_drain(f,error) || !qa_network_tick(host->options.runtime,now,error)) return false;
     }
     for(size_t i=0;i<host->capacity;++i) {

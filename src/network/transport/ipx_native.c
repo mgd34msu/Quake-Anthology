@@ -82,10 +82,8 @@ static bool ipx_native_send(void *opaque, const qa_net_address *to, qa_bytes byt
     return false;
 }
 
-static bool ipx_native_collect(void *opaque, uint64_t now_ns, qa_net_collect_policy policy,
-    qa_net_transport_event *event, qa_error *error) {
+static bool ipx_native_collect(void *opaque, uint64_t now_ns, qa_net_transport_event *event, qa_error *error) {
     *event = (qa_net_transport_event){0};
-    if (policy == QA_NET_COLLECT_LOCAL) return true;
     qa_net_datagram *out = &event->packet;
     ipx_native *ipx = opaque;
     struct sockaddr_ipx source;

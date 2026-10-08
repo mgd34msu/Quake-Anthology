@@ -320,11 +320,11 @@ bool qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to
     return transport->ops.send(transport->state, to, payload, error);
 }
 bool qa_net_transport_collect(qa_net_transport *transport, uint64_t now_ns,
-    qa_net_collect_policy policy, qa_net_transport_event *out, qa_error *error)
+    qa_net_transport_event *out, qa_error *error)
 {
     if (transport == NULL || out == NULL) return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram receive request");
     *out=(qa_net_transport_event){0};
-    return transport->ops.collect(transport->state,now_ns,policy,out,error);
+    return transport->ops.collect(transport->state,now_ns,out,error);
 }
 bool qa_net_transport_dispatch(qa_net_transport *transport, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error)
@@ -369,15 +369,14 @@ static bool host_send(void *context, const qa_net_address *to, qa_bytes payload,
         to, payload, error);
 }
 
-static bool host_collect(void *context, uint64_t now_ns, qa_net_collect_policy policy,
-    qa_net_transport_event *out, qa_error *error)
+static bool host_collect(void *context, uint64_t now_ns, qa_net_transport_event *out, qa_error *error)
 {
     host_state *state = context;
     unsigned first = state->collect_next;
     for (unsigned i = 0; i < 2; ++i) {
         unsigned branch = (first + i) & 1u;
         if (!state->children[branch]) continue;
-        if (!qa_net_transport_collect(state->children[branch], now_ns, policy, out, error)) return false;
+        if (!qa_net_transport_collect(state->children[branch], now_ns, out, error)) return false;
         out->route = (out->route << 1) | branch;
         if (out->packet.kind != QA_NET_POLL_EMPTY) {
             state->collect_next = branch ^ 1u;
@@ -479,10 +478,8 @@ static bool udp_send(void *context, const qa_net_address *to, qa_bytes bytes, qa
     return true;
 }
 
-static bool udp_receive(void *context, uint64_t now_ns, qa_net_collect_policy policy,
-    qa_net_transport_event *event, qa_error *error)
+static bool udp_receive(void *context, uint64_t now_ns, qa_net_transport_event *event, qa_error *error)
 {
-    if (policy == QA_NET_COLLECT_LOCAL) return true;
     qa_net_datagram *out=&event->packet;
     udp_state *state = context;
     struct sockaddr_storage source;
@@ -655,10 +652,8 @@ static bool loop_send(void *context, const qa_net_address *to, qa_bytes bytes, q
     return true;
 }
 
-static bool loop_receive(void *context, uint64_t now_ns, qa_net_collect_policy policy,
-    qa_net_transport_event *event, qa_error *error)
+static bool loop_receive(void *context, uint64_t now_ns, qa_net_transport_event *event, qa_error *error)
 {
-    (void)policy;
     qa_net_datagram *out=&event->packet;
     loop_endpoint *endpoint = context;
     if (endpoint->closed || endpoint->hub->closed) return fail(error, QA_ERROR_IO, "Loopback endpoint is closed");

@@ -15,7 +15,7 @@ bool frontend_kex_browser_open(qa_server_browser *, const frontend_kex_browser_h
                                frontend_kex_browser **, qa_error *);
 bool frontend_kex_browser_scan(frontend_kex_browser *, qa_error *);
 bool frontend_kex_browser_collect(frontend_kex_browser *, uint64_t now_ns,
-                                  qa_net_collect_policy, qa_net_transport_event *, qa_error *);
+                                  qa_net_transport_event *, qa_error *);
 bool frontend_kex_browser_dispatch(frontend_kex_browser *, const qa_net_transport_event *, qa_error *);
 bool frontend_kex_browser_maintenance(frontend_kex_browser *, uint64_t now_ns, qa_error *);
 bool frontend_kex_browser_receive(frontend_kex_browser *, const qa_net_datagram *,

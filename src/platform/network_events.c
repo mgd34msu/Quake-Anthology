@@ -9,12 +9,12 @@ typedef struct packet_header {
 } packet_header;
 
 bool qa_network_events_collect(const qa_network_event_source *source, qa_platform_events *events,
-    uint64_t now_ns, qa_net_collect_policy policy, uint32_t budget, qa_error *error)
+    uint64_t now_ns, uint32_t budget, qa_error *error)
 {
     uint8_t bytes[sizeof(packet_header) + UINT16_MAX];
     for (uint32_t i = 0; i < budget; ++i) {
         qa_net_transport_event input;
-        if (!source->collect(source->context, now_ns, policy, &input, error)) return false;
+        if (!source->collect(source->context, now_ns, &input, error)) return false;
         const qa_net_datagram *packet=&input.packet;
         size_t size = packet->kind == QA_NET_POLL_PACKET ? packet->payload.size : 0;
         packet_header header={.source_id=source->id, .from=packet->from,

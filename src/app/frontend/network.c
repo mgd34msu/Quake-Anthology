@@ -4632,8 +4632,8 @@ static bool detached_send(void *context, const qa_net_address *to, qa_bytes byte
     (void)context; (void)to; (void)bytes;
     return frontend_fail(error, QA_ERROR_ARGUMENT, "detached network candidate has no published transport");
 }
-static bool detached_collect(void *context, uint64_t now, qa_net_collect_policy policy, qa_net_transport_event *event, qa_error *error)
-{ (void)context; (void)now; (void)policy; (void)error; *event = (qa_net_transport_event){0}; return true; }
+static bool detached_collect(void *context, uint64_t now, qa_net_transport_event *event, qa_error *error)
+{ (void)context; (void)now; (void)error; *event = (qa_net_transport_event){0}; return true; }
 static void detached_close(void *context) { (void)context; }
 static bool detached_ready(const void *context) { (void)context; return false; }
 static bool detached_transport(const qa_net_address *address, qa_net_transport **out, qa_error *error)
@@ -6140,11 +6140,11 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
     qa_server_browser_expire(n->browser, f->wall_time_ns);
     return true;
 }
-static bool transport_collect(void *context,uint64_t now,qa_net_collect_policy policy,qa_net_transport_event *out,qa_error *error)
-{ return qa_net_transport_collect(context,now,policy,out,error); }
-static bool browser_collect(void *context,uint64_t now,qa_net_collect_policy policy,qa_net_transport_event *out,qa_error *error)
-{ return frontend_kex_browser_collect(context,now,policy,out,error); }
-bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t now,qa_net_collect_policy policy,qa_error *error)
+static bool transport_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)
+{ return qa_net_transport_collect(context,now,out,error); }
+static bool browser_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)
+{ return frontend_kex_browser_collect(context,now,out,error); }
+bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t now,qa_error *error)
 {
     qa_frontend_network *n=f->network;
     if(!n) return true;
@@ -6154,10 +6154,10 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
     bool ok=qa_net_transport_maintenance(transport,now,error) &&
         (!n->kex_browser || frontend_kex_browser_maintenance(n->kex_browser,now,error));
     if(ok && qa_network_receive_ready(n->runtime))
-        ok=qa_network_events_collect(&source,events,now,policy,256,error);
+        ok=qa_network_events_collect(&source,events,now,256,error);
     if(ok && n->kex_browser) {
         source.destination=1; source.context=n->kex_browser; source.collect=browser_collect;
-        ok=qa_network_events_collect(&source,events,now,policy,256,error);
+        ok=qa_network_events_collect(&source,events,now,256,error);
     }
     if (ok) for (uint32_t i = 0; i < f->options.seats; ++i) {
         frontend_local_client *local = n->local_clients + i;
@@ -6167,7 +6167,7 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
             .context = endpoint, .collect = transport_collect};
         if (!qa_net_transport_maintenance(endpoint, now, error) ||
             (qa_network_receive_ready(local->runtime) &&
-                !qa_network_events_collect(&source, events, now, policy, 256, error))) { ok = false; break; }
+                !qa_network_events_collect(&source, events, now, 256, error))) { ok = false; break; }
     }
     --n->busy;
     return ok;

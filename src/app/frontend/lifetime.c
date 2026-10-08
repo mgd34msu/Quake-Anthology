@@ -912,7 +912,7 @@ bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)
         qa_frontend *frontend=*slot;
         qa_error intake={0};
         if(!frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,
-            QA_NET_COLLECT_ALL,&intake) && original.code==QA_OK) original=intake;
+            &intake) && original.code==QA_OK) original=intake;
         qa_error fault={0};
         if(qa_frontend_destroy(frontend,&fault)) {
             *slot=NULL;

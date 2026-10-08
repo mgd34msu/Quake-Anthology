@@ -437,7 +437,7 @@ typedef struct frontend_replay_command {
 } frontend_replay_command;
 bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error *);
 bool frontend_network_prepare(qa_frontend *, qa_error *);
-bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_net_collect_policy, qa_error *);
+bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_error *);
 bool frontend_network_receive_ready(const qa_frontend *);
 bool frontend_network_event_ready(const qa_frontend *, const qa_platform_event *);
 bool frontend_network_local_input_owned(const qa_frontend *, uint32_t physical);
