@@ -54,6 +54,7 @@ bool frontend_network_unified_source_drop(frontend_network_unified *, qa_actor_o
     uint32_t source_slot, const char *reason, bool *matched, qa_error *);
 bool frontend_network_unified_idle(const frontend_network_unified *);
 bool frontend_network_unified_checkpoint_returned(const frontend_network_unified *);
+uint64_t frontend_network_unified_events_after(const frontend_network_unified *);
 bool frontend_network_unified_qualified(const frontend_network_unified *, qa_network_runtime *,
     bool complete, qa_error *);
 /* Records completion of the actual cold child graph; this is not socket or

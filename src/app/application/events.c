@@ -859,7 +859,6 @@ static bool clear_events(qa_application *application, qa_error *error)
     application->q2_player_event_count = 0;
     application->protocol_event_count = 0;
     application->event_journal_count = 0;
-    application_unified_events_clear(application);
     qa_arena_reset(&application->event_arena);
     application_equipment_events_clear(gear);
     return true;

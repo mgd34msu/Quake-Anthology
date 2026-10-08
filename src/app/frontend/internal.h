@@ -451,6 +451,7 @@ bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map
 bool frontend_network_client_only(const qa_frontend *);
 bool frontend_network_client_command_seat(qa_frontend *,uint32_t,const char *,qa_error *);
 bool frontend_network_publish(qa_frontend *, qa_error *);
+void frontend_network_events_consume(qa_frontend *);
 bool frontend_network_world_change_ready(qa_frontend *, qa_error *);
 bool frontend_network_fresh_ready(const qa_frontend *,const qa_frontend *,const qa_frontend *,qa_error *);
 void frontend_network_publish_fresh(qa_frontend *,qa_frontend *,qa_frontend *);

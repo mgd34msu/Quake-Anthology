@@ -61,6 +61,19 @@ bool frontend_network_unified_idle(const frontend_network_unified *owner)
 bool frontend_network_unified_checkpoint_returned(const frontend_network_unified *owner)
 { return unified_returned(owner,true); }
 
+uint64_t frontend_network_unified_events_after(const frontend_network_unified *owner)
+{
+    uint64_t next = UINT64_MAX;
+    if (owner && owner->options.server) for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
+        const unified_peer *peer = owner->peers + i;
+        const application_unified_server *server = peer->server;
+        if (server && server->admitted && !server->closed &&
+            !qa_unified_session_retiring(peer->session) && server->events_after < next)
+            next = server->events_after;
+    }
+    return next;
+}
+
 static bool release_peer(unified_peer *peer, qa_error *error)
 {
     if (peer->server && !application_unified_server_destroy(peer->server, error)) return false;

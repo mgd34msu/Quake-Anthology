@@ -50,6 +50,7 @@
 #include "network_q2_host_save.h"
 #include "network_unified.h"
 #include "network_unified_save.h"
+#include "../application/unified_events.h"
 #include "../application/unified_save_internal.h"
 #include "network_unified_client.h"
 #include "qc_messages.h"
@@ -6468,6 +6469,11 @@ bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_ma
         if(!frontend_network_unified_pre_frame(f->network->unified,error)) return false;
     }
     return frontend_nq_tick(f->network->nq_host,elapsed_ns,retiring_map,error);
+}
+void frontend_network_events_consume(qa_frontend *f)
+{
+    application_unified_events_consume(f->application,
+        frontend_network_unified_events_after(f->network ? f->network->unified : NULL));
 }
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {

@@ -513,11 +513,11 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         }
         if (!frontend_event_sound(frontend, &event, error)) return false;
     }
-    /* Network, demos and tools also consume application events. Their owner
-     * must drain its projections before this shared queue is released. */
-    return frontend_equipment_events_drain(frontend->gear_events,error) &&
+    bool okay = frontend_equipment_events_drain(frontend->gear_events,error) &&
         (frontend->round ? frontend_round_clear_events(frontend,error) :
          qa_application_clear_events(frontend->application, error));
+    if (okay) frontend_network_events_consume(frontend);
+    return okay;
 }
 static bool audio_output(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {

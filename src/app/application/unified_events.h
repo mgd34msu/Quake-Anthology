@@ -158,6 +158,7 @@ bool application_unified_event_emit(qa_application *, qa_actor_owner,
     qa_actor_id simulation_recipient, uint64_t time_ns, int32_t source_entity,
     bool has_source_entity, bool link_presentation, qa_error *);
 void application_unified_event_record_dispose(application_unified_event_record *);
+void application_unified_events_consume(qa_application *, uint64_t next);
 void application_unified_events_clear(qa_application *);
 bool application_unified_builtin_read(qa_application *, const qa_builtin_event *, qa_unified_builtin_event *, qa_error *);
 void application_unified_builtin_read_dispose(qa_unified_builtin_event *);

@@ -551,12 +551,24 @@ void application_unified_event_record_dispose(application_unified_event_record *
     if (r->simulation) { qa_unified_simulation_payload_dispose(r->simulation); free(r->simulation); }
     *r = (application_unified_event_record){0};
 }
-void application_unified_events_clear(qa_application *app)
+void application_unified_events_consume(qa_application *app, uint64_t next)
 {
-    for (size_t i = 0; i < app->unified_event_count; ++i)
-        application_unified_event_record_dispose(app->unified_events + i);
-    app->unified_event_count = 0;
+    size_t retained = 0;
+    for (size_t i = 0; i < app->unified_event_count; ++i) {
+        application_unified_event_record *row = app->unified_events + i;
+        if (row->order < next) application_unified_event_record_dispose(row);
+        else {
+            if (retained != i) {
+                app->unified_events[retained] = *row;
+                *row = (application_unified_event_record){0};
+            }
+            ++retained;
+        }
+    }
+    app->unified_event_count = retained;
 }
+void application_unified_events_clear(qa_application *app)
+{ application_unified_events_consume(app, UINT64_MAX); }
 static bool record_clone(const application_unified_event_record *source,
     application_unified_event_record *out, qa_error *e)
 {
