@@ -144,3 +144,30 @@ establish per-key acknowledgment timing. Private audio captures contain
 nonzero output; individual cue identity was not checked. GL is software
 rendering, and neither run is a performance measurement. THE-907 remains
 in progress for the precise jump response.
+
+A separate bounded CPU diagnostic on the exact installed `b5d8813b` build
+observed a grounded jump in the same mixed `start` recipe. No W, mouse or fire
+input preceded Space. Authoritative actor 110 received Q3 command 17 with
+prediction disabled, forward and side axes zero, and up axis 63. At movement
+entry it was grounded, with zero velocity and height 28.03125. The actual
+`q3_jump` call emitted `EV_JUMP` 14, cleared ground, set the jump-held flag and
+vertical velocity 270. The same movement call returned naturally with success
+and error code zero: height 51.0244484, about 23 units higher, vertical velocity
+190, no ground, and event sequence advanced from zero to one. This establishes
+the grounded jump that the earlier camera captures alone could not prove.
+
+The coordinator inspected both world images and the raw entry, event and
+return records. The private window closed normally with exit code zero and
+the debugger detached normally. All 14 recorded owned process tokens were
+absent afterward; the original 34 settings files, five installed files and
+temporary helpers stayed unchanged. Actual private audio output was captured.
+The diagnostic used the existing ptracer-authorization constructor and made
+no inferior calls or engine-state writes. It is functional evidence, with no
+timing, repeated-jump, landing, release-state or friction claim. The current
+SDK differed intentionally; identity came from the installed receipt and that
+binary's own symbols. The index is
+`qa-the907-installed-b5-jump-diagnostic-20261008/result-index.json`, with raw
+records in `q5odo38_/user/evidence/logs/grounded-jump-gdb.log`.
+
+The issue reproduction names `e1m1`. These completed mixed packets use
+`start`, so the exact `e1m1` content scope remains to be checked separately.
