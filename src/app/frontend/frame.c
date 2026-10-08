@@ -38,19 +38,9 @@
 #include "qa/application_client_prepare.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
+#include "qa/game_domains.h"
 #include <stdio.h>
 
-static qa_console_dialect dialect(qa_movement_kind kind)
-{
-    switch (kind) {
-    case QA_MOVEMENT_NETQUAKE: return QA_CONSOLE_Q1;
-    case QA_MOVEMENT_QUAKEWORLD: return QA_CONSOLE_QW;
-    case QA_MOVEMENT_Q2_CLASSIC: return QA_CONSOLE_Q2;
-    case QA_MOVEMENT_Q2_RERELEASE: return QA_CONSOLE_Q2_RERELEASE;
-    case QA_MOVEMENT_Q3: return QA_CONSOLE_Q3;
-    }
-    return QA_CONSOLE_Q1;
-}
 static bool pause_flag(qa_cvars *cvars,uint64_t owner,const char *name,bool paused,qa_error *error)
 {
     const qa_cvar_view *value=qa_cvars_find(cvars,name);
@@ -180,7 +170,7 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
     const qa_application_control_view *state,bool remote,qa_error *error)
 {
     qa_movement_kind kind = state->profile.kind;
-    qa_console_dialect profile = dialect(kind);
+    qa_console_dialect profile = qa_movement_console_dialect(kind);
     bool changed = !qa_actor_id_equal(seat->actor, actor) || seat->builder.kind != kind;
     if (changed) {
         double now=(double)frontend->wall_time_ns/1000000.0;

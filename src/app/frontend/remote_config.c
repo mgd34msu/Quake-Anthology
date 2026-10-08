@@ -16,6 +16,7 @@
 #include "qa/console_save.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/catalog_save.h"
+#include "qa/game_domains.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -441,7 +442,7 @@ static bool apply_defaults(void *context,qa_error *error)
 {
     frontend_remote_config *row=context;
     return frontend_authored_bindings_ready(row->authored) ||
-        frontend_authored_bindings_defaults(row->authored,row->input,(qa_console_dialect)row->movement,error);
+        frontend_authored_bindings_defaults(row->authored,row->input,qa_movement_console_dialect(row->movement),error);
 }
 static bool selected_defaults(frontend_remote_config *row,bool seed,qa_error *error)
 {
@@ -449,9 +450,9 @@ static bool selected_defaults(frontend_remote_config *row,bool seed,qa_error *er
     frontend_config_weapon_catalog catalog;
     if (!frontend_config_weapon_defaults(row->application,row->candidate,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},strings,&catalog,error)) return false;
-    return seed?frontend_authored_bindings_seed(row->authored,(qa_console_dialect)row->movement,strings,
+    return seed?frontend_authored_bindings_seed(row->authored,qa_movement_console_dialect(row->movement),strings,
         catalog.items,catalog.count,error):frontend_authored_bindings_select(row->authored,row->input,
-        (qa_console_dialect)row->movement,strings,catalog.items,catalog.count,0,error);
+        qa_movement_console_dialect(row->movement),strings,catalog.items,catalog.count,0,error);
 }
 static frontend_remote_config *same_receiver_previous(const frontend_remote_config *fresh)
 {
@@ -584,7 +585,7 @@ static frontend_remote_config *previous(const frontend_remote_configs *owner,qa_
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
-        if (movement && (qa_movement_kind)movement->selection.clock.kind==row->movement) return row;
+        if (movement && qa_clock_movement_kind(movement->selection.clock.kind)==row->movement) return row;
     }
     return NULL;
 }
@@ -642,7 +643,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
     if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT input lacks its actual selected movement source");
-    row->movement=(qa_movement_kind)selected->selection.clock.kind;
+    row->movement=qa_clock_movement_kind(selected->selection.clock.kind);
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *game=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     qa_application_startup_source game_source={0};
@@ -705,7 +706,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     } else {
         row->q3_mouse=settings_registry(row,QA_CONSOLE_Q3,error);
         row->q3_view=settings_registry(row,QA_CONSOLE_Q3,error);
-        row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:settings_registry(row,(qa_console_dialect)row->movement,error);
+        row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:settings_registry(row,qa_movement_console_dialect(row->movement),error);
         if (!row->q3_mouse || !row->q3_view || !row->movement_mouse ||
             !qa_input_mouse_settings_register(row->q3_mouse,row->movement,error) ||
             !qa_input_movement_settings_register(row->q3_view,QA_MOVEMENT_Q3,error) ||
@@ -747,12 +748,12 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const char *mouse_owner[]={"input","q3",logical};
     const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     const char *view_owner[]={"movement","q3"};
-    const char *movement_owner[]={"movement",dialects[row->movement]};
+    const char *movement_owner[]={"movement",dialects[qa_movement_console_dialect(row->movement)]};
     if ((!frontend_config_store_has_canonical_archive(owner->manager) &&
         (!qa_settings_load_cvars(input_store,mouse_owner,3,QA_CONSOLE_Q3,&row->mouse_archive,error) ||
          !qa_settings_load_cvars(input_store,view_owner,2,QA_CONSOLE_Q3,&row->view_archive,error) ||
          (row->movement_mouse!=row->q3_view && !qa_settings_load_cvars(input_store,movement_owner,2,
-             (qa_console_dialect)row->movement,&row->movement_archive,error)))) ||
+             qa_movement_console_dialect(row->movement),&row->movement_archive,error)))) ||
         !qa_settings_load_seat(input_store,path,&row->settings,&row->found,error)) return false;
     if (!frontend_config_store_seed_player_archive(owner->manager,row->cvars,row->scope.seat,&row->archive,error)) return false;
     bool safe=false;
@@ -791,7 +792,7 @@ bool frontend_remote_config_advance(frontend_remote_config *row,qa_console *cons
             primary=primary->next;
         if (!primary || !primary->configured || !frontend_authored_bindings_completed(primary->authored))
             return fail(error,QA_ERROR_ARGUMENT,"Secondary CLIENT scripts precede their actual primary authored defaults");
-        if (!frontend_authored_bindings_secondary(row->authored,primary->authored,row->input,(qa_console_dialect)row->movement,error)) return false;
+        if (!frontend_authored_bindings_secondary(row->authored,primary->authored,row->input,qa_movement_console_dialect(row->movement),error)) return false;
         frontend_remote_config *old=NULL;
         if (!previous_seat(row,&old,error) || (old && !selected_defaults(row,false,error))) return false;
         row->secondary_pending=false;
@@ -864,7 +865,7 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
             !qa_input_seat_configuration_ready(input,row->input,error)) return false;
         qa_command_context command=qa_input_seat_context(input);
         command.registry=command.generation=0; command.actor=(qa_actor_id){0};
-        command.origin=QA_COMMAND_SEAT; command.seat=row->scope.seat; command.dialect=(qa_console_dialect)row->movement;
+        command.origin=QA_COMMAND_SEAT; command.seat=row->scope.seat; command.dialect=qa_movement_console_dialect(row->movement);
         if (!qa_input_seat_context_ready(input,&command,error) || !qa_seat_console_context_ready(console,&command,error)) return false;
         shared->publication_input=input; shared->publication_console=console;
         shared->publication_command=command; shared->ready=true;
@@ -1022,7 +1023,7 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
     if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks its selected movement source");
-    row->movement=(qa_movement_kind)selected->selection.clock.kind;
+    row->movement=qa_clock_movement_kind(selected->selection.clock.kind);
     if (row->cvars && row->cvars!=target->cvars)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT changed its actual Source view");
     row->cvars=target->cvars;
@@ -1209,7 +1210,7 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
         row->q3_mouse=settings_registry(row,QA_CONSOLE_Q3,io->error);
         row->q3_view=settings_registry(row,QA_CONSOLE_Q3,io->error);
         row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:
-            settings_registry(row,(qa_console_dialect)row->movement,io->error);
+            settings_registry(row,qa_movement_console_dialect(row->movement),io->error);
         ok=row->q3_mouse && row->q3_view && row->movement_mouse;
     }
     if (ok && !writing) { row->authored=frontend_authored_bindings_create(io->error); ok=row->authored!=NULL; }
@@ -1296,7 +1297,7 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
     const qa_launch_instance *movement_source=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
     uint32_t logical;
     if (!frontend_local_seat_read(choices,row->physical_seat,&logical) || logical!=row->scope.seat ||
-        !movement_source || (movement=(qa_movement_kind)movement_source->selection.clock.kind)!=row->movement)
+        !movement_source || (movement=qa_clock_movement_kind(movement_source->selection.clock.kind))!=row->movement)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its real physical seat or movement selection");
     const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(source->descriptor),source->descriptor->selection.product);
     const qa_product *saved=qa_catalog_product(frontend_config_files_catalog(row->files),frontend_config_files_product(row->files));

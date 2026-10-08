@@ -9,7 +9,7 @@ typedef struct qa_strings qa_strings;
 
 /* Exact byte identity, with no case folding or path normalization. Normalize
  * at the domain boundary before interning. IDs belong to this table lifetime;
- * persist the string or a content digest, never the process-local ID. */
+ * persist the string, never the process-local ID. */
 bool qa_strings_create(qa_strings **out, qa_error *error);
 void qa_strings_destroy(qa_strings *strings);
 bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error);
