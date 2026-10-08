@@ -47,11 +47,7 @@ uint64_t qa_cvars_view_identity(const qa_cvars *registry)
 
 qa_cvars_edit *qac_cvars_current_edit(const qa_cvars *registry)
 {
-    if (!registry) return NULL;
-    if (registry->candidate_edit) return registry->candidate_edit;
-    if (registry->entered_edit) return registry->entered_edit;
-    return registry->store && registry->store->edit && registry->store->edit->owner_scope_depth
-        ? registry->store->edit : NULL;
+    return registry && registry->store ? registry->store->edit : NULL;
 }
 
 cvar_values *qac_cvars_current_values(const qa_cvars *registry)

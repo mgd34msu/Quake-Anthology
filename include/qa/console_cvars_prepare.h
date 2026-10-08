@@ -48,8 +48,8 @@ qa_cvars *qa_cvars_edit_registry(const qa_cvars_edit *);
 /* Pure borrow of this canonical owner's existing ticket; terminal ownership
  * remains with the caller that prepared it. */
 qa_cvars_edit *qa_cvars_prepared_edit(const qa_cvars *shared);
-/* Enter an actual Source view into this owner's one prepared ticket. Direct
- * reads and mutations, and views created from it, use the prepared values.
+/* Callback nesting retains the shared table's one prepared ticket. All views
+ * read and write those values without needing a separate entered context.
  * Leaving does not publish, finish or abort a borrowed ticket. */
 bool qa_cvars_edit_enter(qa_cvars_edit *, qa_cvars *, qa_error *);
 bool qa_cvars_edit_leave(qa_cvars_edit *, qa_cvars *, qa_error *);

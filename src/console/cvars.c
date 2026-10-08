@@ -15,8 +15,6 @@ bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
         if (view->notifying)
             return qac_fail(error, QA_ERROR_ARGUMENT, "cvar callback cannot mutate its shared owner");
     qa_cvars_edit *edit = qac_cvars_current_edit(registry);
-    if (registry->store->edit && edit != registry->store->edit)
-        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar mutation requires its entered prepared values");
     if (edit) return !edit->ready && edit->fault.code == QA_OK &&
         qac_cvars_edit_add_view(edit, registry, error);
     if (registry->store->revision == UINT64_MAX)

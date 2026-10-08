@@ -3,6 +3,8 @@
 #endif
 
 #include "qa/arena.h"
+#include "qa/console_cvars_prepare.h"
+#include "qa/settings.h"
 #include "qa/binary.h"
 #include "qa/campaign.h"
 #include "qa/recovery.h"
@@ -541,11 +543,39 @@ static void test_source_nonmipped_transparency(void)
     qa_scene_resources_destroy(resources);
 }
 
+static void test_shared_cvar_archive(void)
+{
+    qa_error error={0};
+    qa_cvar_options options={.dialect=QA_CONSOLE_Q1,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_ENGINE};
+    qa_cvars *engine=qa_cvars_create(&options,&error);
+    CHECK(engine && qa_cvars_register(engine,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
+    options.role=QA_CVAR_ROLE_CGAME;
+    qa_cvars *client=qa_cvars_create_view(engine,&options,&error);
+    CHECK(client && qa_cvars_register(client,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
+    float original=qa_cvars_find(engine,"fov")->number;
+    qa_cvars_edit *edit=NULL;
+    CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    qa_cvar_archive_entry entry={.name="fov",.value="110"};
+    qa_cvar_archive archive={.entries=&entry,.count=1};
+    CHECK(qa_cvar_archive_apply(client,&archive,&error));
+    CHECK(qa_cvars_find(engine,"cg_fov")->number==110 && qa_cvars_find(client,"fov")->number==110);
+    qa_cvars_edit_abort(edit); edit=NULL;
+    CHECK(qa_cvars_find(engine,"fov")->number==original && qa_cvars_find(client,"cg_fov")->number==original);
+    CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    entry.value="120";
+    CHECK(qa_cvar_archive_apply(client,&archive,&error) && qa_cvars_edit_ready(edit,&error));
+    qa_cvars_edit_publish(edit);
+    CHECK(qa_cvars_edit_finish(engine,&error));
+    CHECK(qa_cvars_find(engine,"fov")->number==120 && qa_cvars_find(client,"cg_fov")->number==120);
+    qa_cvars_destroy(client); qa_cvars_destroy(engine);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_shared_cvar_archive();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();
     test_binary();
