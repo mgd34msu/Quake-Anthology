@@ -5,6 +5,7 @@
 #include "capture.h"
 #include "input_profile.h"
 #include "campaign_cinematic.h"
+#include "local_lobby.h"
 #include "qa/application_q1_save.h"
 #include "qa/application_q2_save.h"
 #include <SDL.h>
@@ -133,6 +134,7 @@ static void publish(qa_frontend_original_restore *operation,qa_frontend **slot,q
     qa_frontend *source=operation->source,*active=operation->active;
     if (operation->services && operation->services->publish)
         operation->services->publish(operation->services->context,active->application,source->application);
+    frontend_local_lobby_exchange(active,source);
     active->archive_enabled=false;
     source->archive_enabled=true; source->archive_saved=false;
     source->options.display.hidden=!operation->visible;
