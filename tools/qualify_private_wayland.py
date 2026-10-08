@@ -192,7 +192,7 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
     from PIL import Image, ImageStat
     s = Session()
     gameplay = product != 'menu'
-    result = {'product': product, 'requested_renderer': renderer, 'renderer': 'gl' if renderer == 'default' else renderer, 'owner_display_defaults': owner_defaults, 'reached_menu': False, 'reached_gameplay': False, 'normal_exit': False, 'exit_code': None, 'evidence': str(s.root), 'startup_review': 'PENDING actual final PNG review', 'shutdown_route': 'Public F12 quit binding not yet pressed' if gameplay else 'Public --frames180 normal engine frame-limited exit; no keyboard proof'}
+    result = {'product': product, 'requested_renderer': renderer, 'renderer': 'gl' if renderer == 'default' else renderer, 'owner_display_defaults': owner_defaults, 'reached_menu': False, 'reached_gameplay': False, 'normal_exit': False, 'exit_code': None, 'evidence': str(s.root), 'startup_review': 'PENDING actual final PNG review', 'shutdown_route': 'Private compositor window close not yet requested' if gameplay else 'Public --frames180 normal engine frame-limited exit; no keyboard proof'}
     try:
         result['private_containment'] = s.compositor()
         source, names, data = copied_owner(s, profile, names)
@@ -212,7 +212,7 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
             if product == 'menu':
                 argv += ['--menu']
             else:
-                argv += ['--game', product, '--map', 'start' if product.startswith('q1-') else 'base1' if product.startswith('q2-') else 'q3dm0', '+bind', 'F12', 'quit']
+                argv += ['--game', product, '--map', 'start' if product.startswith('q1-') else 'base1' if product.startswith('q2-') else 'q3dm0']
         result['argv'] = list(map(str, argv))
         p = s.start(product + '-' + renderer, result['argv'], extra=[build, content])
         end = time.monotonic() + 40
@@ -271,14 +271,14 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
         if gameplay:
             if p.poll() is not None:
                 result['exit_code'] = p.returncode
-                raise RuntimeError('candidate exited before public quit binding')
-            quit_argv = ['/usr/bin/wtype', '-P', 'F12', '-s', '100', '-p', 'F12']
-            result['public_quit_binding'] = {'argv': quit_argv, 'log': str(s.root / 'logs/public-quit-binding.log'), 'exit_code': None}
-            quit_process = s.start('public-quit-binding', quit_argv)
-            result['public_quit_binding']['exit_code'] = quit_process.wait(timeout=max(0.01, end - time.monotonic()))
-            if result['public_quit_binding']['exit_code'] != 0:
-                raise RuntimeError('private public quit binding input failed')
-            result['shutdown_route'] = 'Public quit command bound to F12 by startup CLI, pressed by wtype on the Session private Wayland display'
+                raise RuntimeError('candidate exited before compositor window close')
+            quit_argv = ['/usr/bin/swaymsg', '-s', s.env['SWAYSOCK'], '[con_id=' + str(window['id']) + '] kill']
+            result['public_window_close'] = {'argv': quit_argv, 'log': str(s.root / 'logs/public-window-close.log'), 'exit_code': None}
+            quit_process = s.start('public-window-close', quit_argv)
+            result['public_window_close']['exit_code'] = quit_process.wait(timeout=max(0.01, end - time.monotonic()))
+            if result['public_window_close']['exit_code'] != 0:
+                raise RuntimeError('private compositor window close failed')
+            result['shutdown_route'] = 'Normal SDL close event requested for the recorded game container through its private sway socket; no process signal'
         result['exit_code'] = p.wait(timeout=max(0.01, end - time.monotonic()))
         result['normal_exit'] = result['exit_code'] == 0
         if not rendered:
@@ -303,7 +303,7 @@ def main():
     parser.add_argument('--candidate-receipt', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--port-base', type=int, default=46561)
-    parser.add_argument('--gameplay-seconds', type=float, default=20, help='Post-mapping gameplay capture interval; public quit binding remains within the 40-second launch bound')
+    parser.add_argument('--gameplay-seconds', type=float, default=20, help='Post-mapping gameplay capture interval; compositor window close remains within the 40-second launch bound')
     args = parser.parse_args()
     if not 0 < args.gameplay_seconds <= 35:
         parser.error('--gameplay-seconds must be greater than 0 and at most 35')
@@ -324,7 +324,7 @@ def main():
         raise ValueError('candidate receipt stat pins differ from current five candidate files')
     originals = {n: (profile / n).read_bytes() for n in names}
     cases = []
-    result = {'result': 'FAIL', 'artifact': str(binary), 'owner_profile_source': str(profile), 'copied_owner_settings': names, 'candidate_files': pins, 'owner_profile_unchanged': False, 'normal_exit': False, 'exit_code': None, 'private_containment': {'video_driver': 'wayland', 'headless_compositor': True, 'compositor': 'private sway headless pixman', 'SDL_AUDIODRIVER': 'dummy', 'DISPLAY_unset': True, 'HOME_and_XDG_runtime_private': True, 'host_devices_and_desktop_sockets_masked': True, 'no_debugger': True}, 'cases': cases, 'scope': 'Actual private Wayland menu plus five native game families on CPU and software GL; menus use frame-limited normal shutdown, games use the public F12 quit binding on a private keyboard. No physical desktop, GPU fidelity or performance claim.'}
+    result = {'result': 'FAIL', 'artifact': str(binary), 'owner_profile_source': str(profile), 'copied_owner_settings': names, 'candidate_files': pins, 'owner_profile_unchanged': False, 'normal_exit': False, 'exit_code': None, 'private_containment': {'video_driver': 'wayland', 'headless_compositor': True, 'compositor': 'private sway headless pixman', 'SDL_AUDIODRIVER': 'dummy', 'DISPLAY_unset': True, 'HOME_and_XDG_runtime_private': True, 'host_devices_and_desktop_sockets_masked': True, 'no_debugger': True}, 'cases': cases, 'scope': 'Actual private Wayland menu plus five native game families on CPU and software GL; menus use frame-limited normal shutdown, games use the private compositor window-close request. No physical desktop, GPU fidelity or performance claim.'}
     try:
         launch_scopes = [('menu', renderer, True, content) for renderer in ['default', 'cpu']]
         launch_scopes += [(product, renderer, False, content) for product in PRODUCTS for renderer in ['cpu', 'gl']]
