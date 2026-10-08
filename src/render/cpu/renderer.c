@@ -701,10 +701,15 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
     qa_render_source_report(controls,renderer->display.width,renderer->display.height);
   }
   renderer->presenting=true;
-  bool ok = !renderer->options.present ||
-         renderer->options.present(
-             renderer->options.present_context, qa_cpu_pixels(renderer),
-             renderer->display.width, renderer->display.height, error);
+  bool ok = true;
+  if (renderer->options.present) {
+    qa_bytes pixels = qa_cpu_pixels(renderer);
+    uint64_t start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
+    ok = renderer->options.present(renderer->options.present_context, pixels,
+        renderer->display.width, renderer->display.height, error);
+    CPU_STATS_ADD(renderer, present_copy_ticks, SDL_GetPerformanceCounter() - start);
+    CPU_STATS_ADD(renderer, presents, 1);
+  }
   renderer->presenting=false;
   if (ok) {
     renderer->source_frame = false;

@@ -14,7 +14,9 @@
   X(generic_batches) X(generic_commands) X(generic_triangles) \
   X(generic_covered) X(generic_fragments) X(generic_written) \
   X(worker_dispatches) X(worker_posts) X(worker_joins) \
-  X(skin_jobs) X(skin_vertices) X(skin_cached_draws)
+  X(skin_jobs) X(skin_vertices) X(skin_cached_draws) \
+  X(brush_sort_ticks) X(brush_generate_ticks) X(brush_shade_ticks) \
+  X(surface_build_ticks) X(surface_builds) X(present_copy_ticks) X(presents)
 extern _Thread_local qa_cpu_statistics *cpu_row_statistics;
 #define CPU_STATS_ADD(renderer, field, value) do { \
   if ((renderer)->statistics_enabled) \

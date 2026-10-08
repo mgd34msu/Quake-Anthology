@@ -227,6 +227,7 @@ static bool timers_report(qa_frontend *f, const qa_command_invocation *call, dia
     if (strcmp(action, "report")) return true;
     qa_cpu_statistics stats;
     if (!qa_cpu_statistics_read(f->cpu, &stats, error)) return false;
+    double tick_ms = 1000.0 / (double)SDL_GetPerformanceFrequency();
     return append(text, error, "CPU renderer totals\n") &&
         append(text, error, "cpu_brush draws=%" PRIu64 " candidates=%" PRIu64 " predicate_rejects=%" PRIu64
             " planarity_rejects=%" PRIu64 " cache_rejects=%" PRIu64 "\n",
@@ -242,7 +243,15 @@ static bool timers_report(qa_frontend *f, const qa_command_invocation *call, dia
         append(text, error, "cpu_workers dispatches=%" PRIu64 " posts=%" PRIu64 " joins=%" PRIu64 "\n",
             stats.worker_dispatches, stats.worker_posts, stats.worker_joins) &&
         append(text, error, "cpu_skin jobs=%" PRIu64 " vertices=%" PRIu64 " cached_draws=%" PRIu64 "\n",
-            stats.skin_jobs, stats.skin_vertices, stats.skin_cached_draws);
+            stats.skin_jobs, stats.skin_vertices, stats.skin_cached_draws) &&
+        append(text, error, "cpu_work_ms edge_sort=%.6f span_generate=%.6f span_write_worker_sum=%.6f"
+            " surface_cache_build=%.6f present_copy_update=%.6f builds=%" PRIu64 " presents=%" PRIu64 "\n",
+            (double)stats.brush_sort_ticks * tick_ms,
+            (double)stats.brush_generate_ticks * tick_ms,
+            (double)stats.brush_shade_ticks * tick_ms,
+            (double)stats.surface_build_ticks * tick_ms,
+            (double)stats.present_copy_ticks * tick_ms,
+            stats.surface_builds, stats.presents);
 }
 static bool diagnostic(void *context, const qa_command_invocation *call, qa_buffer *out, qa_error *error) {
     qa_frontend *f = context; diagnostic_text text = {0}; qa_arena scratch = {0}; bool ok = false;

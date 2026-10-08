@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "surface_cache.h"
+#include <SDL_timer.h>
 
 /* Like Q1/Q2 D_SCAlloc, one bounded arena recycles surface storage. The RGBA
  * cache is derived presentation data; geometry ownership keeps only its
@@ -407,7 +408,10 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
     slot->block->owner = slot;
     slot->width = width;
     slot->height = height;
+    uint64_t start = renderer->statistics_enabled ? SDL_GetPerformanceCounter() : 0;
     surface_build(draw, mip, &base, &light, slot);
+    CPU_STATS_ADD(renderer, surface_build_ticks, SDL_GetPerformanceCounter() - start);
+    CPU_STATS_ADD(renderer, surface_builds, 1);
     slot->stamp = stamp;
     ++cache->builds;
   }
