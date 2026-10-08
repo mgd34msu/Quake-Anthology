@@ -82,7 +82,7 @@ static bool current(frontend_unified_q2_rr_hud *o, qa_error *e)
 static bool actor_read(frontend_unified_q2_rr_hud *o, qa_actor_id actor,
     bool retained, bool resolve, qa_actor_id *out, qa_error *e)
 {
-    if (!actor.registry || !actor.generation) return fail(e,"RR HUD actor has no Source identity");
+    if (!actor.registry) return fail(e,"RR HUD actor has no Source identity");
     if (!resolve) return true;
     return frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(o->frame),actor,retained,out,e);
 }

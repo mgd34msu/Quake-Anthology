@@ -52,12 +52,12 @@ struct frontend_unified_events {
     double seconds, prepared_seconds;
     uint64_t presentation_sequence, simulation_sequence;
     bool has_presentation_sequence, has_simulation_sequence;
-    bool has_frame, prepared, busy, failed, owns_audio, families_ready;
+    bool has_frame, prepared, busy, owns_audio, families_ready;
 };
 
 static bool current(frontend_unified_events *o, qa_error *e)
 {
-    if (!o || o->failed || !frontend_unified_media_current(o->media))
+    if (!o || !frontend_unified_media_current(o->media))
         return frontend_unified_fail(e, QA_ERROR_ARGUMENT, "Unified event media is not current");
     bool snapshot=o->frontend->capture || o->frontend->source_restoring;
     if (!(snapshot?frontend_remote_unified_checkpoint_current(o->replica,e):frontend_remote_unified_current(o->replica,e))) return false;
@@ -353,7 +353,7 @@ void frontend_unified_events_frame_commit(frontend_unified_events *o)
 }
 bool frontend_unified_events_frame_ready(frontend_unified_events *o,const qa_unified_document *doc,qa_error *e)
 {
-    if (!o || o->busy || !o->prepared || !doc || o->failed ||
+    if (!o || o->busy || !o->prepared || !doc ||
         qa_unified_document_type(doc)!=QA_UNIFIED_FRAME_DOCUMENT ||
         (o->hud && !qa_hud_idle(o->hud)) || !current(o,e))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified events have no returned prepared frame");
@@ -484,7 +484,6 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             o->pending=batch->next; batch_free(batch); if (!o->pending) o->tail=&o->pending;
         }
     }
-    if (!okay) o->failed=true;
     if (okay && o->link_count>4096) {
         size_t n=0;
         uint64_t oldest=o->presentation_sequence>2048?o->presentation_sequence-2048:0;
