@@ -112,7 +112,12 @@ typedef struct qa_net_udp_options {
  * next collection or close. now_ns is supplied by the application, not gameplay. */
 typedef struct qa_net_transport_event {
     qa_net_datagram packet;
+    /* Decoder metadata belongs to the child protocol and stays unchanged when
+     * a host combines physical and loopback transports. */
     uint32_t source;
+    /* Host routing is separate: low bit 0 selects external, 1 local; each host
+     * wrapper shifts the child's route left on collect and right on dispatch. */
+    uint32_t route;
 } qa_net_transport_event;
 typedef struct qa_net_transport_ops {
     bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
@@ -135,6 +140,13 @@ typedef struct qa_net_udp_policy { qa_net_address bound; bool ipv6_only; } qa_ne
 bool qa_net_udp_policy_read(const qa_net_transport *, qa_net_udp_policy *, bool *present, qa_error *);
 bool qa_net_loopback_create(qa_net_limits, qa_net_loopback **, qa_error *);
 bool qa_net_loopback_bind(qa_net_loopback *, const char *, qa_net_transport **, qa_error *);
+/* Combines an optional external transport and an existing local server endpoint
+ * into one host stream. Both handles transfer only on success; the caller keeps
+ * the local endpoint's hub alive. Bound address and UDP policy use the external
+ * child when present. The local-only stream reports the local bound address.
+ * Its datagram budget is the smaller child budget. */
+bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *local,
+                                  qa_net_transport **out, qa_error *);
 /* Closing a hub closes its endpoints; external transport handles remain valid
  * until transport_close, and operations on them report a closed endpoint. */
 void qa_net_loopback_close(qa_net_loopback *);

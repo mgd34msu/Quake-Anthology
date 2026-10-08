@@ -5,7 +5,7 @@
 typedef struct packet_header {
     uint64_t source_id;
     qa_net_address from;
-    uint32_t source;
+    uint32_t source, route;
 } packet_header;
 
 bool qa_network_events_collect(const qa_network_event_source *source, qa_platform_events *events,
@@ -17,7 +17,8 @@ bool qa_network_events_collect(const qa_network_event_source *source, qa_platfor
         if (!source->collect(source->context, now_ns, &input, error)) return false;
         const qa_net_datagram *packet=&input.packet;
         size_t size = packet->kind == QA_NET_POLL_PACKET ? packet->payload.size : 0;
-        packet_header header={.source_id=source->id, .from=packet->from, .source=input.source};
+        packet_header header={.source_id=source->id, .from=packet->from,
+            .source=input.source, .route=input.route};
         memcpy(bytes, &header, sizeof(header));
         if (size) memcpy(bytes + sizeof(header), packet->payload.data, size);
         qa_platform_events_push(events, QA_PLATFORM_EVENT_PACKET,
@@ -38,5 +39,5 @@ void qa_network_event_packet(const qa_platform_event *event, qa_bytes bytes,
     *input = (qa_net_transport_event){.packet={.kind = (qa_net_poll_kind)event->value,
         .from=header.from,
         .payload = {bytes.data + sizeof(header), bytes.size - sizeof(header)},
-        .received_ns = event->time_ns}, .source=header.source};
+        .received_ns = event->time_ns}, .source=header.source, .route=header.route};
 }

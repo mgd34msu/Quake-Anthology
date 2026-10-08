@@ -357,6 +357,109 @@ void qa_net_transport_close(qa_net_transport *transport)
     free(transport);
 }
 
+typedef struct host_state {
+    qa_net_transport *children[2];
+    unsigned collect_next, dispatch_next;
+} host_state;
+
+static bool host_send(void *context, const qa_net_address *to, qa_bytes payload, qa_error *error)
+{
+    host_state *state = context;
+    return qa_net_transport_send(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0],
+        to, payload, error);
+}
+
+static bool host_collect(void *context, uint64_t now_ns, qa_net_transport_event *out, qa_error *error)
+{
+    host_state *state = context;
+    unsigned first = state->collect_next;
+    for (unsigned i = 0; i < 2; ++i) {
+        unsigned branch = (first + i) & 1u;
+        if (!state->children[branch]) continue;
+        if (!qa_net_transport_collect(state->children[branch], now_ns, out, error)) return false;
+        out->route = (out->route << 1) | branch;
+        if (out->packet.kind != QA_NET_POLL_EMPTY) {
+            state->collect_next = branch ^ 1u;
+            return true;
+        }
+    }
+    state->collect_next = first ^ 1u;
+    return true;
+}
+
+static bool host_dispatch(void *context, const qa_net_transport_event *event,
+    qa_net_datagram *out, bool *present, qa_error *error)
+{
+    host_state *state = context;
+    if (event) {
+        qa_net_transport_event child = *event;
+        unsigned branch = child.route & 1u;
+        child.route >>= 1;
+        return qa_net_transport_dispatch(state->children[branch], &child, out, present, error);
+    }
+    unsigned first = state->dispatch_next;
+    for (unsigned i = 0; i < 2; ++i) {
+        unsigned branch = (first + i) & 1u;
+        if (!state->children[branch]) continue;
+        if (!qa_net_transport_dispatch(state->children[branch], NULL, out, present, error)) return false;
+        if (*present) {
+            state->dispatch_next = branch ^ 1u;
+            return true;
+        }
+    }
+    state->dispatch_next = first ^ 1u;
+    return true;
+}
+
+static bool host_maintenance(void *context, uint64_t now_ns, qa_error *error)
+{
+    host_state *state = context;
+    if (state->children[0] && !qa_net_transport_maintenance(state->children[0], now_ns, error)) return false;
+    return qa_net_transport_maintenance(state->children[1], now_ns, error);
+}
+
+static bool host_ready(const void *context)
+{
+    const host_state *state = context;
+    return (!state->children[0] || qa_net_transport_ready(state->children[0])) &&
+        qa_net_transport_ready(state->children[1]);
+}
+
+static void host_close(void *context)
+{
+    host_state *state = context;
+    qa_net_transport_close(state->children[0]);
+    qa_net_transport_close(state->children[1]);
+    free(state);
+}
+
+bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *local,
+    qa_net_transport **out, qa_error *error)
+{
+    if (!local || !out || external == local)
+        return fail(error, QA_ERROR_ARGUMENT, "Host transport requires distinct owned endpoints and output");
+    host_state *state = calloc(1, sizeof(*state));
+    if (!state) return fail(error, QA_ERROR_MEMORY, "Allocating host transport");
+    state->children[0] = external;
+    state->children[1] = local;
+    qa_net_limits limits = local->limits;
+    if (external) {
+        if (external->limits.datagram_bytes < limits.datagram_bytes)
+            limits.datagram_bytes = external->limits.datagram_bytes;
+        if (external->limits.queue_packets > limits.queue_packets)
+            limits.queue_packets = external->limits.queue_packets;
+    }
+    const qa_net_transport_ops ops = {.send = host_send, .collect = host_collect,
+        .dispatch = host_dispatch, .maintenance = host_maintenance,
+        .ready = host_ready, .close = host_close};
+    if (!qa_net_transport_create(external ? &external->address : &local->address,
+        limits, &ops, state, out, error)) {
+        free(state);
+        return false;
+    }
+    return true;
+}
+
 typedef struct udp_state { int fd; uint8_t *bytes; size_t capacity; bool ipv6, ipv6_only; } udp_state;
 
 static bool udp_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
@@ -414,6 +517,10 @@ bool qa_net_udp_policy_read(const qa_net_transport *transport, qa_net_udp_policy
         return fail(error, QA_ERROR_ARGUMENT, "Missing native UDP policy observation");
     *out = (qa_net_udp_policy){0};
     *present = false;
+    if (transport->ops.close == host_close) {
+        const host_state *state = transport->state;
+        return !state->children[0] || qa_net_udp_policy_read(state->children[0], out, present, error);
+    }
     if (transport->ops.send != udp_send || transport->ops.collect != udp_receive ||
         transport->ops.close != udp_close) return true;
     const udp_state *state = transport->state;
