@@ -20,7 +20,7 @@ bool frontend_network_unified_server(const frontend_network_unified *owner)
 
 static bool request_equal(const qa_net_connect *a, const qa_net_connect *b)
 {
-    return a && b && a->attachment == b->attachment && a->attachment == QA_NET_REMOTE &&
+    return a && b && a->attachment == b->attachment &&
         a->protocol.kind == QA_NET_UNIFIED_1 && b->protocol.kind == QA_NET_UNIFIED_1 &&
         !a->protocol.flags && !a->protocol.revision && !b->protocol.flags && !b->protocol.revision &&
         a->seat_count == 1 && b->seat_count == 1 && a->seats && b->seats &&
