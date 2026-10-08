@@ -52,7 +52,6 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
         command.seat=context.seat; command.actor=context.actor;
         command.origin=QA_COMMAND_SEAT; command.direct=true;
         context=command; dialect=context.dialect;
-        if (!qa_application_capture_command_context(frontend->application, &context, &context, error)) return false;
     }
     if (targeted && dialect != QA_CONSOLE_Q3)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Selected source has no numeric client tell command");
@@ -68,17 +67,12 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     if (!raw) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining source chat command");
     if (targeted) snprintf(raw, prefix + size + 1, "%s %s %s", name, target_text, text);
     else snprintf(raw, prefix + size + 1, "%s %s", name, text);
-    const char *argv[] = {name, targeted ? target_text : text, text};
-    qa_command_invocation command = {.console = client_source ? recipient.source.context.console :
-            source_console,
-        .context = context, .argc = targeted ? 3 : 2, .argv = argv,
-        .args_text = raw + strlen(name) + 1, .raw = raw};
     /* This is one source invocation. Engine separators in chat text are never
      * replayed through the local engine command buffer. Source GAME owns the
      * audience, team restrictions, flood control and delivered notification. */
-    bool ok = client_source ? qa_console_execute_now(command.console,&context,raw,error) :
-        remote ? frontend_network_client_command_seat(frontend, seat->id, raw, error) :
-        qa_application_source_command(frontend->application, &command, error);
+    bool ok = remote ? frontend_network_client_command_seat(frontend, seat->id, raw, error) :
+        qa_console_execute_now(client_source ? recipient.source.context.console : source_console,
+            &context, raw, error);
     if (ok && client_source && !frontend_network_client_recipient_current(frontend,seat->id,&recipient))
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Chat changed its actual CLIENT recipient");
     free(raw); return ok;
