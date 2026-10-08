@@ -130,19 +130,16 @@ static bool body_pass(player_fx *p,uint32_t part,qa_q3_ref_entity *r,bool base,q
     if(!ok || !current(p,e))return false;
     return consumed || emit(p,r,e);
 }
+static bool body_pass_adapter(void *context,uint32_t part,qa_q3_ref_entity *ref,bool base,qa_error *e)
+{ return body_pass(context,part,ref,base,e); }
 static bool body_powerups(player_fx *p,uint32_t part,qa_q3_ref_entity *r,bool hidden,qa_error *e)
 {
     if(hidden)return true;
-    int32_t initial=r->custom_shader;
-    if(powered(p,4)) { r->custom_shader=p->media->graphics[Q3N_G_INVIS]; return body_pass(p,part,r,r->custom_shader==initial,e); }
-    if(!body_pass(p,part,r,true,e))return false;
-    if(powered(p,1)) { r->custom_shader=p->media->graphics[p->client.team==1?Q3N_G_RED_QUAD:Q3N_G_QUAD];
-        if(!body_pass(p,part,r,r->custom_shader==initial,e))return false; }
-    if(powered(p,5) && (p->frame->time/100)%10==1) { r->custom_shader=p->media->graphics[Q3N_G_REGEN];
-        if(!body_pass(p,part,r,r->custom_shader==initial,e))return false; }
-    if(powered(p,2)) { r->custom_shader=p->media->graphics[Q3N_G_BATTLE_SUIT];
-        if(!body_pass(p,part,r,r->custom_shader==initial,e))return false; }
-    return true;
+    q3n_body_powerup_media media={.invisibility=p->media->graphics[Q3N_G_INVIS],
+        .quad=p->media->graphics[Q3N_G_QUAD],.red_quad=p->media->graphics[Q3N_G_RED_QUAD],
+        .regeneration=p->media->graphics[Q3N_G_REGEN],.battle_suit=p->media->graphics[Q3N_G_BATTLE_SUIT]};
+    return q3n_player_body_powerups(&media,p->frame->time,(uint32_t)p->state->powerups,
+        p->client.team,part,r,p,body_pass_adapter,e);
 }
 static bool write_dynamic(player_fx *p,const q3n_client_dynamic *dynamic,qa_error *e)
 {

@@ -502,7 +502,8 @@ static bool new_info(q3n_clients *owner, uint32_t index, const char *info, uint6
 static bool create(const q3n_client_options *options, unsigned domain, q3n_clients **out, qa_error *error)
 {
     if (!options || !options->content || !options->assets || !out || *out ||
-        (domain==2 ? (!options->compiled_source || options->reader || options->remote_source) :
+        (domain==3 ? (options->compiled_source || options->reader || options->remote_source) :
+            domain==2 ? (!options->compiled_source || options->reader || options->remote_source) :
             domain==1 ? (!options->remote_source || options->reader || options->compiled_source) :
             (!options->reader || options->remote_source || options->compiled_source)) ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
@@ -530,6 +531,19 @@ bool q3n_clients_create_remote(const q3n_client_options *options, q3n_clients **
 { return create(options, 1, out, error); }
 bool q3n_clients_create_compiled(const q3n_client_options *options,q3n_clients **out,qa_error *error)
 { return create(options,2,out,error); }
+bool q3n_clients_create_received(const q3n_client_options *options,q3n_clients **out,qa_error *error)
+{ return create(options,3,out,error); }
+bool q3n_clients_received_register(q3n_clients *owner, uint32_t index,
+    const char *info, uint64_t revision, uint32_t max_clients, int32_t game_type,
+    const q3n_client_settings *settings, qa_error *error)
+{
+    if (owner->clients[index].observed && owner->clients[index].configstring_revision == revision)
+        return true;
+    owner->busy = true;
+    bool okay = new_info(owner, index, info, revision, max_clients, game_type, settings, error);
+    owner->busy = false;
+    return okay;
+}
 bool q3n_clients_idle(const q3n_clients *owner) { return owner && !owner->busy; }
 qa_q3_presentation_assets *q3n_clients_assets(const q3n_clients *owner)
 { return owner ? owner->options.assets : NULL; }

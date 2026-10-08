@@ -1,4 +1,5 @@
 #include "remote_unified_private.h"
+#include "remote_unified_metadata.h"
 #include "remote_unified_q3.h"
 #include "remote_unified_events.h"
 #include "remote_unified_components.h"
@@ -10,8 +11,8 @@
 #include "../../presentation/q3_native/events.h"
 #include "../../presentation/q3_native/marks.h"
 #include "../../presentation/q3_native/pose.h"
+#include "../../presentation/q3_native/body.h"
 #include "../../presentation/q3_native/attachments.h"
-#include "../../presentation/q3_native/selected_media.h"
 #include "../../presentation/q3_native/particles.h"
 #include "../../presentation/q3_native/events_internal.h"
 #include "../../presentation/q3_native/trajectory.h"
@@ -40,6 +41,8 @@ typedef struct unified_q3_bank {
     q3n_media *media;
     q3n_events *effects;
     q3n_weapons *weapons;
+    q3n_clients *clients;
+    uint64_t character_publication, character_map_revision;
     q3n_particles *particles;
     q3n_unified_effect_source source;
     qa_actor_id blood_owners[Q3N_LOCAL_CAPACITY];
@@ -49,16 +52,16 @@ typedef struct unified_q3_character {
     qa_actor_id actor;
     unified_q3_bank *bank;
     q3n_player_pose pose;
-    qa_player_animation_config animation;
-    qa_resource *animation_holder;
-    int32_t models[3], skins[3];
+    q3n_client_info client;
+    qa_q3_entity source;
+    uint64_t media_revision;
     qa_vec3 origin, angles, velocity;
     int32_t movement, legs, torso, time, team;
     uint32_t flags, powerups;
     float color[4], scale, opacity;
     bool visible, reset;
     qa_q3_ref_entity submitted_parts[3];
-    bool submitted, hidden;
+    bool submitted, hidden, weapon_submitted;
 } unified_q3_character;
 typedef struct unified_q3_ballistic {
     struct unified_q3_ballistic *next;
@@ -571,164 +574,115 @@ static bool character_event(frontend_unified_q3 *o,const qa_unified_presentation
     }
      return o->busy?leave(o,okay,e):okay;
 }
-static bool resource_first(unified_q3_bank *b,const char *const *paths,size_t count,
-    qa_resource **out,char selected[256],qa_error *e)
+static bool character_source(frontend_unified_q3 *o, const qa_unified_character_state *row,
+    qa_actor_id id, frontend_unified_q3_source_view *out, const frontend_unified_q3_source_player **player,
+    qa_error *e)
 {
-    for (size_t i=0; i<count; ++i) {
-        qa_error local={0}; qa_resource *r=NULL;
-        bool okay=qa_vfs_acquire(b->files,paths[i],&r,NULL,&local);
-        if (!okay && local.code!=QA_ERROR_NOT_FOUND) { if (e) *e=local; return false; }
-        if (r && qa_resource_bytes(r).size) {
-            snprintf(selected,256,"%s",paths[i]); *out=r; return current(b->owner,e);
+    const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
+    const qa_unified_frame_metadata *metadata=qa_unified_document_metadata(
+        frontend_remote_unified_metadata_document(o->replica,frame));
+    const qa_unified_provider_state *selected=NULL;
+    *player=NULL;
+    for(size_t i=0;metadata && i<metadata->configuration_count;++i)
+        if(qa_actor_id_equal(metadata->configurations[i].actor,row->actor)) {
+            selected=&metadata->configurations[i].character;break;
         }
-        qa_resource_release(r);
+    frontend_unified_q3_sources *sources=frontend_remote_unified_presentation_q3_sources(o->replica);
+    if(!selected)return true;
+    for(size_t i=0;i<frontend_unified_q3_sources_count(sources);++i) {
+        frontend_unified_q3_source_view source;
+        if(!frontend_unified_q3_sources_read(sources,i,&source,e))return false;
+        if(strcmp(source.instance,selected->provider) || strcmp(source.content,selected->content))continue;
+        for(size_t j=0;j<source.player_count;++j)
+            if(qa_actor_id_equal(source.players[j].actor,id)) {
+                *out=source;*player=source.players+j;return true;
+            }
     }
-    return frontend_unified_fail(e,QA_ERROR_NOT_FOUND,"Q3 character's selected resource is missing");
-}
-static bool character_assets(frontend_unified_q3 *o,unified_q3_character *c,qa_error *e)
-{
-    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
-    const qa_recipe_choices *choices=qa_executable_recipe_choices(recipe);
-    const qa_launch_seat *seat=NULL;
-    for (size_t i=0; i<choices->seat_count; ++i)
-        if (choices->seats[i].actor.present && choices->seats[i].actor.slot==o->replica->wire_player.slot &&
-            choices->seats[i].actor.generation==o->replica->wire_player.generation) seat=&choices->seats[i].selection;
-    if (!seat || !seat->character_model || !seat->character_skin || !seat->character_head_model ||
-        !seat->character_head_skin)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified character lacks its actual offered appearance declaration");
-    char model[64],skin[64],head[64],headskin[64];
-    snprintf(model,sizeof(model),"%.63s",seat->character_model);
-    snprintf(skin,sizeof(skin),"%.63s",seat->character_skin);
-    snprintf(head,sizeof(head),"%.63s",*seat->character_head_model?seat->character_head_model:model);
-    snprintf(headskin,sizeof(headskin),"%.63s",seat->character_head_skin);
-    if (!*model || !*skin || !*headskin || strpbrk(model,"/\\") || strpbrk(skin,"/\\") ||
-        strpbrk(head+(head[0]=='*'),"/\\") || strpbrk(headskin,"/\\"))
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q3 character declaration contains a path component");
-    char paths[8][256],actual[256]; const char *names[8]; qa_resource *holder=NULL;
-    for (unsigned i=0; i<2; ++i) {
-        const char *part=i?"upper":"lower";
-        snprintf(paths[0],256,"models/players/%s/%s.md3",model,part);
-        snprintf(paths[1],256,"models/players/characters/%s/%s.md3",model,part);
-        names[0]=paths[0]; names[1]=paths[1];
-        if (!resource_first(c->bank,names,2,&holder,actual,e)) return false;
-        qa_resource_release(holder); holder=NULL;
-        if (!qa_q3_register_model(c->bank->assets,actual,&c->models[i],e) || !c->models[i] || !current(o,e)) return false;
-        snprintf(paths[0],256,"models/players/%s/%s_%s_default.skin",model,part,skin);
-        snprintf(paths[1],256,"models/players/%s/%s_%s.skin",model,part,skin);
-        snprintf(paths[2],256,"models/players/characters/%s/%s_%s_default.skin",model,part,skin);
-        snprintf(paths[3],256,"models/players/characters/%s/%s_%s.skin",model,part,skin);
-        for (unsigned j=0;j<4;++j) names[j]=paths[j];
-        if (!resource_first(c->bank,names,4,&holder,actual,e)) return false;
-        qa_resource_release(holder); holder=NULL;
-        if (!qa_q3_register_skin(c->bank->assets,actual,&c->skins[i],e) || !c->skins[i] || !current(o,e)) return false;
-    }
-    if (*head=='*') snprintf(paths[0],256,"models/players/heads/%s/%s.md3",head+1,head+1);
-    else snprintf(paths[0],256,"models/players/%s/head.md3",head);
-    snprintf(paths[1],256,"models/players/heads/%s/%s.md3",head+(*head=='*'),head+(*head=='*'));
-    names[0]=paths[0]; names[1]=paths[1];
-    if (!resource_first(c->bank,names,*head=='*'?1:2,&holder,actual,e)) return false;
-    qa_resource_release(holder); holder=NULL;
-    if (!qa_q3_register_model(c->bank->assets,actual,&c->models[2],e) || !c->models[2] || !current(o,e)) return false;
-    size_t n=0;
-    for (unsigned folder=*head=='*'?1:0; folder<2; ++folder) {
-        const char *base=folder?"heads/":"";
-        snprintf(paths[n++],256,"models/players/%s%s/%s/head_default.skin",base,head+(*head=='*'),headskin);
-        snprintf(paths[n++],256,"models/players/%s%s/head_%s.skin",base,head+(*head=='*'),headskin);
-    }
-    for (size_t i=0;i<n;++i) names[i]=paths[i];
-    if (!resource_first(c->bank,names,n,&holder,actual,e)) return false;
-    qa_resource_release(holder); holder=NULL;
-    if (!qa_q3_register_skin(c->bank->assets,actual,&c->skins[2],e) || !c->skins[2] || !current(o,e)) return false;
-    snprintf(paths[0],256,"models/players/%s/animation.cfg",model);
-    snprintf(paths[1],256,"models/players/characters/%s/animation.cfg",model);
-    names[0]=paths[0]; names[1]=paths[1];
-    if (!resource_first(c->bank,names,2,&holder,actual,e)) return false;
-    bool okay=q3n_selected_animation_parse(qa_resource_bytes(holder),actual,&c->animation,e) && current(o,e);
-    if (okay) { qa_resource_release(c->animation_holder); c->animation_holder=holder; }
-    else qa_resource_release(holder);
-    return okay;
+    return true;
 }
 static bool character_read(frontend_unified_q3 *o,const qa_unified_character_state *row,unified_q3_character **out,qa_error *e)
 {
-    const qa_unified_frame *frame=qa_unified_document_frame(o->frame); qa_actor_id id;
-    if (!frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&id,e)) return false;
-    const qa_recipe_provider *p=frontend_remote_unified_provider(o->replica,QA_ROLE_BODY,"");
-    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    const qa_product *product=p?qa_catalog_product(domain->catalog,p->selection.product):NULL;
-    if (!p || !product || product->family!=QA_GAME_Q3) {
-        frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 character has no real received appearance provider");
-        return false;
+    const qa_unified_frame *frame=qa_unified_document_frame(o->frame);qa_actor_id id;
+    *out=NULL;
+    if(!frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&id,e))return false;
+    frontend_unified_q3_source_view source;const frontend_unified_q3_source_player *player;
+    if(!character_source(o,row,id,&source,&player,e))return false;
+    if(!player)return true;
+    unified_q3_bank *bank=NULL;
+    if(!bank_read(o,source.content,source.instance,0,&bank,e))return false;
+    if(bank->clients && (bank->character_publication!=source.publication ||
+        bank->character_map_revision!=source.map_revision)) {
+        q3n_clients_destroy(bank->clients);bank->clients=NULL;
+        for(unified_q3_character *c=o->characters;c;c=c->next)if(c->bank==bank)c->reset=true;
     }
-    unified_q3_bank *bank=NULL; if (!bank_read(o,product->identity,p->selection.instance,0,&bank,e)) return false;
+    if(!bank->clients) {
+        q3n_client_options options={.content=bank->files,.assets=bank->assets,.product=source.product};
+        if(!q3n_clients_create_received(&options,&bank->clients,e))return false;
+        bank->character_publication=source.publication;bank->character_map_revision=source.map_revision;
+    }
+    uint32_t index=player->client_slot;
+    q3n_client_settings settings={.memory_remaining=SIZE_MAX,.loading=true};
+    if(!q3n_clients_received_register(bank->clients,index,
+        qa_q3_configstring(source.game_state,544u+index),source.configstring_revisions[544u+index],
+        source.max_clients,source.game_type,&settings,e))return false;
+    const q3n_client_info *client=q3n_clients_get(bank->clients,index);
     unified_q3_character *c=o->characters;
-    while (c && !qa_actor_id_equal(c->actor,id)) c=c->next;
-    if (!c) {
+    while(c && !qa_actor_id_equal(c->actor,id))c=c->next;
+    if(!c) {
         c=calloc(1,sizeof(*c));
-        if (!c) {
-            frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining full actor Q3 character pose");
-            return false;
-        }
-        c->actor=id; c->bank=bank; c->reset=true; c->next=o->characters; o->characters=c;
+        if(!c)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining full actor Q3 character pose");
+        c->actor=id;c->reset=true;c->next=o->characters;o->characters=c;
     }
-    if (c->bank!=bank) { qa_resource_release(c->animation_holder); c->animation_holder=NULL; c->bank=bank; c->reset=true; }
-    if (!c->animation_holder && !character_assets(o,c,e)) return false;
-    c->origin=row->origin; c->angles=row->angles; c->velocity=row->velocity;
-    c->movement=row->movement_direction; c->legs=row->legs; c->torso=row->torso;
-    c->flags=row->source_flags; c->powerups=row->powerups; c->scale=row->scale; c->opacity=row->opacity;
-    c->team=row->has_team?row->team:0;
+    if(c->bank!=bank || c->media_revision!=client->media_revision)c->reset=true;
+    c->bank=bank;c->client=*client;c->media_revision=client->media_revision;
+    c->source=source.entities[player->source_number].state;
+    c->origin=row->origin;c->angles=row->angles;c->velocity=row->velocity;
+    c->movement=row->movement_direction;c->legs=row->legs;c->torso=row->torso;
+    c->flags=row->source_flags;c->powerups=(uint32_t)c->source.powerups;
+    c->scale=row->scale;c->opacity=row->opacity;c->team=client->team;
     memcpy(c->color,row->color,sizeof(c->color));
-    c->visible=true; *out=c; return true;
+    c->visible=true;*out=c;return true;
 }
-static bool character_draw(frontend_unified_q3 *o,unified_q3_character *c,qa_error *e)
+static bool character_part(void *context,uint32_t part,qa_q3_ref_entity *ref,bool base,qa_error *e)
 {
-    qa_actor_id viewer; uint32_t number;
-    if (!frontend_remote_unified_player(o->replica,&viewer,&number)) return false;
-    c->hidden=(c->flags&128)!=0 || c->opacity<=0 || c->scale==0;
-    if (c->hidden) return true;
-    if (c->reset) {
-        if (!q3n_lerp_clear(&c->animation,&c->pose.legs.animation,c->legs,o->time,e) ||
-            !q3n_lerp_clear(&c->animation,&c->pose.torso.animation,c->torso,o->time,e)) return false;
-        c->pose=(q3n_player_pose){.legs={.yaw_angle=c->angles.y},
-            .torso={.yaw_angle=c->angles.y,.pitch_angle=c->angles.x}}; c->reset=false;
+    (void)part;(void)base;unified_q3_character *c=context;
+    return qa_q3_presentation_entity(c->bank->backend,ref,e) && current(c->bank->owner,e);
+}
+static bool character_submit(frontend_unified_q3 *o,unified_q3_character *c,qa_error *e)
+{
+    qa_actor_id viewer;uint32_t number;
+    if(!frontend_remote_unified_player(o->replica,&viewer,&number))return false;
+    c->hidden=(c->flags&128)!=0 || c->opacity<=0 || c->scale==0 || !c->client.info_valid;
+    if(c->hidden)return true;
+    if(c->reset){q3n_player_reset(&c->pose,c->angles);c->reset=false;}
+    qa_q3_entity state=c->source;
+    state.eFlags=q3ne_word(c->flags);state.legsAnim=c->legs;state.torsoAnim=c->torso;
+    state.angles2[1]=(float)c->movement;
+    state.pos.delta[0]=c->velocity.x;state.pos.delta[1]=c->velocity.y;state.pos.delta[2]=c->velocity.z;
+    q3n_body_visual visual={.scale=c->scale,.opacity=c->opacity};
+    memcpy(visual.color,c->color,sizeof(visual.color));
+    q3n_body_options options={.time=o->time,
+        .frame_milliseconds=q3ne_word((uint32_t)o->time-(uint32_t)o->previous_time),
+        .local_view_client=qa_actor_id_equal(viewer,c->actor)?state.number:-1,.swing_speed=.3f,.visual=&visual};
+    q3n_player_body body;
+    if(!q3n_player_body_build(c->bank->assets,&c->pose,&c->client,&state,c->origin,c->angles,
+        &options,&body,e))return false;
+    memcpy(c->submitted_parts,body.parts,sizeof(body.parts));
+    q3n_body_powerup_media media={0};
+    if((c->powerups&(1u<<4)) &&
+        !qa_q3_register_shader(c->bank->assets,"powerups/invisibility",true,&media.invisibility,e))return false;
+    if(c->powerups&(1u<<1)) {
+        if(!qa_q3_register_shader(c->bank->assets,c->team==1?"powerups/blueflag":"powerups/quad",
+            true,c->team==1?&media.red_quad:&media.quad,e))return false;
     }
-    q3n_pose_axes axes; q3n_pose_entity state={c->flags,c->velocity,c->movement,c->legs,c->torso};
-    int32_t elapsed; uint32_t bits=(uint32_t)o->time-(uint32_t)o->previous_time; memcpy(&elapsed,&bits,4);
-    if (!q3n_player_angles_pose(&c->pose,&c->animation,&state,c->angles,o->time,elapsed,.3f,&axes,e)) return false;
-    int32_t legs=c->pose.legs.yawing && (c->legs&~128)==22?24:c->legs;
-    float speed=c->powerups&(1u<<3)?1.5f:1;
-    if (!q3n_lerp_run(&c->animation,&c->pose.legs.animation,legs,o->time,speed,false,e) ||
-        !q3n_lerp_run(&c->animation,&c->pose.torso.animation,c->torso,o->time,speed,false,e)) return false;
-    qa_q3_ref_entity parts[3]={0}; const q3n_lerp_frame *lerps[]={&c->pose.legs.animation,&c->pose.torso.animation,NULL};
-    const qa_vec3 *part_axes[]={axes.legs,axes.torso,axes.head};
-    for (unsigned i=0;i<3;++i) {
-        parts[i]=(qa_q3_ref_entity){.kind=QA_Q3_REF_MODEL,.model=c->models[i],.custom_skin=c->skins[i],
-            .flags=128|(qa_actor_id_equal(viewer,c->actor)?2:0),.lighting_origin=c->origin,.shader_time=(float)o->time*.001f};
-        memcpy(parts[i].axis,part_axes[i],sizeof(parts[i].axis));
-        if (lerps[i]) { parts[i].frame=lerps[i]->frame; parts[i].old_frame=lerps[i]->old_frame; parts[i].back_lerp=lerps[i]->back_lerp; }
-        for (unsigned j=0;j<4;++j) parts[i].color[j]=(uint8_t)(uint32_t)(int32_t)truncf(fminf(1,fmaxf(0,c->color[j]))*255);
-        parts[i].color[3]=(uint8_t)truncf(fminf(1,fmaxf(0,c->opacity*c->color[3]))*255);
-    }
-    parts[0].origin=c->origin;
-    for (unsigned i=0;i<3;++i) parts[0].axis[i]=qa_vec_scale(parts[0].axis[i],c->scale);
-    parts[0].non_normalized_axes=c->scale!=1;
-    if (!q3n_attach(c->bank->assets,&parts[1],&parts[0],"tag_torso",true,e) ||
-        !q3n_attach(c->bank->assets,&parts[2],&parts[1],"tag_head",true,e)) return false;
-    for (unsigned i=0;i<3;++i) parts[i].old_origin=parts[i].origin;
-    memcpy(c->submitted_parts,parts,sizeof(parts));
-    const char *shaders[4]={NULL}; size_t count=1;
-    if (c->powerups&(1u<<4)) shaders[0]="powerups/invisibility";
-    else {
-        if (c->powerups&(1u<<1)) shaders[count++]=c->team==1?"powerups/blueflag":"powerups/quad";
-        if ((c->powerups&(1u<<5)) && (o->time/100)%10==1) shaders[count++]="powerups/regen";
-        if (c->powerups&(1u<<2)) shaders[count++]="powerups/battleSuit";
-    }
-    for (size_t pass=0;pass<count;++pass) {
-        int32_t shader=0;
-        if (shaders[pass] && (!qa_q3_register_shader(c->bank->assets,shaders[pass],true,&shader,e) || !current(o,e))) return false;
-        for (unsigned part=0;part<3;++part) { parts[part].custom_shader=shader;
-            if (!qa_q3_presentation_entity(c->bank->backend,&parts[part],e) || !current(o,e)) return false; }
-    }
-    c->submitted=true;c->time=o->time; return true;
+    if((c->powerups&(1u<<5)) &&
+        !qa_q3_register_shader(c->bank->assets,"powerups/regen",true,&media.regeneration,e))return false;
+    if((c->powerups&(1u<<2)) &&
+        !qa_q3_register_shader(c->bank->assets,"powerups/battleSuit",true,&media.battle_suit,e))return false;
+    for(uint32_t part=0;part<body.count;++part)
+        if(!q3n_player_body_powerups(&media,o->time,c->powerups,c->team,part,&body.parts[part],
+            c,character_part,e))return false;
+    c->submitted=true;c->time=o->time;return true;
 }
 static qa_vec3 perpendicular(qa_vec3 n)
 {
@@ -807,7 +761,7 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
             qa_q3_source_scene_bank_create(polygons,vertices,&o->scene_bank,e);
     }
     if(okay){qa_q3_source_scene_bank_frame(o->scene_bank);okay=component_bank_read(o,e);}
-    for (unified_q3_character *c=o->characters;c;c=c->next) { c->visible=false;c->submitted=false;c->hidden=false; }
+    for (unified_q3_character *c=o->characters;c;c=c->next) { c->visible=false;c->submitted=false;c->hidden=false;c->weapon_submitted=false; }
     const qa_unified_frame *received=qa_unified_document_frame(o->frame);
     const qa_unified_frame_visuals *visuals=received->visuals;
     size_t character_count=visuals?visuals->character_count:0;
@@ -824,7 +778,7 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     for (size_t i=0;okay && i<character_count;++i) {
         unified_q3_character *c;
         okay=character_read(o,visuals->characters+i,&c,e);
-        if(okay)o->character_order[o->character_count++]=c;
+        if(okay && c)o->character_order[o->character_count++]=c;
     }
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired) {
         q3n_frame frame=effect_frame(o,b,o->time); frame.event_settings=&effect_settings; frame.weapon_settings=&weapon_settings;
@@ -837,7 +791,7 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
         if (okay) okay=q3n_media_load_unified_effects(b->media,&b->source,e) && q3n_particles_load_unified(b->particles,&frame,e);
         for(size_t i=0;okay && i<o->character_count;++i) {
             unified_q3_character *c=o->character_order[i];
-            if(c->visible && c->bank==b)okay=character_draw(o,c,e);
+            if(c->visible && c->bank==b)okay=character_submit(o,c,e);
         }
         if(okay)okay=ballistic_draw(o,b,e);
         if (okay) okay=q3n_marks_submit(&frame,e) && q3n_particles_add(&frame,e);
@@ -938,9 +892,10 @@ bool frontend_unified_q3_player_weapon(void *context,const q3n_frame *f,const q3
     (void)team;unified_q3_character *c=NULL;
     if(!torso || !character_receipt(context,f,row,&c,e))return false;
     if(!c)return q3n_weapons_player_compiled(f,torso,row,e);
-    if(c->hidden)return true;
-    return q3n_weapons_player_compiled_parent(f,c->bank->assets,&c->submitted_parts[1],row,e) &&
-        character_receipt(context,f,row,&c,e);
+    if(c->hidden || c->weapon_submitted)return true;
+    if(!q3n_weapons_player_compiled_parent(f,c->bank->assets,&c->submitted_parts[1],row,e) ||
+        !character_receipt(context,f,row,&c,e))return false;
+    c->weapon_submitted=true;return true;
 }
 bool frontend_unified_q3_equipment_replacement(frontend_unified_q3 *o,const q3n_frame *f,const qa_q3_player *ps,
     const frontend_unified_render_equipment *equipment,bool present,bool *consumed,qa_error *e)
@@ -1088,11 +1043,11 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         unified_q3_bank *b=o->banks;
         if (b->backend && !qa_q3_presentation_destroy(b->backend,e)) return false;
         q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
-        q3n_events_destroy(b->effects); q3n_media_destroy(b->media);
+        q3n_events_destroy(b->effects); q3n_media_destroy(b->media); q3n_clients_destroy(b->clients);
         o->banks=b->next; free(b->content);free(b->activation); free(b);
     }
     while (o->characters) { unified_q3_character *c=o->characters; o->characters=c->next;
-        qa_resource_release(c->animation_holder); free(c); }
+        free(c); }
     while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o->character_order); free(o->lights); free(o); *address=NULL; return true;

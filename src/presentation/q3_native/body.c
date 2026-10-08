@@ -2,6 +2,7 @@
 #include "attachments.h"
 #include "frame.h"
 
+#include <math.h>
 #include <string.h>
 
 void q3n_player_reset(q3n_player_pose *state, qa_vec3 angles)
@@ -10,6 +11,31 @@ void q3n_player_reset(q3n_player_pose *state, qa_vec3 angles)
     memset(&state->torso, 0, sizeof(state->torso));
     state->legs.yaw_angle = state->torso.yaw_angle = angles.y;
     state->torso.pitch_angle = angles.x;
+}
+
+bool q3n_player_body_powerups(const q3n_body_powerup_media *media, int32_t time, uint32_t powerups,
+    int32_t team, uint32_t part, qa_q3_ref_entity *ref, void *context,
+    bool (*submit)(void *, uint32_t, qa_q3_ref_entity *, bool, qa_error *), qa_error *error)
+{
+    int32_t initial = ref->custom_shader;
+    if (powerups & (1u << 4)) {
+        ref->custom_shader = media->invisibility;
+        return submit(context, part, ref, ref->custom_shader == initial, error);
+    }
+    if (!submit(context, part, ref, true, error)) return false;
+    if (powerups & (1u << 1)) {
+        ref->custom_shader = team == 1 ? media->red_quad : media->quad;
+        if (!submit(context, part, ref, ref->custom_shader == initial, error)) return false;
+    }
+    if ((powerups & (1u << 5)) && (time / 100) % 10 == 1) {
+        ref->custom_shader = media->regeneration;
+        if (!submit(context, part, ref, ref->custom_shader == initial, error)) return false;
+    }
+    if (powerups & (1u << 2)) {
+        ref->custom_shader = media->battle_suit;
+        if (!submit(context, part, ref, ref->custom_shader == initial, error)) return false;
+    }
+    return true;
 }
 
 static bool received_current(const q3n_frame *frame,const q3n_remote_entity *source,const q3n_compiled_entity *compiled,
@@ -47,10 +73,22 @@ static bool build(qa_q3_presentation_assets *assets, q3n_player_pose *state,
         part->flags = 128;
         if (source->number == options->local_view_client && !options->third_person) part->flags |= 2;
         if (options->shadow_mode == 3 && options->shadow_visible) part->flags |= 256;
+        if (options->visual) {
+            for (unsigned j = 0; j < 4; ++j)
+                part->color[j] = (uint8_t)truncf(fminf(1, fmaxf(0, options->visual->color[j])) * 255);
+            part->color[3] = (uint8_t)truncf(fminf(1, fmaxf(0,
+                options->visual->opacity * options->visual->color[3])) * 255);
+            part->shader_time = (float)options->time * .001f;
+        }
     }
     memcpy(body.parts[0].axis, axes.legs, sizeof(axes.legs));
     memcpy(body.parts[1].axis, axes.torso, sizeof(axes.torso));
     memcpy(body.parts[2].axis, axes.head, sizeof(axes.head));
+    if (options->visual) {
+        for (unsigned i = 0; i < 3; ++i)
+            body.parts[0].axis[i] = qa_vec_scale(body.parts[0].axis[i], options->visual->scale);
+        body.parts[0].non_normalized_axes = options->visual->scale != 1;
+    }
     if (!options->no_player_animations) {
         float speed = ((uint32_t)source->powerups & (UINT32_C(1) << 3)) ? 1.5f : 1.0f;
         int32_t legs_animation = state->legs.yawing && (source->legsAnim & ~128) == 22 ? 24 : source->legsAnim;
@@ -70,10 +108,12 @@ static bool build(qa_q3_presentation_assets *assets, q3n_player_pose *state,
     if (!client->models[0] || !client->models[1]) { *out = body; return true; }
     if (!q3n_attach(assets, &body.parts[1], &body.parts[0], "tag_torso", true, error) ||
         !received_current(frame,remote,compiled,client,error)) return false;
+    if (options->visual) body.parts[1].old_origin = body.parts[1].origin;
     body.count = 2;
     if (!client->models[2]) { *out = body; return true; }
     if (!q3n_attach(assets, &body.parts[2], &body.parts[1], "tag_head", true, error) ||
         !received_current(frame,remote,compiled,client,error)) return false;
+    if (options->visual) body.parts[2].old_origin = body.parts[2].origin;
     body.count = 3; *out = body; return true;
 }
 

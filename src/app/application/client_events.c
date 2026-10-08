@@ -5,6 +5,12 @@
 #include "guest_native_q2_private.h"
 #include "guest_q3_components.h"
 #include "equipment_runtime.h"
+#include "character_selection.h"
+#include "native_q3_settings.h"
+#include "qa/game_q3_client.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_source.h"
+#include "qa/game_type.h"
 #include <stdlib.h>
 
 typedef enum client_listener_kind {
@@ -59,6 +65,70 @@ static application_player_record *player(qa_application *app, qa_actor_id actor)
 {
     application_player_record *row = player_record(app, actor);
     return row && !row->source_begin_pending ? row : NULL;
+}
+
+static bool userinfo_has(const char *text, const char *key)
+{
+    if (*text == '\\') ++text;
+    while (*text) {
+        const char *name = text;
+        while (*text && *text != '\\') ++text;
+        size_t length = (size_t)(text - name), i = 0;
+        if (!*text) break;
+        while (i < length && key[i]) {
+            unsigned char byte = (unsigned char)name[i];
+            if (byte >= 'A' && byte <= 'Z') byte = (unsigned char)(byte + ('a' - 'A'));
+            if (byte != (unsigned char)key[i]) break;
+            ++i;
+        }
+        if (i == length && !key[i]) return true;
+        ++text;
+        while (*text && *text != '\\') ++text;
+        if (*text) ++text;
+    }
+    return false;
+}
+
+bool application_client_native_q3_userinfo(qa_application *app, application_provider *provider,
+    qa_actor_id actor, const char *userinfo, int32_t game_type, qa_error *error)
+{
+    application_player_record *actual = player_record(app, actor);
+    const qa_launch_snapshot *snapshot = qa_application_launch(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    qa_application_character_declaration declaration;
+    bool found = false;
+    for (size_t i = 0; actual && choices && i < choices->seat_count; ++i) {
+        if (choices->seats[i].id != actual->seat) continue;
+        qa_launch_seat seat = choices->seats[i];
+        seat.actor = actual->configured_actor.registry ? actual->configured_actor : actual->actor;
+        if (!qa_application_character_declaration_read(qa_launch_snapshot_catalog(snapshot), choices,
+            &seat, &declaration, &found, error)) return false;
+        break;
+    }
+    if (!found || declaration.family != QA_GAME_Q3)
+        return qa_q3_client_selected_presentation(provider->state.q3, actor, userinfo, game_type, error);
+    const qa_native_q3_character_declaration *appearance = &declaration.appearance;
+    const char *keys[2] = {qa_game_type_is_team(game_type) ? "team_model" : "model",
+        qa_game_type_is_team(game_type) ? "team_headmodel" : "headmodel"};
+    const char *models[2] = {appearance->model,
+        *appearance->head_model ? appearance->head_model : appearance->model};
+    const char *skins[2] = {appearance->skin, appearance->head_skin};
+    bool missing[2] = {!userinfo_has(userinfo, keys[0]), !userinfo_has(userinfo, keys[1])};
+    if (!missing[0] && !missing[1])
+        return qa_q3_client_selected_presentation(provider->state.q3, actor, userinfo, game_type, error);
+    size_t length = strlen(userinfo), capacity = length + 2;
+    for (size_t i = 0; i < 2; ++i)
+        if (missing[i]) capacity += strlen(keys[i]) + strlen(models[i]) + strlen(skins[i]) + 3;
+    char *selected = malloc(capacity);
+    if (!selected) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 client userinfo");
+    size_t at = 0;
+    for (size_t i = 0; i < 2; ++i)
+        if (missing[i]) at += (size_t)snprintf(selected + at, capacity - at,
+            "\\%s\\%s/%s", keys[i], models[i], skins[i]);
+    if (length && userinfo[0] != '\\') selected[at++] = '\\';
+    memcpy(selected + at, userinfo, length + 1);
+    bool okay = qa_q3_client_selected_presentation(provider->state.q3, actor, selected, game_type, error);
+    free(selected); return okay;
 }
 
 bool application_client_userinfo_publish(qa_application *app, qa_actor_id actor,
@@ -195,6 +265,16 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
     bool ok = true;
     for (size_t i = 0; ok && i < app->provider_count; ++i) {
         application_provider *p = app->providers[i];
+        if (p != source && p->kind == APPLICATION_PROVIDER_Q3) {
+            uint32_t slot;
+            if (qa_q3_native_client_slot(p->state.q3, actor, &slot, NULL)) {
+                int32_t game_type;
+                ok = application_native_q3_settings_integer(p, "g_gametype", &game_type, error) &&
+                    application_client_native_q3_userinfo(app, p, actor,
+                        actual->userinfo, game_type, error);
+            }
+            continue;
+        }
         if (p == source || (p && p->kind <= APPLICATION_PROVIDER_Q3)) continue;
         bool duplicate = false;
         for (size_t j = 0; j < count; ++j) duplicate |= rows[j].provider == p;

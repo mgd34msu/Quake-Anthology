@@ -44,6 +44,11 @@ typedef struct q3n_client_options {
 bool q3n_clients_create(const q3n_client_options *, q3n_clients **, qa_error *);
 bool q3n_clients_create_remote(const q3n_client_options *, q3n_clients **, qa_error *);
 bool q3n_clients_create_compiled(const q3n_client_options *, q3n_clients **, qa_error *);
+bool q3n_clients_create_received(const q3n_client_options *, q3n_clients **, qa_error *);
+/* A decoded Source owns this CS_PLAYERS row; registration needs no viewing PS. */
+bool q3n_clients_received_register(q3n_clients *, uint32_t physical_client,
+    const char *configstring, uint64_t revision, uint32_t max_clients, int32_t game_type,
+    const q3n_client_settings *, qa_error *);
 bool q3n_clients_compiled_current(const q3n_clients *, const q3n_compiled_source_view *, qa_error *);
 bool q3n_clients_compiled_sync(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, qa_error *);
 bool q3n_clients_compiled_register_one(q3n_clients *, const q3n_compiled_source_view *, const q3n_client_settings *, uint32_t, qa_error *);

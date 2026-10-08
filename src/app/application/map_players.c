@@ -16,6 +16,7 @@
 #include "q3_world_restart.h"
 #include "control_frame.h"
 #include "native_q3_clients.h"
+#include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
 #include "native_q3_remote_role.h"
@@ -2034,6 +2035,12 @@ static bool bind_q3_player_roles(qa_application *application,
         if (provider != map_source &&
             !qa_q3_source_bind_client(provider->state.q3, record->client_slot, record->actor, error)) return false;
         if (!qa_q3_bind_player(provider->state.q3, record->actor, selections, 100, error)) return false;
+        if (provider != map_source && record->userinfo) {
+            int32_t game_type;
+            if (!application_native_q3_settings_integer(provider, "g_gametype", &game_type, error) ||
+                !application_client_native_q3_userinfo(application, provider, record->actor,
+                    record->userinfo, game_type, error)) return false;
+        }
     }
     return true;
 }
@@ -2306,7 +2313,7 @@ static bool q1_selected_q3_respawn(qa_application *app, application_provider *so
             match.rules.source == QA_MODE_Q2_CTF || match.rules.source == QA_MODE_LMCTF ? 4 :
             options.program == QA_Q1_CTF || options.teamplay ? 3 : 0;
         if (!qa_q1_source_client_userinfo_read(source->state.q1, actor, true, &userinfo, error)) return false;
-        bool okay = qa_q3_client_selected_presentation(provider->state.q3, actor,
+        bool okay = application_client_native_q3_userinfo(app, provider, actor,
             (const char *)userinfo.data, game_type, error);
         qa_buffer_free(&userinfo);
         qa_q3_selected_source_pose pose;
