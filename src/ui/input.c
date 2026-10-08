@@ -8,9 +8,18 @@ bool ui_action(qa_ui *ui, const qa_ui_control *control, const qa_ui_action *acti
                 qa_error *error) {
     if (!control->enabled || !control->visible || control->kind == QA_UI_TEXT || !control->action)
         return true;
+    size_t depth = ui->depth;
+    qa_ui_id menu = depth ? ui->stack[depth - 1].menu : 0;
+    qa_ui_sound sound = QA_UI_CHANGE;
+    if (action->kind == QA_UI_ACTIVATE || action->kind == QA_UI_SUBMIT ||
+        action->kind == QA_UI_ROW_ACTIVATE)
+        sound = QA_UI_OPEN;
+    else if (control->kind == QA_UI_LIST && action->kind == QA_UI_SELECT)
+        sound = QA_UI_MOVE;
     bool ok = control->action(control->context, ui->options.seat, control->id, action, error);
-    if (ok && ui->options.sound)
-        ui->options.sound(ui->options.context, ui->options.seat, QA_UI_CHANGE);
+    if (ok && ui->options.sound && ui->depth == depth &&
+        (!depth || ui->stack[depth - 1].menu == menu))
+        ui->options.sound(ui->options.context, ui->options.seat, sound);
     return ok;
 }
 bool ui_move(qa_ui *ui, int direction, qa_error *error) {
