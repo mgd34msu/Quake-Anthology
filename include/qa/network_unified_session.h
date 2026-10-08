@@ -14,6 +14,7 @@ typedef struct qa_unified_input_batch {
     qa_unified_input commands[64];
     size_t count;
     qa_buffer providers[64], weapons[64];
+    size_t provider_capacity[64], weapon_capacity[64];
 } qa_unified_input_batch;
 bool qa_unified_inputs_read(const qa_unified_document *, qa_unified_input_batch *, qa_error *);
 bool qa_unified_inputs_document(uint32_t epoch, const qa_unified_input *, size_t,

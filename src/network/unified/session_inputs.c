@@ -8,7 +8,10 @@
 void qa_unified_inputs_free(qa_unified_input_batch *batch)
 {
     if (!batch) return;
-    qa_unified_record_dispose(&qa_unified_inputs_layout, batch);
+    for (size_t i = 0; i < 64; ++i) {
+        qa_buffer_free(batch->providers + i);
+        qa_buffer_free(batch->weapons + i);
+    }
     *batch = (qa_unified_input_batch){0};
 }
 bool qa_unified_inputs_check(qa_unified_input_batch *batch, size_t *bytes, qa_error *error)
@@ -41,6 +44,10 @@ bool qa_unified_inputs_read(const qa_unified_document *document, qa_unified_inpu
     qa_unified_input_batch copy = {0}; size_t bytes;
     if (!qa_unified_record_clone(&qa_unified_inputs_layout, source, &copy, error) ||
         !qa_unified_inputs_check(&copy, &bytes, error)) { qa_unified_inputs_free(&copy); return false; }
+    for (size_t i = 0; i < copy.count; ++i) {
+        copy.provider_capacity[i] = copy.providers[i].size;
+        copy.weapon_capacity[i] = copy.weapons[i].size;
+    }
     *out = copy; return true;
 }
 static bool copy_bytes(qa_bytes source, qa_buffer *out, qa_error *error)
@@ -65,6 +72,8 @@ bool qa_unified_inputs_copy(uint32_t epoch, const qa_unified_input *inputs, size
         batch.commands[i] = inputs[i];
         if (inputs[i].has_arsenal) okay = copy_bytes(inputs[i].arsenal.provider, batch.providers + i, error) &&
             copy_bytes(inputs[i].arsenal.weapon, batch.weapons + i, error);
+        batch.provider_capacity[i] = batch.providers[i].size;
+        batch.weapon_capacity[i] = batch.weapons[i].size;
     }
     size_t measured;
     if (okay) okay=qa_unified_inputs_check(&batch,&measured,error);

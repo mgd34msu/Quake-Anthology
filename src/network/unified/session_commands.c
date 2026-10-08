@@ -43,15 +43,19 @@ bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_sess
 
 static void remove_input(qa_unified_input_batch *b, size_t at)
 {
-    qa_buffer_free(&b->providers[at]); qa_buffer_free(&b->weapons[at]);
+    qa_buffer provider = b->providers[at], weapon = b->weapons[at];
+    size_t provider_capacity = b->provider_capacity[at], weapon_capacity = b->weapon_capacity[at];
     size_t tail = --b->count - at;
     if (tail) {
         memmove(b->commands + at, b->commands + at + 1, tail * sizeof(b->commands[0]));
         memmove(b->providers + at, b->providers + at + 1, tail * sizeof(b->providers[0]));
         memmove(b->weapons + at, b->weapons + at + 1, tail * sizeof(b->weapons[0]));
+        memmove(b->provider_capacity + at, b->provider_capacity + at + 1, tail * sizeof(b->provider_capacity[0]));
+        memmove(b->weapon_capacity + at, b->weapon_capacity + at + 1, tail * sizeof(b->weapon_capacity[0]));
     }
     b->commands[b->count] = (qa_unified_input){0};
-    b->providers[b->count] = (qa_buffer){0}; b->weapons[b->count] = (qa_buffer){0};
+    b->providers[b->count] = provider; b->weapons[b->count] = weapon;
+    b->provider_capacity[b->count] = provider_capacity; b->weapon_capacity[b->count] = weapon_capacity;
 }
 
 void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
@@ -62,21 +66,43 @@ void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
     size_t retained = 0;
     for (size_t i = 0; i < b->count; ++i) {
         if (b->commands[i].sequence <= (uint64_t)acknowledged) {
-            qa_buffer_free(&b->providers[i]); qa_buffer_free(&b->weapons[i]);
+            b->commands[i] = (qa_unified_input){0};
         } else {
             if (retained != i) {
+                qa_buffer provider = b->providers[retained], weapon = b->weapons[retained];
+                size_t provider_capacity = b->provider_capacity[retained], weapon_capacity = b->weapon_capacity[retained];
                 b->commands[retained] = b->commands[i];
                 b->providers[retained] = b->providers[i];
                 b->weapons[retained] = b->weapons[i];
+                b->provider_capacity[retained] = b->provider_capacity[i];
+                b->weapon_capacity[retained] = b->weapon_capacity[i];
+                b->providers[i] = provider; b->weapons[i] = weapon;
+                b->provider_capacity[i] = provider_capacity; b->weapon_capacity[i] = weapon_capacity;
             }
             ++retained;
         }
     }
     for (size_t i = retained; i < b->count; ++i) {
         b->commands[i] = (qa_unified_input){0};
-        b->providers[i] = (qa_buffer){0}; b->weapons[i] = (qa_buffer){0};
     }
     b->count = retained;
+}
+
+static bool selection_reserve(qa_buffer *buffer, size_t *capacity, size_t size, qa_error *e)
+{
+    if (size <= *capacity) return true;
+    size_t next = *capacity ? *capacity : 16;
+    while (next < size) next *= 2;
+    uint8_t *data = realloc(buffer->data, next);
+    if (!data) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual Unified input selection");
+    buffer->data = data; *capacity = next; return true;
+}
+
+static void selection_copy(qa_buffer *buffer, qa_bytes source)
+{
+    if (source.size && (buffer->size != source.size || memcmp(buffer->data, source.data, source.size)))
+        memcpy(buffer->data, source.data, source.size);
+    buffer->size = source.size;
 }
 
 static bool retain_input(qa_unified_session *s, const qa_unified_input *input, qa_error *e)
@@ -94,16 +120,32 @@ static bool retain_input(qa_unified_session *s, const qa_unified_input *input, q
     if (input->command.kind != player.movement ||
         (input->has_arsenal && !bytes_equal(input->arsenal.provider, player.arsenal)))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production input changes the player's selected providers");
-    qa_unified_input_batch decoded = {0};
-    bool ok=qa_unified_inputs_copy(s->epoch,input,1,&decoded,e);
-    if (!ok) { qa_unified_inputs_free(&decoded); return false; }
+    qa_unified_input_batch view = {.epoch = s->epoch, .count = 1};
+    view.commands[0] = *input;
+    if (input->has_arsenal) {
+        view.providers[0] = (qa_buffer){(uint8_t *)input->arsenal.provider.data, input->arsenal.provider.size};
+        view.weapons[0] = (qa_buffer){(uint8_t *)input->arsenal.weapon.data, input->arsenal.weapon.size};
+    }
+    size_t measured;
+    if (!qa_unified_inputs_check(&view, &measured, e)) return false;
+    size_t reusable = s->inputs.count == 64 ? 0 : s->inputs.count;
+    bool ok = selection_reserve(s->inputs.providers + reusable, s->inputs.provider_capacity + reusable,
+        view.providers[0].size, e) &&
+        selection_reserve(s->inputs.weapons + reusable, s->inputs.weapon_capacity + reusable,
+        view.weapons[0].size, e);
+    if (reusable < s->inputs.count) {
+        s->inputs.commands[reusable].arsenal.provider = (qa_bytes){s->inputs.providers[reusable].data, s->inputs.providers[reusable].size};
+        s->inputs.commands[reusable].arsenal.weapon = (qa_bytes){s->inputs.weapons[reusable].data, s->inputs.weapons[reusable].size};
+    }
+    if (!ok) return false;
     if (s->inputs.count == 64) remove_input(&s->inputs, 0);
     size_t at = s->inputs.count++;
     s->inputs.epoch = s->epoch;
-    s->inputs.commands[at] = decoded.commands[0];
-    s->inputs.providers[at] = decoded.providers[0]; s->inputs.weapons[at] = decoded.weapons[0];
-    decoded.providers[0] = (qa_buffer){0}; decoded.weapons[0] = (qa_buffer){0};
-    qa_unified_inputs_free(&decoded);
+    s->inputs.commands[at] = view.commands[0];
+    selection_copy(s->inputs.providers + at, (qa_bytes){view.providers[0].data, view.providers[0].size});
+    selection_copy(s->inputs.weapons + at, (qa_bytes){view.weapons[0].data, view.weapons[0].size});
+    s->inputs.commands[at].arsenal.provider = (qa_bytes){s->inputs.providers[at].data, s->inputs.providers[at].size};
+    s->inputs.commands[at].arsenal.weapon = (qa_bytes){s->inputs.weapons[at].data, s->inputs.weapons[at].size};
     return true;
 }
 
