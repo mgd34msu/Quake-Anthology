@@ -1,7 +1,8 @@
 # Loopback startup and control checks
 
-THE-913 is in review; THE-907 and THE-868 remain in progress. The first
-qualified build recorded here is
+THE-913 is in review. THE-907's bounded mixed `start` and `e1m1` checks are
+complete for review; THE-868 remains in progress. The first qualified build
+recorded here is
 `dee3546e270afe4d04236027ef61f76281b791c1`, built October 8 at
 10:58:39 CDT. These checks used private displays and copied owner settings.
 They do not establish release readiness or frame-time performance.
@@ -169,5 +170,36 @@ binary's own symbols. The index is
 `qa-the907-installed-b5-jump-diagnostic-20261008/result-index.json`, with raw
 records in `q5odo38_/user/evidence/logs/grounded-jump-gdb.log`.
 
-The issue reproduction names `e1m1`. These completed mixed packets use
-`start`, so the exact `e1m1` content scope remains to be checked separately.
+The issue reproduction names `e1m1`. The earlier mixed packets use `start`;
+the next pair checks the reported map directly.
+
+## Exact e1m1 reproduction
+
+The subsequent plain installed `b5d8813b` CPU and GL pair used the same
+Q1 classic world, Q3 movement/ranger/weapons and Q2 rerelease monsters, with
+the existing public map argument changed to `e1m1`. Both show the retail
+metal entrance geometry, original Q1 HUD and one recognizable selected
+shotgun. Initial and W-release images show forward progression toward the
+next doorway; mouse images show a distinct right turn. Firing consumes ammo
+25 to 24, with an ejected shell and wall impact/smoke visible after release.
+A distinct muzzle flash was not captured. Later Space-phase images show a
+raised viewpoint; the objective ground and vertical-velocity proof remains
+scoped to the separate `start` diagnostic.
+
+Both final public console captures identify `e1m1` and one client, with seat
+0, epoch 1, admitted 1 and received 1. CPU reports received source
+milliseconds 5134 and input acknowledgment 38; GL reports 4729 and 34.
+These are single endpoints, with no per-key acknowledgment inference.
+The coordinator inspected both renderers' world, mouse, firing and console
+captures, including the later Space phases.
+
+Each run used a fresh copy of the original 34 settings files and private
+display/audio servers, with no debugger, preload or candidate overlay. Both
+closed normally with exit code zero and clean flushed engine logs. All 50
+recorded owned PID/start-token pairs were absent afterward; original settings,
+the five installed files and helpers stayed unchanged. Actual private audio
+captures contain nonzero output. The newer SDK was intentionally independent
+and was not compared. These checks make no crouch, individual audio-cue,
+campaign, hardware GPU or performance claim. The exact pair index is
+`qa-the907-installed-b5-e1m1-proof-20261008/result-index.json`, with CPU packet
+`s3kfx03y` and GL packet `1nma8aed`.
