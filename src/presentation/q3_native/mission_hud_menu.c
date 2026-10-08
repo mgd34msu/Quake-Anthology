@@ -1,4 +1,5 @@
 /* CG_LoadMenus and Team Arena menu/input lifetime, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "mission_hud_internal.h"
 
 static bool assets(int handle)
@@ -101,7 +102,7 @@ static void score_selection(q3n_mission_hud *o,menuDef_t *menu)
     for(int i=0;i<o->commands->num_scores;++i) { const q3n_command_score *s=&o->commands->scores[i];
         if(s->team==1)++red; else if(s->team==2)++blue; if(s->client==p->clientNum)o->selected_score=i; }
     if(!menu||o->selected_score<0||o->selected_score>=64)return;
-    if(o->commands->game_type>=3) { bool b=o->commands->scores[o->selected_score].team==2; Menu_SetFeederSelection(menu,b?6:5,b?blue:red,NULL); }
+    if(qa_game_type_is_team(o->commands->game_type)) { bool b=o->commands->scores[o->selected_score].team==2; Menu_SetFeederSelection(menu,b?6:5,b?blue:red,NULL); }
     else Menu_SetFeederSelection(menu,11,o->selected_score,NULL);
 }
 bool q3n_mission_hud_score_selection(q3n_mission_hud *o,const q3n_frame *f,const q3n_command_state *state,qa_error *e)
@@ -113,7 +114,7 @@ bool q3n_mission_hud_paint(q3n_mission_hud *o,const q3n_frame *f,bool scoreboard
     if(!q3nm_preferences(o)||!q3n_hud_weapon_read(o->hud,f,&o->draw.weapon_hud,e))return q3nm_end(o,p,false);
     if(scoreboard) {
         if(o->scoreboard_menu>=0)o->menus->menus[o->scoreboard_menu].window.flags&=~WINDOW_FORCED;
-        if(o->scoreboard_menu<0&&o->commands) { menuDef_t *m=Menus_FindByName(o->commands->game_type>=3?"teamscore_menu":"score_menu");
+        if(o->scoreboard_menu<0&&o->commands) { menuDef_t *m=Menus_FindByName(qa_game_type_is_team(o->commands->game_type)?"teamscore_menu":"score_menu");
             if(m)o->scoreboard_menu=(int)(m-o->menus->menus); }
         if(o->scoreboard_menu>=0) { menuDef_t *m=&o->menus->menus[o->scoreboard_menu]; if(first)score_selection(o,m); Menu_Paint(m,qtrue); }
     } else Menu_PaintAll();

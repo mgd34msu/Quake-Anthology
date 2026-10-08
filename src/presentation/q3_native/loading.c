@@ -1,4 +1,5 @@
 /* CG loading information, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "loading_internal.h"
 
 bool q3nl_fail(qa_error *e,qa_status status,const char *text)
@@ -337,6 +338,8 @@ static const char *game_name(qa_q3_product product,int32_t mode)
     case 5:if(product==QA_Q3_TEAM_ARENA)return "One Flag CTF"; break;
     case 6:if(product==QA_Q3_TEAM_ARENA)return "Overload"; break;
     case 7:if(product==QA_Q3_TEAM_ARENA)return "Harvester"; break;
+    case QA_GAME_TYPE_CAMPAIGN:return "Campaign";
+    case QA_GAME_TYPE_COOPERATIVE:return "Cooperative";
     }
     return "Unknown Gametype";
 }
@@ -387,8 +390,8 @@ static bool draw_information(loading_draw *d)
     y+=27;
     int32_t limit=time_limit;
     if(limit) { snprintf(buffer,sizeof(buffer),"timelimit %i",limit); if(!text(d,y,buffer))return false; y+=27; }
-    limit=game_type<4?frag_limit:capture_limit;
-    if(limit) { snprintf(buffer,sizeof(buffer),"%s %i",game_type<4?"fraglimit":"capturelimit",limit); if(!text(d,y,buffer))return false; }
+    limit=!qa_game_type_is_objective(game_type)?frag_limit:capture_limit;
+    if(limit) { snprintf(buffer,sizeof(buffer),"%s %i",!qa_game_type_is_objective(game_type)?"fraglimit":"capturelimit",limit); if(!text(d,y,buffer))return false; }
     return true;
 }
 bool q3n_loading_draw_information(q3n_loading *o,const q3n_frame *f,qa_error *e)

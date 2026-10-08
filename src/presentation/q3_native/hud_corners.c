@@ -1,4 +1,5 @@
 /* CG corner overlays, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "hud_internal.h"
 
 static bool team_overlay(q3n_hud_draw *d,float *y,bool right,bool upper)
@@ -55,7 +56,7 @@ static bool upper(q3n_hud_draw *d)
 {
     q3nh_anchor(d,640,0);
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float y=0; char text[128];
-    if(c->game_type>=3 && d->settings->team_overlay==1 && !team_overlay(d,&y,true,true))return false;
+    if(qa_game_type_is_team(c->game_type) && d->settings->team_overlay==1 && !team_overlay(d,&y,true,true))return false;
     if(d->settings->draw_snapshot) {
         if(d->frame->remote)snprintf(text,sizeof(text),"time:%i snap:%i cmd:%i",
             d->frame->remote->snapshots.snapshot->server_time,
@@ -113,7 +114,7 @@ static bool scores(q3n_hud_draw *d,float *y)
     const q3n_command_state *c=q3n_server_commands_state(d->commands); const qa_q3_player *p=q3n_frame_snapshot_player(d->frame);
     int32_t first=c->scores1,second=c->scores2; float row=24*d->frame->preferences.text_scale;
     *y-=row; float y1=*y,x=640; char text[32]; const q3n_media_view *m=q3n_media_read(d->frame->media);
-    if(c->game_type>=3) {
+    if(qa_game_type_is_team(c->game_type)) {
         for(unsigned i=0;i<2;++i) {
             int32_t team=i==0?2:1,value=i==0?second:first; snprintf(text,sizeof(text),"%2i",value);
             float width; if(!q3nh_width(d,text,16,16,0,&width))return false;
@@ -128,7 +129,7 @@ static bool scores(q3n_hud_draw *d,float *y)
         if(second!=-9999 && !free_score(d,&x,*y,second,!spectator && score==second && score!=first,false))return false;
         if(first!=-9999 && !free_score(d,&x,*y,first,!spectator && score==first,true))return false;
     }
-    int32_t limit=c->game_type>=4?c->capturelimit:c->fraglimit;
+    int32_t limit=qa_game_type_is_objective(c->game_type)?c->capturelimit:c->fraglimit;
     if(limit) { snprintf(text,sizeof(text),"%2i",limit); float width;
         if(!q3nh_width(d,text,16,16,0,&width))return false;
         x-=width+8*d->frame->preferences.text_scale;
@@ -187,10 +188,10 @@ bool q3nh_corners(q3n_hud_draw *d)
     if(d->owner->product==QA_Q3_TEAM_ARENA)return true;
     q3nh_anchor(d,640,480);
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float y=432;
-    if(c->game_type>=3 && d->settings->team_overlay==2 && !team_overlay(d,&y,true,false))return false;
+    if(qa_game_type_is_team(c->game_type) && d->settings->team_overlay==2 && !team_overlay(d,&y,true,false))return false;
     if(!scores(d,&y) || !powerups(d,y))return false;
     y=432; q3nh_anchor(d,0,480);
-    if(c->game_type>=3 && d->settings->team_overlay==3 && !team_overlay(d,&y,false,false))return false;
+    if(qa_game_type_is_team(c->game_type) && d->settings->team_overlay==3 && !team_overlay(d,&y,false,false))return false;
     return pickup(d,y);
 }
 bool q3nh_team_chat(q3n_hud_draw *d)

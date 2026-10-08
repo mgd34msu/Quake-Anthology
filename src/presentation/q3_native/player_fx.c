@@ -1,4 +1,5 @@
 /* id Software cg_players.c, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "player_fx.h"
 #include "events_internal.h"
 #include "attachments.h"
@@ -82,7 +83,7 @@ static bool sprites(player_fx *p,qa_error *e)
     uint32_t ef=(uint32_t)p->state->eFlags;
     for(unsigned i=0;i<8;++i)if(ef&flags[i])return sprite(p,p->media->graphics[shaders[i]],e);
     if(!(ef&1) && q3n_frame_snapshot_player(p->frame)->persistant[3]==p->client.team &&
-        q3n_frame_game_type(p->frame)>=3 && p->settings->draw_friend)
+        qa_game_type_is_team(q3n_frame_game_type(p->frame)) && p->settings->draw_friend)
         return sprite(p,p->media->graphics[Q3N_G_FRIEND],e);
     return true;
 }

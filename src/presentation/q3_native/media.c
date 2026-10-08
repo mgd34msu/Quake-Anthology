@@ -1,3 +1,4 @@
+#include "qa/game_type.h"
 #include "media.h"
 #include "remote_frame.h"
 #include "compiled_source.h"
@@ -403,7 +404,7 @@ static bool load_valid(q3n_media *m,const q3n_media_load *load,qa_error *e)
     uint32_t parsed=0;
     while (*number>='0' && *number<='9') parsed=parsed*10u+(uint32_t)(*number++-'0');
     if (negative) parsed=0u-parsed;
-    return load->game_type>=0 && load->game_type<=7 && parsed==(uint32_t)load->game_type ? true :
+    return parsed==(uint32_t)load->game_type ? true :
         q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading differs from its reached serverinfo game type");
 }
 static bool bits(q3n_media *m, const q3n_media_load *load, const char **text, qa_error *e)
@@ -459,7 +460,7 @@ static bool load_sound_now(q3n_media *m, const q3n_media_load *load, qa_error *e
     bool mission=m->options.product==QA_Q3_TEAM_ARENA;
     PLAY_GROUP(countdown);
     if (mission && !sound(m,"sound/feedback/prepare_team.wav",true,&m->view.sounds[Q3N_S_PREPARE_TEAM],e)) return false;
-    if (load->game_type>=3 || load->build_script) {
+    if (qa_game_type_is_team(load->game_type) || load->build_script) {
         PLAY_GROUP(team_sounds);
         if (load->game_type==4 || load->build_script) { PLAY_GROUP(ctf_sounds); }
         if (mission) {
@@ -748,7 +749,7 @@ static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *
         if (load->game_type==7 || load->build_script) { DRAW_GROUP(harvester); }
         DRAW_GROUP(mission_dust);
     }
-    if (load->game_type>=3 || load->build_script) {
+    if (qa_game_type_is_team(load->game_type) || load->build_script) {
         DRAW_GROUP(team_graphics);
         if (mission && !graphic_one(m,Q3N_G_BLUE_KAMIKAZE,"models/weaphits/kamikblu",GRAPHIC_SHADER,e)) return false;
     }

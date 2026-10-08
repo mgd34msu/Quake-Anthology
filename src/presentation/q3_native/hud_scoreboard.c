@@ -1,4 +1,5 @@
 /* CG scoreboard, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "hud_internal.h"
 
 static void place_string(int32_t value,char out[64])
@@ -40,7 +41,7 @@ static bool client_score(q3n_hud_draw *d,float y,const q3n_command_score *score,
     else snprintf(text,sizeof(text),"%5i %4i %4i %s",score->score,score->ping,score->time,ci->name);
     const qa_q3_player *p=q3n_frame_snapshot_player(d->frame);
     if(score->client==p->clientNum) {
-        *local=true; int32_t rank=p->persistant[3]==3 || c->game_type>=3?-1:p->persistant[2]&~0x4000;
+        *local=true; int32_t rank=p->persistant[3]==3 || qa_game_type_is_team(c->game_type)?-1:p->persistant[2]&~0x4000;
         float highlight[4]={rank==0?0:0.7f,rank==0 || rank==1?0:0.7f,rank==1 || rank==2?0:0.7f,(fade * 0.7f)};
         if(!q3nh_fill(d,176,y,512,17*d->frame->preferences.text_scale,highlight))return false;
     }
@@ -82,7 +83,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
         /* The original scoreboard uses the first RGB component as row fade. */
         float fade=color[0]; char text[256],place[64]; const q3n_event_state *events=q3n_events_state(d->frame->events);
         if(events->killer_name[0]) { snprintf(text,sizeof(text),"Fragged by %s",events->killer_name); if(!q3nh_center(d,40,text,fade))return false; }
-        if(c->game_type<3) {
+        if(!qa_game_type_is_team(c->game_type)) {
             if(p->persistant[3]!=3) { place_string(q3ne_plus(p->persistant[2],1),place);
                 snprintf(text,sizeof(text),"%s place with %i",place,p->persistant[0]); if(!q3nh_center(d,60,text,fade))return false; }
         } else {
@@ -101,7 +102,7 @@ bool q3nh_scoreboard(q3n_hud_draw *d,bool *showing)
             line=q3ne_int((float)line*d->frame->preferences.text_scale);
             int32_t fitting=346/line; if(maximum>fitting)maximum=fitting;
         }
-        if(c->game_type>=3) {
+        if(qa_game_type_is_team(c->game_type)) {
             y+=line/2; int32_t first=c->team_scores[0]>=c->team_scores[1]?1:2;
             for(unsigned i=0;i<2;++i) {
                 int32_t team=i==0?first:first==1?2:1;
@@ -149,7 +150,7 @@ bool q3nh_tourney(q3n_hud_draw *d)
        4,&motd,&revision,d->error) || !giant(d,8,*motd?motd:"Scoreboard"))return false;
     int32_t seconds=d->frame->time/1000,minutes=seconds/60; seconds%=60; char text[64];
     snprintf(text,sizeof(text),"%i:%i%i",minutes,seconds/10,seconds%10); if(!giant(d,64,text))return false;
-    if(c->game_type>=3)return tourney_line(d,160,"Red Team",c->team_scores[0]) && tourney_line(d,224,"Blue Team",c->team_scores[1]);
+    if(qa_game_type_is_team(c->game_type))return tourney_line(d,160,"Red Team",c->team_scores[0]) && tourney_line(d,224,"Blue Team",c->team_scores[1]);
     float y=160;
     for(uint32_t i=0;i<64;++i) {
         const q3n_client_info *ci=q3n_clients_get(d->frame->clients,i); if(!ci || !ci->info_valid || ci->team!=0)continue;

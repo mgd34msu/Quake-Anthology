@@ -1,4 +1,5 @@
 /* Team Arena cg_main/cg_newdraw, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "mission_hud_internal.h"
 #include "qa/font_save.h"
 #include "qa/text.h"
@@ -222,7 +223,7 @@ static void movie_run(int h) { q3n_mission_hud *o=q3nm_active(); int status; if(
 static int feeder_count(float id)
 { q3n_mission_hud *o=q3nm_active(); if(!o->commands)return 0; if(id==11)return o->commands->num_scores; int team=id==5?1:id==6?2:-1,count=0; for(int i=0;i<o->commands->num_scores;++i)if(o->commands->scores[i].team==team)++count; return count; }
 static int score_index(q3n_mission_hud *o,int team,int index)
-{ if(o->commands->game_type>=3) { int count=0; for(int i=0;i<o->commands->num_scores;++i)if(o->commands->scores[i].team==team && count++==index)return i; } return index; }
+{ if(qa_game_type_is_team(o->commands->game_type)) { int count=0; for(int i=0;i<o->commands->num_scores;++i)if(o->commands->scores[i].team==team && count++==index)return i; } return index; }
 static const char *feeder_text(float feeder,int index,int column,int *image)
 {
     q3n_mission_hud *o=q3nm_active(); *image=-1; if(!o->commands)return "";
@@ -244,7 +245,7 @@ static const char *feeder_text(float feeder,int index,int column,int *image)
 static int feeder_image(float id,int index) { (void)id; (void)index; return 0; }
 static void feeder_select(float id,int index)
 { q3n_mission_hud *o=q3nm_active(); if(!o->commands)return;
-    if(o->commands->game_type<3) { o->selected_score=index; return; }
+    if(!qa_game_type_is_team(o->commands->game_type)) { o->selected_score=index; return; }
     int team=id==5?1:2,count=0;
     for(int i=0;i<o->commands->num_scores;++i)if(o->commands->scores[i].team==team&&count++==index) { o->selected_score=i; return; }
 }

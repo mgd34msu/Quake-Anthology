@@ -1,4 +1,5 @@
 /* CG active HUD composition, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "hud_internal.h"
 
 bool q3n_hud_create(const q3n_hud_options *options,q3n_hud **out,qa_error *e)
@@ -307,7 +308,7 @@ static bool warmup(q3n_hud_draw *d)
         }
         if(first && second)snprintf(heading,sizeof(heading),"%s vs %s",first->name,second->name); else draw_heading=false;
     } else {
-        const char *name=c->game_type==0?"Free For All":c->game_type==3?"Team Deathmatch":c->game_type==4?"Capture the Flag":
+        const char *name=c->game_type==QA_GAME_TYPE_CAMPAIGN?"Campaign":c->game_type==QA_GAME_TYPE_COOPERATIVE?"Cooperative":c->game_type==0?"Free For All":c->game_type==3?"Team Deathmatch":c->game_type==4?"Capture the Flag":
             d->owner->product==QA_Q3_TEAM_ARENA?c->game_type==5?"One Flag CTF":c->game_type==6?"Overload":c->game_type==7?"Harvester":"":"";
         snprintf(heading,sizeof(heading),"%s",name);
     }
@@ -459,11 +460,11 @@ bool q3n_hud_frame(q3n_hud *o,const q3n_frame *f,const q3n_hud_settings *setting
         q3nh_anchor(&d,320,480);
         ok=q3nh_big(&d,248,440,"SPECTATOR",1);
         if(ok && c->game_type==1)ok=q3nh_big(&d,200,460,"waiting to play",1);
-        else if(ok && c->game_type>=3)ok=q3nh_big(&d,8,460,"press ESC and use the JOIN menu to play",1);
+        else if(ok && qa_game_type_is_team(c->game_type))ok=q3nh_big(&d,8,460,"press ESC and use the JOIN menu to play",1);
         if(ok)ok=crosshair(&d) && crosshair_names(&d);
     } else {
         if(!o->state.show_scores && p->stats[0]>0)ok=active_status(&d);
-        if(ok && c->game_type>=3 && o->product==QA_Q3_ARENA)ok=q3nh_team_chat(&d);
+        if(ok && qa_game_type_is_team(c->game_type) && o->product==QA_Q3_ARENA)ok=q3nh_team_chat(&d);
     }
     if(ok)ok=votes(&d) && lagometer(&d) && q3nh_corners(&d);
     bool following=false; if(ok)ok=follow(&d,&following); if(ok && !following)ok=warmup(&d);

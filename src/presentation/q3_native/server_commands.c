@@ -1,4 +1,5 @@
 /* id Software cg_servercmds.c and cg_main.c; GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "server_commands_internal.h"
 #include "client_info_internal.h"
 #include "qa/game_q3_wire.h"
@@ -372,8 +373,6 @@ static bool server_info(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     bool ok = info_value(text, "g_gametype", value, sizeof(value), e);
     if (ok) {
         s->game_type = q3nc_integer(value);
-        ok = s->game_type >= 0 && s->game_type <= 7;
-        if (!ok) q3nc_fail(e, QA_ERROR_FORMAT, "Invalid source CGAME server game type");
     }
     if (ok) ok = set_number(o, f, "g_gametype", s->game_type, e);
     const char *keys[] = {"dmflags", "teamflags", "fraglimit", "capturelimit", "timelimit", "sv_maxclients"};
@@ -676,7 +675,7 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
     case 5: {
         int32_t warmup = q3nc_integer(text); s->warmup_count = -1;
         if (warmup > 0 && s->warmup <= 0) ok = sound_field(o, f,
-            o->options.product == QA_Q3_TEAM_ARENA && s->game_type >= 4 && s->game_type <= 7 ? Q3N_S_PREPARE_TEAM : Q3N_S_PREPARE, 7, e);
+            o->options.product == QA_Q3_TEAM_ARENA && qa_game_type_is_objective(s->game_type) ? Q3N_S_PREPARE_TEAM : Q3N_S_PREPARE, 7, e);
         if (ok) s->warmup = warmup;
         break;
     }

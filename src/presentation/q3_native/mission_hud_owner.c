@@ -1,4 +1,5 @@
 /* cg_newdraw.c owner draws, with the Team Arena stat schema. GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "mission_hud_internal.h"
 #include "qa/application_equipment.h"
 #include <float.h>
@@ -100,7 +101,7 @@ static const char *type_text(q3n_mission_hud *o)
 static const char *status_text(q3n_mission_hud *o)
 {
     const qa_q3_player *p=q3nm_player(o); const q3n_command_state *s=o->commands; if(!s)return "";
-    if(s->game_type<3) { if(!p&&!q3nm_require_player(o))return "";
+    if(!qa_game_type_is_team(s->game_type)) { if(!p&&!q3nm_require_player(o))return "";
         if(p->persistant[3]==3)return "";
         int rank=q3ne_plus(p->persistant[2],1); bool tied=(rank&0x4000)!=0; rank&=~0x4000;
         const char *place=rank==1?"^41st^7":rank==2?"^12nd^7":rank==3?"^33rd^7":q3menu_format("%d%s",rank,
@@ -192,7 +193,7 @@ static void flag(q3n_mission_hud *o,rectDef_t r,bool flat)
     int team=p->powerups[7]?1:p->powerups[8]?2:p->powerups[9]?0:-1;
     if(team>=0)q3nm_result(q3nh_flag(&o->draw,r.x,r.y,r.w,r.h,team,flat)); }
 static void held_item(q3n_mission_hud *o,rectDef_t r,bool persistent)
-{ if(persistent&&o->commands->game_type<4)return; int index=q3nm_player(o)->stats[persistent?2:1]; if(!index)return;
+{ if(persistent&&!qa_game_type_is_objective(o->commands->game_type))return; int index=q3nm_player(o)->stats[persistent?2:1]; if(!index)return;
     q3nm_result(q3n_media_register_item(o->frame->media,(uint32_t)index,o->menus->error));
     if(!persistent)q3nm_result(q3n_media_register_item(o->frame->media,(uint32_t)index,o->menus->error));
     if(index>=0&&index<256)pic(o,r,q3n_media_read(o->frame->media)->items[index].icon); }
@@ -300,14 +301,14 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
     case CG_ACCURACY:case CG_ASSISTS:case CG_DEFEND:case CG_EXCELLENT:case CG_IMPRESSIVE:case CG_PERFECT:case CG_GAUNTLET:case CG_CAPTURES:medal(o,id,r,scale,color,picture); break;
     case CG_SPECTATORS:spectators(o,r,scale,color); break;
     case CG_TEAMINFO:if(q3nm_integer(o,"cg_currentSelectedPlayer")==o->commands->num_sorted_team_players)team_info(o,r,text_y,scale,color); break;
-    case CG_CAPFRAGLIMIT:q3nm_text(x,y,scale,color,q3menu_format("%2d",o->commands->game_type>=4?o->commands->capturelimit:o->commands->fraglimit),0,0,style); break;
+    case CG_CAPFRAGLIMIT:q3nm_text(x,y,scale,color,q3menu_format("%2d",qa_game_type_is_objective(o->commands->game_type)?o->commands->capturelimit:o->commands->fraglimit),0,0,style); break;
     case CG_1STPLACE:case CG_2NDPLACE:{ int score=id==CG_1STPLACE?o->commands->scores1:o->commands->scores2; if(score!=-9999)q3nm_text(x,y,scale,color,q3menu_format("%2d",score),0,0,style); break; }
     }
 }
 static bool pending_order(q3n_mission_hud *o,qa_error *e)
 {
     if(!o->commands)return q3ne_fail(e,QA_ERROR_ARGUMENT,"Mission order requires actual Team command state");
-    if(o->commands->game_type<4||!o->order_pending)return true;
+    if(!qa_game_type_is_objective(o->commands->game_type)||!o->order_pending)return true;
     bool ok=true;
     const qa_q3_player *p=q3nm_require_player(o); if(!p)return false;
     static const char *team[]={"offense","defend","patrol","followme","returnflag","followflagcarrier","camp"};

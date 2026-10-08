@@ -1,5 +1,6 @@
 /* Native client media follows content/q3/presentation/players.ts.
  * Source: id Software cg_players.c, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "client_info_internal.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -133,7 +134,7 @@ static void model_skin(const char *value, char model[64], char skin[64])
     copy_text(model, 64, path);
 }
 static const char *team_skin(const q3n_client_info *ci, int32_t game_type)
-{ return game_type >= 3 ? ci->team == 2 ? "blue" : "red" : "default"; }
+{ return qa_game_type_is_team(game_type) ? ci->team == 2 ? "blue" : "red" : "default"; }
 static bool exists(q3n_clients *owner, const char *path, bool *found, qa_error *error)
 {
     *found = false;
@@ -171,7 +172,7 @@ static bool find_file(q3n_clients *owner, const q3n_client_info *ci, int32_t gam
             if (!ok || !exists(owner, path, found, error)) return false;
             if (*found) return true;
             if (!filename(owner, path, capacity, error, "models/players/%s%s/%s%s_%s.%s",
-                folders[folder], name, leader, base, game_type >= 3 ? team : skin, extension) ||
+                folders[folder], name, leader, base, qa_game_type_is_team(game_type) ? team : skin, extension) ||
                 !exists(owner, path, found, error)) return false;
             if (*found) return true;
         }
@@ -372,7 +373,7 @@ static bool load(q3n_clients *owner, q3n_client_info *ci, q3n_animation_holder *
     bool mission = owner->options.product == QA_Q3_TEAM_ARENA;
     const char *team_model = mission ? "james" : "sarge", *team_head = mission ? "*james" : "sarge";
     char team[128] = {0};
-    if (mission && game_type >= 3) {
+    if (mission && qa_game_type_is_team(game_type)) {
         const char *name = ci->team == 2 ? settings->blue_team_name : settings->red_team_name;
         if (*name && !filename(owner, team, sizeof(team), error, "%s/", name)) return false;
     }
@@ -382,7 +383,7 @@ static bool load(q3n_clients *owner, q3n_client_info *ci, q3n_animation_holder *
     if (!loaded) {
         if (settings->build_script) return q3n_client_fail(error, QA_ERROR_NOT_FOUND, "CG_RegisterClientModelname failed");
         bool fallback;
-        if (game_type >= 3) {
+        if (qa_game_type_is_team(game_type)) {
             if (!register_model(owner, ci, holder, game_type, team_model, ci->skin_name, team_head,
                 ci->skin_name, ci->team == 2 ? "Pagans" : "Stroggs", &fallback, error)) return false;
         } else if (!register_model(owner, ci, holder, game_type, "sarge", "default", "sarge", "default", team, &fallback, error)) return false;
@@ -391,7 +392,7 @@ static bool load(q3n_clients *owner, q3n_client_info *ci, q3n_animation_holder *
     qa_model_tag tag;
     if (!qa_q3_presentation_tag(owner->options.assets, ci->models[1], "tag_flag", 0, 0, 1,
         &tag, &ci->new_anims, error) || !current(owner, error)) return false;
-    const char *fallback_sound = mission && game_type >= 3 ? "james" : "sarge";
+    const char *fallback_sound = mission && qa_game_type_is_team(game_type) ? "james" : "sarge";
     memset(ci->sounds, 0, sizeof(ci->sounds));
     for (size_t i = 0; i < sizeof(custom_sounds) / sizeof(*custom_sounds); ++i) {
         char path[160];
@@ -422,7 +423,7 @@ static bool media_match(const q3n_client_info *a, const q3n_client_info *b, int3
 {
     return b->info_valid && !b->deferred && same(a->model_name, b->model_name) && same(a->skin_name, b->skin_name) &&
         same(a->head_model_name, b->head_model_name) && same(a->head_skin_name, b->head_skin_name) &&
-        same(a->blue_team, b->blue_team) && same(a->red_team, b->red_team) && (game_type < 3 || a->team == b->team);
+        same(a->blue_team, b->blue_team) && same(a->red_team, b->red_team) && (!qa_game_type_is_team(game_type) || a->team == b->team);
 }
 static bool media_equal(const q3n_client_info *a, const q3n_client_info *b)
 {
@@ -457,9 +458,9 @@ static bool new_info(q3n_clients *owner, uint32_t index, const char *info, uint6
         char model[1024], head[1024];
         qa_q3_client_info_value(info, "model", model, sizeof(model)); qa_q3_client_info_value(info, "hmodel", head, sizeof(head));
         const char *forced = owner->options.product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
-        model_skin(settings->force_model ? game_type >= 3 ? forced : settings->model : model, ci.model_name, ci.skin_name);
-        model_skin(settings->force_model ? game_type >= 3 ? forced : settings->head_model : head, ci.head_model_name, ci.head_skin_name);
-        if (settings->force_model && game_type >= 3) {
+        model_skin(settings->force_model ? qa_game_type_is_team(game_type) ? forced : settings->model : model, ci.model_name, ci.skin_name);
+        model_skin(settings->force_model ? qa_game_type_is_team(game_type) ? forced : settings->head_model : head, ci.head_model_name, ci.head_skin_name);
+        if (settings->force_model && qa_game_type_is_team(game_type)) {
             const char *slash = strchr(model, '/'); if (slash) copy_text(ci.skin_name, 64, slash + 1);
             slash = strchr(head, '/'); if (slash) copy_text(ci.head_skin_name, 64, slash + 1);
         }
@@ -474,15 +475,15 @@ static bool new_info(q3n_clients *owner, uint32_t index, const char *info, uint6
             for (uint32_t i = 0; i < max_clients; ++i) {
                 const q3n_client_info *match = &owner->clients[i];
                 if (match->info_valid && !match->deferred && same(ci.skin_name, match->skin_name) &&
-                    same(ci.model_name, match->model_name) && (game_type < 3 || ci.team == match->team)) { exact = true; break; }
+                    same(ci.model_name, match->model_name) && (!qa_game_type_is_team(game_type) || ci.team == match->team)) { exact = true; break; }
             }
             if (!exact) for (uint32_t i = 0; i < max_clients; ++i) {
                 const q3n_client_info *match = &owner->clients[i];
-                if (match->info_valid && (game_type < 3 || (!match->deferred && same(ci.skin_name, match->skin_name) && ci.team == match->team))) {
+                if (match->info_valid && (!qa_game_type_is_team(game_type) || (!match->deferred && same(ci.skin_name, match->skin_name) && ci.team == match->team))) {
                     ok = copy_media(owner, i, &ci, &holder, error); ci.deferred = true; reused = true; break;
                 }
             }
-            if (ok && !reused && game_type < 3) ok = print(owner, error, "CG_SetDeferredClientInfo: no valid clients!\n");
+            if (ok && !reused && !qa_game_type_is_team(game_type)) ok = print(owner, error, "CG_SetDeferredClientInfo: no valid clients!\n");
         }
         if (ok && !reused) ok = load(owner, &ci, &holder, game_type, settings, error);
         if (ok && requested_load && force_defer) { ok = print(owner, error, "Memory is low.  Using deferred model.\n"); ci.deferred = false; }
@@ -586,7 +587,7 @@ static bool begin(q3n_clients *owner, qa_application *app, const qa_application_
     int32_t game_type = source_integer(value);
     if (!qa_q3_info_value(serverinfo, "sv_maxclients", value, sizeof(value), error)) return false;
     int32_t max_clients = source_integer(value);
-    if (game_type < 0 || game_type > 7 || max_clients < 0 || max_clients > 64)
+    if (max_clients < 0 || max_clients > 64)
         return q3n_client_fail(error, QA_ERROR_FORMAT, "Invalid native Q3 reached client media serverinfo");
     owner->serverinfo_revision = revision; owner->game_type = game_type; owner->max_clients = (uint32_t)max_clients;
     owner->busy = true; owner->application = app; owner->cut = cut; owner->remote_cut = remote; return true;

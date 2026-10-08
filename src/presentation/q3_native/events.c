@@ -1,4 +1,5 @@
 /* id Software cg_event.c and CG_PlayBufferedSounds; GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "events_internal.h"
 #include "weapon.h"
 #include "../q3/internal.h"
@@ -312,7 +313,7 @@ static bool obituary(const q3n_frame *f, const qa_q3_entity *s, qa_error *error)
     }
     if(message) { snprintf(output,sizeof(output),"%s %s.\n",victim,message); f->events->options.print(f->events->options.context,output); return q3ne_current(f,error); }
     if(attacker==ps->clientNum) {
-        if(q3n_frame_game_type(f)<3) {
+        if(!qa_game_type_is_team(q3n_frame_game_type(f))) {
             char rank[64]; place(q3ne_plus(ps->persistant[2],1),rank);
             snprintf(output,sizeof(output),"You fragged %s\n%s place with %d",victim,rank,ps->persistant[0]);
         } else snprintf(output,sizeof(output),"You fragged %s",victim);

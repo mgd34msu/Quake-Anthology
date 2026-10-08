@@ -1,4 +1,5 @@
 /* CG playerstate transitions, id Software 1999-2005, GPL-2.0-or-later. */
+#include "qa/game_type.h"
 #include "player_state_internal.h"
 
 static bool q3n_player_state_transition_received(q3n_player_state *,const q3n_frame *,
@@ -192,11 +193,11 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
         else if(!(bits&3) && (bits&4) && !sound(f,Q3N_S_HOLY_SHIT,7,e))return false;
         reward=true;
     }
-    if(q3n_frame_game_type(f)>=3)for(unsigned i=7;i<=9;++i)if(p->powerups[i]!=h->powerups[i] && p->powerups[i]) {
+    if(qa_game_type_is_team(q3n_frame_game_type(f)))for(unsigned i=7;i<=9;++i)if(p->powerups[i]!=h->powerups[i] && p->powerups[i]) {
         if(!sound(f,Q3N_S_YOU_HAVE_FLAG,7,e))return false;
         break;
     }
-    if(!reward && !c->warmup && p->persistant[2]!=h->persistant[2] && q3n_frame_game_type(f)<3) {
+    if(!reward && !c->warmup && p->persistant[2]!=h->persistant[2] && !qa_game_type_is_team(q3n_frame_game_type(f))) {
         if(p->persistant[2]==0) { if(!buffered(f,Q3N_S_TAKEN_LEAD,e))return false; }
         else if(p->persistant[2]==0x4000) { if(!buffered(f,Q3N_S_TIED_LEAD,e))return false; }
         else if(!(h->persistant[2]&~0x4000) && !buffered(f,Q3N_S_LOST_LEAD,e))return false;
@@ -214,7 +215,7 @@ static bool local_sounds(q3n_player_state *o,const q3n_frame *f,const qa_q3_play
             g->timelimit_warnings|=1; if(!sound(f,Q3N_S_FIVE_MINUTES,7,e))return false;
         }
     }
-    if(c->fraglimit>0 && q3n_frame_game_type(f)<4) {
+    if(c->fraglimit>0 && !qa_game_type_is_objective(q3n_frame_game_type(f))) {
         if(!(g->fraglimit_warnings&4) && c->scores1==q3ne_sub(c->fraglimit,1)) {
             g->fraglimit_warnings|=7; if(!buffered(f,Q3N_S_ONE_FRAG,e))return false;
         } else if(c->fraglimit>2 && !(g->fraglimit_warnings&2) && c->scores1==q3ne_sub(c->fraglimit,2)) {
