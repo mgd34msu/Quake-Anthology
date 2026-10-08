@@ -91,5 +91,18 @@ first live pair still showed no gun: an earlier compiled ownership marker can
 skip the received continuation without observing a draw. Received Q3 weapons
 now use the shared selected-weapon renderer before that ownership check; the
 compiled default view is consumed. Live qualification of that change is
-pending. The diagnostic index is
+pending at that source step. The diagnostic index is
 `qa-the907-mixed-1a6291ca-q3-view-state.json`.
+
+The `b5d8813b` candidate, built at 12:04:30 CDT, then showed one recognizable
+double-barrel view weapon in both mixed CPU and GL runs. The coordinator
+inspected the CPU firing-phase and GL initial images; world and Q1 HUD remained
+visible. Both runs quit normally with clean logs, unchanged owner settings and
+candidate files, and all recorded owned processes stopped. The evidence index
+is `qa-the907-common-view-weapon-proof-20261008/result-index.json`.
+
+THE-907 remains open: Mouse1 was held about 3.2 seconds, but no distinct flash
+was captured and visible ammo stayed at 25. Individual jump/mouse responses
+and per-key acknowledgments are not established. Final source/ack endpoints
+were CPU 4209/29 and GL 3801/25. These are single observations, not advancement
+proof. This candidate has not yet replaced the qualified installed build.
