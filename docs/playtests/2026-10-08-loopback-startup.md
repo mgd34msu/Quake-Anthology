@@ -127,4 +127,20 @@ used one debugger entry and natural return, with no inferior calls or writes;
 it makes no timing claim. The run quit normally with unchanged owner settings
 and candidate files and all ten recorded owned processes stopped. Its index
 is `qa-the907-mixed-fire-state-20261008/firing-entry-return-evidence.json`.
-Plain installed CPU/GL movement, jump, mouse and fire checks remain pending.
+The subsequent plain installed CPU/GL pair used actual `qfiles/qa-c`, with no
+SDK overlay, preload or debugger. Both show forward displacement toward the
+start-map doorway, a distinct rightward mouse turn, one selected shotgun and
+ammo 25 to 24 with ejected shells and wall impact smoke. Actual copied bindings
+remain `+forward`, `+jump` and `+attack`. Space press/release captures show a
+later raised viewpoint, but do not establish a grounded jump transition or
+velocity; that scope remains open. Each game quit normally with clean flushed
+logs, unchanged owner settings and installed files. All 50 recorded owned
+process tokens were absent after cleanup. The index is
+`qa-the907-installed-b5-input-proof-20261008/result-index.json`.
+
+Final received source/ack endpoints were CPU 5409/41 and GL 5004/37, with
+epoch 1, admitted 1 and received 1. They are single endpoints and do not
+establish per-key acknowledgment timing. Private audio captures contain
+nonzero output; individual cue identity was not checked. GL is software
+rendering, and neither run is a performance measurement. THE-907 remains
+in progress for the precise jump response.
