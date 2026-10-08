@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""THE-899 private headless Wayland qualification; host desktop is never mounted."""
+"""THE-899/THE-868 private headless Wayland qualification; host desktop is never mounted."""
 from pathlib import Path
 import argparse, ctypes, json, os, signal, subprocess, tempfile, time
 BASE = Path(__file__).parent
@@ -159,10 +159,10 @@ class Session:
         (self.root / 'compositor-containment.json').write_text(json.dumps(detail, indent=2) + '\n')
         return detail
 
-    def screenshot(self, label):
+    def screenshot(self, label, timeout=6):
         target = self.root / 'user' / (label + '.png')
         p = self.start('screenshot-' + label, ['/usr/bin/grim', target])
-        if p.wait(timeout=6) != 0:
+        if p.wait(timeout=timeout) != 0:
             raise RuntimeError('private compositor screenshot failed ' + label)
         return target
 
@@ -188,10 +188,11 @@ def windows(t):
             out += windows(node)
     return out
 
-def matrix_case(build, content, profile, names, product, renderer, port, owner_defaults=False):
+def matrix_case(build, content, profile, names, product, renderer, port, owner_defaults=False, gameplay_seconds=20):
     from PIL import Image, ImageStat
     s = Session()
-    result = {'product': product, 'requested_renderer': renderer, 'renderer': 'gl' if renderer == 'default' else renderer, 'owner_display_defaults': owner_defaults, 'reached_menu': False, 'reached_gameplay': False, 'normal_exit': False, 'exit_code': None, 'evidence': str(s.root), 'startup_review': 'PENDING actual final PNG review', 'shutdown_route': 'Public --frames180 normal engine frame-limited exit; no keyboard proof'}
+    gameplay = product != 'menu'
+    result = {'product': product, 'requested_renderer': renderer, 'renderer': 'gl' if renderer == 'default' else renderer, 'owner_display_defaults': owner_defaults, 'reached_menu': False, 'reached_gameplay': False, 'normal_exit': False, 'exit_code': None, 'evidence': str(s.root), 'startup_review': 'PENDING actual final PNG review', 'shutdown_route': 'Public console quit not yet submitted' if gameplay else 'Public --frames180 normal engine frame-limited exit; no keyboard proof'}
     try:
         result['private_containment'] = s.compositor()
         source, names, data = copied_owner(s, profile, names)
@@ -207,7 +208,7 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
             if renderer == 'default':
                 result['renderer_selection_basis'] = 'Source-attested qa_display_options_default selects QA_DISPLAY_OPENGL; no CLI or saved-profile renderer override'
         else:
-            argv = [artifact, '--content-root', content, '--user-content-root', s.root / 'user/content', '--native-runtime-root', build, '--renderer', renderer, '--width', '640', '--height', '400', '--port', str(port), '--frames', '180']
+            argv = [artifact, '--content-root', content, '--user-content-root', s.root / 'user/content', '--native-runtime-root', build, '--renderer', renderer, '--width', '640', '--height', '400', '--port', str(port), '--frames', '0' if gameplay else '180']
             if product == 'menu':
                 argv += ['--menu']
             else:
@@ -252,21 +253,36 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
             result['actual_private_overlay_files'] = mounted
         captures = []
         rendered = []
-        while p.poll() is None and time.monotonic() < end:
-            path = s.screenshot(product + '-' + renderer + '-' + str(len(captures)))
+        capture_end = min(end - 5, time.monotonic() + gameplay_seconds) if gameplay else end
+        if gameplay:
+            result['gameplay_capture_seconds'] = gameplay_seconds
+        while p.poll() is None and time.monotonic() < capture_end:
+            path = s.screenshot(product + '-' + renderer + '-' + str(len(captures)), min(6, max(0.01, end - time.monotonic())))
             with Image.open(path) as picture:
                 stats = ImageStat.Stat(picture.convert('RGB'))
                 nonblack = sum(stats.var) > 100 and sum(stats.mean) > 15
             captures.append({'path': str(path), 'actual_nonblack_output': nonblack})
             if nonblack:
                 rendered.append(str(path))
-            time.sleep(0.1)
-        result['exit_code'] = p.wait(timeout=5)
-        result['normal_exit'] = result['exit_code'] == 0
+            time.sleep(min(0.5 if gameplay else 0.1, max(0, capture_end - time.monotonic())))
         result['compositor_captures'] = captures
+        if rendered:
+            result['world_png'] = rendered[-1]
+        if gameplay:
+            if p.poll() is not None:
+                result['exit_code'] = p.returncode
+                raise RuntimeError('candidate exited before public console quit')
+            quit_argv = ['/usr/bin/wtype', '-k', 'grave', '-s', '200', '-d', '50', 'quit', '-k', 'Return']
+            result['public_console_quit'] = {'argv': quit_argv, 'log': str(s.root / 'logs/public-console-quit.log'), 'exit_code': None}
+            quit_process = s.start('public-console-quit', quit_argv)
+            result['public_console_quit']['exit_code'] = quit_process.wait(timeout=max(0.01, end - time.monotonic()))
+            if result['public_console_quit']['exit_code'] != 0:
+                raise RuntimeError('private public console quit input failed')
+            result['shutdown_route'] = 'Public console quit typed by wtype on the Session private Wayland display'
+        result['exit_code'] = p.wait(timeout=max(0.01, end - time.monotonic()))
+        result['normal_exit'] = result['exit_code'] == 0
         if not rendered:
             raise RuntimeError('candidate never published nonblack compositor output')
-        result['world_png'] = rendered[-1]
         result['owner_profile_unchanged'] = all(((source / n).read_bytes() == v for n, v in data.items()))
         result['log'] = str(s.root / 'logs' / (product + '-' + renderer + '.log'))
         result['raw_log'] = Path(result['log']).read_text(errors='replace')
@@ -287,7 +303,10 @@ def main():
     parser.add_argument('--candidate-receipt', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--port-base', type=int, default=46561)
+    parser.add_argument('--gameplay-seconds', type=float, default=20, help='Post-mapping gameplay capture interval; public console quit remains within the 40-second launch bound')
     args = parser.parse_args()
+    if not 0 < args.gameplay_seconds <= 35:
+        parser.error('--gameplay-seconds must be greater than 0 and at most 35')
     binary = args.binary.resolve()
     build = binary.parent
     profile = args.profile.resolve()
@@ -305,7 +324,7 @@ def main():
         raise ValueError('candidate receipt stat pins differ from current five candidate files')
     originals = {n: (profile / n).read_bytes() for n in names}
     cases = []
-    result = {'result': 'FAIL', 'artifact': str(binary), 'owner_profile_source': str(profile), 'copied_owner_settings': names, 'candidate_files': pins, 'owner_profile_unchanged': False, 'normal_exit': False, 'exit_code': None, 'private_containment': {'video_driver': 'wayland', 'headless_compositor': True, 'compositor': 'private sway headless pixman', 'SDL_AUDIODRIVER': 'dummy', 'DISPLAY_unset': True, 'HOME_and_XDG_runtime_private': True, 'host_devices_and_desktop_sockets_masked': True, 'no_debugger': True}, 'cases': cases, 'scope': 'Actual private Wayland menu plus five native game families on CPU and software GL; public frame-limited normal shutdown, no keyboard proof. No physical desktop, GPU fidelity or performance claim.'}
+    result = {'result': 'FAIL', 'artifact': str(binary), 'owner_profile_source': str(profile), 'copied_owner_settings': names, 'candidate_files': pins, 'owner_profile_unchanged': False, 'normal_exit': False, 'exit_code': None, 'private_containment': {'video_driver': 'wayland', 'headless_compositor': True, 'compositor': 'private sway headless pixman', 'SDL_AUDIODRIVER': 'dummy', 'DISPLAY_unset': True, 'HOME_and_XDG_runtime_private': True, 'host_devices_and_desktop_sockets_masked': True, 'no_debugger': True}, 'cases': cases, 'scope': 'Actual private Wayland menu plus five native game families on CPU and software GL; menus use frame-limited normal shutdown, games use private keyboard public console quit. No physical desktop, GPU fidelity or performance claim.'}
     try:
         launch_scopes = [('menu', renderer, True, content) for renderer in ['default', 'cpu']]
         launch_scopes += [(product, renderer, False, content) for product in PRODUCTS for renderer in ['cpu', 'gl']]
@@ -315,7 +334,7 @@ def main():
         for product, renderer, owner_defaults, case_content in launch_scopes:
             if any((pin(build / name) != pins[name] for name in FILES)):
                 raise RuntimeError('frozen candidate changed before next capture')
-            case = matrix_case(build, case_content, profile, names, product, renderer, args.port_base + len(cases), owner_defaults)
+            case = matrix_case(build, case_content, profile, names, product, renderer, args.port_base + len(cases), owner_defaults, args.gameplay_seconds)
             if case_content == empty:
                 case['content_mode'] = 'empty'
             cases.append(case)
