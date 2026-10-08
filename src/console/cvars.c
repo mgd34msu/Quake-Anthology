@@ -831,7 +831,7 @@ static void write_commit(cvar_target target,cvar_write *write)
         cvar_values *values=target.edit?&qac_cvars_edit_view(target.edit,receiver)->values:&receiver->values;
         cvar *entry=values->rows[canonical->ordinal]; qac_cvars_refresh(receiver,entry);
         if (!entry) continue;
-        if (write->mark && !qac_q1(qac_cvars_view_options(receiver,values).dialect)) {
+        if (write->mark) {
             entry->view.modified=true; ++entry->view.modification_count;
             values->changed_flags|=entry->view.flags;
         }
@@ -853,7 +853,7 @@ static void write_projection_metadata(cvar_target target,const cvar_write *write
                 if (!writes[i].mark || !record_affected(receiver,values,entry,qac_cvars_canonical(writes[i].entry))) continue;
                 changed=true; info |= !writes[i].silent && !writes[i].pending;
             }
-            if (changed && !qac_q1(qac_cvars_view_options(receiver,values).dialect)) {
+            if (changed) {
                 entry->view.modified=true; ++entry->view.modification_count; values->changed_flags|=entry->view.flags;
             }
             if (info && (entry->view.flags&QA_CVAR_USERINFO)) values->userinfo_modified=true;
@@ -864,7 +864,7 @@ static void write_projection_metadata(cvar_target target,const cvar_write *write
                 if (!writes[i].mark || !alias_affected(receiver,values,alias,qac_cvars_canonical(writes[i].entry))) continue;
                 changed=true; info |= !writes[i].silent && !writes[i].pending;
             }
-            if (changed && !qac_q1(qac_cvars_view_options(receiver,values).dialect)) {
+            if (changed) {
                 alias->modified=true; ++alias->modification_count; values->changed_flags|=alias->flags;
             }
             if (info && (alias->flags&QA_CVAR_USERINFO)) values->userinfo_modified=true;
