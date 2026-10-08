@@ -356,8 +356,6 @@ bool q3n_mission_hud_create_compiled(const q3n_mission_hud_options *options,q3n_
        view.basis.product!=QA_Q3_TEAM_ARENA||view.basis.application!=options->application||view.basis.content!=options->content||
        view.basis.seat!=options->seat||view.basis.assets!=options->assets||!options->presentation||!options->fonts||
        !options->milliseconds||!options->print||!options->key_catcher||options->presentation->options.assets!=options->assets||
-       options->compiled_context.registry!=view.basis.viewer.registry||options->compiled_context.owner!=view.basis.receiver||
-       options->compiled_context.generation!=view.basis.publication||!qa_actor_id_equal(options->compiled_context.actor,view.basis.viewer)||
        qa_font_library_content(options->fonts)!=options->assets->options.provider.mounts||
        qa_font_library_resource_owner(options->fonts)!=options->assets->options.provider.images||!q3n_compiled_source_checkpoint_current(&view))
         return q3ne_fail(e,QA_ERROR_ARGUMENT,"Compiled Mission HUD requires its actual CLIENT command and menu/font resource tuple");

@@ -164,9 +164,6 @@ static bool rebind_context_is(const q3n_compiled_source_rebind_ticket *t,
 {
     return t && t->source==s && before && after &&
         (cold ? q3n_compiled_source_rebind_checkpoint_current(t) : q3n_compiled_source_rebind_ready(t)) &&
-        before->owner==t->before.basis.receiver && before->registry==t->before.basis.viewer.registry &&
-        before->generation==t->before.basis.publication && qa_actor_id_equal(before->actor,t->before.basis.viewer) &&
-        qa_actor_id_equal(after->actor,t->candidate.viewer) &&
         before->session==after->session && before->owner==after->owner && before->client==after->client &&
         before->seat==after->seat && before->dialect==after->dialect && before->origin==after->origin &&
         before->direct==after->direct && before->console_text==after->console_text &&

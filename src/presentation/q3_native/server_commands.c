@@ -245,10 +245,6 @@ static bool create(const q3n_server_command_options *options, unsigned domain,
            source.basis.application!=options->application || source.basis.content!=options->content ||
            source.basis.assets!=options->assets || source.basis.product!=options->product ||
            source.basis.publication!=options->publication_generation || source.basis.map_revision!=options->map_revision ||
-           options->compiled_context.owner!=source.basis.receiver ||
-           options->compiled_context.registry!=source.basis.viewer.registry ||
-           options->compiled_context.generation!=source.basis.publication ||
-           !qa_actor_id_equal(options->compiled_context.actor,source.basis.viewer) ||
            !q3n_media_loading_read(options->media,&media,e) || media.compiled_source!=options->compiled_source)
             return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled command constructor has another real source or media owner");
     }
