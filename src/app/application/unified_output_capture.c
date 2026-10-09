@@ -44,7 +44,8 @@ static bool children_current(void *context, qa_application *app,
 
 bool application_unified_output_acquire(qa_application *app, const application_unified_source *source,
     qa_unified_world_frame *world,
-    qa_unified_frame_pool *pool, const application_unified_metadata_receipt *committed_metadata,
+    qa_unified_frame_pool *pool, qa_application_visual_visibility *visibility,
+    const application_unified_metadata_receipt *committed_metadata,
     const qa_unified_document *committed_source_metadata,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
     int64_t acknowledged, uint64_t after, application_unified_component_publisher *publisher,
@@ -77,7 +78,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
             application_unified_prediction_build(app, source, recipient, player, acknowledged, v->owned, entries, entry_count, e) &&
             application_unified_player_values(app, source, recipient, player,
                 external ? external->player : NULL, v->owned, entries, entry_count, e) &&
-            application_unified_presentations_build(app, source, recipient, player, v->owned, &v->visuals, e) &&
+            application_unified_presentations_build(app, source, recipient, player, visibility, v->owned, &v->visuals, e) &&
             application_unified_world_text_read(app, source, v->owned->lease, v->owned->visuals, e) &&
             application_unified_q3_sources_build(app, source, recipient, player, v->owned, &v->q3_sources, e) &&
             application_unified_events_read(app, source, recipient, player, epoch, after, &v->events, e);

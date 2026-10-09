@@ -295,7 +295,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
 
 bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player,
-    qa_unified_frame *frame, application_unified_presentations *out, qa_error *error)
+    qa_application_visual_visibility *visibility, qa_unified_frame *frame, application_unified_presentations *out, qa_error *error)
 {
     if (!out || out->value || !frame || frame->visuals || !source || !player ||
         !application_unified_source_current(app, source) || !application_unified_player_current(app, recipient, player))
@@ -308,12 +308,8 @@ bool application_unified_presentations_build(qa_application *app, const applicat
     qa_application_camera_view camera;
     if (!qa_application_control_camera(app, player->actor, &camera))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Unified model visibility lost its actual Source camera");
-    size_t visibility_bytes = qa_application_visual_visibility_bytes(app);
-    void *visibility_storage = application_unified_frame_alloc(frame->lease, visibility_bytes, 1, error);
-    qa_application_visual_visibility *visibility;
-    if (!visibility_storage || !qa_application_visual_visibility_prepare(app, player->actor,
-        qa_vec_add(camera.origin, camera.view_offset), false,
-        visibility_storage, visibility_bytes, &visibility, error)) return false;
+    if (!qa_application_visual_visibility_prepare(app, player->actor,
+        qa_vec_add(camera.origin, camera.view_offset), false, visibility, error)) return false;
     size_t count = qa_actors_count(qa_session_actors(source->session));
     visuals->characters = count ? application_unified_frame_alloc(frame->lease, count, sizeof(*visuals->characters), error) : NULL;
     if (count && !visuals->characters) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual character roster");

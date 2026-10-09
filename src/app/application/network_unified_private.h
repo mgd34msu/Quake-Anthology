@@ -42,6 +42,7 @@ struct application_unified_server {
     application_unified_component_publisher *components;
     application_unified_output_capture *pending_capture;
     qa_unified_frame_pool *recipient_pool;
+    qa_application_visual_visibility *visibility;
     application_unified_metadata_receipt committed_metadata;
     qa_unified_document *committed_source_metadata;
     application_unified_source offered;

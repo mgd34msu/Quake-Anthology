@@ -97,10 +97,15 @@ bool application_unified_server_offer(application_unified_server *owner, uint32_
         okay = application_unified_inputs_destroy(owner->inputs, error);
         if (okay) owner->inputs = NULL;
     }
+    qa_application_visual_visibility *visibility = NULL;
+    if (okay) okay = qa_application_visual_visibility_create(owner->application,&visibility,error);
     if (!okay) {
+        qa_application_visual_visibility_destroy(visibility);
         qa_unified_document_destroy(offer);
         qa_unified_document_destroy(copy); return false;
     }
+    qa_application_visual_visibility_destroy(owner->visibility);
+    owner->visibility = visibility;
     owner->inputs = NULL;
     player_receipt_clear(owner);
     qa_unified_document_destroy(owner->offer);
@@ -615,7 +620,7 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         application_unified_output_capture *capture = NULL;
         if (!application_unified_player_read(owner->application, owner->client, owner->seat, &actual, error) ||
             !application_unified_output_acquire(owner->application, &source, borrowed_world,
-            owner->recipient_pool, &owner->committed_metadata, owner->committed_source_metadata, owner->client,
+            owner->recipient_pool, owner->visibility, &owner->committed_metadata, owner->committed_source_metadata, owner->client,
             &actual, owner->epoch, acknowledged, owner->events_after, owner->components, external, &capture, error)) return false;
         const application_unified_output *observed = application_unified_output_capture_value(capture);
         const qa_unified_frame *frame = qa_unified_document_frame(observed->frame);
@@ -714,6 +719,7 @@ bool application_unified_server_destroy(application_unified_server *owner, qa_er
     if (!application_unified_inputs_destroy(owner->inputs, error)) return false;
     qa_unified_document_destroy(owner->offer); application_unified_output_dispose(&owner->pending);
     qa_unified_frame_pool_destroy(&owner->recipient_pool);
+    qa_application_visual_visibility_destroy(owner->visibility);
     player_receipt_clear(owner);
     metadata_clear(owner);
     free(owner); return true;

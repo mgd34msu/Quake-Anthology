@@ -37,6 +37,7 @@ struct frontend_root_resources {
     frontend_material_movies *movies;
     qa_scene_world *world;
     frontend_world_scratch scratch[4];
+    qa_application_visual_visibility *visibility[4][2];
     qa_audio_bank *sounds;
     qa_resource *map;
     qa_map_sidecars *sidecars;
@@ -80,12 +81,16 @@ static bool dispose(frontend_root_resources **slot,qa_error *error)
     }
     if (!frontend_material_movies_destroy(&owner->movies,error)) return false;
     qa_media_library_destroy(owner->media); owner->media=NULL;
-    for (unsigned i=0;i<4;++i) frontend_world_scratch_destroy(owner->scratch+i);
+    for (unsigned i=0;i<4;++i) {
+        frontend_world_scratch_destroy(owner->scratch+i);
+        qa_application_visual_visibility_destroy(owner->visibility[i][0]);
+        qa_application_visual_visibility_destroy(owner->visibility[i][1]);
+    }
     if (owner->installed) {
         if (f->root_resources!=owner || f->mounts!=owner->mounts ||
             f->images!=owner->images || f->materials!=owner->materials)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Root resources lost their actual installed destructor association");
-        qa_scene_world_destroy(f->scene_world); f->scene_world=NULL; f->world_scratch=NULL;
+        qa_scene_world_destroy(f->scene_world); f->scene_world=NULL; f->world_scratch=NULL; f->visual_visibility=NULL;
         qa_audio_bank_destroy(f->sounds); f->sounds=NULL;
         qa_resource_release(f->map_resource); f->map_resource=NULL;
         free(f->map_name); f->map_name=NULL;
@@ -127,11 +132,18 @@ bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
     owner->images=f->images; owner->materials=f->materials; owner->installed=true;
     if (f->scene_world) {
         for (unsigned i=0;i<f->options.seats;++i)
-            if (!frontend_world_scratch_create(f->scene_world,owner->scratch+i,error)) {
-                for (unsigned j=0;j<i;++j) frontend_world_scratch_destroy(owner->scratch+j);
+            if (!frontend_world_scratch_create(f->scene_world,owner->scratch+i,error) ||
+                !qa_application_visual_visibility_create(f->application,&owner->visibility[i][0],error) ||
+                !qa_application_visual_visibility_create(f->application,&owner->visibility[i][1],error)) {
+                for (unsigned j=0;j<4;++j) {
+                    frontend_world_scratch_destroy(owner->scratch+j);
+                    qa_application_visual_visibility_destroy(owner->visibility[j][0]);
+                    qa_application_visual_visibility_destroy(owner->visibility[j][1]);
+                }
                 free(owner); return false;
             }
         f->world_scratch=owner->scratch;
+        f->visual_visibility=owner->visibility;
     }
     const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
     if (sidecars) {
@@ -200,7 +212,9 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
         !qa_scene_world_source_resource_bind(owner->world,owner->map,error) ||
         (f->audio && !qa_audio_bank_create(owner->mounts,&owner->sounds,error))) goto fail;
     for (unsigned i=0;i<f->options.seats;++i)
-        if (!frontend_world_scratch_create(owner->world,owner->scratch+i,error)) goto fail;
+        if (!frontend_world_scratch_create(owner->world,owner->scratch+i,error) ||
+            !qa_application_visual_visibility_create(f->application,&owner->visibility[i][0],error) ||
+            !qa_application_visual_visibility_create(f->application,&owner->visibility[i][1],error)) goto fail;
     size_t length=strlen(map.name);
     owner->name=malloc(length+1);
     if (!owner->name) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining render map identity"); goto fail; }
@@ -216,6 +230,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     f->mounts=owner->mounts; f->images=owner->images; f->materials=owner->materials;
     f->scene_world=owner->world; f->sounds=owner->sounds; f->map_resource=owner->map; f->map_name=owner->name;
     f->world_scratch=owner->scratch;
+    f->visual_visibility=owner->visibility;
     f->configuration=configuration; f->map_revision=map.revision;
     owner->installed=true; f->root_resources=owner; f->root_resources_pending=NULL;
     return (!f->q1_sky || frontend_q1_sky_map(f->q1_sky,error)) &&

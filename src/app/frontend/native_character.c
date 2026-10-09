@@ -16,6 +16,7 @@ struct frontend_native_character {
     qa_frontend *frontend;
     frontend_native_q3 *row;
     frontend_native_q3_view owners;
+    qa_application_visual_visibility *visibility;
     const q3n_frame *frame;
     character_output *outputs, *tail;
     int32_t previous_time, frame_milliseconds;
@@ -48,6 +49,7 @@ bool frontend_native_character_create(qa_frontend *frontend, frontend_native_q3 
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native character constructor requires its real receiver and heaps");
     frontend_native_character *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining native character frame owner");
+    if (!qa_application_visual_visibility_create(frontend->application,&owner->visibility,error)) { free(owner); return false; }
     owner->frontend = frontend; owner->row = row; owner->owners = view; *out = owner; return true;
 }
 bool frontend_native_character_begin(frontend_native_character *owner, const q3n_frame *frame, qa_error *error)
@@ -60,14 +62,11 @@ bool frontend_native_character_begin(frontend_native_character *owner, const q3n
     uint32_t difference = (uint32_t)frame->time - (uint32_t)owner->previous_time;
     int32_t elapsed; memcpy(&elapsed, &difference, sizeof(elapsed));
     owner->frame_milliseconds = elapsed < 0 ? 0 : elapsed;
-    size_t visibility_bytes = qa_application_visual_visibility_bytes(frame->application);
-    void *visibility_storage = qa_arena_alloc(&owner->frontend->frame.storage,
-        visibility_bytes, _Alignof(max_align_t), error);
-    qa_application_visual_visibility *visibility;
+    qa_application_visual_visibility *visibility = owner->visibility;
     qa_vec3 eye = qa_v3(frame->local_player.origin[0], frame->local_player.origin[1],
         frame->local_player.origin[2] + (float)frame->local_player.viewheight);
-    if (!visibility_storage || !qa_application_visual_visibility_prepare(frame->application,
-        frame->viewing_actor, eye, false, visibility_storage, visibility_bytes, &visibility, error)) return false;
+    if (!qa_application_visual_visibility_prepare(frame->application,
+        frame->viewing_actor, eye, false, visibility, error)) return false;
     qa_actor_registry *actors = qa_world_actors(qa_application_world(frame->application));
     const qa_actor_record *record; uint32_t cursor = 0, order = 0;
     while (qa_actors_next(actors, &cursor, &record)) {
@@ -119,6 +118,7 @@ bool frontend_native_character_destroy(frontend_native_character *owner, qa_erro
 {
     if (!frontend_native_character_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native character retirement retains an entered frame or pose output");
+    qa_application_visual_visibility_destroy(owner->visibility);
     free(owner); return true;
 }
 bool frontend_native_character_rebind_ready(const frontend_native_character *owner,

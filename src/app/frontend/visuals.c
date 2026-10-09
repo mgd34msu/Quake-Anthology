@@ -1386,12 +1386,10 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
     uint32_t launch_seat;
     if(frontend_seat_launch_id_read(frontend,seat,&launch_seat))
         (void)qa_application_player_actor(frontend->application, launch_seat, &local);
-    size_t visibility_bytes = qa_application_visual_visibility_bytes(frontend->application);
-    void *visibility_storage = qa_arena_alloc(&frame->storage, visibility_bytes, _Alignof(max_align_t), error);
-    qa_application_visual_visibility *visibility;
-    if (!visibility_storage || !qa_application_visual_visibility_prepare(frontend->application, local,
+    qa_application_visual_visibility *visibility = frontend->visual_visibility[seat][world->view.clip_enabled || world->view.mirror];
+    if (!qa_application_visual_visibility_prepare(frontend->application, local,
         world->use_pvs_origin ? world->pvs_origin : world->view.origin, world->no_vis,
-        visibility_storage, visibility_bytes, &visibility, error)) return false;
+        visibility, error)) return false;
     const qa_actor_record *record; uint32_t cursor = 0;
     qa_actor_registry *actors = qa_world_actors(qa_application_world(frontend->application));
     while (qa_actors_next(actors, &cursor, &record)) {

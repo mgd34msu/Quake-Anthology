@@ -305,7 +305,9 @@ bool application_unified_server_restore(qa_bytes bytes, qa_application *app, qa_
     *owner = (application_unified_server){.application = app, .runtime = runtime,
         .client = peer->id, .seat = peer->seats[0].seat, .offered = source, .restore_pending = true};
     owner->recipient_pool = qa_unified_frame_pool_create(0, e);
-    if (!owner->recipient_pool) { free(owner); return false; }
+    if (!owner->recipient_pool || !qa_application_visual_visibility_create(app,&owner->visibility,e)) {
+        qa_unified_frame_pool_destroy(&owner->recipient_pool); free(owner); return false;
+    }
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, source.session, bytes, e) && fields(&io, owner, &source, peer) &&
         qa_source_save_finish(&io, NULL);

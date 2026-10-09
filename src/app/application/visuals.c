@@ -11,6 +11,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q3_source.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *resource_text(qa_application *application, qa_string_id id) {
@@ -149,6 +150,7 @@ static bool pickup_visible(qa_application *application, qa_actor_id actor,
 }
 
 struct qa_application_visual_visibility {
+    size_t capacity;
     qa_application *app;
     application_provider *source;
     qa_actor_id recipient, tracked;
@@ -159,12 +161,10 @@ struct qa_application_visual_visibility {
     bool q1, q2, q3, no_vis;
 };
 
-size_t qa_application_visual_visibility_bytes(const qa_application *app)
+static size_t visual_visibility_bytes(const qa_application *app)
 {
     size_t pvs = app && app->geometry ? qa_collision_q1_pvs_bytes(app->geometry) : 0;
-    application_provider *source = app ? application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") : NULL;
-    if (source && source->product && source->product->family == QA_GAME_Q2 &&
-        source->kind == APPLICATION_PROVIDER_NATIVE && app->geometry) {
+    if (app && app->geometry) {
         size_t pending = application_q2_visibility_pending_capacity(app);
         if (!pending) return 0;
         if (pending * sizeof(int32_t) > pvs) pvs = pending * sizeof(int32_t);
@@ -173,21 +173,35 @@ size_t qa_application_visual_visibility_bytes(const qa_application *app)
         sizeof(qa_application_visual_visibility) + pvs;
 }
 
-bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id recipient,
-    qa_vec3 pvs_origin, bool no_vis, void *storage, size_t capacity,
+bool qa_application_visual_visibility_create(const qa_application *app,
     qa_application_visual_visibility **out, qa_error *error)
 {
-    size_t required = qa_application_visual_visibility_bytes(app);
-    if (!app || !out || !storage || (uintptr_t)storage % _Alignof(max_align_t) ||
-        !required || capacity < required || !qa_vec_finite(pvs_origin) ||
+    size_t capacity = visual_visibility_bytes(app);
+    if (!capacity) return application_fail(error, QA_ERROR_MEMORY, "Visual visibility map storage exceeds address space");
+    qa_application_visual_visibility *v = calloc(1, capacity);
+    if (!v) return application_fail(error, QA_ERROR_MEMORY, "Preparing map-sized visual visibility storage");
+    v->capacity = capacity;
+    *out = v;
+    return true;
+}
+
+void qa_application_visual_visibility_destroy(qa_application_visual_visibility *v)
+{ free(v); }
+
+bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id recipient,
+    qa_vec3 pvs_origin, bool no_vis, qa_application_visual_visibility *v, qa_error *error)
+{
+    size_t required = visual_visibility_bytes(app);
+    if (!app || !v || !required || v->capacity < required || !qa_vec_finite(pvs_origin) ||
         (recipient.registry && !qa_actors_get(qa_session_actors(app->session), recipient)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Visual visibility requires its actual recipient and view storage");
-    qa_application_visual_visibility *v = storage;
+    size_t capacity = v->capacity;
     memset(v, 0, sizeof(*v));
+    v->capacity = capacity;
     v->app = app; v->recipient = recipient; v->no_vis = no_vis;
     v->source = application_world_provider(app, QA_ROLE_ENTITIES, "");
     application_provider *source = v->source;
-    if (!source || !source->product || !app->geometry || !recipient.registry) { *out = v; return true; }
+    if (!source || !source->product || !app->geometry || !recipient.registry) return true;
     if (source->product->family == QA_GAME_Q1 &&
         qa_collision_geometry_family(app->geometry) == QA_COLLISION_Q1) {
         size_t bytes = qa_collision_q1_pvs_bytes(app->geometry);
@@ -250,7 +264,6 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
             v->q3 = true;
         }
     }
-    *out = v;
     return true;
 }
 

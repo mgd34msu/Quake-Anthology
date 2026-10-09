@@ -2,6 +2,7 @@
 #define QA_FRONTEND_INTERNAL_H
 #include "qa/frontend.h"
 #include "world_scratch.h"
+#include "qa/application_visual_visibility.h"
 #include "legacy_render_policy.h"
 #include "qa/audio.h"
 #include "qa/console_draw.h"
@@ -339,6 +340,7 @@ struct qa_frontend {
     qa_material_library *materials;
     qa_scene_world *scene_world;
     frontend_world_scratch *world_scratch;
+    qa_application_visual_visibility *(*visual_visibility)[2];
     qa_resource *map_resource;
     qa_scene_frame frame;
     qa_audio_engine *audio;

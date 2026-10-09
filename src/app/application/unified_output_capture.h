@@ -4,6 +4,7 @@
 #include "unified_output.h"
 #include "unified_player.h"
 #include "unified_components.h"
+#include "qa/application_visual_visibility.h"
 
 typedef struct application_unified_output_capture application_unified_output_capture;
 /* QC supplies its
@@ -19,7 +20,8 @@ typedef struct application_unified_output_external {
 
 bool application_unified_output_acquire(qa_application *, const application_unified_source *,
     qa_unified_world_frame *borrowed_world,
-    qa_unified_frame_pool *recipient_pool, const application_unified_metadata_receipt *committed_metadata,
+    qa_unified_frame_pool *recipient_pool, qa_application_visual_visibility *,
+    const application_unified_metadata_receipt *committed_metadata,
     const qa_unified_document *committed_source_metadata,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
     int64_t acknowledged_input, uint64_t events_after,
