@@ -8334,7 +8334,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     if(n->q3_clients[0].q3_client_requested)n->q3_clients[0].q3_client_attached=false;
     n->demo_format=format;n->demo_playback=true;n->demo_first_frame=true;
     *out=(frontend_demo_playback_source){n,demo_playback_current,demo_playback_advance,demo_playback_release};
-    qa_net_address local={.kind=QA_NET_LOOPBACK};
+    qa_net_address local={.kind=QA_NET_LOOPBACK,.host.loopback="demo"};
     if(format==FRONTEND_DEMO_NQ||format==FRONTEND_DEMO_QW) {
         qa_net_protocol_id wire={format==FRONTEND_DEMO_QW?QA_NET_QW28:QA_NET_NQ15,0,0};
         return q1_client_construct(n,&local,wire,physical,true,error)&&

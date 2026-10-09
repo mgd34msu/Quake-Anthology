@@ -150,7 +150,8 @@ bool qa_net_loopback_bind(qa_net_loopback *, const char *, qa_net_transport **, 
  * into one host stream. Both handles transfer only on success; the caller keeps
  * the local endpoint's hub alive. Bound address and UDP policy use the external
  * child when present. The local-only stream reports the local bound address.
- * Its datagram budget is the smaller child budget. */
+ * Its datagram budget is the maximum child budget; each selected child still
+ * enforces its own limit. */
 bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *local,
                                   qa_net_transport **out, qa_error *);
 /* Closing a hub closes its endpoints; external transport handles remain valid
