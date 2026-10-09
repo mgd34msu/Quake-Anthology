@@ -105,6 +105,8 @@ static bool change(qa_native_guest *guest, uint64_t base, size_t bytes,
     /* Every allocation and identity is prepared before topology changes.
      * Checked dependency transactions own their real topology on failure; a
      * partially replaced guest is terminal and retains all backing for close. */
+    if (okay && guest->memory_retiring)
+        guest->memory_retiring(guest->memory_context, base, bytes);
     for (size_t i = 0; okay && i < guest->mapping_count; ++i) {
         const qa_native_guest_mapping *mapping = &guest->mappings[i];
         if (overlaps(base, bytes, mapping->base, mapping->bytes))

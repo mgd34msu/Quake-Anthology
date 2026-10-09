@@ -131,6 +131,7 @@ struct qa_native_instance {
     size_t entry_count;
     native_allocation *allocations;
     qa_native_entity_table entities;
+    bool entity_views_retired;
     native_slot *slots;
     uint32_t slot_capacity;
     native_runner_connection *runner;
@@ -167,6 +168,20 @@ struct qa_native_instance {
         pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed, process_observing;
     qa_error failure;
 };
+
+static inline void native_entity_notify(qa_native_instance *instance,
+    qa_native_entity_change change, uint32_t slot, qa_native_address address, size_t bytes) {
+    if (change == QA_NATIVE_ENTITIES_INVALIDATE && !address) instance->entity_views_retired = true;
+    else if (change == QA_NATIVE_ENTITIES_TABLE) instance->entity_views_retired = false;
+    if (instance->options.entity_changed) {
+        const qa_native_entity_event event = {change, slot, address, bytes};
+        instance->options.entity_changed(instance->options.context, instance, &event);
+    }
+}
+static inline void native_entity_changed(qa_native_instance *instance,
+    qa_native_entity_change change, uint32_t slot) {
+    native_entity_notify(instance, change, slot, 0, 0);
+}
 
 struct qa_native_write_scope {
     struct qa_native_write_scope *previous;

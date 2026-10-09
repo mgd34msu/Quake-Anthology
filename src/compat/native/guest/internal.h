@@ -67,6 +67,8 @@ struct qa_native_guest {
     void *instruction_context;
     void (*dispatch_started)(void *);
     void *dispatch_context;
+    void (*memory_retiring)(void *, uint64_t, size_t);
+    void *memory_context;
     unsigned callback_depth, publication_depth, stopped_write_calls, stopped_write_bindings;
     bool stepping, failed, restoring, faulting;
     bool has_memory_fault;

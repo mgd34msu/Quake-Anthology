@@ -319,6 +319,7 @@ bool qa_native_restart_original(qa_native_instance *instance, qa_error *error) {
     if (!instrumented_image(instance, &image_generation, error)) return false;
     if (instance->instrumented_child && image_generation > UINT64_MAX - 2)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native original image generation is exhausted");
+    native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
     qa_native_instance *previous = native_active_instance;
     native_active_instance = instance;
     instance->active_depth = 1;
@@ -386,6 +387,7 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
         completed = false; first = current;
     }
     instance->destroying = true;
+    native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
     if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
         qa_native_instance *previous = native_active_instance;
         instance->failed = false; instance->failure = (qa_error){0};

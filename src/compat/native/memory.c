@@ -12,6 +12,46 @@ bool qa_native_range_check(const qa_native_instance *instance, qa_native_address
         native_runner_range_check((qa_native_instance *)instance, address, bytes, permissions, error);
 }
 
+bool qa_native_borrow(const qa_native_instance *instance, qa_native_address address,
+    size_t bytes, qa_bytes *out, qa_error *error) {
+    if (out) *out = (qa_bytes){0};
+    if (!instance || !out || (instance->destroying && !qa_native_unloading_owner(instance)))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "live native instance and borrowed output are required");
+    if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
+        if (!native_direct_range_check(address, bytes, QA_NATIVE_MEMORY_READ, error)) return false;
+        *out = (qa_bytes){bytes ? (const uint8_t *)(uintptr_t)address : NULL, bytes};
+        return true;
+    }
+    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                           "native runner does not expose shared live storage");
+    const qa_native_guest *guest = instance->guest;
+    if (!guest_ready(guest, error) ||
+        !guest_range(guest, address, bytes, QA_NATIVE_GUEST_READ, error)) return false;
+    if (!bytes) return true;
+    const qa_native_guest_mapping *first = guest_mapping(guest, address);
+    const guest_backing *backing = guest_backing_at(guest, first->backing);
+    size_t physical = (size_t)(first->backing_offset + address - first->base);
+    if (bytes > backing->bytes - physical)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                           "native borrowed span exceeds contiguous backing storage");
+    for (size_t offset = 0; offset < bytes; ) {
+        const qa_native_guest_mapping *mapping = guest_mapping(guest, address + offset);
+        uint64_t displacement = address + offset - mapping->base;
+        if (mapping->backing != first->backing ||
+            mapping->backing_offset + displacement != physical + offset)
+            return native_fail(error, QA_ERROR_UNSUPPORTED, offset,
+                               "native borrowed span crosses distinct backing storage");
+        size_t amount = bytes - offset;
+        if (amount > mapping->bytes - displacement)
+            amount = (size_t)(mapping->bytes - displacement);
+        offset += amount;
+    }
+    *out = (qa_bytes){backing->data + physical, bytes};
+    return true;
+}
+
 bool qa_native_read(const qa_native_instance *instance, qa_native_address source, void *out,
                     size_t bytes, qa_error *error) {
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
@@ -177,7 +217,11 @@ bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_
     native_allocation *allocation = *link;
     if (allocation->guest_address && !qa_native_guest_free(instance->guest, address, error)) return false;
     *link = allocation->next;
-    if (!allocation->guest_address) free(allocation->bytes);
+    if (!allocation->guest_address) {
+        native_entity_notify(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX,
+                             address, allocation->size);
+        free(allocation->bytes);
+    }
     free(allocation);
     return true;
 }
@@ -204,7 +248,11 @@ void qa_native_free_tag(qa_native_instance *instance, int32_t tag) {
             }
         }
         *link = allocation->next;
-        if (!allocation->guest_address) free(allocation->bytes);
+        if (!allocation->guest_address) {
+            native_entity_notify(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX,
+                (qa_native_address)(uintptr_t)allocation->bytes, allocation->size);
+            free(allocation->bytes);
+        }
         free(allocation);
     }
 }
@@ -260,7 +308,10 @@ bool native_entity_table_store(qa_native_instance *instance, qa_native_entity_ta
     if ((!table.base && table.capacity) || (!table.stride && table.capacity) ||
         table.count > table.capacity || table.capacity > 1048576u)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "invalid native located entity table");
+    bool changed = instance->entities.base != table.base || instance->entities.stride != table.stride ||
+        instance->entities.count != table.count || instance->entities.capacity != table.capacity;
     if (table.capacity > instance->slot_capacity) {
+        native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
         native_slot *slots = realloc(instance->slots, (size_t)table.capacity * sizeof(*slots));
         if (!slots)
             return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native located source slots");
@@ -273,6 +324,23 @@ bool native_entity_table_store(qa_native_instance *instance, qa_native_entity_ta
         memset(instance->slots + table.capacity, 0,
                (size_t)(instance->slot_capacity - table.capacity) * sizeof(*instance->slots));
     instance->entities = table;
+    if (changed || instance->entity_views_retired)
+        native_entity_changed(instance, QA_NATIVE_ENTITIES_TABLE, UINT32_MAX);
+    return true;
+}
+
+bool qa_native_entity_projection(const qa_native_instance *instance,
+    qa_native_entity_projection_view *out, qa_error *error) {
+    if (!instance || !out || (instance->destroying && !qa_native_unloading_owner(instance)))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native entity projection output is required");
+    *out = (qa_native_entity_projection_view){
+        .table = instance->entities,
+        .slots = {(const uint8_t *)instance->slots,
+                  (size_t)instance->entities.capacity * sizeof(*instance->slots)},
+        .count = &instance->entities.count,
+        .slot_stride = sizeof(*instance->slots),
+        .actor_offset = offsetof(native_slot, actor),
+        .kind_offset = offsetof(native_slot, kind)};
     return true;
 }
 
@@ -330,8 +398,13 @@ bool qa_native_bind_slot(qa_native_instance *instance, const qa_native_slot_bind
     if (binding->kind != QA_NATIVE_SLOT_FREE && !binding->actor.registry)
         return native_fail(error, QA_ERROR_ARGUMENT, binding->slot,
                            "occupied native source slot requires an actor identity");
-    instance->slots[binding->slot] =
+    native_slot *row = instance->slots + binding->slot;
+    bool changed = row->kind != binding->kind || row->actor.registry != binding->actor.registry ||
+        row->actor.generation != binding->actor.generation || row->actor.slot != binding->actor.slot ||
+        row->owner != binding->owner || row->source_slot != binding->source_slot;
+    *row =
         (native_slot){binding->kind, binding->actor, binding->owner, binding->source_slot};
+    if (changed) native_entity_changed(instance, QA_NATIVE_ENTITIES_SLOT, binding->slot);
     return true;
 }
 

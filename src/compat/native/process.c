@@ -3,6 +3,17 @@
 #include "guest/sysv_libc_format.h"
 #include "guest/internal.h"
 
+static void process_memory_retiring(void *context, uint64_t address, size_t bytes)
+{
+    native_entity_notify(context, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX, address, bytes);
+}
+
+static void observe_memory(qa_native_instance *instance)
+{
+    instance->guest->memory_retiring = process_memory_retiring;
+    instance->guest->memory_context = instance;
+}
+
 static bool observe_regions(qa_native_instance *instance, qa_error *error)
 {
     if (!instance->region_count) return true;
@@ -72,6 +83,7 @@ bool native_process_open(qa_native_instance *instance, const qa_native_process_o
         if (!found) return native_fail(error, QA_ERROR_FORMAT, options->source_id, "native source provider is absent");
         if (!qa_native_sysv_process_create(actual, &instance->sysv_process, error)) return false;
         instance->guest = qa_native_sysv_process_guest(instance->sysv_process);
+        observe_memory(instance);
     } else {
         const qa_native_windows_process_options *actual = options->fresh.windows;
         if (!actual || !actual->artifacts)
@@ -89,6 +101,7 @@ bool native_process_open(qa_native_instance *instance, const qa_native_process_o
         if (!found) return native_fail(error, QA_ERROR_FORMAT, options->source_id, "native source image is absent");
         if (!qa_native_windows_process_create(actual, &instance->windows_process, error)) return false;
         instance->guest = qa_native_windows_process_guest(instance->windows_process);
+        observe_memory(instance);
     }
     const native_profile_spec *profile = native_profile(instance->module->info.profile);
     if (!observe_regions(instance, error)) return false;
@@ -164,6 +177,7 @@ bool native_process_export(const qa_native_instance *instance, const char *name,
 
 bool native_process_reload(qa_native_instance *instance, qa_error *error)
 {
+    native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
     bool okay = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
         qa_native_sysv_process_reload(instance->sysv_process, instance->source_id, error) :
         qa_native_windows_process_reload(instance->windows_process, instance->source_id, error);
@@ -612,6 +626,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
         bindings.external_callback = restored_callback; bindings.external_context = instance;
         if (!qa_native_sysv_process_restore(process, &bindings, &instance->sysv_process, error)) return false;
         instance->guest = qa_native_sysv_process_guest(instance->sysv_process);
+        observe_memory(instance);
         qa_native_sysv_artifact artifact;
         if (!qa_native_sysv_process_artifact_read(instance->sysv_process, instance->source_id, &artifact, error)) return false;
         if (artifact.role != QA_NATIVE_SYSV_LIBRARY || !source_matches(instance, &artifact.image, artifact.bytes) ||
@@ -624,6 +639,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
         bindings.external_callback = restored_callback; bindings.external_context = instance;
         if (!qa_native_windows_process_restore(process, &bindings, &instance->windows_process, error)) return false;
         instance->guest = qa_native_windows_process_guest(instance->windows_process);
+        observe_memory(instance);
         qa_native_windows_artifact artifact;
         if (!qa_native_windows_process_artifact_read(instance->windows_process, instance->source_id, &artifact, error)) return false;
         if (!source_matches(instance, &artifact.image, artifact.bytes) || artifact.load_base != instance->image_base)

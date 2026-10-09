@@ -400,6 +400,7 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
             return native_fail(error, QA_ERROR_ARGUMENT, i,
                                "native restore requires detached source region observers");
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
+        native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
         instance->checkpointing = true;
         bool ok = native_runner_checkpoint_restore(instance, checkpoint, part, error);
         instance->checkpointing = false;
@@ -411,6 +412,7 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
     if (!present)
         return native_fail(error, QA_ERROR_NOT_FOUND, part,
                            "native checkpoint does not contain the requested part");
+    native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
     instance->checkpointing = true;
     bool ok = false;
     if (part == QA_NATIVE_RESTORE_HOST) {
@@ -437,6 +439,12 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
                          "host-only native checkpoint has no guest save part");
     }
     instance->checkpointing = false;
+    if (ok && instance->entity_views_retired) {
+        qa_native_entity_table table;
+        qa_error admission = {0};
+        if (qa_native_entity_table_refresh(instance, &table, &admission) && instance->entity_views_retired)
+            native_entity_changed(instance, QA_NATIVE_ENTITIES_TABLE, UINT32_MAX);
+    }
     return ok;
 }
 

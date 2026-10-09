@@ -180,6 +180,23 @@ typedef bool (*qa_native_syscall_fn)(void *context, qa_native_instance *instance
 
 typedef bool (*qa_native_host_checkpoint_fn)(void *context, qa_buffer *state, qa_error *error);
 typedef bool (*qa_native_host_restore_fn)(void *context, qa_bytes state, qa_error *error);
+typedef enum qa_native_entity_change {
+    QA_NATIVE_ENTITIES_TABLE,
+    QA_NATIVE_ENTITIES_SLOT,
+    QA_NATIVE_ENTITIES_INVALIDATE
+} qa_native_entity_change;
+typedef struct qa_native_entity_event {
+    qa_native_entity_change change;
+    uint32_t slot;
+    qa_native_address address;
+    size_t bytes;
+} qa_native_entity_event;
+/* Cold admission/release notifications. TABLE/SLOT follow actual commits;
+ * INVALIDATE precedes restore, unload and storage retirement. Non-slot events
+ * use UINT32_MAX. INVALIDATE address zero means the whole instance; otherwise
+ * only the stated memory span retires. The callback owns no source storage. */
+typedef void (*qa_native_entity_observer_fn)(void *context, qa_native_instance *,
+    const qa_native_entity_event *);
 
 /* context and callback functions remain valid until instance destruction.
  * Dependency bytes and paths are borrowed only during creation. Declaration
@@ -203,6 +220,7 @@ typedef struct qa_native_options {
     /* Requires a separate source process without requesting instrumentation. */
     bool isolate;
     const struct qa_native_process_options *process;
+    qa_native_entity_observer_fn entity_changed;
 } qa_native_options;
 
 typedef enum qa_native_backend {
@@ -365,6 +383,17 @@ enum {
  * foreign mapping or promise residency/file EOF validity. */
 bool qa_native_range_check(const qa_native_instance *, qa_native_address,
     size_t, uint32_t permissions, qa_error *);
+/* Cold read-only view of live module storage. Direct views use the actual
+ * mapped host range; owned guests use their controller backing, never a cast
+ * of a guest address. A span crossing mappings must remain contiguous within
+ * one backing. The legacy runner has no shared view and reports unsupported.
+ * The caller retires views before their allocation is freed, unmap/protection changes,
+ * backing or entity-table replacement, restore, and instance destruction.
+ * Mapping/table metadata growth alone does not relocate the backing bytes.
+ * Resolve while execution is stopped; loads through the returned bytes do
+ * not validate, copy, synchronize execution, or pin the underlying storage. */
+bool qa_native_borrow(const qa_native_instance *, qa_native_address,
+    size_t, qa_bytes *, qa_error *);
 bool qa_native_read_string(const qa_native_instance *instance, qa_native_address source,
                            size_t maximum, qa_buffer *out, qa_error *error);
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
@@ -402,6 +431,17 @@ typedef struct qa_native_entity_table {
     uint32_t count;
     uint32_t capacity;
 } qa_native_entity_table;
+typedef struct qa_native_entity_projection_view {
+    qa_native_entity_table table;
+    qa_bytes slots;
+    const uint32_t *count;
+    uint32_t slot_stride, actor_offset, kind_offset;
+} qa_native_entity_projection_view;
+/* Existing native_slot rows and current count, borrowed without a copy. Slot
+ * kind is qa_native_slot_kind; actor bytes contain qa_actor_id. Re-acquire on
+ * TABLE and retire on INVALIDATE. SLOT changes are already visible in place. */
+bool qa_native_entity_projection(const qa_native_instance *,
+    qa_native_entity_projection_view *, qa_error *);
 
 /* Q2 export tables publish their entity storage automatically. Q3 hosts call
  * set_entity_table from LOCATE_GAME_DATA; QL API 10 records its table import

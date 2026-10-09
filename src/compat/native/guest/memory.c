@@ -129,6 +129,7 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
     if (guest->run || guest->callback_depth || guest->publication_depth || guest->stepping ||
         guest->stopped_write_calls || guest->stopped_write_bindings || guest->recovery)
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native guest destruction requires drained execution");
+    if (guest->memory_retiring) guest->memory_retiring(guest->memory_context, 0, 0);
     if (guest->child) {
         if (!guest_host_child_destroy(&guest->child, error)) { guest->failed = true; return false; }
     } else if (guest->cpu) {
@@ -270,6 +271,8 @@ bool qa_native_guest_unmap(qa_native_guest *guest, uint64_t id, qa_error *error)
         if (!guest_allocation_storage(guest, allocation, NULL, NULL, error)) return false;
         return guest_fail(error, QA_ERROR_ARGUMENT, id, "free the real allocation before unmapping its storage");
     }
+    if (guest->memory_retiring)
+        guest->memory_retiring(guest->memory_context, mapping.base, (size_t)mapping.bytes);
     if (!guest_backend_change(guest, &mapping, 0, true, error)) return false;
     guest_heap_changed(guest, mapping.base, (size_t)mapping.bytes);
     memmove(guest->mappings + index, guest->mappings + index + 1,
@@ -295,6 +298,8 @@ bool qa_native_guest_protect(qa_native_guest *guest, uint64_t id, uint32_t permi
                 if (guest->callbacks[j].address >= mapping->base &&
                     guest->callbacks[j].address - mapping->base < mapping->bytes)
                     return guest_fail(error, QA_ERROR_ARGUMENT, id, "bound native guest trap requires executable storage");
+        if (mapping->permissions != permissions && guest->memory_retiring)
+            guest->memory_retiring(guest->memory_context, mapping->base, (size_t)mapping->bytes);
         if (!guest_backend_change(guest, mapping, permissions, false, error)) return false;
         mapping->permissions = permissions;
         guest_heap_changed(guest, mapping->base, (size_t)mapping->bytes);
@@ -670,6 +675,8 @@ bool qa_native_guest_free(qa_native_guest *guest, uint64_t address, qa_error *er
             heap->span_count + 1, sizeof(*heap->spans), error)) return false;
     }
     /* Retain the record if removing its storage is rejected. */
+    if (guest->memory_retiring)
+        guest->memory_retiring(guest->memory_context, allocation.address, rounded);
     memmove(guest->allocations + index, guest->allocations + index + 1,
         (--guest->allocation_count - index) * sizeof(*guest->allocations));
     bool okay = allocation.mapping ? qa_native_guest_unmap_range(guest, allocation.address, rounded, error) :

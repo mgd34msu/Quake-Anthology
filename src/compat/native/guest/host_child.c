@@ -4,6 +4,7 @@
 #include "qa/platform_services.h"
 #include <errno.h>
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(__linux__) && defined(__x86_64__)
@@ -90,6 +91,8 @@ static bool packet_send(int descriptor,uint32_t operation,uint32_t status,uint64
     uint8_t header[32]={0};memcpy(header,"QAHC",4);qa_store_u32le(header+4,1);
     qa_store_u32le(header+8,operation);qa_store_u32le(header+12,status);qa_store_u64le(header+16,sequence);qa_store_u64le(header+24,bytes.size);
     if((!bytes.data && bytes.size) || bytes.size>UINT32_MAX) return fail(error,QA_ERROR_ARGUMENT,sequence,"native child packet extent is invalid");
+    /* The packet hands off shared backing stores before the child resumes. */
+    atomic_signal_fence(memory_order_release);
     struct iovec vector={header,1};struct msghdr message={.msg_iov=&vector,.msg_iovlen=1};
     union {struct cmsghdr alignment;uint8_t bytes[CMSG_SPACE(sizeof(int))];} control;
     if(passed>=0) {
@@ -121,7 +124,10 @@ static bool packet_receive(int descriptor,host_packet *packet,qa_error *error)
     packet->operation=qa_load_u32le(header+8);packet->status=qa_load_u32le(header+12);packet->sequence=qa_load_u64le(header+16);
     packet->body.data=count?malloc((size_t)count):NULL;packet->body.size=(size_t)count;
     if(count && !packet->body.data) {packet_free(packet);return fail(error,QA_ERROR_MEMORY,0,"retaining native child packet");}
-    if(!transfer(descriptor,packet->body.data,packet->body.size,false,error)) {packet_free(packet);return false;}return true;
+    if(!transfer(descriptor,packet->body.data,packet->body.size,false,error)) {packet_free(packet);return false;}
+    /* The stopped child has published its shared backing before this reply. */
+    atomic_signal_fence(memory_order_acquire);
+    return true;
 }
 static bool reply_failure(int descriptor,uint32_t operation,uint64_t sequence,const qa_error *error,qa_error *transport_error)
 {
