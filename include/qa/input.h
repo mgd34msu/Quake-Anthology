@@ -4,6 +4,8 @@
 #include "qa/console.h"
 #include "qa/movement.h"
 
+#define QA_INPUT_LOCAL_SEATS 4
+
 typedef struct qa_input_pair {
     float x, y;
 } qa_input_pair;

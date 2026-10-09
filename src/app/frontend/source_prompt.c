@@ -173,7 +173,7 @@ static bool prepare(frontend_source_prompt *o,qa_error *e)
     if(!current(o,&found,e))return false;
     if(!found)return clear(o,e);
     qa_ui_preferences preferences;
-    if(!qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),o->seat->id,&preferences,e))return false;
+    if(!qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),qa_application_ui_preference_handles(o->seat->frontend->application),o->seat->id,&preferences,e))return false;
     if(!o->prepared || !o->language || strcmp(o->language,preferences.language)) {
         qa_builtin_event event={.kind=QA_BUILTIN_SOURCE_PROMPT,.family=QA_GAME_Q1,.provider=o->provider,
             .actor=o->actor,.text=o->title,.time_ns=o->time_ns};
@@ -198,7 +198,7 @@ static bool prepare(frontend_source_prompt *o,qa_error *e)
         free(source);
         if(okay)okay=current(o,&found,e);
         if(okay && !found)okay=frontend_fail(e,QA_ERROR_ARGUMENT,"Source prompt recipient changed during preparation");
-        if(okay)okay=qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),o->seat->id,&preferences,e);
+        if(okay)okay=qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),qa_application_ui_preference_handles(o->seat->frontend->application),o->seat->id,&preferences,e);
         if(okay && strcmp(language,preferences.language))okay=frontend_fail(e,QA_ERROR_ARGUMENT,"Source prompt language changed during preparation");
         if(!okay) { if(labels)for(size_t i=0;i<o->count;++i)free(labels[i]); free(labels); free(title); free(language); return false; }
         free(o->shown_title); free(o->language); o->shown_title=title; o->language=language;

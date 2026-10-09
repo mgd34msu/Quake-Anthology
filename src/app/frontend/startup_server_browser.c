@@ -675,7 +675,7 @@ static qa_ui_control field(browser_menu_context *context,qa_ui_id id,const char 
 static bool fit(frontend_startup_server_browser *o,char *text,size_t capacity,float width,float scale,qa_error *e)
 {
     qa_ui_preferences preferences;
-    if(!qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),o->seat->id,&preferences,e))return false;
+    if(!qa_ui_preferences_read(qa_application_cvars(o->seat->frontend->application),qa_application_ui_preference_handles(o->seat->frontend->application),o->seat->id,&preferences,e))return false;
     qa_font_selection fonts;
     if(!frontend_menu_font_selection(o->seat->frontend,o->seat->id,preferences.typeface==QA_UI_TYPEFACE_BOLD,&fonts,e))return false;
     qa_font_layout_options options={.scale=scale*preferences.text_scale,.color={1,1,1,1},

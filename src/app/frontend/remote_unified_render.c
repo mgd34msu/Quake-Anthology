@@ -337,7 +337,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
         (qa_actor_owner)hud_domain->command_context.owner,hud_domain->command_context.seat,&hud_source,e);
     const qa_product *hud_product=okay?qa_catalog_product(qa_launch_instance_catalog(hud_source.descriptor),
         hud_source.descriptor->selection.product):NULL;
-    if (okay) okay=qa_ui_preferences_read(qa_application_cvars(f->application),
+    if (okay) okay=qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),
         hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,hud_product,e);
     r->origin=view->origin; r->angles=view->angles; r->height=view->view_height;
     r->source_view_offset=view->has_client_view_offset_delta; r->kick=view->kick_angles;

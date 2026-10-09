@@ -27,6 +27,12 @@ struct seat_route {
     bool calibration_sensor;
     qa_haptic_player haptic;
 };
+typedef enum input_cvar {
+    INPUT_CVAR_MOUSE, INPUT_CVAR_NO_GRAB, INPUT_CVAR_JOYSTICK, INPUT_CVAR_JOYSTICK_PROFILE,
+    INPUT_CVAR_MIDI, INPUT_CVAR_JOYSTICK_SEAT, INPUT_CVAR_MIDI_SEAT, INPUT_CVAR_MIDI_DEVICE,
+    INPUT_CVAR_MIDI_CHANNEL, INPUT_CVAR_JOYSTICK_THRESHOLD, INPUT_CVAR_JOYSTICK_BALL_SCALE,
+    INPUT_CVAR_SUBFRAME, INPUT_CVAR_DEBUG_JOYSTICK, INPUT_CVAR_MIDI_PORT, INPUT_CVAR_COUNT
+} input_cvar;
 typedef enum input_native_startup {
     INPUT_NATIVE_READY,
     INPUT_NATIVE_PENDING,
@@ -34,6 +40,7 @@ typedef enum input_native_startup {
 } input_native_startup;
 struct qa_input_platform {
     qa_input_platform_options options;
+    qa_cvar_handle cvars[INPUT_CVAR_COUNT];
     const qa_cvars_edit *constructor_edit;
     const qa_input_platform_settings *constructor_settings;
     struct device *devices;

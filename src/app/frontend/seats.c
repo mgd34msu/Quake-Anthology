@@ -143,7 +143,7 @@ static bool hud_presentation(void *context, qa_ui_presentation *out, qa_error *e
 {
     frontend_seat *seat = context;
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id,
+    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application),qa_application_ui_preference_handles(seat->frontend->application), seat->id,
             &preferences, error) || !frontend_menu_font_selection(seat->frontend, seat->id,
             preferences.typeface == QA_UI_TYPEFACE_BOLD, &out->fonts, error)) return false;
     if (preferences.typeface != QA_UI_TYPEFACE_BOLD) out->fonts.primary = NULL;
@@ -293,7 +293,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     qa_ui_preferences preferences;
     uint32_t launch_seat;
     bool published=frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat);
-    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id, &preferences, error)) return false;
+    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application),qa_application_ui_preference_handles(seat->frontend->application), seat->id, &preferences, error)) return false;
     if (published) (void)qa_application_presentation_read(seat->frontend->application, launch_seat, &source);
     out->source_vitals = source.source_hud;
     out->crosshair_visible = !source.source_hud && preferences.crosshair;
@@ -739,7 +739,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
         seat->client_clock_ns=frontend->wall_time_ns;
         if (!seat_services_create(seat, error)) return false;
         qa_ui_preferences preferences;
-        if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||
+        if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), i, &preferences, error) ||
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
             .art = frontend->menu_art,

@@ -345,7 +345,7 @@ static int32_t memory_remaining(void *context)
 static bool preferences(void *context,qa_ui_preferences *out,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;
     return frontend_unified_q3_runtime_services_current(o) && qa_ui_preferences_read(
-        qa_application_cvars(o->options.frontend->application),o->physical_seat,out,e); }
+        qa_application_cvars(o->options.frontend->application),qa_application_ui_preference_handles(o->options.frontend->application),o->physical_seat,out,e); }
 static bool backend_frame(void *context,qa_q3_presentation *backend,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;
     return frontend_unified_q3_runtime_services_current(o) && qa_q3_presentation_frame(backend,

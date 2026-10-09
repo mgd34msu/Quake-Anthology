@@ -103,7 +103,7 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
         !scope->binding.world || !scope->binding.geometry || scope->binding.world != frontend->scene_world ||
         scope->binding.frame != &frontend->frame || scope->binding.options.seat != seat ||
         scope->binding.options.audio != frontend->audio ||
-        !qa_ui_preferences_read(qa_application_cvars(scope->application), seat, &scope->preferences, error))
+        !qa_ui_preferences_read(qa_application_cvars(scope->application),qa_application_ui_preference_handles(scope->application), seat, &scope->preferences, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects lost their physical map, preferences or audio binding");
     scope->admitted = true;
     uint64_t next = qa_application_events_next(scope->application);

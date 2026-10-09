@@ -473,6 +473,12 @@ qa_cvars *qa_application_cvars(qa_application *application)
     return application == NULL ? NULL : application->cvars;
 }
 
+const qa_ui_preference_handles *qa_application_ui_preference_handles(const qa_application *application)
+{ return application ? &application->ui_preference_handles : NULL; }
+
+void qa_application_ui_preferences_bind(qa_application *application)
+{ qa_ui_preferences_bind(application->cvars, &application->ui_preference_handles); }
+
 qa_console *qa_application_console(qa_application *application)
 {
     return application == NULL ? NULL : application->console;

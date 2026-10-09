@@ -1,7 +1,7 @@
 #ifndef QA_UI_PREFERENCES_H
 #define QA_UI_PREFERENCES_H
 #include "qa/ui.h"
-#include "qa/input_platform.h"
+#include "qa/console_cvars_prepare.h"
 
 struct qa_cvars_edit;
 
@@ -19,6 +19,9 @@ typedef enum qa_ui_preference {
     QA_UI_PREF_CROSSHAIR, QA_UI_PREF_CROSSHAIR_SIZE, QA_UI_PREF_TYPEFACE,
     QA_UI_PREF_COLOR_MODE, QA_UI_PREF_LANGUAGE, QA_UI_PREF_COUNT
 } qa_ui_preference;
+typedef struct qa_ui_preference_handles {
+    qa_cvar_handle seats[QA_INPUT_LOCAL_SEATS][QA_UI_PREF_COUNT];
+} qa_ui_preference_handles;
 typedef enum qa_ui_preference_kind {
     QA_UI_PREFERENCE_RANGE, QA_UI_PREFERENCE_TOGGLE, QA_UI_PREFERENCE_CHOICE,
     QA_UI_PREFERENCE_LANGUAGE
@@ -36,13 +39,16 @@ const qa_ui_preference_description *qa_ui_preference_describe(qa_ui_preference);
  * namespaces remain available independently of the current local roster. */
 bool qa_ui_preferences_register(qa_cvars *, uint64_t owner, qa_error *);
 bool qa_ui_preference_name(uint32_t seat, qa_ui_preference, char out[64], qa_error *);
-bool qa_ui_preferences_read(const qa_cvars *, uint32_t seat, qa_ui_preferences *, qa_error *);
+/* Bind after registration or registry replacement; scalar edits preserve handles. */
+void qa_ui_preferences_bind(const qa_cvars *, qa_ui_preference_handles *);
+bool qa_ui_preferences_read(const qa_cvars *, const qa_ui_preference_handles *,
+    uint32_t seat, qa_ui_preferences *, qa_error *);
 /* Reads the same actual proposed scalar records from a retained canonical
  * publication ticket. Language borrows that ticket until publish or abort. */
-bool qa_ui_preferences_edit_read(const struct qa_cvars_edit *, uint32_t seat,
+bool qa_ui_preferences_edit_read(const struct qa_cvars_edit *, const qa_ui_preference_handles *, uint32_t seat,
     qa_ui_preferences *, qa_error *);
-/* Pure sealed canonical-row proof; performs no alias projection or parsing. */
-bool qa_ui_preferences_edit_ready_is(const struct qa_cvars_edit *,uint32_t seat,
+/* Reads the same indexed prepared rows without name scans. */
+bool qa_ui_preferences_edit_ready_is(const struct qa_cvars_edit *,const qa_ui_preference_handles *,uint32_t seat,
     const qa_ui_preferences *);
 bool qa_ui_preference_set(qa_cvars *, uint32_t seat, qa_ui_preference, const char *, qa_error *);
 #endif

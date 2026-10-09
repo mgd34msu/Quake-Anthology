@@ -1775,6 +1775,7 @@ static bool persistence_restore_owner(void *opaque, void *value,
         bool ok = qa_cvars_save_prepare(candidate->cvars, record->payload, &ticket, error) &&
             qa_cvars_save_commit(ticket, error);
         if (!ok) qa_cvars_save_abort(ticket);
+        if (ok) qa_application_ui_preferences_bind(candidate);
         return ok;
     }
     case QA_SAVE_PROVIDER: {
@@ -1804,6 +1805,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             qa_cvars_save_prepare(candidate->cvars,(qa_bytes){values.data,values.size},&ticket,error) &&
             qa_cvars_save_commit(ticket,error);
         if (!ok) qa_cvars_save_abort(ticket);
+        if (ok) qa_application_ui_preferences_bind(candidate);
         qa_buffer_free(&values);
         if (ok) ok=application_save_progression_restore(candidate,operation->ops,
             persistence_progression(operation,image,error),error);

@@ -222,7 +222,7 @@ bool frontend_ui_cinematic_prepare(qa_frontend *f,qa_vfs *files,const char *path
     if (!current(f,files,path,seat,&movie,error)) return false;
     cinematic_caption_seat *state=f->ui_features->cinematic_captions->seats+seat;
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(f->application),seat,&preferences,error)) return false;
+    if (!qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error)) return false;
     if (state->origin==files && state->path && !strcmp(state->path,path) && !strcmp(state->language,preferences.language)) {
         free(state->failed_language); state->failed_language=NULL; return true;
     }
@@ -252,7 +252,7 @@ bool frontend_ui_cinematic_draw(qa_frontend *f,qa_vfs *files,const char *path,ui
         movie.viewport.width!=viewport.width || movie.viewport.height!=viewport.height)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Subtitle clock and viewport belong to another cinematic frame");
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(f->application),seat,&preferences,error)) return false;
+    if (!qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error)) return false;
     cinematic_caption_seat *state=f->ui_features->cinematic_captions->seats+seat;
     if (state->failed_language && !strcmp(state->failed_language,preferences.language)) return true;
     qa_error preparation={0};

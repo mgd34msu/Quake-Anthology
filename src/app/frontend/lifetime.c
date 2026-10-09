@@ -713,6 +713,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
         }
         if(!frontend_shared_register(qa_application_cvars(frontend->application),source,
             device.format,options->gamma,error)) goto fail;
+        qa_application_ui_preferences_bind(frontend->application);
     }
     if (!frontend_network_declarations(qa_application_cvars(frontend->application),error)) goto fail;
     if ((!options->dedicated && !frontend_q1_sky_create(frontend,&frontend->q1_sky,error)) ||

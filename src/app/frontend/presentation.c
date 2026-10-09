@@ -338,7 +338,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
         qa_ui_preferences preferences;
-        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error)) return false;
+        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), i, &preferences, error)) return false;
         qa_scene_rect rect = frontend_viewport(frontend, i);
         if (!qa_scene_frame_output_domain(&frontend->frame,rect,false,error)) return false;
         qa_ui_state ui;

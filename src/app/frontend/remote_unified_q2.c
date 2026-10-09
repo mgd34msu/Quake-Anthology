@@ -1080,7 +1080,7 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
     for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=args[i].text?args[i].text:"";}
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_ui_preferences preferences;qa_localization *catalog=NULL;qa_localization_options opts={.profile=QA_LOCALIZATION_Q2_RERELEASE};
-    okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&preferences,e) &&
+    okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
         qa_localization_acquire(o->localizations,b->files,preferences.language,&opts,&catalog,e);
     if (okay){char output[1024];size_t n=qa_localize_presentation(catalog,text,arguments,count,false,output,sizeof(output));
         char *copy=malloc(n+1);if (!copy)okay=false;else{memcpy(copy,output,n+1);qa_buffer_free(out);*out=(qa_buffer){(uint8_t *)copy,n};}}

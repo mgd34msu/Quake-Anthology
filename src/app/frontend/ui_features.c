@@ -114,7 +114,7 @@ bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)
     if (frame > INT64_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Caption delivery clock exceeds source range");
     for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i) {
         qa_ui_preferences preferences;
-        if (!qa_ui_preferences_read(qa_application_cvars(f->application), i, &preferences, error) ||
+        if (!qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application), i, &preferences, error) ||
             !qa_sound_captions_prepare(owner->seats[i].captions, preferences.language, (int64_t)frame, error)) return false;
         frontend_ui_seat_features *seat=owner->seats+i;
         if (!seat->language || strcmp(seat->language,preferences.language)) {
@@ -180,7 +180,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     if (ok && (!product || product->family!=QA_GAME_Q1))
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Localized Q1 event lost its actual published source edition");
     qa_ui_preferences preferences; qa_localization *catalog=NULL;
-    if (ok) ok=qa_ui_preferences_read(qa_application_cvars(f->application),seat,&preferences,error) &&
+    if (ok) ok=qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error) &&
         qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
             &(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,error);
     if (ok) {
@@ -228,7 +228,7 @@ bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builti
     if (!view || !product || product->family!=QA_GAME_Q1)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source prompt lost its actual content view and edition");
     qa_ui_preferences preferences; qa_localization *catalog=NULL;
-    if (!qa_ui_preferences_read(qa_application_cvars(f->application),seat,&preferences,error) ||
+    if (!qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),seat,&preferences,error) ||
         !qa_localization_acquire(f->ui_features->catalogs,view,preferences.language,
             &(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,error)) return false;
     const char *format=qa_strings_cstr(strings,field);
@@ -285,7 +285,7 @@ bool frontend_ui_features_captions(frontend_seat *seat, const qa_active_caption 
     if (!state || !out || !count) return frontend_fail(error, QA_ERROR_ARGUMENT, "Caption presentation requires its actual seat owner");
     *out = NULL; *count = 0;
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id, &preferences, error)) return false;
+    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application),qa_application_ui_preference_handles(seat->frontend->application), seat->id, &preferences, error)) return false;
     if (!preferences.captions || !seat->frontend->audio) return true;
     uint64_t frame = qa_audio_engine_clock(seat->frontend->audio);
     if (frame > INT64_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Caption delivery clock exceeds source range");

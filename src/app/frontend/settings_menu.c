@@ -849,7 +849,7 @@ static bool language(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     qa_vfs_listing listing={0};
     if(!qa_vfs_list(seat->frontend->ui_mounts,"localization",".txt",&listing,error)) return false;
     qa_ui_preferences preferences;
-    if(!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application),seat->id,&preferences,error)) { qa_vfs_listing_free(&listing); return false; }
+    if(!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application),qa_application_ui_preference_handles(seat->frontend->application),seat->id,&preferences,error)) { qa_vfs_listing_free(&listing); return false; }
     const char **languages=cache(seat->settings_menu,listing.count+2,sizeof(*languages),_Alignof(const char *));
     if(!languages) { qa_vfs_listing_free(&listing); return false; }
     size_t count=1,selected=0; languages[0]="english";

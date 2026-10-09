@@ -25,6 +25,7 @@
 #include "qa/qvm.h"
 #include "qa/persistence_content.h"
 #include "qa/save.h"
+#include "qa/ui_preferences.h"
 #include "unified_events.h"
 #include "event_stream.h"
 
@@ -263,6 +264,7 @@ struct qa_application {
     qa_q3_product_policy q3_product;
     const qa_q3_product_policy *q3_product_preparing;
     qa_cvars *cvars;
+    qa_ui_preference_handles ui_preference_handles;
     qa_console *console;
     const qa_native_runner_config *native_runner;
     qa_native_runtime *native_runtime;

@@ -30,14 +30,26 @@ static bool native_owner(qa_input_platform *p, qa_error *error) {
     return false;
 }
 static bool initialize_native(qa_input_platform *, double, qa_error *);
-static float variable(qa_input_platform *p, const char *name, float fallback) {
-    const qa_cvar_view *v = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,name):
-        qa_cvars_find(p->options.cvars, name);
+static const char *const cvar_names[INPUT_CVAR_COUNT] = {
+    "in_mouse", "in_nograb", "in_joystick", "in_joystickProfile", "in_midi",
+    "in_joystickSeat", "in_midiseat", "in_mididevice", "in_midichannel",
+    "joy_threshold", "in_joyBallScale", "in_subframe", "in_debugjoystick", "in_midiport"
+};
+static void bind_cvars(qa_input_platform *p) {
+    for (unsigned i = 0; i < INPUT_CVAR_COUNT; ++i)
+        p->cvars[i] = p->constructor_edit ? qa_cvars_edit_resolve(p->constructor_edit, cvar_names[i]) :
+            qa_cvars_resolve(p->options.cvars, cvar_names[i]);
+}
+static const qa_cvar_view *read_cvar(qa_input_platform *p, input_cvar key) {
+    return p->constructor_edit ? qa_cvars_edit_read(p->constructor_edit, p->cvars[key]) :
+        qa_cvars_read(p->options.cvars, p->cvars[key]);
+}
+static float variable(qa_input_platform *p, input_cvar key, float fallback) {
+    const qa_cvar_view *v = read_cvar(p, key);
     return v ? v->number : fallback;
 }
-static int integer(qa_input_platform *p, const char *name, int fallback) {
-    const qa_cvar_view *v = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,name):
-        qa_cvars_find(p->options.cvars, name);
+static int integer(qa_input_platform *p, input_cvar key, int fallback) {
+    const qa_cvar_view *v = read_cvar(p, key);
     return v ? v->integer : fallback;
 }
 static struct device *device(qa_input_platform *p, int32_t instance) {
@@ -383,6 +395,7 @@ bool input_platform_haptic_bindings_ready(const qa_input_platform *p) {
     return true;
 }
 void input_platform_route_contexts_rebind(qa_input_platform *p) {
+    bind_cvars(p);
     for (unsigned i = 0; i < 4; ++i) {
         p->seats[i].platform = p;
         p->seats[i].slot = i;
@@ -416,7 +429,7 @@ bool qa_input_platform_sync_focus(qa_input_platform *p, qa_error *error) {
         return true;
     qa_input_seat *s = p->keyboard >= 0 ? p->seats[p->keyboard].seat : NULL;
     input_pointer_modes modes = pointer_modes(SDL_GetWindowFlags(window), s ? qa_input_seat_focus(s) : QA_INPUT_GAME,
-        s && p->mouse_available, integer(p, "in_nograb", 0) != 0);
+        s && p->mouse_available, integer(p, INPUT_CVAR_NO_GRAB, 0) != 0);
     if (!input_platform_modes_apply(window, modes.relative, modes.grab, modes.text, error)) return false;
     p->capture = modes.relative;
     return true;
@@ -432,6 +445,7 @@ static qa_input_platform *allocate_owner(const qa_input_platform_options *o, qa_
         return NULL;
     }
     p->options = *o;
+    bind_cvars(p);
     p->keyboard = -1;
     p->midi_fd = -1;
     p->midi_channel = -1;
@@ -512,6 +526,7 @@ qa_input_platform *qa_input_platform_create_prepared(const qa_input_platform_opt
     qa_input_platform *p=allocate_owner(options,error);
     if (!p) return NULL;
     p->constructor_edit=edit; p->constructor_settings=desired;
+    bind_cvars(p);
     p->native_owned=true;
     p->old_controller_events=SDL_GameControllerEventState(SDL_QUERY);
     p->old_joystick_events=SDL_JoystickEventState(SDL_QUERY);
@@ -627,7 +642,8 @@ bool input_platform_fresh_routes(qa_input_platform *p, qa_input_seat *const seat
     bool success = qa_input_device_settings_register(p->options.cvars, error) &&
         qa_cvars_apply_latched(p->options.cvars, "in_joystick", error) &&
         qa_cvars_apply_latched(p->options.cvars, "in_joystickProfile", error);
-    const qa_cvar_view *profile = qa_cvars_find(p->options.cvars, "in_joystickProfile");
+    bind_cvars(p);
+    const qa_cvar_view *profile = read_cvar(p, INPUT_CVAR_JOYSTICK_PROFILE);
     if (success && (!profile || (strcmp(profile->value, "linux") && strcmp(profile->value, "windows")))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "in_joystickProfile must be linux or windows");
         success = false;
@@ -642,15 +658,15 @@ bool input_platform_fresh_routes(qa_input_platform *p, qa_input_seat *const seat
         p->seats[i].seat = seats[i];
     }
     p->keyboard = keyboard;
-    int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
+    int source = integer(p, INPUT_CVAR_JOYSTICK_SEAT, 1), midi = integer(p, INPUT_CVAR_MIDI_SEAT, 1);
     p->source_slot = source >= 1 && source <= 4 && seats[source - 1] ? source - 1 : -1;
     p->midi_slot = midi >= 1 && midi <= 4 && seats[midi - 1] ? midi - 1 : -1;
     p->windows_joystick = !strcmp(profile->value, "windows");
-    p->mouse_available = variable(p, "in_mouse", 1) != 0;
-    p->joystick_enabled=integer(p,"in_joystick",0)!=0;
-    p->midi_enabled=variable(p,"in_midi",0)!=0;
-    p->requested_midi_device=integer(p,"in_mididevice",0);
-    p->midi_channel = integer(p, "in_midichannel", 1);
+    p->mouse_available = variable(p, INPUT_CVAR_MOUSE, 1) != 0;
+    p->joystick_enabled=integer(p,INPUT_CVAR_JOYSTICK,0)!=0;
+    p->midi_enabled=variable(p,INPUT_CVAR_MIDI,0)!=0;
+    p->requested_midi_device=integer(p,INPUT_CVAR_MIDI_DEVICE,0);
+    p->midi_channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1);
     p->now = time;
     p->native_startup = INPUT_NATIVE_PENDING;
     return true;
@@ -677,7 +693,7 @@ bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4
         p->seats[i].calibration_sensor = false;
     }
     p->keyboard = keyboard;
-    int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
+    int source = integer(p, INPUT_CVAR_JOYSTICK_SEAT, 1), midi = integer(p, INPUT_CVAR_MIDI_SEAT, 1);
     p->midi_slot = midi >= 1 && midi <= 4 && seats[midi - 1] ? midi - 1 : -1;
     if (!resolve(p, time, retained, error))
         ok = false;
@@ -820,6 +836,7 @@ bool qa_input_platform_routes_prepared(qa_input_platform *p,qa_input_seat *const
         return false;
     }
     p->constructor_edit=edit; p->constructor_settings=desired;
+    bind_cvars(p);
     bool ok=qa_input_platform_routes(p,seats,selections,keyboard,time,error) &&
         constructor_settings_is(&p->options,edit,desired,error);
     p->constructor_edit=NULL; p->constructor_settings=NULL;
@@ -837,6 +854,7 @@ bool qa_input_platform_window_prepared(qa_input_platform *p,const qa_display *di
         return false;
     }
     p->constructor_edit=edit; p->constructor_settings=desired;
+    bind_cvars(p);
     bool ok=qa_input_platform_window(p,display,time,error) &&
         constructor_settings_is(&p->options,edit,desired,error);
     p->constructor_edit=NULL; p->constructor_settings=NULL;
@@ -1259,11 +1277,11 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
     free(p->midi_devices);
     p->midi_devices = NULL;
     p->midi_count = 0;
-    if (p->constructor_settings?!p->constructor_settings->midi_enabled:variable(p, "in_midi", 0) == 0)
+    if (p->constructor_settings?!p->constructor_settings->midi_enabled:variable(p, INPUT_CVAR_MIDI, 0) == 0)
         return true;
     if (!qa_input_midi_devices(&p->midi_devices, &p->midi_count, error))
         return false;
-    int index = integer(p, "in_mididevice", 0);
+    int index = integer(p, INPUT_CVAR_MIDI_DEVICE, 0);
     if (index < 0 || (size_t)index >= p->midi_count) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "MIDI device index %d is outside %zu devices",
                      index, p->midi_count);
@@ -1848,17 +1866,17 @@ bool qa_input_platform_reconnect_prepare(qa_input_platform *p, double now,
     }
     if (p->native_startup != INPUT_NATIVE_READY || p->native_initializing || now < p->retry_at) return true;
     p->retry_at = now + 1000;
-    bool source = integer(p, "in_joystick", 0) != 0 && !p->joystick;
-    bool midi = variable(p, "in_midi", 0) != 0 && p->midi_fd < 0;
+    bool source = integer(p, INPUT_CVAR_JOYSTICK, 0) != 0 && !p->joystick;
+    bool midi = variable(p, INPUT_CVAR_MIDI, 0) != 0 && p->midi_fd < 0;
     if (!source && !midi) return true;
     qa_input_platform_settings desired = {
-        .mouse_available = p->mouse_available, .no_grab = variable(p, "in_nograb", 0) != 0,
-        .joystick_enabled = integer(p, "in_joystick", 0) != 0, .windows_joystick = p->windows_joystick,
-        .midi_enabled = variable(p, "in_midi", 0) != 0,
-        .joystick_seat = integer(p, "in_joystickSeat", 1), .midi_seat = integer(p, "in_midiseat", 1),
-        .midi_device = integer(p, "in_mididevice", 0), .midi_channel = integer(p, "in_midichannel", 1),
-        .joystick_threshold = variable(p, "joy_threshold", .15f),
-        .joystick_ball_scale = variable(p, "in_joyBallScale", .02f)};
+        .mouse_available = p->mouse_available, .no_grab = variable(p, INPUT_CVAR_NO_GRAB, 0) != 0,
+        .joystick_enabled = integer(p, INPUT_CVAR_JOYSTICK, 0) != 0, .windows_joystick = p->windows_joystick,
+        .midi_enabled = variable(p, INPUT_CVAR_MIDI, 0) != 0,
+        .joystick_seat = integer(p, INPUT_CVAR_JOYSTICK_SEAT, 1), .midi_seat = integer(p, INPUT_CVAR_MIDI_SEAT, 1),
+        .midi_device = integer(p, INPUT_CVAR_MIDI_DEVICE, 0), .midi_channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1),
+        .joystick_threshold = variable(p, INPUT_CVAR_JOYSTICK_THRESHOLD, .15f),
+        .joystick_ball_scale = variable(p, INPUT_CVAR_JOYSTICK_BALL_SCALE, .02f)};
     qa_input_seat *configuration[4];
     for (unsigned slot = 0; slot < 4; ++slot) configuration[slot] = p->seats[slot].seat;
     return settings_prepare(p, &desired, configuration, NULL, now, source, midi, out, error);
@@ -2454,8 +2472,8 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
         !qa_cvars_apply_latched(p->options.cvars, "in_joystick", error) ||
         !qa_cvars_apply_latched(p->options.cvars, "in_joystickProfile", error)))
         return false;
-    const qa_cvar_view *profile = p->constructor_edit?qa_cvars_edit_find(p->constructor_edit,"in_joystickProfile"):
-        qa_cvars_find(p->options.cvars, "in_joystickProfile");
+    bind_cvars(p);
+    const qa_cvar_view *profile = read_cvar(p, INPUT_CVAR_JOYSTICK_PROFILE);
     if (!profile ||
         (strcmp(profile->value, "linux") != 0 && strcmp(profile->value, "windows") != 0)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "in_joystickProfile must be linux or windows");
@@ -2463,10 +2481,10 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
     }
     p->windows_joystick = strcmp(profile->value, "windows") == 0;
     p->mouse_available = p->constructor_settings?p->constructor_settings->mouse_available:
-        variable(p, "in_mouse", 1) != 0;
-    p->joystick_enabled=integer(p,"in_joystick",0)!=0;
-    p->midi_enabled=p->constructor_settings?p->constructor_settings->midi_enabled:variable(p,"in_midi",0)!=0;
-    p->requested_midi_device=integer(p,"in_mididevice",0);
+        variable(p, INPUT_CVAR_MOUSE, 1) != 0;
+    p->joystick_enabled=integer(p,INPUT_CVAR_JOYSTICK,0)!=0;
+    p->midi_enabled=p->constructor_settings?p->constructor_settings->midi_enabled:variable(p,INPUT_CVAR_MIDI,0)!=0;
+    p->requested_midi_device=integer(p,INPUT_CVAR_MIDI_DEVICE,0);
     for (unsigned i = 0; i < 4; ++i)
         if (!qa_haptic_stop(&p->seats[i].haptic, error))
             return false;
@@ -2475,7 +2493,7 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
     p->joystick = NULL;
     p->joystick_instance = -1;
     p->joystick_rumble = (input_motor_output){0};
-    if (integer(p, "in_joystick", 0) != 0) {
+    if (integer(p, INPUT_CVAR_JOYSTICK, 0) != 0) {
         if (p->windows_joystick) {
             if (!qa_source_joystick_release(&p->source, time, source_key, p, error))
                 return false;
@@ -2498,7 +2516,7 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
     }
     if (!midi_release(p, time, error))
         return false;
-    p->midi_channel = integer(p, "in_midichannel", 1);
+    p->midi_channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1);
     qa_error warning = {0};
     if (!open_midi(p, &warning)) {
         char message[320];
@@ -2572,7 +2590,7 @@ void qa_input_platform_collect(qa_input_platform *p, qa_platform_events *events,
         qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME,
         now_ns, INPUT_FRAME_INITIALIZE, 0, (qa_bytes){0});
     double now = (double)now_ns / 1000000.0;
-    bool subframe = p && integer(p, "in_subframe", 1) != 0;
+    bool subframe = p && integer(p, INPUT_CVAR_SUBFRAME, 1) != 0;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         qa_platform_event_kind kind;
@@ -2714,7 +2732,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
             if (!window_focus(p, focused, now, error)) return false;
             break;
         }
-    int source = integer(p, "in_joystickSeat", 1), midi = integer(p, "in_midiseat", 1);
+    int source = integer(p, INPUT_CVAR_JOYSTICK_SEAT, 1), midi = integer(p, INPUT_CVAR_MIDI_SEAT, 1);
     source = source_route(p->seats, source, p->joystick_instance);
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
     if (source != p->source_slot) {
@@ -2773,7 +2791,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
                     return false;
             if (sample->joystick_hat)
                 p->source.hat = sample->source_hat;
-            if (integer(p, "in_debugjoystick", 0) != 0) {
+            if (integer(p, INPUT_CVAR_DEBUG_JOYSTICK, 0) != 0) {
                 uint32_t buttons = 0;
                 for (unsigned i = 0; i < 32; ++i)
                     if (p->source.buttons[i])
@@ -2818,11 +2836,11 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
         }
     }
     if (!qa_source_joystick_frame(&p->source, p->joystick != NULL, p->windows_joystick,
-                                  variable(p, "joy_threshold", 0.15f), axes,
-                                  variable(p, "in_joyBallScale", 0.02f), source_key, source_mouse,
+                                  variable(p, INPUT_CVAR_JOYSTICK_THRESHOLD, 0.15f), axes,
+                                  variable(p, INPUT_CVAR_JOYSTICK_BALL_SCALE, 0.02f), source_key, source_mouse,
                                   p, error))
         return false;
-    int channel = integer(p, "in_midichannel", 1);
+    int channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1);
     if (channel != p->midi_channel) {
         if (!midi_release(p, now, error)) return false;
         p->midi_channel = channel;
@@ -2867,12 +2885,12 @@ void qa_input_platform_midi_info(qa_input_platform *p) {
     (void)snprintf(text, sizeof(text),
                    "MIDI control: %s\nport: %d\nchannel: %d\ncurrent device: "
                    "%d\nnumber of devices: %zu\n",
-                   integer(p, "in_midi", 0) ? "enabled" : "disabled", integer(p, "in_midiport", 1),
-                   integer(p, "in_midichannel", 1), integer(p, "in_mididevice", 0), p->midi_count);
+                   integer(p, INPUT_CVAR_MIDI, 0) ? "enabled" : "disabled", integer(p, INPUT_CVAR_MIDI_PORT, 1),
+                   integer(p, INPUT_CVAR_MIDI_CHANNEL, 1), integer(p, INPUT_CVAR_MIDI_DEVICE, 0), p->midi_count);
     report(p, text);
     for (size_t i = 0; i < p->midi_count; ++i) {
         (void)snprintf(text, sizeof(text), "%s device %zu: %s\n%s\n",
-                       (int64_t)i == integer(p, "in_mididevice", 0) ? "***" : "...", i,
+                       (int64_t)i == integer(p, INPUT_CVAR_MIDI_DEVICE, 0) ? "***" : "...", i,
                        p->midi_devices[i].name, p->midi_devices[i].path);
         report(p, text);
     }

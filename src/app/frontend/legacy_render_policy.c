@@ -472,7 +472,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     }
     if ((policy.lighting.polyblend || !policy.lighting.present) && (blend.w > 0 || services->blend)) {
         qa_ui_preferences preferences;
-        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), world->view.seat, &preferences, error)) return false;
+        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), world->view.seat, &preferences, error)) return false;
         if (preferences.reduced_flashes) blend = (qa_scene_vec4){0};
         if (services->blend) {
             if (!scene_current(services, error) ||

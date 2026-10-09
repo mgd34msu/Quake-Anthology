@@ -571,7 +571,7 @@ static bool q3_held_output(frontend_equipment_source *owner, const qa_applicatio
     qa_ui_preferences preferences;
     q3n_selected_weapon_held held = {.parent_assets = parent_assets, .torso = parent,
         .lighting_origin = parent->lighting_origin, .powerups = powerups, .personal_model = personal_model};
-    return qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),
+    return qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),qa_application_ui_preference_handles(owner->options.frontend->application),
         owner->options.physical_seat, &preferences, error) &&
         frontend_equipment_q3_held(presenter, source, &held, preferences.reduced_flashes,
             owner, current_preparation, out, submitted, error);
@@ -593,7 +593,7 @@ static bool gear_held_output(frontend_equipment_source *owner, const qa_applicat
     qa_ui_preferences preferences;
     q3n_selected_weapon_held held = {.parent_assets = parent_assets, .torso = parent,
         .lighting_origin = parent->lighting_origin, .powerups = powerups, .personal_model = personal_model};
-    return qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),
+    return qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),qa_application_ui_preference_handles(owner->options.frontend->application),
         owner->options.physical_seat, &preferences, error) &&
         frontend_equipment_gear_held(presenter, &gear, &held, preferences.reduced_flashes,
             owner, current_preparation, out, submitted, error);
@@ -903,7 +903,7 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
                 .horizontal_speed = hypot((double)source->velocity[0], (double)source->velocity[1]),
                 .bob_cycle = source->bobCycle, .draw_gun = true};
             bool submitted = false; qa_ui_preferences preferences;
-            if (!qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),
+            if (!qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),qa_application_ui_preference_handles(owner->options.frontend->application),
                     owner->options.physical_seat, &preferences, error) ||
                 !frontend_equipment_q3_view(presenter, &owner->selection, &view, preferences.reduced_flashes,
                     owner, current_preparation, &owner->q3_view, &submitted, error)) return false;

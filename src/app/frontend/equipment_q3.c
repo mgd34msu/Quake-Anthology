@@ -418,7 +418,7 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
         .horizontal_speed = hypot((double)source->q3_source.velocity[0], (double)source->q3_source.velocity[1]),
         .bob_cycle = source->q3_source.bobCycle, .draw_gun = true};
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), physical_seat, &preferences, error) ||
+    if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), physical_seat, &preferences, error) ||
         !frontend_equipment_q3_retain(presenter, error)) return false;
     frontend_equipment_q3_output output = {0}; bool submitted = false;
     bool ok = draw_output(presenter, source, &view, NULL, preferences.reduced_flashes,

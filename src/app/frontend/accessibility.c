@@ -18,7 +18,7 @@ bool frontend_accessibility_sync(qa_frontend *frontend, qa_error *error)
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; qa_ui_preferences preferences;
         qa_font_selection selection;
-        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||
+        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), i, &preferences, error) ||
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &selection, error) ||
             !qa_ui_set_presentation(seat->ui, &selection, preferences.text_scale, preferences.color_mode, error)) return false;
         seat->fonts = selection;

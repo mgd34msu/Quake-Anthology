@@ -235,7 +235,7 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
             qa_application_player_actor(owner->application,ticket->logical_seats[i],&actor);
         if (!ticket->actor_present[i]) continue;
         qa_ui_preferences preferences;
-        if (!qa_ui_preferences_edit_read(edit,i,&preferences,e)) return false;
+        if (!qa_ui_preferences_edit_read(edit,qa_application_ui_preference_handles(owner->application),i,&preferences,e)) return false;
         char *name=malloc(strlen(preferences.language)+1);
         if (!name) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining actual source language recipient");
         strcpy(name,preferences.language); ticket->language_name[i]=name; ticket->actors[i]=actor;

@@ -478,6 +478,9 @@ qa_targets *qa_application_targets(qa_application *);
 qa_player_progress *qa_application_player_progress(qa_application *);
 qa_rankings *qa_application_rankings(qa_application *);
 qa_cvars *qa_application_cvars(qa_application *);
+typedef struct qa_ui_preference_handles qa_ui_preference_handles;
+const qa_ui_preference_handles *qa_application_ui_preference_handles(const qa_application *);
+void qa_application_ui_preferences_bind(qa_application *);
 qa_console *qa_application_console(qa_application *);
 /* Qualify all callback owners before the caller's no-fail publication phase.
  * Applying the new borrowed context invokes no service callback. */

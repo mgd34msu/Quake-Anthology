@@ -74,7 +74,7 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
             &out->health_team_face,error)) return false;
     }
     qa_ui_preferences preferences;
-    if (!qa_ui_preferences_read(qa_application_cvars(row->options.domain.application), frame->seat,
+    if (!qa_ui_preferences_read(qa_application_cvars(row->options.domain.application),qa_application_ui_preference_handles(row->options.domain.application), frame->seat,
         &preferences, error)) return false;
     if (!frame->source_status_native &&
         !frontend_q1_hud_read(row->materials, data, product, row->options.domain.cvars,

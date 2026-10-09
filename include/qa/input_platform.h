@@ -8,8 +8,6 @@
 #include "qa/platform_events.h"
 #include <SDL2/SDL.h>
 
-#define QA_INPUT_LOCAL_SEATS 4
-
 typedef enum qa_controller_selection_kind {
     QA_CONTROLLER_AUTO,
     QA_CONTROLLER_NONE,

@@ -72,7 +72,7 @@ bool frontend_shared_ui_prepare(qa_frontend *f,const qa_cvars_edit *edit,
     if (!owner->view) return false;
     for (unsigned i=0;i<owner->count;++i) {
         prepared_seat *seat=owner->seat+i;
-        if (!qa_ui_preferences_edit_read(edit,i,&seat->preferences,e) ||
+        if (!qa_ui_preferences_edit_read(edit,qa_application_ui_preference_handles(f->application),i,&seat->preferences,e) ||
             !frontend_menu_font_selection(f,i,seat->preferences.typeface==QA_UI_TYPEFACE_BOLD,&seat->fonts,e) ||
             !qa_ui_presentation_prepare(seat->ui,&seat->fonts,seat->preferences.text_scale,
                 seat->preferences.color_mode,&seat->presentation,e)) return false;
@@ -106,7 +106,7 @@ bool frontend_shared_ui_ready(const frontend_shared_ui *owner,qa_error *e)
         const prepared_seat *seat=owner->seat+i;
         const frontend_ui_seat_features *state=owner->features->seats+i;
         qa_ui_preferences proposed;
-        if (!qa_ui_preferences_edit_read(owner->edit,i,&proposed,e) || !same_preferences(&seat->preferences,&proposed) ||
+        if (!qa_ui_preferences_edit_read(owner->edit,qa_application_ui_preference_handles(owner->application),i,&proposed,e) || !same_preferences(&seat->preferences,&proposed) ||
             state->language!=seat->previous_language || state->localization!=seat->previous_catalog)
             return fail(e,"Prepared UI preference or active catalog changed before publication");
         if (!qa_ui_presentation_ready(seat->presentation,e) || !qa_sound_caption_language_ready(seat->sound,e) ||
@@ -122,7 +122,7 @@ bool frontend_shared_ui_ready_is(const frontend_shared_ui *owner)
     for (unsigned i=0;i<owner->count;++i) {
         const prepared_seat *seat=owner->seat+i;
         const frontend_ui_seat_features *state=owner->features->seats+i;
-        if (!qa_ui_preferences_edit_ready_is(owner->edit,i,&seat->preferences) ||
+        if (!qa_ui_preferences_edit_ready_is(owner->edit,qa_application_ui_preference_handles(owner->application),i,&seat->preferences) ||
             state->language!=seat->previous_language || state->localization!=seat->previous_catalog ||
             !qa_ui_presentation_ready(seat->presentation,NULL) || !qa_sound_caption_language_ready(seat->sound,NULL) ||
             (seat->cinematic && !frontend_ui_cinematic_language_ready_is(seat->cinematic))) return false;

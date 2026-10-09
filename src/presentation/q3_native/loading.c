@@ -409,7 +409,7 @@ bool q3n_loading_draw_information(q3n_loading *o,const q3n_frame *f,qa_error *e)
         qa_ui_presentation_read(o->options.ui,&d.typography,e);
     if(ok) {
         if(f->compiled)d.preferences=f->preferences;
-        else ok=qa_ui_preferences_read(qa_application_cvars(o->options.application),o->options.presentation_seat,&d.preferences,e);
+        else ok=qa_ui_preferences_read(qa_application_cvars(o->options.application),qa_application_ui_preference_handles(o->options.application),o->options.presentation_seat,&d.preferences,e);
     }
     if(ok && !d.media.initialized)
         ok=q3nl_fail(e,QA_ERROR_ARGUMENT,"Loading information requires its real completed loading-font registration stage");

@@ -281,7 +281,7 @@ static bool frame_read(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,q
         .physical_presentation_seat=o->services.resources.physical_seat,.time=r->snapshots.time,
         .frame_milliseconds=o->frame_milliseconds,.client_frame=o->client_frame,.refdef=o->refdef,
         .view_angles=o->view_angles,.weapon_settings=&o->settings.weapons,.event_settings=&o->settings.events};
-    return qa_ui_preferences_read(qa_application_cvars(o->frontend->application),
+    return qa_ui_preferences_read(qa_application_cvars(o->frontend->application),qa_application_ui_preference_handles(o->frontend->application),
         o->services.resources.physical_seat,&out->preferences,e) && q3n_frame_current(out);
 }
 bool frontend_remote_q3_runtime_command_frame(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,q3n_frame *out,qa_error *e)

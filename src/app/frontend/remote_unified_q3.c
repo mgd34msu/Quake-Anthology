@@ -402,7 +402,7 @@ static bool enter(frontend_unified_q3 *o, qa_actor_id id, qa_error *e)
     if (!o || o->busy || !o->has_frame || !current(o,e))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 effects require their committed real CLIENT FRAME");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if(!qa_ui_preferences_read(qa_application_cvars(o->frontend->application),d->physical_seat,&o->preferences,e) ||
+    if(!qa_ui_preferences_read(qa_application_cvars(o->frontend->application),qa_application_ui_preference_handles(o->frontend->application),d->physical_seat,&o->preferences,e) ||
         !current(o,e))return false;
     o->entered_frame=frontend_remote_unified_frame(o->replica); o->entered_actor=id; o->busy=true; return true;
 }

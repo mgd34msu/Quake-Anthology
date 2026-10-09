@@ -240,7 +240,7 @@ static bool localized(frontend_unified_q2_rr_hud *o, const rr_record *r, const c
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_localization_options options={.profile=QA_LOCALIZATION_Q2_RERELEASE};
     bool okay=domain && media_bank(o,r->content,true,&bank,e) &&
-        qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&prefs,e) &&
+        qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&prefs,e) &&
         qa_localization_acquire(o->localizations,bank.files,prefs.language,&options,&catalog,e);
     if (okay) {
         char result[1024]; size_t size=qa_localize_presentation(catalog,source,args,count,false,result,sizeof(result));
@@ -745,7 +745,7 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
         !frontend_remote_unified_player(o->replica,&viewer,&source_number)) return false;
     rr_draw draw={.frame=frame,.viewport=viewport};
     bool okay=qa_ui_presentation_read(ui,&draw.ui,e) &&
-        qa_ui_preferences_read(qa_application_cvars(domain->application),domain->physical_seat,&draw.prefs,e);
+        qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&draw.prefs,e);
     if (!okay) return false;
     draw.scale=fminf((float)viewport.width/640.f,(float)viewport.height/480.f);
     draw.x=(float)viewport.x+((float)viewport.width-640*draw.scale)*.5f; draw.y=(float)viewport.y+((float)viewport.height-480*draw.scale)*.5f;

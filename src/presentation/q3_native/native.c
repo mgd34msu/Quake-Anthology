@@ -364,7 +364,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     o->frame_options=settings;
     *f=frame_base(o,&source);
     f->weapon_settings=&settings->weapons; f->event_settings=&settings->events;
-    if(!qa_ui_preferences_read(qa_application_cvars(o->options.application),o->physical_presentation_seat,&f->preferences,e))return false;
+    if(!qa_ui_preferences_read(qa_application_cvars(o->options.application),qa_application_ui_preference_handles(o->options.application),o->physical_presentation_seat,&f->preferences,e))return false;
     qa_application_native_q3_view local; bool found;
     if(!qa_application_native_q3_presentation_visible(f->application,&source,o->seat,&local,&found,e))return false;
     if(!found)return true;
