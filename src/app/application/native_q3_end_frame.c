@@ -128,7 +128,7 @@ static bool client_end_frame(application_provider *provider, qa_actor_id actor,
     if (!live || !publish) return true;
 
     int32_t smooth, command_time;
-    if (!application_native_q3_settings_integer(provider, "g_smoothClients", &smooth, error) ||
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_SMOOTH_CLIENTS, &smooth, error) ||
         !qa_q3_client_command_time(game, actor, &command_time, error) ||
         !qa_q3_wire_player_publish(game, actor, true, smooth != 0, command_time, error) ||
         !client_current(provider, actor, slot, frame, &live, error)) return false;

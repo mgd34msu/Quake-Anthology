@@ -240,12 +240,12 @@ bool application_native_q3_source_world_initialize(void *opaque, qa_error *error
 static bool q3_settings_values(application_provider *p, qa_mode_q3_settings *out, qa_error *e) {
     const application_native_q3_cvar_snapshot *warmup;
     *out = (qa_mode_q3_settings){0};
-    if (!application_native_q3_settings_integer(p, "g_doWarmup", &out->do_warmup, e) ||
-        !application_native_q3_settings_integer(p, "g_warmup", &out->warmup_seconds, e) ||
-        !application_native_q3_settings_integer(p, "timelimit", &out->time_limit_minutes, e) ||
-        !application_native_q3_settings_integer(p, "fraglimit", &out->frag_limit, e) ||
-        !application_native_q3_settings_integer(p, "capturelimit", &out->capture_limit, e) ||
-        !application_native_q3_settings_snapshot(p, "g_warmup", &warmup, e)) return false;
+    if (!application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_DO_WARMUP, &out->do_warmup, e) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_WARMUP, &out->warmup_seconds, e) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_TIMELIMIT, &out->time_limit_minutes, e) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_FRAGLIMIT, &out->frag_limit, e) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_CAPTURELIMIT, &out->capture_limit, e) ||
+        !application_native_q3_settings_snapshot_at(p, APPLICATION_Q3_SETTING_G_WARMUP, &warmup, e)) return false;
     out->warmup_modification_count = warmup->modification_count;
     return true;
 }
@@ -397,7 +397,7 @@ bool application_native_q3_settings_install(application_provider *p, qa_error *e
     qa_mode_q3_settings settings;
     if (!q3_settings_values(p, &settings, e)) return false;
     int32_t restarted;
-    if (!application_native_q3_settings_integer(p, "g_restarted", &restarted, e)) return false;
+    if (!application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_RESTARTED, &restarted, e)) return false;
     for (size_t i = 0; i < app->mode_count; ++i) {
         qa_mode_id id = app->mode_ids[i];
         if (!native_q3_mode(p, id)) continue;
@@ -429,8 +429,8 @@ bool application_native_q3_settings_source_remap(void *opaque, qa_error *error) 
     application_provider *p = opaque;
     const char *red, *blue;
     int32_t time;
-    return application_native_q3_settings_string(p, "g_redteam", &red, error) &&
-        application_native_q3_settings_string(p, "g_blueteam", &blue, error) &&
+    return application_native_q3_settings_string_at(p, APPLICATION_Q3_SETTING_G_REDTEAM, &red, error) &&
+        application_native_q3_settings_string_at(p, APPLICATION_Q3_SETTING_G_BLUETEAM, &blue, error) &&
         qa_q3_source_clock(p->state.q3, &time, error) &&
         qa_q3_shader_remap_teams(p->state.q3, red, blue, time, error);
 }
@@ -439,19 +439,19 @@ static bool q3_source_rules(application_provider *p, qa_error *error) {
     qa_q3_rules rules;
     int32_t friendly_fire, blood;
     if (!qa_q3_rules_read(p->state.q3, &rules, error) ||
-        !application_native_q3_settings_integer(p, "g_gametype", &rules.game_type, error) ||
-        !application_native_q3_settings_integer(p, "dmflags", &rules.dmflags, error) ||
-        !application_native_q3_settings_integer(p, "g_friendlyFire", &friendly_fire, error) ||
-        !application_native_q3_settings_integer(p, "com_blood", &blood, error) ||
-        !application_native_q3_settings_integer(p, "g_forcerespawn", &rules.force_respawn_seconds, error) ||
-        !application_native_q3_settings_number(p, "g_gravity", &rules.gravity, error) ||
-        !application_native_q3_settings_number(p, "g_quadfactor", &rules.quad_factor, error) ||
-        !application_native_q3_settings_number(p, "g_knockback", &rules.knockback, error) ||
-        !application_native_q3_settings_number(p, "g_weaponrespawn", &rules.weapon_respawn_seconds, error) ||
-        !application_native_q3_settings_number(p, "g_weaponTeamRespawn", &rules.team_weapon_respawn_seconds, error))
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_GAMETYPE, &rules.game_type, error) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_DMFLAGS, &rules.dmflags, error) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_FRIENDLY_FIRE, &friendly_fire, error) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_COM_BLOOD, &blood, error) ||
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_FORCERESPAWN, &rules.force_respawn_seconds, error) ||
+        !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_GRAVITY, &rules.gravity, error) ||
+        !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_QUADFACTOR, &rules.quad_factor, error) ||
+        !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_KNOCKBACK, &rules.knockback, error) ||
+        !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_WEAPONRESPAWN, &rules.weapon_respawn_seconds, error) ||
+        !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_WEAPON_TEAM_RESPAWN, &rules.team_weapon_respawn_seconds, error))
         return false;
     if (p->product && !strcmp(p->product->campaign, "missionpack") &&
-        !application_native_q3_settings_integer(p, "g_proxMineTimeout", &rules.proximity_timeout_ms, error))
+        !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_PROX_MINE_TIMEOUT, &rules.proximity_timeout_ms, error))
         return false;
     rules.friendly_fire = friendly_fire != 0;
     rules.blood = blood != 0;
@@ -522,7 +522,7 @@ bool application_native_q3_settings_source_frame(void *opaque,
 
 static bool q3_list_entities(application_provider *p, qa_error *error) {
     int32_t list;
-    if (!application_native_q3_settings_integer(p, "g_listEntity", &list, error)) return false;
+    if (!application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_LIST_ENTITY, &list, error)) return false;
     if (!list) return true;
     for (uint32_t slot = 0; slot < 1024; ++slot) {
         const char *name;
@@ -537,7 +537,7 @@ static bool q3_list_entities(application_provider *p, qa_error *error) {
         free(text);
         if (!okay) return false;
     }
-    return application_native_q3_settings_force_set(p, "g_listEntity", "0", error);
+    return application_native_q3_settings_force_set(p, APPLICATION_Q3_SETTING_G_LIST_ENTITY, "0", error);
 }
 
 bool application_native_q3_source_end_frame(void *opaque,

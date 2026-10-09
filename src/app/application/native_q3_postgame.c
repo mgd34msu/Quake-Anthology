@@ -69,7 +69,7 @@ static bool begin(application_provider *provider, postgame_scope *scope, qa_erro
     if (!qa_q3_source_clock(scope->game, &scope->time, error) || !live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
         !qa_q3_source_match_context_read(scope->game, &scope->product, &start, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &scope->game_type, error))
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &scope->game_type, error))
         return false;
     return application_native_q3_console_borrow(provider, error);
 }
@@ -206,9 +206,9 @@ bool application_native_q3_match_begin_product(application_provider *provider, q
     bool okay = true;
     if (scope.product == QA_Q3_TEAM_ARENA) {
         int32_t active;
-        okay = application_native_q3_settings_integer(provider, "ui_singlePlayerActive", &active, error);
+        okay = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_UI_SINGLE_PLAYER_ACTIVE, &active, error);
         if (okay && active) okay = application_native_q3_settings_force_set(provider,
-            "ui_singlePlayerActive", "0", error) && live(&scope, error) && tournament_info(&scope, error);
+            APPLICATION_Q3_SETTING_UI_SINGLE_PLAYER_ACTIVE, "0", error) && live(&scope, error) && tournament_info(&scope, error);
     } else if (scope.game_type == 2) {
         okay = tournament_info(&scope, error) && live(&scope, error) &&
             qa_q3_source_spawn_victory_pads(scope.game, error);

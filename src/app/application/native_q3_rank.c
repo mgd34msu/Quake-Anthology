@@ -63,7 +63,7 @@ static bool begin(application_provider *provider, rank_scope *scope, qa_error *e
             "CalculateRanks has no actual provider-associated score owner");
     if (!live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &scope->game_type, error))
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &scope->game_type, error))
         return false;
     return application_native_q3_console_borrow(provider, error);
 }

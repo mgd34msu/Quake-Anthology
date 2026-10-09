@@ -77,7 +77,7 @@ static bool clock_read(void *context,qa_bot_catalog_clock *out,qa_error *error) 
     if(maximum>INT32_MAX) return application_fail(error,QA_ERROR_FORMAT,"native bot source client extent is not signed");
     *out=(qa_bot_catalog_clock){.time=time,.start_time=start_time,
         .max_clients=(int32_t)maximum};
-    return application_native_q3_settings_integer(actual,"g_gametype",&out->game_type,error) &&
+    return application_native_q3_settings_integer_at(actual,APPLICATION_Q3_SETTING_G_GAMETYPE,&out->game_type,error) &&
         application_native_q3_match_intermission(actual,&out->intermission_time,error);
 }
 static bool client_read(void *context,int32_t number,qa_bot_catalog_client *out,qa_error *error) {

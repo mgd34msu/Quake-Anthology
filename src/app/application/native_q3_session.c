@@ -196,10 +196,10 @@ static bool initialize_client(const session_source *source, qa_actor_id actor,
 {
     int32_t game_type, auto_join = 0, maximum, time;
     qa_q3_client_session row = {0};
-    if (!application_native_q3_settings_integer(source->provider, "g_gametype", &game_type, error))
+    if (!application_native_q3_settings_integer_at(source->provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error))
         return false;
     if (qa_game_type_is_team(game_type)) {
-        if (!application_native_q3_settings_integer(source->provider, "g_teamAutoJoin", &auto_join, error))
+        if (!application_native_q3_settings_integer_at(source->provider, APPLICATION_Q3_SETTING_G_TEAM_AUTO_JOIN, &auto_join, error))
             return false;
         if (auto_join) {
             if (!application_native_q3_client_pick_team(source->provider, -1, &row.team, error))
@@ -215,8 +215,8 @@ static bool initialize_client(const session_source *source, qa_actor_id actor,
                 return false;
             if (game_type == 1) row.team = counts.num_non_spectator >= 2 ? 3 : 0;
             else {
-                if (!application_native_q3_settings_integer(source->provider,
-                        "g_maxGameClients", &maximum, error)) return false;
+                if (!application_native_q3_settings_integer_at(source->provider,
+                        APPLICATION_Q3_SETTING_G_MAX_GAME_CLIENTS, &maximum, error)) return false;
                 row.team = maximum > 0 && counts.num_non_spectator >= maximum ? 3 : 0;
             }
         }
@@ -247,7 +247,7 @@ bool application_native_q3_session_initialize(void *opaque, qa_error *error)
     char previous[SESSION_BUFFER_SIZE];
     cvar_read(&source, "session", previous);
     int32_t game_type;
-    bool ok = application_native_q3_settings_integer(provider, "g_gametype", &game_type, error);
+    bool ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
     if (ok && game_type != integer(previous))
         ok = qa_q3_source_new_session_set(source.game, true, error) &&
             application_native_q3_console_print(provider,
@@ -302,7 +302,7 @@ static bool world_write(const session_source *source, qa_error *error)
 {
     int32_t game_type;
     uint32_t maximum;
-    bool ok = application_native_q3_settings_integer(source->provider, "g_gametype", &game_type, error);
+    bool ok = application_native_q3_settings_integer_at(source->provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
     char value[SESSION_BUFFER_SIZE];
     if (ok) {
         qa_format_q3_integer(game_type, value);

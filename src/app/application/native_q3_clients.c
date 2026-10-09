@@ -432,7 +432,7 @@ static bool userinfo_changed(application_provider *provider,
         if (!application_native_q3_send_command(provider, -1, text, error) ||
             !slot_current(provider, slot, actor, error)) return false;
     }
-    if (!application_native_q3_settings_integer(provider, "g_gametype", &game_type, error) ||
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error) ||
         !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error)) return false;
     char model[64], head[64], color1[1024], color2[1024], red[1024], blue[1024];
     char task[1024], skill[1024], config[8192], log[8256];
@@ -522,7 +522,7 @@ bool application_native_q3_client_connect(application_provider *provider, qa_act
         return true;
     }
     if (ok) ok = qa_q3_client_server_flags(provider->state.q3, slot, &flags, error) &&
-        application_native_q3_settings_string(provider, "g_password", &password, error);
+        application_native_q3_settings_string_at(provider, APPLICATION_Q3_SETTING_G_PASSWORD, &password, error);
     if (ok && !(flags & 8u) && strcmp(address, "localhost") && *password &&
         !named(password, "none") && strcmp(password, supplied)) *denial = "Invalid password";
     if (!ok || *denial) {
@@ -611,7 +611,7 @@ static bool client_spawn(application_provider *provider, qa_actor_id actor,
     if (!application_control_spawn_reset(app, actor, spectator, error)) return false;
     int32_t inactivity, now;
     if (!qa_q3_source_clock(provider->state.q3, &now, error) ||
-        !application_native_q3_settings_integer(provider, "g_inactivity", &inactivity, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_INACTIVITY, &inactivity, error)) return false;
     uint32_t deadline_bits = (uint32_t)now + (uint32_t)inactivity * 1000u;
     int32_t deadline;
     memcpy(&deadline, &deadline_bits, sizeof(deadline));
@@ -666,7 +666,7 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
     int32_t game_type;
     if (ok) ok = session(provider, actor, &sess, error) &&
         qa_q3_client_read(provider->state.q3, actor, &client, error) &&
-        application_native_q3_settings_integer(provider, "g_gametype", &game_type, error);
+        application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
     char text[128];
     if (ok && sess.team != 3) {
         ok = qa_q3_client_teleport_event(provider->state.q3, actor, true, error) &&
@@ -716,7 +716,7 @@ static bool toss_cube(application_provider *provider, qa_actor_id actor,
     int32_t timeout;
     qa_actor_id cube = {0};
     if (!source(provider, actor, &slot, error) ||
-        !application_native_q3_settings_integer(provider, "g_cubeTimeout", &timeout, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_CUBE_TIMEOUT, &timeout, error) ||
         !qa_q3_client_toss_cube(provider->state.q3, actor, team, timeout, &cube, error) ||
         !source(provider, actor, &slot, error)) return false;
     if (!cube.registry) return true;
@@ -740,7 +740,7 @@ bool application_native_q3_client_death_items(void *opaque, qa_actor_id actor,
     qa_q3_product product;
     int32_t start, game_type;
     bool okay = qa_q3_source_match_context_read(provider->state.q3, &product, &start, error) &&
-        application_native_q3_settings_integer(provider, "g_gametype", &game_type, error);
+        application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
     if (okay && product == QA_Q3_TEAM_ARENA && game_type == 7) {
         qa_q3_client_session client_session;
         okay = session(provider, actor, &client_session, error) &&
@@ -788,7 +788,7 @@ static bool client_disconnect(application_provider *provider,
             qa_q3_client_disconnect_items(provider->state.q3, actor, error) &&
             source(provider, actor, &slot, error);
         int32_t game_type;
-        if (ok) ok = application_native_q3_settings_integer(provider, "g_gametype", &game_type, error);
+        if (ok) ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
         if (ok && game_type == 7 && provider->product &&
             !strcmp(provider->product->campaign, "missionpack"))
             ok = toss_cube(provider, actor, sess.team, error);
@@ -800,7 +800,7 @@ static bool client_disconnect(application_provider *provider,
     }
     int32_t game_type, warmup, intermission;
     qa_q3_source_client_counts ranks;
-    if (ok) ok = application_native_q3_settings_integer(provider, "g_gametype", &game_type, error) &&
+    if (ok) ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error) &&
         application_native_q3_match_warmup(provider, &warmup, error) &&
         application_native_q3_match_intermission(provider, &intermission, error) &&
         qa_q3_source_client_counts_read(provider->state.q3, &ranks, error);
@@ -997,9 +997,9 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         !qa_q3_source_client_counts_read(provider->state.q3, &ranks, error) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error) ||
         !qa_q3_source_clock(provider->state.q3, &time, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &game_type, error) ||
-        !application_native_q3_settings_integer(provider, "g_teamForceBalance", &balance, error) ||
-        !application_native_q3_settings_integer(provider, "g_maxGameClients", &max_players, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_TEAM_FORCE_BALANCE, &balance, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_MAX_GAME_CLIENTS, &max_players, error)) return false;
     int32_t team = 0, state = QA_Q3_SPECTATOR_NOT, client = 0;
     if (named(request, "scoreboard") || named(request, "score")) {
         team = 3; state = QA_Q3_SPECTATOR_SCOREBOARD;
@@ -1196,7 +1196,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
     int32_t game_type, target = -1;
     if (!source(provider, actor, &slot, error) || !session(provider, actor, &sess, error) ||
         !qa_q3_source_max_clients(provider->state.q3, &maximum, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &game_type, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error)) return false;
     if (!cycle && command->argc != 2)
         return sess.spectator_state != QA_Q3_SPECTATOR_FOLLOW || stop_following(provider, actor, error);
     if (!cycle) {
@@ -1284,7 +1284,7 @@ static bool team_command(application_provider *provider, qa_actor_id actor,
     if (!source(provider, actor, &slot, error) || !session(provider, actor, &sess, error) ||
         !qa_q3_client_read(provider->state.q3, actor, &client, error) ||
         !qa_q3_source_clock(provider->state.q3, &time, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &game_type, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error)) return false;
     if (command->argc != 2)
         return print_client(provider, slot, sess.team == 1 ? "Red team\n" :
             sess.team == 2 ? "Blue team\n" : sess.team == 3 ? "Spectator team\n" : "Free team\n", error);
@@ -1328,11 +1328,11 @@ static bool level_shot(application_provider *provider, qa_actor_id actor, qa_err
     int32_t cheats, game_type;
     qa_combat_state combat;
     if (!source(provider, actor, &slot, error) ||
-        !application_native_q3_settings_integer(provider, "sv_cheats", &cheats, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_SV_CHEATS, &cheats, error)) return false;
     if (!cheats) return print_client(provider, slot, "Cheats are not enabled on this server.\n", error);
     if (!qa_combat_read(provider->application->combat, actor, &combat, error)) return false;
     if (combat.health <= 0) return print_client(provider, slot, "You must be alive to use this command.\n", error);
-    if (!application_native_q3_settings_integer(provider, "g_gametype", &game_type, error)) return false;
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error)) return false;
     if (game_type != 0) return print_client(provider, slot, "Must be in g_gametype 0 for levelshot\n", error);
     return application_native_q3_match_begin_intermission(provider, error) &&
         source(provider, actor, &slot, error) &&
@@ -1448,11 +1448,11 @@ bool application_native_q3_client_think_policy(application_provider *provider, q
     if (*msec < 1 && sess.spectator_state != QA_Q3_SPECTATOR_FOLLOW) return true;
     if (*msec > 200) *msec = 200;
     int32_t cached, fixed;
-    if (!application_native_q3_settings_integer(provider, "pmove_msec", &cached, error) ||
-        !application_native_q3_settings_integer(provider, "pmove_fixed", &fixed, error)) return false;
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_PMOVE_MSEC, &cached, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_PMOVE_FIXED, &fixed, error)) return false;
     bool use_fixed = fixed != 0 || client.pmove_fixed;
     if ((cached < 8 || cached > 33) &&
-        !application_native_q3_settings_force_set(provider, "pmove_msec", cached < 8 ? "8" : "33", error)) return false;
+        !application_native_q3_settings_force_set(provider, APPLICATION_Q3_SETTING_PMOVE_MSEC, cached < 8 ? "8" : "33", error)) return false;
     if (use_fixed) {
         if (cached <= 0) return application_fail(error, QA_ERROR_ARGUMENT, "fixed source pmove requires a positive cached step");
         int32_t sum = difference(accepted->serverTime, difference(1, cached));
@@ -1517,8 +1517,8 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         *gravity = foreign ? policy.gravity : control->state.data.q3.gravity;
     } else {
         float gravity_value, speed_value;
-        if (!application_native_q3_settings_number(provider, "g_gravity", &gravity_value, error) ||
-            !application_native_q3_settings_number(provider, "g_speed", &speed_value, error)) return false;
+        if (!application_native_q3_settings_number_at(provider, APPLICATION_Q3_SETTING_G_GRAVITY, &gravity_value, error) ||
+            !application_native_q3_settings_number_at(provider, APPLICATION_Q3_SETTING_G_SPEED, &speed_value, error)) return false;
         *pm_type = noclip ? 1 : combat.health <= 0 ? 3 : 0;
         *gravity = qa_source_float_to_i32(gravity_value);
         *speed = qa_source_float_to_i32(speed_value);
@@ -1629,7 +1629,7 @@ bool application_native_q3_client_deferred(application_provider *provider,
     int32_t synchronous;
     if (!out || !source(provider, actor, &slot, error) ||
         !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error) ||
-        !application_native_q3_settings_integer(provider, "g_synchronousClients", &synchronous, error)) return false;
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_SYNCHRONOUS_CLIENTS, &synchronous, error)) return false;
     *out = (flags & 8u) != 0 || synchronous != 0;
     return true;
 }

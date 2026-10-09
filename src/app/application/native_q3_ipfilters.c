@@ -131,7 +131,7 @@ static bool update_bans(struct application_native_q3_ipfilters *owner,
         memcpy(list + size, address, length + 1);
         size += length;
     }
-    return application_native_q3_settings_force_set(owner->provider, "g_banIPs", list, error) &&
+    return application_native_q3_settings_force_set(owner->provider, APPLICATION_Q3_SETTING_G_BAN_IPS, list, error) &&
         admitted(owner, context, error);
 }
 
@@ -194,7 +194,7 @@ bool application_native_q3_ipfilters_init(application_provider *provider, qa_err
     const application_native_q3_cvar_snapshot *snapshot;
     if (!owner || owner->operation != IP_IDLE || !admitted(owner, NULL, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 IP filters have no idle source Init owner");
-    if (!application_native_q3_settings_snapshot(provider, "g_banIPs", &snapshot, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, APPLICATION_Q3_SETTING_G_BAN_IPS, &snapshot, error)) return false;
     size_t size = strlen(snapshot->value);
     if (size >= IP_BAN_CAPACITY)
         return application_fail(error, QA_ERROR_ARGUMENT, "g_banIPs exceeds the source256-byte vmCvar buffer");
@@ -243,7 +243,7 @@ bool application_native_q3_ipfilters_filter(application_provider *provider, cons
         ++cursor;
     }
     int32_t filter_ban;
-    if (!application_native_q3_settings_integer(provider, "g_filterBan", &filter_ban, error)) return false;
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_FILTER_BAN, &filter_ban, error)) return false;
     uint32_t initialized_mask = initialized == 4 ? UINT32_MAX : (1u << (initialized * 8)) - 1u;
     bool deny_matches = filter_ban != 0;
     for (size_t row = 0; row < owner->state.count; ++row) {

@@ -175,12 +175,12 @@ static bool rules(const match_scope *scope, qa_mode_view *mode, qa_mode_q3_setti
     const application_native_q3_cvar_snapshot *warmup;
     if (!live(scope, error) || !scope->selected_q3 ||
         !qa_modes_read(scope->modes, scope->mode, mode, error) ||
-        !application_native_q3_settings_integer(scope->provider, "g_doWarmup", &settings->do_warmup, error) ||
-        !application_native_q3_settings_integer(scope->provider, "g_warmup", &settings->warmup_seconds, error) ||
-        !application_native_q3_settings_integer(scope->provider, "timelimit", &settings->time_limit_minutes, error) ||
-        !application_native_q3_settings_integer(scope->provider, "fraglimit", &settings->frag_limit, error) ||
-        !application_native_q3_settings_integer(scope->provider, "capturelimit", &settings->capture_limit, error) ||
-        !application_native_q3_settings_snapshot(scope->provider, "g_warmup", &warmup, error)) return false;
+        !application_native_q3_settings_integer_at(scope->provider, APPLICATION_Q3_SETTING_G_DO_WARMUP, &settings->do_warmup, error) ||
+        !application_native_q3_settings_integer_at(scope->provider, APPLICATION_Q3_SETTING_G_WARMUP, &settings->warmup_seconds, error) ||
+        !application_native_q3_settings_integer_at(scope->provider, APPLICATION_Q3_SETTING_TIMELIMIT, &settings->time_limit_minutes, error) ||
+        !application_native_q3_settings_integer_at(scope->provider, APPLICATION_Q3_SETTING_FRAGLIMIT, &settings->frag_limit, error) ||
+        !application_native_q3_settings_integer_at(scope->provider, APPLICATION_Q3_SETTING_CAPTURELIMIT, &settings->capture_limit, error) ||
+        !application_native_q3_settings_snapshot_at(scope->provider, APPLICATION_Q3_SETTING_G_WARMUP, &warmup, error)) return false;
     settings->warmup_modification_count = warmup->modification_count;
     return true;
 }
@@ -240,8 +240,8 @@ static bool single_player(const match_scope *scope, bool *out, qa_error *error)
     *out = false;
     if (scope->product != QA_Q3_TEAM_ARENA) return true;
     int32_t active;
-    if (!application_native_q3_settings_integer(scope->provider,
-        "ui_singlePlayerActive", &active, error)) return false;
+    if (!application_native_q3_settings_integer_at(scope->provider,
+        APPLICATION_Q3_SETTING_UI_SINGLE_PLAYER_ACTIVE, &active, error)) return false;
     *out = active != 0;
     return true;
 }
@@ -266,7 +266,7 @@ bool application_native_q3_match_init(application_provider *provider, qa_error *
     if (!source_live(provider, error)) return false;
     const application_native_q3_cvar_snapshot *warmup;
     qa_q3_source_match_state match;
-    if (!application_native_q3_settings_snapshot(provider, "g_warmup", &warmup, error) ||
+    if (!application_native_q3_settings_snapshot_at(provider, APPLICATION_Q3_SETTING_G_WARMUP, &warmup, error) ||
         !qa_q3_source_match_state_read(provider->state.q3, &match, error)) return false;
     match.warmup_modification_count = warmup->modification_count;
     return qa_q3_source_match_state_write(provider->state.q3, &match, error);
@@ -438,7 +438,7 @@ static bool tournament(match_scope *scope, qa_error *error)
     if (scope->time <= team.warmup_time_ms) return true;
     team.warmup_time_ms = signed_bits((uint32_t)team.warmup_time_ms + 10000u);
     if (!qa_q3_source_team_state_write(scope->game, &team, error) ||
-        !application_native_q3_settings_force_set(scope->provider, "g_restarted", "1", error) ||
+        !application_native_q3_settings_force_set(scope->provider, APPLICATION_Q3_SETTING_G_RESTARTED, "1", error) ||
         !live(scope, error) || !append(scope, "map_restart 0\n", error)) return false;
     if (!qa_q3_source_match_state_read(scope->game, &match, error)) return false;
     match.restarted = true;

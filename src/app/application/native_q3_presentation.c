@@ -39,7 +39,7 @@ bool qa_application_native_q3_presentation_read(qa_application *app, qa_actor_ow
         !application_q3_wire_time(provider, &wire_time, error) ||
         !qa_q3_source_clock(view.source_game, &view.source_time_ms, error) ||
         !qa_q3_source_match_context_read(view.source_game, &view.product, &view.match_start_time_ms, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &view.game_type, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &view.game_type, error) ||
         !qa_q3_source_max_clients(view.source_game, &view.max_clients, error) ||
         !qa_q3_source_entity_count(view.source_game, &view.entity_count, error))
         return false;

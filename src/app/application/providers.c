@@ -1149,7 +1149,7 @@ static int32_t q3_source_team(void *opaque, qa_actor_id actor)
 
 static bool q3_memory_debug_integer(void *opaque, int32_t *out, qa_error *error)
 {
-    return application_native_q3_settings_integer(opaque, "g_debugAlloc", out, error);
+    return application_native_q3_settings_integer_at(opaque, APPLICATION_Q3_SETTING_G_DEBUG_ALLOC, out, error);
 }
 
 static qa_trajectory q3_mover_trajectory(const qa_q3_trajectory *source)

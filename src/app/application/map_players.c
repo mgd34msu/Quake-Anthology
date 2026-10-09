@@ -2038,7 +2038,7 @@ static bool bind_q3_player_roles(qa_application *application,
         if (!qa_q3_bind_player(provider->state.q3, record->actor, selections, 100, error)) return false;
         if (provider != map_source && record->userinfo) {
             int32_t game_type;
-            if (!application_native_q3_settings_integer(provider, "g_gametype", &game_type, error) ||
+            if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error) ||
                 !application_client_native_q3_userinfo(application, provider, record->actor,
                     record->userinfo, game_type, error)) return false;
         }

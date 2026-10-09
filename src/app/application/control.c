@@ -2139,9 +2139,9 @@ static bool prepare_input(application_move_call *move,
             !qa_q3_client_read(source->state.q3, record->actor, &client, error) ||
             !qa_q3_client_session_read(source->state.q3, record->actor, &session, error) ||
             !qa_q3_client_server_flags(source->state.q3, slot, &flags, error) ||
-            !application_native_q3_settings_integer(source, "pmove_fixed", &fixed, error) ||
-            !application_native_q3_settings_integer(source, "pmove_msec", &step, error) ||
-            !application_native_q3_settings_integer(source, "dmflags", &dmflags, error)) return false;
+            !application_native_q3_settings_integer_at(source, APPLICATION_Q3_SETTING_PMOVE_FIXED, &fixed, error) ||
+            !application_native_q3_settings_integer_at(source, APPLICATION_Q3_SETTING_PMOVE_MSEC, &step, error) ||
+            !application_native_q3_settings_integer_at(source, APPLICATION_Q3_SETTING_DMFLAGS, &dmflags, error)) return false;
         bool spectator = session.team == 3;
         if (!spectator && (fixed || client.pmove_fixed) && step <= 0)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native fixed Pmove has no positive cached interval");
@@ -3617,9 +3617,9 @@ bool qa_application_control_prediction_read(qa_application *application,
             int32_t fixed, step, dmflags;
             if (!qa_q3_client_read(physical->state.q3, actor, &source_client, error) ||
                 !qa_q3_client_session_read(physical->state.q3, actor, &source_session, error) ||
-                !application_native_q3_settings_integer(physical, "pmove_fixed", &fixed, error) ||
-                !application_native_q3_settings_integer(physical, "pmove_msec", &step, error) ||
-                !application_native_q3_settings_integer(physical, "dmflags", &dmflags, error)) return false;
+                !application_native_q3_settings_integer_at(physical, APPLICATION_Q3_SETTING_PMOVE_FIXED, &fixed, error) ||
+                !application_native_q3_settings_integer_at(physical, APPLICATION_Q3_SETTING_PMOVE_MSEC, &step, error) ||
+                !application_native_q3_settings_integer_at(physical, APPLICATION_Q3_SETTING_DMFLAGS, &dmflags, error)) return false;
             bool spectator = source_session.team == 3;
             if (!spectator && (fixed || source_client.pmove_fixed) && step <= 0)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Prediction fixed Pmove lost its genuine cached interval");

@@ -2831,8 +2831,8 @@ static bool q3_begin_map(application_provider *provider,
 {
     qa_q3_map_options options = q3_map_options(provider, choices);
     int32_t warmup;
-    if (!application_native_q3_settings_integer(provider, "g_doWarmup", &warmup, error) ||
-        !application_native_q3_settings_integer(provider, "g_restarted", &options.restarted, error)) return false;
+    if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_DO_WARMUP, &warmup, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_RESTARTED, &options.restarted, error)) return false;
     options.warmup = warmup != 0;
     bool ok = provider->map_bound
                   ? qa_q3_maps_reset(provider->state.q3, &options, error)

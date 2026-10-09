@@ -10,6 +10,7 @@
 #include <string.h>
 
 typedef struct setting_definition {
+    application_native_q3_setting setting;
     const char *name, *value;
     uint32_t flags;
     bool track, team_shader;
@@ -23,69 +24,69 @@ typedef struct setting_definition {
 #define R QA_CVAR_READONLY
 #define N QA_CVAR_NO_RESTART
 #define Y QA_CVAR_SYSTEMINFO
-#define CV(name, value, flags, track, shader, policy) {name, value, flags, track, shader, policy}
+#define CV(setting, name, value, flags, track, shader, policy) {setting, name, value, flags, track, shader, policy}
 /* Q3GameSettings definitions preserve the source registration/update order. */
 static const setting_definition common_settings[] = {
-    CV("sv_cheats", "", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_restarted", "0", R, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_gametype", "0", S | U | L, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("sv_maxclients", "8", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_maxGameClients", "0", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("dmflags", "0", S | A, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("fraglimit", "20", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("timelimit", "0", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("capturelimit", "8", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_synchronousClients", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_friendlyFire", "0", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_teamAutoJoin", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_teamForceBalance", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_warmup", "20", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_doWarmup", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_log", "games.log", A, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_logSync", "0", A, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_password", "", U, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_banIPs", "", A, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_filterBan", "1", A, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_needpass", "0", S | R, false, false, QA_CVAR_SAVE_SETTING),
-    CV("dedicated", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_speed", "320", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_gravity", "800", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_knockback", "1000", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_quadfactor", "3", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_weaponrespawn", "5", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_weaponTeamRespawn", "30", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_forcerespawn", "20", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_inactivity", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_debugMove", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_debugDamage", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_debugAlloc", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_motd", "", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("com_blood", "1", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_podiumDist", "80", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_podiumDrop", "70", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_allowVote", "1", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_listEntity", "0", 0, false, false, QA_CVAR_SAVE_SETTING)
+    CV(APPLICATION_Q3_SETTING_SV_CHEATS, "sv_cheats", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_RESTARTED, "g_restarted", "0", R, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_GAMETYPE, "g_gametype", "0", S | U | L, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_SV_MAXCLIENTS, "sv_maxclients", "8", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_MAX_GAME_CLIENTS, "g_maxGameClients", "0", S | L | A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_DMFLAGS, "dmflags", "0", S | A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_FRAGLIMIT, "fraglimit", "20", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_TIMELIMIT, "timelimit", "0", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_CAPTURELIMIT, "capturelimit", "8", S | A | N, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_SYNCHRONOUS_CLIENTS, "g_synchronousClients", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_FRIENDLY_FIRE, "g_friendlyFire", "0", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_TEAM_AUTO_JOIN, "g_teamAutoJoin", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_TEAM_FORCE_BALANCE, "g_teamForceBalance", "0", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_WARMUP, "g_warmup", "20", A, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_DO_WARMUP, "g_doWarmup", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_LOG, "g_log", "games.log", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_LOG_SYNC, "g_logSync", "0", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_PASSWORD, "g_password", "", U, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_BAN_IPS, "g_banIPs", "", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_FILTER_BAN, "g_filterBan", "1", A, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_NEEDPASS, "g_needpass", "0", S | R, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_DEDICATED, "dedicated", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_SPEED, "g_speed", "320", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_GRAVITY, "g_gravity", "800", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_KNOCKBACK, "g_knockback", "1000", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_QUADFACTOR, "g_quadfactor", "3", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_WEAPONRESPAWN, "g_weaponrespawn", "5", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_WEAPON_TEAM_RESPAWN, "g_weaponTeamRespawn", "30", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_FORCERESPAWN, "g_forcerespawn", "20", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_INACTIVITY, "g_inactivity", "0", 0, true, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_DEBUG_MOVE, "g_debugMove", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_DEBUG_DAMAGE, "g_debugDamage", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_DEBUG_ALLOC, "g_debugAlloc", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_MOTD, "g_motd", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_COM_BLOOD, "com_blood", "1", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_PODIUM_DIST, "g_podiumDist", "80", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_PODIUM_DROP, "g_podiumDrop", "70", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_ALLOW_VOTE, "g_allowVote", "1", A, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_LIST_ENTITY, "g_listEntity", "0", 0, false, false, QA_CVAR_SAVE_SETTING)
 };
 static const setting_definition missionpack_settings[] = {
-    CV("g_obeliskHealth", "2500", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_obeliskRegenPeriod", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_obeliskRegenAmount", "15", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_obeliskRespawnDelay", "10", S, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_cubeTimeout", "30", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_redteam", "Stroggs", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_blueteam", "Pagans", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
-    CV("ui_singlePlayerActive", "", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("g_enableDust", "0", S, true, false, QA_CVAR_SAVE_SETTING),
-    CV("g_enableBreath", "0", S, true, false, QA_CVAR_SAVE_SETTING),
-    CV("g_proxMineTimeout", "20000", 0, false, false, QA_CVAR_SAVE_GAMEPLAY)
+    CV(APPLICATION_Q3_SETTING_G_OBELISK_HEALTH, "g_obeliskHealth", "2500", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_OBELISK_REGEN_PERIOD, "g_obeliskRegenPeriod", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_OBELISK_REGEN_AMOUNT, "g_obeliskRegenAmount", "15", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_OBELISK_RESPAWN_DELAY, "g_obeliskRespawnDelay", "10", S, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_CUBE_TIMEOUT, "g_cubeTimeout", "30", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_REDTEAM, "g_redteam", "Stroggs", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_BLUETEAM, "g_blueteam", "Pagans", A | S | U, true, true, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_UI_SINGLE_PLAYER_ACTIVE, "ui_singlePlayerActive", "", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_ENABLE_DUST, "g_enableDust", "0", S, true, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_ENABLE_BREATH, "g_enableBreath", "0", S, true, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_G_PROX_MINE_TIMEOUT, "g_proxMineTimeout", "20000", 0, false, false, QA_CVAR_SAVE_GAMEPLAY)
 };
 static const setting_definition final_settings[] = {
-    CV("g_smoothClients", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("pmove_fixed", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("pmove_msec", "8", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
-    CV("g_rankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("sv_enableRankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
-    CV("sv_rankingsActive", "0", R, false, false, QA_CVAR_SAVE_SETTING)
+    CV(APPLICATION_Q3_SETTING_G_SMOOTH_CLIENTS, "g_smoothClients", "1", 0, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_PMOVE_FIXED, "pmove_fixed", "0", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_PMOVE_MSEC, "pmove_msec", "8", Y, false, false, QA_CVAR_SAVE_GAMEPLAY),
+    CV(APPLICATION_Q3_SETTING_G_RANKINGS, "g_rankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_SV_ENABLE_RANKINGS, "sv_enableRankings", "0", 0, false, false, QA_CVAR_SAVE_SETTING),
+    CV(APPLICATION_Q3_SETTING_SV_RANKINGS_ACTIVE, "sv_rankingsActive", "0", R, false, false, QA_CVAR_SAVE_SETTING)
 };
 #undef CV
 #undef A
@@ -108,10 +109,17 @@ typedef enum settings_operation {
     SETTINGS_CAPTURING, SETTINGS_IMPORTING
 } settings_operation;
 
+typedef struct setting_reference {
+    qa_cvars *registry;
+    qa_cvar_handle handle;
+} setting_reference;
+
 struct application_native_q3_settings {
     application_provider *provider;
     application_native_q3_settings_options options;
     application_native_q3_cvar_snapshot snapshots[SETTINGS_CAPACITY];
+    setting_reference references[SETTINGS_CAPACITY];
+    size_t indices[APPLICATION_Q3_SETTING_COUNT];
     qa_q3_product product;
     settings_operation operation;
     uint64_t password_modification_count;
@@ -276,6 +284,9 @@ bool application_native_q3_settings_create(application_provider *provider, qa_q3
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q3 cached settings");
     owner->provider = provider;
     owner->product = product;
+    for (size_t i = 0; i < APPLICATION_Q3_SETTING_COUNT; ++i) owner->indices[i] = SIZE_MAX;
+    for (size_t i = 0; i < definition_count(owner); ++i)
+        owner->indices[definition_at(owner, i)->setting] = i;
     if (options) owner->options = *options;
     provider->native_q3_settings = owner;
     return true;
@@ -338,7 +349,10 @@ static bool register_cache(application_provider *provider, const char *build_dat
             qa_cvars_declare_save_policy(registry, definition->name, definition->save_policy, error);
         if (okay && !owner_live(owner))
             okay = application_fail(error, QA_ERROR_ARGUMENT, "native Q3 settings source retired during registration");
-        const qa_cvar_view *current = okay ? qa_cvars_find(registry, definition->name) : NULL;
+        if (okay) owner->references[i] = (setting_reference){registry,
+            qa_cvars_resolve(registry, definition->name)};
+        const qa_cvar_view *current = okay ? qa_cvars_read(registry,
+            owner->references[i].handle) : NULL;
         if (okay && !current)
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 registered cvar disappeared");
         if (okay) okay = snapshot_copy(&copied[i], current, error);
@@ -369,49 +383,50 @@ bool application_native_q3_settings_reset_cache(application_provider *provider,
     return register_cache(provider, build_date, true, error);
 }
 
-bool application_native_q3_settings_snapshot(const application_provider *provider, const char *name,
-    const application_native_q3_cvar_snapshot **out, qa_error *error)
+bool application_native_q3_settings_snapshot_at(const application_provider *provider,
+    application_native_q3_setting setting, const application_native_q3_cvar_snapshot **out,
+    qa_error *error)
 {
     const struct application_native_q3_settings *owner = owner_at(provider);
-    if (!owner || !owner->initialized || !name || !out)
+    if (!owner || !owner->initialized || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 cached settings are not initialized");
-    for (size_t i = 0; i < definition_count(owner); ++i)
-        if (!strcmp(definition_at(owner, i)->name, name)) {
-            *out = &owner->snapshots[i];
-            return true;
-        }
-    return application_fail(error, QA_ERROR_NOT_FOUND, "unregistered native Q3 cached setting");
+    size_t index = owner->indices[setting];
+    if (index == SIZE_MAX)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "unregistered native Q3 cached setting");
+    *out = &owner->snapshots[index];
+    return true;
 }
 
-bool application_native_q3_settings_integer(const application_provider *provider, const char *name,
-    int32_t *out, qa_error *error)
+bool application_native_q3_settings_integer_at(const application_provider *provider,
+    application_native_q3_setting setting, int32_t *out, qa_error *error)
 {
-    const application_native_q3_cvar_snapshot *snapshot;
+    const application_native_q3_cvar_snapshot *snapshot = NULL;
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 integer read requires its output");
-    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, setting, &snapshot, error)) return false;
     *out = snapshot->integer_value;
     return true;
 }
 
-bool application_native_q3_settings_number(const application_provider *provider, const char *name,
-    float *out, qa_error *error)
+bool application_native_q3_settings_number_at(const application_provider *provider,
+    application_native_q3_setting setting, float *out, qa_error *error)
 {
-    const application_native_q3_cvar_snapshot *snapshot;
+    const application_native_q3_cvar_snapshot *snapshot = NULL;
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 number read requires its output");
-    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, setting, &snapshot, error)) return false;
     *out = (float)snapshot->numeric_value;
     return true;
 }
 
-bool application_native_q3_settings_string(const application_provider *provider, const char *name,
-    const char **out, qa_error *error)
+bool application_native_q3_settings_string_at(const application_provider *provider,
+    application_native_q3_setting setting, const char **out, qa_error *error)
 {
-    const application_native_q3_cvar_snapshot *snapshot;
+    const application_native_q3_cvar_snapshot *snapshot = NULL;
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 text read requires its output");
-    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, setting, &snapshot, error)) return false;
     *out = snapshot->value;
     return true;
 }
+
 
 static bool source_set(struct application_native_q3_settings *owner, const char *name,
     const char *value, qa_error *error)
@@ -438,16 +453,16 @@ bool application_native_q3_settings_source_set(application_provider *provider, c
     return source_set(owner, name, value, error);
 }
 
-bool application_native_q3_settings_force_set(application_provider *provider, const char *name,
+bool application_native_q3_settings_force_set(application_provider *provider, application_native_q3_setting setting,
     const char *value, qa_error *error)
 {
     struct application_native_q3_settings *owner = owner_at(provider);
     const application_native_q3_cvar_snapshot *snapshot;
     if (!owner || !value)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 force-set requires its actual cached setting");
-    if (!application_native_q3_settings_snapshot(provider, name, &snapshot, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, setting, &snapshot, error)) return false;
     (void)snapshot;
-    return source_set(owner, name, value, error);
+    return source_set(owner, definition_at(owner, owner->indices[setting])->name, value, error);
 }
 
 static bool remap_teams(struct application_native_q3_settings *owner, qa_error *error)
@@ -479,7 +494,7 @@ bool application_native_q3_settings_check_cvars(application_provider *provider, 
     const application_native_q3_cvar_snapshot *password;
     if (!owner || owner->operation != SETTINGS_IDLE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 CheckCvars requires its idle source module state");
-    if (!application_native_q3_settings_snapshot(provider, "g_password", &password, error)) return false;
+    if (!application_native_q3_settings_snapshot_at(provider, APPLICATION_Q3_SETTING_G_PASSWORD, &password, error)) return false;
     if (owner->password_seen && owner->password_modification_count == password->modification_count)
         return true;
     if (!application_native_q3_console_borrow(provider, error)) return false;
@@ -487,7 +502,7 @@ bool application_native_q3_settings_check_cvars(application_provider *provider, 
     bool needpass = password->value[0] && !ascii_equal(password->value, "none");
     owner->password_seen = true;
     owner->password_modification_count = password->modification_count;
-    bool okay = application_native_q3_settings_force_set(provider, "g_needpass", needpass ? "1" : "0", error);
+    bool okay = application_native_q3_settings_force_set(provider, APPLICATION_Q3_SETTING_G_NEEDPASS, needpass ? "1" : "0", error);
     owner->operation = SETTINGS_IDLE;
     application_native_q3_console_release(provider);
     return okay;
@@ -503,8 +518,8 @@ bool application_native_q3_settings_update(application_provider *provider, qa_er
     bool okay = true, remapped = false;
     for (size_t i = 0; okay && i < definition_count(owner); ++i) {
         const setting_definition *definition = definition_at(owner, i);
-        qa_cvars *registry = application_native_q3_cvar_owner(provider, definition->name);
-        const qa_cvar_view *current = qa_cvars_find(registry, definition->name);
+        const setting_reference *reference = &owner->references[i];
+        const qa_cvar_view *current = qa_cvars_read(reference->registry, reference->handle);
         if (!current) {
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 cached cvar disappeared from its registry");
             break;
@@ -618,7 +633,7 @@ bool application_native_q3_settings_capture(application_provider *provider, qa_b
     bool warmup_observed = false;
     bool pending[SETTINGS_CAPACITY] = {0};
     size_t count = 0;
-    bool okay = application_native_q3_settings_snapshot(provider, "g_warmup", &warmup, error) &&
+    bool okay = application_native_q3_settings_snapshot_at(provider, APPLICATION_Q3_SETTING_G_WARMUP, &warmup, error) &&
         qa_q3_source_match_state_read(provider->state.q3, &match, error);
     if (okay) warmup_observed = match.warmup_modification_count == warmup->modification_count;
     for (size_t i = 0; okay && i < definition_count(owner); ++i) {
@@ -661,8 +676,10 @@ bool application_native_q3_settings_restore(application_provider *provider, qa_b
         qa_source_save_bool(&io, &warmup_observed);
     for (size_t i = 0; okay && i < definition_count(owner); ++i) {
         const setting_definition *definition = definition_at(owner, i);
-        const qa_cvar_view *current = qa_cvars_find(application_native_q3_cvar_owner(provider,
-            definition->name), definition->name);
+        qa_cvars *registry = application_native_q3_cvar_owner(provider, definition->name);
+        owner->references[i] = (setting_reference){registry,
+            qa_cvars_resolve(registry, definition->name)};
+        const qa_cvar_view *current = qa_cvars_read(registry, owner->references[i].handle);
         if (!current) okay = application_fail(error, QA_ERROR_FORMAT,
             "Q3 copied setting has no current source declaration");
         else okay = snapshot_copy(&restored[i], current, error);

@@ -269,7 +269,7 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
             uint32_t slot;
             if (qa_q3_native_client_slot(p->state.q3, actor, &slot, NULL)) {
                 int32_t game_type;
-                ok = application_native_q3_settings_integer(p, "g_gametype", &game_type, error) &&
+                ok = application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error) &&
                     application_client_native_q3_userinfo(app, p, actor,
                         actual->userinfo, game_type, error);
             }

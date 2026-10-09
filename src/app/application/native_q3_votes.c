@@ -226,7 +226,7 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
     qa_q3_native_client caller;
     qa_q3_client_session sess;
     int32_t allowed;
-    if (!application_native_q3_settings_integer(scope->owner->provider, "g_allowVote", &allowed, error) ||
+    if (!application_native_q3_settings_integer_at(scope->owner->provider, APPLICATION_Q3_SETTING_G_ALLOW_VOTE, &allowed, error) ||
         !client(scope, scope->slot, &caller, &sess, error)) return false;
     if (!allowed) return print_client(scope, "Voting not allowed here.\n", error);
     if (vote->time) return print_client(scope, "A vote is already in progress.\n", error);
@@ -331,7 +331,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
     uint32_t offset = (uint32_t)sess.team - 1;
     source_vote *vote = &scope->owner->state.teams[offset];
     int32_t allowed;
-    if (!application_native_q3_settings_integer(scope->owner->provider, "g_allowVote", &allowed, error)) return false;
+    if (!application_native_q3_settings_integer_at(scope->owner->provider, APPLICATION_Q3_SETTING_G_ALLOW_VOTE, &allowed, error)) return false;
     if (!allowed) return print_client(scope, "Voting not allowed here.\n", error);
     if (vote->time) return print_client(scope, "A team vote is already in progress.\n", error);
     if (caller.team_vote_count >= 3)

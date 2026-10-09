@@ -43,7 +43,7 @@ static bool inactivity(application_provider *provider, qa_actor_id actor,
     if (!qa_q3_client_read(game, actor, &client, error) ||
         !qa_q3_native_client_slot(game, actor, &slot, error) ||
         !qa_q3_source_clock(game, &now, error) ||
-        !application_native_q3_settings_integer(provider, "g_inactivity", &seconds, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_INACTIVITY, &seconds, error) ||
         !qa_q3_client_inactivity_read(game, actor, &deadline, &warned, error)) return false;
     const qa_q3_usercmd *command = &client.command;
     if (!seconds || command->forwardmove || command->rightmove || command->upmove ||
@@ -299,7 +299,7 @@ static bool movement_command(native_q3_think_call *call, bool spectator, qa_erro
     qa_q3_source_match_state match;
     int32_t single_player, now;
     if (!qa_q3_source_match_state_read(provider->state.q3, &match, error) ||
-        !application_native_q3_settings_integer(provider, "ui_singlePlayerActive", &single_player, error) ||
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_UI_SINGLE_PLAYER_ACTIVE, &single_player, error) ||
         !qa_q3_source_clock(provider->state.q3, &now, error)) return false;
     if (!match.intermission_queued_ms || !single_player) return true;
     int32_t elapsed = signed_word((uint32_t)now - (uint32_t)match.intermission_queued_ms);
@@ -388,7 +388,7 @@ static bool client_think_body(void *opaque, qa_session *session,
                 sizeof(storage) / sizeof(*storage), &contacts, &count, error)) return false;
             bool ok = qa_q3_client_think_event_time(provider->state.q3, call->actor, old_sequence, error);
             int32_t smooth;
-            if (ok) ok = application_native_q3_settings_integer(provider, "g_smoothClients", &smooth, error);
+            if (ok) ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_SMOOTH_CLIENTS, &smooth, error);
             if (ok) ok = qa_q3_wire_player_publish(provider->state.q3, call->actor, true,
                 smooth != 0, completed_time, error);
             if (ok) ok = qa_q3_wire_player_pending(provider->state.q3, call->actor, error);

@@ -669,7 +669,7 @@ static bool bot_game_type(void *opaque,int32_t *out,qa_error *error) {
     if(bots->shared_world) {*out=0;return true;}
     application_provider *source=bot_source(opaque);
     if(source && source->kind==APPLICATION_PROVIDER_Q3)
-        return application_native_q3_settings_integer(source,"g_gametype",out,error);
+        return application_native_q3_settings_integer_at(source,APPLICATION_Q3_SETTING_G_GAMETYPE,out,error);
     return application_fail(error,QA_ERROR_UNSUPPORTED,"bot setup requires its actual GAME copied game type");
 }
 static bool bot_exit_level(void *opaque,qa_error *error) {

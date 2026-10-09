@@ -74,7 +74,7 @@ static bool provider_current(const application_unified_q3_sources *v, const comp
         qa_q3_source_clock(r->game, &time, NULL) && time == r->time &&
         qa_q3_source_match_context_read(r->game, &product, &start, NULL) &&
         product == r->product && start == r->level_start &&
-        application_native_q3_settings_integer(p, "g_gametype", &type, NULL) && type == r->game_type &&
+        application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_GAMETYPE, &type, NULL) && type == r->game_type &&
         qa_q3_source_max_clients(r->game, &clients, NULL) && clients == r->clients &&
         qa_q3_source_entity_count(r->game, &entities, NULL) && entities == r->entities &&
         application_native_q3_wire_snapshot_bit(r->provider,&snapshot_bit,NULL) && snapshot_bit == r->snapshot_bit &&
@@ -360,7 +360,7 @@ bool application_unified_q3_sources_build(qa_application *app, const application
             qa_session_clock(source->session, p->owner, &clock) &&
             qa_q3_source_clock(r->game, &r->time, e) &&
             qa_q3_source_match_context_read(r->game, &r->product, &r->level_start, e) &&
-            application_native_q3_settings_integer(p, "g_gametype", &r->game_type, e) &&
+            application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_GAMETYPE, &r->game_type, e) &&
             qa_q3_source_max_clients(r->game, &r->clients, e) &&
             qa_q3_source_entity_count(r->game, &r->entities, e) &&
             application_native_q3_wire_snapshot_bit(p,&r->snapshot_bit,e) &&

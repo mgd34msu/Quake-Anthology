@@ -406,7 +406,7 @@ static bool services(objective_call *call, mode_q3_objective_services *out, qa_e
         .score_plum = score_plum,
         .rank_capture = rank_capture, .rank_pickup = rank_pickup};
     return qa_q3_source_clock(call->game, &out->time_ms, error) &&
-        application_native_q3_settings_integer(call->provider, "g_gametype", &out->game_type, error) &&
+        application_native_q3_settings_integer_at(call->provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &out->game_type, error) &&
         qa_q3_source_max_clients(call->game, &out->max_clients, error) && source_live(call, error);
 }
 
@@ -507,10 +507,10 @@ bool application_native_q3_obelisk_settings(void *opaque, qa_q3_obelisk_settings
     qa_q3_game *game = provider->state.q3;
     qa_actor_owner owner = provider->owner;
     if (!application_native_q3_console_borrow(provider, error)) return false;
-    bool okay = application_native_q3_settings_integer(provider, "g_obeliskHealth", &out->health, error) &&
-        application_native_q3_settings_integer(provider, "g_obeliskRegenPeriod", &out->regen_period_seconds, error) &&
-        application_native_q3_settings_integer(provider, "g_obeliskRegenAmount", &out->regen_amount, error) &&
-        application_native_q3_settings_integer(provider, "g_obeliskRespawnDelay", &out->respawn_delay_seconds, error);
+    bool okay = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_OBELISK_HEALTH, &out->health, error) &&
+        application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_OBELISK_REGEN_PERIOD, &out->regen_period_seconds, error) &&
+        application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_OBELISK_REGEN_AMOUNT, &out->regen_amount, error) &&
+        application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_OBELISK_RESPAWN_DELAY, &out->respawn_delay_seconds, error);
     if (okay && (provider->state.q3 != game || provider->owner != owner ||
         provider->close_pending || provider->application->destroy_requested))
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "Obelisk source retired during its settings read");

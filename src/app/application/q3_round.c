@@ -360,8 +360,8 @@ bool application_q3_round_restart(qa_application *app, application_provider *pro
                 int32_t warmup = 0, effective_restarted = 0;
                 okay = application_native_q3_settings_reset_cache(provider, __DATE__, error) &&
                     application_native_q3_settings_source_modes(provider, error) &&
-                    application_native_q3_settings_integer(provider, "g_doWarmup", &warmup, error) &&
-                    application_native_q3_settings_integer(provider, "g_restarted", &effective_restarted, error);
+                    application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_DO_WARMUP, &warmup, error) &&
+                    application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_RESTARTED, &effective_restarted, error);
                 if (okay && !qa_session_clock(app->session, provider->owner, &clock))
                     okay = application_fail(error, QA_ERROR_ARGUMENT, "Q3 reset lost its source settings or clock");
                 bool effective_warmup = warmup != 0;

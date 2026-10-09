@@ -71,7 +71,7 @@ static bool begin(application_provider *provider, team_combat_scope *scope,
         !live(scope, error) ||
         !qa_q3_source_max_clients(scope->game, &scope->maximum, error) ||
         !qa_q3_source_match_context_read(scope->game, &product, &start, error) ||
-        !application_native_q3_settings_integer(provider, "g_gametype", &scope->game_type, error))
+        !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &scope->game_type, error))
         return false;
     scope->missionpack = product == QA_Q3_TEAM_ARENA;
     return application_native_q3_console_borrow(provider, error);
