@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_NATIVE_Q2_CONSOLE_H
 #define QA_APPLICATION_NATIVE_Q2_CONSOLE_H
 #include "internal.h"
+#include "qa/hud_controls.h"
 
 typedef struct application_q2_source_scripts {
     void *context;
@@ -25,6 +26,7 @@ bool application_native_q2_console_idle(const application_provider *);
 bool application_native_q2_console_at(application_provider *, qa_console **, qa_cvars **,
     qa_command_context *);
 qa_cvars *application_native_q2_console_registry(const application_provider *);
+const qa_hud_cvar_handles *application_native_q2_console_hud_controls(const application_provider *);
 bool application_native_q2_console_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_native_q2_console_restore(application_provider *, qa_bytes, qa_error *);
 /* Pure projection, also required after host player-service configuration and

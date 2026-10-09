@@ -66,7 +66,7 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
         .scores=hud->scores,.score_count=scores,.source_vitals=true,.selected_weapon=selected,
         .crosshair_visible=data->health>0,.crosshair_color={1,1,1,1}};
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
-    const qa_cvar_view *teamplay=qa_cvars_find(row->options.domain.cvars,"teamplay");
+    const qa_cvar_view *teamplay=qa_cvars_read(row->options.domain.cvars,row->legacy_cvars.hud.teamplay);
     if (product && !strcmp(product->campaign,"rogue") && teamplay &&
         qa_q1_rogue_team_face_active(row->max_clients,teamplay->number) && row->view_entity<=256) {
         const remote_q1_client *viewer_row=row->clients+row->view_entity-1;
@@ -78,7 +78,7 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
         &preferences, error)) return false;
     if (!frame->source_status_native &&
         !frontend_q1_hud_read(row->materials, data, product, row->options.domain.cvars,
-            row->frontend->view_settings,
+            &row->legacy_cvars.hud, row->frontend->view_settings,
             qa_q1_is_qw(row->options.domain.protocol), row->view_motion.seconds, face, &out->q1, error)) return false;
     out->q1.intermission = row->intermission;
     out->q1.level = row->level_name;

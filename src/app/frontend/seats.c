@@ -234,7 +234,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
         .binding = local_q2_binding};
     options.fonts.classic = seat->q2_hud_classic;
-    const qa_cvar_view *use_font = qa_cvars_find(source->cvars, "scr_usekfont");
+    const qa_cvar_view *use_font = source->hud_cvars ?
+        qa_cvars_read(source->cvars, source->hud_cvars->use_font) : NULL;
     options.use_font = source->edition == QA_Q2_RERELEASE && use_font && use_font->integer != 0;
     qa_hud_q2_frame received = {.protocol = protocol, .stats = source->stats,
         .stat_count = QA_Q2_MAX_STATS, .inventory = source->inventory,
@@ -379,7 +380,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
                 frontend_view_q1_face(client.health,client.items,seat->q1_view_motion.seconds,&seat->q1_view_motion),
                 &out->health_icon,error)) return false;
         if (!strcmp(legacy.product->campaign,"rogue")) {
-            const qa_cvar_view *teamplay=qa_cvars_find(legacy.registry,"teamplay");
+            const qa_cvar_view *teamplay=qa_cvars_read(legacy.registry,legacy.legacy->hud.teamplay);
             uint32_t clients,entities;
             if (!qa_application_network_q1_extents(seat->frontend->application,provider,&clients,&entities,error)) return false;
             if (teamplay && qa_q1_rogue_team_face_active(clients,teamplay->number)) {
@@ -394,7 +395,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         }
         if (!source.source_hud && !frame->source_status_native) {
             if (!frontend_equipment_media_q1_hud_read(seat->frontend,provider,&client,legacy.product,
-                legacy.registry,legacy.product->edition==QA_EDITION_QUAKEWORLD,seat->q1_view_motion.seconds,
+                legacy.registry,&legacy.legacy->hud,legacy.product->edition==QA_EDITION_QUAKEWORLD,seat->q1_view_motion.seconds,
                 out->health_icon,&out->q1,error)) return false;
             qa_application_network_q1_world world;
             if (!qa_application_network_q1_world_read(seat->frontend->application,provider,&world,error)) return false;

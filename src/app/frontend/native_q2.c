@@ -6,6 +6,8 @@
 #include "qa/font_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/localization.h"
+#include "qa/hud_controls.h"
+#include "qa/ui_preferences.h"
 #include "qa/binary.h"
 #include <SDL.h>
 #include <math.h>
@@ -34,6 +36,7 @@ struct frontend_native_q2 {
     qa_vfs *mounts;
     const qa_vfs *provider_files; /* Borrowed from the genuine provider launch. */
     qa_cvars *cvars; /* Borrowed through guest shutdown and frontend lease release. */
+    qa_hud_cvar_handles hud_cvars;
     qa_scene_resources *images;
     qa_audio_bank *sounds;
     qa_font_library *fonts;
@@ -115,10 +118,10 @@ static bool catalog_for(frontend_native_q2 *source, qa_localization **out, qa_er
     qa_cvars *cvars = qa_application_cvars(source->application);
     const qa_cvar_view *language = NULL;
     if (source->seat_bound) {
-        char name[64]; snprintf(name, sizeof(name), "ui_seat%u_language", source->seat + 1);
-        language = qa_cvars_find(cvars, name);
+        const qa_ui_preference_handles *preferences = qa_application_ui_preference_handles(source->application);
+        language = qa_cvars_read(cvars, preferences->seats[source->seat][QA_UI_PREF_LANGUAGE]);
     }
-    if (!language) language = qa_cvars_find(source->cvars, "language");
+    if (!language) language = qa_cvars_read(source->cvars, source->hud_cvars.language);
     qa_localization_options options = {.profile = QA_LOCALIZATION_Q2_RERELEASE};
     return qa_localization_acquire(source->catalogs, source->mounts,
         language ? language->value : "english", &options, out, error);
@@ -219,7 +222,7 @@ static bool font_layout(frontend_native_q2 *source, const char *text, int32_t sc
     if (!source_font(source, error)) return false;
     qa_font_selection selection = source->frontend->seats[source->seat].fonts;
     selection.classic = source->classic;
-    const qa_cvar_view *use_font = qa_cvars_find(source->cvars, "scr_usekfont");
+    const qa_cvar_view *use_font = qa_cvars_read(source->cvars, source->hud_cvars.use_font);
     bool selected = !use_font || use_font->integer != 0;
     if (!selected) { selection.primary = NULL; selection.fallbacks = NULL; selection.fallback_count = 0; }
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)},
@@ -436,7 +439,7 @@ static void platform_print_body(void *context, const qa_native_host_print *print
         qa_error error = {0};
         bool ok;
         if (print->kind == QA_NATIVE_HOST_PRINT_CENTER) {
-            const qa_cvar_view *time = qa_cvars_find(source->cvars, "scr_centertime");
+            const qa_cvar_view *time = qa_cvars_read(source->cvars, source->hud_cvars.center_time);
             double seconds = time && isfinite(time->number) ? fmax(0, fmin(time->number, 86400)) : 2.5;
             ok = qa_hud_center_print(frontend->seats[seat].hud, print->text, frontend->time_ns,
                 (uint64_t)(seconds * 1000000000), true, 0, &error);
@@ -639,6 +642,8 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     }
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
     source->cvars = engine->cvars; source->prepared = false;
+    qa_hud_cvars_bind(source->cvars,
+        QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME, &source->hud_cvars);
     engine->context = source; engine->print = platform_print; engine->sound = platform_sound;
     engine->hud_view = platform_hud_view;
     engine->resource_precache = platform_resource_precache;

@@ -93,6 +93,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
     value.time_ns = clock.frame.time_ns; value.server_frame = (int32_t)clock.frame_number;
     value.frame_ns = clock_owner->component.clock.interval_ns;
     value.cvars = application_native_q2_console_registry(clock_owner);
+    value.hud_cvars = application_native_q2_console_hud_controls(clock_owner);
     if (original) {
         struct application_native_q2 *engine = original->state.native.q2_engine;
         qa_q2_player player;

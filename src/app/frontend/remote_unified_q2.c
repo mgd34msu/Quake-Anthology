@@ -1812,7 +1812,7 @@ static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_nat
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
         .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture};
     options.fonts.classic=v->font;
-    const qa_cvar_view *use_font=qa_cvars_find(d->cvars,"scr_usekfont");
+    const qa_cvar_view *use_font=qa_cvars_read(d->cvars,o->replica->legacy_cvars.hud.use_font);
     options.use_font=v->protocol.kind==QA_NET_Q2KEX_2023 && use_font && use_font->integer!=0;
     qa_hud_q2_frame hud={.protocol=v->protocol,.stats=state->stats,.stat_count=state->stat_count,
         .inventory=inventory,.inventory_count=256,.layout=layout,.player_number=player_number,

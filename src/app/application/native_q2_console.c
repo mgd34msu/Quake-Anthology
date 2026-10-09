@@ -100,6 +100,7 @@ struct application_native_q2_console {
     application_provider *provider;
     qa_console *console;
     qa_cvars *cvars;
+    qa_hud_cvar_handles hud_cvars;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
@@ -116,6 +117,9 @@ static bool classic_rogue(const application_provider *provider) {
 qa_cvars *application_native_q2_console_registry(const application_provider *provider) {
     return provider && provider->kind == APPLICATION_PROVIDER_Q2 && provider->native_q2_console ?
         provider->native_q2_console->cvars : NULL;
+}
+const qa_hud_cvar_handles *application_native_q2_console_hud_controls(const application_provider *provider) {
+    return application_native_q2_console_registry(provider) ? &provider->native_q2_console->hud_cvars : NULL;
 }
 bool application_native_q2_console_idle(const application_provider *provider) {
     const struct application_native_q2_console *owner = provider ? provider->native_q2_console : NULL;
@@ -435,6 +439,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
             okay = qa_cvars_register(cvars, "goallimit", "0", 0, provider->owner, NULL, error);
     }
     if (okay) {
+        qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
         qa_cvars_set_server_active(cvars, false);
         okay = changed(provider->native_q2_console, cvars, "password", error) &&
             observe(provider->native_q2_console, error);
@@ -524,6 +529,7 @@ bool application_native_q2_console_restore(application_provider *provider, qa_by
     qa_cvars_restore *ticket = NULL;
     bool okay = qa_cvars_save_prepare(cvars, bytes, &ticket, error) && qa_cvars_save_commit(ticket, error);
     if (!okay) qa_cvars_save_abort(ticket);
+    if (okay) qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
     return okay && observe(provider->native_q2_console, error);
 }
 bool application_native_q2_rotation_changed(void *context, const qa_string_id *maps, size_t count, qa_error *error) {

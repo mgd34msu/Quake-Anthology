@@ -6,6 +6,7 @@
 #include "qa/native_host.h"
 #include "qa/game_q2_wire.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/hud_controls.h"
 
 typedef enum qa_application_native_q2_source_kind {
     QA_APPLICATION_NATIVE_Q2_BUILTIN,
@@ -105,6 +106,7 @@ typedef struct qa_application_native_q2_hud {
     bool deathmatch, cooperative;
     qa_q2_edition edition;
     const qa_cvars *cvars;
+    const qa_hud_cvar_handles *hud_cvars;
     const qa_q2_game *game;
     qa_q2_player_view view;
     const char *statusbar, *layout;

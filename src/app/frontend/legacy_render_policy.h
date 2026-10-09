@@ -3,6 +3,7 @@
 
 #include "qa/frontend.h"
 #include "qa/scene.h"
+#include "qa/hud_controls.h"
 
 float frontend_legacy_lightstyle_sample(qa_game_family, const char *pattern, double seconds);
 qa_vec3 frontend_legacy_entity_angles(qa_scene_family, qa_product_edition,
@@ -24,6 +25,7 @@ typedef struct frontend_legacy_cvar_handles {
     qa_cvar_handle r_dynamic, gl_dynamic, gl_polyblend, gl_cull, gl_clear;
     qa_cvar_handle gl_modulate, gl_monolightmap, gl_saturatelighting, cl_flares;
     qa_cvar_handle cl_predict, r_drawviewmodel, cl_gun, hand;
+    qa_hud_cvar_handles hud;
 } frontend_legacy_cvar_handles;
 
 void frontend_legacy_cvars_bind(const qa_cvars *, frontend_legacy_cvar_handles *);

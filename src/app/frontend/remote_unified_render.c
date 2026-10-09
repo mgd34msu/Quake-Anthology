@@ -288,7 +288,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     frontend_q1_view_motion motion = {0};
     if (!frontend_q1_face_read(materials, frontend_view_q1_face(client.health, client.items, r->seconds, &motion),
             &face, e) || !frontend_q1_hud_read(materials, &client, product, domain->cvars,
-            r->frontend->view_settings,
+            &r->replica->legacy_cvars.hud, r->frontend->view_settings,
             product->edition == QA_EDITION_QUAKEWORLD, r->seconds, face, &r->q1, e)) return false;
     const qa_unified_frame_metadata *metadata = frontend_remote_unified_metadata(r->replica);
     if (metadata && metadata->q1) {

@@ -119,7 +119,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
 {
     row->predicted = false;
     const qa_q2_player *received = player(row);
-    const qa_cvar_view *predict = qa_cvars_find(row->options.domain.cvars, "cl_predict");
+    const qa_cvar_view *predict = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_predict);
     if (!received || !row->media_ready || !row->geometry || !row->options.entity_actor || !row->sent_set ||
         (predict && predict->number == 0) || (received->pmove.flags & 64) ||
         row->last_command < row->acknowledged_command || row->last_command - row->acknowledged_command >= 64) return true;

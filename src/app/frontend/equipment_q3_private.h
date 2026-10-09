@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_EQUIPMENT_Q3_PRIVATE_H
 #define QA_FRONTEND_EQUIPMENT_Q3_PRIVATE_H
 #include "equipment_q3.h"
+#include "qa/hud_controls.h"
 
 typedef struct equipment_q3_content equipment_q3_content;
 struct frontend_equipment_q3_presenter {
@@ -12,6 +13,7 @@ struct frontend_equipment_q3_presenter {
     uint32_t physical_seat;
     int32_t source_time_ms;
     qa_cvars *cvars;
+    qa_hud_cvar_handles hud_cvars;
     size_t users;
 };
 struct equipment_q3_content {

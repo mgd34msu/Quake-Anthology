@@ -584,11 +584,12 @@ static const qa_scene_image *q1_hud_picture_read(void *context, const char *lump
     return frontend_q1_face_read(context, lump, &image, error) ? image : NULL;
 }
 bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata *client,
-    const qa_product *product, const qa_cvars *registry, frontend_view_settings *settings,
+    const qa_product *product, const qa_cvars *registry, const qa_hud_cvar_handles *refs,
+    frontend_view_settings *settings,
     bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
-    const qa_cvar_view *deathmatch = qa_cvars_find(registry, "deathmatch"),
-        *swap = qa_cvars_find(registry, "cl_hudswap");
+    const qa_cvar_view *deathmatch = qa_cvars_read(registry, refs->deathmatch),
+        *swap = qa_cvars_read(registry, refs->swap);
     if (!materials || !client || !product || product->family != QA_GAME_Q1 || !out || !face ||
         !isfinite(seconds))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
@@ -624,11 +625,12 @@ bool frontend_equipment_media_q1_hud_prepare(qa_frontend *f, qa_actor_owner prov
 }
 bool frontend_equipment_media_q1_hud_read(qa_frontend *f, qa_actor_owner provider,
     const qa_q1_clientdata *client, const qa_product *product, const qa_cvars *registry,
+    const qa_hud_cvar_handles *refs,
     bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
     frontend_visual_owner_view media;
     return frontend_visual_media_read(f, provider, QA_GAME_Q1, &media, error) &&
-        frontend_q1_hud_read(media.materials, client, product, registry, f->view_settings,
+        frontend_q1_hud_read(media.materials, client, product, registry, refs, f->view_settings,
             quakeworld, seconds, face, out, error);
 }
 bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provider,
