@@ -82,6 +82,31 @@ Actual writers from 23356edb's parent produced 471 payloads that the repaired re
 
 Exact staged source 01ee20c4 passed full production and ASan builds and both seven core suites. Evidence: `/tmp/qa-the2873-persistence-compat-20261009` and `/tmp/qa-the2873-one-pass-final-20261009`. The transient untagged widened layout was never installed in qa-c and is not guessed by the reader; the inspected owner records use the original compact layout.
 
+## Q1 metadata resolved at load
+
+Q1 contact faces now retain canonical surface flags and authored texture names.
+The contact query reads those records directly; it no longer resolves texinfo or
+texture metadata. BSPX BRUSHLIST decode tables are temporary load records and
+are freed after constructing canonical cells, terminals and model ranges. The
+first authored range, including an empty range, retains its original meaning.
+
+Full production and ASan/UBSan builds and both seven core suites pass. The
+integrated public-query fixture reproduces all 5,334,908 bytes across nine
+datasets in both builds. Each build performs 36,864 serial/concurrent comparisons
+using two scratches on the same const geometry, with unchanged loaded snapshots
+and zero watched query heap calls. Retail Q1/Q2/Q2RR/Q3 maps, opaque Q1 terminals,
+currents and missing Q3 visibility retain their native output.
+
+The contact-specific GCC/Clang sanitizer fixtures preserve 6,187 rows per dataset
+for retail, missing and external textures and BSPX solid/water/opaque cases.
+Texture/texinfo query lookups fall from 12,374 to zero. This is a structural count,
+not a latency claim. Evidence: `qa-the2873-q1-cold-20261009` and
+`qa-the2873-cold-public-20261009/results.json`.
+
+Shared-world mutation and concurrent portal updates are outside the const
+geometry proof. The renderer's separate submission admission-stamp journal
+remains a primitive/allocation bypass and is being migrated to `qa_stamp_set`.
+
 ## Dropped experiment: direct spatial clipping
 
 The callback-free trace and point queries were tried as one spatial walk instead of collecting actor IDs first. Candidate order, tied contacts, exclusions, poses, owner transitions and failed-output behavior matched. Cold queries with more than eight candidates made zero heap calls instead of two. Full production/ASan builds, both core suites, six SDK roles and all 24 gameplay records passed.

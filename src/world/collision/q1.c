@@ -26,9 +26,17 @@ typedef struct q1hull {
     const qa_collision_terminal *terminals;
     int32_t root;
 } q1hull;
-typedef struct q1contactface { qa_bsp_face face; qa_collision_plane plane; size_t next; } q1contactface;
+typedef struct q1contactface {
+    qa_bsp_face face;
+    qa_collision_plane plane;
+    qa_collision_surface surface;
+    size_t next;
+    bool has_surface;
+} q1contactface;
 typedef struct q1model {
-    qa_bsp_model source; int32_t drawing_root,clip_roots[2]; size_t brush_model;
+    qa_bsp_model source; int32_t drawing_root,clip_roots[2];
+    qa_bsp_range brushes;
+    bool authored_brushes;
     q1contactface *contact_faces; size_t *face_buckets; size_t bucket_count;
 } q1model;
 typedef struct q1clip_cache {
@@ -45,7 +53,7 @@ typedef struct q1state {
     int32_t *leaf_references; size_t leaf_count;
     qa_collision_terminal *terminals,*brush_contents; size_t terminal_count;
     q1model *models; size_t model_count;
-    qa_bsp_brush_list brushes;
+    size_t brush_count, brush_plane_count;
     q1cell **brush_cells;
 } q1state;
 typedef struct native_trace {
@@ -417,9 +425,8 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     sweep.shape.radius=fmin(extents.x,fmin(extents.y,extents.z));
     sweep.shape.half_segment=fmax(0,extents.z-sweep.shape.radius);
     q1bounds envelope=sweep_envelope(&sweep,sweep.end);
-    size_t authored=state->models[model].brush_model;
-    if(authored!=SIZE_MAX) {
-        qa_bsp_range range=state->brushes.models[authored].brushes;
+    if(state->models[model].authored_brushes) {
+        qa_bsp_range range=state->models[model].brushes;
         for(size_t i=range.first;i<(size_t)range.first+range.count;i++) {
             if(!blocks(state->brush_contents[i].bits,&query->policy)||state->brush_cells[i]==NULL) continue;
             q1bounds b=state->brush_cells[i]->bounds;
@@ -503,21 +510,10 @@ static bool surface_at_contact(const q1state *state,size_t model,qa_vec3 point,q
             if(positive && negative) break;
         }
         if(face->edges.count<3 || (positive && negative)) continue;
-        qa_bsp_texinfo info;
-        if(!qa_bsp_read_texinfo(&state->bsp,face->texinfo,&info,error)) return false;
-        size_t texture_count;
-        if(!qa_bsp_texture_count(&state->bsp,&texture_count,error)) return false;
-        if(info.texture<0 || (size_t)info.texture>=texture_count) return true;
-        qa_bsp_texture texture;
-        if(!qa_bsp_read_texture(&state->bsp,(size_t)info.texture,&texture,error)) return false;
-        if(texture.storage==QA_BSP_TEXTURE_MISSING) return true;
-        result->surface_flags=texture.name.size>=3 && memcmp(texture.name.data,"sky",3)==0?sky_surface_flags:(qa_collision_bits){0};
-        /* A Quake surface reports the authored texture even when its pixels
-         * are externally supplied. This also retains sky flags for adapters. */
-        result->has_surface=true; result->surface.flags=result->surface_flags;
-        size_t length=texture.name.size<sizeof(result->surface.name)-1?texture.name.size:sizeof(result->surface.name)-1;
-        if(length>0) memcpy(result->surface.name,texture.name.data,length);
-        result->surface.name[length]='\0'; return true;
+        if(!candidate->has_surface) return true;
+        result->surface_flags=candidate->surface.flags;
+        result->has_surface=true; result->surface=candidate->surface;
+        return true;
     }
     return true;
 }
@@ -562,7 +558,6 @@ static bool q1_point_contents(const void *opaque,void *workspace,const qa_point_
 static void q1_destroy(void *opaque) {
     q1state *state=opaque;
     if(state==NULL) return;
-    qa_bsp_brush_list_free(&state->brushes);
     qa_arena_destroy(&state->retained); free(state);
 }
 static void q1_destroy_scratch(void *opaque) {
@@ -576,7 +571,7 @@ static void q1_destroy_scratch(void *opaque) {
 static void *q1_create_scratch(const void *opaque,qa_error *error) {
     const q1state *state=opaque;
     size_t topology=state->drawing_count;
-    size_t additions[]={state->clip_count,state->brushes.brush_count,state->brushes.plane_count,1};
+    size_t additions[]={state->clip_count,state->brush_count,state->brush_plane_count,1};
     for(size_t i=0;i<sizeof(additions)/sizeof(*additions);i++) {
         if(additions[i]>SIZE_MAX-topology) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake collision scratch topology overflow"); return NULL; }
         topology+=additions[i];
@@ -614,6 +609,8 @@ static const qa_collision_ops q1_ops={.destroy=q1_destroy,.trace=q1_trace,.point
 static bool build_contact_faces(q1work *work,q1state *state,q1model *model) {
     size_t count=model->source.faces.count;
     if(count==0) return true;
+    size_t texture_count;
+    if(!qa_bsp_texture_count(&state->bsp,&texture_count,work->error)) return false;
     model->contact_faces=q1_alloc(work,count,sizeof(*model->contact_faces),alignof(q1contactface));
     model->face_buckets=q1_alloc(work,count,sizeof(*model->face_buckets),alignof(size_t));
     if(work->failed) return false;
@@ -627,7 +624,22 @@ static bool build_contact_faces(q1work *work,q1state *state,q1model *model) {
         qa_collision_plane plane=state->planes[face.plane];
         if(face.draw_flags!=0) { plane.normal=qa_vec_scale(plane.normal,-1); plane.distance=-plane.distance; }
         size_t bucket=plane_hash(plane)%count;
-        model->contact_faces[index]=(q1contactface){face,plane,model->face_buckets[bucket]};
+        q1contactface contact={.face=face,.plane=plane,.next=model->face_buckets[bucket]};
+        qa_bsp_texinfo info;
+        if(!qa_bsp_read_texinfo(&state->bsp,face.texinfo,&info,work->error)) return false;
+        if(info.texture>=0 && (size_t)info.texture<texture_count) {
+            qa_bsp_texture texture;
+            if(!qa_bsp_read_texture(&state->bsp,(size_t)info.texture,&texture,work->error)) return false;
+            if(texture.storage!=QA_BSP_TEXTURE_MISSING) {
+                contact.has_surface=true;
+                contact.surface.flags=texture.name.size>=3 && memcmp(texture.name.data,"sky",3)==0
+                    ?sky_surface_flags:(qa_collision_bits){0};
+                size_t length=texture.name.size<sizeof(contact.surface.name)-1
+                    ?texture.name.size:sizeof(contact.surface.name)-1;
+                if(length>0) memcpy(contact.surface.name,texture.name.data,length);
+            }
+        }
+        model->contact_faces[index]=contact;
         model->face_buckets[bucket]=index;
     }
     return true;
@@ -635,32 +647,40 @@ static bool build_contact_faces(q1work *work,q1state *state,q1model *model) {
 static bool load_brushes(q1work *work,q1state *state) {
     qa_bsp_extension extension;
     if(!qa_bsp_find_extension(&state->bsp,"BRUSHLIST",&extension,NULL)) return true;
-    qa_error local={0};
-    if(!qa_bsp_read_brush_list(&state->bsp,&state->brushes,&local)) {
+    qa_error local={0}; qa_bsp_brush_list brushes={0};
+    if(!qa_bsp_read_brush_list(&state->bsp,&brushes,&local)) {
         if(local.code==QA_ERROR_UNSUPPORTED) return true;
         if(work->error!=NULL) *work->error=local;
         return false;
     }
-    state->brush_cells=q1_alloc(work,state->brushes.brush_count,sizeof(*state->brush_cells),alignof(q1cell *));
-    state->brush_contents=q1_alloc(work,state->brushes.brush_count,sizeof(*state->brush_contents),alignof(qa_collision_terminal));
-    if(work->failed) return false;
-    for(size_t i=0;i<state->brushes.model_count;i++) {
-        qa_bsp_brush_model model=state->brushes.models[i];
-        if(model.model>=state->model_count) { qa_error_set(work->error,QA_ERROR_FORMAT,0,"Invalid Quake BSPX brush model"); return false; }
-        if(state->models[model.model].brush_model==SIZE_MAX) state->models[model.model].brush_model=i;
+    bool ok=false;
+    state->brush_count=brushes.brush_count; state->brush_plane_count=brushes.plane_count;
+    state->brush_cells=q1_alloc(work,brushes.brush_count,sizeof(*state->brush_cells),alignof(q1cell *));
+    state->brush_contents=q1_alloc(work,brushes.brush_count,sizeof(*state->brush_contents),alignof(qa_collision_terminal));
+    if(work->failed) goto done;
+    for(size_t i=0;i<brushes.model_count;i++) {
+        qa_bsp_brush_model model=brushes.models[i];
+        if(model.model>=state->model_count) { qa_error_set(work->error,QA_ERROR_FORMAT,0,"Invalid Quake BSPX brush model"); goto done; }
+        if(!state->models[model.model].authored_brushes) {
+            state->models[model.model].authored_brushes=true;
+            state->models[model.model].brushes=model.brushes;
+        }
     }
-    for(size_t i=0;i<state->brushes.brush_count;i++) {
-        qa_bsp_extra_brush brush=state->brushes.brushes[i];
+    for(size_t i=0;i<brushes.brush_count;i++) {
+        qa_bsp_extra_brush brush=brushes.brushes[i];
         state->brush_contents[i]=qa_collision_q1_terminal(brush.contents);
         q1cell *cell=q1_box(work,qbounds(qa_bsp_to_bounds(brush.bounds)));
         for(size_t j=0;j<brush.planes.count && cell!=NULL;j++) {
-            qa_bsp_plane p=state->brushes.planes[(size_t)brush.planes.first+j];
+            qa_bsp_plane p=brushes.planes[(size_t)brush.planes.first+j];
             cell=q1_clip(work,cell,derived_plane(qa_collision_bsp_plane(p)));
         }
-        if(work->failed) return false;
+        if(work->failed) goto done;
         state->brush_cells[i]=cell;
     }
-    return true;
+    ok=true;
+done:
+    qa_bsp_brush_list_free(&brushes);
+    return ok;
 }
 static int32_t terminal_reference(q1state *state,int32_t token) {
     if(token>=-19 && token<=-1) return token;
@@ -720,8 +740,9 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
     }
     for(size_t i=0;i<state->model_count;i++) {
         q1model *model=&state->models[i];
+        *model=(q1model){0};
         if(!qa_bsp_read_model(bsp,i,&model->source,error)) goto fail;
-        model->brush_model=SIZE_MAX; model->drawing_root=model->source.headnodes[0];
+        model->drawing_root=model->source.headnodes[0];
         if(model->drawing_root<0) {
             size_t leaf=(size_t)(-1-(int64_t)model->drawing_root);
             if(leaf>=state->leaf_count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid Quake drawing hull root leaf"); goto fail; }
