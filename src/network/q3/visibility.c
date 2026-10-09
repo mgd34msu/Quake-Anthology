@@ -4,58 +4,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool qa_q3_leaf_visibility(qa_collision_geometry *geometry, const qa_world_leaf_membership *membership,
-    qa_q3_visibility_entity *out, int32_t clusters[16], qa_error *error)
+bool qa_q3_leaf_visibility(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,
+    qa_trace_scratch *scratch,qa_q3_visibility_entity *out,int32_t clusters[16],
+    bool *has_leaves,qa_error *error)
 {
-    if (!geometry || !membership || !out || !clusters || (membership->count && !membership->leaves)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 link visibility requires its actual leaf membership");
-        return false;
+    qa_collision_geometry *geometry=qa_world_geometry(world);
+    if(!geometry || !out || !clusters) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 link visibility requires its actual leaf membership"); return false;
     }
-    bool native = qa_collision_geometry_family(geometry) == QA_COLLISION_Q3;
-    size_t count = native && membership->count > 128 ? 128 : membership->count;
-    int32_t area = -1, area2 = -1, maximum = -1;
-    size_t total = 0;
-    for (size_t i = 0; i < count; ++i) {
-        const qa_collision_leaf *leaf = &membership->leaves[i];
-        if (leaf->area < -1 || leaf->area > INT32_MAX || leaf->cluster < -1 || leaf->cluster > INT32_MAX) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 link visibility exceeds source indices");
-            return false;
-        }
-        int32_t next = (int32_t)leaf->area;
-        if (next != -1) {
-            if (area != -1 && area != next) area2 = next;
-            else area = next;
-        }
-        if (leaf->cluster < 0) continue;
-        int32_t cluster = (int32_t)leaf->cluster;
-        if (cluster > maximum) maximum = cluster;
-        if (native) {
-            if (total < 16) clusters[total] = cluster;
-        } else {
-            size_t at = total < 16 ? total : 16;
-            while (at && clusters[at - 1] > cluster) {
-                if (at < 16) clusters[at] = clusters[at - 1];
-                --at;
-            }
-            if (at < 16) clusters[at] = cluster;
-        }
-        ++total;
+    const qa_world_leaf_visibility_result *r;
+    if(!qa_world_leaf_visibility(world,actor,bounds,QA_WORLD_LEAVES_BOX,scratch,&r,error)) return false;
+    bool native=qa_collision_geometry_family(geometry)==QA_COLLISION_Q3;
+    if(native?r->prefix_invalid:r->all_invalid) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 link visibility exceeds source indices"); return false;
     }
-    int32_t last_cluster = 0;
-    if (total >= 16) {
-        if (native) {
-            qa_collision_leaf last;
-            if (!qa_collision_leaf_at(geometry, membership->last_leaf, &last, error)) return false;
-            if (last.cluster < -1 || last.cluster > INT32_MAX) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 last linked cluster exceeds source range");
-                return false;
-            }
-            last_cluster = (int32_t)last.cluster;
-        } else last_cluster = maximum;
+    const qa_leaf_area_pair *areas=native?&r->native_areas:&r->foreign_areas;
+    size_t count=native?r->ordered_count:r->sorted_count;
+    if(native && count>=16 && r->last_invalid) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 last linked cluster exceeds source range"); return false;
     }
-    out->area = area; out->area2 = area2; out->last_cluster = last_cluster;
-    out->cluster_count = total < 16 ? total : 16; out->clusters = clusters;
-    return true;
+    memcpy(clusters,native?r->ordered:r->sorted,count*sizeof(*clusters));
+    out->area=areas->area;out->area2=areas->area2;out->last_cluster=count>=16?(native?r->last_cluster:r->maximum_cluster):0;
+    out->cluster_count=count;out->clusters=clusters;*has_leaves=r->count!=0;return true;
 }
 
 typedef struct visibility_search {

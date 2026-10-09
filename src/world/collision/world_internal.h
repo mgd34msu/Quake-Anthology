@@ -35,6 +35,13 @@ typedef struct qa_world_trace_geometry {
     qa_collision_geometry *geometry;
     qa_trace_scratch *scratch;
 } qa_world_trace_geometry;
+typedef struct qa_world_leaf_cache {
+    qa_world_leaf_visibility_result leaf_visibility;
+    qa_bounds leaf_box_bounds, leaf_q1_bounds;
+    qa_collision_geometry *leaf_geometry;
+    uint64_t leaf_storage;
+    bool leaf_box_ready, leaf_q1_ready;
+} qa_world_leaf_cache;
 struct qa_world {
     qa_actor_registry *actors;
     qa_collision_geometry *geometry;
@@ -47,6 +54,10 @@ struct qa_world {
     uint32_t visit_depth, callback_depth;
     uint64_t attachment_order, body_serial;
     qa_world_geometry_admission *geometry_admission;
+    qa_arena visibility_storage;
+    qa_world_leaf_cache *leaf_cache;
+    uint8_t *visibility_bits;
+    size_t cluster_bytes, area_bytes, visibility_stride;
     qa_arena snapshot_storage;
     qa_pool snapshot_pool;
 };

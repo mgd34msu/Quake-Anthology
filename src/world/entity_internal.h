@@ -24,15 +24,8 @@ typedef struct qa_world_body {
     qa_body_state linked_state;
     qa_actor_collision linked_collision;
     uint64_t link_count;
-    qa_collision_leaf *leaves;
-    size_t leaf_count, leaf_capacity;
-    qa_bounds leaf_bounds;
-    qa_collision_geometry *leaf_geometry;
-    uint64_t leaf_storage;
-    int32_t leaf_topnode;
-    uint32_t leaf_last;
-    qa_world_leaf_policy leaf_policy;
-    bool leaves_ready;
+
+
 } qa_world_body;
 
 void qa_world_reset_bodies(qa_world *);

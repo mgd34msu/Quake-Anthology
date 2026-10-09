@@ -127,18 +127,26 @@ typedef struct qa_world_hooks {
 } qa_world_hooks;
 typedef struct qa_body_link_state { uint64_t link_count; bool linked; qa_body_state state; qa_bounds absolute_bounds; } qa_body_link_state;
 typedef enum qa_world_leaf_policy { QA_WORLD_LEAVES_BOX, QA_WORLD_LEAVES_Q1_TOUCHED } qa_world_leaf_policy;
-typedef struct qa_world_leaf_membership {
-    const qa_collision_leaf *leaves;
+typedef struct qa_leaf_area_pair { int32_t area, area2; uint16_t count; } qa_leaf_area_pair;
+typedef struct qa_world_leaf_visibility_result {
     size_t count;
-    int32_t topnode;
+    int32_t topnode, last_cluster, last_emitted_cluster, maximum_cluster;
     uint32_t last_leaf;
-} qa_world_leaf_membership;
-/* Borrowed until this body's next membership preparation, replacement or
- * release. NULL bounds reads its published link; explicit bounds prepare the
- * same derived owner before Source link publication. Q1_TOUCHED preserves
- * original Q1 visibility classification, solid exclusion and first 16 rows. */
-bool qa_world_link_membership(qa_world *, qa_actor_id, const qa_bounds *,
-    qa_world_leaf_policy, qa_world_leaf_membership *, qa_error *);
+    qa_leaf_area_pair q2_areas, native_areas, foreign_areas, unique_areas, portal_areas;
+    int32_t ordered[16], sorted[16], distinct[128];
+    uint16_t ordered_count, sorted_count, distinct_count;
+    bool prefix_invalid, all_invalid, last_invalid, last_emitted_invalid, portal_invalid, portal_third;
+    uint32_t q1_leaves[16];
+    uint16_t q1_count;
+    qa_bytes cluster_bits, area_bits;
+    int32_t first_cluster, invalid_cluster, invalid_area;
+    bool has_invalid_cluster, has_invalid_area;
+} qa_world_leaf_visibility_result;
+/* Derived geometry only, borrowed until this body's next changed query/release.
+ * BOX aggregates every occurrence, retaining exact bounded source projections.
+ * Q1_TOUCHED independently retains the original non-solid first16 leaf IDs. */
+bool qa_world_leaf_visibility(qa_world *, qa_actor_id, const qa_bounds *,
+    qa_world_leaf_policy, qa_trace_scratch *, const qa_world_leaf_visibility_result **, qa_error *);
 bool qa_world_q1_visible(qa_world *, qa_actor_id, const qa_bounds *, qa_bytes pvs,
     bool *, qa_error *);
 

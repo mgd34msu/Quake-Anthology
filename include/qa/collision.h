@@ -122,6 +122,10 @@ bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_collisio
 bool qa_collision_leaf_at(const qa_collision_geometry *, uint32_t, qa_collision_leaf *, qa_error *);
 bool qa_collision_box_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, uint32_t *leaves, size_t capacity, qa_leaf_list *, qa_error *);
 bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, int32_t to, bool phs, bool *, qa_error *);
+/* Same visibility rules/rows as scalar targets; bits name nonnegative clusters. */
+bool qa_collision_clusters_visible(const qa_collision_geometry *, qa_trace_scratch *,
+    const int32_t *from, size_t from_count, qa_bytes targets, bool phs, bool *, qa_error *);
+uint32_t qa_collision_cluster_count(const qa_collision_geometry *);
 /* Original Q1 fat-PVS unions source leaf rows within signed plane distance 8.
  * Query the exact output extent first; no other-family visibility is implied.
  * The resulting caller-owned row can serve every entity in one source frame. */

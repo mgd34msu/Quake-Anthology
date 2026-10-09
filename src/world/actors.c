@@ -49,8 +49,7 @@ static void free_storage(qa_actor_registry *registry)
         for (uint32_t i = 0; i < registry->page_count; ++i) {
             qa_actor_page *page = registry->pages[i];
             if (page != NULL)
-                for (size_t slot = 0; slot < QA_ACTOR_PAGE_SIZE; ++slot) free(page->bodies[slot].leaves);
-            free(page);
+                free(page);
         }
     }
     free(registry->pages);

@@ -197,33 +197,21 @@ static bool source_visibility(qa_unified_q3_source *out, application_unified_q3_
         *entity = (qa_q3_visibility_entity){.state=states+i,.linked=raw.linked,.flags=raw.server_flags,
             .single_client=raw.single_client,.area=-1,.area2=-1,.clusters=clusters[i]};
         if (!raw.linked) continue;
-        qa_world_leaf_membership membership;
-        ok = qa_world_link_membership(v->source.world,binding.actor,NULL,
-            QA_WORLD_LEAVES_BOX,&membership,e) && binding_current(v,r,i,&binding,e);
-        size_t count = ok && membership.count < 128 ? membership.count : 128;
-        for (size_t k = 0; ok && k < count; ++k) {
-            qa_collision_leaf leaf = membership.leaves[k];
-            if (leaf.area < -1 || leaf.area > INT32_MAX || leaf.cluster < -1 || leaf.cluster > INT32_MAX)
-                ok = application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 linked leaf exceeds its Source index");
-            if (!ok) break;
-            int32_t area = (int32_t)leaf.area;
-            if (area != -1) {
-                if (entity->area != -1 && entity->area != area) entity->area2 = area;
-                else entity->area = area;
+        const qa_world_leaf_visibility_result *rleaf;
+        ok=qa_world_leaf_visibility(v->source.world,binding.actor,NULL,QA_WORLD_LEAVES_BOX,
+            qa_world_trace_scratch(v->source.world,geometry),&rleaf,e);
+        if(ok && rleaf->prefix_invalid)
+            ok=application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 linked leaf exceeds its Source index");
+        if(ok) {
+            entity->area=rleaf->native_areas.area;entity->area2=rleaf->native_areas.area2;
+            entity->cluster_count=rleaf->ordered_count;
+            memcpy(clusters[i],rleaf->ordered,entity->cluster_count*sizeof(*clusters[i]));
+            if(entity->cluster_count==16) {
+                if(rleaf->last_emitted_invalid) ok=application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 last leaf exceeds its Source cluster");
+                else entity->last_cluster=rleaf->last_emitted_cluster;
             }
         }
-        for (size_t k = 0; ok && k < count; ++k) {
-            qa_collision_leaf leaf = membership.leaves[k];
-            if (leaf.cluster == -1) continue;
-            clusters[i][entity->cluster_count++] = (int32_t)leaf.cluster;
-            if (entity->cluster_count == 16) {
-                leaf = membership.leaves[membership.count-1];
-                if (leaf.cluster < -1 || leaf.cluster > INT32_MAX)
-                    ok = application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 last leaf exceeds its Source cluster");
-                if (ok) entity->last_cluster = (int32_t)leaf.cluster;
-                break;
-            }
-        }
+        if(ok) ok=binding_current(v,r,i,&binding,e);
     }
     source_visibility_world world = {.geometry=geometry};
     qa_q3_visibility_world queries = {.context=&world,.point=visibility_point,.area_bits=visibility_bits,

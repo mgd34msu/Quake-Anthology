@@ -692,14 +692,11 @@ static bool link_membership(const qa_q3_game *game, qa_actor_id actor, const qa_
                              qa_q3_wire_visibility *out, bool *has_leaves, qa_error *error) {
     qa_collision_geometry *geometry = qa_world_geometry(game->options.services.world);
     if (!geometry) return q3_fail(error, "Q3 linked entity lacks actual collision geometry");
-    qa_world_leaf_membership membership;
-    if (!qa_world_link_membership(game->options.services.world, actor, bounds,
-        QA_WORLD_LEAVES_BOX, &membership, error)) return false;
-    qa_q3_visibility_entity visibility = {0};
-    if (!qa_q3_leaf_visibility(geometry, &membership, &visibility, out->clusters, error)) return false;
-    *has_leaves = membership.count != 0;
-    out->area = visibility.area; out->area2 = visibility.area2;
-    out->last_cluster = visibility.last_cluster; out->cluster_count = visibility.cluster_count;
+    qa_q3_visibility_entity visibility={0};
+    if(!qa_q3_leaf_visibility(game->options.services.world,actor,bounds,
+        qa_world_trace_scratch(game->options.services.world,geometry),&visibility,out->clusters,has_leaves,error)) return false;
+    out->area=visibility.area;out->area2=visibility.area2;
+    out->last_cluster=visibility.last_cluster;out->cluster_count=visibility.cluster_count;
     return true;
 }
 
@@ -884,32 +881,16 @@ bool qa_q3_wire_native_visibility_read(const qa_q3_game *game, uint32_t slot,
         if (!geometry || !qa_world_linked(world, actor, &linked) ||
             linked.link_count != state.link_count)
             ok = q3_fail(error, "native Q3 visibility lost its current published body");
-        qa_world_leaf_membership membership;
-        if (ok) ok = qa_world_link_membership(world, actor, NULL,
-            QA_WORLD_LEAVES_BOX, &membership, error);
-        int32_t areas[2];
-        size_t area_count = 0;
-        size_t count = ok && membership.count > 128 ? 128 : ok ? membership.count : 0;
-        for (size_t i = 0; ok && i < count; ++i) {
-            const qa_collision_leaf *leaf = &membership.leaves[i];
-            if (leaf->area < -1 || leaf->area > INT32_MAX || leaf->cluster < -1 || leaf->cluster > INT32_MAX) {
-                ok = q3_fail(error, "native Q3 visibility exceeds its source index domain");
-                break;
-            }
-            int32_t area = (int32_t)leaf->area;
-            bool area_seen = false;
-            for (size_t j = 0; j < area_count; ++j) area_seen |= areas[j] == area;
-            if (!area_seen && area_count < 2) areas[area_count++] = area;
-            if (leaf->cluster < 0) continue;
-            int32_t cluster = (int32_t)leaf->cluster;
-            bool cluster_seen = false;
-            for (size_t j = 0; j < value.cluster_count; ++j) cluster_seen |= value.clusters[j] == cluster;
-            if (!cluster_seen) value.clusters[value.cluster_count++] = cluster;
-        }
-        if (ok) {
-            value.linked = true;
-            if (area_count) value.area = areas[0];
-            if (area_count > 1) value.area2 = areas[1];
+        const qa_world_leaf_visibility_result *r;
+        if(ok) ok=qa_world_leaf_visibility(world,actor,NULL,QA_WORLD_LEAVES_BOX,
+            qa_world_trace_scratch(world,geometry),&r,error);
+        if(ok && r->prefix_invalid) ok=q3_fail(error,"native Q3 visibility exceeds its source index domain");
+        if(ok) {
+            value.linked=true;
+            if(r->unique_areas.count) value.area=r->unique_areas.area;
+            if(r->unique_areas.count>1) value.area2=r->unique_areas.area2;
+            value.cluster_count=r->distinct_count;
+            memcpy(value.clusters,r->distinct,value.cluster_count*sizeof(*value.clusters));
         }
     }
     qa_body_link_state final;

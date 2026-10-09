@@ -674,35 +674,15 @@ static bool source_link_metadata(qa_native_host *host, qa_actor_id actor, qa_bou
                                  qa_native_host_link_metadata *metadata,
                                  qa_error *error)
 {
-    qa_world_leaf_membership membership;
-    if (!qa_world_link_membership(host->world.world, actor, &bounds,
-        QA_WORLD_LEAVES_BOX, &membership, error))
-        return false;
-    metadata->headnode = membership.topnode;
-    metadata->cluster_count = membership.count >= 128 ? -1 : 0;
-    size_t count = membership.count < 128 ? membership.count : 128;
-    for (size_t index = 0; index < count; ++index) {
-        qa_collision_leaf leaf = membership.leaves[index];
-        if (leaf.area != 0) {
-            if (metadata->area != 0 && leaf.area != metadata->area)
-                metadata->secondary_area = (int32_t)leaf.area;
-            else
-                metadata->area = (int32_t)leaf.area;
-        }
-        if (metadata->cluster_count < 0 || leaf.cluster < 0)
-            continue;
-        bool duplicate = false;
-        for (int32_t cluster = 0; cluster < metadata->cluster_count; ++cluster)
-            if (metadata->clusters[cluster] == (int32_t)leaf.cluster) {
-                duplicate = true;
-                break;
-            }
-        if (!duplicate) {
-            if (metadata->cluster_count == 16)
-                metadata->cluster_count = -1;
-            else
-                metadata->clusters[metadata->cluster_count++] = (int32_t)leaf.cluster;
-        }
+    const qa_world_leaf_visibility_result *r;
+    if(!qa_world_leaf_visibility(host->world.world,actor,&bounds,QA_WORLD_LEAVES_BOX,
+        qa_world_trace_scratch(host->world.world,qa_world_geometry(host->world.world)),&r,error)) return false;
+    metadata->headnode=r->topnode;
+    metadata->area=r->q2_areas.area; metadata->secondary_area=r->q2_areas.area2;
+    metadata->cluster_count=r->count>=128?-1:r->distinct_count>16?-1:(int32_t)r->distinct_count;
+    if(r->count<128) {
+        size_t count=r->distinct_count<16?r->distinct_count:16;
+        memcpy(metadata->clusters,r->distinct,count*sizeof(*metadata->clusters));
     }
     return true;
 }

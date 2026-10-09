@@ -2688,32 +2688,14 @@ static bool q3_area_portal(application_provider *provider,
     if (!qa_world_linked(provider->application->world, actor, &linked))
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "Q3 area portal actor is not linked");
-    qa_world_leaf_membership membership;
-    if (!qa_world_link_membership(provider->application->world, actor, &linked.absolute_bounds,
-        QA_WORLD_LEAVES_BOX, &membership, error)) return false;
-    int32_t first = -1, second = -1;
-    bool ok = true;
-    for (size_t index = 0; index < membership.count; ++index) {
-        qa_collision_leaf leaf = membership.leaves[index];
-        if (leaf.area > INT32_MAX) {
-            ok = application_fail(error, QA_ERROR_FORMAT,
-                                  "Q3 area portal area exceeds source range");
-            break;
-        }
-        if (leaf.area < 0 || leaf.area == first || leaf.area == second)
-            continue;
-        if (first < 0)
-            first = (int32_t)leaf.area;
-        else if (second < 0)
-            second = (int32_t)leaf.area;
-        else {
-            ok = application_fail(error, QA_ERROR_FORMAT,
-                                  "Q3 area portal touches more than two areas");
-            break;
-        }
-    }
-    if (!ok || first < 0 || second < 0)
-        return ok;
+    const qa_world_leaf_visibility_result *r;
+    qa_world *world=provider->application->world;
+    if(!qa_world_leaf_visibility(world,actor,&linked.absolute_bounds,QA_WORLD_LEAVES_BOX,
+        qa_world_trace_scratch(world,qa_world_geometry(world)),&r,error)) return false;
+    if(r->portal_invalid) return application_fail(error,QA_ERROR_FORMAT,"Q3 area portal area exceeds source range");
+    if(r->portal_third) return application_fail(error,QA_ERROR_FORMAT,"Q3 area portal touches more than two areas");
+    int32_t first=r->portal_areas.area,second=r->portal_areas.area2;
+    if(first<0 || second<0) return true;
     return application_portal_q3(provider, (uint32_t)first,
                                  (uint32_t)second, open, error);
 }

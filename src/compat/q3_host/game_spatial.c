@@ -169,15 +169,14 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
     bounds = shared.absolute_bounds;
     qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
-    qa_world_leaf_membership membership;
-    if (!qa_world_link_membership(host->options.world, actor, &bounds,
-        QA_WORLD_LEAVES_BOX, &membership, error)) return q3_game_end(&call, false);
-    qa_q3_visibility_entity visibility = {0};
-    if (!qa_q3_leaf_visibility(geometry, &membership, &visibility, slot->clusters, error))
-        return q3_game_end(&call, false);
-    slot->has_visibility = true; slot->area = visibility.area; slot->area2 = visibility.area2;
-    slot->last_cluster = visibility.last_cluster; slot->cluster_count = (uint32_t)visibility.cluster_count;
-    if (!membership.count) return q3_game_end(&call, true);
+    bool has_leaves;
+    qa_q3_visibility_entity visibility={0};
+    if(!qa_q3_leaf_visibility(host->options.world,actor,&bounds,
+        qa_world_trace_scratch(host->options.world,geometry),&visibility,slot->clusters,&has_leaves,error))
+        return q3_game_end(&call,false);
+    slot->has_visibility=true;slot->area=visibility.area;slot->area2=visibility.area2;
+    slot->last_cluster=visibility.last_cluster;slot->cluster_count=(uint32_t)visibility.cluster_count;
+    if(!has_leaves) return q3_game_end(&call,true);
     if ((!slot->borrowed && !qa_world_link_bounds(host->options.world, actor, &bounds, error)) ||
         !same_actor(&call, number, actor, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);

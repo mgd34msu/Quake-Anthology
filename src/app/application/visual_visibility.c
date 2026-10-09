@@ -16,6 +16,39 @@ static bool cluster_visible(qa_collision_geometry *geometry, const application_q
     return true;
 }
 
+static bool membership_area_visible(qa_collision_geometry *geometry,int32_t from,
+    const qa_world_leaf_visibility_result *r,bool *out,qa_error *error)
+{
+    *out=false;
+    if(r->has_invalid_area) {
+        bool seen;
+        if(!qa_collision_areas_connected(geometry,from,r->invalid_area,&seen,error)) return false;
+        *out|=seen;
+    }
+    for(size_t byte=0;byte<r->area_bits.size;++byte) {
+        uint8_t bits=r->area_bits.data[byte];
+        for(unsigned bit=0;bits;++bit,bits>>=1) if(bits&1u) {
+            bool seen;
+            if(!qa_collision_areas_connected(geometry,from,(int32_t)(byte*8u+bit),&seen,error)) return false;
+            *out|=seen;
+        }
+    }
+    return true;
+}
+static bool membership_cluster_visible(qa_collision_geometry *geometry,qa_trace_scratch *scratch,
+    const application_q2_visibility_recipient *recipient,const qa_world_leaf_visibility_result *r,
+    bool phs,bool *out,qa_error *error)
+{
+    *out=false;
+    if(r->has_invalid_cluster) {
+        if(!cluster_visible(geometry,recipient,r->invalid_cluster,phs,out,error)) return false;
+    }
+    bool seen;
+    if(!qa_collision_clusters_visible(geometry,scratch,recipient->clusters,recipient->cluster_count,
+        r->cluster_bits,phs,&seen,error)) return false;
+    *out|=seen;
+    return true;
+}
 static bool headnode_visible(qa_collision_geometry *geometry, const application_q2_visibility_recipient *recipient,
     int32_t headnode, bool phs, bool *out, qa_error *error)
 {
@@ -90,7 +123,7 @@ bool application_q2_visibility_test(qa_application *app, struct application_nati
     bool beam = (state->renderfx & 128) != 0, shadow = rr && (state->renderfx & 16384) != 0;
     bool phs = beam || (rr && (shadow || state->sound));
     bool area = false, visible = false;
-    qa_world_leaf_membership membership = {0};
+    const qa_world_leaf_visibility_result *membership=NULL;
     if (sdk && !rr) {
         if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area, original->areas[0], &area, error)) return false;
         if (!area && original->areas[1] &&
@@ -103,22 +136,13 @@ bool application_q2_visibility_test(qa_application *app, struct application_nati
         } else for (int32_t i = 0; !visible && i < original->cluster_count; ++i)
             if (!cluster_visible(geometry, recipient, original->clusters[i], false, &visible, error)) return false;
     } else {
-        if (!qa_world_link_membership(app->world, entity->actor, &bounds,
-                QA_WORLD_LEAVES_BOX, &membership, error)) return false;
-        for (size_t i = 0; i < membership.count; ++i) {
-            const qa_collision_leaf *leaf = &membership.leaves[i];
-            bool connected, seen;
-            if (!qa_collision_areas_connected(geometry, (int32_t)recipient->leaf.area,
-                (int32_t)leaf->area, &connected, error)) return false;
-            area |= connected;
-            if (builtin && beam && !rr) {
-                seen = false;
-                if (!i && !qa_collision_cluster_visible(geometry,
-                    (int32_t)recipient->leaf.cluster, (int32_t)leaf->cluster,
-                    true, &seen, error)) return false;
-            } else if (!cluster_visible(geometry, recipient, (int32_t)leaf->cluster, phs, &seen, error)) return false;
-            visible |= seen;
-        }
+        if(!qa_world_leaf_visibility(app->world,entity->actor,&bounds,QA_WORLD_LEAVES_BOX,
+            qa_world_trace_scratch(app->world,geometry),&membership,error)) return false;
+        if(!membership_area_visible(geometry,(int32_t)recipient->leaf.area,membership,&area,error)) return false;
+        if(builtin && beam && !rr) {
+            if(membership->count && !qa_collision_cluster_visible(geometry,(int32_t)recipient->leaf.cluster,
+                membership->first_cluster,true,&visible,error)) return false;
+        } else if(!membership_cluster_visible(geometry,qa_world_trace_scratch(app->world,geometry),recipient,membership,phs,&visible,error)) return false;
         if (!area) return true;
     }
     if (!visible) return true;
@@ -131,9 +155,7 @@ bool application_q2_visibility_test(qa_application *app, struct application_nati
         if (!state->modelindex) return true;
         if (!beam) {
             visible = false;
-            for (size_t i = 0; !visible && i < membership.count; ++i)
-                if (!cluster_visible(geometry, recipient, (int32_t)membership.leaves[i].cluster,
-                    false, &visible, error)) return false;
+            if(!membership_cluster_visible(geometry,qa_world_trace_scratch(app->world,geometry),recipient,membership,false,&visible,error)) return false;
         }
         *out = beam || visible; return true;
     }

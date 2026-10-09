@@ -12,6 +12,8 @@ struct qa_trace_scratch {
     void *kernel;
     int32_t *nodes;
     qa_stamp_set leaves;
+    uint8_t *visibility_pending;
+    size_t visibility_capacity;
 };
 
 struct qa_collision_geometry {
@@ -72,6 +74,9 @@ bool qa_trace_scratch_create(const qa_collision_geometry *geometry,
     if (!scratch) return false;
     scratch->geometry = geometry;
     scratch->ops = geometry->kernel.ops;
+    scratch->visibility_capacity=((size_t)geometry->cluster_count+7u)/8u;
+    scratch->visibility_pending=geometry_array(scratch->visibility_capacity,1,error);
+    if(scratch->visibility_capacity && !scratch->visibility_pending) goto failed;
     scratch->nodes = geometry_array(geometry->node_count + 1, sizeof(*scratch->nodes), error);
     if (!scratch->nodes) goto failed;
     size_t leaves = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count : 0;
@@ -91,6 +96,7 @@ void qa_trace_scratch_destroy(qa_trace_scratch *scratch)
 {
     if (!scratch) return;
     if (scratch->kernel) scratch->ops->destroy_scratch(scratch->kernel);
+    free(scratch->visibility_pending);
     free(scratch->nodes);
     free(scratch->leaves.marks);
     free(scratch);
@@ -676,41 +682,72 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_trace_scr
     return true;
 }
 
-bool qa_collision_q1_membership_visible(qa_bytes pvs, const qa_collision_leaf *leaves, size_t count)
-{
-    for (size_t i = 0; i < count; ++i)
-        if (leaves[i].leaf && bit_test(pvs, leaves[i].leaf - 1)) return true;
-    return false;
-}
 
-bool qa_collision_cluster_visible(const qa_collision_geometry *geometry, int32_t from, int32_t to,
-                                  bool phs, bool *out, qa_error *error)
+typedef enum visibility_answer { VISIBILITY_NONE, VISIBILITY_ALL, VISIBILITY_ROW } visibility_answer;
+static bool visibility_target_row(const qa_collision_geometry *geometry,int32_t from,int32_t to,
+    bool phs,qa_bytes *row,visibility_answer *answer,qa_error *error)
 {
-    if (geometry == NULL || out == NULL) return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid visibility query");
-    if (to < 0) { *out = false; return true; }
-    qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
+    *answer=VISIBILITY_NONE;
+    if(to<0) return true;
+    qa_bytes vis=geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
     size_t index;
-    if (geometry->family == QA_COLLISION_Q1) {
-        if (from < 0) { *out = true; return true; }
-        index = (size_t)(uint32_t)from + 1u;
-        if (index >= geometry->leaf_count) return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid Q1 visibility leaf");
-    } else if (geometry->family == QA_COLLISION_Q2) {
-        if (vis.size == 0) { *out = true; return true; }
-        if (from < 0 || (uint32_t)from >= geometry->cluster_count || (uint32_t)to >= geometry->cluster_count) {
-            *out = false; return true;
-        }
-        index = (size_t)(uint32_t)from;
+    if(geometry->family==QA_COLLISION_Q1) {
+        if(from<0) { *answer=VISIBILITY_ALL; return true; }
+        index=(size_t)(uint32_t)from+1u;
+        if(index>=geometry->leaf_count) return geometry_fail(error,QA_ERROR_ARGUMENT,"Invalid Q1 visibility leaf");
+    } else if(geometry->family==QA_COLLISION_Q2) {
+        if(vis.size==0) { *answer=VISIBILITY_ALL; return true; }
+        if(from<0 || (uint32_t)from>=geometry->cluster_count || (uint32_t)to>=geometry->cluster_count) return true;
+        index=(size_t)(uint32_t)from;
     } else {
-        if ((uint32_t)to >= geometry->cluster_count) { *out = false; return true; }
-        if (vis.size == 0) { *out = true; return true; }
-        /* CM_ClusterPVS returns the allocation start for invalid clusters. */
-        index = from < 0 || (uint32_t)from >= geometry->cluster_count ? 0 : (size_t)(uint32_t)from;
+        if((uint32_t)to>=geometry->cluster_count) return true;
+        if(vis.size==0) { *answer=VISIBILITY_ALL; return true; }
+        index=from<0 || (uint32_t)from>=geometry->cluster_count?0:(size_t)(uint32_t)from;
     }
-    qa_bytes row;
-    if (!visibility_row(geometry, index, phs, &row, error)) return false;
-    *out = bit_test(row, (size_t)(uint32_t)to);
+    if(!visibility_row(geometry,index,phs,row,error)) return false;
+    *answer=VISIBILITY_ROW;return true;
+}
+bool qa_collision_cluster_visible(const qa_collision_geometry *geometry,int32_t from,int32_t to,
+    bool phs,bool *out,qa_error *error)
+{
+    if(!geometry || !out) return geometry_fail(error,QA_ERROR_ARGUMENT,"Invalid visibility query");
+    qa_bytes row={0};visibility_answer answer;
+    if(!visibility_target_row(geometry,from,to,phs,&row,&answer,error)) return false;
+    *out=answer==VISIBILITY_ALL || (answer==VISIBILITY_ROW && bit_test(row,(size_t)(uint32_t)to));
     return true;
 }
+bool qa_collision_clusters_visible(const qa_collision_geometry *geometry,qa_trace_scratch *scratch,
+    const int32_t *from,size_t from_count,qa_bytes targets,bool phs,bool *out,qa_error *error)
+{
+    if(!geometry || !out) return geometry_fail(error,QA_ERROR_ARGUMENT,"Invalid visibility query");
+    *out=false;
+    size_t count=targets.size<scratch->visibility_capacity?targets.size:scratch->visibility_capacity;
+    uint8_t *pending=scratch->visibility_pending;
+    if(count) memcpy(pending,targets.data,count);
+    if(count && geometry->family!=QA_COLLISION_Q1 && count==bit_bytes(geometry->cluster_count) && geometry->cluster_count%8u)
+        pending[count-1]&=(uint8_t)((1u<<(geometry->cluster_count%8u))-1u);
+    for(size_t source=0;source<from_count;++source) {
+        size_t first=0;
+        while(first<count && !pending[first]) ++first;
+        if(first==count) break;
+        unsigned low=0;
+        while(!(pending[first]&(1u<<low))) ++low;
+        int32_t first_target=(int32_t)(first*8u+low);
+        qa_bytes row={0};visibility_answer answer;
+        if(!visibility_target_row(geometry,from[source],first_target,phs,&row,&answer,error)) return false;
+        if(answer==VISIBILITY_ALL) { *out=true;break; }
+        if(answer==VISIBILITY_NONE) continue;
+        size_t bytes=row.size<count?row.size:count;
+        for(size_t i=first;i<bytes;++i) {
+            uint8_t hit=pending[i]&row.data[i];
+            if(hit) { *out=true;pending[i]&=(uint8_t)~hit; }
+        }
+    }
+    return true;
+}
+
+uint32_t qa_collision_cluster_count(const qa_collision_geometry *geometry)
+{ return geometry?geometry->cluster_count:0; }
 
 uint32_t qa_collision_area_count(const qa_collision_geometry *geometry)
 {

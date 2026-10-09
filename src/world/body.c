@@ -18,8 +18,11 @@ void qa_world_reset_bodies(qa_world *world)
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *body=qa_world_raw_body(world,slot);
         if(body!=NULL) {
+            if(body->present) {
+                world->leaf_cache[slot].leaf_box_ready=false;
+                world->leaf_cache[slot].leaf_q1_ready=false;
+            }
             qa_spatial_remove(world,slot);
-            free(body->leaves);
             memset(body,0,sizeof(*body));
             *qa_actors_link(world->actors->links,slot)=(qa_spatial_link){0};
         }
@@ -78,6 +81,30 @@ static bool same_collision(const qa_actor_collision *left,const qa_actor_collisi
         && left->q3_entity_number==right->q3_entity_number && left->q3_owner_number==right->q3_owner_number;
 }
 
+static bool prepare_visibility_storage(qa_world *world,qa_collision_geometry *geometry,
+    qa_arena *arena,qa_world_leaf_cache **cache,uint8_t **bits,
+    size_t *cluster_bytes,size_t *area_bytes,qa_error *error)
+{
+    *cluster_bytes=((size_t)qa_collision_cluster_count(geometry)+7u)/8u;
+    *area_bytes=((size_t)qa_collision_area_count(geometry)+7u)/8u;
+    if(*cluster_bytes>SIZE_MAX-*area_bytes) return fail(error,QA_ERROR_MEMORY,"Visibility extent overflow");
+    size_t stride=*cluster_bytes+*area_bytes;
+    if((stride && world->capacity>SIZE_MAX/stride) || sizeof(**cache)>SIZE_MAX/world->capacity)
+        return fail(error,QA_ERROR_MEMORY,"Visibility extent overflow");
+    size_t bytes=stride*world->capacity,metadata=(size_t)world->capacity*sizeof(**cache);
+    if(bytes>SIZE_MAX-metadata) return fail(error,QA_ERROR_MEMORY,"Visibility extent overflow");
+    if(!qa_arena_reserve(arena,metadata+bytes,error)) return false;
+    *cache=qa_arena_alloc(arena,metadata,_Alignof(qa_world_leaf_cache),error);
+    if(!*cache) return false;
+    memset(*cache,0,metadata);
+    *bits=NULL;
+    if(bytes) {
+        *bits=qa_arena_alloc(arena,bytes,1,error);
+        if(!*bits) return false;
+        memset(*bits,0,bytes);
+    }
+    qa_arena_seal(arena);return true;
+}
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
                      const qa_world_hooks *hooks,size_t snapshot_frame_capacity,
                      qa_world **out, qa_error *error)
@@ -90,10 +117,16 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     if(world==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate shared world");
     world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
     if(hooks!=NULL) world->hooks=*hooks;
-    if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { free(world); return false; }
+    if(!prepare_visibility_storage(world,geometry,&world->visibility_storage,&world->leaf_cache,&world->visibility_bits,
+        &world->cluster_bytes,&world->area_bytes,error)) {
+        qa_arena_destroy(&world->visibility_storage);free(world);return false;
+    }
+    world->visibility_stride=world->cluster_bytes+world->area_bytes;
+    if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { qa_arena_destroy(&world->visibility_storage);free(world);return false; }
     if(!qa_spatial_initialize(world,bounds,error)
         || !qa_spatial_prepare_snapshots(world,snapshot_frame_capacity!=0?
             snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,error)) {
+        qa_arena_destroy(&world->visibility_storage);
         qa_arena_destroy(&world->snapshot_storage);
         qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
     }
@@ -152,6 +185,7 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
     qa_spatial_dispose(world);
     dispose_trace_geometries(world);
     qa_trace_scratch_destroy(world->trace_scratch);
+    qa_arena_destroy(&world->visibility_storage);
     free(world); return true;
 }
 
@@ -163,6 +197,10 @@ struct qa_world_geometry_admission {
     qa_collision_geometry *geometry;
     qa_trace_scratch *scratch;
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
+    qa_arena visibility_storage;
+    qa_world_leaf_cache *leaf_cache;
+    uint8_t *visibility_bits;
+    size_t cluster_bytes,area_bytes;
 };
 
 bool qa_world_prepare_geometry(qa_world *world,qa_collision_geometry *geometry,
@@ -177,9 +215,14 @@ bool qa_world_prepare_geometry(qa_world *world,qa_collision_geometry *geometry,
     if(!qa_spatial_initialize(&candidate,bounds,error)) return false;
     qa_world_geometry_admission *token=malloc(sizeof(*token));
     if(token==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate geometry admission");
+    memset(token,0,sizeof(*token));
     token->world=world; token->geometry=geometry;
     token->scratch=NULL;
     if(!qa_trace_scratch_create(geometry,&token->scratch,error)) { free(token); return false; }
+    if(!prepare_visibility_storage(world,geometry,&token->visibility_storage,&token->leaf_cache,&token->visibility_bits,
+        &token->cluster_bytes,&token->area_bytes,error)) {
+        qa_trace_scratch_destroy(token->scratch);qa_arena_destroy(&token->visibility_storage);free(token);return false;
+    }
     memcpy(token->sectors,candidate.sectors,sizeof(token->sectors));
     world->geometry_admission=token;
     *out=token;
@@ -209,6 +252,13 @@ bool qa_world_geometry_admission_commit(qa_world_geometry_admission *token,qa_er
     if(!qa_world_geometry_admission_validate(token,error)) return false;
     dispose_trace_geometries(token->world);
     qa_trace_scratch_destroy(token->world->trace_scratch);
+    qa_arena_destroy(&token->world->visibility_storage);
+    token->world->visibility_storage=token->visibility_storage;
+    token->visibility_storage=(qa_arena){0};
+    token->world->leaf_cache=token->leaf_cache;
+    token->world->visibility_bits=token->visibility_bits;
+    token->world->cluster_bytes=token->cluster_bytes;token->world->area_bytes=token->area_bytes;
+    token->world->visibility_stride=token->cluster_bytes+token->area_bytes;
     token->world->geometry=token->geometry;
     token->world->trace_scratch=token->scratch;
     token->scratch=NULL;
@@ -222,6 +272,7 @@ void qa_world_geometry_admission_abort(qa_world_geometry_admission *token)
     if(token==NULL) return;
     token->world->geometry_admission=NULL;
     qa_trace_scratch_destroy(token->scratch);
+    qa_arena_destroy(&token->visibility_storage);
     free(token);
 }
 
@@ -267,8 +318,8 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
     if(body!=NULL && body->present && qa_actor_id_equal(body->actor,released.id)) {
         bool linked=body->linked;
         qa_spatial_remove(world,body->actor.slot);
-        free(body->leaves);
         memset(body,0,sizeof(*body));
+        world->leaf_cache[released.id.slot]=(qa_world_leaf_cache){0};
         *qa_actors_link(world->actors->links,released.id.slot)=(qa_spatial_link){0};
         if(linked) notify_unlink(world,released.id);
     }
@@ -553,11 +604,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         snapshot.link_count=body->link_count+1;
     }
     linked=&snapshot;
-    if(body->leaves_ready || body->leaves) {
-        qa_world_leaf_membership membership;
-        if(!qa_world_link_membership(world,linked->actor,&linked->absolute_bounds,
-            body->leaf_policy,&membership,error)) return false;
-    }
+
     body->linked=true; body->linked_state=linked->state;
     spatial->bounds=linked->absolute_bounds; body->link_count=linked->link_count;
     body->linked_collision=collision;
@@ -575,63 +622,152 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     return true;
 }
 
-typedef struct membership_writer { qa_world_body *body; size_t limit; } membership_writer;
-static qa_leaf_visit membership_leaf(void *context,const qa_collision_leaf *leaf,qa_error *error)
+typedef enum leaf_cluster_order { LEAF_ORDERED, LEAF_DISTINCT, LEAF_SORTED } leaf_cluster_order;
+static void leaf_cluster_add(int32_t *values,uint16_t *count,size_t capacity,int32_t cluster,
+    leaf_cluster_order order)
 {
-    membership_writer *writer=context;
-    qa_world_body *body=writer->body;
-    if(body->leaf_count==body->leaf_capacity) {
-        size_t capacity=body->leaf_capacity?body->leaf_capacity*2:8;
-        if(capacity<body->leaf_capacity || capacity>SIZE_MAX/sizeof(*body->leaves)) {
-            fail(error,QA_ERROR_MEMORY,"Linked leaf membership extent overflow"); return QA_LEAF_FAILED;
-        }
-        qa_collision_leaf *leaves=realloc(body->leaves,capacity*sizeof(*leaves));
-        if(!leaves) { fail(error,QA_ERROR_MEMORY,"Retaining linked leaf membership"); return QA_LEAF_FAILED; }
-        body->leaves=leaves; body->leaf_capacity=capacity;
+    if(cluster<0) return;
+    size_t n=*count;
+    if(order==LEAF_DISTINCT) {
+        for(size_t i=0;i<n;++i) if(values[i]==cluster) return;
     }
-    body->leaves[body->leaf_count++]=*leaf;
-    return body->leaf_count==writer->limit?QA_LEAF_STOP:QA_LEAF_CONTINUE;
+    if(order==LEAF_SORTED) {
+        size_t at=n<capacity?n:capacity;
+        while(at && values[at-1]>cluster) {
+            if(at<capacity) values[at]=values[at-1];
+            --at;
+        }
+        if(at<capacity) values[at]=cluster;
+    } else if(n<capacity) values[n]=cluster;
+    if(n<capacity) ++*count;
 }
-
-bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds *explicit_bounds,
-    qa_world_leaf_policy policy,qa_world_leaf_membership *out,qa_error *error)
+typedef enum leaf_area_order { LEAF_LAST_OTHER, LEAF_FIRST_TWO, LEAF_PORTAL_TWO } leaf_area_order;
+static void leaf_area_add(qa_leaf_area_pair *pair,int32_t area,int32_t empty,
+    leaf_area_order order,bool *third)
+{
+    if(order==LEAF_LAST_OTHER) {
+        if(area==empty) return;
+        if(pair->area!=empty && pair->area!=area) pair->area2=area;
+        else pair->area=area;
+        return;
+    }
+    if(order==LEAF_PORTAL_TWO && area<0) return;
+    if(pair->count && pair->area==area) return;
+    if(pair->count>1 && pair->area2==area) return;
+    if(pair->count==0) pair->area=area;
+    else if(pair->count==1) pair->area2=area;
+    else { if(third) *third=true; return; }
+    ++pair->count;
+}
+typedef struct leaf_aggregate { qa_world_leaf_visibility_result result; qa_collision_geometry *geometry; size_t visited; bool touched; } leaf_aggregate;
+static qa_leaf_visit leaf_aggregate_visit(void *context,const qa_collision_leaf *leaf,qa_error *error)
+{
+    leaf_aggregate *a=context;
+    qa_world_leaf_visibility_result *r=&a->result;
+    (void)error;
+    size_t index=a->visited++;
+    if(a->touched) {
+        r->q1_leaves[r->q1_count++]=leaf->leaf;
+        return r->q1_count==16?QA_LEAF_STOP:QA_LEAF_CONTINUE;
+    }
+    bool invalid=leaf->area < -1 || leaf->area > INT32_MAX || leaf->cluster < -1 || leaf->cluster > INT32_MAX;
+    r->all_invalid|=invalid;
+    int32_t area=(int32_t)leaf->area,cluster=(int32_t)leaf->cluster;
+    r->last_emitted_cluster=cluster;
+    r->last_emitted_invalid=leaf->cluster < -1 || leaf->cluster > INT32_MAX;
+    if(!index) r->first_cluster=cluster;
+    if(cluster>=0) {
+        if((uint32_t)cluster<qa_collision_cluster_count(a->geometry))
+            ((uint8_t*)r->cluster_bits.data)[(uint32_t)cluster/8u]|=(uint8_t)(1u<<((uint32_t)cluster%8u));
+        else if(!r->has_invalid_cluster) { r->has_invalid_cluster=true;r->invalid_cluster=cluster; }
+    }
+    if(area>=0 && (uint32_t)area<qa_collision_area_count(a->geometry))
+        ((uint8_t*)r->area_bits.data)[(uint32_t)area/8u]|=(uint8_t)(1u<<((uint32_t)area%8u));
+    else if(!r->has_invalid_area) { r->has_invalid_area=true;r->invalid_area=area; }
+    if(leaf->cluster>=0 && cluster>r->maximum_cluster) r->maximum_cluster=cluster;
+    leaf_area_add(&r->foreign_areas,area,-1,LEAF_LAST_OTHER,NULL);
+    if(leaf->area>INT32_MAX) r->portal_invalid=true;
+    else leaf_area_add(&r->portal_areas,area,-1,LEAF_PORTAL_TWO,&r->portal_third);
+    leaf_cluster_add(r->sorted,&r->sorted_count,16,cluster,LEAF_SORTED);
+    if(index<128) {
+        r->prefix_invalid|=invalid;
+        leaf_area_add(&r->q2_areas,area,0,LEAF_LAST_OTHER,NULL);
+        leaf_area_add(&r->native_areas,area,-1,LEAF_LAST_OTHER,NULL);
+        leaf_area_add(&r->unique_areas,area,-1,LEAF_FIRST_TWO,NULL);
+        leaf_cluster_add(r->ordered,&r->ordered_count,16,cluster,LEAF_ORDERED);
+        leaf_cluster_add(r->distinct,&r->distinct_count,128,cluster,LEAF_DISTINCT);
+    }
+    return QA_LEAF_CONTINUE;
+}
+bool qa_world_leaf_visibility(qa_world *world,qa_actor_id actor,const qa_bounds *explicit_bounds,
+    qa_world_leaf_policy policy,qa_trace_scratch *scratch,
+    const qa_world_leaf_visibility_result **out,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(!body || !out || (unsigned)policy>QA_WORLD_LEAVES_Q1_TOUCHED ||
         (!explicit_bounds && !body->linked))
         return fail(error,QA_ERROR_ARGUMENT,"Leaf membership requires its actual body and bounds");
+    qa_world_leaf_cache *cache=world->leaf_cache+actor.slot;
     qa_bounds bounds=explicit_bounds?*explicit_bounds:qa_actors_link(world->actors->links,body->actor.slot)->bounds;
     if(!qa_bounds_valid(bounds) || !world->geometry ||
         (policy==QA_WORLD_LEAVES_Q1_TOUCHED && qa_collision_geometry_family(world->geometry)!=QA_COLLISION_Q1))
         return fail(error,QA_ERROR_ARGUMENT,"Leaf membership lost its actual geometry or Source policy");
-    if(!body->leaves_ready || body->leaf_geometry!=world->geometry ||
-        body->leaf_storage!=body->storage_serial || body->leaf_policy!=policy ||
-        memcmp(&body->leaf_bounds,&bounds,sizeof(bounds))) {
-        body->leaves_ready=false; body->leaf_count=0;
-        qa_leaf_list list;
-        membership_writer writer={body,policy==QA_WORLD_LEAVES_Q1_TOUCHED?16:SIZE_MAX};
-        if(!qa_collision_walk_leaves(world->geometry,world->trace_scratch,bounds,policy==QA_WORLD_LEAVES_Q1_TOUCHED,
-            membership_leaf,&writer,&list,error)) return false;
-        body->leaf_bounds=bounds; body->leaf_geometry=world->geometry;
-        body->leaf_storage=body->storage_serial; body->leaf_policy=policy;
-        body->leaf_topnode=list.topnode; body->leaf_last=list.last_leaf; body->leaves_ready=true;
+    if(cache->leaf_geometry!=world->geometry || cache->leaf_storage!=body->storage_serial) {
+        cache->leaf_box_ready=false; cache->leaf_q1_ready=false;
+        cache->leaf_geometry=world->geometry; cache->leaf_storage=body->storage_serial;
     }
-    *out=(qa_world_leaf_membership){body->leaves,body->leaf_count,body->leaf_topnode,body->leaf_last};
-    return true;
+    bool touched=policy==QA_WORLD_LEAVES_Q1_TOUCHED;
+    bool ready=touched?cache->leaf_q1_ready:cache->leaf_box_ready;
+    const qa_bounds *previous=touched?&cache->leaf_q1_bounds:&cache->leaf_box_bounds;
+    if(ready && !memcmp(previous,&bounds,sizeof(bounds))) { *out=&cache->leaf_visibility; return true; }
+    leaf_aggregate aggregate={.geometry=world->geometry,.touched=touched};
+    if(!touched) {
+        cache->leaf_box_ready=false;
+        uint8_t *bits=world->visibility_stride?world->visibility_bits+(size_t)actor.slot*world->visibility_stride:NULL;
+        if(world->visibility_stride) memset(bits,0,world->visibility_stride);
+        aggregate.result.cluster_bits=(qa_bytes){bits,world->cluster_bytes};
+        aggregate.result.area_bits=(qa_bytes){world->area_bytes?bits+world->cluster_bytes:NULL,world->area_bytes};
+    }
+    aggregate.result.native_areas=(qa_leaf_area_pair){.area=-1,.area2=-1};
+    aggregate.result.foreign_areas=aggregate.result.native_areas;
+    aggregate.result.unique_areas=aggregate.result.native_areas;
+    aggregate.result.portal_areas=aggregate.result.native_areas;
+    aggregate.result.maximum_cluster=-1;
+    qa_leaf_list list;
+    if(!qa_collision_walk_leaves(world->geometry,scratch,bounds,touched,leaf_aggregate_visit,&aggregate,&list,error)) return false;
+    if(touched) {
+        memcpy(cache->leaf_visibility.q1_leaves,aggregate.result.q1_leaves,aggregate.result.q1_count*sizeof(uint32_t));
+        cache->leaf_visibility.q1_count=aggregate.result.q1_count;
+        cache->leaf_q1_bounds=bounds; cache->leaf_q1_ready=true;
+    } else {
+        aggregate.result.count=list.count; aggregate.result.topnode=list.topnode;
+        aggregate.result.last_leaf=list.last_leaf;
+        qa_collision_leaf last;
+        if(!qa_collision_leaf_at(world->geometry,list.last_leaf,&last,error)) return false;
+        aggregate.result.last_cluster=(int32_t)last.cluster;
+        aggregate.result.last_invalid=last.cluster < -1 || last.cluster > INT32_MAX;
+        aggregate.result.q1_count=cache->leaf_visibility.q1_count;
+        memcpy(aggregate.result.q1_leaves,cache->leaf_visibility.q1_leaves,sizeof(aggregate.result.q1_leaves));
+        cache->leaf_visibility=aggregate.result;
+        cache->leaf_box_bounds=bounds; cache->leaf_box_ready=true;
+    }
+    *out=&cache->leaf_visibility; return true;
 }
-
 bool qa_world_q1_visible(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,
     qa_bytes pvs,bool *out,qa_error *error)
 {
     qa_collision_geometry *geometry=qa_world_geometry(world);
     if(!geometry || qa_collision_geometry_family(geometry)!=QA_COLLISION_Q1 || !out ||
-        (bounds && !qa_bounds_valid(*bounds)) ||
-        pvs.size!=qa_collision_q1_pvs_bytes(geometry) || (pvs.size && !pvs.data))
+        (bounds && !qa_bounds_valid(*bounds)) || pvs.size!=qa_collision_q1_pvs_bytes(geometry) ||
+        (pvs.size && !pvs.data))
         return fail(error,QA_ERROR_ARGUMENT,"Q1 entity visibility requires its actual fat-PVS and source bounds");
     *out=false;
-    qa_world_leaf_membership membership;
-    if(!qa_world_link_membership(world,actor,bounds,QA_WORLD_LEAVES_Q1_TOUCHED,&membership,error)) return false;
-    *out=qa_collision_q1_membership_visible(pvs,membership.leaves,membership.count);
+    const qa_world_leaf_visibility_result *r;
+    if(!qa_world_leaf_visibility(world,actor,bounds,QA_WORLD_LEAVES_Q1_TOUCHED,world->trace_scratch,&r,error)) return false;
+    for(size_t i=0;i<r->q1_count;++i) {
+        uint32_t leaf=r->q1_leaves[i];
+        if(leaf && (leaf-1)/8u<pvs.size && (pvs.data[(leaf-1)/8u]&(1u<<((leaf-1)%8u)))) { *out=true; break; }
+    }
     return true;
 }
 

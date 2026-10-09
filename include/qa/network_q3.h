@@ -534,8 +534,8 @@ typedef struct qa_q3_visibility_entity {
 } qa_q3_visibility_entity;
 /* Original Source link projection: native ordered 128 leaves/16 clusters,
  * foreign sorted 16 clusters, and the original area/overflow ordering. */
-bool qa_q3_leaf_visibility(qa_collision_geometry *, const qa_world_leaf_membership *,
-    qa_q3_visibility_entity *, int32_t clusters[16], qa_error *);
+bool qa_q3_leaf_visibility(qa_world *, qa_actor_id, const qa_bounds *, qa_trace_scratch *,
+    qa_q3_visibility_entity *, int32_t clusters[16], bool *has_leaves, qa_error *);
 typedef struct qa_q3_visibility_world {
     void *context;
     bool (*point)(void *, const float origin[3], int32_t *area, int32_t *cluster, qa_error *);
