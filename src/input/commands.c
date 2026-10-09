@@ -1,5 +1,6 @@
 #include "qa/input.h"
 #include "qa/text.h"
+#include <string.h>
 
 static const struct { float move, walk, source_speed; } stock[] = {
     {320, 320, 400}, {320, 320, 400}, {400, 400, 400},
@@ -280,27 +281,25 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
         .acknowledged_server_seconds = kind == QA_MOVEMENT_NETQUAKE ? frame->acknowledged_server_seconds : 0,
         .weapon = q3 ? frame->weapon : 0, .light_level = kind == QA_MOVEMENT_Q2_CLASSIC ? frame->light_level : 0,
         .impulse = kind == QA_MOVEMENT_Q2_RERELEASE || q3 ? 0 : intent->impulse};
-    if (intent->directional && !q3) {
-        const float angles[] = {intent->angles.x, intent->angles.y, intent->angles.z};
-        float *relative[] = {&command.angles.x, &command.angles.y, &command.angles.z};
-        for (unsigned i = 0; i < 3; ++i) {
-            if (kind == QA_MOVEMENT_Q2_RERELEASE) {
-                const float delta[] = {frame->delta_angles.x, frame->delta_angles.y, frame->delta_angles.z};
-                *relative[i] = angles[i] - delta[i];
-            } else if (kind == QA_MOVEMENT_Q2_CLASSIC) {
-                *relative[i] = (float)signed_word((uint32_t)qa_angle_to_word(angles[i]) -
-                    (uint32_t)frame->delta_angle_words[i]) * (360.0f / 65536.0f);
+    if (q3 || kind == QA_MOVEMENT_Q2_CLASSIC ||
+        (kind == QA_MOVEMENT_Q2_RERELEASE && intent->directional)) {
+        qa_movement_command source = {.kind = kind, .angles = intent->angles}, converted;
+        qa_input_command_basis from = {.kind = kind}, to = {.kind = kind,
+            .words = q3 || kind == QA_MOVEMENT_Q2_CLASSIC, .relative = intent->directional,
+            .wrap_words = true, .delta_angles = frame->delta_angles};
+        memcpy(to.delta_words, frame->delta_angle_words, sizeof(to.delta_words));
+        qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        if (kind == QA_MOVEMENT_Q2_RERELEASE) command.angles = converted.angles;
+        else {
+            float *angles[] = {&command.angles.x, &command.angles.y, &command.angles.z};
+            for (unsigned i = 0; i < 3; ++i) {
+                uint32_t word = (uint32_t)converted.angle_words[i];
+                command.angle_words[i] = encoding == QA_INPUT_COMMAND_SOURCE_Q3 ||
+                    (kind == QA_MOVEMENT_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
+                    ? signed_word(word) : (int32_t)word;
+                if (intent->directional && kind == QA_MOVEMENT_Q2_CLASSIC)
+                    *angles[i] = (float)signed_word(word) * (360.0f / 65536.0f);
             }
-        }
-    }
-    if (q3 || kind == QA_MOVEMENT_Q2_CLASSIC) {
-        const float angles[] = {intent->angles.x, intent->angles.y, intent->angles.z};
-        for (unsigned i = 0; i < 3; ++i) {
-            uint32_t word = qa_angle_to_word(angles[i]);
-            if (intent->directional) word -= (uint32_t)frame->delta_angle_words[i];
-            command.angle_words[i] = encoding == QA_INPUT_COMMAND_SOURCE_Q3 ||
-                (kind == QA_MOVEMENT_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
-                ? signed_word(word) : (int32_t)(word & 65535);
         }
     }
     if (q3 && encoding != QA_INPUT_COMMAND_SOURCE_Q3) {
@@ -313,6 +312,69 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
     else move = qa_v3(truncf(move.x), truncf(move.y), truncf(move.z));
     command.move = move;
     *out = command;
+}
+float qa_input_command_units(qa_movement_kind kind) {
+    return kind == QA_MOVEMENT_Q3 ? 127.0f :
+        kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0f : 200.0f;
+}
+void qa_input_command_convert(const qa_movement_command *source, const qa_input_move_intent *precise,
+    const qa_input_command_basis *from, const qa_input_command_basis *to,
+    qa_input_axis_rule rule, qa_movement_command *out) {
+    qa_movement_command result = *source;
+    result.kind = to->kind;
+    double input_units = from->units != 0 ? from->units : qa_input_command_units(from->kind);
+    double output_units = to->units != 0 ? to->units : qa_input_command_units(to->kind);
+    const double moves[] = {precise ? precise->x : source->forward_move,
+        precise ? precise->y : source->side_move, precise ? precise->z : source->up_move};
+    float *outputs[] = {&result.forward_move, &result.side_move, &result.up_move};
+    for (unsigned i = 0; i < 3; ++i) {
+        double value;
+        if (rule.float_product) {
+            float ratio = (float)(output_units / input_units);
+            value = (float)((float)moves[i] * ratio);
+        } else value = rule.ratio_first ? (double)moves[i] * (output_units / input_units) :
+            (double)moves[i] * output_units / input_units;
+        if (rule.clamp) value = fmax(rule.minimum, fmin(rule.maximum, value));
+        switch (rule.quantization) {
+        case QA_INPUT_AXIS_EXACT: break;
+        case QA_INPUT_AXIS_TRUNCATE: value = trunc(value); break;
+        case QA_INPUT_AXIS_NEAREST: value = (double)lrintf((float)value); break;
+        case QA_INPUT_AXIS_SHORT: value = (int32_t)(uint16_t)(uint32_t)qa_source_float_to_i32((float)value);
+            if (value > INT16_MAX) value -= 65536;
+            break;
+        }
+        *outputs[i] = (float)value;
+    }
+    const float degrees[] = {source->angles.x, source->angles.y, source->angles.z};
+    const float from_delta[] = {from->delta_angles.x, from->delta_angles.y, from->delta_angles.z};
+    const float to_delta[] = {to->delta_angles.x, to->delta_angles.y, to->delta_angles.z};
+    float *angles[] = {&result.angles.x, &result.angles.y, &result.angles.z};
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t word = (uint32_t)source->angle_words[i];
+        float absolute;
+        double wide;
+        if (from->words) {
+            word += from->relative ? (uint32_t)from->delta_words[i] : 0;
+            double value = from->wrap_words ? (double)(word & 65535u) :
+                (double)source->angle_words[i] + (from->relative ? from->delta_words[i] : 0);
+            wide = value * 360.0 / 65536.0; absolute = (float)wide;
+        } else {
+            absolute = from->relative ? degrees[i] + from_delta[i] : degrees[i];
+            wide = absolute; word = qa_angle_to_word(absolute);
+        }
+        if (from->repack_words) word = qa_angle_to_word(absolute);
+        if (to->words) {
+            word -= to->relative ? (uint32_t)to->delta_words[i] : 0;
+            if (to->wrap_words) word &= 65535u;
+            memcpy(&result.angle_words[i], &word, sizeof(word));
+            *angles[i] = absolute;
+        } else {
+            result.angle_words[i] = 0;
+            *angles[i] = to->relative ? to->wide_delta ? (float)(wide - to_delta[i]) :
+                absolute - to_delta[i] : absolute;
+        }
+    }
+    *out = result;
 }
 void qa_input_usercmd_project(const qa_input_usercmd *source, qa_movement_command *out) {
     *out = (qa_movement_command){.kind = source->kind, .sequence = source->sequence,

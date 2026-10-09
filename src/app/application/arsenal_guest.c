@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "guest_input_private.h"
 #include "control_frame.h"
 #include "client_outputs.h"
@@ -142,26 +143,6 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     return ok;
 }
 
-static float move_scale(qa_movement_kind kind)
-{
-    return kind == QA_MOVEMENT_Q3 ? 127.0f
-           : kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0f : 200.0f;
-}
-
-static int8_t axis(float value)
-{
-    if (value > 127) return 127;
-    if (value < -127) return -127;
-    return (int8_t)lrintf(value);
-}
-
-static int8_t source_axis(float value)
-{
-    if (value > 127) return 127;
-    if (value < -128) return -128;
-    return (int8_t)lrintf(value);
-}
-
 static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *skip, qa_error *error)
 {
     application_guest_input *input = context;
@@ -193,31 +174,27 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
     uint32_t remaining = scope->milliseconds;
-    double scale = move_scale(control.state.kind);
-    qa_movement_command command = {.kind = control.state.kind,
+    qa_movement_command raw = {.kind = QA_MOVEMENT_Q3,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = remaining, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
-        .forward_move = (float)((double)source.forwardmove * scale / 127.0),
-        .side_move = (float)((double)source.rightmove * scale / 127.0),
-        .up_move = (float)((double)source.upmove * scale / 127.0), .buttons = (uint32_t)source.buttons & 1u,
+        .forward_move = source.forwardmove, .side_move = source.rightmove, .up_move = source.upmove,
+        .buttons = (uint32_t)source.buttons & 1u,
         .weapon = input->command ? input->command->weapon : source.weapon,
         .impulse = input->command && input->input_applied ? input->applied_command.impulse
                  : input->command ? input->command->impulse : 0};
-    const float aim[] = {command.angles.x, command.angles.y, command.angles.z};
-    if (command.kind == QA_MOVEMENT_Q3) {
-        command.buttons = (uint32_t)source.buttons;
-        command.forward_move = source.forwardmove; command.side_move = source.rightmove;
-        command.up_move = source.upmove;
-        for (size_t i = 0; i < 3; ++i)
-            command.angle_words[i] = (uint16_t)(qa_angle_to_word(aim[i]) -
-                                               control.state.data.q3.delta_angle_words[i]);
-    } else if (command.kind == QA_MOVEMENT_Q2_CLASSIC) {
-        for (size_t i = 0; i < 3; ++i)
-            command.angle_words[i] = (uint16_t)(qa_angle_to_word(aim[i]) -
-                                               control.state.data.q2.delta_angle_shorts[i]);
-    } else if (command.kind == QA_MOVEMENT_Q2_RERELEASE) {
-        command.angles = qa_vec_sub(command.angles, control.state.data.q2r.delta_angles);
+    qa_input_command_basis from = {.kind = QA_MOVEMENT_Q3}, to = {.kind = control.state.kind};
+    if (to.kind == QA_MOVEMENT_Q3 || to.kind == QA_MOVEMENT_Q2_CLASSIC) {
+        to.words = to.relative = to.wrap_words = true;
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = to.kind == QA_MOVEMENT_Q3 ?
+            control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
+    } else if (to.kind == QA_MOVEMENT_Q2_RERELEASE) {
+        to.relative = true; to.delta_angles = control.state.data.q2r.delta_angles;
+    }
+    qa_movement_command command;
+    qa_input_command_convert(&raw, NULL, &from, &to, (qa_input_axis_rule){0}, &command);
+    if (command.kind == QA_MOVEMENT_Q3) command.buttons = (uint32_t)source.buttons;
+    else if (command.kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (source.upmove > 0) command.buttons |= 8u;
         if (source.upmove < 0) command.buttons |= 16u;
         command.up_move = 0;
@@ -242,10 +219,22 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     qa_q3_usercmd updated = source;
     updated.buttons = command.kind == QA_MOVEMENT_Q3 ? (int32_t)applied.buttons
         : (int32_t)(((uint32_t)source.buttons & ~1u) | (applied.buttons & 1u));
-    float source_scale = 127.0f / move_scale(applied.kind);
-    updated.forwardmove = source_axis(applied.forward_move * source_scale);
-    updated.rightmove = source_axis(applied.side_move * source_scale);
-    updated.upmove = source_axis(applied.up_move * source_scale);
+    qa_input_command_basis applied_from = {.kind = applied.kind};
+    if (applied.kind == QA_MOVEMENT_Q2_CLASSIC || applied.kind == QA_MOVEMENT_Q3) {
+        applied_from.words = applied_from.relative = applied_from.wrap_words = applied_from.repack_words = true;
+        for (unsigned i = 0; i < 3; ++i) applied_from.delta_words[i] = applied.kind == QA_MOVEMENT_Q3 ?
+            control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
+    } else if (applied.kind == QA_MOVEMENT_Q2_RERELEASE) {
+        applied_from.relative = true; applied_from.delta_angles = control.state.data.q2r.delta_angles;
+    }
+    qa_input_command_basis source_to = {.kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    memcpy(source_to.delta_words, player.deltaAngles, sizeof(source_to.delta_words));
+    qa_movement_command projected;
+    qa_input_command_convert(&applied, NULL, &applied_from, &source_to,
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
+            .minimum = -128, .maximum = 127, .float_product = true}, &projected);
+    updated.forwardmove = (int8_t)projected.forward_move;
+    updated.rightmove = (int8_t)projected.side_move; updated.upmove = (int8_t)projected.up_move;
     if (applied.kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (applied.buttons & 8u) updated.upmove = 127;
         else if (applied.buttons & 16u) updated.upmove = -127;
@@ -253,26 +242,9 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         if (applied.buttons & 2u) updated.upmove = 127;
         else if (updated.upmove > 0) updated.upmove = 0;
     }
-    qa_vec3 applied_aim = applied.angles;
-    if (applied.kind == QA_MOVEMENT_Q2_RERELEASE)
-        applied_aim = qa_vec_add(applied_aim, control.state.data.q2r.delta_angles);
-    if (applied.kind == QA_MOVEMENT_Q2_CLASSIC || applied.kind == QA_MOVEMENT_Q3) {
-        float decoded[3];
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = applied.kind == QA_MOVEMENT_Q3 ? control.state.data.q3.delta_angle_words[i]
-                                                          : control.state.data.q2.delta_angle_shorts[i];
-            decoded[i] = (float)(uint16_t)((uint32_t)applied.angle_words[i] + (uint32_t)delta) *
-                         (360.0f / 65536.0f);
-        }
-        applied_aim = qa_v3(decoded[0], decoded[1], decoded[2]);
-    }
-    const float applied_angles[] = {applied_aim.x, applied_aim.y, applied_aim.z};
     bool aim_changed = applied.angles.x != command.angles.x || applied.angles.y != command.angles.y ||
         applied.angles.z != command.angles.z || memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
-    if (aim_changed) for (size_t i = 0; i < 3; ++i) {
-        uint32_t bits = (uint32_t)qa_angle_to_word(applied_angles[i]) - (uint32_t)player.deltaAngles[i];
-        memcpy(&updated.angles[i], &bits, sizeof(bits));
-    }
+    if (aim_changed) memcpy(updated.angles, projected.angle_words, sizeof(updated.angles));
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
         !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
         return false;
@@ -383,8 +355,13 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_q3_usercmd updated = source;
     memcpy(updated.angles, command.angle_words, sizeof(updated.angles));
     updated.buttons = (int32_t)command.buttons; updated.weapon = command.weapon;
-    updated.forwardmove = source_axis(command.forward_move);
-    updated.rightmove = source_axis(command.side_move); updated.upmove = source_axis(command.up_move);
+    qa_input_command_basis basis = {.kind = QA_MOVEMENT_Q3, .words = true};
+    qa_movement_command projected;
+    qa_input_command_convert(&command, NULL, &basis, &basis,
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
+            .minimum = -128, .maximum = 127, .float_product = true}, &projected);
+    updated.forwardmove = (int8_t)projected.forward_move;
+    updated.rightmove = (int8_t)projected.side_move; updated.upmove = (int8_t)projected.up_move;
     if (before && slice) {
         application_client_outputs outputs;
         if (!application_control_outputs(app, scope->actor, &outputs, error)) return false;
@@ -1167,27 +1144,27 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     qa_application_control_view control;
     if (!qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest command has no shared control view");
-    float angles[] = {command->angles.x, command->angles.y, command->angles.z};
+    qa_input_command_basis from = {.kind = command->kind}, to = {
+        .kind = QA_MOVEMENT_Q3, .words = true, .relative = true, .wrap_words = true};
     if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = command->kind == QA_MOVEMENT_Q3 ? control.state.data.q3.delta_angle_words[i]
-                                                          : control.state.data.q2.delta_angle_shorts[i];
-            angles[i] = (float)(uint16_t)((uint32_t)command->angle_words[i] + (uint32_t)delta) * (360.0f / 65536.0f);
-        }
+        from.words = from.relative = from.wrap_words = from.repack_words = true;
+        for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_MOVEMENT_Q3 ?
+            control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
     } else if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
-        qa_vec3 aim = qa_vec_add(command->angles, control.state.data.q2r.delta_angles);
-        angles[0] = aim.x; angles[1] = aim.y; angles[2] = aim.z;
+        from.relative = true; from.delta_angles = control.state.data.q2r.delta_angles;
     }
-    for (size_t i = 0; i < 3; ++i)
-        source.angles[i] = (uint16_t)(qa_angle_to_word(angles[i]) - player.deltaAngles[i]);
+    memcpy(to.delta_words, player.deltaAngles, sizeof(to.delta_words));
+    qa_movement_command projected;
+    qa_input_command_convert(command, NULL, &from, &to,
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
+            .minimum = -127, .maximum = 127, .float_product = true}, &projected);
+    memcpy(source.angles, projected.angle_words, sizeof(source.angles));
     if (command->kind == QA_MOVEMENT_Q3 && movement == guest) {
         source.serverTime = command->server_time_ms;
         memcpy(source.angles, command->angle_words, sizeof(source.angles));
     }
-    float scale = 127.0f / move_scale(command->kind);
-    source.forwardmove = axis(command->forward_move * scale);
-    source.rightmove = axis(command->side_move * scale);
-    source.upmove = axis(command->up_move * scale);
+    source.forwardmove = (int8_t)projected.forward_move;
+    source.rightmove = (int8_t)projected.side_move; source.upmove = (int8_t)projected.up_move;
     if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (command->buttons & 8u) source.upmove = 127;
         if (command->buttons & 16u) source.upmove = -127;

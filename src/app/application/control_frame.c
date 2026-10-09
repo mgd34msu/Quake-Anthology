@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "control_frame.h"
 #include "native_q3_control.h"
 #include "guest_input_private.h"
@@ -335,13 +336,6 @@ static bool q2_raw_valid(const qa_movement_command *command)
     return true;
 }
 
-static int8_t q3_axis(float value)
-{
-    if (value > 127) return 127;
-    if (value < -127) return -127;
-    return (int8_t)lrintf(value);
-}
-
 static qa_movement_command q3_command(const qa_q3_usercmd *raw, uint64_t sequence)
 {
     qa_movement_command command = {.kind = QA_MOVEMENT_Q3, .sequence = sequence,
@@ -353,11 +347,15 @@ static qa_movement_command q3_command(const qa_q3_usercmd *raw, uint64_t sequenc
 
 static qa_q3_usercmd q3_source_command(const qa_movement_command *command, bool raw)
 {
+    qa_movement_command converted;
+    qa_input_command_basis basis = {.kind = QA_MOVEMENT_Q3, .words = true};
+    qa_input_command_convert(command, NULL, &basis, &basis,
+        raw ? (qa_input_axis_rule){0} : (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST,
+            .clamp = true, .minimum = -127, .maximum = 127, .float_product = true}, &converted);
     qa_q3_usercmd out = {.serverTime = command->server_time_ms,
         .buttons = (int32_t)command->buttons, .weapon = command->weapon,
-        .forwardmove = raw ? (int8_t)command->forward_move : q3_axis(command->forward_move),
-        .rightmove = raw ? (int8_t)command->side_move : q3_axis(command->side_move),
-        .upmove = raw ? (int8_t)command->up_move : q3_axis(command->up_move)};
+        .forwardmove = (int8_t)converted.forward_move,
+        .rightmove = (int8_t)converted.side_move, .upmove = (int8_t)converted.up_move};
     memcpy(out.angles, command->angle_words, sizeof(out.angles));
     return out;
 }
@@ -381,17 +379,22 @@ static bool unified_mod_command(const control_unified *receipt, const qa_q3_play
     if (!unified_valid(receipt))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component accepted unified command is invalid");
     qa_unified_movement raw = receipt->movement;
-    double forward, side, up, buttons; int32_t angles[3];
-    double scale = raw.kind == QA_MOVEMENT_NETQUAKE || raw.kind == QA_MOVEMENT_QUAKEWORLD ? 320 : 200;
+    double forward, side, up, buttons;
+    qa_movement_command input = {.kind = raw.kind}, converted;
+    qa_input_command_basis from = {.kind = raw.kind}, to = {
+        .kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    memcpy(to.delta_words, player->deltaAngles, sizeof(to.delta_words));
     qa_q3_usercmd command = {.serverTime = command_word((uint32_t)(time_ns / UINT64_C(1000000))),
         .weapon = (uint8_t)player->weapon};
     if (raw.kind == QA_MOVEMENT_Q3) {
         command.serverTime = (int32_t)raw.data.q3.server_time_ms;
-        for (unsigned i = 0; i < 3; ++i) angles[i] = (int32_t)raw.data.q3.angle_words[i];
+        for (unsigned i = 0; i < 3; ++i) input.angle_words[i] = (int32_t)raw.data.q3.angle_words[i];
+        from.words = true;
         forward = raw.data.q3.forward; side = raw.data.q3.right; up = raw.data.q3.up;
-        buttons = raw.data.q3.buttons; scale = 127;
+        buttons = raw.data.q3.buttons;
     } else if (raw.kind == QA_MOVEMENT_Q2_CLASSIC) {
-        for (unsigned i = 0; i < 3; ++i) angles[i] = (int32_t)raw.data.q2.angle_shorts[i];
+        for (unsigned i = 0; i < 3; ++i) input.angle_words[i] = (int32_t)raw.data.q2.angle_shorts[i];
+        from.words = true;
         forward = raw.data.q2.forward; side = raw.data.q2.side; up = raw.data.q2.up;
         buttons = raw.data.q2.buttons;
     } else {
@@ -407,26 +410,19 @@ static bool unified_mod_command(const control_unified *receipt, const qa_q3_play
             buttons = raw.data.q2r.buttons;
             up = (uint32_t)buttons & 8u ? 200 : (uint32_t)buttons & 16u ? -200 : 0;
         }
-        angles[0] = qa_angle_to_word((float)aim.x);
-        angles[1] = qa_angle_to_word((float)aim.y);
-        angles[2] = qa_angle_to_word((float)aim.z);
+        input.angles = qa_v3((float)aim.x, (float)aim.y, (float)aim.z);
     }
     uint32_t word = (uint32_t)buttons;
     bool holdable = receipt->has_arsenal ? receipt->use_holdable : raw.kind == QA_MOVEMENT_Q3 && (word & 4u);
     command.buttons = command_word((raw.kind == QA_MOVEMENT_Q3 ? word & ~4u : word & 1u) | (holdable ? 4u : 0u));
-    for (unsigned i = 0; i < 3; ++i) command.angles[i] = command_word((uint32_t)angles[i] - (uint32_t)player->deltaAngles[i]);
-    command.forwardmove = (int8_t)trunc(fmax(-127, fmin(127, forward * 127 / scale)));
-    command.rightmove = (int8_t)trunc(fmax(-127, fmin(127, side * 127 / scale)));
-    command.upmove = (int8_t)trunc(fmax(-127, fmin(127, up * 127 / scale)));
-    if ((raw.kind == QA_MOVEMENT_NETQUAKE || raw.kind == QA_MOVEMENT_QUAKEWORLD) && (word & 2u)) command.upmove = 127;
-    if (raw.kind == QA_MOVEMENT_Q3) {
-        const double axes[] = {forward, side, up};
-        int8_t *outputs[] = {&command.forwardmove, &command.rightmove, &command.upmove};
-        for (unsigned i = 0; i < 3; ++i) {
-            uint32_t byte = (uint8_t)(int32_t)axes[i];
-            *outputs[i] = (int8_t)(byte < 128u ? (int32_t)byte : (int32_t)byte - 256);
-        }
-    }
+    qa_input_move_intent moves = {forward, side, up};
+    if ((raw.kind == QA_MOVEMENT_NETQUAKE || raw.kind == QA_MOVEMENT_QUAKEWORLD) && (word & 2u)) moves.z = 320;
+    qa_input_axis_rule rule = raw.kind == QA_MOVEMENT_Q3 ? (qa_input_axis_rule){0} :
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE, .clamp = true, .minimum = -127, .maximum = 127};
+    qa_input_command_convert(&input, &moves, &from, &to, rule, &converted);
+    memcpy(command.angles, converted.angle_words, sizeof(command.angles));
+    command.forwardmove = (int8_t)converted.forward_move;
+    command.rightmove = (int8_t)converted.side_move; command.upmove = (int8_t)converted.up_move;
     *out = command; return true;
 }
 
@@ -1378,20 +1374,21 @@ bool application_control_last_mod_command(const qa_application *app, qa_actor_id
         result = q3_source_command(command, true);
         result.weapon = (uint8_t)player->weapon;
     } else {
-        double scale = command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD ? 320 : 200;
-        result.forwardmove = (int8_t)trunc(fmax(-127, fmin(127, command->forward_move * 127.0 / scale)));
-        result.rightmove = (int8_t)trunc(fmax(-127, fmin(127, command->side_move * 127.0 / scale)));
-        result.upmove = (int8_t)(command->kind == QA_MOVEMENT_Q2_RERELEASE ?
-            command->buttons & 8u ? 127 : command->buttons & 16u ? -127 : 0 :
-            (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD) &&
-            (command->buttons & 2u) ? 127 : trunc(fmax(-127, fmin(127, command->up_move * 127.0 / scale))));
-        const double aim[] = {command->angles.x, command->angles.y, command->angles.z};
-        for (unsigned i = 0; i < 3; ++i) {
-            uint32_t word = command->kind == QA_MOVEMENT_Q2_CLASSIC ? (uint32_t)command->angle_words[i] :
-                (uint32_t)qa_angle_to_word((float)aim[i]);
-            if (input->domain == CONTROL_COMMAND_SELECTED) word -= (uint32_t)player->deltaAngles[i];
-            memcpy(result.angles + i, &word, sizeof(word));
-        }
+        qa_movement_command source_command = *command, converted;
+        qa_input_command_basis from = {.kind = command->kind, .words = command->kind == QA_MOVEMENT_Q2_CLASSIC};
+        qa_input_command_basis to = {.kind = QA_MOVEMENT_Q3, .words = true,
+            .relative = input->domain == CONTROL_COMMAND_SELECTED};
+        memcpy(to.delta_words, player->deltaAngles, sizeof(to.delta_words));
+        if (command->kind == QA_MOVEMENT_Q2_RERELEASE)
+            source_command.up_move = command->buttons & 8u ? 200 : command->buttons & 16u ? -200 : 0;
+        else if ((command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD) &&
+                 (command->buttons & 2u)) source_command.up_move = 320;
+        qa_input_command_convert(&source_command, NULL, &from, &to,
+            (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE,
+                .clamp = true, .minimum = -127, .maximum = 127}, &converted);
+        result.forwardmove = (int8_t)converted.forward_move;
+        result.rightmove = (int8_t)converted.side_move; result.upmove = (int8_t)converted.up_move;
+        memcpy(result.angles, converted.angle_words, sizeof(result.angles));
     }
     *out = result; return true;
 }
@@ -1711,12 +1708,6 @@ typedef struct command_group_call {
     application_control_outcome outcome;
 } command_group_call;
 
-static float qw_axis(float value)
-{
-    double scaled = (double)value * 127.0 / 320.0;
-    return (float)trunc(scaled < -127 ? -127 : scaled > 127 ? 127 : scaled);
-}
-
 static qa_movement_command selected_command(const application_control_record *record,
     const qa_movement_command *raw, uint64_t source_time_ns,
     const int32_t words[3], qa_vec3 axes)
@@ -1729,24 +1720,24 @@ static qa_movement_command selected_command(const application_control_record *re
         (uint32_t)record->state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
     time += raw->milliseconds; memcpy(&out.server_time_ms, &time, sizeof(time));
     out.acknowledged_server_seconds = (double)out.server_time_ms / 1000.0;
-    double speed = out.kind == QA_MOVEMENT_NETQUAKE || out.kind == QA_MOVEMENT_QUAKEWORLD
-        ? 320.0 : out.kind == QA_MOVEMENT_Q3 ? 127.0 : 200.0;
-    out.forward_move = (float)((double)axes.x * speed / 127.0);
-    out.side_move = (float)((double)axes.y * speed / 127.0);
-    out.up_move = (float)((double)axes.z * speed / 127.0);
+    qa_movement_command source = out;
+    source.forward_move = axes.x; source.side_move = axes.y; source.up_move = axes.z;
+    memcpy(source.angle_words, words, sizeof(source.angle_words));
+    qa_input_command_basis from = {.kind = QA_MOVEMENT_Q3, .words = true}, to = {.kind = out.kind};
+    if (out.kind == QA_MOVEMENT_Q2_CLASSIC || out.kind == QA_MOVEMENT_Q3) {
+        to.words = to.relative = true;
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = out.kind == QA_MOVEMENT_Q3 ?
+            record->state.data.q3.delta_angle_words[i] : record->state.data.q2.delta_angle_shorts[i];
+    } else if (out.kind == QA_MOVEMENT_Q2_RERELEASE) {
+        to.relative = true; to.delta_angles = record->state.data.q2r.delta_angles;
+    }
+    qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &out);
     if (out.kind == QA_MOVEMENT_NETQUAKE) {
         if (axes.z > 0) out.buttons |= 2u;
     } else if (out.kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (axes.z > 0) out.buttons |= 8u;
         if (axes.z < 0) out.buttons |= 16u;
-        out.up_move = 0; out.angles = qa_vec_sub(out.angles, record->state.data.q2r.delta_angles);
-    } else if (out.kind == QA_MOVEMENT_Q2_CLASSIC || out.kind == QA_MOVEMENT_Q3) {
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = out.kind == QA_MOVEMENT_Q3 ? record->state.data.q3.delta_angle_words[i] :
-                record->state.data.q2.delta_angle_shorts[i];
-            uint32_t bits = (uint32_t)words[i] - (uint32_t)delta;
-            memcpy(&out.angle_words[i], &bits, sizeof(bits));
-        }
+        out.up_move = 0;
     }
     return out;
 }
@@ -1756,10 +1747,14 @@ static bool q1_selected_command(qa_application *app, qa_actor_id actor,
     qa_movement_command *out, qa_error *error)
 {
     application_control_record *record = &app->controls[actor.slot];
-    float forward = qw_axis(raw->forward_move), side = qw_axis(raw->side_move);
-    float up = qw_axis(raw->buttons & 2u ? 320.0f : raw->up_move);
-    int32_t words[] = {qa_angle_to_word(raw->angles.x), qa_angle_to_word(raw->angles.y), qa_angle_to_word(raw->angles.z)};
-    *out = selected_command(record, raw, source_start_ns, words, qa_v3(forward, side, up));
+    qa_movement_command input = *raw, projected;
+    input.up_move = raw->buttons & 2u ? 320.0f : raw->up_move;
+    qa_input_command_basis from = {.kind = raw->kind}, to = {.kind = QA_MOVEMENT_Q3, .words = true};
+    qa_input_command_convert(&input, NULL, &from, &to,
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE, .clamp = true,
+            .minimum = -127, .maximum = 127}, &projected);
+    *out = selected_command(record, raw, source_start_ns, projected.angle_words,
+        qa_v3(projected.forward_move, projected.side_move, projected.up_move));
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state player;
@@ -1803,22 +1798,20 @@ static bool q2_selected_command(qa_application *app, qa_actor_id actor,
         *out = *raw;
         return true;
     }
-    qa_vec3 aim;
+    qa_input_command_basis from = {.kind = raw->kind, .relative = true}, to = {
+        .kind = QA_MOVEMENT_Q3, .words = true};
     if (raw->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        const int16_t *delta = physical->state.data.q2.delta_angle_shorts;
-        aim = qa_v3((float)((double)(uint16_t)((uint32_t)raw->angle_words[0] + (uint32_t)delta[0]) * 360 / 65536),
-            (float)((double)(uint16_t)((uint32_t)raw->angle_words[1] + (uint32_t)delta[1]) * 360 / 65536),
-            (float)((double)(uint16_t)((uint32_t)raw->angle_words[2] + (uint32_t)delta[2]) * 360 / 65536));
-    } else aim = qa_vec_add(raw->angles, physical->state.data.q2r.delta_angles);
-    /* The shared command projection crosses each provider's command units
-     * once. Source words and the physical PM continuation remain untouched. */
-    float forward = (float)trunc(fmax(-127, fmin(127, (double)raw->forward_move * 127 / 200)));
-    float side = (float)trunc(fmax(-127, fmin(127, (double)raw->side_move * 127 / 200)));
-    float up = raw->kind == QA_MOVEMENT_Q2_RERELEASE
-        ? raw->buttons & 8u ? 127 : raw->buttons & 16u ? -127 : 0
-        : (float)trunc(fmax(-127, fmin(127, (double)raw->up_move * 127 / 200)));
-    int32_t words[] = {qa_angle_to_word(aim.x), qa_angle_to_word(aim.y), qa_angle_to_word(aim.z)};
-    *out = selected_command(record, raw, admission->time_ns, words, qa_v3(forward, side, up));
+        from.words = from.wrap_words = from.repack_words = true;
+        for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = physical->state.data.q2.delta_angle_shorts[i];
+    } else from.delta_angles = physical->state.data.q2r.delta_angles;
+    qa_movement_command input = *raw, projected;
+    if (raw->kind == QA_MOVEMENT_Q2_RERELEASE)
+        input.up_move = raw->buttons & 8u ? 200 : raw->buttons & 16u ? -200 : 0;
+    qa_input_command_convert(&input, NULL, &from, &to,
+        (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE, .clamp = true,
+            .minimum = -127, .maximum = 127}, &projected);
+    *out = selected_command(record, raw, admission->time_ns, projected.angle_words,
+        qa_v3(projected.forward_move, projected.side_move, projected.up_move));
     out->impulse = raw->impulse; out->light_level = raw->light_level;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) {
@@ -1834,12 +1827,14 @@ static bool unified_q2_source(const control_unified *receipt, qa_movement_kind s
     const qa_movement_command *selected, uint64_t elapsed_ns, qa_movement_command *out, qa_error *error)
 {
     const qa_unified_movement *movement = &receipt->movement;
-    double forward, side, up, buttons, degrees[3];
-    double scale = movement->kind == QA_MOVEMENT_NETQUAKE || movement->kind == QA_MOVEMENT_QUAKEWORLD ? 320 :
-        movement->kind == QA_MOVEMENT_Q3 ? 127 : 200;
+    double forward, side, up, buttons;
+    qa_movement_command input = {.kind = movement->kind};
+    qa_input_command_basis from = {.kind = movement->kind}, to = {
+        .kind = source_kind, .words = source_kind == QA_MOVEMENT_Q2_CLASSIC, .wrap_words = true};
     if (movement->kind == QA_MOVEMENT_Q2_CLASSIC || movement->kind == QA_MOVEMENT_Q3) {
         const double *words = movement->kind == QA_MOVEMENT_Q3 ? movement->data.q3.angle_words : movement->data.q2.angle_shorts;
-        for (unsigned i = 0; i < 3; ++i) degrees[i] = words[i] * (360.0 / 65536);
+        for (unsigned i = 0; i < 3; ++i) input.angle_words[i] = (int32_t)words[i];
+        from.words = true;
         if (movement->kind == QA_MOVEMENT_Q3) {
             forward = movement->data.q3.forward; side = movement->data.q3.right; up = movement->data.q3.up;
             buttons = movement->data.q3.buttons;
@@ -1860,36 +1855,35 @@ static bool unified_q2_source(const control_unified *receipt, qa_movement_kind s
             side = movement->data.q2r.side; buttons = movement->data.q2r.buttons;
             up = (uint32_t)buttons & 8u ? 200 : (uint32_t)buttons & 16u ? -200 : 0;
         }
-        degrees[0] = aim.x; degrees[1] = aim.y; degrees[2] = aim.z;
+        input.angles = qa_v3((float)aim.x, (float)aim.y, (float)aim.z);
     }
     uint32_t button_word = (uint32_t)buttons;
-    if ((movement->kind == QA_MOVEMENT_NETQUAKE || movement->kind == QA_MOVEMENT_QUAKEWORLD) && (button_word & 2u)) up = scale;
+    if ((movement->kind == QA_MOVEMENT_NETQUAKE || movement->kind == QA_MOVEMENT_QUAKEWORLD) && (button_word & 2u)) up = 320;
     uint64_t duration = movement->kind == QA_MOVEMENT_NETQUAKE ? elapsed_ns / UINT64_C(1000000) : selected->milliseconds;
     qa_movement_command command = {.kind = source_kind, .sequence = receipt->sequence,
         .milliseconds = (uint8_t)duration, .buttons = button_word & 1u, .impulse = selected->impulse};
     if (receipt->has_arsenal && receipt->has_impulse) command.impulse = receipt->impulse;
-    double values[] = {forward * 200 / scale, side * 200 / scale, up * 200 / scale};
+    qa_input_move_intent moves = {forward, side, up};
+    qa_movement_command converted;
+    qa_input_command_convert(&input, &moves, &from, &to,
+        (qa_input_axis_rule){.quantization = source_kind == QA_MOVEMENT_Q2_CLASSIC ?
+            QA_INPUT_AXIS_SHORT : QA_INPUT_AXIS_EXACT}, &converted);
+    command.forward_move = converted.forward_move; command.side_move = converted.side_move;
+    command.up_move = converted.up_move;
     if (source_kind == QA_MOVEMENT_Q2_CLASSIC) {
-        for (unsigned i = 0; i < 3; ++i) {
-            uint16_t word = movement->kind == QA_MOVEMENT_Q2_CLASSIC ? (uint16_t)(int32_t)movement->data.q2.angle_shorts[i] :
-                movement->kind == QA_MOVEMENT_Q3 ? (uint16_t)(int32_t)movement->data.q3.angle_words[i] :
-                (uint16_t)qa_angle_to_word((float)degrees[i]);
-            command.angle_words[i] = word <= INT16_MAX ? word : (int32_t)word - 65536;
-            uint16_t axis = (uint16_t)qa_source_float_to_i32((float)values[i]);
-            values[i] = axis <= INT16_MAX ? axis : (int32_t)axis - 65536;
-        }
+        for (unsigned i = 0; i < 3; ++i) command.angle_words[i] =
+            converted.angle_words[i] <= INT16_MAX ? converted.angle_words[i] : converted.angle_words[i] - 65536;
         command.light_level = selected->light_level;
     } else {
-        for (unsigned i = 0; i < 3; ++i)
-            if (!isfinite(degrees[i]) || fabs(degrees[i]) > FLT_MAX || !isfinite(values[i]) || fabs(values[i]) > FLT_MAX)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source Q2 command exceeds its real float fields");
-        command.angles = qa_v3((float)degrees[0], (float)degrees[1], (float)degrees[2]);
+        if (!qa_vec_finite(converted.angles) || !isfinite(converted.forward_move) ||
+            !isfinite(converted.side_move) || !isfinite(converted.up_move))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source Q2 command exceeds its real float fields");
+        command.angles = converted.angles;
         if (up > 0) command.buttons |= 8u;
         if (up < 0) command.buttons |= 16u;
-        values[2] = 0;
+        command.up_move = 0;
         if (movement->kind == QA_MOVEMENT_Q2_RERELEASE) command.server_frame = (int32_t)movement->data.q2r.server_frame;
     }
-    command.forward_move = (float)values[0]; command.side_move = (float)values[1]; command.up_move = (float)values[2];
     *out = command; return true;
 }
 

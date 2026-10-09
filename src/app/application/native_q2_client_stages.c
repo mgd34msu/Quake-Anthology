@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "guest_native_q2_private.h"
 #include "native_q2_source_invocation.h"
 #include "native_q2_client_stages.h"
@@ -466,20 +467,29 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
     double milliseconds=round(v[Q3_MOD_ELAPSED].as.scalar*1000),impulse=v[Q3_MOD_IMPULSE].as.scalar;
     if(milliseconds<0||milliseconds>255||impulse<0||impulse>255||impulse!=trunc(impulse))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native user command exceeds its source byte ABI");
-    double moves[]={v[Q3_MOD_FORWARD].as.scalar*200,v[Q3_MOD_SIDE].as.scalar*200,v[Q3_MOD_UP].as.scalar*200};
-    if(!rerelease&&v[Q3_MOD_JUMP].as.scalar!=0) moves[2]=fmax(200,moves[2]);
+    qa_movement_kind kind = rerelease ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
+    qa_input_move_intent moves = {v[Q3_MOD_FORWARD].as.scalar, v[Q3_MOD_SIDE].as.scalar, v[Q3_MOD_UP].as.scalar};
+    if(!rerelease&&v[Q3_MOD_JUMP].as.scalar!=0) moves.z=fmax(1,moves.z);
+    double scaled_moves[] = {moves.x * qa_input_command_units(kind), moves.y * qa_input_command_units(kind),
+        moves.z * qa_input_command_units(kind)};
+    for(size_t i=0;i<(rerelease?2u:3u);++i)
+        if(!isfinite(scaled_moves[i])||(!rerelease&&(scaled_moves[i]<INT16_MIN||scaled_moves[i]>INT16_MAX))||!isfinite((float)scaled_moves[i]))
+            return application_fail(e,QA_ERROR_ARGUMENT,"Native user command movement exceeds its actual source ABI");
+    qa_movement_command input = {.kind = kind, .angles = v[Q3_MOD_VIEW_ANGLES].as.vector}, converted;
+    qa_input_command_basis from = {.kind = kind, .units = 1}, to = {.kind = kind, .words = !rerelease};
+    qa_input_command_convert(&input, &moves, &from, &to,
+        (qa_input_axis_rule){.quantization = rerelease ? QA_INPUT_AXIS_EXACT : QA_INPUT_AXIS_TRUNCATE}, &converted);
     memset(s->command,0,sizeof(s->command));s->command[0]=(uint8_t)milliseconds;
-    s->command[1]=(uint8_t)((v[Q3_MOD_ATTACK].as.scalar!=0?1:0)|(rerelease&&v[Q3_MOD_JUMP].as.scalar!=0?8:0)|(rerelease&&moves[2]<0?16:0));
-    qa_vec3 aim=v[Q3_MOD_VIEW_ANGLES].as.vector;double angles[]={aim.x,aim.y,aim.z};
+    s->command[1]=(uint8_t)((v[Q3_MOD_ATTACK].as.scalar!=0?1:0)|(rerelease&&v[Q3_MOD_JUMP].as.scalar!=0?8:0)|(rerelease&&moves.z<0?16:0));
+    const float angles[] = {converted.angles.x, converted.angles.y, converted.angles.z};
+    const float axes[] = {converted.forward_move, converted.side_move, converted.up_move};
     for(size_t i=0;i<3;++i) {
-        if(rerelease) {float f=(float)angles[i];uint32_t bits;memcpy(&bits,&f,4);qa_store_u32le(s->command+4+i*4,bits);}
-        else qa_store_u16le(s->command+2+i*2,qa_angle_to_word((float)angles[i]));
+        if(rerelease) {uint32_t bits;memcpy(&bits,angles+i,4);qa_store_u32le(s->command+4+i*4,bits);}
+        else qa_store_u16le(s->command+2+i*2,(uint16_t)converted.angle_words[i]);
     }
     for(size_t i=0;i<(rerelease?2u:3u);++i) {
-        if(!isfinite(moves[i])||(!rerelease&&(moves[i]<INT16_MIN||moves[i]>INT16_MAX))||!isfinite((float)moves[i]))
-            return application_fail(e,QA_ERROR_ARGUMENT,"Native user command movement exceeds its actual source ABI");
-        if(rerelease) {float f=(float)moves[i];uint32_t bits;memcpy(&bits,&f,4);qa_store_u32le(s->command+16+i*4,bits);}
-        else qa_store_u16le(s->command+8+i*2,(uint16_t)(int16_t)trunc(moves[i]));
+        if(rerelease) {uint32_t bits;memcpy(&bits,axes+i,4);qa_store_u32le(s->command+16+i*4,bits);}
+        else qa_store_u16le(s->command+8+i*2,(uint16_t)(int16_t)axes[i]);
     }
     if(rerelease) qa_store_u32le(s->command+24,(uint32_t)application_native_q2_stages_frame(s->owner->engine));
     else s->command[14]=(uint8_t)impulse;

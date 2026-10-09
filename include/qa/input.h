@@ -236,6 +236,26 @@ bool qa_input_command_sample(qa_input_command_builder *, const qa_input_command_
 void qa_input_usercmd_build(const qa_input_command_intent *, const qa_input_command_frame *,
     double source_frame_ms, qa_input_command_encoding, qa_input_usercmd *);
 void qa_input_usercmd_project(const qa_input_usercmd *, qa_movement_command *);
+
+typedef struct qa_input_command_basis {
+    qa_movement_kind kind;
+    double units;
+    qa_vec3 delta_angles;
+    int32_t delta_words[3];
+    bool words, relative, wrap_words, repack_words, wide_delta;
+} qa_input_command_basis;
+typedef enum qa_input_axis_quantization {
+    QA_INPUT_AXIS_EXACT, QA_INPUT_AXIS_TRUNCATE, QA_INPUT_AXIS_NEAREST, QA_INPUT_AXIS_SHORT
+} qa_input_axis_quantization;
+typedef struct qa_input_axis_rule {
+    qa_input_axis_quantization quantization;
+    float minimum, maximum;
+    bool clamp, ratio_first, float_product;
+} qa_input_axis_rule;
+float qa_input_command_units(qa_movement_kind);
+void qa_input_command_convert(const qa_movement_command *, const qa_input_move_intent *,
+    const qa_input_command_basis *, const qa_input_command_basis *, qa_input_axis_rule, qa_movement_command *);
+
 qa_input_command_tuning qa_input_command_defaults(qa_movement_kind);
 void qa_input_command_clear(qa_input_command_builder *);
 bool qa_input_command_angles(qa_input_command_builder *, qa_vec3, qa_error *);

@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "native_q3_control.h"
 #include "native_q3_clients.h"
 #include "native_q3_console.h"
@@ -264,27 +265,22 @@ static bool selected_command(native_q3_think_call *call,
     qa_q3_player source;
     if (!qa_q3_native_client_slot(call->provider->state.q3, call->actor, &slot, error) ||
         !qa_q3_wire_player_read(call->provider->state.q3, slot, &source, error)) return false;
-    out->angles = qa_v3(
-        (float)(((double)raw->angles[0] + source.deltaAngles[0]) * 360 / 65536),
-        (float)(((double)raw->angles[1] + source.deltaAngles[1]) * 360 / 65536),
-        (float)(((double)raw->angles[2] + source.deltaAngles[2]) * 360 / 65536));
-    double scale = out->kind == QA_MOVEMENT_NETQUAKE || out->kind == QA_MOVEMENT_QUAKEWORLD ? 320 : 200;
-    out->forward_move = (float)(raw->forwardmove * scale / 127);
-    out->side_move = (float)(raw->rightmove * scale / 127);
-    out->up_move = (float)(raw->upmove * scale / 127);
+    memcpy(out->angle_words, raw->angles, sizeof(out->angle_words));
+    out->forward_move = raw->forwardmove; out->side_move = raw->rightmove; out->up_move = raw->upmove;
+    qa_input_command_basis from = {.kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    memcpy(from.delta_words, source.deltaAngles, sizeof(from.delta_words));
+    qa_input_command_basis to = {.kind = out->kind};
+    if (out->kind == QA_MOVEMENT_Q2_CLASSIC) {
+        to.words = to.relative = to.wrap_words = true;
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = record->state.data.q2.delta_angle_shorts[i];
+    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
+        to.relative = to.wide_delta = true; to.delta_angles = record->state.data.q2r.delta_angles;
+    }
+    qa_input_command_convert(out, NULL, &from, &to, (qa_input_axis_rule){0}, out);
     out->buttons &= 1u;
     if (out->kind == QA_MOVEMENT_NETQUAKE)
         out->acknowledged_server_seconds = (double)raw->serverTime / 1000;
-    if (out->kind == QA_MOVEMENT_Q2_CLASSIC) {
-        for (size_t i = 0; i < 3; ++i)
-            out->angle_words[i] = (uint16_t)((uint32_t)raw->angles[i] + (uint32_t)source.deltaAngles[i] -
-                (uint32_t)record->state.data.q2.delta_angle_shorts[i]);
-    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
-        qa_vec3 delta = record->state.data.q2r.delta_angles;
-        out->angles = qa_v3(
-            (float)(((double)raw->angles[0] + source.deltaAngles[0]) * 360 / 65536 - delta.x),
-            (float)(((double)raw->angles[1] + source.deltaAngles[1]) * 360 / 65536 - delta.y),
-            (float)(((double)raw->angles[2] + source.deltaAngles[2]) * 360 / 65536 - delta.z));
+    if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (raw->upmove > 0) out->buttons |= 8u;
         if (raw->upmove < 0) out->buttons |= 16u;
         out->up_move = 0;

@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "internal.h"
 #include "map_players_private.h"
 #include "guest_native_q2_private.h"
@@ -857,15 +858,12 @@ static bool component_input_current(const application_control_mod_input *scope, 
     return true;
 }
 
-static double component_move_scale(qa_movement_kind kind)
-{ return kind == QA_MOVEMENT_Q3 ? 127.0 : kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0 : 200.0; }
-
 static bool component_input_values(void *context, application_q3_mod_inputs *out, qa_error *error)
 {
     application_control_mod_input *scope = context;
     if (!component_input_current(scope, error)) return false;
     const qa_movement_command *command = scope->command;
-    double scale = component_move_scale(command->kind);
+    double scale = qa_input_command_units(command->kind);
     bool rerelease = command->kind == QA_MOVEMENT_Q2_RERELEASE;
     bool q1 = command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD;
     application_q3_mod_inputs values = {0};
@@ -919,7 +917,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
             else if (next.kind == QA_MOVEMENT_Q2_RERELEASE)
                 next.buttons = value != 0 ? next.buttons | 8u : next.buttons & ~8u;
             else next.up_move = value == 0 ? fminf(0, next.up_move)
-                : fmaxf(fmaxf(10, next.up_move), (float)component_move_scale(next.kind));
+                : fmaxf(fmaxf(10, next.up_move), (float)qa_input_command_units(next.kind));
             break;
         case Q3_MOD_IMPULSE:
             if (value < 0 || value > 255 || value != trunc(value))
@@ -931,7 +929,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
             if (input == Q3_MOD_UP && next.kind == QA_MOVEMENT_Q2_RERELEASE) {
                 next.buttons = (next.buttons & ~(8u | 16u)) | (value > 0 ? 8u : value < 0 ? 16u : 0); break;
             }
-            double scaled = value * component_move_scale(next.kind);
+            double scaled = value * qa_input_command_units(next.kind);
             if (next.kind == QA_MOVEMENT_Q2_RERELEASE) {
                 if (!isfinite(scaled) || !isfinite((float)(scaled)))
                     return application_fail(error, QA_ERROR_ARGUMENT, "Component movement exceeds its float command fields");
@@ -1132,25 +1130,27 @@ bool application_control_mod_usercmd(void *context, qa_actor_id actor,
     qa_q3_usercmd result = {.serverTime = command->kind == QA_MOVEMENT_Q3 ? command->server_time_ms : (int32_t)milliseconds,
         .buttons = (int32_t)(command->kind == QA_MOVEMENT_Q3 ? command->buttons : command->buttons & 1u),
         .weapon = (uint8_t)player->weapon};
-    const double aim[] = {scope->aim.x, scope->aim.y, scope->aim.z};
-    for (unsigned i = 0; i < 3; ++i) {
-        uint32_t word = qa_angle_to_word((float)aim[i]);
-        word -= (uint32_t)player->deltaAngles[i];
-        memcpy(result.angles + i, &word, sizeof(word));
-    }
-    double scale = 127.0 / component_move_scale(command->kind);
-    double forward = trunc(fmax(-127, fmin(127, command->forward_move * scale)));
-    double side = trunc(fmax(-127, fmin(127, command->side_move * scale)));
-    double up = command->kind == QA_MOVEMENT_Q2_RERELEASE ? command->buttons & 8u ? 127 : command->buttons & 16u ? -127 : 0 :
-        (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD) && (command->buttons & 2u) ? 127 :
-        trunc(fmax(-127, fmin(127, command->up_move * scale)));
+    qa_movement_command input = *command, converted;
+    input.angles = scope->aim;
+    qa_input_command_basis from = {.kind = command->kind};
+    qa_input_command_basis to = {.kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    memcpy(to.delta_words, player->deltaAngles, sizeof(to.delta_words));
+    qa_input_axis_rule rule = {.quantization = QA_INPUT_AXIS_TRUNCATE,
+        .clamp = true, .minimum = -127, .maximum = 127, .ratio_first = true};
+    if (command->kind == QA_MOVEMENT_Q2_RERELEASE)
+        input.up_move = command->buttons & 8u ? 200 : command->buttons & 16u ? -200 : 0;
+    else if ((command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD) &&
+             (command->buttons & 2u)) input.up_move = 320;
     if (command->kind == QA_MOVEMENT_Q3) {
         const float axes[] = {command->forward_move, command->side_move, command->up_move};
         for (unsigned i = 0; i < 3; ++i) if (!isfinite(axes[i]) || axes[i] < -128 || axes[i] > 127 || axes[i] != truncf(axes[i]))
             return application_fail(error, QA_ERROR_ARGUMENT, "Component Q3 command does not fit its actual byte axes");
-        forward = axes[0]; side = axes[1]; up = axes[2];
+        rule = (qa_input_axis_rule){0};
     }
-    result.forwardmove = (int8_t)forward; result.rightmove = (int8_t)side; result.upmove = (int8_t)up;
+    qa_input_command_convert(&input, NULL, &from, &to, rule, &converted);
+    memcpy(result.angles, converted.angle_words, sizeof(result.angles));
+    result.forwardmove = (int8_t)converted.forward_move;
+    result.rightmove = (int8_t)converted.side_move; result.upmove = (int8_t)converted.up_move;
     if (!component_input_current(scope, error)) return false;
     *out = result; return true;
 }

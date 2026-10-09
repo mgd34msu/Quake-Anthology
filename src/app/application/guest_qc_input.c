@@ -1,3 +1,4 @@
+#include "qa/input.h"
 #include "guest_qc_profile.h"
 #include "guest_qc_objectives.h"
 #include <float.h>
@@ -22,11 +23,6 @@ struct application_qc_parked_input {
     struct application_qc_parked_input *next;
     struct application_qc_input_scope *head, *tail, *parent;
 };
-static float move_scale(qa_movement_kind kind)
-{
-    return kind == QA_MOVEMENT_Q3 ? 127.0f :
-        kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0f : 200.0f;
-}
 float application_qc_input_scalar(const qa_movement_command *command, application_qc_input_id input)
 {
     switch (input) {
@@ -35,10 +31,10 @@ float application_qc_input_scalar(const qa_movement_command *command, applicatio
         (command->buttons & 2u) ? 1.0f : 0.0f : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
         (command->buttons & 8u) ? 1.0f : 0.0f : command->up_move >= 10 ? 1.0f : 0.0f;
     case QC_INPUT_IMPULSE: return command->impulse;
-    case QC_INPUT_FORWARD: return command->forward_move / move_scale(command->kind);
-    case QC_INPUT_SIDE: return command->side_move / move_scale(command->kind);
+    case QC_INPUT_FORWARD: return command->forward_move / qa_input_command_units(command->kind);
+    case QC_INPUT_SIDE: return command->side_move / qa_input_command_units(command->kind);
     case QC_INPUT_UP: return command->kind == QA_MOVEMENT_Q2_RERELEASE ?
-        (command->buttons & 8u) ? 1 : (command->buttons & 16u) ? -1 : 0 : command->up_move / move_scale(command->kind);
+        (command->buttons & 8u) ? 1 : (command->buttons & 16u) ? -1 : 0 : command->up_move / qa_input_command_units(command->kind);
     default: return 0;
     }
 }
@@ -53,7 +49,7 @@ static bool set_input(qa_movement_command *command, application_qc_input_id inpu
         else if (command->kind == QA_MOVEMENT_Q2_RERELEASE)
             command->buttons = value != 0 ? command->buttons | 8u : command->buttons & ~8u;
         else if (value == 0) { if (command->up_move > 0) command->up_move = 0; }
-        else command->up_move = fmaxf(command->up_move, move_scale(command->kind));
+        else command->up_move = fmaxf(command->up_move, qa_input_command_units(command->kind));
         break;
     case QC_INPUT_IMPULSE: {
         if (value < 0 || value > 255 || truncf(value) != value)
@@ -65,7 +61,7 @@ static bool set_input(qa_movement_command *command, application_qc_input_id inpu
             command->buttons = (command->buttons & ~24u) | (value > 0 ? 8u : value < 0 ? 16u : 0u);
             break;
         }
-        double scaled = (double)value * move_scale(command->kind);
+        double scaled = (double)value * qa_input_command_units(command->kind);
         if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
             if (fabs(scaled) > FLT_MAX) return application_fail(error, QA_ERROR_FORMAT, "QC movement output exceeds command range");
         } else {
