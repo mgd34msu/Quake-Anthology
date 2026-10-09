@@ -28,6 +28,7 @@ struct frontend_music_policy {
     qa_application *application;
     qa_audio_engine *engine;
     qa_audio_music *music;
+    qa_cvar_handle shuffle, menu_track;
     frontend_music_policy **slot;
     uint64_t bus;
     uint32_t audience;
@@ -58,6 +59,11 @@ struct frontend_shared_music {
     bool ready;
 };
 static bool fail(qa_error *e, const char *text) { return frontend_fail(e, QA_ERROR_ARGUMENT, text); }
+static void music_cvars_bind(frontend_music_policy *owner) {
+    qa_cvars *registry = qa_application_cvars(owner->application);
+    owner->shuffle = qa_cvars_resolve(registry, "music_shuffle");
+    owner->menu_track = qa_cvars_resolve(registry, "music_menu_track");
+}
 static char *copy(const char *text, qa_error *e) {
     if (!text) return NULL;
     size_t n = strlen(text) + 1; char *result = malloc(n);
@@ -282,6 +288,7 @@ bool frontend_music_policy_create(qa_frontend *f, const frontend_music_policy_op
     frontend_music_policy *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(e, QA_ERROR_MEMORY, "Retaining application music policy");
     owner->frontend = f; owner->application = f->application; owner->engine = f->audio;
+    music_cvars_bind(owner);
     if (!qa_audio_music_retain(options->music, e)) { free(owner); return false; }
     owner->music = options->music; owner->slot = out; owner->bus = options->bus;
     owner->audience = options->audience; owner->bus_gain = options->bus_gain; owner->menu = options->menu;
@@ -687,8 +694,8 @@ bool frontend_shared_music_abort(frontend_shared_music **in, qa_error *e) {
 bool frontend_music_policy_update(frontend_music_policy *owner, qa_error *e) {
     if (!owner || !frontend_music_policy_idle(owner) || owner->frontend->capture || owner->frontend->source_restoring)
         return fail(e, "Music update requires its idle attached policy");
-    const qa_cvar_view *shuffle = qa_cvars_find(qa_application_cvars(owner->application), "music_shuffle");
-    const qa_cvar_view *menu = qa_cvars_find(qa_application_cvars(owner->application), "music_menu_track");
+    const qa_cvar_view *shuffle = qa_cvars_read(qa_application_cvars(owner->application), owner->shuffle);
+    const qa_cvar_view *menu = qa_cvars_read(qa_application_cvars(owner->application), owner->menu_track);
     if (owner->menu && (!menu || !menu->value)) return fail(e, "Menu music frame lacks its actual canonical preference");
     if (owner->menu && owner->state.menu_track && !strcmp(owner->state.menu_track, menu->value) &&
         frontend_shared_menu_track_valid(menu->value)) return true;
@@ -959,6 +966,7 @@ bool frontend_music_policy_content_visit(const frontend_music_policy *owner,
 }
 void frontend_music_policy_rebind(frontend_music_policy *owner, qa_frontend *f, frontend_music_policy **slot) {
     owner->frontend = f; owner->application = f->application; owner->engine = f->audio; owner->slot = slot;
+    music_cvars_bind(owner);
 }
 
 bool frontend_music_policy_restore_player(frontend_music_policy *owner, qa_audio_music *music, qa_error *e) {

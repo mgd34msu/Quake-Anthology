@@ -13,6 +13,7 @@ struct frontend_view_settings {
     qa_frontend *frontend;
     qa_application *application;
     qa_cvars *registry;
+    qa_cvar_handle fov, q1_view[6];
     frontend_view_settings **installed;
     frontend_view_preparation *preparation;
     void *context;
@@ -56,9 +57,16 @@ static bool decimal(const char *value,double *out,qa_error *e)
 }
 static bool validate(void *context,const char *value,qa_error *e)
 { (void)context; return decimal(value,NULL,e); }
+static void view_cvars_bind(frontend_view_settings *owner)
+{
+    owner->fov=qa_cvars_resolve(owner->registry,qa_cvars_canonical_name(owner->registry,"fov"));
+    const char *const names[]={"viewsize","cl_sbar","chase_active","chase_back","chase_up","chase_right"};
+    for (size_t i=0;i<6;++i)
+        owner->q1_view[i]=qa_cvars_resolve(owner->registry,qa_cvars_canonical_name(owner->registry,names[i]));
+}
 static const qa_cvar_view *record(const frontend_view_settings *owner)
 {
-    return owner?qa_cvars_find(owner->registry,qa_cvars_canonical_name(owner->registry,"fov")):NULL;
+    return owner?qa_cvars_read(owner->registry,owner->fov):NULL;
 }
 bool frontend_view_settings_parent_is(const frontend_view_settings *owner,
     const qa_frontend *f,const qa_cvars *registry)
@@ -113,6 +121,7 @@ bool frontend_view_settings_create(qa_frontend *f,qa_cvars *registry,void *conte
     frontend_view_settings *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining explicit view preference");
     owner->frontend=f; owner->application=f->application; owner->registry=registry;
+    view_cvars_bind(owner);
     owner->installed=out; owner->context=context; owner->changed=changed;
     owner->value=number; owner->modification_count=row->modification_count;
     owner->explicit_override=number!=90;
@@ -152,19 +161,18 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
     if (!current(owner) || !out || (dialect!=QA_CONSOLE_Q1 && dialect!=QA_CONSOLE_QW) ||
         owner->preparation || owner->notifying || !qa_cvars_observer_idle(owner->registry))
         return fail(e,"Q1 view settings require their returned published canonical parent");
-    const char *const names[]={"viewsize","cl_sbar","chase_active","chase_back","chase_up","chase_right"};
-    const char *canonical[6];
+    const char *size_name=NULL;
     double numbers[6];
     for (size_t i=0;i<6;++i) {
-        canonical[i]=qa_cvars_canonical_name(owner->registry,names[i]);
-        const qa_cvar_view *row=qa_cvars_find(owner->registry,canonical[i]);
-        if (!row || strcmp(row->name,canonical[i]) || !isfinite(row->number))
+        const qa_cvar_view *row=qa_cvars_read(owner->registry,owner->q1_view[i]);
+        if (!row || !isfinite(row->number))
             return fail(e,"Q1 view settings lost an actual finite canonical record");
+        if (!i) size_name=row->name;
         numbers[i]=row->number;
     }
     if (numbers[0]<30 || numbers[0]>120) {
         const char *value=numbers[0]<30?"30":"120";
-        if (!qa_cvars_set(owner->registry,canonical[0],value,false,e)) return false;
+        if (!qa_cvars_set(owner->registry,size_name,value,false,e)) return false;
         numbers[0]=numbers[0]<30?30:120;
     }
     *out=(frontend_q1_view_settings){.size=numbers[0],
@@ -687,5 +695,6 @@ bool frontend_view_settings_rebind(frontend_view_settings *owner,qa_frontend *f,
         return fail(e,"View rebind requires its same genuine published canonical registry");
     if (owner->installed!=slot) *owner->installed=NULL;
     owner->frontend=f; owner->application=f->application; owner->installed=slot; owner->context=context;
+    view_cvars_bind(owner);
     *slot=owner; return true;
 }
