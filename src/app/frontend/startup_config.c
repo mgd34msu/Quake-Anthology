@@ -35,6 +35,7 @@ frontend_startup_config *frontend_startup_config_create(const frontend_startup_c
     frontend_startup_config *owner=calloc(1,sizeof(*owner));
     if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating startup configuration"),NULL;
     owner->options=*options;
+    if (options->continuation) return owner;
     qa_console_dialect dialect=options->command.dialect;
     if (options->seat_scope) {
         add(owner,dialect==QA_CONSOLE_Q3?"q3config.cfg":"config.cfg",FRONTEND_SCRIPT_SEAT);
@@ -196,8 +197,9 @@ bool frontend_startup_config_advance(frontend_startup_config *owner,qa_console *
         ok=prefix_advance(owner,console,owner->image_text,&done,error);
         if (ok) { owner->index=1; owner->completed=done; *complete=done; }
     } else {
-        if (!owner->options.seat_scope && owner->options.command.dialect==QA_CONSOLE_QW &&
-            owner->options.command.origin==QA_COMMAND_SERVER && !owner->archive) {
+        if ((owner->options.continuation || (!owner->options.seat_scope &&
+            owner->options.command.dialect==QA_CONSOLE_QW &&
+            owner->options.command.origin==QA_COMMAND_SERVER)) && !owner->archive) {
             owner->defaults=true; ok=apply(owner,owner->options.apply_defaults);
             if (ok) { owner->archive=true; ok=apply(owner,owner->options.apply_archive); }
         }

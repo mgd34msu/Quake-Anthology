@@ -9,7 +9,7 @@ typedef enum frontend_script_scope {
 typedef struct frontend_startup_config frontend_startup_config;
 typedef struct frontend_startup_config_options {
     qa_command_context command;
-    bool has_mod, seat_scope, safe_mode;
+    bool has_mod, seat_scope, safe_mode, continuation;
     void *context;
     bool (*read)(void *, frontend_script_scope, const char *, const qa_command_context *,
                  qa_bytes *, void **lease, qa_error *);

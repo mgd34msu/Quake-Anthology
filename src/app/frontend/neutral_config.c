@@ -12,6 +12,7 @@
 #include "seat_save.h"
 #include "restart.h"
 #include "commands.h"
+#include "demo_dispatch.h"
 #include "shared_register.h"
 #include "legacy_render_policy.h"
 #include "save_private.h"
@@ -53,7 +54,7 @@ struct frontend_neutral_config {
     qa_console_dialect dialect;
     bool issued, attached, found, ready, published, running, imported, retiring, movement_selected;
     bool write_registered,dump_registered;
-    bool configuration_done,variables_seeded,archive_seeded,release_before,startup_owned;
+    bool configuration_done,variables_seeded,archive_seeded,release_before,startup_owned,continuation;
     bool retirement_started,recipient_returned,retirement_release_saved,restore_discarded;
     qa_error failure;
 };
@@ -61,6 +62,7 @@ struct frontend_neutral_configs {
     qa_frontend *frontend;
     frontend_config_store *manager;
     frontend_neutral_config *rows;
+    frontend_authored_bindings *continuation[QA_INPUT_LOCAL_SEATS];
     bool restoring;
 };
 static bool fail(qa_error *e, qa_status code, const char *message)
@@ -90,6 +92,11 @@ static bool physical_read(const frontend_neutral_config *row,qa_application_clie
 static bool physical(const frontend_neutral_config *row,qa_application_client_source *out)
 { return physical_read(row,out,true); }
 static bool same_context(const qa_command_context *,const qa_command_context *);
+static bool demo_continuation(const frontend_neutral_config *row)
+{
+    qa_frontend *f=row->owner->frontend;
+    return frontend_demo_playback_path(frontend_demo_dispatch_service(f->demos,row->physical_seat))!=NULL;
+}
 static bool checkpoint_ready(const frontend_neutral_config *row,qa_error *e)
 {
     qa_application_client_source actual;
@@ -324,7 +331,14 @@ static void script_complete(void *context,const qa_command_context *command,cons
 static bool defaults(void *context,qa_error *e)
 {
     frontend_neutral_config *row=context;
-    return frontend_authored_bindings_defaults(row->authored,row->input,qa_movement_console_dialect(row->kind),e);
+    if ((!row->continuation || !frontend_authored_bindings_ready(row->authored)) &&
+        !frontend_authored_bindings_defaults(row->authored,row->input,qa_movement_console_dialect(row->kind),e)) return false;
+    if (!row->continuation) return true;
+    qa_input_seat *configuration=NULL;
+    if (!qa_input_seat_configuration_clone(row->owner->frontend->seats[row->physical_seat].input,
+        &configuration,e)) return false;
+    qa_input_seat_configuration_publish(row->input,configuration);
+    qa_input_seat_destroy(configuration); return true;
 }
 static bool apply_archive_entries(frontend_neutral_config *row,const qa_cvar_archive *archive,bool player_only,qa_error *e)
 {
@@ -346,8 +360,9 @@ static bool archive(void *context,qa_error *e)
 {
     frontend_neutral_config *row=context;
     bool legacy_globals=frontend_config_store_legacy_globals(row->owner->manager);
-    if (!frontend_config_store_client_settings_archive(row->owner->manager,row->preparation,&row->shared_archive,e) ||
-        !apply_archive_entries(row,&row->client_archive,!legacy_globals,e) ||
+    if (!frontend_config_store_client_settings_archive(row->owner->manager,row->preparation,&row->shared_archive,e)) return false;
+    if (row->continuation) return true;
+    if (!apply_archive_entries(row,&row->client_archive,!legacy_globals,e) ||
         !apply_archive_entries(row,&row->mouse_archive,!legacy_globals,e) ||
         !apply_archive_entries(row,&row->movement_archive,!legacy_globals,e)) return false;
     if (!row->found) return true;
@@ -514,7 +529,18 @@ static bool install(void *context,const qa_application_client_source *source,boo
             .console=source->context.console,.cvars=row->mouse,.gamepad=*qa_input_seat_gamepad_tuning(live),
             .context_ready=input_context,.context_user=row};
         row->input=qa_input_seat_create(&input,e);
-        row->authored=frontend_authored_bindings_create(e);
+        row->continuation=demo_continuation(row);
+        frontend_authored_bindings **carried=row->owner->continuation+row->physical_seat;
+        if (row->continuation) { row->authored=*carried; *carried=NULL; }
+        else { frontend_authored_bindings_destroy(*carried); *carried=NULL; }
+        if (row->continuation && !row->authored) {
+            qa_console *console=NULL; qa_cvars *registry=NULL; qa_command_context command;
+            if (qa_input_seat_recipient_read(live,&console,&registry,&command)) {
+                const frontend_config_source *previous=frontend_config_store_source(row->owner->manager,registry);
+                if (previous && !frontend_config_source_clone_bindings(previous,row->command.seat,&row->authored,e)) return false;
+            }
+        }
+        if (!row->authored) row->authored=frontend_authored_bindings_create(e);
         if (!row->input || !row->authored) return false;
         if (!frontend_config_store_neutral_adopt_store(row->owner->manager,held,row->files,e)) return false;
         qa_settings_store store=frontend_config_files_store(row->files,false);
@@ -527,12 +553,12 @@ static bool install(void *context,const qa_application_client_source *source,boo
         const char *client_owner[]={"client",product->key,held->selection.implementation,logical};
         const char *mouse_owner[]={"input",dialect_name(row->dialect),logical};
         const char *movement_owner[]={"movement",dialect_name(qa_movement_console_dialect(row->kind))};
-        if ((!frontend_config_store_has_canonical_archive(row->owner->manager) &&
+        if (!row->continuation && ((!frontend_config_store_has_canonical_archive(row->owner->manager) &&
             (!qa_settings_load_cvars(store,client_owner,4,row->dialect,&row->client_archive,e) ||
             !qa_settings_load_cvars(input_store,mouse_owner,3,row->dialect,&row->mouse_archive,e) ||
             !qa_settings_load_cvars(input_store,movement_owner,2,qa_movement_console_dialect(row->kind),&row->movement_archive,e))) ||
-            !qa_settings_load_seat(input_store,path,&row->settings,&row->found,e)) return false;
-        if (!frontend_config_store_seed_player_archive(row->owner->manager,row->client,row->command.seat,
+            !qa_settings_load_seat(input_store,path,&row->settings,&row->found,e))) return false;
+        if (!row->continuation && !frontend_config_store_seed_player_archive(row->owner->manager,row->client,row->command.seat,
             &row->client_archive,e)) return false;
     }
     row->bindings=qa_input_console_create(&(qa_input_console_options){.console=source->context.console,
@@ -578,6 +604,7 @@ static bool advance_preparation(void *context,qa_application_client_preparation 
         bool safe=false;
         if (row->startup_owned && !qa_application_client_prepare_safe_mode(preparation,&safe,e)) return false;
         frontend_startup_config_options options={.command=row->command,.safe_mode=safe,
+            .continuation=row->continuation,
             .has_mod=qa_catalog_configuration_base(qa_launch_instance_catalog(held),held->selection.product)!=held->selection.product,
             .context=row,.read=script_read,.release=script_release,
             .apply_defaults=defaults,.apply_archive=archive,.apply_launch=launch,.replay_startup_variables=replay};
@@ -818,6 +845,11 @@ static void released(void *context)
     while (*at && *at!=row) at=&(*at)->next;
     if (*at!=row) return;
     frontend_neutral_config *next=row->next;
+    if (row->published && row->authored && demo_continuation(row)) {
+        frontend_authored_bindings **carried=row->owner->continuation+row->physical_seat;
+        frontend_authored_bindings_destroy(*carried);
+        *carried=row->authored; row->authored=NULL;
+    }
     row->attached=false;
     if (dispose(row,NULL)) *at=next;
 }
@@ -859,6 +891,8 @@ bool frontend_neutral_configs_destroy(frontend_neutral_configs *owner,qa_error *
         if (!dispose(row,e)) return false;
         owner->rows=next;
     }
+    for (size_t i=0;i<QA_INPUT_LOCAL_SEATS;++i)
+        frontend_authored_bindings_destroy(owner->continuation[i]);
     free(owner); return true;
 }
 bool frontend_neutral_config_options(frontend_neutral_configs *owner,uint32_t physical,
