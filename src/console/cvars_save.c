@@ -195,8 +195,8 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
     uint32_t dialect = 0;
     size_t count = 0;
     bool okay = header(&io, &dialect, &count);
-    if (okay && (dialect != (uint32_t)registry->store->active_dialect || count > bytes.size - io.offset))
-        okay = qac_fail(error, QA_ERROR_FORMAT, "saved gameplay cvar dialect or extent differs");
+    if (okay && count > bytes.size - io.offset)
+        okay = qac_fail(error, QA_ERROR_FORMAT, "saved gameplay cvar extent differs");
     saved_cvar **tail = &state->rows;
     for (size_t i = 0; okay && i < count; ++i) {
         saved_cvar *row = calloc(1, sizeof(*row));

@@ -66,8 +66,8 @@ static char *directory(qa_error *error)
 static bool open_stream(void *context,const char *filename,bool resume,uint64_t position,
     qa_bot_log_stream *out,qa_error *error)
 {
-    (void)context;
-    if(!filename || !out || position>UINT64_C(9007199254740991))
+    (void)context; (void)position;
+    if(!filename || !out)
         return application_fail(error,QA_ERROR_ARGUMENT,"Bot log open has invalid source filename or saved position");
     const char *name=filename;
     for(const char *cursor=filename;*cursor;++cursor)
@@ -79,13 +79,12 @@ static bool open_stream(void *context,const char *filename,bool resume,uint64_t 
     char *path=directory(error);if(!path) return false;
     application_bot_log_stream *stream=calloc(1,sizeof(*stream));
     if(!stream) {free(path);return application_fail(error,QA_ERROR_MEMORY,"Allocating retained bot log descriptor owner");}
-    bool okay=(resume || qa_fs_path_create_directory(path,error)) && qa_fs_root_open(path,&stream->root,error);
+    bool okay=qa_fs_path_create_directory(path,error) && qa_fs_root_open(path,&stream->root,error);
     free(path);uint64_t size;
-    if(okay) okay=qa_fs_root_stream_open(stream->root,name,QA_FS_STREAM_WRITE,resume,&stream->file,&size,error);
-    if(okay && resume && size<position)
-        okay=application_fail(error,QA_ERROR_FORMAT,"Saved bot log position exceeds the retained file");
+    if(okay) okay=qa_fs_root_stream_open(stream->root,name,
+        resume?QA_FS_STREAM_APPEND:QA_FS_STREAM_WRITE,resume,&stream->file,&size,error);
     if(!okay) {qa_fs_stream_close(stream->file);qa_fs_root_close(stream->root);free(stream);return false;}
-    stream->position=resume?position:0;
+    stream->position=size;
     *out=(qa_bot_log_stream){.context=stream,.write=write_stream,.flush=flush,.close=close_stream,.checkpoint=checkpoint};
     return true;
 }
