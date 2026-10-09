@@ -651,9 +651,6 @@ bool qa_executable_recipe_current(const qa_executable_recipe *r, const qa_catalo
 {
     if (!r || catalog != r->catalog || qa_catalog_generation(catalog) != r->catalog_generation || qa_catalog_resources(catalog) != r->pool) return false;
     for (size_t i = 0; i < r->view_count; ++i) if (!qa_vfs_lookup_equal(r->views[i].files, r->views[i].admitted_policy)) return false;
-    for (size_t i = 0; i < r->resource_count; ++i) { const recipe_resource *entry = r->resources[i];
-        if (entry->view >= r->view_count || qa_resource_pool_find(r->pool, qa_resource_id(entry->value.resource)) != entry->value.resource ||
-            !qa_vfs_acquisition_retained(r->views[entry->view].files, &entry->acquisition, NULL)) return false; }
     return true;
 }
 bool qa_executable_recipe_close(qa_executable_recipe *r, qa_error *error)
