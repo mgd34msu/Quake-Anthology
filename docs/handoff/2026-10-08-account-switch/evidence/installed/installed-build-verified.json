@@ -1,0 +1,12 @@
+{
+  "result": "PASS",
+  "source_commit": "a36aa7012486859974de7f827b41e315909d2a0b",
+  "built_time": "2026-10-09T03:14:03.732737+00:00",
+  "verified_at": "2026-10-09T03:28:06.152815+00:00",
+  "original_profile_count": 42,
+  "original_profile_byte_equal": true,
+  "installed_five_files_byte_equal": true,
+  "candidate": "/tmp/qa-the2859-hud-production-20261009",
+  "qualified_receipt": "/tmp/qa-the2859-hud-wayland-20261009/qualification-reviewed.json",
+  "contact_png_reviewed": true
+}

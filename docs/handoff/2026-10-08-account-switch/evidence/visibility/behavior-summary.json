@@ -1,0 +1,42 @@
+[
+  {
+    "edition": "classic",
+    "source": "native",
+    "sampled_other_actors": 31,
+    "default_visible": 5,
+    "default_culled": 26,
+    "rr_nonzero_or_override_visible": null,
+    "classic_existing_override_ignored": true,
+    "prepared_abort_publish_and_rebind_match": true
+  },
+  {
+    "edition": "classic",
+    "source": "original",
+    "sampled_other_actors": 31,
+    "default_visible": 5,
+    "default_culled": 26,
+    "rr_nonzero_or_override_visible": null,
+    "classic_existing_override_ignored": true,
+    "prepared_abort_publish_and_rebind_match": true
+  },
+  {
+    "edition": "rerelease",
+    "source": "native",
+    "sampled_other_actors": 31,
+    "default_visible": 5,
+    "default_culled": 26,
+    "rr_nonzero_or_override_visible": 31,
+    "classic_existing_override_ignored": false,
+    "prepared_abort_publish_and_rebind_match": true
+  },
+  {
+    "edition": "rerelease",
+    "source": "original",
+    "sampled_other_actors": 31,
+    "default_visible": 5,
+    "default_culled": 26,
+    "rr_nonzero_or_override_visible": 31,
+    "classic_existing_override_ignored": false,
+    "prepared_abort_publish_and_rebind_match": true
+  }
+]

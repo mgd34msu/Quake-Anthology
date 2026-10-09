@@ -1,0 +1,19 @@
+Test project /home/buzzkill/.cache/quake-anthology-recovery/runtime-checkout/build
+    Start 1: platform_services
+1/7 Test #1: platform_services ................   Passed    0.00 sec
+    Start 2: core
+2/7 Test #2: core .............................   Passed    0.02 sec
+    Start 3: archive
+3/7 Test #3: archive ..........................   Passed    0.00 sec
+    Start 4: vfs
+4/7 Test #4: vfs ..............................   Passed    0.01 sec
+    Start 5: bsp
+5/7 Test #5: bsp ..............................   Passed    0.00 sec
+    Start 6: image
+6/7 Test #6: image ............................   Passed    0.00 sec
+    Start 7: model
+7/7 Test #7: model ............................   Passed    0.00 sec
+
+100% tests passed out of 7
+
+Total Test time (real) =   0.05 sec

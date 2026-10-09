@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "qa/q2_save.h"
 #include "qa/binary.h"
+#include "qa/archive.h"
+#include <limits.h>
+#include <zlib.h>
 
 #define Q2_SERVER_HEADER (QA_Q2_SAVE_COMMENT_BYTES + QA_Q2_SAVE_MAP_COMMAND_BYTES)
 #define Q2_SERVER_CVAR (QA_Q2_SAVE_CVAR_BYTES * 2)
@@ -428,16 +431,118 @@ static bool read_file(qa_fs_root *root, const char *directory, const char *name,
     return ok;
 }
 
-bool qa_q2_save_server_read(qa_fs_root *root, const char *directory,
+typedef struct q2_save_files {
+    qa_fs_root *root;
+    const char *directory;
+    qa_fs_listing files;
+    qa_archive *pack;
+    qa_buffer unpacked;
+} q2_save_files;
+
+static void close_files(q2_save_files *files)
+{
+    qa_fs_listing_free(&files->files); qa_archive_close(files->pack);
+    qa_buffer_free(&files->unpacked); *files = (q2_save_files){0};
+}
+
+static bool open_pack(q2_save_files *files, qa_bytes bytes, qa_error *error)
+{
+    if (!bytes.data || bytes.size < 18 || bytes.size > UINT_MAX ||
+        bytes.data[0] != 31 || bytes.data[1] != 139 || bytes.data[2] != 8)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease save lacks its gzip PACK payload");
+    uint32_t size = qa_load_u32le(bytes.data + bytes.size - 4);
+    if (size < 12 || size > INT32_MAX)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease PACK exceeds its original signed offsets");
+    qa_buffer raw = {.data = malloc(size), .size = size};
+    if (!raw.data) return persistence_fail(error, QA_ERROR_MEMORY, "Inflating original Quake II PACK state");
+    z_stream stream = {0};
+    int status = inflateInit2(&stream, 31);
+    bool ok = status == Z_OK;
+    if (ok) {
+        stream.next_in = (Bytef *)(uintptr_t)bytes.data; stream.avail_in = (uInt)bytes.size;
+        stream.next_out = raw.data; stream.avail_out = size;
+        status = inflate(&stream, Z_FINISH);
+        ok = status == Z_STREAM_END && stream.total_in == bytes.size && stream.total_out == raw.size;
+        int ended = inflateEnd(&stream); if (ended != Z_OK) ok = false;
+    }
+    if (!ok) {
+        qa_buffer_free(&raw);
+        return persistence_fail(error, status == Z_MEM_ERROR ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
+            "Quake II rerelease gzip state is truncated or corrupt");
+    }
+    if (!qa_archive_open_memory((qa_bytes){raw.data, raw.size}, QA_ARCHIVE_PAK, &files->pack, error)) {
+        qa_buffer_free(&raw); return false;
+    }
+    files->unpacked = raw; return true;
+}
+
+static bool open_files(qa_fs_root *root, const char *path, q2_save_files *files, qa_error *error)
+{
+    qa_fs_entry_kind kind;
+    if (!qa_fs_root_status(root, path, &kind, NULL, error)) return false;
+    files->root = root; files->directory = path;
+    if (kind == QA_FS_DIRECTORY) return qa_fs_root_list(root, path, &files->files, error);
+    if (kind != QA_FS_REGULAR)
+        return persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II original save is absent");
+    qa_fs_file *file = NULL; qa_fs_identity identity; qa_buffer bytes = {0};
+    bool ok = qa_fs_root_file_open(root, path, &file, &identity, error) &&
+        qa_fs_file_read_snapshot(file, &identity, &bytes, error) &&
+        open_pack(files, (qa_bytes){bytes.data, bytes.size}, error);
+    qa_fs_file_close(file); qa_buffer_free(&bytes); return ok;
+}
+
+static bool read_member(const q2_save_files *files, const char *name, const char *suffix,
+    qa_buffer *out, qa_error *error)
+{
+    if (!files->pack) return read_file(files->root, files->directory, name, suffix, out, error);
+    size_t a = strlen(name), b = strlen(suffix);
+    if (a + b >= 56) return persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved member exceeds its PACK name");
+    char path[56]; memcpy(path, name, a); memcpy(path + a, suffix, b + 1);
+    const qa_archive_entry *entry = NULL, *duplicate = NULL;
+    if (!qa_archive_find_normalized(files->pack, path, QA_ARCHIVE_EXACT, 0, &entry, error)) return false;
+    if (!entry || entry->is_directory) return persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II original PACK member is absent");
+    if (!qa_archive_find_normalized(files->pack, path, QA_ARCHIVE_EXACT, entry->ordinal + 1, &duplicate, error)) return false;
+    if (duplicate) return persistence_fail(error, QA_ERROR_FORMAT, "Quake II original PACK repeats a saved member");
+    qa_archive_data data = {0};
+    if (!qa_archive_read(files->pack, entry->ordinal, &data, error)) return false;
+    qa_buffer value = {.data = data.bytes.size ? malloc(data.bytes.size) : NULL, .size = data.bytes.size};
+    bool ok = !value.size || value.data;
+    if (ok && value.size) memcpy(value.data, data.bytes.data, value.size);
+    qa_archive_data_free(&data);
+    if (!ok) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining original Quake II module state");
+    *out = value; return true;
+}
+
+static bool game_member(const q2_save_files *files, qa_error *error)
+{
+    if (files->pack) {
+        const qa_archive_entry *entry = NULL;
+        if (!qa_archive_find_normalized(files->pack, "game.ssv", QA_ARCHIVE_EXACT, 0, &entry, error)) return false;
+        return (entry && !entry->is_directory && entry->size) ||
+            persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II original PACK has no GAME file");
+    }
+    char *path = file_path(files->directory, "game.ssv", "", error);
+    if (!path) return false;
+    qa_fs_entry_kind kind; qa_fs_identity identity;
+    bool ok = qa_fs_root_status(files->root, path, &kind, &identity, error); free(path);
+    if (ok && (kind != QA_FS_REGULAR || !qa_fs_identity_size(&identity)))
+        ok = persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II original directory has no GAME file");
+    return ok;
+}
+
+bool qa_q2_save_server_read(qa_fs_root *root, const char *path,
     qa_q2_save_server *out, qa_error *error)
 {
-    if (!root || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server directory/output are required");
-    if (!qa_save_slot_name(directory, error)) return false;
-    qa_buffer bytes = {0};
-    bool ok = read_file(root, directory, "server.ssv", "", &bytes, error) &&
-        qa_q2_save_server_decode((qa_bytes){bytes.data, bytes.size}, out, error);
-    qa_buffer_free(&bytes);
-    return ok;
+    if (!root || !out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II server location/output are required");
+    if (!qa_save_slot_name(path, error)) return false;
+    q2_save_files files = {0}; qa_buffer bytes = {0}; qa_q2_save_server server = {0};
+    bool ok = open_files(root, path, &files, error) && game_member(&files, error) &&
+        read_member(&files, "server.ssv", "", &bytes, error) &&
+        qa_q2_save_server_decode((qa_bytes){bytes.data, bytes.size}, &server, error);
+    if (ok && files.pack && !server.rerelease)
+        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II original PACK lacks its EVAS server");
+    if (ok) *out = server; else qa_q2_save_server_dispose(&server);
+    qa_buffer_free(&bytes); close_files(&files); return ok;
 }
 
 static bool write_file(qa_fs_root *root, const char *directory, const char *name,
@@ -551,26 +656,30 @@ void qa_q2_save_destroy(qa_q2_save_data *save)
     free(save->levels); free(save);
 }
 
-bool qa_q2_save_directory_read(qa_fs_root *root, const char *directory,
-    qa_q2_save_data **out, qa_error *error)
+static bool decode_files(const q2_save_files *files, qa_q2_save_data **out, qa_error *error)
 {
-    if (!root || !out || *out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II directory read requires an empty output");
-    if (!qa_save_slot_name(directory, error)) return false;
     qa_q2_save_data *save = calloc(1, sizeof(*save));
-    if (!save) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II save directory");
-    qa_fs_listing files = {0};
-    bool ok = qa_q2_save_server_read(root, directory, &save->server, error) &&
-        read_file(root, directory, "game.ssv", "", &save->game, error) &&
-        qa_fs_root_list(root, directory, &files, error);
+    if (!save) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II saved files");
+    qa_buffer server = {0};
+    bool ok = read_member(files, "server.ssv", "", &server, error) &&
+        qa_q2_save_server_decode((qa_bytes){server.data, server.size}, &save->server, error) &&
+        read_member(files, "game.ssv", "", &save->game, error);
+    qa_buffer_free(&server);
+    if (ok && files->pack && !save->server.rerelease)
+        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease PACK lacks its actual EVAS server");
     if (ok && !save->game.size)
-        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II save directory has an empty GAME file");
-    for (size_t i = 0; ok && i < files.count; ++i) {
-        const qa_fs_entry *entry = files.entries + i;
-        size_t length = strlen(entry->name);
-        if (entry->kind != QA_FS_REGULAR || length < 5 || strcmp(entry->name + length - 4, ".sav")) continue;
+        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II original save has an empty GAME file");
+    size_t count = files->pack ? qa_archive_count(files->pack) : files->files.count;
+    for (size_t i = 0; ok && i < count; ++i) {
+        const qa_archive_entry *member = files->pack ? qa_archive_entry_at(files->pack, i) : NULL;
+        const qa_fs_entry *entry = files->pack ? NULL : files->files.entries + i;
+        const char *path = member ? member->path : entry->name;
+        bool regular = member ? !member->is_directory : entry->kind == QA_FS_REGULAR;
+        size_t length = strlen(path);
+        if (!regular || length < 5 || strcmp(path + length - 4, ".sav")) continue;
         size_t size = length - 4;
         if (size >= QA_Q2_SAVE_MAP_BYTES) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved map exceeds MAX_QPATH"); break; }
-        char name[QA_Q2_SAVE_MAP_BYTES]; memcpy(name, entry->name, size); name[size] = 0;
+        char name[QA_Q2_SAVE_MAP_BYTES]; memcpy(name, path, size); name[size] = 0;
         if (!level_name(name, error)) { ok = false; break; }
         if (save->level_count == SIZE_MAX / sizeof(*save->levels)) {
             ok = persistence_fail(error, QA_ERROR_MEMORY, "Quake II saved level roster exceeds memory"); break;
@@ -581,17 +690,118 @@ bool qa_q2_save_directory_read(qa_fs_root *root, const char *directory,
         qa_q2_save_level *level = next + save->level_count++;
         *level = (qa_q2_save_level){.rerelease = save->server.rerelease}; memcpy(level->name, name, size + 1);
         qa_buffer engine = {0};
-        ok = read_file(root, directory, name, ".sav", &level->game, error) &&
-            read_file(root, directory, name, ".sv2", &engine, error) &&
+        ok = read_member(files, name, ".sav", &level->game, error) &&
+            read_member(files, name, ".sv2", &engine, error) &&
             qa_q2_save_level_decode((qa_bytes){engine.data, engine.size}, level, error);
         qa_buffer_free(&engine);
         if (ok && !level->game.size)
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved LEVEL file is empty");
     }
-    qa_fs_listing_free(&files);
     if (!ok) { qa_q2_save_destroy(save); return false; }
-    *out = save;
-    return true;
+    *out = save; return true;
+}
+
+bool qa_q2_save_pack_decode(qa_bytes bytes, qa_q2_save_data **out, qa_error *error)
+{
+    if (!out || *out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II PACK read requires an empty output");
+    q2_save_files files = {0};
+    bool ok = open_pack(&files, bytes, error) && decode_files(&files, out, error);
+    close_files(&files); return ok;
+}
+
+bool qa_q2_save_directory_read(qa_fs_root *root, const char *path,
+    qa_q2_save_data **out, qa_error *error)
+{
+    if (!root || !out || *out) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II original read requires an empty output");
+    if (!qa_save_slot_name(path, error)) return false;
+    q2_save_files files = {0};
+    bool ok = open_files(root, path, &files, error) && decode_files(&files, out, error);
+    close_files(&files); return ok;
+}
+
+static bool deflate_bytes(z_stream *stream, qa_bytes bytes, qa_error *error)
+{
+    stream->next_in = (Bytef *)(uintptr_t)bytes.data; stream->avail_in = (uInt)bytes.size;
+    int status = deflate(stream, Z_NO_FLUSH);
+    return (status == Z_OK && !stream->avail_in) || persistence_fail(error,
+        status == Z_MEM_ERROR ? QA_ERROR_MEMORY : QA_ERROR_IO, "Compressing original Quake II saved state");
+}
+
+static void pack_member(uint8_t *row, const char *name, const char *suffix, uint32_t offset, uint32_t size)
+{
+    size_t a = strlen(name), b = strlen(suffix);
+    memcpy(row, name, a); memcpy(row + a, suffix, b);
+    qa_store_u32le(row + 56, offset); qa_store_u32le(row + 60, size);
+}
+
+static bool write_pack(qa_fs_root *root, const char *path, const qa_q2_save_data *save,
+    qa_bytes server, uint64_t nonce, qa_error *error)
+{
+    if (save->level_count > (INT32_MAX / 64 - 2) / 2)
+        return persistence_fail(error, QA_ERROR_MEMORY, "Quake II original PACK directory exceeds its signed extent");
+    size_t members = 2 + save->level_count * 2;
+    qa_buffer directory = {.data = calloc(members * 64 + 12, 1), .size = members * 64 + 12};
+    qa_buffer *engine = save->level_count ? calloc(save->level_count, sizeof(*engine)) : NULL;
+    if (!directory.data || (save->level_count && !engine)) {
+        qa_buffer_free(&directory); free(engine);
+        return persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II original PACK directory");
+    }
+    memcpy(directory.data, "PACK", 4); qa_store_u32le(directory.data + 4, 12);
+    qa_store_u32le(directory.data + 8, (uint32_t)(members * 64));
+    size_t extent = directory.size; bool ok = server.size <= INT32_MAX - directory.size &&
+        save->game.size <= INT32_MAX - directory.size - server.size;
+    if (ok) {
+        pack_member(directory.data + 12, "server.ssv", "", (uint32_t)extent, (uint32_t)server.size); extent += server.size;
+        pack_member(directory.data + 76, "game.ssv", "", (uint32_t)extent, (uint32_t)save->game.size); extent += save->game.size;
+    }
+    for (size_t i = 0; ok && i < save->level_count; ++i) {
+        const qa_q2_save_level *level = save->levels + i;
+        if (!level->rerelease || strlen(level->name) + 4 >= 56 || level->game.size > INT32_MAX) {
+            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease LEVEL has no representable PACK identity"); break;
+        }
+        ok = qa_q2_save_level_encode(level, engine + i, error);
+        if (!ok) break;
+        if (extent > INT32_MAX || level->game.size > INT32_MAX - extent ||
+            engine[i].size > INT32_MAX - extent - level->game.size) {
+            ok = persistence_fail(error, QA_ERROR_MEMORY, "Quake II original PACK payload exceeds signed offsets"); break;
+        }
+        uint8_t *row = directory.data + 12 + (2 + i * 2) * 64;
+        pack_member(row, level->name, ".sav", (uint32_t)extent, (uint32_t)level->game.size); extent += level->game.size;
+        pack_member(row + 64, level->name, ".sv2", (uint32_t)extent, (uint32_t)engine[i].size); extent += engine[i].size;
+    }
+    if (ok && extent > INT32_MAX) ok = persistence_fail(error, QA_ERROR_MEMORY, "Quake II original PACK exceeds signed offsets");
+    if (!ok && (!error || error->code == QA_OK)) persistence_fail(error, QA_ERROR_MEMORY, "Quake II original PACK file is too large");
+    z_stream stream = {0}; bool initialized = false; qa_buffer compressed = {0};
+    if (ok) {
+        int status = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 9, Z_DEFAULT_STRATEGY);
+        initialized = status == Z_OK;
+        if (!initialized) ok = persistence_fail(error, status == Z_MEM_ERROR ? QA_ERROR_MEMORY : QA_ERROR_IO,
+            "Opening Quake II original gzip state stream");
+    }
+    if (ok) {
+        uLong bound = deflateBound(&stream, (uLong)extent);
+        if (bound > UINT_MAX) ok = persistence_fail(error, QA_ERROR_MEMORY, "Quake II gzip output exceeds its stream extent");
+        else {
+            compressed = (qa_buffer){.data = malloc((size_t)bound), .size = (size_t)bound};
+            if (!compressed.data) ok = persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II compressed state");
+            else { stream.next_out = compressed.data; stream.avail_out = (uInt)bound; }
+        }
+    }
+    if (ok) ok = deflate_bytes(&stream, (qa_bytes){directory.data, directory.size}, error) &&
+        deflate_bytes(&stream, server, error) && deflate_bytes(&stream, (qa_bytes){save->game.data, save->game.size}, error);
+    for (size_t i = 0; ok && i < save->level_count; ++i)
+        ok = deflate_bytes(&stream, (qa_bytes){save->levels[i].game.data, save->levels[i].game.size}, error) &&
+            deflate_bytes(&stream, (qa_bytes){engine[i].data, engine[i].size}, error);
+    if (ok) {
+        int status = deflate(&stream, Z_FINISH);
+        ok = status == Z_STREAM_END || persistence_fail(error, QA_ERROR_IO, "Finishing Quake II original gzip state");
+        compressed.size = stream.total_out;
+    }
+    if (initialized && deflateEnd(&stream) != Z_OK && ok)
+        ok = persistence_fail(error, QA_ERROR_IO, "Closing Quake II original gzip state");
+    if (ok) ok = qa_fs_root_replace(root, path, (qa_bytes){compressed.data, compressed.size}, nonce, error);
+    for (size_t i = 0; i < save->level_count; ++i) qa_buffer_free(engine + i);
+    free(engine); qa_buffer_free(&directory); qa_buffer_free(&compressed); return ok;
 }
 
 bool qa_q2_save_directory_write(qa_fs_root *root, const char *directory,
@@ -613,6 +823,10 @@ bool qa_q2_save_directory_write(qa_fs_root *root, const char *directory,
         for (size_t prior = 0; ok && prior < i; ++prior)
             if (!strcmp(save->levels[prior].name, level->name))
                 ok = persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II save repeats a level");
+    }
+    if (ok && save->server.rerelease) {
+        ok = write_pack(root, directory, save, (qa_bytes){server.data, server.size}, nonce, error);
+        qa_buffer_free(&server); return ok;
     }
     /* Publish the server entry last. Ordinary Source writes replace a named
      * slot's old per-level set; stale visited maps must not survive a new unit. */

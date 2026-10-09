@@ -187,74 +187,18 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
     }
     return true;
 }
-static bool rail_color(frontend_remote_q2 *row, qa_cvar_handle handle, const char *name, uint32_t *out, qa_error *error)
-{
-    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, handle);
-    if (!setting) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color lost its actual CLIENT declaration");
-    if (frontend_remote_q2_effects_color(setting->value, out)) return true;
-    size_t value_length = strlen(setting->value), name_length = strlen(name);
-    if (value_length > SIZE_MAX - name_length - 32)
-        return remote_q2_fail(error, QA_ERROR_MEMORY, "Q2 rail color warning overflow");
-    size_t capacity = value_length + name_length + 32;
-    char *warning = malloc(capacity);
-    if (!warning) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 rail color warning");
-    snprintf(warning, capacity, "Invalid value '%s' for '%s'\n", setting->value, name);
-    qa_console_emit(row->options.domain.console, &row->options.domain.command_context, warning);
-    free(warning);
-    if (!remote_q2_live(row, error) || !qa_cvars_reset(row->options.domain.cvars, name, true, error) ||
-        !remote_q2_live(row, error)) return false;
-    setting = qa_cvars_read(row->options.domain.cvars, handle);
-    return (setting && frontend_remote_q2_effects_color(setting->value, out)) ||
-        remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
-}
+static bool controls_current(void *context, qa_error *error)
+{ return remote_q2_live(context, error); }
 static bool controls(void *context, frontend_remote_q2_effects_controls *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || !out || !remote_q2_live(row, error)) return false;
-    if (!qa_cvars_observer_idle(row->options.domain.cvars))
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects controls require their returned CLIENT registry");
-    uint32_t core, spiral;
-    if (!rail_color(row, row->cvar_handles.cl_railcore_color, "cl_railcore_color", &core, error) ||
-        !rail_color(row, row->cvar_handles.cl_railspiral_color, "cl_railspiral_color", &spiral, error)) return false;
-    const qa_cvar_view *rail_time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_time);
-    if (!rail_time || !isfinite(rail_time->number))
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail time has no actual finite CLIENT row");
-    float duration = rail_time->number;
-    if ((duration < 0 || duration > 2073600) &&
-        (!qa_cvars_set_number(row->options.domain.cvars, "cl_railtrail_time", duration < 0 ? 0 : 2073600, error) ||
-            !remote_q2_live(row, error))) return false;
-    rail_time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_time);
-    const qa_cvar_view *core_row = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railcore_color);
-    const qa_cvar_view *spiral_row = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railspiral_color);
-    if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value, &core) ||
-        !frontend_remote_q2_effects_color(spiral_row->value, &spiral))
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
-    const qa_cvar_view *time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_muzzlelight_time);
-    const qa_cvar_view *effects = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_rerelease_effects);
-    const qa_cvar_view *flashes = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_muzzleflashes);
-    const qa_cvar_view *hacks = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_dlight_hacks);
-    const qa_cvar_view *particles = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_particles);
-    const qa_cvar_view *explosions = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_explosions);
-    const qa_cvar_view *gun = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_gun);
-    const qa_cvar_view *gun_fov = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gunfov);
-    const qa_cvar_view *rail_type = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_type);
-    const qa_cvar_view *rail_width = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railcore_width);
-    const qa_cvar_view *rail_radius = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railspiral_radius);
-    if (!time || !effects || !flashes || !hacks || !particles || !explosions || !gun || !gun_fov ||
-        !rail_time || !rail_type || !rail_width || !rail_radius || !isfinite(rail_time->number) ||
-        rail_time->number < 0 || rail_time->number > 2073600 || !isfinite(rail_radius->number) ||
-        !isfinite(gun_fov->number) || gun_fov->number < -FLT_MAX || gun_fov->number > FLT_MAX)
-        return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects have no actual canonical CLIENT controls");
-    frontend_remote_q2_effects_controls result = {.muzzlelight_milliseconds = time->integer,
-        .rerelease_effects = effects->integer != 0, .muzzleflashes = flashes->integer != 0,
-        .dlight_hacks = (uint32_t)hacks->integer, .disable_particles = (uint32_t)particles->integer,
-        .disable_explosions = (uint32_t)explosions->integer,
-        .gun = gun->integer, .gun_fov = gun_fov->number,
-        .rail_type = rail_type->integer, .rail_width = rail_width->integer,
-        .rail_seconds = rail_time->number, .rail_radius = rail_radius->number,
-        .rail_core_rgba = core, .rail_spiral_rgba = spiral};
-    if (!remote_q2_live(row, error)) return false;
-    *out = result; return true;
+    if (!row) return false;
+    frontend_remote_q2_effects_control_source source = {
+        .cvars = row->options.domain.cvars, .handles = &row->cvar_handles.effects,
+        .gun = row->cvar_handles.legacy.cl_gun, .console = row->options.domain.console,
+        .command_context = &row->options.domain.command_context,
+        .context = row, .current = controls_current};
+    return frontend_remote_q2_effects_controls_read(&source, out, error);
 }
 static bool frame_milliseconds(void *context, double *out, qa_error *error)
 {

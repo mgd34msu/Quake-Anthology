@@ -1,0 +1,9 @@
+{
+  "verified_at": "2026-10-09T04:04:13.935286+00:00",
+  "token_count": 13883,
+  "matching_live": [],
+  "matching_zombies": [],
+  "reused_pid_count": 2,
+  "unreadable_manifests": [],
+  "method": "PID plus Linux process start token; read-only audit; no name-based signals"
+}

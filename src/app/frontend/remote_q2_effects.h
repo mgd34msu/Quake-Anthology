@@ -5,6 +5,7 @@
 #include "qa/source_save.h"
 #include "qa/builtin.h"
 #include "qa/collision.h"
+#include "qa/console.h"
 #include "q2_entity_effects.h"
 
 typedef struct frontend_remote_q2_effects frontend_remote_q2_effects;
@@ -29,6 +30,25 @@ typedef struct frontend_remote_q2_effects_controls {
     float rail_radius;
     uint32_t rail_core_rgba, rail_spiral_rgba;
 } frontend_remote_q2_effects_controls;
+typedef struct frontend_remote_q2_effects_cvars {
+    qa_cvar_handle cl_disable_explosions, cl_disable_particles, cl_dlight_hacks;
+    qa_cvar_handle cl_gunfov, cl_muzzleflashes, cl_muzzlelight_time;
+    qa_cvar_handle cl_railcore_color, cl_railcore_width, cl_railspiral_color;
+    qa_cvar_handle cl_railspiral_radius, cl_railtrail_time, cl_railtrail_type;
+    qa_cvar_handle cl_rerelease_effects;
+} frontend_remote_q2_effects_cvars;
+typedef struct frontend_remote_q2_effects_control_source {
+    qa_cvars *cvars;
+    const frontend_remote_q2_effects_cvars *handles;
+    qa_cvar_handle gun;
+    qa_console *console;
+    const qa_command_context *command_context;
+    void *context;
+    bool (*current)(void *, qa_error *);
+} frontend_remote_q2_effects_control_source;
+void frontend_remote_q2_effects_cvars_bind(qa_cvars *, frontend_remote_q2_effects_cvars *);
+bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_control_source *,
+    frontend_remote_q2_effects_controls *, qa_error *);
 typedef frontend_q2_entity_pose frontend_remote_q2_effects_pose;
 typedef struct frontend_remote_q2_effects_shadow_light {
     qa_actor_id actor;

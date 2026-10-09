@@ -10,6 +10,8 @@
 #include "../src/app/frontend/constructor.h"
 #include "../src/app/frontend/remote_q1_client.h"
 #include "qa/bsp.h"
+#include "qa/binary.h"
+#include "qa/recovery.h"
 #include <SDL2/SDL.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -64,54 +66,52 @@ static bool source_health(const qa_q1_save_data *data,double *health,bool *god,q
     }
     return (found_health && found_flags) || fail(error,"Original Source player edict lacks real health/flags");
 }
-static bool observation(qa_frontend *f,qa_buffer *source,const char *directory,
-    bool record,qa_error *error)
+static bool capture_observation(qa_frontend *f,qa_buffer *source,qa_body_state *body,
+    qa_application_control_view *control,qa_error *error)
 {
-    uint32_t logical;qa_actor_id actor;qa_body_state body;
-    qa_application_control_view control;
+    uint32_t logical;qa_actor_id actor;
     if (!frontend_seat_launch_id_read(f,0,&logical) ||
         !qa_application_player_actor(f->application,logical,&actor) ||
-        !qa_world_body_read(qa_application_world(f->application),actor,&body,error) ||
-        !qa_application_control_read(f->application,actor,&control)) return false;
+        !qa_world_body_read(qa_application_world(f->application),actor,body,error) ||
+        !qa_application_control_read(f->application,actor,control)) return false;
     qa_q1_save_data *data=NULL;double health=0;bool god=false;
     qa_q1_save_client client;
     bool okay=frontend_q1_save_client_read(f,0,&client,error) &&
         qa_application_q1_save_capture(f->application,&client,&data,error) &&
         source_health(data,&health,&god,error);
-    if (!okay) { qa_q1_save_destroy(data);return false; }
-    printf("STATE logical=%u elapsed=%llu origin=%.9g,%.9g,%.9g health=%.9g god=%d input_sequence=%llu\n",
-        logical,(unsigned long long)qa_session_elapsed(qa_application_session(f->application)),
-        body.origin.x,body.origin.y,body.origin.z,health,god,
-        (unsigned long long)control.command_sequence);fflush(stdout);
-    if (!god || health!=73 || control.command_sequence==0)
+    if (okay && (!god || health!=73 || control->command_sequence==0))
         okay=fail(error,"Recovery did not retain actual completed cheat/input effects");
-    if (okay) {
-        char path[4096];int length=snprintf(path,sizeof(path),"%s/expected-control.txt",directory);
-        if (length<0 || (size_t)length>=sizeof(path)) okay=fail(error,"Recovery control observation path is too long");
-        else {
-            FILE *file=fopen(path,record?"w":"r");
-            if (!file) okay=fail(error,"Opening actual recovery control observation failed");
-            else if (record) {
-                okay=fprintf(file,"%.9g %.9g %.9g %" PRIu64 "\n",body.origin.x,body.origin.y,body.origin.z,
-                    control.command_sequence)>0;
-                if (fclose(file)) okay=false;
-            } else {
-                qa_vec3 expected;uint64_t sequence;
-                okay=fscanf(file,"%f %f %f %" SCNu64,&expected.x,&expected.y,&expected.z,&sequence)==4;
-                if (fclose(file)) okay=false;
-                if (okay) {
-                    okay=expected.x==body.origin.x && expected.y==body.origin.y && expected.z==body.origin.z &&
-                        sequence==control.command_sequence;
-                    printf("CONTROL_EQUAL origin=%d sequence=%" PRIu64 "/%" PRIu64 " equal=%d\n",
-                        expected.x==body.origin.x && expected.y==body.origin.y && expected.z==body.origin.z,
-                        sequence,control.command_sequence,okay);fflush(stdout);
-                }
-            }
-            if (!okay && error->code==QA_OK) fail(error,"Recovered actual player origin/input sequence differs");
-        }
-    }
     if (okay) okay=qa_q1_save_encode(data,source,error);
     qa_q1_save_destroy(data);return okay;
+}
+static bool observation(qa_frontend *f,qa_buffer *source,const char *directory,
+    bool record,qa_error *error)
+{
+    qa_body_state body;qa_application_control_view control;
+    if (!capture_observation(f,source,&body,&control,error)) return false;
+    printf("STATE elapsed=%llu origin=%.9g,%.9g,%.9g health=73 god=1 input_sequence=%llu\n",
+        (unsigned long long)qa_session_elapsed(qa_application_session(f->application)),
+        body.origin.x,body.origin.y,body.origin.z,(unsigned long long)control.command_sequence);fflush(stdout);
+    char path[4096];int length=snprintf(path,sizeof(path),"%s/expected-control.txt",directory);
+    if (length<0 || (size_t)length>=sizeof(path)) return fail(error,"Recovery control observation path is too long");
+    FILE *file=fopen(path,record?"w":"r");
+    if (!file) return fail(error,"Opening actual recovery control observation failed");
+    bool okay;
+    if (record) okay=fprintf(file,"%.9g %.9g %.9g %" PRIu64 "\n",body.origin.x,body.origin.y,body.origin.z,
+        control.command_sequence)>0;
+    else {
+        qa_vec3 expected;uint64_t sequence;
+        okay=fscanf(file,"%f %f %f %" SCNu64,&expected.x,&expected.y,&expected.z,&sequence)==4;
+        if (okay) {
+            okay=expected.x==body.origin.x && expected.y==body.origin.y && expected.z==body.origin.z &&
+                sequence==control.command_sequence;
+            printf("CONTROL_EQUAL origin=%d sequence=%" PRIu64 "/%" PRIu64 " equal=%d\n",
+                expected.x==body.origin.x && expected.y==body.origin.y && expected.z==body.origin.z,
+                sequence,control.command_sequence,okay);fflush(stdout);
+        }
+    }
+    if (fclose(file)) okay=false;
+    return okay || fail(error,"Recovered actual player origin/input sequence differs");
 }
 static bool write_observation(const char *directory,const char *name,qa_bytes bytes,qa_error *error)
 {

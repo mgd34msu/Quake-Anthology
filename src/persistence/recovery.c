@@ -124,20 +124,6 @@ bool qa_autosave_level_entry(qa_autosave_state *state, uint64_t generation,
     return true;
 }
 
-bool qa_autosave_write(qa_autosave_state *state, qa_fs_root *root, const qa_save_image *image,
-                        uint64_t nonce, qa_error *error)
-{
-    if (!state || !root || !image) return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid autosave write request");
-    if (!state->enabled || !state->pending) return true;
-    const qa_save_metadata *metadata = qa_save_image_metadata(image);
-    if (metadata->purpose != QA_SAVE_LEVEL_ENTRY || metadata->world_generation != state->entered_generation)
-        return persistence_fail(error, QA_ERROR_ARGUMENT, "Autosave image differs from pending level entry");
-    if (!qa_save_write(root, "autosave.sav", image, nonce, error)) return false;
-    state->saved_generation = state->entered_generation;
-    state->pending = false;
-    return true;
-}
-
 bool qa_recovery_begin(qa_fs_root *root, const char *name, const qa_save_image *initial,
                         qa_recovery **out, qa_error *error)
 {

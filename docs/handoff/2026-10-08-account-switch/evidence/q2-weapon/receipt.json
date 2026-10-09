@@ -1,0 +1,60 @@
+{
+  "issue": "THE-2859",
+  "owned_files": [
+    "src/app/application/native_q2_console.c"
+  ],
+  "working_source_equals_frozen_after": true,
+  "strict_owned_file": [
+    {
+      "command": [
+        "gcc",
+        "-std=c17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wshadow",
+        "-Wconversion",
+        "-Wstrict-prototypes",
+        "-Werror",
+        "-ffp-contract=off",
+        "-Iinclude",
+        "-Isrc",
+        "-fsyntax-only",
+        "src/app/application/native_q2_console.c"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "clang",
+        "-std=c17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wshadow",
+        "-Wconversion",
+        "-Wstrict-prototypes",
+        "-Werror",
+        "-ffp-contract=off",
+        "-Iinclude",
+        "-Isrc",
+        "-fsyntax-only",
+        "src/app/application/native_q2_console.c"
+      ],
+      "exit": 0
+    }
+  ],
+  "component_rows": 78,
+  "equal_input_bytes": 5616,
+  "before_name_reads": 4800,
+  "after_name_reads": 0,
+  "warm_resolve_calls": 0,
+  "warm_heap_calls": 0,
+  "gcc_clang_normal_asan_ubsan_pass": true,
+  "default_sanitizer_options": true,
+  "sdk_git_install_av_mutations": false,
+  "perf_claim": "component counts only; no frame time claim",
+  "source_patch": "/tmp/qa-the2859-q2-weapon-tail-20261009/owned.patch",
+  "report": "/tmp/qa-the2859-q2-weapon-tail-20261009/report.md",
+  "commands": "/tmp/qa-the2859-q2-weapon-tail-20261009/commands.json"
+}

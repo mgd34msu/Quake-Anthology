@@ -385,6 +385,57 @@ static void test_recovery_checkpoints(void)
     CHECK(unlink(path) == 0 && rmdir(directory) == 0);
 }
 
+static void test_demo_buffered_prefix(void)
+{
+    qa_error error={0};char directory[]="/tmp/qa-demo-buffer-XXXXXX";
+    CHECK(mkdtemp(directory));qa_fs_root *root=NULL;
+    CHECK(qa_fs_root_open(directory,&root,&error));
+    qa_save_image *image=recovery_image(0,73);qa_demo_recorder *recorder=NULL;
+    CHECK(qa_demo_record_begin(root,"prefix.qdemo",image,&recorder,&error));
+    CHECK(qa_demo_record_buffered(recorder,true,&error));
+    CHECK(qa_save_image_destroy_checked(&image,&error));
+    qa_net_protocol_id protocol={QA_NET_UNIFIED_1,0,0};uint8_t payload[200]={1};
+    for (unsigned i=0;i<1200;++i) {
+        CHECK(qa_demo_record_append(recorder,QA_DEMO_INPUT,0,protocol,(qa_bytes){payload,sizeof(payload)},&error));
+        CHECK(qa_demo_record_append(recorder,QA_DEMO_ADVANCE,1,protocol,(qa_bytes){0},&error));
+        if (i%100==99) CHECK(qa_demo_record_flush(recorder,&error));
+    }
+    qa_demo *demo=NULL;
+    CHECK(qa_demo_read(root,"prefix.qdemo",true,&demo,&error));
+    CHECK(qa_demo_end_time(demo)==1200);
+    qa_demo_destroy(demo);
+    uint8_t large[256*1024]={0};
+    CHECK(!qa_demo_record_append(recorder,QA_DEMO_JOURNAL,0,protocol,(qa_bytes){large,sizeof(large)},&error));
+    qa_demo_recorder_destroy(recorder);
+    CHECK(qa_demo_read(root,"prefix.qdemo",true,&demo,&error));
+    CHECK(qa_demo_end_time(demo)==1200 && !qa_demo_complete(demo));
+    uint64_t sequence=qa_demo_record_at(demo,qa_demo_record_count(demo)-1)->sequence;
+    qa_demo_destroy(demo);
+    uint8_t header[52]={0};
+    qa_store_u64le(header,sizeof(header));qa_store_u32le(header+8,QA_DEMO_ADVANCE);
+    qa_store_u64le(header+16,sequence+1);qa_store_u64le(header+24,1201);qa_store_u64le(header+32,1);
+    qa_store_u32le(header+40,QA_NET_UNIFIED_1);
+    qa_fs_stream *stream=NULL;uint64_t size=0;size_t written=0;
+    CHECK(qa_fs_root_stream_open(root,"prefix.qdemo",QA_FS_STREAM_APPEND,true,&stream,&size,&error));
+    CHECK(qa_fs_stream_write_some(stream,(qa_bytes){header,17},size,&written,&error) && written==17);
+    qa_fs_stream_close(stream);
+    CHECK(qa_demo_read(root,"prefix.qdemo",true,&demo,&error));
+    CHECK(qa_demo_end_time(demo)==1200);qa_demo_destroy(demo);
+    CHECK(!qa_demo_read(root,"prefix.qdemo",false,&demo,&error));
+    CHECK(qa_fs_root_stream_open(root,"prefix.qdemo",QA_FS_STREAM_APPEND,true,&stream,&size,&error));
+    CHECK(qa_fs_stream_write_some(stream,(qa_bytes){header+17,sizeof(header)-17},size,&written,&error));
+    qa_fs_stream_close(stream);
+    CHECK(qa_demo_read(root,"prefix.qdemo",true,&demo,&error));
+    CHECK(qa_demo_end_time(demo)==1201);qa_demo_destroy(demo);
+    header[8]=99;
+    CHECK(qa_fs_root_stream_open(root,"prefix.qdemo",QA_FS_STREAM_WRITE,true,&stream,&size,&error));
+    CHECK(qa_fs_stream_write_some(stream,(qa_bytes){header+8,1},size-sizeof(header)+8,&written,&error));
+    qa_fs_stream_close(stream);
+    CHECK(!qa_demo_read(root,"prefix.qdemo",true,&demo,&error));
+    CHECK(qa_fs_root_remove(root,"prefix.qdemo",&error));qa_fs_root_close(root);
+    CHECK(rmdir(directory)==0);
+}
+
 static void test_q1_original_codec(void)
 {
     qa_error error={0};qa_buffer bytes={0};qa_q1_save_data *decoded=NULL;
@@ -584,6 +635,7 @@ int main(int argc, char **argv)
     test_files();
     test_campaign_unit();
     test_recovery_checkpoints();
+    test_demo_buffered_prefix();
     test_q1_original_codec();
     test_q1_gameplay();
     test_guest();

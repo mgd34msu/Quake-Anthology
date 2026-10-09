@@ -83,8 +83,9 @@ typedef struct qa_application_network_q1_world {
 } qa_application_network_q1_world;
 bool qa_application_network_q1_world_read(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_world *, qa_error *);
+/* Absent optional source/control data returns present=false without a packet. */
 bool qa_application_network_q1_clientdata(qa_application *, qa_actor_id,
-    qa_q1_clientdata *, qa_error *);
+    qa_q1_clientdata *, bool *present, qa_error *);
 typedef struct qa_application_network_q1_status_player {
     qa_actor_id actor;
     uint32_t source_slot;
@@ -115,8 +116,8 @@ typedef struct qa_application_network_q1_feedback {
     double origin[3];
     float angles[3];
 } qa_application_network_q1_feedback;
-/* Consume the returned source damage and fixangle fields once.
- * Requires a spawned NetQuake or rerelease client. */
+/* Consume returned source damage and fixangle fields once. Unbegun clients
+ * and entered QC input return empty feedback without consuming source fields. */
 bool qa_application_network_q1_consume_feedback(qa_application *, qa_actor_id,
     qa_application_network_q1_feedback *, qa_error *);
 bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,

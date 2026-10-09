@@ -1,0 +1,10 @@
+{
+  "source_tree": "d7ad4fd6ad839ab64a1ec481733a8eb80575eec0",
+  "base_commit": "e81f359f0c2adcdf2487b61aecc7c74702de7804",
+  "matched": true,
+  "file_count": 3092,
+  "updated_files": [],
+  "removed_files": [],
+  "mismatches": [],
+  "method": "Direct bytes against frozen staged build inputs; no unstaged files included"
+}

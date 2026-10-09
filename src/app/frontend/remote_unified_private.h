@@ -4,6 +4,7 @@
 #include "remote_unified.h"
 #include "qa/strings.h"
 #include "q1_sky.h"
+#include "remote_q2_effects.h"
 
 typedef struct frontend_unified_identity {
     struct frontend_unified_identity *next;
@@ -25,6 +26,7 @@ struct frontend_remote_unified {
     frontend_remote_unified_options options;
     frontend_q1_sky_controls sky_controls;
     frontend_legacy_cvar_handles legacy_cvars;
+    frontend_remote_q2_effects_cvars q2_effect_cvars;
     qa_unified_session *session;
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
     qa_unified_document *offer, *frame, *prepared_frame;

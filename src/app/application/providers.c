@@ -1448,6 +1448,7 @@ static bool provider_clock_bind(application_provider *provider, qa_error *error)
     qa_console *console; qa_cvars *cvars = NULL;
     (void)application_guest_console_at(provider, 0, &console, &cvars, NULL);
     qa_source_frame_time_bind(cvars, &provider->frame_time);
+    provider->sv_novis = qa_cvars_resolve(cvars, "sv_novis");
     provider->component.clock_admit = provider_clock_admit;
     provider->component.clock_context = provider;
     return true;

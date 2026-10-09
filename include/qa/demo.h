@@ -28,8 +28,11 @@ bool qa_demo_record_append(qa_demo_recorder *, qa_demo_record_kind, uint64_t ela
                             qa_net_protocol_id, qa_bytes, qa_error *);
 bool qa_demo_record_keyframe(qa_demo_recorder *, const qa_save_image *, qa_error *);
 bool qa_demo_record_end(qa_demo_recorder *, qa_error *);
-/* Buffered recorders write canonical blocks immediately and defer durable
- * sync to their owner. Keyframes and END always make the prefix durable. */
+/* Buffered records copy into a fixed 256 KiB byte queue. A writer thread writes
+ * and syncs batches of at least 64 KiB; ordinary appends perform no file I/O or
+ * allocation. Queue exhaustion faults recording and keeps its valid file prefix.
+ * Explicit flush, keyframes, END and destruction drain on the caller's request.
+ * A crash may lose the queued tail; only complete written frames are replayed. */
 bool qa_demo_record_buffered(qa_demo_recorder *, bool, qa_error *);
 bool qa_demo_record_flush(qa_demo_recorder *, qa_error *);
 void qa_demo_recorder_destroy(qa_demo_recorder *);

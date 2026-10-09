@@ -23,6 +23,35 @@ static bool source_value(const qa_q1_save_record *record, const char *key, char 
     return true;
 }
 
+static bool q2_metadata(qa_fs_root *root, const char *name, qa_save_slot_format *format,
+    qa_save_metadata *out, qa_q1_save_slot_metadata *original, qa_q2_save_slot_metadata *q2,
+    qa_error *error)
+{
+    qa_q2_save_server server = {0};
+    if (!qa_q2_save_server_read(root, name, &server, error)) return false;
+    qa_q2_save_slot_metadata metadata = {.rerelease = server.rerelease,
+        .autosave = server.autosave, .timestamp = server.timestamp};
+    memcpy(metadata.comment, server.comment, sizeof(metadata.comment));
+    memcpy(metadata.map_command, server.map_command, sizeof(metadata.map_command));
+    memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
+    bool ok = true;
+    for (size_t i = 0; i < server.cvar_count; ++i)
+        if (!strcmp(server.cvars[i].name, "game")) {
+            size_t length = strlen(server.cvars[i].value);
+            if (length >= sizeof(metadata.game_directory)) {
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved game directory exceeds MAX_QPATH"); break;
+            }
+            memset(metadata.game_directory, 0, sizeof(metadata.game_directory));
+            memcpy(metadata.game_directory, server.cvars[i].value, length);
+            if (!length) memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
+        }
+    if (ok) {
+        *format = QA_SAVE_SLOT_Q2_CLASSIC; *out = (qa_save_metadata){0};
+        *original = (qa_q1_save_slot_metadata){0}; if (q2) *q2 = metadata;
+    }
+    qa_q2_save_server_dispose(&server); return ok;
+}
+
 bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
     qa_save_slot_format *format, qa_save_metadata *out, qa_q1_save_slot_metadata *original,
     qa_q2_save_slot_metadata *q2, qa_error *error)
@@ -32,47 +61,18 @@ bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
     if (!root || !qa_save_slot_name(name, error)) return false;
     qa_fs_entry_kind entry_kind;
     if (!qa_fs_root_status(root, name, &entry_kind, NULL, error)) return false;
-    if (entry_kind == QA_FS_DIRECTORY) {
-        qa_q2_save_server server = {0};
-        if (!qa_q2_save_server_read(root, name, &server, error)) return false;
-        size_t size = strlen(name);
-        char *game_path = malloc(size + sizeof("/game.ssv"));
-        bool ok = game_path != NULL;
-        if (!ok) persistence_fail(error, QA_ERROR_MEMORY, "Retaining Quake II GAME save path");
-        if (ok) {
-            memcpy(game_path, name, size); memcpy(game_path + size, "/game.ssv", sizeof("/game.ssv"));
-            ok = qa_fs_root_status(root, game_path, &entry_kind, NULL, error);
-            if (ok && entry_kind != QA_FS_REGULAR)
-                ok = persistence_fail(error, QA_ERROR_NOT_FOUND, "Quake II save directory has no GAME file");
-        }
-        free(game_path);
-        qa_q2_save_slot_metadata metadata = {0};
-        if (ok) {
-            memcpy(metadata.comment, server.comment, sizeof(metadata.comment));
-            memcpy(metadata.map_command, server.map_command, sizeof(metadata.map_command));
-            memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
-            for (size_t i = 0; i < server.cvar_count; ++i)
-                if (!strcmp(server.cvars[i].name, "game")) {
-                    memset(metadata.game_directory, 0, sizeof(metadata.game_directory));
-                    size_t length = strlen(server.cvars[i].value);
-                    if (length >= sizeof(metadata.game_directory)) {
-                        ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved game directory exceeds MAX_QPATH"); break;
-                    }
-                    memcpy(metadata.game_directory, server.cvars[i].value, length);
-                    if (!metadata.game_directory[0]) memcpy(metadata.game_directory, "baseq2", sizeof("baseq2"));
-                }
-            if (ok) {
-                *format = QA_SAVE_SLOT_Q2_CLASSIC; *out = (qa_save_metadata){0};
-                *original = (qa_q1_save_slot_metadata){0}; if (q2) *q2 = metadata;
-            }
-        }
-        qa_q2_save_server_dispose(&server);
-        return ok;
-    }
+    if (entry_kind == QA_FS_DIRECTORY)
+        return q2_metadata(root, name, format, out, original, q2, error);
     qa_fs_file *file = NULL; qa_fs_identity identity; qa_save_metadata summary = {0}; bool is_shared = false;
-    bool inspected = qa_fs_root_file_open(root, name, &file, &identity, error) &&
-        qa_save_image_metadata_read(file, &identity, &summary, &is_shared, error);
+    bool inspected = qa_fs_root_file_open(root, name, &file, &identity, error);
+    uint8_t prefix[3] = {0};
+    if (inspected && qa_fs_identity_size(&identity) >= sizeof(prefix))
+        inspected = qa_fs_file_read_at(file, 0, prefix, sizeof(prefix), error);
+    bool pack = inspected && prefix[0] == 31 && prefix[1] == 139 && prefix[2] == 8;
+    if (inspected && !pack)
+        inspected = qa_save_image_metadata_read(file, &identity, &summary, &is_shared, error);
     qa_fs_file_close(file);
+    if (pack) return q2_metadata(root, name, format, out, original, q2, error);
     if (!inspected) return false;
     if (is_shared) {
         *format = QA_SAVE_SLOT_SHARED; *out = summary; *original = (qa_q1_save_slot_metadata){0};
@@ -184,7 +184,8 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
             continue;
         size_t leaf_length = strlen(files.entries[i].name);
         if (files.entries[i].kind == QA_FS_REGULAR &&
-            (leaf_length < 5 || strcmp(files.entries[i].name + leaf_length - 4, ".sav"))) continue;
+            !(leaf_length >= 5 && !strcmp(files.entries[i].name + leaf_length - 4, ".sav")) &&
+            !(leaf_length >= 8 && !strcmp(files.entries[i].name + leaf_length - 7, ".pak.gz"))) continue;
         char *path = slot_path(directory, files.entries[i].name, error);
         if (!path) {
             ok = false;

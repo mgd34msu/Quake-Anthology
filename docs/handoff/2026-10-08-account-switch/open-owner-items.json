@@ -1,0 +1,293 @@
+{
+  "verified_at": "2026-10-09",
+  "source": "Live Linear open In Progress/In Review issues; M0 milestone plus MIKE-39 THE-2881",
+  "issues": [
+    {
+      "id": "THE-2845",
+      "title": "Standalone save/load is rejected because internal loopback is classified as a network game",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-2845/standalone-saveload-is-rejected-because-internal-loopback-is"
+    },
+    {
+      "id": "THE-2846",
+      "title": "End game exits when bootstrap settings require a source-free ENGINE input seat after loopback play",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-2846/end-game-exits-when-bootstrap-settings-require-a-source-free-engine"
+    },
+    {
+      "id": "THE-2844",
+      "title": "Offline menu Play selects legacy wire and stalls valid CLIENT configuration",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-2844/offline-menu-play-selects-legacy-wire-and-stalls-valid-client"
+    },
+    {
+      "id": "THE-856",
+      "title": "MIKE-12: Custom menu has no reachable Local lobby adapter",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-856/mike-12-custom-menu-has-no-reachable-local-lobby-adapter"
+    },
+    {
+      "id": "THE-906",
+      "title": "Q3 packet CLIENT draws generic vitals over the original cgame status bar",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-906/q3-packet-client-draws-generic-vitals-over-the-original-cgame-status"
+    },
+    {
+      "id": "THE-159",
+      "title": "MIKE-06: Q3 plays wrong sounds (weapon pickup plays the water droplet)",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-159/mike-06-q3-plays-wrong-sounds-weapon-pickup-plays-the-water-droplet"
+    },
+    {
+      "id": "THE-185",
+      "title": "MIKE-12: Menus must be the ported quake-typescript menus and assets",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-185/mike-12-menus-must-be-the-ported-quake-typescript-menus-and-assets"
+    },
+    {
+      "id": "THE-233",
+      "title": "MIKE-20: Particle effects missing",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-233/mike-20-particle-effects-missing"
+    },
+    {
+      "id": "THE-395",
+      "title": "MIKE-31: Pickups do not spin; Q1 weapons and ammo stay visible after pickup",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-395/mike-31-pickups-do-not-spin-q1-weapons-and-ammo-stay-visible-after"
+    },
+    {
+      "id": "THE-190",
+      "title": "MIKE-13: Q2 classic choppy, shots miss the crosshair, most sounds missing",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-190/mike-13-q2-classic-choppy-shots-miss-the-crosshair-most-sounds-missing"
+    },
+    {
+      "id": "THE-196",
+      "title": "MIKE-14: Q2 rerelease choppy (40 Hz tick) and sounds missing most of the time",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-196/mike-14-q2-rerelease-choppy-40-hz-tick-and-sounds-missing-most-of-the"
+    },
+    {
+      "id": "THE-438",
+      "title": "MIKE-37: Q1 has no original status bar (generic Health/Armor tiles)",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-438/mike-37-q1-has-no-original-status-bar-generic-healtharmor-tiles"
+    },
+    {
+      "id": "THE-305",
+      "title": "MIKE-25: Q1 classic has no rocket explosion sound",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-305/mike-25-q1-classic-has-no-rocket-explosion-sound"
+    },
+    {
+      "id": "THE-420",
+      "title": "MIKE-34: Q3 spawn bounce, one jump press gives repeated jumps, crouch replays",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-420/mike-34-q3-spawn-bounce-one-jump-press-gives-repeated-jumps-crouch"
+    },
+    {
+      "id": "THE-380",
+      "title": "MIKE-30: Q2 jump and crouch broken (rerelease crouch sinks through the floor), no jump sound",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-380/mike-30-q2-jump-and-crouch-broken-rerelease-crouch-sinks-through-the"
+    },
+    {
+      "id": "THE-280",
+      "title": "MIKE-23: Q1 sometimes facing the wrong direction after a teleporter",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-280/mike-23-q1-sometimes-facing-the-wrong-direction-after-a-teleporter"
+    },
+    {
+      "id": "THE-358",
+      "title": "MIKE-29: Q1 in-game music is wrong or missing",
+      "status": "In Progress",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-358/mike-29-q1-in-game-music-is-wrong-or-missing"
+    },
+    {
+      "id": "THE-2881",
+      "title": "MIKE-39: installed qa-c ends shortly after startup (\"Neutral settings lost their actual installed CLIENT tuple\"); mouse pointer stays visible",
+      "status": "In Review",
+      "projectMilestone": null,
+      "url": "https://linear.app/the-artificery/issue/THE-2881/mike-39-installed-qa-c-ends-shortly-after-startup-neutral-settings"
+    },
+    {
+      "id": "THE-909",
+      "title": "Host frames clear unsent packet events between native game ticks",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-909/host-frames-clear-unsent-packet-events-between-native-game-ticks"
+    },
+    {
+      "id": "THE-907",
+      "title": "Mixed Q1 world with Q3 providers is rejected before the packet CLIENT can draw",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-907/mixed-q1-world-with-q3-providers-is-rejected-before-the-packet-client"
+    },
+    {
+      "id": "THE-593",
+      "title": "Q2 classic and rerelease draw generic Health/Armor/weapon tiles instead of the game's status bar; Q2 classic GL also shows no view weapon",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-593/q2-classic-and-rerelease-draw-generic-healtharmorweapon-tiles-instead"
+    },
+    {
+      "id": "THE-903",
+      "title": "Combined save restore crashes when building the local lobby menu",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-903/combined-save-restore-crashes-when-building-the-local-lobby-menu"
+    },
+    {
+      "id": "THE-316",
+      "title": "MIKE-26: No menu sounds (only music plays in menus)",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-316/mike-26-no-menu-sounds-only-music-plays-in-menus"
+    },
+    {
+      "id": "THE-201",
+      "title": "MIKE-15: Q2 classic cinematic video is dark",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-201/mike-15-q2-classic-cinematic-video-is-dark"
+    },
+    {
+      "id": "THE-899",
+      "title": "MIKE-38: qa-c exits at startup on Wayland (\"SDL candidate native settings differ from the requested settings\")",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-899/mike-38-qa-c-exits-at-startup-on-wayland-sdl-candidate-native-settings"
+    },
+    {
+      "id": "THE-902",
+      "title": "Opening chat can drop its first character before native text input starts",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-902/opening-chat-can-drop-its-first-character-before-native-text-input"
+    },
+    {
+      "id": "THE-139",
+      "title": "MIKE-01: Q1 movement floats, can't jump, can't stop without pressing another direction",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-139/mike-01-q1-movement-floats-cant-jump-cant-stop-without-pressing"
+    },
+    {
+      "id": "THE-213",
+      "title": "MIKE-17: Transparency renders as a solid color (palette 255, fences, alpha surfaces)",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-213/mike-17-transparency-renders-as-a-solid-color-palette-255-fences-alpha"
+    },
+    {
+      "id": "THE-913",
+      "title": "Q3 loopback maps with inline models reject a valid render input",
+      "status": "In Review",
+      "projectMilestone": {
+        "id": "da9ce1bc-c0eb-4239-9042-ac5373abdefd",
+        "name": "M0 · Owner playtest defects"
+      },
+      "url": "https://linear.app/the-artificery/issue/THE-913/q3-loopback-maps-with-inline-models-reject-a-valid-render-input"
+    }
+  ]
+}

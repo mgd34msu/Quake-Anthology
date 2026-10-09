@@ -1,0 +1,90 @@
+{
+  "result": "PREPARED_WAITING_EXCLUSIVE_ROOT_TIMING_GO",
+  "launched": false,
+  "controller": "/tmp/qa-the2859-ordinary-frame-plan-20261009/ordinary_case.py",
+  "cases": [
+    {
+      "case": "q1-classic",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-classic",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-rerelease",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-rerelease",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-classic",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-classic",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-rerelease",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-rerelease",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q3",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q3",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    }
+  ],
+  "baseline": "/tmp/qa-the2881-install-scope-production-20261008/candidate-receipt.json",
+  "after": "Coordinator final cache-wave production receipt; not diagnostic and not yet nominated",
+  "affinity": "taskset -c0-7,12-19, every game thread checked; no other heavy own work",
+  "workload": "Same full42-file frozen copiedprofile, exactretailsource/map/product/dimensions, native modules and stationary no-inputcamera",
+  "warm_sample": "--frames1800; require at least600actualwarmcompletedSDLpresents then final600consecutive measuredintervals",
+  "timings": "TimersOFF, no debugger; same fixedpreallocated observer writes once after normal shutdown; median/p99 from final600",
+  "workload_qualification": "Separate bounded private public-console/actualstate capture beforetiming. Record cap values, map/drawable, camera origin/angles, seedstate and sourcegeneration/owner. CLIclaims alone are not observedstateproof. Same seed/camera acrossbeforeafter; do not claim qualified until recorded.",
+  "seed_source_refs": [
+    "providers.c Q1random_seed usesproviderowner",
+    "providers.c Q2seed usesproviderowner",
+    "map.c Q3randomseed usesproviderowner/publicationgeneration"
+  ],
+  "stage_method": "Separate timersON private pass, no pending startupwaitstream. After startup, publickeyboard opensconsole and submits timersreport/frameinfo; closesconsole before600warmframe interval. A second report is injected only after >=600further ordinary completedframes, recorded via publicframeinfo. Public probes/report overhead is included only in stagepass and is not primarydistribution. Require actual tables/frames and label worker totals separately fromwalltime.",
+  "stage_controller_status": "Methodprepared; keyboard/frameconfirmation extension not yet run or scientificallyqualified. No measurement of unverifiedstagecontroller.",
+  "cleanup": "PrivateXvfb/nullaudio,--noaudio; recordedownedPID/starttokensonly; artifact/profiledirectbytes unchanged; no ownerdesktop/audio sockets",
+  "limits": [
+    "No before/after numbers yet. Fixedrealtime600frame workloads advance native simulation for differentwalltimes; actualseed/camera/state evidence is needed to boundcomparability.",
+    "The old waitstream exercises startupreplay and is separately proved underTHE2892; it is not ordinaryframecontrol.",
+    "StationaryretailCPUframeonly; no feel/audio/protocolinteroperabilityclaim."
+  ],
+  "qualification_note": "/tmp/qa-the2859-ordinary-frame-plan-20261009/qualification.md",
+  "preferred_controlled_workload": "Same existing original-protocol timedemo stream, qualified before/after; client/presentation benchmark only, no authoritative tick/RNG claim.",
+  "seed_state_limitation": "No generic public RNG-state query; idle native map or CLI seed assumption is not exact state replay."
+}

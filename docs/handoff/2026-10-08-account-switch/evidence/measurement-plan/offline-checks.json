@@ -1,0 +1,76 @@
+{
+  "result": "PASS",
+  "launched": false,
+  "cases": [
+    {
+      "case": "q1-classic",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-classic",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-rerelease",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q1-rerelease",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-classic",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-classic",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-rerelease",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q2-rerelease",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q3",
+      "output": "cpu640",
+      "argv_words": 42,
+      "waits": 0
+    },
+    {
+      "case": "q3",
+      "output": "cpu320",
+      "argv_words": 42,
+      "waits": 0
+    }
+  ],
+  "synthetic_distribution": {
+    "warm_completed_presents": 1200,
+    "measured_presents": 600,
+    "first_sequence": 1200,
+    "last_sequence": 1799,
+    "median_ms": 8.0,
+    "p99_ms": 8.0,
+    "mean_ms": 8.0,
+    "present_mean_ms": 0.001
+  }
+}

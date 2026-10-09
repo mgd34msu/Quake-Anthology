@@ -34,7 +34,7 @@ bool application_native_q1_wire_precache(qa_application *, qa_actor_owner, bool,
     const char *[255], size_t *, qa_error *);
 bool application_native_q1_wire_world(qa_application *, qa_actor_owner,
     qa_application_network_q1_world *, qa_error *);
-bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_clientdata *, qa_error *);
+bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_clientdata *, bool *, qa_error *);
 bool application_native_q1_wire_status(qa_application *, qa_actor_owner,
     qa_application_network_q1_status_player [255], size_t *, qa_error *);
 typedef struct application_native_q1_chat_sender {

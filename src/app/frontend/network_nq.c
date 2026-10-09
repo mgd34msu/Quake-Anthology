@@ -194,8 +194,10 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
         message.op = QA_NQ_SETANGLE; memcpy(message.data.angles, state.angles, sizeof(state.angles));
         if (!batch_message(&batch, &message, options, error)) return false;
         message.op = QA_NQ_CLIENTDATA;
-        if (!qa_application_network_q1_clientdata(host->frontend->application, actor, &message.data.clientdata, error) ||
-            !batch_message(&batch, &message, options, error)) return false;
+        bool clientdata_present;
+        if (!qa_application_network_q1_clientdata(host->frontend->application, actor,
+            &message.data.clientdata, &clientdata_present, error)) return false;
+        if (clientdata_present && !batch_message(&batch, &message, options, error)) return false;
     } else return frontend_fail(error, QA_ERROR_ARGUMENT, "Unknown NetQuake source signon stage");
     return batch_flush(&batch, error);
 }
@@ -908,8 +910,10 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protoc
         if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
     }
     message.op = QA_NQ_CLIENTDATA;
-    if (!qa_application_network_q1_clientdata(host->frontend->application, actor, &message.data.clientdata, error) ||
-        !qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
+    bool clientdata_present;
+    if (!qa_application_network_q1_clientdata(host->frontend->application, actor,
+        &message.data.clientdata, &clientdata_present, error)) return false;
+    if (clientdata_present && !qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(host->frontend->application));
     size_t extent = qa_collision_q1_pvs_bytes(geometry); uint8_t *pvs = extent ? malloc(extent) : NULL;
     if (!pvs) return frontend_fail(error, extent ? QA_ERROR_MEMORY : QA_ERROR_FORMAT, "NetQuake frame requires its actual source PVS row");

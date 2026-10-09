@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-10-09T04:05:35.362412+00:00",
+  "main": "e81f359f0c2adcdf2487b61aecc7c74702de7804",
+  "wip_branch": "wip/the-2859-2026-10-08",
+  "wip_verification": "UNVERIFIED as a combined tree; do not merge wholesale or install",
+  "installed": "a36aa7012486859974de7f827b41e315909d2a0b",
+  "active_issue": "THE-2859",
+  "next_issue": [
+    "THE-2876",
+    "THE-2861"
+  ],
+  "install_cadence": "Only completed full slice or owner retest fix",
+  "process_audit": "docs/handoff/2026-10-08-account-switch/evidence/process-cleanup/process-audit.json"
+}

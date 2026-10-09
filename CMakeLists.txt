@@ -1602,7 +1602,7 @@ add_library(qa_persistence STATIC
     src/persistence/strings.c
     src/persistence/targets.c
     src/persistence/world.c)
-target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console qa_navigation qa_native)
+target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console qa_navigation qa_native PRIVATE SDL2::SDL2)
 
 # Engine data uses the same VFS as installed game resources on every platform.
 foreach(name DejaVuSans.ttf LICENSE-DejaVu.txt)

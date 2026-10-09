@@ -20,6 +20,8 @@ typedef struct qa_q1_save_slot_metadata {
 } qa_q1_save_slot_metadata;
 
 typedef struct qa_q2_save_slot_metadata {
+    bool rerelease, autosave;
+    uint64_t timestamp;
     char comment[QA_Q2_SAVE_DESCRIPTION_CAPACITY];
     char map_command[QA_Q2_SAVE_MAP_COMMAND_CAPACITY];
     char game_directory[QA_Q2_SAVE_CVAR_BYTES];
@@ -47,7 +49,7 @@ typedef struct qa_save_slot_listing {
 bool qa_save_slot_inspect(qa_fs_root *, const char *name, qa_save_slot_format *,
     qa_save_metadata *, qa_q1_save_slot_metadata *, qa_q2_save_slot_metadata *, qa_error *);
 void qa_q1_save_slot_metadata_dispose(qa_q1_save_slot_metadata *);
-/* Lists immediate regular .sav files and Q2 save directories. Empty selects
+/* Lists immediate .sav and .pak.gz files and Q2 save directories. Empty selects
  * the root; a missing directory publishes an empty listing. Reserved current
  * names, links and invalid slot paths are excluded. Entries sort by exact path.
  * Unreadable or malformed files retain their own error and zero metadata.

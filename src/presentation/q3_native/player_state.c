@@ -1,10 +1,17 @@
 /* CG playerstate transitions, id Software 1999-2005, GPL-2.0-or-later. */
 #include "qa/game_type.h"
+#include "qa/unified_frame_player.h"
 #include "player_state_internal.h"
 
 static bool q3n_player_state_transition_received(q3n_player_state *,const q3n_frame *,
     const qa_q3_player *,const qa_q3_player *,const q3n_player_state_context *,
     qa_q3_entity,q3n_entity *,qa_q3_entity,q3n_entity *,int32_t,qa_error *);
+
+q3n_weapon_hud q3n_weapon_hud_from_ui(const qa_unified_player_ui *ui)
+{
+    return ui ? (q3n_weapon_hud){.selected=ui->selected_arsenal,
+        .warning=(int32_t)ui->arsenal_warning} : (q3n_weapon_hud){0};
+}
 
 static bool current(q3n_player_state *o,const q3n_frame *f,qa_error *e)
 {

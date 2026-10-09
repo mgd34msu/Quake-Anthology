@@ -2,6 +2,7 @@
 #define QA_FRONTEND_REMOTE_Q2_PRIVATE_H
 #include "internal.h"
 #include "remote_q2_client.h"
+#include "remote_q2_effects.h"
 #include "qa/hud_q2.h"
 #include "qa/font.h"
 #include "model_inventory.h"
@@ -56,28 +57,16 @@ typedef struct remote_q2_sent_command {
 typedef struct remote_q2_cvar_handles {
     qa_cvars *registry;
     frontend_legacy_cvar_handles legacy;
+    frontend_remote_q2_effects_cvars effects;
     qa_cvar_handle ch_alpha;
     qa_cvar_handle ch_scale;
     qa_cvar_handle ch_x;
     qa_cvar_handle ch_y;
     qa_cvar_handle cl_blend;
-    qa_cvar_handle cl_disable_explosions;
-    qa_cvar_handle cl_disable_particles;
-    qa_cvar_handle cl_dlight_hacks;
     qa_cvar_handle cl_entities;
-    qa_cvar_handle cl_gunfov;
     qa_cvar_handle cl_hit_markers;
     qa_cvar_handle cl_lights;
-    qa_cvar_handle cl_muzzleflashes;
-    qa_cvar_handle cl_muzzlelight_time;
     qa_cvar_handle cl_particles;
-    qa_cvar_handle cl_railcore_color;
-    qa_cvar_handle cl_railcore_width;
-    qa_cvar_handle cl_railspiral_color;
-    qa_cvar_handle cl_railspiral_radius;
-    qa_cvar_handle cl_railtrail_time;
-    qa_cvar_handle cl_railtrail_type;
-    qa_cvar_handle cl_rerelease_effects;
     qa_cvar_handle crosshair;
     qa_cvar_handle gl_damageblend_frac;
     qa_cvar_handle paused;

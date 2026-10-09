@@ -1,12 +1,23 @@
 #include "internal.h"
 #include "qa/demo.h"
+#include <SDL_thread.h>
+#include <SDL_mutex.h>
 
 #define DEMO_HEADER_BYTES 32u
 
+enum { DEMO_QUEUE_BYTES = 256 * 1024, DEMO_BATCH_BYTES = 64 * 1024 };
 struct qa_demo_recorder {
     qa_fs_stream *stream;
     uint64_t time_ns, sequence, position;
     bool faulted, ended, buffered, dirty;
+    SDL_Thread *thread;
+    SDL_mutex *mutex;
+    SDL_cond *ready, *drained;
+    uint8_t *queue;
+    size_t first, queued;
+    uint64_t written_position, durable_position;
+    bool flushing, stopping;
+    qa_error worker_error;
 };
 struct qa_demo {
     qa_buffer storage;
@@ -36,16 +47,105 @@ static bool demo_name(const char *name, qa_error *error)
 
 static bool write_part(qa_demo_recorder *recorder, qa_bytes bytes, qa_error *error)
 {
-    size_t written = 0;
-    uint64_t resulting_size = 0;
-    bool ok = qa_fs_stream_write(recorder->stream, bytes, recorder->position, &written, &resulting_size, error);
-    if (!ok || written != bytes.size || recorder->position > UINT64_MAX - written) {
-        recorder->faulted = true;
-        if (ok) persistence_fail(error, QA_ERROR_IO, "Demo append made incomplete progress");
-        return false;
+    while (bytes.size) {
+        size_t written = 0;
+        if (!qa_fs_stream_write_some(recorder->stream, bytes, recorder->written_position,
+            &written, error) || !written) {
+            if (error && error->code == QA_OK)
+                persistence_fail(error, QA_ERROR_IO, "Demo append made incomplete progress");
+            return false;
+        }
+        recorder->written_position += written;
+        bytes.data += written; bytes.size -= written;
     }
-    recorder->position += written;
     return true;
+}
+
+static int SDLCALL record_worker(void *context)
+{
+    qa_demo_recorder *recorder = context;
+    SDL_LockMutex(recorder->mutex);
+    for (;;) {
+        while (recorder->queued < DEMO_BATCH_BYTES && !recorder->flushing && !recorder->stopping)
+            SDL_CondWait(recorder->ready, recorder->mutex);
+        if (!recorder->queued) {
+            if (recorder->written_position != recorder->durable_position) {
+                SDL_UnlockMutex(recorder->mutex);
+                qa_error error = {0};
+                bool ok = qa_fs_stream_sync(recorder->stream, &error);
+                SDL_LockMutex(recorder->mutex);
+                if (!ok) {
+                    recorder->worker_error = error;
+                    SDL_CondBroadcast(recorder->drained);
+                    break;
+                }
+                recorder->durable_position = recorder->written_position;
+            }
+            recorder->flushing = false;
+            SDL_CondBroadcast(recorder->drained);
+            if (recorder->stopping) break;
+            continue;
+        }
+        size_t amount = recorder->queued;
+        size_t first = recorder->first;
+        size_t part = amount < DEMO_QUEUE_BYTES - first ? amount : DEMO_QUEUE_BYTES - first;
+        SDL_UnlockMutex(recorder->mutex);
+        qa_error error = {0};
+        bool ok = write_part(recorder, (qa_bytes){recorder->queue + first, part}, &error) &&
+            write_part(recorder, (qa_bytes){recorder->queue, amount - part}, &error) &&
+            qa_fs_stream_sync(recorder->stream, &error);
+        SDL_LockMutex(recorder->mutex);
+        if (!ok) {
+            recorder->worker_error = error;
+            SDL_CondBroadcast(recorder->drained);
+            break;
+        }
+        recorder->first = (first + amount) % DEMO_QUEUE_BYTES;
+        recorder->queued -= amount;
+        recorder->durable_position = recorder->written_position;
+    }
+    SDL_UnlockMutex(recorder->mutex);
+    return 0;
+}
+
+static bool record_worker_start(qa_demo_recorder *recorder, qa_error *error)
+{
+    if (recorder->thread) return true;
+    recorder->queue = malloc(DEMO_QUEUE_BYTES);
+    recorder->mutex = SDL_CreateMutex();
+    recorder->ready = SDL_CreateCond();
+    recorder->drained = SDL_CreateCond();
+    if (recorder->queue && recorder->mutex && recorder->ready && recorder->drained)
+        recorder->thread = SDL_CreateThread(record_worker, "Demo writer", recorder);
+    if (recorder->thread) return true;
+    recorder->faulted = true;
+    return persistence_fail(error, QA_ERROR_MEMORY, "Creating buffered demo writer");
+}
+
+static void queue_part(qa_demo_recorder *recorder, qa_bytes bytes, size_t at)
+{
+    size_t first = bytes.size < DEMO_QUEUE_BYTES - at ? bytes.size : DEMO_QUEUE_BYTES - at;
+    if (first) memcpy(recorder->queue + at, bytes.data, first);
+    if (bytes.size != first) memcpy(recorder->queue, bytes.data + first, bytes.size - first);
+}
+
+static bool queue_record(qa_demo_recorder *recorder, qa_bytes header, qa_bytes payload, qa_error *error)
+{
+    SDL_LockMutex(recorder->mutex);
+    bool ok = recorder->worker_error.code == QA_OK;
+    if (!ok && error) *error = recorder->worker_error;
+    size_t size = header.size + payload.size;
+    if (ok && size > DEMO_QUEUE_BYTES - recorder->queued)
+        ok = persistence_fail(error, QA_ERROR_IO, "Demo writer queue is full; completed file prefix remains recoverable");
+    if (ok) {
+        size_t at = (recorder->first + recorder->queued) % DEMO_QUEUE_BYTES;
+        queue_part(recorder, header, at);
+        queue_part(recorder, payload, (at + header.size) % DEMO_QUEUE_BYTES);
+        recorder->queued += size;
+        if (recorder->queued >= DEMO_BATCH_BYTES) SDL_CondSignal(recorder->ready);
+    }
+    SDL_UnlockMutex(recorder->mutex);
+    return ok;
 }
 
 static bool record_header(qa_net_writer *writer, qa_demo_record_kind kind,
@@ -73,8 +173,15 @@ static bool record_append(qa_demo_recorder *recorder, qa_demo_record_kind kind, 
     qa_net_writer w;
     qa_net_writer_init(&w, header, sizeof(header), error);
     if (!record_header(&w, kind, recorder->sequence + 1,
-        recorder->time_ns + elapsed_ns, elapsed_ns, protocol, payload.size) || !write_part(recorder, (qa_bytes){header, sizeof(header)}, error) ||
-        !write_part(recorder, payload, error)) return false;
+        recorder->time_ns + elapsed_ns, elapsed_ns, protocol, payload.size)) return false;
+    if (recorder->position > UINT64_MAX - sizeof(header) - payload.size)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Demo position overflows");
+    bool queued = recorder->buffered && kind != QA_DEMO_KEYFRAME;
+    bool ok = queued ? queue_record(recorder, (qa_bytes){header, sizeof(header)}, payload, error) :
+        qa_demo_record_flush(recorder, error) && write_part(recorder, (qa_bytes){header, sizeof(header)}, error) &&
+        write_part(recorder, payload, error);
+    if (!ok) { recorder->faulted = true; return false; }
+    recorder->position += sizeof(header) + payload.size;
     recorder->dirty = true;
     if ((!recorder->buffered || kind == QA_DEMO_KEYFRAME || kind == QA_DEMO_END) &&
         !qa_demo_record_flush(recorder, error)) return false;
@@ -103,6 +210,19 @@ bool qa_demo_record_flush(qa_demo_recorder *recorder, qa_error *error)
 {
     if (!recorder || recorder->faulted)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Absent or faulted demo recorder");
+    if (recorder->thread) {
+        SDL_LockMutex(recorder->mutex);
+        recorder->flushing = true;
+        SDL_CondSignal(recorder->ready);
+        while (recorder->flushing && recorder->worker_error.code == QA_OK)
+            SDL_CondWait(recorder->drained, recorder->mutex);
+        bool ok = recorder->worker_error.code == QA_OK;
+        if (!ok && error) *error = recorder->worker_error;
+        SDL_UnlockMutex(recorder->mutex);
+        if (!ok) { recorder->faulted = true; return false; }
+        recorder->dirty = false;
+        return true;
+    }
     if (!recorder->dirty) return true;
     if (!qa_fs_stream_sync(recorder->stream, error)) {
         recorder->faulted = true;
@@ -116,6 +236,7 @@ bool qa_demo_record_buffered(qa_demo_recorder *recorder, bool buffered, qa_error
 {
     if (!recorder || recorder->faulted || recorder->ended)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Buffering requires an active demo recorder");
+    if (buffered && !record_worker_start(recorder, error)) return false;
     if (!buffered && !qa_demo_record_flush(recorder, error)) return false;
     recorder->buffered = buffered;
     return true;
@@ -164,7 +285,7 @@ bool qa_demo_record_begin(qa_fs_root *root, const char *name, const qa_save_imag
     if (!ok) { qa_demo_recorder_destroy(recorder); return false; }
     recorder->time_ns = metadata->elapsed_ns;
     recorder->sequence = 1;
-    recorder->position = size;
+    recorder->durable_position = recorder->written_position = recorder->position = size;
     *out = recorder;
     return true;
 }
@@ -176,7 +297,21 @@ bool qa_demo_record_end(qa_demo_recorder *recorder, qa_error *error)
     return qa_demo_record_append(recorder, QA_DEMO_END, 0, (qa_net_protocol_id){QA_NET_UNIFIED_1, 0, 0}, (qa_bytes){0}, error);
 }
 void qa_demo_recorder_destroy(qa_demo_recorder *recorder)
-{ if (recorder) { qa_fs_stream_close(recorder->stream); free(recorder); } }
+{
+    if (!recorder) return;
+    if (recorder->thread) {
+        SDL_LockMutex(recorder->mutex);
+        recorder->stopping = true;
+        SDL_CondSignal(recorder->ready);
+        SDL_UnlockMutex(recorder->mutex);
+        SDL_WaitThread(recorder->thread, NULL);
+    }
+    if (recorder->drained) SDL_DestroyCond(recorder->drained);
+    if (recorder->ready) SDL_DestroyCond(recorder->ready);
+    if (recorder->mutex) SDL_DestroyMutex(recorder->mutex);
+    free(recorder->queue);
+    qa_fs_stream_close(recorder->stream); free(recorder);
+}
 uint64_t persistence_demo_record_bytes(const qa_demo_recorder *recorder)
 { return recorder ? recorder->position : 0; }
 

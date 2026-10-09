@@ -1,0 +1,52 @@
+[
+  {
+    "compiler": "gcc",
+    "file": "src/app/frontend/remote_q2_effects.c",
+    "exit": 0
+  },
+  {
+    "compiler": "gcc",
+    "file": "src/app/frontend/remote_q2_effects_bridge.c",
+    "exit": 0
+  },
+  {
+    "compiler": "gcc",
+    "file": "src/app/frontend/remote_unified_q2.c",
+    "exit": 0
+  },
+  {
+    "compiler": "gcc",
+    "file": "src/app/frontend/remote_q2_client.c",
+    "exit": 0
+  },
+  {
+    "compiler": "gcc",
+    "file": "src/app/frontend/remote_unified.c",
+    "exit": 0
+  },
+  {
+    "compiler": "clang",
+    "file": "src/app/frontend/remote_q2_effects.c",
+    "exit": 0
+  },
+  {
+    "compiler": "clang",
+    "file": "src/app/frontend/remote_q2_effects_bridge.c",
+    "exit": 0
+  },
+  {
+    "compiler": "clang",
+    "file": "src/app/frontend/remote_unified_q2.c",
+    "exit": 0
+  },
+  {
+    "compiler": "clang",
+    "file": "src/app/frontend/remote_q2_client.c",
+    "exit": 0
+  },
+  {
+    "compiler": "clang",
+    "file": "src/app/frontend/remote_unified.c",
+    "exit": 0
+  }
+]

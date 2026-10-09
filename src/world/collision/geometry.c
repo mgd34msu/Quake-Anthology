@@ -29,6 +29,7 @@ struct qa_collision_geometry {
     uint32_t cluster_count;
     size_t visibility_bytes, visibility_slots;
     uint8_t **pvs, **phs;
+    uint8_t *visibility_data, *derived_phs;
 
     uint32_t area_count;
     uint32_t *flood, *area_stack, *area_pairs;
@@ -119,10 +120,8 @@ void qa_collision_destroy(qa_collision_geometry *geometry)
     if (geometry == NULL) return;
     if (geometry->references > 1) { --geometry->references; return; }
     if (geometry->kernel.ops != NULL) geometry->kernel.ops->destroy(geometry->kernel.state);
-    if (geometry->pvs != NULL)
-        for (size_t i = 0; i < geometry->visibility_slots; ++i) free(geometry->pvs[i]);
-    if (geometry->phs != NULL)
-        for (size_t i = 0; i < geometry->visibility_slots; ++i) free(geometry->phs[i]);
+    free(geometry->visibility_data);
+    free(geometry->derived_phs);
     free(geometry->pvs);
     free(geometry->phs);
     free(geometry->planes);
@@ -287,6 +286,8 @@ static bool load_areas(qa_collision_geometry *geometry, qa_error *error)
     return true;
 }
 
+static bool load_visibility(qa_collision_geometry *, qa_error *);
+
 bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa_error *error)
 {
     if (bsp == NULL || out == NULL || bsp->family < QA_BSP_Q1 || bsp->family > QA_BSP_Q3)
@@ -302,7 +303,8 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
         geometry->map_identity ^= bsp->source.data[i];
         geometry->map_identity *= UINT64_C(1099511628211);
     }
-    if (!load_topology(geometry, error) || !load_areas(geometry, error)) goto fail;
+    if (!load_topology(geometry, error) || !load_areas(geometry, error)
+        || !load_visibility(geometry, error)) goto fail;
     const qa_collision_topology topology = {geometry->planes, geometry->nodes,
         geometry->plane_count, geometry->node_count};
     bool created = geometry->family == QA_COLLISION_Q1 ? qa_q1_collision_create(bsp, &topology, &geometry->kernel, error)
@@ -557,37 +559,117 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bo
 
 static bool visibility_row(const qa_collision_geometry *geometry, size_t index, bool phs, qa_bytes *out, qa_error *error)
 {
+    (void)error;
     if (geometry->visibility_bytes == 0) { *out = (qa_bytes){0}; return true; }
-    qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
     if (geometry->family == QA_COLLISION_Q3 && !phs) {
+        qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
         size_t width = qa_load_u32le(vis.data + 4);
         *out = (qa_bytes){vis.data + 8 + index * width, width};
-        return true;
-    }
-    uint8_t **cache = phs ? geometry->phs : geometry->pvs;
-    if (cache[index] != NULL) { *out = (qa_bytes){cache[index], geometry->visibility_bytes}; return true; }
-    uint8_t *row = geometry_array(geometry->visibility_bytes, 1, error);
-    if (row == NULL) return false;
-    if (!phs || geometry->family == QA_COLLISION_Q2) {
-        size_t written;
-        if (!qa_bsp_visibility(&geometry->bsp, (int32_t)index, phs, geometry->cluster_count,
-                               row, geometry->visibility_bytes, &written, error)) { free(row); return false; }
     } else {
-        qa_bytes source;
-        if (!visibility_row(geometry, index, false, &source, error)) { free(row); return false; }
-        memcpy(row, source.data, geometry->visibility_bytes);
-        size_t neighbors = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count - 1 : geometry->cluster_count;
-        for (size_t neighbor = 0; neighbor < neighbors; ++neighbor) {
-            /* Inspect only the original PVS, never the growing PHS union. */
-            if (!bit_test(source, neighbor)) continue;
+        uint8_t **rows = phs ? geometry->phs : geometry->pvs;
+        *out = (qa_bytes){rows[index], geometry->visibility_bytes};
+    }
+    return true;
+}
+
+typedef struct visibility_reference {
+    int64_t offset;
+    size_t slot;
+    bool phs;
+} visibility_reference;
+
+static int visibility_offset_order(const void *left, const void *right)
+{
+    int64_t a = ((const visibility_reference *)left)->offset;
+    int64_t b = ((const visibility_reference *)right)->offset;
+    return a < b ? -1 : a > b;
+}
+
+static bool derive_phs(const qa_collision_geometry *geometry, size_t index, uint8_t *row, qa_error *error)
+{
+    qa_bytes source;
+    if (!visibility_row(geometry, index, false, &source, error)) return false;
+    memcpy(row, source.data, geometry->visibility_bytes);
+    size_t neighbors = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count - 1 : geometry->cluster_count;
+    /* Union only neighbors of the original PVS, not the growing PHS. */
+    for (size_t byte = 0; byte < geometry->visibility_bytes; ++byte) {
+        uint8_t bits = source.data[byte];
+        if (!bits) continue;
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            size_t neighbor = byte * 8 + bit;
+            if (neighbor >= neighbors || !(bits & (1u << bit))) continue;
             qa_bytes adjacent;
             size_t adjacent_index = geometry->family == QA_COLLISION_Q1 ? neighbor + 1 : neighbor;
-            if (!visibility_row(geometry, adjacent_index, false, &adjacent, error)) { free(row); return false; }
-            for (size_t byte = 0; byte < geometry->visibility_bytes; ++byte) row[byte] |= adjacent.data[byte];
+            if (!visibility_row(geometry, adjacent_index, false, &adjacent, error)) return false;
+            for (size_t n = 0; n < geometry->visibility_bytes; ++n) row[n] |= adjacent.data[n];
         }
     }
-    cache[index] = row;
-    *out = (qa_bytes){row, geometry->visibility_bytes};
+    return true;
+}
+
+static bool load_visibility(qa_collision_geometry *geometry, qa_error *error)
+{
+    size_t slots = geometry->visibility_slots, width = geometry->visibility_bytes;
+    qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
+    if (!slots || !width || (geometry->family == QA_COLLISION_Q3 && !vis.size)) return true;
+    if (geometry->family == QA_COLLISION_Q3) {
+        geometry->derived_phs = geometry_array(slots, width, error);
+        if (!geometry->derived_phs) return false;
+        for (size_t i = 0; i < slots; ++i) {
+            geometry->phs[i] = geometry->derived_phs + i * width;
+            if (!derive_phs(geometry, i, geometry->phs[i], error)) return false;
+        }
+        return true;
+    }
+
+    size_t sets = geometry->family == QA_COLLISION_Q2 ? 2u : 1u;
+    visibility_reference *references = geometry_array(slots, sets * sizeof(*references), error);
+    if (!references) return false;
+    size_t count = slots * sets;
+    for (size_t i = 0; i < slots; ++i) {
+        if (geometry->family == QA_COLLISION_Q1) {
+            qa_bsp_leaf leaf;
+            if (!qa_bsp_read_leaf(&geometry->bsp, i, &leaf, error)) { free(references); return false; }
+            references[i] = (visibility_reference){.offset = i && vis.size ? leaf.visibility_offset : -1, .slot = i};
+        } else {
+            for (size_t h = 0; h < sets; ++h)
+                references[i * sets + h] = (visibility_reference){
+                    .offset = vis.size ? qa_load_i32le(vis.data + 4 + i * 8 + h * 4) : -1,
+                    .slot = i, .phs = h != 0};
+        }
+    }
+    qsort(references, count, sizeof(*references), visibility_offset_order);
+    size_t unique = 1;
+    for (size_t i = 1; i < count; ++i) unique += references[i].offset != references[i - 1].offset;
+    geometry->visibility_data = geometry_array(unique, width, error);
+    if (!geometry->visibility_data) { free(references); return false; }
+    size_t decoded = 0;
+    for (size_t i = 0; i < count; ++decoded) {
+        const visibility_reference *reference = references + i;
+        uint8_t *row = geometry->visibility_data + decoded * width;
+        size_t written;
+        if (!qa_bsp_visibility(&geometry->bsp, (int32_t)reference->slot, reference->phs,
+            geometry->cluster_count, row, width, &written, error)) { free(references); return false; }
+        int64_t offset = reference->offset;
+        do {
+            reference = references + i;
+            (reference->phs ? geometry->phs : geometry->pvs)[reference->slot] = row;
+            ++i;
+        } while (i < count && references[i].offset == offset);
+    }
+    if (geometry->family == QA_COLLISION_Q1) {
+        geometry->derived_phs = geometry_array(unique, width, error);
+        if (!geometry->derived_phs) { free(references); return false; }
+        decoded = 0;
+        for (size_t i = 0; i < count; ++decoded) {
+            uint8_t *row = geometry->derived_phs + decoded * width;
+            if (!derive_phs(geometry, references[i].slot, row, error)) { free(references); return false; }
+            int64_t offset = references[i].offset;
+            do { geometry->phs[references[i].slot] = row; ++i; }
+            while (i < count && references[i].offset == offset);
+        }
+    }
+    free(references);
     return true;
 }
 

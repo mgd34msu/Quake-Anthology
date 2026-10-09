@@ -11,6 +11,7 @@
 #include "qa/scene_world_save.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/unified_frame_player.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -97,6 +98,13 @@ static bool oldest(void *context,const q3n_frame *f,int32_t *time,bool *availabl
        !input || !cut(o,f,e) || !frontend_unified_input_oldest_q3(input,&command,available,e))return false;
     if(*available)*time=command.server_time_ms;
     return cut(o,f,e);
+}
+static bool weapon_warning(void *context,const q3n_frame *f,q3n_weapon_hud *out,qa_error *e)
+{
+    frontend_unified_q3_runtime_factory *o=context;(void)f;(void)e;
+    const qa_unified_frame *received=qa_unified_document_frame(frontend_remote_unified_frame(o->options.replica));
+    *out=q3n_weapon_hud_from_ui(received && received->player ? &received->player->ui : NULL);
+    return true;
 }
 static bool trace_number(void *context,const q3n_compiled_frame *frame,const qa_trace_result *hit,int32_t *out,qa_error *e)
 {
@@ -346,7 +354,9 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
     operations.presentation.lod_scale=5;operations.presentation.rail_core_width=6;operations.presentation.rail_ring_width=16;
     operations.presentation.rail_segment_length=32;
     operations.commands.context=o;operations.commands.compiled_register=registered;operations.commands.initialize_stage=initialize_stage;
+    operations.player_state.context=o;operations.player_state.weapon_warning=weapon_warning;
     operations.hud.context=o;operations.hud.compiled_oldest_command=oldest;operations.hud.client_command=reliable;
+    operations.hud.weapon_warning=weapon_warning;
     frontend_unified_q3_runtime_services_options services={.frontend=options->frontend,.replica=options->replica,.media=options->media,
         .client=options->client,.source=options->source,.events=options->events,.receiver=options->receiver,.audio_owner=options->audio_owner,
         .audio_context=options->audio_context,.audio_actor=options->audio_actor,.entered_frame=entered,

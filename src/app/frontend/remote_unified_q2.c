@@ -498,64 +498,18 @@ static bool trace(void *ctx,const qa_trace_query *query,qa_trace_result *out,qa_
     q2_bank *b=ctx;
     return current(b->owner,e) && frontend_remote_unified_presentation_trace(b->owner->replica,query,out,e);
 }
-static bool rail_color(q2_bank *b,const char *name,uint32_t *out,qa_error *e)
+static bool controls_current(void *context, qa_error *error)
+{ return current(context, error); }
+static bool controls(void *ctx, frontend_remote_q2_effects_controls *out, qa_error *error)
 {
-    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(b->owner->replica);
-    const qa_cvar_view *row=qa_cvars_find(domain->cvars,name);
-    if (!row) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 rail color lost its actual CLIENT declaration");
-    if (frontend_remote_q2_effects_color(row->value,out)) return true;
-    size_t value_length=strlen(row->value),name_length=strlen(name);
-    if (value_length>SIZE_MAX-name_length-32)
-        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 rail color warning overflow");
-    size_t capacity=value_length+name_length+32; char *warning=malloc(capacity);
-    if (!warning) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 rail color warning");
-    snprintf(warning,capacity,"Invalid value '%s' for '%s'\n",row->value,name);
-    qa_console_emit(domain->console,&domain->command_context,warning); free(warning);
-    if (!current(b->owner,e) || !qa_cvars_reset(domain->cvars,name,true,e) || !current(b->owner,e)) return false;
-    row=qa_cvars_find(domain->cvars,name);
-    return (row && frontend_remote_q2_effects_color(row->value,out)) ||
-        frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 rail color has no valid actual CLIENT reset value");
-}
-static bool controls(void *ctx,frontend_remote_q2_effects_controls *out,qa_error *e)
-{
-    q2_bank *b=ctx;
-    if (!out || !current(b->owner,e)) return false;
-    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(b->owner->replica);
-    if (!qa_cvars_observer_idle(domain->cvars))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 effects controls require their returned CLIENT registry");
-    uint32_t core,spiral;
-    if (!rail_color(b,"cl_railcore_color",&core,e) || !rail_color(b,"cl_railspiral_color",&spiral,e)) return false;
-    const qa_cvar_view *rail_time=qa_cvars_find(domain->cvars,"cl_railtrail_time");
-    if (!rail_time || !isfinite(rail_time->number))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 rail time has no actual finite CLIENT row");
-    float duration=rail_time->number;
-    if ((duration<0 || duration>2073600) &&
-        (!qa_cvars_set_number(domain->cvars,"cl_railtrail_time",duration<0?0:2073600,e) || !current(b->owner,e))) return false;
-    rail_time=qa_cvars_find(domain->cvars,"cl_railtrail_time");
-    const qa_cvar_view *core_row=qa_cvars_find(domain->cvars,"cl_railcore_color"),
-        *spiral_row=qa_cvars_find(domain->cvars,"cl_railspiral_color");
-    if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value,&core) ||
-        !frontend_remote_q2_effects_color(spiral_row->value,&spiral))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 rail controls changed during their actual CLIENT normalization");
-    const qa_cvar_view *time=qa_cvars_find(domain->cvars,"cl_muzzlelight_time"),
-        *effects=qa_cvars_find(domain->cvars,"cl_rerelease_effects"),*hacks=qa_cvars_find(domain->cvars,"cl_dlight_hacks"),
-        *flashes=qa_cvars_find(domain->cvars,"cl_muzzleflashes"),
-        *particles=qa_cvars_find(domain->cvars,"cl_disable_particles"),*explosions=qa_cvars_find(domain->cvars,"cl_disable_explosions"),
-        *gun=qa_cvars_find(domain->cvars,"cl_gun"),*gun_fov=qa_cvars_find(domain->cvars,"cl_gunfov"),
-        *rail_type=qa_cvars_find(domain->cvars,"cl_railtrail_type"),*rail_width=qa_cvars_find(domain->cvars,"cl_railcore_width"),
-        *rail_radius=qa_cvars_find(domain->cvars,"cl_railspiral_radius");
-    if (!time || !effects || !hacks || !flashes || !particles || !explosions || !gun || !gun_fov ||
-        !rail_time || !rail_type || !rail_width || !rail_radius || !isfinite(rail_time->number) ||
-        rail_time->number<0 || rail_time->number>2073600 || !isfinite(rail_radius->number) ||
-        !isfinite(gun_fov->number) || fabs(gun_fov->number)>FLT_MAX)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 semantic effects have no actual CLIENT controls registry");
-    frontend_remote_q2_effects_controls result={.muzzlelight_milliseconds=time->integer,.rerelease_effects=effects->integer!=0,
-        .muzzleflashes=flashes->integer!=0,.dlight_hacks=(uint32_t)hacks->integer,
-        .disable_particles=(uint32_t)particles->integer,.disable_explosions=(uint32_t)explosions->integer,
-        .gun=gun->integer,.gun_fov=(float)gun_fov->number,.rail_type=rail_type->integer,.rail_width=rail_width->integer,
-        .rail_seconds=rail_time->number,.rail_radius=rail_radius->number,.rail_core_rgba=core,.rail_spiral_rgba=spiral};
-    if (!current(b->owner,e)) return false;
-    *out=result; return true;
+    q2_bank *b = ctx;
+    const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(b->owner->replica);
+    frontend_remote_q2_effects_control_source source = {
+        .cvars = domain->cvars, .handles = &b->owner->replica->q2_effect_cvars,
+        .gun = b->owner->replica->legacy_cvars.cl_gun, .console = domain->console,
+        .command_context = &domain->command_context,
+        .context = b->owner, .current = controls_current};
+    return frontend_remote_q2_effects_controls_read(&source, out, error);
 }
 static bool frame_milliseconds(void *ctx,double *out,qa_error *e)
 {

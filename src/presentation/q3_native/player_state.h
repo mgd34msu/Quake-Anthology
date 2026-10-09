@@ -12,6 +12,8 @@ typedef struct q3n_weapon_hud {
     bool selected;
     int32_t warning;
 } q3n_weapon_hud;
+struct qa_unified_player_ui;
+q3n_weapon_hud q3n_weapon_hud_from_ui(const struct qa_unified_player_ui *);
 typedef struct q3n_player_state_options {
     qa_application *application;
     const qa_application_native_q3_presentation *source;

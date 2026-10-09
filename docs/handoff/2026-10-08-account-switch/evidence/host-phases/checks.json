@@ -1,0 +1,165 @@
+{
+  "extract": {
+    "exit_code": 0,
+    "command": [
+      "python",
+      "/tmp/qa-the865-host-phases-20261009/extract_fixture.py"
+    ]
+  },
+  "generate": {
+    "exit_code": 0,
+    "command": [
+      "python",
+      "/tmp/qa-the865-host-phases-20261009/make_fixture.py"
+    ]
+  },
+  "gcc_source_syntax": {
+    "exit_code": 0,
+    "command": [
+      "gcc",
+      "-std=c17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Wshadow",
+      "-Wconversion",
+      "-Wstrict-prototypes",
+      "-Werror",
+      "-ffp-contract=off",
+      "-Iinclude",
+      "-fsyntax-only",
+      "src/app/frontend/frame.c"
+    ]
+  },
+  "gcc_fixture_build": {
+    "exit_code": 0,
+    "command": [
+      "gcc",
+      "-std=c17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Wshadow",
+      "-Wconversion",
+      "-Wstrict-prototypes",
+      "-Werror",
+      "-ffp-contract=off",
+      "-Iinclude",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "/tmp/qa-the865-host-phases-20261009/fixture.c",
+      "src/platform/events.c",
+      "src/input/commands.c",
+      "src/input/mouse.c",
+      "src/core/common.c",
+      "src/core/number.c",
+      "-Wl,--gc-sections",
+      "-lm",
+      "-o",
+      "/tmp/qa-the865-host-phases-20261009/fixture-gcc"
+    ]
+  },
+  "gcc_fixture_run": {
+    "exit_code": 0,
+    "command": [
+      "/tmp/qa-the865-host-phases-20261009/fixture-gcc"
+    ]
+  },
+  "clang_source_syntax": {
+    "exit_code": 0,
+    "command": [
+      "clang",
+      "-std=c17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Wshadow",
+      "-Wconversion",
+      "-Wstrict-prototypes",
+      "-Werror",
+      "-ffp-contract=off",
+      "-Iinclude",
+      "-fsyntax-only",
+      "src/app/frontend/frame.c"
+    ]
+  },
+  "clang_fixture_build": {
+    "exit_code": 0,
+    "command": [
+      "clang",
+      "-std=c17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Wshadow",
+      "-Wconversion",
+      "-Wstrict-prototypes",
+      "-Werror",
+      "-ffp-contract=off",
+      "-Iinclude",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "/tmp/qa-the865-host-phases-20261009/fixture.c",
+      "src/platform/events.c",
+      "src/input/commands.c",
+      "src/input/mouse.c",
+      "src/core/common.c",
+      "src/core/number.c",
+      "-Wl,--gc-sections",
+      "-lm",
+      "-o",
+      "/tmp/qa-the865-host-phases-20261009/fixture-clang"
+    ]
+  },
+  "clang_fixture_run": {
+    "exit_code": 0,
+    "command": [
+      "/tmp/qa-the865-host-phases-20261009/fixture-clang"
+    ]
+  },
+  "sanitizer_build": {
+    "exit_code": 0,
+    "command": [
+      "clang",
+      "-std=c17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Wshadow",
+      "-Wconversion",
+      "-Wstrict-prototypes",
+      "-Werror",
+      "-ffp-contract=off",
+      "-Iinclude",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-fsanitize=address,undefined",
+      "-g",
+      "/tmp/qa-the865-host-phases-20261009/fixture.c",
+      "src/platform/events.c",
+      "src/input/commands.c",
+      "src/input/mouse.c",
+      "src/core/common.c",
+      "src/core/number.c",
+      "-Wl,--gc-sections",
+      "-lm",
+      "-o",
+      "/tmp/qa-the865-host-phases-20261009/fixture-asan"
+    ]
+  },
+  "sanitizer_run": {
+    "exit_code": 0,
+    "command": [
+      "/tmp/qa-the865-host-phases-20261009/fixture-asan"
+    ]
+  },
+  "source_scope": {
+    "controls_byte_unchanged": true,
+    "application_advance_sites_before": 1,
+    "application_advance_sites_after": 1,
+    "failure_returns_before": 87,
+    "failure_returns_after": 86,
+    "frontend_fail_sites_before": 26,
+    "frontend_fail_sites_after": 26
+  }
+}

@@ -26,8 +26,6 @@ typedef struct qa_autosave_state {
 void qa_autosave_configure(qa_autosave_state *, bool enabled);
 bool qa_autosave_level_entry(qa_autosave_state *, uint64_t world_generation,
                              bool fresh_entry, qa_error *);
-bool qa_autosave_write(qa_autosave_state *, qa_fs_root *, const qa_save_image *,
-                        uint64_t nonce, qa_error *);
 
 typedef struct qa_recovery qa_recovery;
 /* Logical player identity and the actual accepted movement command. Device

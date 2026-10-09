@@ -81,6 +81,7 @@ void qa_q2_save_server_dispose(qa_q2_save_server *);
 bool qa_q2_save_server_read(qa_fs_root *, const char *, qa_q2_save_server *, qa_error *);
 /* A new-level autosave may have no per-map files. Every admitted level has
  * its real .sav/.sv2 pair. The GAME validates its own opaque files at load. */
+bool qa_q2_save_pack_decode(qa_bytes, qa_q2_save_data **, qa_error *);
 bool qa_q2_save_directory_read(qa_fs_root *, const char *, qa_q2_save_data **, qa_error *);
 bool qa_q2_save_directory_write(qa_fs_root *, const char *, const qa_q2_save_data *, uint64_t, qa_error *);
 void qa_q2_save_destroy(qa_q2_save_data *);

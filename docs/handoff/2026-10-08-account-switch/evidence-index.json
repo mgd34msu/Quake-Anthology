@@ -1,0 +1,125 @@
+[
+  {
+    "source": "/tmp/qa-the2859-cold-tail-build-20261009/source-attestation.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/main-build/source-attestation.json",
+    "bytes": 323
+  },
+  {
+    "source": "/tmp/qa-the2859-cold-tail-build-20261009/ctest.log",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/main-build/ctest.log",
+    "bytes": 773
+  },
+  {
+    "source": "/tmp/qa-the2859-cold-tail-build-20261009/ctest-asan.log",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/main-build/ctest-asan.log",
+    "bytes": 736
+  },
+  {
+    "source": "/tmp/qa-the2859-hud-wayland-20261009/installed-build-verified.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/installed/installed-build-verified.json",
+    "bytes": 486
+  },
+  {
+    "source": "/tmp/qa-the2859-hud-wayland-20261009/report.md",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/installed/report.md",
+    "bytes": 3005
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-weapon-tail-20261009/report.md",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/q2-weapon/report.md",
+    "bytes": 4526
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-weapon-tail-20261009/receipt.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/q2-weapon/receipt.json",
+    "bytes": 1496
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-weapon-tail-20261009/owned.patch",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/component-patches.tar.gz",
+    "bytes": 3740,
+    "archive_member": "evidence/q2-weapon/owned.patch"
+  },
+  {
+    "source": "/tmp/qa-the2859-visibility-tail-20261009/report.md",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/visibility/report.md",
+    "bytes": 4650
+  },
+  {
+    "source": "/tmp/qa-the2859-visibility-tail-20261009/checks.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/visibility/checks.json",
+    "bytes": 10048
+  },
+  {
+    "source": "/tmp/qa-the2859-visibility-tail-20261009/behavior-summary.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/visibility/behavior-summary.json",
+    "bytes": 1153
+  },
+  {
+    "source": "/tmp/qa-the2859-visibility-tail-20261009/freeze.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/visibility/freeze.json",
+    "bytes": 622
+  },
+  {
+    "source": "/tmp/qa-the2859-visibility-tail-20261009/source.patch",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/component-patches.tar.gz",
+    "bytes": 1942,
+    "archive_member": "evidence/visibility/source.patch"
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-controls-20261009/checks.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/q2-controls-incomplete/checks.json",
+    "bytes": 5952
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-controls-20261009/syntax-results.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/q2-controls-incomplete/syntax-results.json",
+    "bytes": 999
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-controls-20261009/root-glue.patch",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/component-patches.tar.gz",
+    "bytes": 4903,
+    "archive_member": "evidence/q2-controls-incomplete/root-glue.patch"
+  },
+  {
+    "source": "/tmp/qa-the2859-q2-controls-20261009/source-files.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/q2-controls-incomplete/source-files.json",
+    "bytes": 236
+  },
+  {
+    "source": "/tmp/qa-the865-host-phases-20261009/report.md",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/host-phases/report.md",
+    "bytes": 6623
+  },
+  {
+    "source": "/tmp/qa-the865-host-phases-20261009/checks.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/host-phases/checks.json",
+    "bytes": 3647
+  },
+  {
+    "source": "/tmp/qa-the873-visibility-load-20261008/results.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/visibility-load/results.json",
+    "bytes": 35203
+  },
+  {
+    "source": "/tmp/qa-the2859-ordinary-frame-plan-20261009/qualification.md",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/measurement-plan/qualification.md",
+    "bytes": 5222
+  },
+  {
+    "source": "/tmp/qa-the2859-ordinary-frame-plan-20261009/plan.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/measurement-plan/plan.json",
+    "bytes": 4048
+  },
+  {
+    "source": "/tmp/qa-the2859-ordinary-frame-plan-20261009/offline-checks.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/measurement-plan/offline-checks.json",
+    "bytes": 1380
+  },
+  {
+    "source": "/tmp/qa-account-switch-20261008/process-audit.json",
+    "committed_copy": "docs/handoff/2026-10-08-account-switch/evidence/process-cleanup/process-audit.json",
+    "bytes": 274
+  }
+]

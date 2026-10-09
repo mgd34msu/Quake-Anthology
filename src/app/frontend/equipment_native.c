@@ -1,4 +1,5 @@
 #include "qa/q3_presentation_save.h"
+#include "qa/unified_frame_player.h"
 #include "equipment_native.h"
 #include "save_private.h"
 
@@ -44,7 +45,9 @@ static bool warning(void *context, const q3n_frame *frame, q3n_weapon_hud *out, 
     if (!out || !current(owner, frame) ||
         !owner->services.current(owner->services.context, &owner->draw))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native weapon HUD lost its real admitted frame and receiver");
-    *out = (q3n_weapon_hud){.selected = owner->draw.selected, .warning = (int32_t)owner->draw.warning};
+    qa_unified_player_ui ui = {.selected_arsenal=owner->draw.selected,
+        .arsenal_warning=(qa_unified_arsenal_warning)owner->draw.warning};
+    *out = q3n_weapon_hud_from_ui(&ui);
     return true;
 }
 static bool begin(void *context, const q3n_frame *frame, qa_error *error)

@@ -1,0 +1,9 @@
+[
+  "src/console/cvars.c",
+  "src/console/cvars_store.c",
+  "src/console/cvars_conversion.c",
+  "src/console/cvar_catalog_generated.c",
+  "src/console/text.c",
+  "src/console/documentation.c",
+  "src/app/frontend/remote_q2_effects.c"
+]

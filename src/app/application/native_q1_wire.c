@@ -700,11 +700,19 @@ static float particle_direction(float value) {
     return (float)(fmax(-128, fmin(127, scaled)) / 16);
 }
 bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id actor,
-    qa_q1_clientdata *out, qa_error *error) {
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 clientdata observation");
+    qa_q1_clientdata *out, bool *present, qa_error *error) {
+    if (!out || !present) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 clientdata observation");
+    *present = false;
     application_native_q1_wire_source source = {0};
     if (!observation_begin(app, 0, &source, error)) return false;
-    application_control_record *row = NULL;
+    uint32_t physical;
+    application_control_record *row = control(app, actor);
+    const application_player_record *connection = roster(app, actor);
+    if (!qa_q1_native_client_slot(source.provider->state.q1, actor, &physical, NULL) ||
+        !row || !connection || connection->deferred || connection->source_begin_pending) {
+        application_native_q1_wire_end(&source);
+        return true;
+    }
     qa_body_state body;
     qa_q1_wire_player player; qa_combat_state combat; qa_q1_wire_world world;
     qa_application_equipment_view equipment;
@@ -739,6 +747,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
             ? row->state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
         *out = value;
+        *present = true;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lost its actual source player or selected control");
     application_native_q1_wire_end(&source); return okay;
@@ -780,16 +789,17 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     application_native_q1_wire_source source = {0};
     if (!observation_begin(app, 0, &source, error)) return false;
     uint32_t physical;
-    if (!qa_q1_native_client_slot(source.provider->state.q1, actor, &physical, NULL)) {
+    application_control_record *row = control(app, actor);
+    const application_player_record *connection = roster(app, actor);
+    if (!qa_q1_native_client_slot(source.provider->state.q1, actor, &physical, NULL) ||
+        !row || !connection || connection->deferred || connection->source_begin_pending) {
         *out = (qa_application_network_q1_feedback){0};
         application_native_q1_wire_end(&source);
         return true;
     }
-    uint32_t slot; application_control_record *row = control(app, actor);
-    const application_player_record *connection = roster(app, actor);
+    uint32_t slot;
     qa_q1_wire_feedback feedback;
-    bool okay = client(&source, actor, &slot, error) && row && connection &&
-        !connection->deferred && !connection->source_begin_pending &&
+    bool okay = client(&source, actor, &slot, error) &&
         qa_q1_wire_feedback_consume(&source.receipt, actor, &feedback);
     if (okay) {
         connection = roster(app, actor);

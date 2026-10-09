@@ -1,0 +1,20 @@
+{
+  "time": "2026-10-09T04:00:53.901405+00:00",
+  "head": "e81f359f0c2adcdf2487b61aecc7c74702de7804",
+  "owned": [
+    "src/app/application/providers.c",
+    "src/app/application/visuals.c"
+  ],
+  "root_glue": "src/app/application/internal.h:87 provider.sv_novis",
+  "owned_equal_retained_after": true,
+  "retained_component_sources": [
+    "src/app/application/visual_visibility.c",
+    "src/app/application/native_q2_console.c",
+    "src/console/frame_time.c",
+    "src/formats/bsp.c",
+    "src/session/session.c",
+    "src/session/scheduler.c"
+  ],
+  "sdk_mutation": false,
+  "build_game_install_git_mutation": false
+}
