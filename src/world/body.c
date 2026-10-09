@@ -260,11 +260,9 @@ uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
     return body==NULL?0:body->storage_serial;
 }
 
-bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
-                            qa_body_state *out,qa_error *error)
+bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
+                          qa_body_state *out,qa_error *error)
 {
-    qa_world_body *body=qa_world_find_body(world,actor);
-    if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
     qa_body_state state;
     if(body->external) {
         if(!qa_entity_body_read(body->binding.fields,pose,&state,error)) return false;
@@ -272,6 +270,14 @@ bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose po
         body->state=state;
     } else state=body->state;
     *out=state; return true;
+}
+
+bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
+                            qa_body_state *out,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
+    return qa_world_body_sample(body,pose,out,error);
 }
 
 bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
@@ -365,27 +371,40 @@ bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_
     return true;
 }
 
+bool qa_world_collision_sample(const qa_world_body *body,bool link_metadata,
+                               qa_actor_collision *out,qa_error *error)
+{
+    const qa_entity_collision_fields *fields=body->collision_binding.fields;
+    if(fields==NULL) {
+        if(!body->has_collision) return false;
+        *out=body->collision; return true;
+    }
+    return qa_entity_collision_read(fields,link_metadata,out,error);
+}
+
 static bool read_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,
                            bool link_metadata,qa_error *error)
 {
     if(world==NULL || out==NULL) return fail(error,QA_ERROR_ARGUMENT,"Invalid collision read");
     qa_world_body *body=qa_world_find_body(world,actor);
-    if(body==NULL) return false;
-    qa_collision_binding binding=body->collision_binding;
-    if(binding.fields==NULL) {
-        if(!body->has_collision) return false;
-        *out=body->collision; return true;
-    }
-    qa_actor_collision collision={0};
-    if(!qa_entity_collision_read(binding.fields,link_metadata,&collision,error)) return false;
-    if(!valid_collision(world,&collision,QA_ERROR_FORMAT,error)) return false;
-    *out=collision; return true;
+    return body!=NULL && qa_world_collision_sample(body,link_metadata,out,error);
 }
 
 bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,false,error); }
 bool qa_world_get_link_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,true,error); }
+bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
+                      qa_spatial_actor *out,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return false;
+    qa_spatial_actor current={.body=qa_world_published_body(world,body)};
+    if(!qa_world_collision_sample(body,false,&current.collision,error) ||
+       !qa_world_body_sample(body,pose,&current.body.state,error)) return false;
+    *out=current; return true;
+}
+
 bool qa_world_attach(qa_world *world,qa_actor_id actor,const qa_body_attachment *attachment,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);

@@ -8,48 +8,6 @@ _Static_assert(CHAR_BIT == 8, "Quake formats require eight-bit bytes");
 _Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 &&
                FLT_MAX_EXP == 128, "Quake formats require binary32 floats");
 
-uint16_t qa_load_u16le(const void *data)
-{
-    const uint8_t *bytes = data;
-    return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8));
-}
-
-uint32_t qa_load_u32le(const void *data)
-{
-    const uint8_t *bytes = data;
-    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
-           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
-}
-
-uint64_t qa_load_u64le(const void *data)
-{
-    const uint8_t *bytes = data;
-    return (uint64_t)qa_load_u32le(bytes) |
-           ((uint64_t)qa_load_u32le(bytes + 4) << 32);
-}
-
-int16_t qa_load_i16le(const void *data)
-{
-    uint16_t value = qa_load_u16le(data);
-    return value <= INT16_MAX ? (int16_t)value :
-           (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
-}
-
-int32_t qa_load_i32le(const void *data)
-{
-    uint32_t value = qa_load_u32le(data);
-    return value <= INT32_MAX ? (int32_t)value :
-           -1 - (int32_t)(UINT32_MAX - value);
-}
-
-float qa_load_f32le(const void *data)
-{
-    uint32_t bits = qa_load_u32le(data);
-    float value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
 void qa_store_u16le(void *data, uint16_t value)
 {
     uint8_t *bytes = data;

@@ -221,8 +221,10 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     bool ok=true;
     for(size_t i=0;i<candidates.count;++i) {
         qa_actor_id id=candidates.actors[i];
+        qa_world_body *body=qa_world_find_body(world,id);
+        if(body==NULL) continue;
         qa_actor_collision collision;
-        if(!qa_world_get_collision(world,id,&collision,&local)) {
+        if(!qa_world_collision_sample(body,false,&collision,&local)) {
             if(local.code!=QA_OK) { if(error!=NULL) *error=local; ok=false; break; }
             continue;
         }
@@ -235,7 +237,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         int32_t contents=qa_world_actor_contents(&collision,query->policy.family);
         if(query->policy.family==QA_COLLISION_Q1?contents!=-2:((uint32_t)contents&query->policy.contents_mask)==0) continue;
         qa_body_state state;
-        if(!qa_world_body_read_pose(world,id,QA_ENTITY_CLIP_POSE,&state,error)) {
+        if(!qa_world_body_sample(body,QA_ENTITY_CLIP_POSE,&state,error)) {
             ok=false; break;
         }
         if(pass_has_width && state.bounds.maxs.x==state.bounds.mins.x) continue;

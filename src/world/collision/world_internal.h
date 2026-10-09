@@ -46,6 +46,8 @@ static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *wor
     const qa_actor_collision *collision)
 { return collision->model_geometry ? collision->model_geometry : world->geometry; }
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
+bool qa_world_body_sample(qa_world_body *, qa_entity_pose, qa_body_state *, qa_error *);
+bool qa_world_collision_sample(const qa_world_body *, bool, qa_actor_collision *, qa_error *);
 static inline qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
 {
     if(world==NULL || slot>=world->capacity) return NULL;
