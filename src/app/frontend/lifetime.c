@@ -716,6 +716,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
         qa_application_ui_preferences_bind(frontend->application);
     }
     if (!frontend_network_declarations(qa_application_cvars(frontend->application),error)) goto fail;
+    frontend_engine_cvars_bind(frontend);
     if ((!options->dedicated && !frontend_q1_sky_create(frontend,&frontend->q1_sky,error)) ||
         !frontend_qc_messages_create(frontend,&frontend->qc_messages,error) ||
         !frontend_view_bindings_create(frontend,error) ||
@@ -946,11 +947,11 @@ static bool run_source_deadline(qa_frontend *frontend, uint64_t elapsed, uint64_
     if (!frontend->options.dedicated && frontend->display && !display->minimized &&
         display->drawable_width && display->drawable_height) {
         const qa_cvars *cvars = qa_application_cvars(frontend->application);
-        const qa_cvar_view *value = qa_cvars_find(cvars, "timedemo");
+        const qa_cvar_view *value = qa_cvars_read(cvars, frontend->engine_cvars.timedemo);
         if (value && value->integer) return true;
-        value = qa_cvars_find(cvars, "com_maxfps");
+        value = qa_cvars_read(cvars, frontend->engine_cvars.com_maxfps);
         int32_t maximum = value ? value->integer : 0;
-        value = qa_cvars_find(cvars, "r_maxfps");
+        value = qa_cvars_read(cvars, frontend->engine_cvars.r_maxfps);
         if (value && value->integer > 0 && (maximum <= 0 || value->integer < maximum))
             maximum = value->integer;
         if (maximum > 0)

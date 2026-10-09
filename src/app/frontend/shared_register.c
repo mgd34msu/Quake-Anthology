@@ -398,6 +398,19 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
         qa_cvars_register(registry,"crosshair",profile->edition==QA_EDITION_RERELEASE?"3":"0",
         QA_CVAR_ARCHIVE,command->owner,"",error);
 }
+void frontend_engine_cvars_bind(qa_frontend *frontend)
+{
+    const qa_cvars *registry=qa_application_cvars(frontend->application);
+    uint64_t identity=qa_cvars_view_identity(registry);
+    if (frontend->engine_cvars.view_identity==identity) return;
+    frontend->engine_cvars=(frontend_engine_cvar_handles){.view_identity=identity,
+        .timedemo=qa_cvars_resolve(registry,"timedemo"),
+        .com_maxfps=qa_cvars_resolve(registry,"com_maxfps"),
+        .r_maxfps=qa_cvars_resolve(registry,"r_maxfps"),
+        .s_volume=qa_cvars_resolve(registry,"s_volume"),
+        .scr_centertime=qa_cvars_resolve(registry,"scr_centertime"),
+        .s_geometry_acoustics=qa_cvars_resolve(registry,"s_geometryAcoustics")};
+}
 bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     qa_audio_output_format output,float gamma,qa_error *error)
 {

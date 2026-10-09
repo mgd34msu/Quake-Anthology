@@ -80,7 +80,10 @@ static bool prepare_services(void *context,qa_application *candidate,const qa_sa
     bool ok=(!source->cpu || qa_cpu_gamma_read(source->cpu,&f->options.gamma,error)) &&
         (!source->gl || qa_gl_gamma_read(source->gl,&f->options.gamma,error)) &&
         frontend_shared_register(qa_application_cvars(candidate),NULL,f->audio_output_format,f->options.gamma,error);
-    if (ok) qa_application_ui_preferences_bind(candidate);
+    if (ok) {
+        qa_application_ui_preferences_bind(candidate);
+        frontend_engine_cvars_bind(f);
+    }
     ok=ok &&
         frontend_network_declarations(qa_application_cvars(candidate),error) &&
         (f->options.dedicated || frontend_q1_sky_create(f,&f->q1_sky,error)) &&

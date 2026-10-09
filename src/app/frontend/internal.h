@@ -193,6 +193,11 @@ typedef struct frontend_seat {
     bool q2_view_ready, q2_help, q2_inventory;
     bool scores, chat_team;
 } frontend_seat;
+typedef struct frontend_engine_cvar_handles {
+    uint64_t view_identity;
+    qa_cvar_handle timedemo, com_maxfps, r_maxfps;
+    qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
+} frontend_engine_cvar_handles;
 struct qa_frontend {
     qa_frontend_options options;
     qa_frontend_tools *tools;
@@ -280,6 +285,7 @@ struct qa_frontend {
     size_t audio_id_count, audio_id_capacity;
     uint64_t next_audio_id;
     qa_application *application;
+    frontend_engine_cvar_handles engine_cvars;
     qa_display *display;
     qa_cpu_renderer *cpu;
     qa_gl_renderer *gl;
@@ -318,6 +324,7 @@ struct qa_frontend {
     void (*native_print)(void *, const qa_native_host_print *);
     bool (*native_clipboard)(void *, const char *, qa_error *);
 };
+void frontend_engine_cvars_bind(qa_frontend *);
 bool frontend_fail(qa_error *, qa_status, const char *);
 bool frontend_save_image_release(qa_frontend *,qa_save_image **,qa_error *);
 bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);

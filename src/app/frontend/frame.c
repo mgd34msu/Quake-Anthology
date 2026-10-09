@@ -479,7 +479,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
             bool center = event.kind == QA_BUILTIN_CENTERPRINT;
             uint64_t center_duration = UINT64_C(4000000000);
             if (center) {
-                const qa_cvar_view *duration = qa_cvars_find(qa_application_cvars(frontend->application), "scr_centertime");
+                const qa_cvar_view *duration = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.scr_centertime);
                 if (duration && isfinite(duration->number))
                     center_duration = (uint64_t)(fmax(0, fmin(86400, duration->number)) * 1e9);
             }
@@ -956,7 +956,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
                 if (ok && !replay && !qa_application_should_stop(frontend->application) && frontend->audio) {
                     ok = qa_profiler_push(profiler, "audio", error);
                     if (ok) {
-                        const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
+                        const qa_cvar_view *volume = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.s_volume);
                         qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
                         ok=frontend_acoustics_source_sync(frontend,error);
                         if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);

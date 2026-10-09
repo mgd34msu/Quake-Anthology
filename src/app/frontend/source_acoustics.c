@@ -118,7 +118,7 @@ bool frontend_acoustics_source_sync(qa_frontend *f,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Live acoustics requires its returned frontend ENGINE owner");
     if (!f->audio || frontend_config_store_shared_pending(f->config_store)) return true;
     const qa_cvars *registry=qa_application_cvars(f->application);
-    const qa_cvar_view *row=qa_cvars_find(registry,"s_geometryAcoustics");
+    const qa_cvar_view *row=qa_cvars_read(registry,f->engine_cvars.s_geometry_acoustics);
     if (!qa_cvars_observer_idle(registry) || !row || !row->value ||
         (strcmp(row->value,"0") && strcmp(row->value,"1")))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Live acoustics requires its committed canonical 0 or 1 declaration");
