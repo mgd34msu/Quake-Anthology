@@ -216,8 +216,16 @@ bool guest_cpu_open(qa_native_guest *guest, bool fresh, qa_error *error)
     if (!guest_uc(guest, uc_hook_add(guest->cpu, &guest->fault_hook, UC_HOOK_MEM_INVALID,
         fault_pointer, guest, 1, 0), error)) return false;
     /* The real hook API initializes Unicorn after selecting the CPU model. */
-    if (!guest_uc(guest, qa_unicorn_memory_bind(guest->cpu), error)) return false;
-    return guest_uc(guest, qa_unicorn_store_bind(guest->cpu, guest->store_hook), error);
+    if (!guest_uc(guest, qa_unicorn_memory_bind(guest->cpu), error) ||
+        !guest_uc(guest, qa_unicorn_store_bind(guest->cpu, guest->store_hook), error)) return false;
+    if (fresh) {
+        /* User-process SSE is enabled once; restore supplies its saved CR4. */
+        uint64_t cr4 = 0;
+        if (!guest_uc(guest, uc_reg_read(guest->cpu, UC_X86_REG_CR4, &cr4), error)) return false;
+        cr4 |= UINT64_C(0x200);
+        if (!guest_uc(guest, uc_reg_write(guest->cpu, UC_X86_REG_CR4, &cr4), error)) return false;
+    }
+    return true;
 }
 
 bool qa_native_guest_bind(qa_native_guest *guest, const qa_native_guest_callback *callback, qa_error *error)
