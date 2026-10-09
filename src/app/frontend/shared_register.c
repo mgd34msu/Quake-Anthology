@@ -409,7 +409,11 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .r_maxfps=qa_cvars_resolve(registry,"r_maxfps"),
         .s_volume=qa_cvars_resolve(registry,"s_volume"),
         .scr_centertime=qa_cvars_resolve(registry,"scr_centertime"),
-        .s_geometry_acoustics=qa_cvars_resolve(registry,"s_geometryAcoustics")};
+        .s_geometry_acoustics=qa_cvars_resolve(registry,"s_geometryAcoustics"),
+        .gl_farclip=qa_cvars_resolve(registry,"gl_farclip"),
+        .r_gamma=qa_cvars_resolve(registry,"r_gamma"),
+        .con_notifytime=qa_cvars_resolve(registry,"con_notifytime"),
+        .r_drawentities=qa_cvars_resolve(registry,"r_drawentities")};
 }
 bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     qa_audio_output_format output,float gamma,qa_error *error)

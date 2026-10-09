@@ -197,6 +197,7 @@ typedef struct frontend_engine_cvar_handles {
     uint64_t view_identity;
     qa_cvar_handle timedemo, com_maxfps, r_maxfps;
     qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
+    qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
 } frontend_engine_cvar_handles;
 struct qa_frontend {
     qa_frontend_options options;

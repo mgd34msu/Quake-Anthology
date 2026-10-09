@@ -117,6 +117,7 @@ typedef struct frontend_config_legacy_view {
     qa_cvars *registry;
     uint32_t authored_seat;
     uint64_t command_generation;
+    const frontend_q1_motion_refs *motion;
 } frontend_config_legacy_view;
 bool frontend_config_store_primary_legacy_read(const frontend_config_store *,uint32_t,
     frontend_config_legacy_view *,bool *present,qa_error *);

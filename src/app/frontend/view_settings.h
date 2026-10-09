@@ -32,6 +32,12 @@ typedef struct frontend_q1_motion_settings {
     bool contents_blend;
     qa_vec3 idle_cycle, idle_level, offset;
 } frontend_q1_motion_settings;
+typedef struct frontend_q1_motion_refs {
+    const qa_cvars *registry;
+    qa_cvar_handle bob, bob_cycle, bob_up, roll_speed, roll_angle, cshift_percent;
+    qa_cvar_handle kick_time, kick_roll, kick_pitch, idle_scale, contents_blend;
+    qa_cvar_handle idle_cycle[3], idle_level[3], offset[3];
+} frontend_q1_motion_refs;
 typedef struct frontend_q1_motion_input {
     qa_vec3 origin, angles, entity_angles, velocity, punch;
     double seconds, frame_seconds;
@@ -40,7 +46,8 @@ typedef struct frontend_q1_motion_input {
 } frontend_q1_motion_input;
 bool frontend_view_settings_q1_motion_register(qa_cvars *,uint64_t owner,bool quakeworld,qa_error *);
 bool frontend_view_settings_q1_motion_owns(const char *,bool quakeworld);
-bool frontend_view_settings_q1_motion_sample(const qa_cvars *,bool quakeworld,
+void frontend_view_settings_q1_motion_bind(const qa_cvars *,frontend_q1_motion_refs *);
+bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *,bool quakeworld,
     frontend_q1_motion_settings *,qa_error *);
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
     uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);

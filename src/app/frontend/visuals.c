@@ -1158,7 +1158,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     uint8_t left_hand = 0;
     if (weapon.family == QA_GAME_Q1) {
         const qa_cvar_view *gun = qa_cvars_find(source.registry, "r_drawviewmodel");
-        const qa_cvar_view *entities = qa_cvars_find(qa_application_cvars(frontend->application), "r_drawentities");
+        const qa_cvar_view *entities = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.r_drawentities);
         if (!gun || !entities)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its retained draw settings");
         frontend_q1_view_settings settings;

@@ -309,6 +309,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     frontend_remote_q1 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 presentation");
     row->frontend = f; row->options = *options; row->protocol = d->protocol;
+    frontend_view_settings_q1_motion_bind(d->cvars,&row->motion_refs);
     row->fraction = 1; row->revision = row->next_event = 1;
     qa_catalog_retain(d->catalog);
     frontend_remote_q1 **tail = &f->remote_q1; while (*tail) tail = &(*tail)->next;
@@ -323,7 +324,8 @@ bool frontend_remote_q1_bind(frontend_remote_q1 *row, const frontend_remote_q1_d
     expected.client = actual->client; expected.seat = actual->seat; expected.epoch = actual->epoch;
     if (!remote_q1_domain_equal(&expected, actual) || qa_network_epoch(actual->runtime, actual->client) != actual->epoch ||
         !row->options.current(row->options.context, actual, error)) return false;
-    row->options.domain = *actual; row->bound = true; return true;
+    row->options.domain = *actual; row->bound = true;
+    frontend_view_settings_q1_motion_bind(actual->cvars,&row->motion_refs); return true;
 }
 static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa_error *error)
 {

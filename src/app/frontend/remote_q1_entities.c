@@ -48,7 +48,7 @@ bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message
         angles = qa_v3(entity->angles[0], entity->angles[1], entity->angles[2]);
     }
     frontend_q1_motion_settings settings;
-    if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars, qw, &settings, error)) return false;
+    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, qw, &settings, error)) return false;
     frontend_view_q1_damage(&settings, origin, angles, message->data.damage.armor, message->data.damage.blood,
         qa_v3(message->data.damage.origin[0], message->data.damage.origin[1], message->data.damage.origin[2]),
         row->view_motion.initialized ? row->view_motion.seconds : row->seconds, &row->view_motion);
@@ -63,7 +63,7 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
     bool qw = qa_q1_is_qw(row->options.domain.protocol);
     frontend_q1_motion_settings settings;
     frontend_q1_view_settings view;
-    if (!frontend_view_settings_q1_motion_sample(row->options.domain.cvars, qw, &settings, error) ||
+    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, qw, &settings, error) ||
         !frontend_view_settings_q1_sample(row->frontend->view_settings,
             qw ? QA_CONSOLE_QW : QA_CONSOLE_Q1, &view, error)) return false;
     qa_vec3 entity_angles = player.angles;

@@ -106,7 +106,7 @@ static qa_scene_rect q1_view_rectangle(qa_scene_rect viewport,
 static bool q1_view_projection(qa_frontend *frontend, qa_scene_view *view,
     double fov, qa_error *error)
 {
-    const qa_cvar_view *far_clip = qa_cvars_find(qa_application_cvars(frontend->application), "gl_farclip");
+    const qa_cvar_view *far_clip = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.gl_farclip);
     if (!far_clip || !isfinite(far_clip->number) || far_clip->number <= 4)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 CLIENT camera lost its actual far clip declaration");
     float horizontal = (float)fov;
@@ -180,7 +180,7 @@ bool frontend_display_ready(qa_frontend *frontend, bool *ready, qa_error *error)
 }
 bool frontend_frame_present(qa_frontend *frontend, qa_error *error)
 {
-    const qa_cvar_view *gamma = qa_cvars_find(qa_application_cvars(frontend->application), "r_gamma");
+    const qa_cvar_view *gamma = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.r_gamma);
     float brightness = gamma ? fmaxf(.5f, fminf(3, gamma->number)) : frontend->options.gamma;
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     bool profiling = qa_profiler_enabled(profiler);
@@ -242,7 +242,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         seconds = clock.seconds;
     }
     frontend_q1_motion_settings settings;
-    if (!frontend_view_settings_q1_motion_sample(source.registry, qw, &settings, error)) return false;
+    if (!frontend_view_settings_q1_motion_sample(source.motion, qw, &settings, error)) return false;
     if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
         seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
     }
@@ -569,7 +569,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, message));
             float field_scale = preferences.text_scale *
                 (message && qa_seat_console_context_read(seat->console).dialect == QA_CONSOLE_Q3 ? 2.0f : 1.0f);
-            const qa_cvar_view *notify_time = qa_cvars_find(qa_application_cvars(frontend->application), "con_notifytime");
+            const qa_cvar_view *notify_time = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.con_notifytime);
             qa_console_draw_options console = {.target = rect, .font = &console_fonts,
                 .buffer = message && !notify ? NULL : qa_seat_console_buffer(seat->console),
                 .field = field_active ? &field : NULL,

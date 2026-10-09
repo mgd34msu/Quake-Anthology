@@ -42,6 +42,7 @@ struct frontend_remote_q1 {
     struct frontend_remote_q1_sky_policy *sky_policy;
     remote_q1_camera camera;
     qa_collision_geometry *collision;
+    frontend_q1_motion_refs motion_refs;
     frontend_q1_view_motion view_motion;
     frontend_q1_view_pose view_pose;
     qa_vec3 view_entity_origin, view_entity_angles;

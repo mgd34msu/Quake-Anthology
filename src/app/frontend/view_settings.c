@@ -208,42 +208,63 @@ bool frontend_view_settings_q1_motion_owns(const char *name, bool quakeworld)
         if ((!quakeworld || !motion_declarations[i].offset) && !strcmp(name, motion_declarations[i].name)) return true;
     return false;
 }
-static bool motion_setting(const qa_cvars *registry, const char *name, float *out, qa_error *error)
+void frontend_view_settings_q1_motion_bind(const qa_cvars *registry, frontend_q1_motion_refs *refs)
 {
-    const qa_cvar_view *row = qa_cvars_find(registry, name);
+    *refs = (frontend_q1_motion_refs){.registry=registry,
+        .bob=qa_cvars_resolve(registry,"cl_bob"),
+        .bob_cycle=qa_cvars_resolve(registry,"cl_bobcycle"),
+        .bob_up=qa_cvars_resolve(registry,"cl_bobup"),
+        .roll_speed=qa_cvars_resolve(registry,"cl_rollspeed"),
+        .roll_angle=qa_cvars_resolve(registry,"cl_rollangle"),
+        .cshift_percent=qa_cvars_resolve(registry,"gl_cshiftpercent"),
+        .kick_time=qa_cvars_resolve(registry,"v_kicktime"),
+        .kick_roll=qa_cvars_resolve(registry,"v_kickroll"),
+        .kick_pitch=qa_cvars_resolve(registry,"v_kickpitch"),
+        .idle_scale=qa_cvars_resolve(registry,"v_idlescale"),
+        .idle_cycle={qa_cvars_resolve(registry,"v_ipitch_cycle"),
+            qa_cvars_resolve(registry,"v_iyaw_cycle"),qa_cvars_resolve(registry,"v_iroll_cycle")},
+        .idle_level={qa_cvars_resolve(registry,"v_ipitch_level"),
+            qa_cvars_resolve(registry,"v_iyaw_level"),qa_cvars_resolve(registry,"v_iroll_level")},
+        .offset={qa_cvars_resolve(registry,"scr_ofsx"),
+            qa_cvars_resolve(registry,"scr_ofsy"),qa_cvars_resolve(registry,"scr_ofsz")},
+        .contents_blend=qa_cvars_resolve(registry,"v_contentblend")};
+}
+static bool motion_setting(const frontend_q1_motion_refs *refs, qa_cvar_handle handle, float *out, qa_error *error)
+{
+    const qa_cvar_view *row = qa_cvars_read(refs->registry, handle);
     if (!row || !isfinite(row->number))
         return fail(error, "Q1 view motion lost its actual finite CLIENT setting");
     *out = (float)row->number; return true;
 }
-bool frontend_view_settings_q1_motion_sample(const qa_cvars *registry, bool quakeworld,
+bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *refs, bool quakeworld,
     frontend_q1_motion_settings *out, qa_error *error)
 {
     frontend_q1_motion_settings value = {.contents_blend=true};
-    if (!registry || !out) return fail(error, "Q1 view motion requires its actual registry and output");
-    if (!motion_setting(registry, "cl_bob", &value.bob, error) ||
-        !motion_setting(registry, "cl_bobcycle", &value.bob_cycle, error) ||
-        !motion_setting(registry, "cl_bobup", &value.bob_up, error) ||
-        !motion_setting(registry, "cl_rollspeed", &value.roll_speed, error) ||
-        !motion_setting(registry, "cl_rollangle", &value.roll_angle, error) ||
-        !motion_setting(registry, "gl_cshiftpercent", &value.cshift_percent, error) ||
-        !motion_setting(registry, "v_kicktime", &value.kick_time, error) ||
-        !motion_setting(registry, "v_kickroll", &value.kick_roll, error) ||
-        !motion_setting(registry, "v_kickpitch", &value.kick_pitch, error) ||
-        !motion_setting(registry, "v_idlescale", &value.idle_scale, error) ||
-        !motion_setting(registry, "v_ipitch_cycle", &value.idle_cycle.x, error) ||
-        !motion_setting(registry, "v_iyaw_cycle", &value.idle_cycle.y, error) ||
-        !motion_setting(registry, "v_iroll_cycle", &value.idle_cycle.z, error) ||
-        !motion_setting(registry, "v_ipitch_level", &value.idle_level.x, error) ||
-        !motion_setting(registry, "v_iyaw_level", &value.idle_level.y, error) ||
-        !motion_setting(registry, "v_iroll_level", &value.idle_level.z, error)) return false;
+    if (!refs || !refs->registry || !out) return fail(error, "Q1 view motion requires its actual registry and output");
+    if (!motion_setting(refs, refs->bob, &value.bob, error) ||
+        !motion_setting(refs, refs->bob_cycle, &value.bob_cycle, error) ||
+        !motion_setting(refs, refs->bob_up, &value.bob_up, error) ||
+        !motion_setting(refs, refs->roll_speed, &value.roll_speed, error) ||
+        !motion_setting(refs, refs->roll_angle, &value.roll_angle, error) ||
+        !motion_setting(refs, refs->cshift_percent, &value.cshift_percent, error) ||
+        !motion_setting(refs, refs->kick_time, &value.kick_time, error) ||
+        !motion_setting(refs, refs->kick_roll, &value.kick_roll, error) ||
+        !motion_setting(refs, refs->kick_pitch, &value.kick_pitch, error) ||
+        !motion_setting(refs, refs->idle_scale, &value.idle_scale, error) ||
+        !motion_setting(refs, refs->idle_cycle[0], &value.idle_cycle.x, error) ||
+        !motion_setting(refs, refs->idle_cycle[1], &value.idle_cycle.y, error) ||
+        !motion_setting(refs, refs->idle_cycle[2], &value.idle_cycle.z, error) ||
+        !motion_setting(refs, refs->idle_level[0], &value.idle_level.x, error) ||
+        !motion_setting(refs, refs->idle_level[1], &value.idle_level.y, error) ||
+        !motion_setting(refs, refs->idle_level[2], &value.idle_level.z, error)) return false;
     if (quakeworld) {
         float enabled;
-        if (!motion_setting(registry, "v_contentblend", &enabled, error)) return false;
+        if (!motion_setting(refs, refs->contents_blend, &enabled, error)) return false;
         value.contents_blend = enabled != 0;
     }
-    if (!quakeworld && (!motion_setting(registry, "scr_ofsx", &value.offset.x, error) ||
-        !motion_setting(registry, "scr_ofsy", &value.offset.y, error) ||
-        !motion_setting(registry, "scr_ofsz", &value.offset.z, error))) return false;
+    if (!quakeworld && (!motion_setting(refs, refs->offset[0], &value.offset.x, error) ||
+        !motion_setting(refs, refs->offset[1], &value.offset.y, error) ||
+        !motion_setting(refs, refs->offset[2], &value.offset.z, error))) return false;
     if (value.bob_cycle <= 0 || value.bob_up <= 0 || value.bob_up >= 1)
         return fail(error, "Q1 bob requires a positive cycle and an up fraction between zero and one");
     *out = value; return true;
@@ -376,7 +397,7 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
         if (!camera.has_character || camera.character_family != QA_GAME_Q1) return true;
         bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
         frontend_q1_motion_settings settings;
-        if (!frontend_view_settings_q1_motion_sample(source.registry, qw, &settings, error)) return false;
+        if (!frontend_view_settings_q1_motion_sample(source.motion, qw, &settings, error)) return false;
         frontend_seat *seat = f->seats + physical;
         if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
             seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
