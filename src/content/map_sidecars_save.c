@@ -74,7 +74,10 @@ static bool fields(qa_source_save_io *io, qa_application_content_graph *graph, q
             !text(io, &receipt->path) || !text(io, &receipt->lookup_path) ||
             !text(io, &receipt->link_source) || !text(io, &receipt->link_target) ||
             !qa_vfs_acquisition_opening_codec(io, owner->view, receipt) || !receipt->opening_present) return false;
-        if (reading) row->value.acquisition = receipt;
+        if (reading) {
+            receipt->resource_id = qa_resource_id(row->value.resource);
+            row->value.acquisition = receipt;
+        }
     }
     return map_sidecars_inventory(owner, io->error) && qa_map_sidecars_current(owner);
 }

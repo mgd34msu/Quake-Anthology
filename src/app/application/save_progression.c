@@ -112,20 +112,8 @@ bool application_save_progression_restore(qa_application *candidate,
         return fail(error, QA_ERROR_FORMAT, "Progression import differs from its actual constructed owners");
     return qa_rankings_restore(candidate->rankings, ops ? ops->rankings : NULL, record.rankings, error) &&
            (!record.progress_present || qa_player_progress_restore(candidate->progress,
-               ops ? ops->progress : NULL, record.progress, error)) &&
+               record.progress, error)) &&
            application_rankings_restore(candidate, ops, record.source, error);
-}
-bool application_save_progression_matches(qa_application *candidate,
-    const qa_application_persistence_ops *ops, qa_bytes bytes, qa_error *error) {
-    progression_record record = {0};
-    if (!read_record(bytes, &record, error)) return false;
-    qa_buffer actual = {0};
-    bool ok = application_rankings_restore_ready(candidate, error) &&
-              application_save_progression_capture(candidate, ops, &actual, error);
-    if (ok && (actual.size != bytes.size || memcmp(actual.data, bytes.data, bytes.size)))
-        ok = fail(error, QA_ERROR_FORMAT, "Candidate progression changed after private import");
-    qa_buffer_free(&actual);
-    return ok;
 }
 bool application_save_progression_handoff(qa_application *active, qa_application *candidate,
     const qa_application_persistence_ops *ops, bool *relinquish_active, qa_error *error) {

@@ -1927,9 +1927,7 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
     if (*operation->slot != operation->active || !persistence_unchanged(operation, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "active application changed before restored publication");
     if (!application_save_content_ready(candidate->content_graph, error)) return false;
-    qa_bytes progression=persistence_progression(operation,operation->image,error);
-    if (!progression.size || !application_save_progression_matches(candidate,
-        operation->ops, progression, error) ||
+    if (!application_rankings_restore_ready(candidate, error) ||
         !persistence_unchanged(operation, error))
         return false;
     if (!persistence_safe(candidate))

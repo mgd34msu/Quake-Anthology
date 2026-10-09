@@ -203,6 +203,5 @@ void qa_player_progress_close(qa_player_progress *store) {
     progress_data_free(&store->data);
     qa_fs_root_close(store->root);
     free(store->relative);
-    free(store->saved_root); free(store->admitted_root);
     free(store);
 }

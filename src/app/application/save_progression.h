@@ -13,10 +13,7 @@ bool application_save_progression_capture(qa_application *,
     const qa_application_persistence_ops *, qa_buffer *empty, qa_error *);
 bool application_save_progression_restore(qa_application *,
     const qa_application_persistence_ops *, qa_bytes, qa_error *);
-bool application_save_progression_matches(qa_application *,
-    const qa_application_persistence_ops *, qa_bytes, qa_error *);
-/* All private/shared/frontend owners and complete byte recapture must already
- * be validated. This is the LAST fallible operation before pointer publication;
+/* This is the last fallible operation before pointer publication;
  * success cannot be followed by a fallible check or cleanup. */
 bool application_save_progression_handoff(qa_application *active, qa_application *candidate,
     const qa_application_persistence_ops *, bool *relinquish_active, qa_error *);

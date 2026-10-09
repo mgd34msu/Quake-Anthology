@@ -24,8 +24,6 @@ struct qa_player_progress {
     uint64_t nonce;
     bool reload_required;
     bool restore_pending;
-    char *saved_root, *admitted_root;
-    qa_fs_identity saved_root_identity, admitted_root_identity;
     progress_data data;
 };
 

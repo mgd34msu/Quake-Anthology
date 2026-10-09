@@ -57,7 +57,6 @@ typedef struct qa_application_persistence_ops {
      * are unconfigured; installed external providers require both readonly
      * binding/continuation refs and the final transactional handoff below. */
     const qa_rankings_checkpoint_refs *rankings;
-    const qa_player_progress_checkpoint_refs *progress;
     const qa_application_ranking_checkpoint_refs *ranking_source;
     /* Last fallible step, after complete candidate validation. Failure must
      * leave both backend ownerships unchanged. Success qualifies and transfers

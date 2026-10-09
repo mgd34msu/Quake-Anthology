@@ -4,17 +4,6 @@
 #include "qa/save.h"
 
 static const uint8_t progress_magic[8] = {'Q','A','P','P',1,0,0,0};
-static bool root_snapshot(qa_player_progress *store, char **path, qa_fs_identity *identity,
-                           qa_error *error) {
-    qa_fs_entry_kind kind;
-    if (!qa_fs_root_join(store->root, "", path, error) ||
-        !qa_fs_root_status(store->root, "", &kind, identity, error)) return false;
-    if (kind != QA_FS_DIRECTORY) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Player progress root is not a directory");
-        return false;
-    }
-    return true;
-}
 static bool identity_fields(qa_source_save_io *io, qa_fs_identity *identity) {
     for (size_t i = 0; i < QA_FS_IDENTITY_WORDS; ++i)
         if (!qa_source_save_u64(io, &identity->words[i])) return false;
@@ -70,18 +59,9 @@ bool qa_player_progress_checkpoint(const qa_player_progress *source, qa_buffer *
         return false;
     }
     qa_player_progress copy = *source;
-    char *current = NULL;
+    bool ok = progress_checkpoint_data_ready(&copy.data, error);
+    char *root = NULL;
     qa_fs_identity identity = {0};
-    bool ok = progress_checkpoint_data_ready(&copy.data, error) &&
-              root_snapshot(&copy, &current, &identity, error);
-    if (ok && copy.saved_root &&
-        (strcmp(current, copy.admitted_root) ||
-         !qa_fs_identity_equal(&identity, &copy.admitted_root_identity))) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Admitted player progress root changed");
-        ok = false;
-    }
-    char *root = copy.saved_root ? copy.saved_root : current;
-    if (copy.saved_root) identity = copy.saved_root_identity;
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, NULL, error) && ps_magic(&io, progress_magic) &&
                  qa_source_save_owned_text(&io, &root) && identity_fields(&io, &identity) &&
@@ -89,53 +69,38 @@ bool qa_player_progress_checkpoint(const qa_player_progress *source, qa_buffer *
                  qa_source_save_bool(&io, &copy.reload_required) && data_fields(&io, &copy.data) &&
                  qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
-    free(current);
     return ok;
 }
-bool qa_player_progress_restore(qa_player_progress *store,
-                                const qa_player_progress_checkpoint_refs *refs,
-                                qa_bytes bytes, qa_error *error) {
-    if (!store || !store->restore_pending || store->saved_root || store->data.count ||
+bool qa_player_progress_restore(qa_player_progress *store, qa_bytes bytes, qa_error *error) {
+    if (!store || !store->restore_pending || store->data.count ||
         store->data.capacity || store->data.index_capacity ||
         qa_strings_count(store->data.strings)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Progress import requires its stable restored empty owner");
         return false;
     }
     qa_player_progress scratch = {0};
+    char *legacy_root = NULL;
+    qa_fs_identity legacy_identity = {0};
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && ps_magic(&io, progress_magic) &&
-              qa_source_save_owned_text(&io, &scratch.saved_root) && scratch.saved_root && *scratch.saved_root &&
-              identity_fields(&io, &scratch.saved_root_identity) && qa_source_save_owned_text(&io, &scratch.relative) &&
+              qa_source_save_owned_text(&io, &legacy_root) &&
+              identity_fields(&io, &legacy_identity) && qa_source_save_owned_text(&io, &scratch.relative) &&
               scratch.relative && !strcmp(scratch.relative, store->relative) &&
               qa_source_save_u64(&io, &scratch.nonce) &&
               qa_source_save_bool(&io, &scratch.reload_required) && data_fields(&io, &scratch.data) &&
               qa_source_save_finish(&io, NULL);
-    if (ok) ok = root_snapshot(store, &scratch.admitted_root, &scratch.admitted_root_identity, error);
-    if (ok) {
-        if (refs && refs->root_ready)
-            ok = refs->root_ready(refs->context, store->root, scratch.saved_root,
-                                  &scratch.saved_root_identity, error);
-        else ok = scratch.saved_root_identity.words[0] == scratch.admitted_root_identity.words[0] &&
-                  scratch.saved_root_identity.words[1] == scratch.admitted_root_identity.words[1];
-    }
     if (ok) {
         progress_data_free(&store->data);
         store->data = scratch.data; scratch.data = (progress_data){0};
         store->nonce = scratch.nonce; store->reload_required = scratch.reload_required;
-        store->saved_root = scratch.saved_root; scratch.saved_root = NULL;
-        store->admitted_root = scratch.admitted_root; scratch.admitted_root = NULL;
-        store->saved_root_identity = scratch.saved_root_identity;
-        store->admitted_root_identity = scratch.admitted_root_identity;
     } else if (error && error->code == QA_OK)
         qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Invalid player progress checkpoint admission");
     qa_source_save_dispose(&io);
     progress_data_free(&scratch.data);
-    free(scratch.saved_root); free(scratch.admitted_root); free(scratch.relative);
+    free(legacy_root); free(scratch.relative);
     return ok;
 }
 void qa_player_progress_publish_restored(qa_player_progress *store) {
     if (!store) return;
-    free(store->saved_root); store->saved_root = NULL;
-    free(store->admitted_root); store->admitted_root = NULL;
     store->restore_pending = false;
 }
