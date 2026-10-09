@@ -290,11 +290,14 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             owner->seat, epoch, &owner->inputs, error);
         if (okay) okay = admitted_document(owner, &actual, &commit->reply, error);
         application_unified_events initial = {0};
+        qa_unified_frame_lease *event_lease = okay ? qa_unified_frame_lease_acquire(owner->recipient_pool, error) : NULL;
+        if (okay && !event_lease) okay = false;
         application_unified_source current_source;
         if (okay) okay = application_q1_music_cue(owner->application, false, error) &&
             application_unified_source_read(owner->application, &current_source, error) &&
             application_unified_events_initial_read(owner->application, &current_source, client, &actual,
-                epoch, &initial, error);
+                epoch, event_lease, &initial, error);
+        qa_unified_frame_lease_release(event_lease);
         size_t resources = application_unified_event_resource_count(owner->application);
         qa_unified_document *declarations = NULL;
         if (okay && resources > owner->declared_resources)

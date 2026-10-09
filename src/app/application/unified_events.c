@@ -1049,6 +1049,7 @@ static bool presentation_for(const application_unified_event_record *row, qa_net
 typedef struct event_iterator {
     const qa_application *application;
     const application_event_view *view;
+    qa_event_lease *lease;
     uint64_t cursor, end;
     size_t persistent;
     bool initial;
@@ -1058,7 +1059,10 @@ static const application_unified_event_record *event_iterator_next(event_iterato
 {
     if (iterator->initial) {
         if (iterator->persistent == iterator->application->unified_persistent_count) return NULL;
-        return &iterator->application->unified_persistent[iterator->persistent++].event;
+        const application_unified_persistent_event *slot =
+            iterator->application->unified_persistent + iterator->persistent++;
+        iterator->lease = slot->lease;
+        return &slot->event;
     }
     while (!iterator->view) {
         if (iterator->cursor == iterator->end) return NULL;
@@ -1073,7 +1077,7 @@ static const application_unified_event_record *event_iterator_next(event_iterato
 
 static bool events_project(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    uint64_t after, bool initial, application_unified_events *out, qa_error *e)
+    uint64_t after, bool initial, qa_unified_frame_lease *lease, application_unified_events *out, qa_error *e)
 {
     if (!app || !source || !player || !out || !epoch || after > qa_application_events_next(app) ||
         !application_unified_source_current(app, source) || !application_unified_player_current(app, recipient, player))
@@ -1088,27 +1092,44 @@ static bool events_project(qa_application *app, const application_unified_source
         .end = result.through, .initial = initial};
     event_iterator iterator = begin;
     const application_unified_event_record *r;
-    size_t presentation_count = 0, simulation_count = 0;
+    size_t presentation_count = 0, simulation_count = 0, dependency_count = 0;
+    uint64_t previous_order = 0;
     while ((r = event_iterator_next(&iterator))) {
-        presentation_count += r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
-        simulation_count += simulation_for(r, recipient, player->actor);
+        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
+        bool simulation = simulation_for(r, recipient, player->actor);
+        presentation_count += presentation; simulation_count += simulation;
+        if ((presentation || simulation) && (initial || r->order != previous_order)) {
+            ++dependency_count; previous_order = r->order;
+        }
     }
     if (!presentation_count && !simulation_count) {
         if (!application_unified_events_current(&result))
             return application_fail(e, QA_ERROR_ARGUMENT, "Source event projection changed its actual owner");
         *out = result; return true;
     }
-    qa_unified_frame_events *events = calloc(1, sizeof(*events));
-    if (events) { events->strings=qa_session_strings(app->session); qa_strings_retain(events->strings); }
-    if (!events) return application_fail(e, QA_ERROR_MEMORY, "Projecting actual typed Source events");
+    qa_unified_frame_events *events = qa_unified_frame_lease_alloc(lease, 1, sizeof(*events), _Alignof(qa_unified_frame_events), e);
+    if (!events) return false;
+    if (!qa_unified_frame_lease_retain(lease, e)) return false;
+    events->lease = lease;
+    events->strings = qa_session_strings(app->session); qa_strings_retain(events->strings);
     events->epoch = epoch; events->frame = initial ? 0 : source->frame.number;
-    if (presentation_count) events->presentation = calloc(presentation_count, sizeof(*events->presentation));
-    if (simulation_count) events->simulation = calloc(simulation_count, sizeof(*events->simulation));
-    bool ok = (!presentation_count || events->presentation) && (!simulation_count || events->simulation);
+    events->dependencies = qa_unified_frame_lease_alloc(lease, dependency_count, sizeof(*events->dependencies), _Alignof(qa_event_lease *), e);
+    if (presentation_count) events->presentation = qa_unified_frame_lease_alloc(lease, presentation_count, sizeof(*events->presentation), _Alignof(qa_unified_presentation_event), e);
+    if (simulation_count) events->simulation = qa_unified_frame_lease_alloc(lease, simulation_count, sizeof(*events->simulation), _Alignof(qa_unified_simulation_event), e);
+    bool ok = events->dependencies && (!presentation_count || events->presentation) && (!simulation_count || events->simulation);
     if (!ok) application_fail(e, QA_ERROR_MEMORY, "Projecting actual typed Source event arrays");
-    iterator = begin;
+    iterator = begin; previous_order = 0;
     while (ok && (r = event_iterator_next(&iterator))) {
-        if (r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor)) {
+        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
+        bool simulation = simulation_for(r, recipient, player->actor);
+        if ((presentation || simulation) && (initial || r->order != previous_order)) {
+            qa_event_lease *dependency;
+            if (initial) { dependency = iterator.lease; qa_event_lease_retain(dependency); }
+            else dependency = qa_event_ring_retain(app->event_ring, r->order);
+            events->dependencies[events->dependency_count++] = dependency;
+            previous_order = r->order;
+        }
+        if (presentation) {
             qa_unified_presentation_event borrowed = {.sequence = r->presentation_sequence,
                 .seconds = source_time(r->time_ns, r->presentation_clock, false), .content = event_alias(app, r->content),
                 .provider = event_alias(app, r->provider), .family = r->family, .recipient = r->recipient,
@@ -1116,9 +1137,9 @@ static bool events_project(qa_application *app, const application_unified_source
                 .source_entity = r->source_entity, .has_source_entity = r->has_source_entity, .payload = *r->presentation};
             if (r->owner_generation) borrowed.owner = (qa_unified_presentation_owner){.provider = borrowed.provider, .generation = r->owner_generation};
             qa_unified_presentation_event *target = events->presentation + events->presentation_count++;
-            ok = qa_unified_presentation_event_clone(&borrowed, target, e);
+            *target = borrowed;
         }
-        if (ok && simulation_for(r, recipient, player->actor)) {
+        if (ok && simulation) {
             bool milliseconds = r->clock == QA_RULESET_Q2_RERELEASE;
             qa_unified_simulation_event borrowed = {.sequence = r->simulation_sequence,
                 .time = source_time(r->simulation_time_ns, r->clock, milliseconds), .milliseconds = milliseconds,
@@ -1127,19 +1148,15 @@ static bool events_project(qa_application *app, const application_unified_source
             borrowed.payload.linked_presentation = r->link_presentation;
             borrowed.payload.source_presentation_sequence = r->link_presentation ? r->presentation_sequence : 0;
             qa_unified_simulation_event *target = events->simulation + events->simulation_count++;
-            ok = qa_unified_record_clone(&qa_unified_simulation_event_layout, &borrowed, target, e);
+            *target = borrowed;
             if (ok && borrowed.payload.kind == QA_UNIFIED_SIMULATION_SOUND &&
                 !application_unified_event_resource_read(app, borrowed.payload.value.sound.resource))
                 ok = application_fail(e, QA_ERROR_FORMAT, "Source sound lost its registered dictionary resource");
         }
     }
     if (ok && (events->presentation_count || events->simulation_count)) {
-        result.controls = calloc(1, sizeof(*result.controls));
-        if (!result.controls) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining actual typed Source prerequisite control");
-        else {
-            ok = qa_unified_document_create_events(&events, result.controls, e);
-            if (ok) result.control_count = 1;
-        }
+        ok = qa_unified_document_create_events(&events, result.controls, e);
+        if (ok) result.control_count = 1;
     }
     if (ok && !application_unified_events_current(&result)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Source event projection changed its actual owner");
     qa_unified_frame_events_destroy(events);
@@ -1148,12 +1165,12 @@ static bool events_project(qa_application *app, const application_unified_source
 }
 bool application_unified_events_read(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    uint64_t after, application_unified_events *out, qa_error *e)
-{ return events_project(app, source, recipient, player, epoch, after, false, out, e); }
+    uint64_t after, qa_unified_frame_lease *lease, application_unified_events *out, qa_error *e)
+{ return events_project(app, source, recipient, player, epoch, after, false, lease, out, e); }
 bool application_unified_events_initial_read(qa_application *app, const application_unified_source *source,
     qa_net_client_id recipient, const qa_unified_session_player *player, uint32_t epoch,
-    application_unified_events *out, qa_error *e)
-{ return events_project(app, source, recipient, player, epoch, 0, true, out, e); }
+    qa_unified_frame_lease *lease, application_unified_events *out, qa_error *e)
+{ return events_project(app, source, recipient, player, epoch, 0, true, lease, out, e); }
 bool application_unified_events_current(const application_unified_events *events)
 {
     return events && events->application && application_unified_source_current(events->application, &events->source) &&
@@ -1167,5 +1184,5 @@ void application_unified_events_dispose(application_unified_events *events)
 {
     if (!events) return;
     for (size_t i = 0; i < events->control_count; ++i) qa_unified_document_destroy(events->controls[i]);
-    free(events->controls); *events = (application_unified_events){0};
+    *events = (application_unified_events){0};
 }

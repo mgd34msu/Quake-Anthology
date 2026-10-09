@@ -167,7 +167,7 @@ bool application_unified_event_recipient(qa_application *, const application_uni
 bool application_unified_damage_emit(qa_application *, const qa_damage_outcome *, qa_error *);
 
 typedef struct application_unified_events {
-    qa_unified_document **controls;
+    qa_unified_document *controls[1];
     size_t control_count;
     qa_application *application;
     application_unified_source source;
@@ -183,13 +183,13 @@ typedef struct application_unified_events {
 
 bool application_unified_events_read(qa_application *, const application_unified_source *,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
-    uint64_t after, application_unified_events *, qa_error *);
+    uint64_t after, qa_unified_frame_lease *, application_unified_events *, qa_error *);
 /* Actual admission reads retained presentation only. It owns no simulation
  * replay or world-text snapshot; through is committed by the caller after
  * retaining every control. */
 bool application_unified_events_initial_read(qa_application *, const application_unified_source *,
     qa_net_client_id, const qa_unified_session_player *, uint32_t epoch,
-    application_unified_events *, qa_error *);
+    qa_unified_frame_lease *, application_unified_events *, qa_error *);
 bool application_unified_events_current(const application_unified_events *);
 void application_unified_events_dispose(application_unified_events *);
 

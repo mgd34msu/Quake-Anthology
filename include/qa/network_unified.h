@@ -122,6 +122,9 @@ bool qa_unified_document_validate(const qa_unified_document *,
                                    qa_unified_document_validator, void *, qa_error *);
 qa_unified_document_kind qa_unified_document_type(const qa_unified_document *);
 bool qa_unified_document_encode(const qa_unified_document *, qa_buffer *, qa_error *);
+/* Record budget charge. Leased FRAME backing can include shared storage;
+ * EVENTS charge their logical payload, not unique source-page residency.
+ * This is not a load-reservation or process-residency measurement. */
 size_t qa_unified_document_memory(const qa_unified_document *);
 bool qa_unified_document_equal(const qa_unified_document *, const qa_unified_document *);
 /* Retain shares the immutable record. Each custody is released

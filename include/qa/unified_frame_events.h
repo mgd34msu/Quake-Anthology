@@ -2,6 +2,7 @@
 #define QA_UNIFIED_FRAME_EVENTS_H
 
 #include "qa/builtin.h"
+#include "qa/event_ring.h"
 #include "qa/game_q2_player.h"
 #include "qa/network_q2_messages.h"
 #include "qa/network_unified_frame.h"
@@ -11,7 +12,8 @@
 #include "qa/qvm.h"
 
 /* Source identifiers are resolved at emission. Session string handles never
- * become wire identities. All pointers in these records are owned. */
+ * become wire identities. Payload pointers are owned by the event record or
+ * its retained source page leases. */
 typedef struct qa_unified_message_arg {
     qa_builtin_message_arg_kind kind;
     char *text;
@@ -320,6 +322,10 @@ typedef struct qa_unified_frame_events {
     size_t presentation_count;
     qa_unified_simulation_event *simulation;
     size_t simulation_count;
+    /* Storage custody is not part of the encoded record layout. */
+    qa_unified_frame_lease *lease;
+    qa_event_lease **dependencies;
+    size_t dependency_count;
 } qa_unified_frame_events;
 
 /* The shared compiled record layout owns clone/dispose, external decoding,

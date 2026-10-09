@@ -1754,9 +1754,15 @@ bool qa_unified_presentation_event_clone(const qa_unified_presentation_event *fr
     qa_unified_presentation_event *out, qa_error *error)
 { return qa_unified_record_clone(&qa_unified_presentation_event_layout, from, out, error); }
 void qa_unified_frame_events_destroy(qa_unified_frame_events *value)
-{ if (!value) return;
+{
+    if (!value) return;
+    qa_unified_frame_lease *lease = value->lease;
+    for (size_t i = 0; i < value->dependency_count; ++i)
+        qa_event_lease_release(value->dependencies[i]);
     qa_strings_destroy(value->strings);
-    qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
+    if (lease) qa_unified_frame_lease_release(lease);
+    else { qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
+}
 
 static const qa_unified_field unified_vec_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_vec3, x, QA_UNIFIED_FIELD_F64),

@@ -81,7 +81,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
             application_unified_presentations_build(app, source, recipient, player, visibility, v->owned, &v->visuals, e) &&
             application_unified_world_text_read(app, source, v->owned->lease, v->owned->visuals, e) &&
             application_unified_q3_sources_build(app, source, recipient, player, v->owned, &v->q3_sources, e) &&
-            application_unified_events_read(app, source, recipient, player, epoch, after, &v->events, e);
+            application_unified_events_read(app, source, recipient, player, epoch, after, frame->lease, &v->events, e);
     }
     if (ok && publisher) ok = application_unified_components_prepare(publisher, source, player,
         epoch, v->owned, v->owned->player, &v->components, e);

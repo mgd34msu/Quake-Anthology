@@ -176,6 +176,7 @@ bool qa_unified_document_retain(const qa_unified_document *source,
 void qa_unified_document_destroy(qa_unified_document *d) {
     if (!d || --d->references) return;
     if (d->frame && d->frame->lease) { qa_unified_frame_destroy(d->frame); return; }
+    if (d->events && d->events->lease) { qa_unified_frame_events_destroy(d->events); return; }
     qa_unified_frame_destroy(d->frame);
     if (d->inputs) { qa_unified_inputs_free(d->inputs); free(d->inputs); }
     qa_unified_frame_events_destroy(d->events);
@@ -418,7 +419,7 @@ bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_unifi
     size_t bytes;
     if (!owned || !*owned || !out || *out || !(*owned)->epoch ||
         !qa_unified_record_measure(&qa_unified_events_layout,*owned,&bytes,error)) return false;
-    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,NULL,error);
+    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,(*owned)->lease,error);
     if (!d) return false;
     d->events=*owned; *owned=NULL; *out=d; return true;
 }
