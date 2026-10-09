@@ -81,3 +81,16 @@ The initial canonical migration widened untagged collision fields. The single co
 Actual writers from 23356edb's parent produced 471 payloads that the repaired reader decoded and rewrote byte-identically. Another 207 mixed/opaque cases round-tripped without loss. GCC, Clang and both ASan/UBSan variants passed. The owner profile's Q2 rerelease, Q3 and recovery world records also decoded and rewrote identically: 537/268, 70/11 and 390/197 body/spatial counts respectively. This component check does not establish a full saved-session restore.
 
 Exact staged source 01ee20c4 passed full production and ASan builds and both seven core suites. Evidence: `/tmp/qa-the2873-persistence-compat-20261009` and `/tmp/qa-the2873-one-pass-final-20261009`. The transient untagged widened layout was never installed in qa-c and is not guessed by the reader; the inspected owner records use the original compact layout.
+
+## Dropped experiment: direct spatial clipping
+
+The callback-free trace and point queries were tried as one spatial walk instead of collecting actor IDs first. Candidate order, tied contacts, exclusions, poses, owner transitions and failed-output behavior matched. Cold queries with more than eight candidates made zero heap calls instead of two. Full production/ASan builds, both core suites, six SDK roles and all 24 gameplay records passed.
+
+Three versions were measured: embedded result storage, borrowed result pointers, and borrowed once-per-query sampler errors. None established a consistent improvement. The final exact tree 05c07898 produced these historical ABBA median / p99 microseconds per unchanged 48-query batch:
+
+| Edition | A1 | B1 | B2 | A2 |
+| --- | ---: | ---: | ---: | ---: |
+| classic | 9.580 / 9.711 | 10.260 / 14.810 | 10.320 / 19.171 | 9.691 / 9.850 |
+| rerelease | 9.680 / 9.990 | 9.680 / 10.191 | 9.820 / 9.970 | 9.580 / 13.450 |
+
+All 16 historical and immediate-live phases preserved exact results and zero warm native-read, borrow and controller heap counts. The new-build medians did not all meet 9.6 us. The source experiment was dropped; retained evidence is under `/tmp/qa-the2873-one-pass-20261009`, `/tmp/qa-the2873-one-pass-pointer-20261009` and `/tmp/qa-the2873-one-pass-error-20261009`. This does not close THE-2861. The serial-versus-concurrent map comparison remains the public two-scratch proof above; it is not a module/controller concurrency claim.
