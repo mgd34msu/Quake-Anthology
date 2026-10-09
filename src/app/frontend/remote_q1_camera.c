@@ -8,8 +8,8 @@
 
 static qa_vec3 vector(const float *v) { return qa_v3(v[0], v[1], v[2]); }
 static double length(qa_vec3 v) { return sqrt((double)v.x*v.x + (double)v.y*v.y + (double)v.z*v.z); }
-static bool setting(const frontend_remote_q1 *row, const char *name)
-{ const qa_cvar_view *v = qa_cvars_find(row->options.domain.cvars, name); return v && v->number != 0; }
+static bool setting(const frontend_remote_q1 *row, qa_cvar_handle handle)
+{ const qa_cvar_view *v = qa_cvars_read(row->options.domain.cvars, handle); return v && v->number != 0; }
 static bool spectator_info(const char *info)
 {
     const char *value = NULL; size_t size = 0;
@@ -112,7 +112,7 @@ static bool finish(frontend_remote_q1 *row, const qa_qw_command *command, qa_err
         if (c->tracking) return unlock(row,error);
         c->tracking = true;
     } else { c->old_buttons &= (uint8_t)~1; if (!c->tracking) return true; }
-    if (setting(row,"cl_hightrack")) return high_target(row,error);
+    if (setting(row,row->hightrack)) return high_target(row,error);
     if (c->locked) {
         if ((command->buttons & 2) && (c->old_buttons & 2)) return true;
         if (!(command->buttons & 2)) { c->old_buttons &= (uint8_t)~2; return true; }
@@ -129,11 +129,11 @@ bool remote_q1_camera_command(frontend_remote_q1 *row, qa_qw_command *command, u
         !row->qw_player_valid[row->qw.player_slot]) return true;
     remote_q1_camera *c = &row->camera; double seconds = (double)now/1000000000.0;
     remote_q1_camera_view previous = c->view; bool previous_present = c->tracking && c->locked && c->has_view;
-    if (setting(row,"cl_hightrack") && !c->locked && !high_target(row,error)) return false;
+    if (setting(row,row->hightrack) && !c->locked && !high_target(row,error)) return false;
     if (c->tracking) {
         if (c->locked && !eligible(row,c->slot)) {
             c->locked = false;
-            if (setting(row,"cl_hightrack") ? !high_target(row,error) : !unlock(row,error)) return false;
+            if (setting(row,row->hightrack) ? !high_target(row,error) : !unlock(row,error)) return false;
         } else if (row->qw_player_valid[c->slot]) {
             const qa_qw_player *target = row->qw_players+c->slot;
             qa_qw_player own = row->qw_players[row->qw.player_slot];
@@ -149,7 +149,7 @@ bool remote_q1_camera_command(frontend_remote_q1 *row, qa_qw_command *command, u
                 }
             } else c->last_view_seconds = seconds;
             if (c->locked) {
-                bool chase = setting(row,"cl_chasecam");
+                bool chase = setting(row,row->chasecam);
                 if (chase) c->desired = vector(target->origin);
                 qa_vec3 delta = qa_vec_sub(c->desired,vector(self->origin));
                 if (chase ? delta.x != 0 || delta.y != 0 || delta.z != 0 : length(delta) > 16) {

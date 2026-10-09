@@ -134,8 +134,8 @@ static bool load(frontend_remote_q1_skins *o, skin_entry *entry, qa_error *e)
 static bool prepare(frontend_remote_q1_skins *o, qa_error *e)
 {
     if (o->loading) return true;
-    const qa_cvar_view *n = qa_cvars_find(o->row->options.domain.cvars, "noskins");
-    const qa_cvar_view *b = qa_cvars_find(o->row->options.domain.cvars, "baseskin");
+    const qa_cvar_view *n = qa_cvars_read(o->row->options.domain.cvars, o->row->noskins);
+    const qa_cvar_view *b = qa_cvars_read(o->row->options.domain.cvars, o->row->baseskin);
     if (!n || !b) return remote_q1_fail(e, QA_ERROR_ARGUMENT, "QW skin policy lacks its actual CLIENT cvars");
     bool changed = o->noskins != n->number || !o->base || strcmp(o->base, b->value);
     if (changed) {
@@ -178,7 +178,7 @@ static bool advance(frontend_remote_q1_skins *o, bool *ready, qa_error *e)
         if (!qa_vfs_probe(o->files, o->paths[o->cursor], &found, &size, e) || !current(o, e)) return false;
         if (found) { ++o->cursor; continue; }
         if (!o->bindings.permission(o->bindings.context, &allowed, &recording, &playback, e) || !current(o, e)) return false;
-        const qa_cvar_view *noskins = qa_cvars_find(o->row->options.domain.cvars, "noskins");
+        const qa_cvar_view *noskins = qa_cvars_read(o->row->options.domain.cvars, o->row->noskins);
         if (!noskins) return remote_q1_fail(e, QA_ERROR_ARGUMENT, "QW download lost its actual noskins policy");
         if (!allowed || recording || playback || noskins->number != 0) {
             char message[104]; snprintf(message, sizeof(message), "Skipping QuakeWorld download %s: %s\n",
@@ -201,8 +201,8 @@ static bool refresh(frontend_remote_q1_skins *o, bool *ready, qa_error *e)
 {
     *ready = false;
     if (o->waiting || o->paused) { o->again = true; return true; }
-    const qa_cvar_view *n = qa_cvars_find(o->row->options.domain.cvars, "noskins");
-    const qa_cvar_view *b = qa_cvars_find(o->row->options.domain.cvars, "baseskin");
+    const qa_cvar_view *n = qa_cvars_read(o->row->options.domain.cvars, o->row->noskins);
+    const qa_cvar_view *b = qa_cvars_read(o->row->options.domain.cvars, o->row->baseskin);
     if (!n || !b || !remote_q1_string(&o->base, b->value, e)) return false;
     o->noskins = n->number; o->loading = true; o->path_count = o->cursor = 0;
     memset(o->selected, 0, sizeof(o->selected));

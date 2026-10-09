@@ -459,7 +459,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
         break;
     case QA_NQ_SOUND: {
         service.kind=QA_QW_SOUND;service.data.sound=message->data.sound;
-        const qa_cvar_view *phs=qa_cvars_find(application_native_q1_console_registry(p),"sv_phs");
+        const qa_cvar_view *phs=qa_cvars_read(application_native_q1_console_registry(p),p->sv_phs);
         if (!phs || !isfinite(phs->number)) return application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld sound has no source PHS policy");
         if (service.data.sound.channel>15) return application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld sound channel exceeds its source range");
         bool global=(service.data.sound.channel&8)!=0 || phs->number==0;

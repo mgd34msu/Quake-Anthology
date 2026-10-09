@@ -305,6 +305,10 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->frontend = f; row->options = *options; row->protocol = d->protocol;
     frontend_view_settings_q1_motion_bind(d->cvars,&row->motion_refs);
     frontend_legacy_cvars_bind(d->cvars,&row->legacy_cvars);
+    row->hightrack = qa_cvars_resolve(d->cvars, "cl_hightrack");
+    row->chasecam = qa_cvars_resolve(d->cvars, "cl_chasecam");
+    row->noskins = qa_cvars_resolve(d->cvars, "noskins");
+    row->baseskin = qa_cvars_resolve(d->cvars, "baseskin");
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&row->sky_controls);
     row->fraction = 1; row->revision = row->next_event = 1;
     qa_catalog_retain(d->catalog);
@@ -322,7 +326,12 @@ bool frontend_remote_q1_bind(frontend_remote_q1 *row, const frontend_remote_q1_d
         !row->options.current(row->options.context, actual, error)) return false;
     row->options.domain = *actual; row->bound = true;
     frontend_view_settings_q1_motion_bind(actual->cvars,&row->motion_refs);
-    frontend_legacy_cvars_bind(actual->cvars,&row->legacy_cvars); return true;
+    frontend_legacy_cvars_bind(actual->cvars,&row->legacy_cvars);
+    row->hightrack = qa_cvars_resolve(actual->cvars, "cl_hightrack");
+    row->chasecam = qa_cvars_resolve(actual->cvars, "cl_chasecam");
+    row->noskins = qa_cvars_resolve(actual->cvars, "noskins");
+    row->baseskin = qa_cvars_resolve(actual->cvars, "baseskin");
+    return true;
 }
 static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa_error *error)
 {

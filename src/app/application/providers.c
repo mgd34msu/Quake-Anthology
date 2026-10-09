@@ -1452,6 +1452,7 @@ static bool provider_clock_bind(application_provider *provider, qa_error *error)
     provider->q2_maxclients = qa_cvars_resolve(cvars, "maxclients");
     provider->q2_airaccelerate = qa_cvars_resolve(cvars, "sv_airaccelerate");
     provider->teamplay = qa_cvars_resolve(cvars, "teamplay");
+    provider->sv_phs = qa_cvars_resolve(cvars, "sv_phs");
     provider->component.clock_admit = provider_clock_admit;
     provider->component.clock_context = provider;
     return true;

@@ -84,7 +84,7 @@ typedef struct application_provider {
     bool event_activation_deferred, event_activation_bound;
     qa_component component;
     qa_source_frame_time_binding frame_time;
-    qa_cvar_handle sv_novis, q2_maxclients, q2_airaccelerate, teamplay;
+    qa_cvar_handle sv_novis, q2_maxclients, q2_airaccelerate, teamplay, sv_phs;
     qa_combat_policy policy;
     qa_q1_game_operation q1_lifetime;
     bool constructed;
