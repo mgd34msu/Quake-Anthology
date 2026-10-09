@@ -970,7 +970,7 @@ bool frontend_neutral_config_read(const frontend_neutral_configs *owner,const qa
             !qa_cvars_observer_idle(row->client) || !qa_cvars_observer_idle(row->mouse) || !qa_cvars_observer_idle(row->movement))
             return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT settings have not completed their actual programme");
         qa_application_client_source actual;
-        if (!physical(row,&actual)) return fail(e,QA_ERROR_ARGUMENT,"Neutral settings lost their actual installed CLIENT tuple");
+        if (!physical_read(row,&actual,false)) return fail(e,QA_ERROR_ARGUMENT,"Neutral settings lost their actual installed CLIENT tuple");
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,
             .mouse=row->mouse,.movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
             .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true};
@@ -986,7 +986,7 @@ bool frontend_neutral_config_current(const frontend_neutral_config_view *view)
         actual.movement==view->movement && actual.kind==view->kind && actual.physical_seat==view->physical_seat &&
         actual.namespace_revision==view->namespace_revision &&
         actual.ready==view->ready && actual.published==view->published &&
-        qa_application_client_current(view->owner->owner->frontend->application,&view->source);
+        qa_application_client_associated(view->owner->owner->frontend->application,&view->source);
 }
 bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *owner,
     const qa_input_seat *input,const qa_input_release *release,qa_error *e)
@@ -1070,7 +1070,8 @@ bool frontend_neutral_config_startup_read(const frontend_neutral_configs *owner,
     *found=false; *out=(qa_application_client_source){0};
     for (const frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->startup_owned || !row->attached || row->retiring || row->imported) continue;
-        if (!row->ready || !row->published || row->running || row->preparation) continue;
+        if (!row->ready || !row->published || row->running || row->preparation ||
+            !qa_application_client_current(owner->frontend->application,&row->source)) continue;
         frontend_neutral_config_view view;
         if (!frontend_neutral_config_read(owner,row->source.context.cvars,&view,e)) return false;
         if (!frontend_network_client_configuration_primary(owner->frontend,&view.source)) continue;

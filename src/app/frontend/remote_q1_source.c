@@ -202,8 +202,7 @@ bool frontend_remote_q1_source_entity_current(const frontend_remote_q1_source *o
 {
     if (!owner || owner->closing || !owner->receiver || !generation || !owner->receiver->loaded) return false;
     const frontend_remote_q1 *row = owner->receiver;
-    bool found = number == row->view_entity && number != 0;
-    for (size_t i = 0; !found && i < row->current.count; ++i) found = row->current.rows[i].number == number;
+    bool found = number < 65536u;
     for (size_t i = 0; !found && i < row->statics.count; ++i) found = row->statics.rows[i].number == number;
     if (found) *generation = row->map_generation;
     return found && *generation != 0;
