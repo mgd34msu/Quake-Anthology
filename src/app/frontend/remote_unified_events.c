@@ -197,7 +197,7 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
         if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared Source resource names");
         else {
             memcpy(r->content,key->content,content_size); memcpy(r->path,key->path,path_size);
-            memcpy(r->id,row->identity,sizeof(r->id)); r->resource=held.resource;
+            strcpy(r->id,row->identity); r->resource=held.resource;
             r->family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
             *out=r;
         }

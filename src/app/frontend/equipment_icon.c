@@ -94,5 +94,5 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
         qa_image_free(&indexed);qa_image_free(&rgba);qa_wad_free(&directory);
     }
     if(okay){*out=material;*source=resource;resource=NULL;}
-    qa_resource_release(resource);free(path);free(lump);free(name);free(material_key);qa_json_destroy(doc);return okay;
+    qa_scene_image_release(image);qa_resource_release(resource);free(path);free(lump);free(name);free(material_key);qa_json_destroy(doc);return okay;
 }
