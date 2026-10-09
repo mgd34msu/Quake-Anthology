@@ -652,7 +652,7 @@ void test_guest(void)
         .host = {.session = fixture.session, .world = fixture.world, .owner = owner,
             .default_definition = owner, .context = &fixture, .source_time_seconds = guest_source_time}};
     GAME_CHECK(qa_qc_instance_create(fixture.program, &options, &fixture.instance, &error));
-    qa_component component = {.owner = owner, .clock = qa_clock_defaults(QA_CLOCK_NETQUAKE),
+    qa_component component = {.owner = owner, .clock = qa_clock_defaults(QA_RULESET_NETQUAKE),
         .state = fixture.instance, .actor_released = guest_component_released};
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);

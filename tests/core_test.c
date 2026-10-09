@@ -547,7 +547,7 @@ static void test_source_nonmipped_transparency(void)
 static void test_shared_cvar_archive(void)
 {
     qa_error error={0};
-    qa_cvar_options options={.dialect=QA_CONSOLE_Q1,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_ENGINE};
+    qa_cvar_options options={.dialect=QA_RULESET_NETQUAKE,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_ENGINE};
     qa_cvars *engine=qa_cvars_create(&options,&error);
     CHECK(engine && qa_cvars_register(engine,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
     options.role=QA_CVAR_ROLE_CGAME;
@@ -586,10 +586,10 @@ static bool shared_input_menu(void *user, qa_input_seat *seat, qa_input_focus fo
 static void test_shared_input_menu_defaults(void)
 {
     qa_error error = {0};
-    qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_CONSOLE_Q3,
+    qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_CLIENT}, &error);
     CHECK(cvars);
-    for (qa_console_dialect dialect = QA_CONSOLE_Q1; dialect <= QA_CONSOLE_Q3; ++dialect) {
+    for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
         CHECK(qa_cvars_select_dialect(cvars, dialect, &error));
         CHECK(qa_cvars_find(cvars, "in_nograb")->integer == 0);
         CHECK(!qa_cvars_find(cvars, "in_nograb")->explicit_value);
@@ -648,7 +648,7 @@ static void test_shared_input_menu_defaults(void)
         qa_console_destroy(console);
     }
     CHECK(qa_cvars_set(cvars, "in_nograb", "1", true, &error));
-    for (qa_console_dialect dialect = QA_CONSOLE_Q1; dialect <= QA_CONSOLE_Q3; ++dialect) {
+    for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
         CHECK(qa_cvars_select_dialect(cvars, dialect, &error));
         CHECK(qa_cvars_find(cvars, "in_nograb")->integer == 1);
         CHECK(qa_cvars_find(cvars, "in_nograb")->explicit_value);

@@ -178,7 +178,7 @@ bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_ow
     } else return true;
     const qa_clock_config *clock=&provider->component.clock;
     if (!clock->interval_ns || clock->kind!=(edition==QA_Q2_CLASSIC ?
-            QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE))
+            QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE))
         return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its admitted frame interval");
     *out=edition; *interval_ns=clock->interval_ns; *found=true;
     return true;
@@ -236,7 +236,7 @@ static bool observe(qa_application *app, bool retained,
     if (!view.publication || !qa_session_clock(app->session, provider->owner, &view.clock) ||
         view.clock.frame.provider != provider->owner || view.clock.frame.phase != QA_FRAME_EXIT ||
         view.clock.frame.number != view.clock.frame_number ||
-        (view.clock.frame.kind != QA_CLOCK_Q2_CLASSIC && view.clock.frame.kind != QA_CLOCK_Q2_RERELEASE) ||
+        (view.clock.frame.kind != QA_RULESET_Q2_CLASSIC && view.clock.frame.kind != QA_RULESET_Q2_RERELEASE) ||
         view.clock_config.kind != view.clock.frame.kind)
         return application_fail(error, QA_ERROR_FORMAT,
             "Q2 presentation has no matching completed physical source clock");
@@ -272,7 +272,7 @@ static bool observe(qa_application *app, bool retained,
             "Q2 presentation requires an actual compiled or original Q2 GAME");
     }
     if (view.server_time_ns != view.clock.frame.time_ns ||
-        (view.edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE) != view.clock.frame.kind)
+        (view.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) != view.clock.frame.kind)
         return application_fail(error, QA_ERROR_FORMAT,
             "Q2 physical GAME time differs from its completed source frame");
     *out = view; *found = true;

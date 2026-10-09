@@ -46,7 +46,7 @@ static qa_q3_host *role_host(qa_application *app,
         context.role != wanted->role || context.owner != wanted->receiver ||
         context.service_owner != wanted->service_owner || context.frontend_lifetime != wanted->frontend_lifetime ||
         context.command_context.owner != wanted->receiver || context.command_context.seat != wanted->seat ||
-        context.command_context.dialect != QA_CONSOLE_Q3) {
+        context.command_context.dialect != QA_RULESET_Q3) {
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 scene lease differs from its actual role host");
         return NULL;
     }

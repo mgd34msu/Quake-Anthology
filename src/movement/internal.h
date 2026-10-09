@@ -59,7 +59,7 @@ bool qa_move_event(qa_move_context *, int32_t event, int32_t parameter);
 bool qa_move_animation(qa_move_context *, qa_movement_animation_kind, int32_t value, bool force, bool backwards);
 bool qa_move_bounds(qa_move_context *, qa_bounds requested, qa_collision_bits mask, qa_bounds *);
 bool qa_move_apply_stance(qa_move_context *);
-int32_t qa_move_mode_type(qa_movement_kind, qa_movement_mode);
+int32_t qa_move_mode_type(qa_ruleset_id, qa_movement_mode);
 qa_vec3 qa_move_clip(qa_vec3 velocity, qa_vec3 normal, float overbounce, float stop_epsilon);
 void qa_move_angles(qa_vec3 degrees, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up);
 int32_t qa_move_q2_coordinate_word(const qa_q2_movement_state *, float);

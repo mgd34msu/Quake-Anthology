@@ -40,10 +40,10 @@ bool qa_network_accepted_sequence(const qa_network_runtime *runtime, qa_net_clie
     return qa_network_fail(error, "Accepted-command lookup lacks its admitted source seat");
 }
 static bool authority_identity(qa_network_runtime *runtime, qa_net_client_id id,
-    qa_net_seat_id seat_id, qa_actor_id actor, uint64_t epoch, qa_movement_kind movement,
+    qa_net_seat_id seat_id, qa_actor_id actor, uint64_t epoch, qa_ruleset_id movement,
     qa_bytes arsenal, qa_network_peer **peer, qa_network_seat **seat, qa_error *error)
 {
-    if (!runtime || !actor.registry || (unsigned)movement > QA_MOVEMENT_Q3)
+    if (!runtime || !actor.registry || (unsigned)movement > QA_RULESET_Q3)
         return qa_network_fail(error, "Invalid network command owner");
     *peer = qa_network_peer_get(runtime, id, error);
     if (!*peer || epoch != (*peer)->epoch)
@@ -87,7 +87,7 @@ bool qa_network_accept_unified_input(qa_network_runtime *runtime,qa_net_client_i
     qa_net_seat_id seat_id,qa_actor_id actor,uint64_t epoch,const qa_unified_input *input,qa_error *error)
 {
     if(!runtime || !input || !runtime->options.hooks.unified_input ||
-        (unsigned)input->command.kind>QA_MOVEMENT_Q3 ||
+        (unsigned)input->command.kind>QA_RULESET_Q3 ||
         (input->has_arsenal && (!input->arsenal.provider.data || !input->arsenal.provider.size ||
             (input->arsenal.weapon.size && !input->arsenal.weapon.data))))
         return qa_network_fail(error,"Anthology input requires its actual binary64 source consumer");
@@ -108,13 +108,13 @@ bool qa_network_accept_commands(qa_network_runtime *runtime,
     const qa_network_command_group *group, qa_error *error)
 {
     if (!runtime || !group || !group->commands || !group->count || group->count > 20 ||
-        (unsigned)group->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.commands)
+        (unsigned)group->movement > QA_RULESET_Q3 || !runtime->options.hooks.commands)
         return qa_network_fail(error, "QuakeWorld group requires its complete command consumer");
     uint64_t sequence = group->commands[0].sequence;
     if (!sequence) return qa_network_fail(error, "QuakeWorld source packet sequence is zero");
     for (size_t i = 0; i < group->count; ++i) {
         const qa_movement_command *command = group->commands + i;
-        if (command->kind != QA_MOVEMENT_QUAKEWORLD || command->sequence != sequence ||
+        if (command->kind != QA_RULESET_QUAKEWORLD || command->sequence != sequence ||
             command->milliseconds > UINT8_MAX || command->buttons > UINT8_MAX ||
             !isfinite(command->forward_move) || !isfinite(command->side_move) ||
             !isfinite(command->up_move) || !isfinite(command->angles.x) ||
@@ -136,7 +136,7 @@ bool qa_network_accept_q3_source_command(qa_network_runtime *runtime,
     const qa_network_q3_source_command *command, qa_error *error)
 {
     if (!runtime || !command || !command->sequence ||
-        (unsigned)command->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.q3_source_command)
+        (unsigned)command->movement > QA_RULESET_Q3 || !runtime->options.hooks.q3_source_command)
         return qa_network_fail(error, "Q3 source command requires its complete raw command consumer");
     qa_network_peer *peer; qa_network_seat *seat;
     if (!authority_identity(runtime, command->client, command->seat, command->actor,
@@ -152,7 +152,7 @@ bool qa_network_accept_nq_source_command(qa_network_runtime *runtime,
     const qa_network_nq_source_command *command, qa_error *error)
 {
     if (!runtime || !command || !command->sequence || !command->source_owner ||
-        (unsigned)command->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.nq_source_command ||
+        (unsigned)command->movement > QA_RULESET_Q3 || !runtime->options.hooks.nq_source_command ||
         !isfinite(command->command.time) || !isfinite(command->command.angles[0]) ||
         !isfinite(command->command.angles[1]) || !isfinite(command->command.angles[2]))
         return qa_network_fail(error, "NetQuake source command requires its genuine raw command consumer");
@@ -207,7 +207,7 @@ bool qa_network_snapshot_apply(qa_network_runtime *runtime, qa_net_client_id id,
         return qa_network_fail(error, "Missing admitted snapshot/prediction owners");
     qa_network_seat *seat = seat_get(peer, snapshot->seat, error);
     if (!seat) return false;
-    if (seat->applying || (unsigned)snapshot->movement > QA_MOVEMENT_Q3)
+    if (seat->applying || (unsigned)snapshot->movement > QA_RULESET_Q3)
         return qa_network_fail(error, "Invalid or recursive snapshot callback");
     if (seat->prediction_fault) return qa_network_fail(error, "Prediction fault requires travel or reconnect recovery");
     if (seat->has_snapshot && snapshot->sequence <= seat->snapshot) return true;
@@ -257,7 +257,7 @@ bool qa_network_q1_client_submit(qa_network_runtime *runtime,
     if (!authority(runtime,command,&peer,&seat,error)) return false;
     const qa_net_client *client=qa_net_connections_get(runtime->connections,command->client);
     if (!client || !qa_network_q1_client_peer(peer) || peer->seat_count!=1 ||
-        command->movement.kind!=(qa_q1_is_qw(client->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE))
+        command->movement.kind!=(qa_q1_is_qw(client->protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE))
         return qa_network_fail(error,"Q1 CLIENT input differs from its admitted native command profile");
     runtime->callback=true; seat->applying=true;
     bool ok=peer->ops.command(peer->state,command,error);

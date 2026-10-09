@@ -440,10 +440,10 @@ static bool projection_pose(void *context,qa_actor_id actor,double *height,bool 
         !application_control_outputs(app,actor,&outputs,e))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native client pose lost its actual canonical controls");
     *height=camera.view_offset.z;
-    *crouched=control.state.kind==QA_MOVEMENT_Q3?(control.state.data.q3.movement_flags&1u)!=0:
-        control.state.kind==QA_MOVEMENT_Q2_CLASSIC?(control.state.data.q2.flags&1u)!=0:
-        control.state.kind==QA_MOVEMENT_Q2_RERELEASE?(control.state.data.q2r.flags&1u)!=0:
-        control.state.kind==QA_MOVEMENT_QUAKEWORLD&&control.bounds.maxs.z<qa_movement_input_default(control.state.kind,actor).standing.bounds.maxs.z;
+    *crouched=control.state.kind==QA_RULESET_Q3?(control.state.data.q3.movement_flags&1u)!=0:
+        control.state.kind==QA_RULESET_Q2_CLASSIC?(control.state.data.q2.flags&1u)!=0:
+        control.state.kind==QA_RULESET_Q2_RERELEASE?(control.state.data.q2r.flags&1u)!=0:
+        control.state.kind==QA_RULESET_QUAKEWORLD&&control.bounds.maxs.z<qa_movement_input_default(control.state.kind,actor).standing.bounds.maxs.z;
     if(outputs.has_stance) *crouched=outputs.crouched;
     return true;
 }

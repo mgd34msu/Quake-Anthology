@@ -610,7 +610,7 @@ static bool snapshot_restore_value(application_native_q3_cvar_snapshot *out,
     qa_cvars_edit *edit = NULL;
     bool okay = qa_cvars_edit_prepare(registry, &edit, error) &&
         qa_cvars_edit_apply(edit, &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_ASSIGN,
-            .name = name, .value = value, .source_dialect = QA_CONSOLE_Q3, .force = true}, error);
+            .name = name, .value = value, .source_dialect = QA_RULESET_Q3, .force = true}, error);
     const qa_cvar_view *copy = okay ? qa_cvars_edit_find(edit, name) : NULL;
     if (okay) okay = copy && snapshot_copy(out, copy, error);
     qa_cvars_edit_abort(edit);

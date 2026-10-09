@@ -602,7 +602,7 @@ bool application_qc_player_receive(application_provider *provider, qa_actor_id a
             return application_fail(error, QA_ERROR_ARGUMENT, "QC receipt does not advance its physical client sequence");
         int32_t reference;
         if (!application_qc_reference(engine, actor, &reference, error)) return false;
-        bool source_impulse = command->kind != QA_MOVEMENT_Q3 && command->kind != QA_MOVEMENT_Q2_RERELEASE;
+        bool source_impulse = command->kind != QA_RULESET_Q3 && command->kind != QA_RULESET_Q2_RERELEASE;
         if (source_impulse && command->impulse) {
             application_qc_weapon_command(engine,actor);
             if(!application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;

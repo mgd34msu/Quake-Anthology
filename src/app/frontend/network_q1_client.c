@@ -520,7 +520,7 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
     if (!o->options.seat.owner) o->options.seat=(qa_net_seat_id){QA_NETWORK_COMMAND_OWNER,0};
     o->input_clock_ns=options->frontend->wall_time_ns;
     if(!retain_policy(o,error)) return false;
-    o->input.kind=qa_q1_is_qw(options->protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE;
+    o->input.kind=qa_q1_is_qw(options->protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE;
     o->binding=(qa_net_seat_binding){o->options.seat,0};
     qa_vfs *prepared=NULL;
     if(!qa_catalog_open(catalog,o->options.selected,&prepared,error)) return false;
@@ -529,10 +529,10 @@ bool frontend_network_q1_client_create(const frontend_network_q1_client_options 
     source.input_origin.seat=o->options.seat.index;
     source.input_origin.owner=0; source.input_origin.actor=(qa_actor_id){0}; source.input_origin.client=0;
     source.input_origin.registry=source.input_origin.generation=0; source.input_origin.script=false;
-    source.input_origin.dialect=qa_q1_is_qw(options->protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1;
+    source.input_origin.dialect=qa_q1_is_qw(options->protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE;
     source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=o->options.selected,
         .prepared=prepared,.instance="remote-q1-client",.seat=source.input_origin.seat,
-        .clock=qa_q1_is_qw(options->protocol)?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE};
+        .clock=qa_q1_is_qw(options->protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE};
     bool ok=frontend_client_source_create(options->frontend,&source,&o->physical,error);
     qa_vfs_destroy(prepared); return ok;
 }

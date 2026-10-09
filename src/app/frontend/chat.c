@@ -16,7 +16,7 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     bool client_source = false;
     if (!remote && !frontend_network_client_recipient_read(frontend,seat->id,
         &recipient,&client_source,error)) return false;
-    qa_console_dialect dialect = QA_CONSOLE_Q3;
+    qa_ruleset_id dialect = QA_RULESET_Q3;
     qa_console *source_console = qa_application_console(frontend->application);
     qa_command_context context = {.seat = seat->id, .origin = QA_COMMAND_SEAT, .direct = true};
     if (client_source) {
@@ -51,7 +51,7 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
             dialect=game.command.dialect;
         }
     }
-    if (targeted && dialect != QA_CONSOLE_Q3)
+    if (targeted && dialect != QA_RULESET_Q3)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Selected source has no numeric client tell command");
     const char *name = targeted ? "tell" : team ? "say_team" : "say";
     char target_text[16];

@@ -90,7 +90,7 @@ static struct application_qc_state *qw_source(qa_application *app,
         !qa_world_idle(app->world) || !qa_qc_idle(provider->state.qc.instance) ||
         !application_qc_input_idle(provider) ||
         !qa_session_clock(app->session, provider->owner, &clock) ||
-        clock.frame.provider != provider->owner || clock.frame.kind != QA_CLOCK_QUAKEWORLD ||
+        clock.frame.provider != provider->owner || clock.frame.kind != QA_RULESET_QUAKEWORLD ||
         clock.frame.phase != QA_FRAME_EXIT) {
         application_fail(error, QA_ERROR_UNSUPPORTED,
             "QuakeWorld wire requires its completed classic QC source and 32 physical client rows");

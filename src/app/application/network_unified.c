@@ -209,7 +209,7 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
     if (owner->cursor == owner->count) return true;
     owner->advancing = true;
     bool okay = true;
-    if (player.movement == QA_MOVEMENT_NETQUAKE) {
+    if (player.movement == QA_RULESET_NETQUAKE) {
         qa_unified_input selected = owner->commands[owner->cursor].value;
         for (size_t i = owner->cursor + 1; i < owner->count; ++i) {
             qa_unified_input next = owner->commands[i].value;
@@ -706,11 +706,11 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         .argv = words, .args_text = args, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
         .owner = source->owner, .actor = player.actor}};
     command.context.seat = row->seat;
-    command.context.dialect = source->product->family == QA_GAME_Q1 ? QA_CONSOLE_Q1 : QA_CONSOLE_Q3;
+    command.context.dialect = source->product->family == QA_GAME_Q1 ? QA_RULESET_NETQUAKE : QA_RULESET_Q3;
     if (source->product->family == QA_GAME_Q1)
-        command.context.dialect = source->product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
+        command.context.dialect = source->product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     else if (source->product->family == QA_GAME_Q2)
-        command.context.dialect = source->product->edition == QA_EDITION_RERELEASE ? QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
+        command.context.dialect = source->product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error);
     bool handled = false;
     if (okay && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {
@@ -782,7 +782,7 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
     const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count, .argv = arguments,
         .args_text = tail, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL, .owner = player.source_owner,
-        .actor = player.actor, .seat = row->seat, .dialect = QA_CONSOLE_Q3}};
+        .actor = player.actor, .seat = row->seat, .dialect = QA_RULESET_Q3}};
     bool handled = false;
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error) &&
         application_q3_components_command(app, player.actor, owner, &command, &handled, error);
@@ -839,7 +839,7 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
     const application_player_record *row=application_players_connection_read(app,client,seat);
     qa_command_invocation command={.console=app->console,.argc=value->argument_count,
         .argv=value->arguments,.args_text=tail,.context={.origin=row->remote?QA_COMMAND_REMOTE:QA_COMMAND_LOCAL,
-        .owner=provider->owner,.actor=player.actor,.seat=row->seat,.dialect=QA_CONSOLE_Q3}};
+        .owner=provider->owner,.actor=player.actor,.seat=row->seat,.dialect=QA_RULESET_Q3}};
     bool handled=false;
     bool okay=qa_application_capture_command_context(app,&command.context,&command.context,error) &&
         application_native_q3_source_client_command(provider,player.actor,&command,&handled,error);

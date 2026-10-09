@@ -138,7 +138,7 @@ static bool reset_podium(void *context,qa_error *error) {
 static bool command(void *context,const char *text,bool append,qa_error *error) {
     application_bots *bots=context;application_provider *actual;qa_console *console;
     if(!source(bots,&actual,error)) return false;
-    qa_command_context origin={.owner=actual->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
+    qa_command_context origin={.owner=actual->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     if(bots->shared_world) console=bots->application->console;
     else if(!application_native_q3_console_at(actual,&console,NULL,NULL))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot catalogue source console is absent");

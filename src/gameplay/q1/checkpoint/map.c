@@ -153,7 +153,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         return m->pending.brush.phase <= maximum || q1_save_fail(io,"Invalid addon brush phase");
     }
     if (m->action == Q1_MAP_DELAYED_USE) {
-        Q1_SAVE_ENUM(io, m->pending.delayed.dialect, QA_CLOCK_Q3);
+        Q1_SAVE_ENUM(io, m->pending.delayed.dialect, QA_RULESET_Q3);
         Q1_SAVE(io, string, m->pending.delayed.shader_old);
         Q1_SAVE(io, string, m->pending.delayed.shader_new);
         return true;

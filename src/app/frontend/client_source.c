@@ -674,24 +674,24 @@ typedef struct client_source_prefix {
 static bool clock_fields(qa_source_save_io *io, qa_clock_config *clock)
 {
     uint32_t kind = clock->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_CLOCK_Q3 ||
+    if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3 ||
         !qa_source_save_u64(io, &clock->initial_time_ns) || !qa_source_save_u64(io, &clock->interval_ns) ||
         !qa_source_save_u64(io, &clock->minimum_frame_ns) || !qa_source_save_u64(io, &clock->maximum_frame_ns) ||
         !qa_source_save_u64(io, &clock->initial_lead_ns) || !qa_source_save_u32(io, &clock->maximum_steps)) return false;
-    clock->kind = (qa_clock_kind)kind; return true;
+    clock->kind = (qa_ruleset_id)kind; return true;
 }
 static bool command_fields(qa_source_save_io *io, qa_command_context *c)
 {
     uint32_t dialect = c->dialect, origin = c->origin;
     if (!qa_source_save_u64(io, &c->session) || !qa_source_save_u64(io, &c->owner) ||
         !qa_source_save_u64(io, &c->client) || !qa_source_save_u32(io, &c->seat) ||
-        !qa_source_save_u32(io, &dialect) || dialect > QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io, &dialect) || dialect > QA_RULESET_Q3 ||
         !qa_source_save_u32(io, &origin) || (origin != QA_COMMAND_LOCAL && origin != QA_COMMAND_SEAT) ||
         !qa_source_save_bool(io, &c->direct) || !qa_source_save_bool(io, &c->console_text) ||
         !qa_source_save_u64(io, &c->registry) || !c->registry ||
         !qa_source_save_u64(io, &c->generation) || !c->generation || c->script || c->actor.registry ||
         c->actor.generation || c->actor.slot) return false;
-    c->dialect = (qa_console_dialect)dialect; c->origin = (qa_command_origin)origin;
+    c->dialect = (qa_ruleset_id)dialect; c->origin = (qa_command_origin)origin;
     return true;
 }
 static bool selection_text(qa_source_save_io *io, const char **text)

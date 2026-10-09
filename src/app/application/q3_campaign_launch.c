@@ -77,7 +77,7 @@ bool application_q3_campaign_launch_cvars(application_provider *provider,
         provider->launch->selection.runtime != state->runtime ||
         !provider->product || provider->product->family != QA_GAME_Q3 ||
         !cvars || !cvar_owner || !qa_cvars_same_store(cvars, app->cvars) ||
-        cvars == state->previous_cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
+        cvars == state->previous_cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign startup values require their fresh physical GAME registry");
     for (size_t i = 0; i < state->count; ++i) {
@@ -150,7 +150,7 @@ static bool campaign_launch(qa_application *app,
         (app->world && !qa_world_idle(app->world)) || !qa_combat_idle(app->combat) ||
         !qa_console_idle(app->console) || !application_guests_idle(app) ||
         !application_rankings_idle(app) || !application_bots_can_destroy(app) ||
-        (source && (!source->cvars || qa_cvars_dialect(source->cvars) != QA_CONSOLE_Q3 ||
+        (source && (!source->cvars || qa_cvars_dialect(source->cvars) != QA_RULESET_Q3 ||
             !qa_application_q3_campaign_current(app, source))))
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign launch requires an idle application and current source cut");
@@ -170,7 +170,7 @@ static bool campaign_launch(qa_application *app,
             strcmp(selection->instance, source->launch->selection.instance) ||
             selection->product != source->content_product ||
             selection->runtime != source->launch->selection.runtime)) ||
-        selection->clock.kind != QA_CLOCK_Q3)
+        selection->clock.kind != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign draft must retain the actual selected Q3 GAME identity");
     for (size_t i = 0; i < count; ++i)

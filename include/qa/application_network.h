@@ -13,7 +13,7 @@ bool qa_application_network_local_bind(qa_application *, const qa_net_client *,
 /* These adapters borrow the application. Seat authority is always the
  * canonical roster, and travel resolves its freshly published actor IDs. */
 bool qa_application_network_controlled(qa_application *, qa_net_client_id,
-    qa_net_seat_id, qa_actor_id, qa_movement_kind, qa_bytes arsenal, qa_error *);
+    qa_net_seat_id, qa_actor_id, qa_ruleset_id, qa_bytes arsenal, qa_error *);
 bool qa_application_network_command(qa_application *, const qa_network_command *, qa_error *);
 bool qa_application_network_q3_command(qa_application *,
     const qa_network_q3_source_command *, qa_error *);

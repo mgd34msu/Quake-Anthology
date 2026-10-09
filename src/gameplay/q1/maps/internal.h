@@ -383,7 +383,7 @@ struct q1_map_state {
     } spawn_template;
     union {
         struct {
-            qa_clock_kind dialect;
+            qa_ruleset_id dialect;
             qa_string_id shader_old, shader_new;
         } delayed;
         qa_q1_campaign_timer finale;

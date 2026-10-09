@@ -12,27 +12,27 @@ bool frontend_unified_command_build(frontend_unified_command_builder *builder,
     qa_unified_vec3 angles = {source.angles.x, source.angles.y, source.angles.z};
     qa_unified_movement command = {.kind = source.kind};
     switch (source.kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         command.data.nq.acknowledged_seconds = source.acknowledged_server_seconds;
         command.data.nq.angles = angles; command.data.nq.forward = source.move.x;
         command.data.nq.side = source.move.y; command.data.nq.up = source.move.z;
         command.data.nq.buttons = source.buttons; command.data.nq.impulse = source.impulse; break;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         command.data.qw.milliseconds = source.milliseconds; command.data.qw.angles = angles;
         command.data.qw.forward = source.move.x; command.data.qw.side = source.move.y;
         command.data.qw.up = source.move.z; command.data.qw.buttons = source.buttons;
         command.data.qw.impulse = source.impulse; break;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         command.data.q2.milliseconds = source.milliseconds;
         for (unsigned i = 0; i < 3; ++i) command.data.q2.angle_shorts[i] = source.angle_words[i];
         command.data.q2.forward = source.move.x; command.data.q2.side = source.move.y;
         command.data.q2.up = source.move.z; command.data.q2.buttons = source.buttons;
         command.data.q2.impulse = source.impulse; command.data.q2.light_level = source.light_level; break;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         command.data.q2r.milliseconds = source.milliseconds; command.data.q2r.angles = angles;
         command.data.q2r.forward = source.move.x; command.data.q2r.side = source.move.y;
         command.data.q2r.buttons = source.buttons; command.data.q2r.server_frame = source.server_frame; break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         command.data.q3.server_time_ms = source.server_time_ms;
         for (unsigned i = 0; i < 3; ++i) command.data.q3.angle_words[i] = source.angle_words[i];
         command.data.q3.forward = source.move.x; command.data.q3.right = source.move.y;

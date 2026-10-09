@@ -121,7 +121,7 @@ qa_vfs *application_native_q1_wire_content(application_provider *provider,qa_err
     if (!provider || !provider->launch)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q1 source media lost its actual provider"),NULL;
     const qa_application_startup_hooks *hooks=provider->application?provider->application->startup_hooks:NULL;
-    if (provider->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD && hooks && hooks->source_files) {
+    if (provider->launch->selection.clock.kind==QA_RULESET_QUAKEWORLD && hooks && hooks->source_files) {
         qa_launch_source_files source; const char *directory=NULL;
         return application_native_q1_source_files(provider,&source,&directory,error)?source.content:NULL;
     }
@@ -453,7 +453,7 @@ static qa_net_protocol_id protocol(void) { return (qa_net_protocol_id){.kind = Q
 static const char *text(qa_application *app, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(app->session), id) : "";
 }
-static bool source_current(application_native_q1_wire_source *source, qa_clock_kind dialect,
+static bool source_current(application_native_q1_wire_source *source, qa_ruleset_id dialect,
     bool packet, qa_error *error) {
     application_provider *p = source ? source->provider : NULL;
     qa_application *app = p ? p->application : NULL;
@@ -480,7 +480,7 @@ static bool source_current(application_native_q1_wire_source *source, qa_clock_k
                                 "Native Q1 wire resources are not admitted for this source generation");
     return true;
 }
-static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kind dialect,
+static bool source_begin(qa_application *app, qa_actor_owner owner, qa_ruleset_id dialect,
     bool packet, application_native_q1_wire_source *out, qa_error *error) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     if (!out || !p || !p->native_q1_wire || (owner && p->owner != owner) ||
@@ -498,11 +498,11 @@ static bool source_begin(qa_application *app, qa_actor_owner owner, qa_clock_kin
 }
 bool application_native_q1_wire_begin(qa_application *app, qa_actor_owner owner,
     application_native_q1_wire_source *out, qa_error *error) {
-    return source_begin(app, owner, QA_CLOCK_NETQUAKE, true, out, error);
+    return source_begin(app, owner, QA_RULESET_NETQUAKE, true, out, error);
 }
 bool application_native_q1_wire_qw_begin(qa_application *app,
     application_native_q1_wire_source *out, qa_error *error) {
-    if (!source_begin(app, 0, QA_CLOCK_QUAKEWORLD, true, out, error)) return false;
+    if (!source_begin(app, 0, QA_RULESET_QUAKEWORLD, true, out, error)) return false;
     qa_clock_state clock;
     qa_q1_options options;
     double seconds;
@@ -513,7 +513,7 @@ bool application_native_q1_wire_qw_begin(qa_application *app,
         out->receipt.entity_slots <= 768 && geometry &&
         qa_collision_geometry_family(geometry) == QA_COLLISION_Q1 &&
         qa_session_clock(app->session, out->provider->owner, &clock) &&
-        clock.frame.provider == out->provider->owner && clock.frame.kind == QA_CLOCK_QUAKEWORLD &&
+        clock.frame.provider == out->provider->owner && clock.frame.kind == QA_RULESET_QUAKEWORLD &&
         clock.frame.phase == QA_FRAME_EXIT;
     if (!okay) {
         application_native_q1_wire_end(out);
@@ -525,8 +525,8 @@ bool application_native_q1_wire_qw_begin(qa_application *app,
 static bool observation_begin(qa_application *app, qa_actor_owner owner,
     application_native_q1_wire_source *out, qa_error *error) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
-    if (!p || !p->launch || (p->launch->selection.clock.kind != QA_CLOCK_NETQUAKE &&
-        p->launch->selection.clock.kind != QA_CLOCK_QUAKEWORLD))
+    if (!p || !p->launch || (p->launch->selection.clock.kind != QA_RULESET_NETQUAKE &&
+        p->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 observation lost its actual Source clock");
     return source_begin(app, owner, p->launch->selection.clock.kind, false, out, error);
 }
@@ -674,7 +674,7 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
     bool okay = qa_q1_wire_world_read(&source.receipt, &world);
     if (okay) {
         qa_application_network_q1_world value = {.protocol = {
-                .kind = source.provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15},
+                .kind = source.provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15},
             .max_clients = source.receipt.client_slots, .standard_quake = source.receipt.standard_quake,
             .deathmatch = source.receipt.deathmatch != 0, .seconds = (float)source.receipt.seconds,
             .map = text(app, world.map), .level = text(app, world.level), .cd_track = world.cd_track,
@@ -721,7 +721,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         client(&source, actor, &slot, error) && (row = control(app, actor)) != NULL;
     if (okay) {
         qa_q1_clientdata value = {.viewheight = row->view_height,
-            .idealpitch = row->state.kind == QA_MOVEMENT_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
+            .idealpitch = row->state.kind == QA_RULESET_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
             .items = player.items | (player.items2 << 23) |
                 ((source.receipt.program == QA_Q1_HIPNOTIC || source.receipt.program == QA_Q1_ROGUE)
                     ? 0 : world.server_flags << 28),
@@ -735,7 +735,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
             .nails = (uint32_t)qa_source_float_to_i32((float)player.nails),
             .rockets = (uint32_t)qa_source_float_to_i32((float)player.rockets),
             .cells = (uint32_t)qa_source_float_to_i32((float)player.cells), .weapon = player.weapon};
-        vector(value.punch, row->state.kind == QA_MOVEMENT_NETQUAKE
+        vector(value.punch, row->state.kind == QA_RULESET_NETQUAKE
             ? row->state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
         *out = value;
@@ -802,7 +802,7 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     if (okay) {
         qa_application_network_q1_feedback value = {.damage = feedback.armor != 0 || feedback.blood != 0,
             .armor = source_byte(feedback.armor), .blood = source_byte(feedback.blood),
-            .set_angle = row->state.kind == QA_MOVEMENT_NETQUAKE && row->state.data.nq.fix_angle};
+            .set_angle = row->state.kind == QA_RULESET_NETQUAKE && row->state.data.nq.fix_angle};
         memcpy(value.origin, feedback.origin, sizeof(value.origin));
         if (value.set_angle) {
             vector(value.angles, row->state.data.nq.angles);
@@ -934,7 +934,7 @@ bool application_native_q1_wire_inflictor_center(qa_application *app,
 static bool emit_message(application_provider *p, const qa_builtin_event *event,
     const qa_nq_message *message, qa_actor_id recipient, bool reliable, bool signon,
     const qa_application_protocol_reference *reference, qa_error *error) {
-    if (p->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD)
+    if (p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD)
         return application_native_q1_qw_emit(p, event, message, recipient, reliable, signon, reference, error);
     uint8_t bytes[8192]; qa_net_writer writer;
     qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
@@ -949,7 +949,7 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
     }
     if (!qa_nq_write(&writer, selected_protocol, (qa_nq_options){.standard_quake = standard},
                     message, NULL, 0)) return false;
-    qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_CLOCK_NETQUAKE,
+    qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_RULESET_NETQUAKE,
         .time_ns = event->time_ns, .recipient = recipient, .origin = event->origin,
         .payload = {bytes, qa_net_writer_size(&writer)}, .references = reference,
         .reference_count = reference ? 1 : 0, .destination = signon ? 3 : recipient.registry ? 1 : reliable ? 2 : 0,
@@ -1021,14 +1021,14 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
     if (!event || event->family != QA_GAME_Q1) return true;
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
-        p->launch->selection.clock.kind == QA_CLOCK_NETQUAKE && event->provider == p->owner &&
+        p->launch->selection.clock.kind == QA_RULESET_NETQUAKE && event->provider == p->owner &&
         event->kind == QA_BUILTIN_MESSAGE && (event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL)) {
         qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text(app, event->text)};
         return emit_message(p, event, &message, event->actor, true, false, NULL, error);
     }
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
-        p->close_pending || !p->launch || (p->launch->selection.clock.kind != QA_CLOCK_NETQUAKE &&
-         p->launch->selection.clock.kind != QA_CLOCK_QUAKEWORLD) ||
+        p->close_pending || !p->launch || (p->launch->selection.clock.kind != QA_RULESET_NETQUAKE &&
+         p->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD) ||
         !qa_q1_wire_enabled(p->state.q1)) return true;
     qa_nq_message message = {0}; qa_actor_id recipient = {0};
     qa_application_protocol_reference reference = {0}; bool has_reference = false;
@@ -1036,7 +1036,7 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
     uint32_t slot, index;
     switch (event->kind) {
     case QA_BUILTIN_MUZZLE:
-        if (p->launch->selection.clock.kind != QA_CLOCK_QUAKEWORLD ||
+        if (p->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD ||
             !qa_q1_wire_emission_slot(p->state.q1, event->actor, &slot)) return true;
         message.op = QA_NQ_SETVIEW; message.data.value = slot;
         reference = (qa_application_protocol_reference){.actor = event->actor, .offset = 1};
@@ -1204,7 +1204,7 @@ bool application_native_q1_wire_observe(qa_application *app, qa_error *error) {
         okay = qa_q1_wire_board_observe(&source.receipt, slot, &change, error);
         if (!okay) break;
         qa_nq_message message = {0};
-        bool qw=p->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD;
+        bool qw=p->launch->selection.clock.kind==QA_RULESET_QUAKEWORLD;
         if (change.name_changed || (qw && change.colors_changed)) {
             message.op = QA_NQ_NAME; message.data.indexed_text.index = (uint8_t)slot;
             message.data.indexed_text.text = text(app, change.name);
@@ -1474,8 +1474,8 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     if (!out || !recipients || !out_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 source chat outputs");
     bool qw = source && source->provider && source->provider->launch &&
-        source->provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
-    if (!source_current(source, qw ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE, true, error)) return false;
+        source->provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD;
+    if (!source_current(source, qw ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE, true, error)) return false;
     if (qw && (target || source->receipt.client_slots != 32 || (!sender.registry && team_only)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld chat changes its actual Source audience");
     if (!sender.registry && target)

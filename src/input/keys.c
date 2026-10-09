@@ -103,10 +103,10 @@ int qa_input_key_parse(const char *text) {
 unsigned qa_input_mouse_button(unsigned button) {
     return button == 2 ? 3 : button == 3 ? 2 : button;
 }
-int qa_input_source_key(int key, qa_console_dialect dialect) {
+int qa_input_source_key(int key, qa_ruleset_id dialect) {
     if (key < 0)
         return -1;
-    if (dialect == QA_CONSOLE_Q3)
+    if (dialect == QA_RULESET_Q3)
         return key <= 255 ? key : -1;
     if (key < 128)
         return key;
@@ -126,7 +126,7 @@ int qa_input_source_key(int key, qa_console_dialect dialect) {
         return key - QA_KEY_AUX1 + 207;
     if (key >= QA_KEY_AUX17 && key <= QA_KEY_AUX32)
         return key - QA_KEY_AUX17 + 223;
-    bool q2 = dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    bool q2 = dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
     if (key == QA_KEY_WHEEL_UP)
         return q2 ? 240 : 239;
     if (key == QA_KEY_WHEEL_DOWN)

@@ -178,27 +178,27 @@ static bool reconcile_turns(qa_session *session, qa_error *error)
     return true;
 }
 
-qa_clock_config qa_clock_defaults(qa_clock_kind kind)
+qa_clock_config qa_clock_defaults(qa_ruleset_id kind)
 {
     qa_clock_config result = {.kind = kind};
     switch (kind) {
-    case QA_CLOCK_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         result.minimum_frame_ns = UINT64_C(13888889);
         result.maximum_frame_ns = UINT64_C(100000000);
         break;
-    case QA_CLOCK_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         result.minimum_frame_ns = UINT64_C(30000000);
         result.maximum_frame_ns = UINT64_C(100000000);
         break;
-    case QA_CLOCK_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         result.interval_ns = UINT64_C(100000000);
         result.maximum_steps = 1;
         break;
-    case QA_CLOCK_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         result.interval_ns = UINT64_C(25000000);
         result.maximum_steps = 1;
         break;
-    case QA_CLOCK_Q3:
+    case QA_RULESET_Q3:
         result.interval_ns = UINT64_C(50000000);
         break;
     }
@@ -207,9 +207,9 @@ qa_clock_config qa_clock_defaults(qa_clock_kind kind)
 
 static bool valid_clock(const qa_clock_config *clock)
 {
-    if (clock->kind < QA_CLOCK_NETQUAKE || clock->kind > QA_CLOCK_Q3) return false;
-    if (clock->kind == QA_CLOCK_Q2_CLASSIC && clock->interval_ns != UINT64_C(100000000)) return false;
-    if (clock->kind >= QA_CLOCK_Q2_CLASSIC && clock->interval_ns == 0) return false;
+    if (clock->kind < QA_RULESET_NETQUAKE || clock->kind > QA_RULESET_Q3) return false;
+    if (clock->kind == QA_RULESET_Q2_CLASSIC && clock->interval_ns != UINT64_C(100000000)) return false;
+    if (clock->kind >= QA_RULESET_Q2_CLASSIC && clock->interval_ns == 0) return false;
     if (clock->interval_ns == 0 && (clock->minimum_frame_ns == 0
         || clock->maximum_frame_ns < clock->minimum_frame_ns || clock->initial_lead_ns != 0)) return false;
     return clock->initial_lead_ns <= clock->interval_ns
@@ -228,7 +228,7 @@ static qa_clock_state initial_clock(const qa_session *session, const qa_componen
 
 static bool qw_server_clock(const component_state *entry)
 {
-    return entry->component.clock.kind == QA_CLOCK_QUAKEWORLD && !entry->component.clock.interval_ns;
+    return entry->component.clock.kind == QA_RULESET_QUAKEWORLD && !entry->component.clock.interval_ns;
 }
 
 static void actor_released(void *context, qa_actor_registry *actors, qa_actor_record released)
@@ -675,7 +675,7 @@ bool qa_session_pending_frame(const qa_session *session, qa_actor_owner owner, u
         else if (!entry->component.clock.interval_ns) *source_host_ns = *accepted ? *duration_ns : 0;
         else {
             uint64_t before = entry->clock.debt_ns, after = projected.clock.debt_ns;
-            if (entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE) {
+            if (entry->component.clock.kind == QA_RULESET_Q2_RERELEASE) {
                 before -= before % UINT64_C(1000000);
                 after -= after % UINT64_C(1000000);
             }
@@ -1036,8 +1036,8 @@ static bool next_frame(const component_state *entry, uint64_t *duration, uint64_
 
 static bool q2_clock(const component_state *entry)
 {
-    return entry->component.clock.kind == QA_CLOCK_Q2_CLASSIC ||
-        entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE;
+    return entry->component.clock.kind == QA_RULESET_Q2_CLASSIC ||
+        entry->component.clock.kind == QA_RULESET_Q2_RERELEASE;
 }
 
 static bool frame_limit(const component_state *entry)
@@ -1056,10 +1056,10 @@ static void consume_frame(component_state *entry, uint64_t step)
     } else {
         entry->clock.debt_ns -= step;
         uint64_t retained = entry->clock.debt_ns;
-        if (entry->component.clock.kind == QA_CLOCK_Q2_CLASSIC &&
+        if (entry->component.clock.kind == QA_RULESET_Q2_CLASSIC &&
             retained > entry->component.clock.initial_lead_ns)
             retained = entry->component.clock.initial_lead_ns;
-        else if (entry->component.clock.kind == QA_CLOCK_Q2_RERELEASE &&
+        else if (entry->component.clock.kind == QA_RULESET_Q2_RERELEASE &&
             retained > UINT64_C(250000000))
             retained = UINT64_C(100000000) + retained % UINT64_C(1000000);
         if (!entry->component.clock_admit) entry->clock.host_origin_ns += entry->clock.debt_ns - retained;
@@ -1174,7 +1174,7 @@ bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *erro
             if (qw_server_clock(entry)) start += entry->clock.debt_ns;
             entry->clock.frame = (qa_source_frame){entry->component.owner, entry->component.clock.kind,
                                                   QA_FRAME_ENTRY, ++entry->clock.frame_number, start, step, start};
-            if (entry->component.clock.kind != QA_CLOCK_NETQUAKE && entry->component.clock.kind != QA_CLOCK_QUAKEWORLD)
+            if (entry->component.clock.kind != QA_RULESET_NETQUAKE && entry->component.clock.kind != QA_RULESET_QUAKEWORLD)
                 entry->clock.frame.time_ns += step;
             consume_frame(entry, step);
         }
@@ -1304,7 +1304,7 @@ bool qa_session_round_step(qa_session *session, qa_actor_owner owner, uint64_t e
         qa_scheduler_has_admissions(session->scheduler) || elapsed_ns == 0)
         return fail(error, QA_ERROR_ARGUMENT, "Round frame requires an idle healthy session and interval");
     component_state *entry = component(session, owner);
-    if (entry == NULL || entry->component.clock.kind != QA_CLOCK_Q3 || entry->clock.paused)
+    if (entry == NULL || entry->component.clock.kind != QA_RULESET_Q3 || entry->clock.paused)
         return fail(error, QA_ERROR_ARGUMENT, "Round frame requires an active Q3 source");
     if (session->elapsed_ns > UINT64_MAX - elapsed_ns || entry->clock.frame_number == UINT64_MAX ||
         entry->clock.elapsed_ns > UINT64_MAX - elapsed_ns ||
@@ -1332,7 +1332,7 @@ bool qa_session_round_step(qa_session *session, qa_actor_owner owner, uint64_t e
     /* Native Q3 components use the same end-of-interval source time as normal
      * admission. A supplied GAME callback preserves SV_MapRestart's entry time. */
     uint64_t source_time = callback ? start : start + elapsed_ns;
-    entry->clock.frame = (qa_source_frame){owner, QA_CLOCK_Q3, QA_FRAME_ENTRY,
+    entry->clock.frame = (qa_source_frame){owner, QA_RULESET_Q3, QA_FRAME_ENTRY,
         ++entry->clock.frame_number, start, elapsed_ns, source_time};
     entry->clock.elapsed_ns += elapsed_ns;
     entry->in_frame = true;

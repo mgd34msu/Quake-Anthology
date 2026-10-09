@@ -40,11 +40,11 @@ bool qa_launch_select_original(qa_launch_draft *d, const char *instance, qa_erro
     return qa_launch_set_provider(d, &provider, error);
 }
 
-static qa_clock_kind product_clock(const qa_product *p)
+static qa_ruleset_id product_clock(const qa_product *p)
 {
-    return p->family == QA_GAME_Q3 ? QA_CLOCK_Q3 : p->family == QA_GAME_Q2
-        ? (p->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)
-        : (p->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
+    return p->family == QA_GAME_Q3 ? QA_RULESET_Q3 : p->family == QA_GAME_Q2
+        ? (p->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)
+        : (p->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE);
 }
 
 bool qa_launch_select_game_type(qa_launch_draft *d, const char *component, qa_error *error)
@@ -84,7 +84,7 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
         if (episode && *episode->command) world.start_command = episode->command;
     }
     if (!qa_launch_set_world(d, &world, error)) return false;
-    qa_clock_kind clock = product_clock(p);
+    qa_ruleset_id clock = product_clock(p);
     qa_launch_provider provider = {.instance = "native:primary", .product = product,
         .runtime = p->program_kind, .implementation = program->key,
         .artifact = p->program_kind == QA_PROGRAM_BUILTIN ? NULL : p->program,

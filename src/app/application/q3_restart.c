@@ -72,9 +72,9 @@ bool application_q3_restart_clock(application_provider *provider, int32_t *out, 
         return application_fail(error, QA_ERROR_NOT_FOUND, "restart source clock is absent");
     if (provider->kind != APPLICATION_PROVIDER_Q3)
         return application_q3_guest_round_clock(provider, out, error);
-    if (!provider->state.q3 || provider->component.clock.kind != QA_CLOCK_Q3 ||
+    if (!provider->state.q3 || provider->component.clock.kind != QA_RULESET_Q3 ||
         !qa_session_clock(app->session, provider->owner, &clock) ||
-        clock.frame.kind != QA_CLOCK_Q3 || clock.frame.provider != provider->owner)
+        clock.frame.kind != QA_RULESET_Q3 || clock.frame.provider != provider->owner)
         return application_fail(error, QA_ERROR_NOT_FOUND, "restart has no actual native Q3 clock");
     uint32_t bits = (uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
     memcpy(out, &bits, sizeof(bits));
@@ -157,7 +157,7 @@ bool application_q3_restart_request(application_q3_restart *state, qa_applicatio
     qa_mode_id mode, const qa_command_invocation *command, qa_error *error) {
     application_provider *provider = app ? application_native_q3_mode_source_provider(app, mode) : NULL;
     if (!provider || !command || !command->raw || !command->argc || !command->argv ||
-        command->context.owner != provider->owner || command->context.dialect != QA_CONSOLE_Q3 ||
+        command->context.owner != provider->owner || command->context.dialect != QA_RULESET_Q3 ||
         !qa_application_command_context_active(app, &command->context))
         return application_fail(error, QA_ERROR_ARGUMENT, "restart invocation lacks its actual GAME context");
     qa_match_intent intent = {.kind = QA_MATCH_RESTART_MAP, .mode = mode, .actor = command->context.actor};
@@ -249,8 +249,8 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         !qa_source_save_u64(io, &context->generation) || !qa_source_save_actor(io, &context->actor)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ)
         context->registry = qa_actors_identity(qa_session_actors(io->session));
-    context->owner = owner; context->dialect = (qa_console_dialect)dialect; context->origin = (qa_command_origin)origin;
-    return owner && dialect == QA_CONSOLE_Q3 && origin == QA_COMMAND_SERVER &&
+    context->owner = owner; context->dialect = (qa_ruleset_id)dialect; context->origin = (qa_command_origin)origin;
+    return owner && dialect == QA_RULESET_Q3 && origin == QA_COMMAND_SERVER &&
         !context->client && !context->actor.registry && !context->direct && !context->console_text &&
         context->generation;
 }

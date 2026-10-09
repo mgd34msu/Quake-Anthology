@@ -150,7 +150,7 @@ static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error)
     }
     qa_command_context context = selected.command;
     if (!has_selected || !selected.console || selected.scope.provider != source->owner ||
-        context.owner != source->owner || context.dialect != QA_CONSOLE_Q3)
+        context.owner != source->owner || context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "nextmap needs an actual Q3 source console");
     context.origin = QA_COMMAND_SERVER;
     context.client = 0;
@@ -172,7 +172,7 @@ static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error)
 static map_registry *registry_read(map_parser *parser, qa_cvars *cvars, qa_error *error) {
     for (map_registry *r = parser->registries; r; r = r->next)
         if (r->cvars == cvars) return r;
-    if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3) {
+    if (!cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3) {
         application_fail(error, QA_ERROR_UNSUPPORTED, "nextmap variable has no Q3 registry");
         return NULL;
     }
@@ -459,7 +459,7 @@ bool application_native_config_command_allowed(qa_application *app,
     if (!source || source->kind != APPLICATION_PROVIDER_Q3 || source->owner != plan->owner ||
         plan->scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME || plan->scope.provider != source->owner ||
         plan->scope.seat || plan->context.owner != source->owner || plan->context.actor.registry ||
-        plan->context.dialect != QA_CONSOLE_Q3 || plan->context.origin != QA_COMMAND_SERVER ||
+        plan->context.dialect != QA_RULESET_Q3 || plan->context.origin != QA_COMMAND_SERVER ||
         !application_native_q3_console_at(source, &console, NULL, &actual) ||
         actual.session != plan->context.session || actual.cvar_view != plan->context.cvar_view ||
         !qa_application_command_context_active(app, &plan->context))
@@ -499,7 +499,7 @@ bool application_native_config_plan(qa_application *app, qa_mode_id mode,
             if (!application_native_config_command_allowed(app, &parser.plan, tokens.values[0], error))
                 okay = false;
             else if ((!parser.plan.assignment_count && !equal_name(tokens.values[0], expected)) ||
-                !cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || !variable || tokens.count < 2)
+                !cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3 || !variable || tokens.count < 2)
                 okay = application_fail(error, QA_ERROR_UNSUPPORTED, "config continuation lacks an actual direct source cvar command");
             else {
                 application_map_assignment value = {.name = copy_text(tokens.values[0], error),
@@ -542,7 +542,7 @@ bool application_native_mode_selected_map_command(void *opaque, qa_mode_id mode,
     bool okay = source_console(&parser, mode, error);
     if (okay) {
         qa_cvars *cvars = qa_console_cvar_owner(parser.console, &parser.plan.context, "nextmap");
-        if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
+        if (!cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3)
             okay = application_fail(error, QA_ERROR_UNSUPPORTED, "selected-map snapshot has no actual Q3 cvar scope");
         else {
             const qa_cvar_view *nextmap = qa_cvars_find(cvars, "nextmap");
@@ -605,13 +605,13 @@ bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
     bool okay = source_console(&parser, mode, error);
     qa_command_tokens tokens = {0};
     if (okay) {
-        size_t length = qa_command_separator((const char *)bytes.data, bytes.size, QA_CONSOLE_Q3);
+        size_t length = qa_command_separator((const char *)bytes.data, bytes.size, QA_RULESET_Q3);
         size_t copied = length < parser.command_limit ? length : parser.command_limit - 1;
         char *line = malloc(copied + 1);
         if (!line) okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source restart command");
         else {
             memcpy(line, bytes.data, copied); line[copied] = 0;
-            okay = qa_command_tokenize(line, QA_CONSOLE_Q3, false, &tokens, error);
+            okay = qa_command_tokenize(line, QA_RULESET_Q3, false, &tokens, error);
             free(line);
         }
         /* Enqueued source intents retain one actual engine command. Subsequent
@@ -627,7 +627,7 @@ bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
         okay = application_fail(error, QA_ERROR_ARGUMENT, "restart continuation differs from its source command");
     qa_cvars *cvars = okay ? qa_console_cvar_owner(parser.console, &parser.plan.context, "g_doWarmup") : NULL;
     const qa_cvar_view *warmup = qa_cvars_find(cvars, "g_doWarmup");
-    if (okay && (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || !warmup))
+    if (okay && (!cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3 || !warmup))
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "restart has no actual source warmup cvar");
     if (okay && !qa_application_command_context_active(app, &parser.plan.context))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "restart source retired during admission");

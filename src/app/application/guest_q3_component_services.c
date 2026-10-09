@@ -94,7 +94,7 @@ static bool arguments(void *context,qa_native_host_command_view *out,qa_error *e
 static bool command_current(void *context,const qa_command_context *command)
 {
     application_q3_component *c=context; qa_error e={0};
-    return command&&command->owner==c->options.host.command_context.owner&&command->dialect==QA_CONSOLE_Q3&&q3component_current(c,&e);
+    return command&&command->owner==c->options.host.command_context.owner&&command->dialect==QA_RULESET_Q3&&q3component_current(c,&e);
 }
 static bool command_capture(void *context,const qa_command_context *command,qa_command_context *out,qa_error *e)
 { if(!command_current(context,command)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component command left its private source namespace"); *out=*command; return true; }
@@ -117,7 +117,7 @@ static qa_command_result console_command(void *context,const qa_command_invocati
 }
 bool q3component_services(application_q3_component *c,qa_error *e)
 {
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,
+    qa_cvar_options cvars={.dialect=QA_RULESET_Q3,
         .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_GAME,.user=c,.print=print,.cheats_allowed=cheats,
         .declaration_save_policy=application_native_q3_cvar_save_policy};
     c->cvars=qa_cvars_create_view(qa_application_cvars(c->options.application),&cvars,e); if(!c->cvars) return false;

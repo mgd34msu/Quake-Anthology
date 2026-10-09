@@ -21,8 +21,8 @@ static bool pressed(const qa_seat_input_sample *s, qa_input_action action) {
 static float add(float value, float amount, bool integral) {
     return integral ? truncf(value + amount) : value + amount;
 }
-qa_input_command_tuning qa_input_command_defaults(qa_movement_kind kind) {
-    bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
+qa_input_command_tuning qa_input_command_defaults(qa_ruleset_id kind) {
+    bool q1 = kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD;
     return (qa_input_command_tuning){.view = {.forward_speed = 200,
                                               .back_speed = 200,
                                               .side_speed = q1 ? 350 : 200,
@@ -51,8 +51,8 @@ void qa_input_command_center(qa_input_command_builder *builder, float delta_pitc
     builder->angles.x = -delta_pitch;
 }
 bool qa_input_command_impulse(qa_input_command_builder *builder, int32_t impulse, qa_error *error) {
-    if (!builder || (builder->kind != QA_MOVEMENT_NETQUAKE &&
-        builder->kind != QA_MOVEMENT_QUAKEWORLD) || impulse < 1 || impulse > UINT8_MAX) {
+    if (!builder || (builder->kind != QA_RULESET_NETQUAKE &&
+        builder->kind != QA_RULESET_QUAKEWORLD) || impulse < 1 || impulse > UINT8_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Impulse requires an NQ/QW builder and value 1..255");
         return false;
     }
@@ -63,10 +63,10 @@ bool qa_input_command_impulse(qa_input_command_builder *builder, int32_t impulse
 static bool valid(const qa_input_command_builder *builder, const qa_input_command_tuning *t,
                   const qa_seat_input_sample *s, const qa_input_command_frame *f,
                   double source_ms) {
-    if (!builder || !t || !s || !f || f->kind != builder->kind || f->kind < QA_MOVEMENT_NETQUAKE ||
-        f->kind > QA_MOVEMENT_Q3 || !qa_vec_finite(builder->angles) ||
-        (builder->pending_impulse && builder->kind != QA_MOVEMENT_NETQUAKE &&
-         builder->kind != QA_MOVEMENT_QUAKEWORLD) ||
+    if (!builder || !t || !s || !f || f->kind != builder->kind || f->kind < QA_RULESET_NETQUAKE ||
+        f->kind > QA_RULESET_Q3 || !qa_vec_finite(builder->angles) ||
+        (builder->pending_impulse && builder->kind != QA_RULESET_NETQUAKE &&
+         builder->kind != QA_RULESET_QUAKEWORLD) ||
         !qa_mouse_tuning_valid(&t->mouse) || !isfinite(source_ms) || source_ms < 0 ||
         !isfinite(s->frame_ms) || s->frame_ms <= 0 || !isfinite(s->gamepad.move.x) ||
         !isfinite(s->gamepad.move.y) || !isfinite(s->gamepad.look_degrees.x) ||
@@ -80,10 +80,10 @@ static bool valid(const qa_input_command_builder *builder, const qa_input_comman
         return false;
     if (f->has_pitch_drift && !isfinite(f->ideal_pitch))
         return false;
-    if ((f->kind == QA_MOVEMENT_Q2_CLASSIC || f->kind == QA_MOVEMENT_Q2_RERELEASE) &&
+    if ((f->kind == QA_RULESET_Q2_CLASSIC || f->kind == QA_RULESET_Q2_RERELEASE) &&
         !qa_vec_finite(f->delta_angles))
         return false;
-    if (f->kind == QA_MOVEMENT_NETQUAKE && !isfinite(f->acknowledged_server_seconds))
+    if (f->kind == QA_RULESET_NETQUAKE && !isfinite(f->acknowledged_server_seconds))
         return false;
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
         if (!isfinite(s->buttons[i].fraction) || s->buttons[i].fraction < 0 ||
@@ -101,8 +101,8 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
     }
     qa_input_command_builder next = *builder;
     const qa_view_input_tuning *v = &t->view;
-    bool q3 = f->kind == QA_MOVEMENT_Q3;
-    bool q1 = f->kind == QA_MOVEMENT_NETQUAKE || f->kind == QA_MOVEMENT_QUAKEWORLD;
+    bool q3 = f->kind == QA_RULESET_Q3;
+    bool q1 = f->kind == QA_RULESET_NETQUAKE || f->kind == QA_RULESET_QUAKEWORLD;
     bool speed = active(s, QA_INPUT_WALK), strafe = active(s, QA_INPUT_STRAFE),
          klook = active(s, QA_INPUT_KLOOK);
     float seconds = (float)(source_ms / 1000),
@@ -178,7 +178,7 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
                      t->mouse.look_spring,
             .ideal_pitch = f->ideal_pitch,
             .forward = forward,
-            .threshold = f->kind == QA_MOVEMENT_QUAKEWORLD ? 200 : v->forward_speed,
+            .threshold = f->kind == QA_RULESET_QUAKEWORLD ? 200 : v->forward_speed,
             .speed = t->drift_speed,
             .delay = t->drift_delay};
         pitch = qa_pitch_drift_sample(&next.drift, pitch, seconds, &drift);
@@ -190,7 +190,7 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
     if (q3) pitch = clamp(pitch, previous_pitch - 90, previous_pitch + 90);
     if (q1)
         pitch = clamp(pitch, -70, 80);
-    if (f->kind == QA_MOVEMENT_Q2_CLASSIC || f->kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (f->kind == QA_RULESET_Q2_CLASSIC || f->kind == QA_RULESET_Q2_RERELEASE) {
         float delta = f->delta_angles.x;
         if (delta > 180)
             delta -= 360;
@@ -231,9 +231,9 @@ static int32_t signed_word(uint32_t value) {
 void qa_input_usercmd_build(const qa_input_command_intent *intent,
     const qa_input_command_frame *frame, double elapsed, qa_input_command_encoding encoding,
     qa_input_usercmd *out) {
-    qa_movement_kind kind = frame->kind;
-    bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
-    bool q3 = kind == QA_MOVEMENT_Q3;
+    qa_ruleset_id kind = frame->kind;
+    bool q1 = kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD;
+    bool q3 = kind == QA_RULESET_Q3;
     const float scale = stock[kind].move;
     qa_vec3 move = qa_v3((float)(intent->move.x * PHYSICAL_MOVE_UNIT),
                         (float)(intent->move.y * PHYSICAL_MOVE_UNIT),
@@ -268,7 +268,7 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
         if (action(intent, QA_INPUT_ATTACK) && (q1 || frame->attack_allowed)) buttons |= 1;
         if ((q1 && action(intent, QA_INPUT_JUMP)) || (!q1 && action(intent, QA_INPUT_USE))) buttons |= 2;
         if (!q1 && intent->any_key_down && intent->game_focus) buttons |= 128;
-        if (kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (kind == QA_RULESET_Q2_RERELEASE) {
             if (action(intent, QA_INPUT_HOLSTER)) buttons |= 4;
             if (action(intent, QA_INPUT_JUMP) || action(intent, QA_INPUT_MOVE_UP)) buttons |= 8;
             if (action(intent, QA_INPUT_CROUCH) || action(intent, QA_INPUT_MOVE_DOWN)) buttons |= 16;
@@ -277,27 +277,27 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
     qa_input_usercmd command = {.kind = kind, .sequence = frame->sequence,
         .angles = intent->angles, .milliseconds = trunc(elapsed > 250 ? 100 : elapsed),
         .buttons = buttons, .server_time_ms = q3 ? frame->server_time_ms : 0,
-        .server_frame = kind == QA_MOVEMENT_Q2_RERELEASE ? frame->server_frame : 0,
-        .acknowledged_server_seconds = kind == QA_MOVEMENT_NETQUAKE ? frame->acknowledged_server_seconds : 0,
-        .weapon = q3 ? frame->weapon : 0, .light_level = kind == QA_MOVEMENT_Q2_CLASSIC ? frame->light_level : 0,
-        .impulse = kind == QA_MOVEMENT_Q2_RERELEASE || q3 ? 0 : intent->impulse};
-    if (q3 || kind == QA_MOVEMENT_Q2_CLASSIC ||
-        (kind == QA_MOVEMENT_Q2_RERELEASE && intent->directional)) {
+        .server_frame = kind == QA_RULESET_Q2_RERELEASE ? frame->server_frame : 0,
+        .acknowledged_server_seconds = kind == QA_RULESET_NETQUAKE ? frame->acknowledged_server_seconds : 0,
+        .weapon = q3 ? frame->weapon : 0, .light_level = kind == QA_RULESET_Q2_CLASSIC ? frame->light_level : 0,
+        .impulse = kind == QA_RULESET_Q2_RERELEASE || q3 ? 0 : intent->impulse};
+    if (q3 || kind == QA_RULESET_Q2_CLASSIC ||
+        (kind == QA_RULESET_Q2_RERELEASE && intent->directional)) {
         qa_movement_command source = {.kind = kind, .angles = intent->angles}, converted;
         qa_input_command_basis from = {.kind = kind}, to = {.kind = kind,
-            .words = q3 || kind == QA_MOVEMENT_Q2_CLASSIC, .relative = intent->directional,
+            .words = q3 || kind == QA_RULESET_Q2_CLASSIC, .relative = intent->directional,
             .wrap_words = true, .delta_angles = frame->delta_angles};
         memcpy(to.delta_words, frame->delta_angle_words, sizeof(to.delta_words));
         qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
-        if (kind == QA_MOVEMENT_Q2_RERELEASE) command.angles = converted.angles;
+        if (kind == QA_RULESET_Q2_RERELEASE) command.angles = converted.angles;
         else {
             float *angles[] = {&command.angles.x, &command.angles.y, &command.angles.z};
             for (unsigned i = 0; i < 3; ++i) {
                 uint32_t word = (uint32_t)converted.angle_words[i];
                 command.angle_words[i] = encoding == QA_INPUT_COMMAND_SOURCE_Q3 ||
-                    (kind == QA_MOVEMENT_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
+                    (kind == QA_RULESET_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
                     ? signed_word(word) : (int32_t)word;
-                if (intent->directional && kind == QA_MOVEMENT_Q2_CLASSIC)
+                if (intent->directional && kind == QA_RULESET_Q2_CLASSIC)
                     *angles[i] = (float)signed_word(word) * (360.0f / 65536.0f);
             }
         }
@@ -305,17 +305,17 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
     if (q3 && encoding != QA_INPUT_COMMAND_SOURCE_Q3) {
         move.x = clamp(move.x, -scale, scale); move.y = clamp(move.y, -scale, scale);
         move.z = clamp(move.z, -scale, scale);
-    } else if (kind == QA_MOVEMENT_Q2_CLASSIC || kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (kind == QA_RULESET_Q2_CLASSIC || kind == QA_RULESET_Q2_RERELEASE) {
         move.x = clamp(move.x, -scale, scale); move.y = clamp(move.y, -scale, scale);
     }
-    if (kind == QA_MOVEMENT_Q2_RERELEASE) move.z = 0;
+    if (kind == QA_RULESET_Q2_RERELEASE) move.z = 0;
     else move = qa_v3(truncf(move.x), truncf(move.y), truncf(move.z));
     command.move = move;
     *out = command;
 }
-float qa_input_command_units(qa_movement_kind kind) {
-    return kind == QA_MOVEMENT_Q3 ? 127.0f :
-        kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD ? 320.0f : 200.0f;
+float qa_input_command_units(qa_ruleset_id kind) {
+    return kind == QA_RULESET_Q3 ? 127.0f :
+        kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD ? 320.0f : 200.0f;
 }
 void qa_input_command_convert(const qa_movement_command *source, const qa_input_move_intent *precise,
     const qa_input_command_basis *from, const qa_input_command_basis *to,

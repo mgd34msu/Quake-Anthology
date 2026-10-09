@@ -476,7 +476,7 @@ bool application_qc_control_receipt_time(const application_provider *provider,
         ? provider->state.qc.engine : NULL;
     if (!engine || !out || !engine->initialized || !provider->constructed ||
         !provider->attached || provider->close_pending || engine->profile != QA_QC_QUAKEWORLD ||
-        provider->component.clock.kind != QA_CLOCK_QUAKEWORLD ||
+        provider->component.clock.kind != QA_RULESET_QUAKEWORLD ||
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW receipt time requires its actual physical source owner");
     bool member;
@@ -606,7 +606,7 @@ bool application_qc_control_state(application_provider *provider, qa_actor_id ac
         environment->health = health;
         environment->has_body_bounds = true; environment->body_bounds = (qa_bounds){minimum, maximum};
     }
-    if (state->kind == QA_MOVEMENT_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
+    if (state->kind == QA_RULESET_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
         qa_nq_movement_state *nq = &state->data.nq;
         float flags, level, type, teleport, ideal; int32_t flag_bits;
         nq->angles = angles; nq->view_angles = fix != 0 ? angles : view;
@@ -624,7 +624,7 @@ bool application_qc_control_state(application_provider *provider, qa_actor_id ac
             !control_integer(level, &nq->water_level, error) ||
             !control_integer(type, &nq->water_type, error)) return false;
         nq->flags = (uint32_t)flag_bits; nq->teleport_time_seconds = teleport; nq->ideal_pitch = ideal;
-    } else if (state->kind == QA_MOVEMENT_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
+    } else if (state->kind == QA_RULESET_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
         qa_qw_movement_state *qw = &state->data.qw; float teleport;
         qw->origin.x = (double)origin.x + minimum.x + 16;
         qw->origin.y = (double)origin.y + minimum.y + 16;
@@ -634,11 +634,11 @@ bool application_qc_control_state(application_provider *provider, qa_actor_id ac
         qw->water_jump_time_seconds = teleport;
     }
     if (spectator) {
-        if (state->kind == QA_MOVEMENT_NETQUAKE) state->data.nq.move_type = 8;
-        else if (state->kind == QA_MOVEMENT_QUAKEWORLD) state->data.qw.spectator = 1;
-        else if (state->kind == QA_MOVEMENT_Q2_CLASSIC) state->data.q2.type = 1;
-        else if (state->kind == QA_MOVEMENT_Q2_RERELEASE) state->data.q2r.type = 2;
-        else if (state->kind == QA_MOVEMENT_Q3) state->data.q3.movement_type = 1;
+        if (state->kind == QA_RULESET_NETQUAKE) state->data.nq.move_type = 8;
+        else if (state->kind == QA_RULESET_QUAKEWORLD) state->data.qw.spectator = 1;
+        else if (state->kind == QA_RULESET_Q2_CLASSIC) state->data.q2.type = 1;
+        else if (state->kind == QA_RULESET_Q2_RERELEASE) state->data.q2r.type = 2;
+        else if (state->kind == QA_RULESET_Q3) state->data.q3.movement_type = 1;
     }
     return control_current(engine, reference, actor, error);
 }
@@ -677,7 +677,7 @@ bool application_qc_control_body(application_provider *provider, qa_actor_id act
         !control_ground(engine, reference, actor, ground, true, error)) return false;
     if (ground.hit == QA_TRACE_HIT_WORLD)
         body->ground = qa_actor_reference_source(provider->owner, 0);
-    if (engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_MOVEMENT_QUAKEWORLD) return true;
+    if (engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_RULESET_QUAKEWORLD) return true;
     if (!control_vector(engine, reference, actor, "mins", &minimum, error) ||
         !control_vector(engine, reference, actor, "angles", &body->angles, error) ||
         !control_word((double)state->data.qw.origin.x - minimum.x - 16, &body->origin.x, error) ||
@@ -690,7 +690,7 @@ bool application_qc_control_profile(application_provider *provider, qa_actor_id 
 {
     struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
     if (!engine || !profile) return application_fail(error, QA_ERROR_ARGUMENT, "QC control profile is absent");
-    if (provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD || profile->kind != QA_MOVEMENT_QUAKEWORLD)
+    if (provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD || profile->kind != QA_RULESET_QUAKEWORLD)
         return true;
     int32_t reference; bool spectator;
     if (!control_client(engine, actor, &reference, &spectator, error)) return false;
@@ -728,7 +728,7 @@ static bool control_store_state(struct application_qc_state *engine, int32_t ref
                                   const qa_movement_call *call, qa_error *error)
 {
     const qa_movement_state *state = call->state;
-    if (state->kind == QA_MOVEMENT_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
+    if (state->kind == QA_RULESET_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
         const qa_nq_movement_state *nq = &state->data.nq;
         float teleport;
         if (!control_word(nq->teleport_time_seconds, &teleport, error)) return false;
@@ -744,7 +744,7 @@ static bool control_store_state(struct application_qc_state *engine, int32_t ref
             control_store_scalar(engine, reference, actor, "idealpitch", nq->ideal_pitch, error) &&
             control_store_scalar(engine, reference, actor, "fixangle", nq->fix_angle ? 1 : 0, error);
     }
-    if (state->kind == QA_MOVEMENT_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
+    if (state->kind == QA_RULESET_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
         const qa_qw_movement_state *qw = &state->data.qw; qa_vec3 minimum;
         if (!control_vector(engine, reference, actor, "mins", &minimum, error)) return false;
         qa_vec3 origin;
@@ -768,15 +768,15 @@ static bool control_transition(struct application_qc_state *engine, int32_t refe
 }
 static bool control_jump(const qa_movement_command *command)
 {
-    return command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD ?
-        (command->buttons & 2u) != 0 : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
+    return command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD ?
+        (command->buttons & 2u) != 0 : command->kind == QA_RULESET_Q2_RERELEASE ?
         (command->buttons & 8u) != 0 : command->up_move >= 10;
 }
 static void control_consume_jump(qa_movement_command *command)
 {
-    if (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD)
+    if (command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD)
         command->buttons &= ~2u;
-    else if (command->kind == QA_MOVEMENT_Q2_RERELEASE) command->buttons &= ~8u;
+    else if (command->kind == QA_RULESET_Q2_RERELEASE) command->buttons &= ~8u;
     else if (command->up_move > 0) command->up_move = 0;
 }
 static bool control_clear_ground(struct application_qc_state *engine, qa_actor_id actor, qa_error *error)
@@ -820,9 +820,9 @@ static bool control_mixed_water(struct application_qc_state *engine, int32_t ref
                                   const qa_movement_call *call, qa_error *error)
 {
     qa_movement_ground ground;
-    if (call->state->kind == QA_MOVEMENT_NETQUAKE) ground = call->state->data.nq.ground;
-    else if (call->state->kind == QA_MOVEMENT_QUAKEWORLD) ground = call->state->data.qw.ground;
-    else if (call->state->kind == QA_MOVEMENT_Q3) ground = call->state->data.q3.ground;
+    if (call->state->kind == QA_RULESET_NETQUAKE) ground = call->state->data.nq.ground;
+    else if (call->state->kind == QA_RULESET_QUAKEWORLD) ground = call->state->data.qw.ground;
+    else if (call->state->kind == QA_RULESET_Q3) ground = call->state->data.q3.ground;
     else {
         qa_body_state body;
         if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
@@ -833,7 +833,7 @@ static bool control_mixed_water(struct application_qc_state *engine, int32_t ref
         return application_fail(error, QA_ERROR_ARGUMENT, "Mixed QC postthink needs actual water outputs");
     int32_t level = *call->water_level, type = *call->water_type;
     int32_t source_type = level == 0 ? -1 :
-        call->state->kind == QA_MOVEMENT_NETQUAKE || call->state->kind == QA_MOVEMENT_QUAKEWORLD ? type :
+        call->state->kind == QA_RULESET_NETQUAKE || call->state->kind == QA_RULESET_QUAKEWORLD ? type :
         (type & 16) != 0 ? -4 : (type & 8) != 0 ? -5 : -3;
     return control_ground(engine, reference, actor, ground, false, error) &&
         control_store_scalar(engine, reference, actor, "waterlevel", (float)level, error) &&
@@ -871,7 +871,7 @@ static bool control_run_think(struct application_qc_state *engine, qa_actor_id a
             frame, QA_THINK_DURING_PHYSICS, &result, error);
     }
     bool member;
-    if (engine->provider->component.clock.kind != QA_CLOCK_NETQUAKE)
+    if (engine->provider->component.clock.kind != QA_RULESET_NETQUAKE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Foreign QC source think requires a NetQuake client turn");
     if (!application_qc_control_source_client(engine->provider, actor, &member, error)) return false;
     if (!member)
@@ -967,25 +967,25 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
     int32_t reference; bool spectator;
     if (!control_client(engine, actor, &reference, &spectator, error) ||
         !control_store_state(engine, reference, actor, call, error)) return false;
-    if (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind == QA_MOVEMENT_QUAKEWORLD &&
+    if (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind == QA_RULESET_QUAKEWORLD &&
         (phase == QA_MOVE_LINK || phase == QA_MOVE_LINK_TRIGGERS || phase == QA_MOVE_POSTTHINK)) {
         if (call->water_level && !control_store_scalar(engine, reference, actor, "waterlevel", (float)*call->water_level, error)) return false;
         if (call->water_type && !control_store_scalar(engine, reference, actor, "watertype", (float)*call->water_type, error)) return false;
     }
     if (phase == QA_MOVE_PRETHINK) {
-        if (context->command_only && context->command.kind == QA_CLOCK_QUAKEWORLD) {
+        if (context->command_only && context->command.kind == QA_RULESET_QUAKEWORLD) {
             engine->source_time_ns = context->command.time_ns;
             if (!qa_qc_game_set_time(provider->state.qc.game, (double)engine->source_time_ns / 1e9,
                 (double)context->command.elapsed_ns / 1e9, error)) return false;
         }
         int32_t before_flags = 0; qa_vec3 before_velocity = {0};
         bool mixed = path == APPLICATION_CONTROL_MIXED ||
-            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD) ||
-            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_MOVEMENT_NETQUAKE);
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_RULESET_QUAKEWORLD) ||
+            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_RULESET_NETQUAKE);
         if (mixed && !control_transition(engine, reference, actor, &before_flags, &before_velocity, error)) return false;
         if (path == APPLICATION_CONTROL_QW_GROUP) {
             const qa_movement_command *source_command = context->source_qwcmd &&
-                call->state->kind != QA_MOVEMENT_QUAKEWORLD ? &context->source_command : call->command;
+                call->state->kind != QA_RULESET_QUAKEWORLD ? &context->source_command : call->command;
             if (!control_qw_input(engine, reference, actor, source_command, error)) return false;
             if (spectator) goto refreshed;
         }
@@ -1032,8 +1032,8 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
         }
     } else if (phase == QA_MOVE_POSTTHINK) {
         if ((path == APPLICATION_CONTROL_MIXED ||
-            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD) ||
-            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_MOVEMENT_NETQUAKE)) &&
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_RULESET_QUAKEWORLD) ||
+            (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_RULESET_NETQUAKE)) &&
             !control_mixed_water(engine, reference, actor, call, error)) return false;
         if (!context->defer_postthink && !(spectator ?
             application_qc_spectator_callback(engine, "SpectatorThink", actor, error) :

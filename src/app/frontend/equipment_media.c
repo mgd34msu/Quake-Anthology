@@ -596,7 +596,7 @@ bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata
         !isfinite(seconds))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
     frontend_q1_view_settings view;
-    if (!frontend_view_settings_q1_sample(settings, quakeworld ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+    if (!frontend_view_settings_q1_sample(settings, quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
         &view, error)) return false;
     *out = (qa_hud_q1_status){.picture_context = materials, .picture = q1_hud_picture_read, .face = face,
         .health = client->health, .armor = client->armor, .items = client->items,

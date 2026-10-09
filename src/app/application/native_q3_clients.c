@@ -135,7 +135,7 @@ bool application_native_q3_mode_client_slot(void *opaque, qa_mode_id mode,
     if (provider->kind == APPLICATION_PROVIDER_Q3) {
         if (!provider->state.q3 || !qa_q3_native_client_slot(provider->state.q3, actor, slot, error)) return false;
     } else if ((provider->kind != APPLICATION_PROVIDER_QVM && provider->kind != APPLICATION_PROVIDER_NATIVE) ||
-        provider->component.clock.kind != QA_CLOCK_Q3 ||
+        provider->component.clock.kind != QA_RULESET_Q3 ||
         !application_q3_guest_actor_bound(provider, actor, slot)) return false;
     *owner = provider->owner;
     return true;
@@ -1492,7 +1492,7 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         !qa_actor_id_equal(app->controls[actor.slot].actor, actor) ||
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
     application_control_record *control = &app->controls[actor.slot];
-    bool foreign = control->state.kind != QA_MOVEMENT_Q3;
+    bool foreign = control->state.kind != QA_RULESET_Q3;
     bool noclip;
     qa_q3_wire_policy policy = {0};
     if (source_client) {
@@ -1539,7 +1539,7 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
             }
         } else if ((equipment->kind == APPLICATION_PROVIDER_QVM ||
                     equipment->kind == APPLICATION_PROVIDER_NATIVE) &&
-                   equipment->component.clock.kind == QA_CLOCK_Q3) {
+                   equipment->component.clock.kind == QA_RULESET_Q3) {
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "selected guest Q3 equipment has no typed movement speed capability");
         }
@@ -1593,7 +1593,7 @@ bool application_native_q3_source_client_run(void *opaque, qa_actor_id actor,
     if (!app || !frame || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->constructed || !provider->attached || provider->close_pending || app->destroy_requested ||
         app->operation != APPLICATION_ADVANCING || frame->provider != provider->owner ||
-        frame->kind != QA_CLOCK_Q3 || frame->phase != QA_ENTITY_PHYSICS ||
+        frame->kind != QA_RULESET_Q3 || frame->phase != QA_ENTITY_PHYSICS ||
         !qa_session_active_frame(app->session, provider->owner, &active) ||
         active.kind != frame->kind || active.phase != frame->phase || active.number != frame->number ||
         active.start_ns != frame->start_ns || active.time_ns != frame->time_ns ||

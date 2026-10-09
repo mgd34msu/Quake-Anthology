@@ -89,9 +89,9 @@ static bool selection_command(const qa_input_binding *binding)
     }
     return false;
 }
-static bool general(binding_set *set,qa_console_dialect dialect,qa_error *error)
+static bool general(binding_set *set,qa_ruleset_id dialect,qa_error *error)
 {
-    if ((unsigned)dialect>QA_CONSOLE_Q3) return fail(error,QA_ERROR_ARGUMENT,"Invalid binding movement dialect");
+    if ((unsigned)dialect>QA_RULESET_Q3) return fail(error,QA_ERROR_ARGUMENT,"Invalid binding movement dialect");
     qa_input_binding binding;
     for (size_t i=0;qa_input_default_binding_at(dialect,0,i,&binding);++i)
         if (!put(set,&binding,false,error)) return false;
@@ -136,7 +136,7 @@ bool frontend_authored_bindings_clone(const frontend_authored_bindings *previous
     *out=owner; return true;
 }
 static bool defaults(frontend_authored_bindings *owner,const frontend_authored_bindings *primary,
-    qa_input_seat *input,qa_console_dialect dialect,qa_error *error)
+    qa_input_seat *input,qa_ruleset_id dialect,qa_error *error)
 {
     if (!owner || !input || owner->initialized || (primary && !primary->initialized))
         return fail(error,QA_ERROR_ARGUMENT,"Authored defaults require the actual unfinished seat phase");
@@ -154,10 +154,10 @@ static bool defaults(frontend_authored_bindings *owner,const frontend_authored_b
     return true;
 }
 bool frontend_authored_bindings_defaults(frontend_authored_bindings *owner,qa_input_seat *input,
-    qa_console_dialect dialect,qa_error *error)
+    qa_ruleset_id dialect,qa_error *error)
 { return defaults(owner,NULL,input,dialect,error); }
 bool frontend_authored_bindings_secondary(frontend_authored_bindings *owner,
-    const frontend_authored_bindings *primary,qa_input_seat *input,qa_console_dialect dialect,qa_error *error)
+    const frontend_authored_bindings *primary,qa_input_seat *input,qa_ruleset_id dialect,qa_error *error)
 { return defaults(owner,primary,input,dialect,error); }
 static qa_physical_input canonical_input(qa_physical_input input)
 {
@@ -318,7 +318,7 @@ static bool has_item(qa_strings *strings,const qa_item_definition *items,size_t 
     }
     return false;
 }
-static bool selected(binding_set *set,qa_console_dialect dialect,qa_strings *strings,
+static bool selected(binding_set *set,qa_ruleset_id dialect,qa_strings *strings,
     const qa_item_definition *items,size_t count,qa_error *error)
 {
     if (!general(set,dialect,error)) return false;
@@ -334,7 +334,7 @@ static bool selected(binding_set *set,qa_console_dialect dialect,qa_strings *str
     }
     return true;
 }
-bool frontend_authored_bindings_seed(frontend_authored_bindings *owner,qa_console_dialect dialect,
+bool frontend_authored_bindings_seed(frontend_authored_bindings *owner,qa_ruleset_id dialect,
     qa_strings *strings,const qa_item_definition *items,size_t count,qa_error *error)
 {
     if (!owner || owner->initialized || !strings || (count && !items))
@@ -343,7 +343,7 @@ bool frontend_authored_bindings_seed(frontend_authored_bindings *owner,qa_consol
     if (!selected(&next,dialect,strings,items,count,error)) { clear(&next); return false; }
     clear(&owner->selected); owner->selected=next; return true;
 }
-static bool selected_unchanged(const binding_set *set,qa_console_dialect dialect,
+static bool selected_unchanged(const binding_set *set,qa_ruleset_id dialect,
     qa_strings *strings,const qa_item_definition *items,size_t count)
 {
     size_t index=0,general_count=0; qa_input_binding binding;
@@ -378,11 +378,11 @@ static qa_input_binding remap(qa_input_binding binding,int32_t controller)
     return binding;
 }
 bool frontend_authored_bindings_select(frontend_authored_bindings *owner,qa_input_seat *input,
-    qa_console_dialect dialect,qa_strings *strings,const qa_item_definition *items,size_t count,
+    qa_ruleset_id dialect,qa_strings *strings,const qa_item_definition *items,size_t count,
     int32_t controller,qa_error *error)
 {
     if (!owner || !owner->initialized || !input || !strings || (count && !items) || controller<0 ||
-        (unsigned)dialect>QA_CONSOLE_Q3)
+        (unsigned)dialect>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Selected defaults require actual seat item definitions");
     if (owner->selection_applied && selected_unchanged(&owner->selected,dialect,strings,items,count)) return true;
     binding_set next={0},live={0};

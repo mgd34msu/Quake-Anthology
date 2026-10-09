@@ -53,14 +53,14 @@ static bool capture(void *context, const qa_command_context *source, qa_command_
     if (!available(row) || !source || (source->owner && source->owner != provider->owner) || source->seat != row->seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT console lost its actual receiver and authored seat");
     qa_command_context command = *source;
-    command.owner = provider->owner; command.dialect = QA_CONSOLE_Q3;
+    command.owner = provider->owner; command.dialect = QA_RULESET_Q3;
     return application_command_capture(provider->application, &command, out, error);
 }
 static bool active(void *context, const qa_command_context *command)
 {
     struct application_guest_q3_client_console *row = context;
     return available(row) && command && command->owner == row->engine->provider->owner && command->seat == row->seat &&
-        command->dialect == QA_CONSOLE_Q3 && application_command_active(row->engine->provider->application, command);
+        command->dialect == QA_RULESET_Q3 && application_command_active(row->engine->provider->application, command);
 }
 static void print(void *context, const qa_command_context *command, const char *text)
 {
@@ -179,13 +179,13 @@ bool application_guest_q3_client_console_prepare(struct application_q3_guest *en
         (void)globals_close(row,NULL);
         free(row); return false;
     }
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3, .side = QA_CVAR_SIDE_CLIENT,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3, .side = QA_CVAR_SIDE_CLIENT,
         .role = kind == QA_QVM_CGAME ? QA_CVAR_ROLE_CGAME : QA_CVAR_ROLE_UI, .seat = seat,
         .user = engine->provider->application,
         .print = cvar_print, .cheats_allowed = cheats};
     row->cvars = qa_cvars_create_view(engine->provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner, .seat = seat,
-        .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars,
+        .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars,
         .user = row, .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = complete, .allow_command = allowed,
         .source_command = dispatch, .forward = forward};
@@ -218,7 +218,7 @@ bool application_guest_q3_client_console_source(struct application_q3_guest *eng
         .console = row->console, .cvars = row->cvars,
         .declaration_owner = declaration ? declaration->service_owner : engine->provider->owner,
         .command = {.owner = engine->provider->owner, .seat = row->seat,
-            .cvar_view = qa_cvars_view_identity(row->cvars), .dialect = QA_CONSOLE_Q3,
+            .cvar_view = qa_cvars_view_identity(row->cvars), .dialect = QA_RULESET_Q3,
             .origin = QA_COMMAND_SEAT}};
     return true;
 }

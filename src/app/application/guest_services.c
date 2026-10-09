@@ -62,14 +62,14 @@ static qa_command_result forward(void *context,const qa_command_invocation *comm
 
 bool application_console_create(qa_application *application, qa_error *error)
 {
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_UNSPECIFIED, .role = QA_CVAR_ROLE_ENGINE,
         .user = application, .print = cvar_print};
     application->cvars = qa_cvars_create(&cvars, error);
     if (application->cvars == NULL) return false;
     application->bot_minplayers = qa_cvars_resolve(application->cvars, "bot_minplayers");
     if (!qa_cvars_register(application->cvars, "sv_cheats", "", 0, 0, NULL, error)) return false;
-    qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
+    qa_console_options console = {.context = {.dialect = QA_RULESET_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,
         .user = application, .print = application_console_print,
         .read_script = read_script, .release_script = release_script,
@@ -84,7 +84,7 @@ bool application_console_create(qa_application *application, qa_error *error)
 static void guest_print(void *context, const char *text)
 {
     application_provider *provider = context;
-    qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
+    qa_command_context command = {.owner = provider->owner, .dialect = QA_RULESET_Q3,
         .origin = QA_COMMAND_SERVER};
     qa_console *console = application_guest_q3_console_owner(provider);
     qa_console_emit(console ? console : provider->application->console, &command, text);
@@ -193,7 +193,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         .write_view = {.root = write_root},
         .game_directory = directory,
         .command_context = {.owner = provider->owner, .seat = role == QA_QVM_GAME ? 0 : seat,
-            .dialect = QA_CONSOLE_Q3,
+            .dialect = QA_RULESET_Q3,
             .origin = role == QA_QVM_GAME ? QA_COMMAND_SERVER : QA_COMMAND_SEAT},
         .common = {.context = provider, .print = guest_print,
             .milliseconds = guest_milliseconds, .calendar = guest_calendar},

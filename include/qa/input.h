@@ -176,7 +176,7 @@ typedef struct qa_view_input_tuning {
     bool always_run;
 } qa_view_input_tuning;
 typedef struct qa_input_command_frame {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     uint64_t sequence;
     double acknowledged_server_seconds;
     qa_vec3 delta_angles;
@@ -188,7 +188,7 @@ typedef struct qa_input_command_frame {
     float ideal_pitch;
 } qa_input_command_frame;
 typedef struct qa_input_command_builder {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     qa_vec3 angles;
     qa_mouse_input mouse;
     qa_pitch_drift drift;
@@ -221,7 +221,7 @@ typedef enum qa_input_command_encoding {
     QA_INPUT_COMMAND_NATIVE, QA_INPUT_COMMAND_UNIFIED, QA_INPUT_COMMAND_SOURCE_Q3
 } qa_input_command_encoding;
 typedef struct qa_input_usercmd {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     uint64_t sequence;
     qa_vec3 angles, move;
     int32_t angle_words[3];
@@ -238,7 +238,7 @@ void qa_input_usercmd_build(const qa_input_command_intent *, const qa_input_comm
 void qa_input_usercmd_project(const qa_input_usercmd *, qa_movement_command *);
 
 typedef struct qa_input_command_basis {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     double units;
     qa_vec3 delta_angles;
     int32_t delta_words[3];
@@ -252,11 +252,11 @@ typedef struct qa_input_axis_rule {
     float minimum, maximum;
     bool clamp, ratio_first, float_product;
 } qa_input_axis_rule;
-float qa_input_command_units(qa_movement_kind);
+float qa_input_command_units(qa_ruleset_id);
 void qa_input_command_convert(const qa_movement_command *, const qa_input_move_intent *,
     const qa_input_command_basis *, const qa_input_command_basis *, qa_input_axis_rule, qa_movement_command *);
 
-qa_input_command_tuning qa_input_command_defaults(qa_movement_kind);
+qa_input_command_tuning qa_input_command_defaults(qa_ruleset_id);
 void qa_input_command_clear(qa_input_command_builder *);
 bool qa_input_command_angles(qa_input_command_builder *, qa_vec3, qa_error *);
 /* Replaces the pending NQ/QW impulse. Only a successful command build consumes it. */
@@ -327,7 +327,7 @@ enum qa_key_code {
 int qa_input_key_parse(const char *);
 /* A key name occupies at most 32 bytes including NUL. */
 const char *qa_input_key_name(int key, char out[32]);
-int qa_input_source_key(int key, qa_console_dialect);
+int qa_input_source_key(int key, qa_ruleset_id);
 int qa_input_sdl_key(int32_t keycode, uint16_t modifiers);
 double qa_input_event_time(uint32_t timestamp, uint32_t ticks, double now_ms, bool subframe);
 unsigned qa_input_mouse_button(unsigned physical);
@@ -446,7 +446,7 @@ size_t qa_input_seat_catcher_count(const qa_input_seat *);
 bool qa_input_seat_catcher_at(const qa_input_seat *, size_t, qa_input_catcher *);
 qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *);
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *);
-bool qa_input_seat_profile(qa_input_seat *, qa_console_dialect, qa_error *);
+bool qa_input_seat_profile(qa_input_seat *, qa_ruleset_id, qa_error *);
 bool qa_input_seat_bind(qa_input_seat *, const qa_input_binding *, qa_error *);
 /* Validates/copies the complete list before publication. Held presses retain
  * their original binding until release, including after a settings reload. */
@@ -488,21 +488,21 @@ bool qa_input_seat_impulse(qa_input_seat *, const char *, qa_error *);
 /* Mouse, pitch drift and cl_run belong to the seat's mouse owner. Movement
  * speeds and angle/move multipliers belong to the selected view owner. These
  * may alias for a composed registry; no other registry is consulted. */
-bool qa_input_mouse_settings_register(qa_cvars *, qa_movement_kind selected, qa_error *);
-bool qa_input_movement_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
-bool qa_input_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
+bool qa_input_mouse_settings_register(qa_cvars *, qa_ruleset_id selected, qa_error *);
+bool qa_input_movement_settings_register(qa_cvars *, qa_ruleset_id, qa_error *);
+bool qa_input_settings_register(qa_cvars *, qa_ruleset_id, qa_error *);
 /* Bind once for the actual mouse and movement registry views after registration
  * or replacement. Scalar changes are projected by the common cvar store. */
 void qa_input_settings_bind(const qa_cvars *mouse, const qa_cvars *movement,
     qa_input_tuning_handles *);
 bool qa_input_settings_read(const qa_cvars *mouse, const qa_cvars *movement,
-    const qa_input_tuning_handles *, qa_movement_kind, qa_input_command_tuning *, qa_error *);
+    const qa_input_tuning_handles *, qa_ruleset_id, qa_input_command_tuning *, qa_error *);
 bool qa_input_mouse_settings_write(qa_cvars *, const qa_mouse_tuning *, qa_error *);
 bool qa_input_device_settings_register(qa_cvars *, qa_error *);
 bool qa_input_bindings_config(const qa_input_seat *, bool controllers, qa_buffer *, qa_error *);
 /* Pure rows from the same general defaults used by apply and reset. Command
  * text has static lifetime; false marks the end or an invalid profile/device. */
-bool qa_input_default_binding_at(qa_console_dialect, int32_t device, size_t index,
+bool qa_input_default_binding_at(qa_ruleset_id, int32_t device, size_t index,
                                   qa_input_binding *out);
 bool qa_input_default_bindings(qa_input_seat *, int32_t device, qa_error *);
 /* Copy and validate the default list before replacing current bindings. */

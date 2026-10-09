@@ -28,8 +28,8 @@ static const q2_source_cvar engine_cvars[] = {
 };
 
 bool application_native_q2_engine_cvars(qa_cvars *cvars, uint64_t owner, qa_error *error) {
-    if (!cvars || !owner || (qa_cvars_dialect(cvars) != QA_CONSOLE_Q2 &&
-        qa_cvars_dialect(cvars) != QA_CONSOLE_Q2_RERELEASE))
+    if (!cvars || !owner || (qa_cvars_dialect(cvars) != QA_RULESET_Q2_CLASSIC &&
+        qa_cvars_dialect(cvars) != QA_RULESET_Q2_RERELEASE))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 ENGINE declarations require their physical Source registry");
     for (size_t i = 0; i < sizeof(engine_cvars) / sizeof(*engine_cvars); ++i)
         if (!qa_cvars_register(cvars, engine_cvars[i].name, engine_cvars[i].value,
@@ -123,12 +123,12 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
         owner->combat_cvars[i] = qa_cvars_resolve(owner->cvars, combat_names[i]);
 }
 
-static qa_console_dialect dialect(const application_provider *provider) {
-    return provider->launch->selection.clock.kind == QA_CLOCK_Q2_RERELEASE ?
-        QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
+static qa_ruleset_id dialect(const application_provider *provider) {
+    return provider->launch->selection.clock.kind == QA_RULESET_Q2_RERELEASE ?
+        QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
 }
 static bool classic_rogue(const application_provider *provider) {
-    return dialect(provider) == QA_CONSOLE_Q2 && !strcmp(provider->product->campaign, "rogue");
+    return dialect(provider) == QA_RULESET_Q2_CLASSIC && !strcmp(provider->product->campaign, "rogue");
 }
 qa_cvars *application_native_q2_console_registry(const application_provider *provider) {
     return provider && provider->kind == APPLICATION_PROVIDER_Q2 && provider->native_q2_console ?
@@ -399,7 +399,7 @@ static bool observe(struct application_native_q2_console *owner, qa_error *error
         if (!observe_name(owner, engine_cvars[i].name, error)) return false;
     for (size_t i = 0; i < sizeof(common) / sizeof(*common); ++i)
         if (!observe_name(owner, common[i].name, error)) return false;
-    if (dialect(owner->provider) == QA_CONSOLE_Q2_RERELEASE) {
+    if (dialect(owner->provider) == QA_RULESET_Q2_RERELEASE) {
         for (size_t i = 0; i < sizeof(rerelease) / sizeof(*rerelease); ++i)
             if (!observe_name(owner, rerelease[i].name, error)) return false;
     } else {
@@ -419,7 +419,7 @@ static bool observe(struct application_native_q2_console *owner, qa_error *error
 static bool definitions(application_provider *provider, const q2_source_cvar *table,
                          size_t count, qa_error *error) {
     qa_cvars *cvars = application_native_q2_console_registry(provider);
-    uint32_t game = dialect(provider) == QA_CONSOLE_Q2_RERELEASE ? QA_Q2_CVAR_GAME : 0;
+    uint32_t game = dialect(provider) == QA_RULESET_Q2_RERELEASE ? QA_Q2_CVAR_GAME : 0;
     for (size_t i = 0; i < count; ++i) {
         const char *value = table[i].value;
         uint32_t flags = table[i].flags | game;
@@ -441,7 +441,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     if (okay) okay = definitions(provider, common, sizeof(common) / sizeof(*common), error);
     if (okay) okay = application_native_q2_engine_cvars(cvars, provider->owner, error);
     if (okay) okay = qa_server_admin_declarations(cvars,provider->owner,error);
-    bool rr = dialect(provider) == QA_CONSOLE_Q2_RERELEASE;
+    bool rr = dialect(provider) == QA_RULESET_Q2_RERELEASE;
     if (okay) okay = rr ? definitions(provider, rerelease, sizeof(rerelease) / sizeof(*rerelease), error) :
         (qa_cvars_register(cvars, "sv_maplist", "", 0, provider->owner, NULL, error) &&
          qa_cvars_declare_save_policy(cvars, "sv_maplist", QA_CVAR_SAVE_GAMEPLAY, error));
@@ -557,7 +557,7 @@ bool application_native_q2_rotation_changed(void *context, const qa_string_id *m
     qa_console *console = NULL; qa_cvars *cvars = NULL; qa_command_context raw, command;
     if (!provider || !maps || !count || !provider->state.q2 ||
         !application_native_q2_console_at(provider, &console, &cvars, &raw) ||
-        qa_cvars_dialect(cvars) != QA_CONSOLE_Q2_RERELEASE || !qa_cvars_find(cvars, "g_map_list") ||
+        qa_cvars_dialect(cvars) != QA_RULESET_Q2_RERELEASE || !qa_cvars_find(cvars, "g_map_list") ||
         !qa_application_capture_command_context(provider->application, &raw, &command, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 rotation publication lost its actual rerelease Source");
     qa_cvars *actual = NULL; qa_cvars_edit *ticket = NULL;
@@ -625,7 +625,7 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
         rules->auto_lock = automatic != 0;
     }
     rules->friendly_fire = (qa_q2_source_deathmatch_flags(cvars) & 256u) == 0;
-    rules->q2_rerelease = dialect(provider) == QA_CONSOLE_Q2_RERELEASE;
+    rules->q2_rerelease = dialect(provider) == QA_RULESET_Q2_RERELEASE;
     return true;
 }
 bool application_native_q2_source_modes_refresh(application_provider *provider, qa_error *error) {
@@ -696,7 +696,7 @@ bool application_native_q2_source_weapon_input(application_provider *provider, q
                                                qa_error *error) {
     if (!input || !application_native_q2_console_registry(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 weapon input requires its source registry");
-    if (dialect(provider) == QA_CONSOLE_Q2_RERELEASE) {
+    if (dialect(provider) == QA_RULESET_Q2_RERELEASE) {
         struct application_native_q2_console *owner = provider->native_q2_console;
         input->infinite_ammo = qa_cvars_read(owner->cvars, owner->weapon_cvars.infinite_ammo)->integer != 0;
         input->instant_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.instant_switch)->integer != 0;

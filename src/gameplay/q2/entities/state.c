@@ -202,7 +202,7 @@ bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding 
     }
     *out = (qa_target_binding){.actor = id,
                                .source = g->options.edition == QA_Q2_CLASSIC
-                                             ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE,
+                                             ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE,
                                .context = g,
                                .read = authored,
                                .use = use,
@@ -499,8 +499,8 @@ bool q2_entity_targets(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool i
                               &(qa_target_use){.source = a->id,
                                                .activator = activator,
                                                .dialect = g->options.edition == QA_Q2_CLASSIC
-                                                              ? QA_CLOCK_Q2_CLASSIC
-                                                              : QA_CLOCK_Q2_RERELEASE,
+                                                              ? QA_RULESET_Q2_CLASSIC
+                                                              : QA_RULESET_Q2_RERELEASE,
                                                .fields = fields,
                                                .time_ns = g->now_ns},
                               e);
@@ -546,8 +546,8 @@ bool qa_q2_entity_use_targets(qa_q2_game *g, qa_actor_id id, qa_actor_id activat
     return q2_entity_targets(g, a, activator, ignore_delay, e);
 }
 bool qa_q2_entity_defer_targets(qa_q2_game *g, const qa_target_use *request, qa_error *e) {
-    qa_clock_kind dialect = g && g->options.edition == QA_Q2_RERELEASE
-                                ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC;
+    qa_ruleset_id dialect = g && g->options.edition == QA_Q2_RERELEASE
+                                ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     if (!g || !request || request->dialect != dialect ||
         !isfinite(request->fields.delay_seconds) || request->fields.delay_seconds == 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 delayed target request");

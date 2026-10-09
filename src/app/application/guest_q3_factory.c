@@ -160,7 +160,7 @@ bool qa_application_q3_client_configuration_entered(const qa_application *app,
             host.owner != provider->owner || host.role != role->kind || host.service_owner != role->service_owner ||
             host.console != source->console || host.cvars != source->cvars ||
             host.command_context.owner != source->scope.provider || host.command_context.seat != source->scope.seat ||
-            host.command_context.dialect != QA_CONSOLE_Q3) continue;
+            host.command_context.dialect != QA_RULESET_Q3) continue;
         if (found) return false;
         found = true;
     }
@@ -244,7 +244,7 @@ bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner re
         !qa_q3_host_client_context_read(role->host, &host) || host.session != app->session ||
         host.owner != receiver || host.role != QA_QVM_CGAME || host.service_owner != role->service_owner ||
         host.command_context.owner != receiver || host.command_context.seat != seat ||
-        host.command_context.dialect != QA_CONSOLE_Q3)
+        host.command_context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment requests lack their true current CGAME owner");
     *hud = application_q3_equipment_hud(role->equipment);
     *view = application_q3_equipment_view(role->equipment);
@@ -686,7 +686,7 @@ bool application_guest_q3_console_prepare(qa_application *app, application_provi
     *console = application_guest_q3_console_owner(provider);
     *cvars = application_guest_q3_console_registry(provider);
     *command = (qa_command_context){.owner = provider->owner,
-        .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+        .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER};
     return (*console && *cvars) || application_fail(error, QA_ERROR_ARGUMENT,
         "Original Q3 preparation did not retain its actual private GAME console");
 }
@@ -712,7 +712,7 @@ bool application_guest_q3_startup_source_at(application_provider *provider, size
                 .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
                 .console = console, .cvars = application_guest_q3_console_registry(provider),
                 .declaration_owner = game ? game->service_owner : provider->owner,
-                .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER,
+                .command = {.owner = provider->owner, .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER,
                     .cvar_view = qa_cvars_view_identity(application_guest_q3_console_registry(provider))}};
             *found = true; return true;
         }

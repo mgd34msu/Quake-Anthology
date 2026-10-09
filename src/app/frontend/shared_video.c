@@ -78,7 +78,7 @@ bool frontend_shared_video_resolve(void *user,const qa_cvar_video_query *query,
     bool canonical=!strcmp(query->member,FRONTEND_VIDEO_MODE_NAME),classic=false;
     for (size_t i=0;i<sizeof(frontend_q2_video_members)/sizeof(*frontend_q2_video_members);++i)
         classic|=!strcmp(query->member,frontend_q2_video_members[i]);
-    if (query->dialect==QA_CONSOLE_Q2_RERELEASE && !strcmp(query->member,FRONTEND_VIDEO_FULLSCREEN_MEMBER))
+    if (query->dialect==QA_RULESET_Q2_RERELEASE && !strcmp(query->member,FRONTEND_VIDEO_FULLSCREEN_MEMBER))
         return fullscreen_mode(query,out);
     if (!canonical && !classic) return fail(error,"Source video mode has no native resolution table");
     size_t count=classic?FRONTEND_Q2_VIDEO_MODE_COUNT:sizeof(frontend_video_modes)/sizeof(*frontend_video_modes);
@@ -102,7 +102,7 @@ bool frontend_shared_video_dimensions(const qa_cvars_edit *edit,uint32_t fallbac
 {
     const qa_cvar_view *mode=qa_cvars_edit_find(edit,FRONTEND_VIDEO_MODE_NAME);
     if (!mode) return fail(error,"Display projection lost its canonical mode");
-    qa_cvar_video_query query={.member=FRONTEND_VIDEO_MODE_NAME,.dialect=QA_CONSOLE_Q3,.index=mode->integer};
+    qa_cvar_video_query query={.member=FRONTEND_VIDEO_MODE_NAME,.dialect=QA_RULESET_Q3,.index=mode->integer};
     if (query.index==-1) {
         const qa_cvar_view *w=qa_cvars_edit_find(edit,"r_customwidth"),*h=qa_cvars_edit_find(edit,"r_customheight");
         if (!w || !h) return fail(error,"Display projection lost its canonical custom dimensions");

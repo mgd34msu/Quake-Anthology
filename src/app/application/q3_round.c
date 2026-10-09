@@ -85,7 +85,7 @@ bool qa_application_q3_round_callback_ready(qa_application *app,
         ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     if (!app || app->operation != APPLICATION_IDLE || !provider ||
         provider->owner != source_owner || !provider->constructed || !provider->attached ||
-        provider->close_pending || provider->component.clock.kind != QA_CLOCK_Q3 ||
+        provider->close_pending || provider->component.clock.kind != QA_RULESET_Q3 ||
         !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
         !app->world || !qa_world_idle(app->world) || !qa_combat_idle(app->combat) ||
         !application_guests_idle(app) || !qa_console_idle(app->console) ||
@@ -108,7 +108,7 @@ static bool source_compatible(qa_application *app,
     if (!choices || !provider || provider->application != app || !provider->constructed ||
         !provider->attached || provider->close_pending || !provider->launch ||
         !provider->product || provider->product->family != QA_GAME_Q3 ||
-        provider->component.clock.kind != QA_CLOCK_Q3 ||
+        provider->component.clock.kind != QA_RULESET_Q3 ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         provider != application_native_q3_mode_source_provider(app, mode) ||
         !app->primary_mode_ready || !same_mode(mode, app->primary_mode))
@@ -123,7 +123,7 @@ static bool source_compatible(qa_application *app,
         if (application_native_q3_mode_source_provider(app, app->mode_ids[i]) != provider) return true;
     qa_clock_state clock;
     if (!qa_session_clock(app->session, provider->owner, &clock) || clock.paused ||
-        clock.frame.kind != QA_CLOCK_Q3 ||
+        clock.frame.kind != QA_RULESET_Q3 ||
         (clock.frame_number && clock.frame.phase != QA_FRAME_EXIT) ||
         clock.frame_number > UINT64_MAX - 4 ||
         clock.elapsed_ns > UINT64_MAX - 4 * ROUND_FRAME_NS ||

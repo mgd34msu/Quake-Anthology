@@ -1,12 +1,9 @@
 #ifndef QA_MOVEMENT_H
 #define QA_MOVEMENT_H
 
+#include "qa/ruleset.h"
 #include "qa/world.h"
 
-typedef enum qa_movement_kind {
-    QA_MOVEMENT_NETQUAKE, QA_MOVEMENT_QUAKEWORLD, QA_MOVEMENT_Q2_CLASSIC,
-    QA_MOVEMENT_Q2_RERELEASE, QA_MOVEMENT_Q3
-} qa_movement_kind;
 typedef enum qa_q1_edition { QA_Q1_CLASSIC, QA_Q1_RERELEASE, QA_Q1_QUAKE64 } qa_q1_edition;
 typedef struct qa_q1_water_transition_result {
     int32_t water_type, water_level;
@@ -36,7 +33,7 @@ typedef struct qa_movement_ground {
  * Axes retain Q2 rerelease fractions. Input and protocol adapters apply the
  * integer encoding of classic commands; signed byte/short values fit exactly. */
 typedef struct qa_movement_command {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     uint64_t sequence;
     uint32_t milliseconds;
     int32_t server_time_ms, server_frame;
@@ -137,7 +134,7 @@ typedef struct qa_q3_movement_state {
     int32_t movement_frame, jump_pad_frame;
 } qa_q3_movement_state;
 typedef struct qa_movement_state {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     union {
         qa_nq_movement_state nq;
         qa_qw_movement_state qw;
@@ -153,7 +150,7 @@ typedef struct qa_q1_movement_parameters {
     float entity_gravity;
 } qa_q1_movement_parameters;
 typedef struct qa_movement_profile {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     union {
         struct {
             qa_q1_movement_parameters parameters;
@@ -299,10 +296,10 @@ typedef struct qa_movement_services {
     bool (*is_bsp)(void *, const qa_trace_result *, bool *, qa_error *);
 } qa_movement_services;
 
-qa_movement_profile qa_movement_profile_default(qa_movement_kind);
+qa_movement_profile qa_movement_profile_default(qa_ruleset_id);
 qa_movement_environment qa_movement_environment_default(void);
-qa_movement_state qa_movement_state_default(qa_movement_kind, qa_vec3 origin);
-qa_movement_input qa_movement_input_default(qa_movement_kind, qa_actor_id);
+qa_movement_state qa_movement_state_default(qa_ruleset_id, qa_vec3 origin);
+qa_movement_input qa_movement_input_default(qa_ruleset_id, qa_actor_id);
 qa_vec3 qa_movement_origin(const qa_movement_state *);
 qa_vec3 qa_movement_velocity(const qa_movement_state *);
 bool qa_movement_set_origin(qa_movement_state *, qa_vec3, qa_error *);

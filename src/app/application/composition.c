@@ -26,7 +26,7 @@ static bool resource_files(void *opaque,const qa_launch_choices *choices,qa_prod
     qa_application *app=opaque; *provided=false;
     application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
     if (!provider || provider->kind!=APPLICATION_PROVIDER_Q1 || !provider->launch ||
-        provider->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD || !app->startup_hooks ||
+        provider->launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD || !app->startup_hooks ||
         !app->startup_hooks->source_files || product!=provider->launch->selection.product ||
         choices->world.geometry!=product || strcmp(choices->world.map,path)) return true;
     const qa_launch_provider *selected=NULL;

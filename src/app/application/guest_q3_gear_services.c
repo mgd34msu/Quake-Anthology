@@ -33,7 +33,7 @@ static bool command_active(void *context, const qa_command_context *command)
 {
     application_q3_gear *gear = context;
     return command && command->owner == gear->options.host.command_context.owner &&
-        command->dialect == QA_CONSOLE_Q3 && gear->options.current(gear->options.context);
+        command->dialect == QA_RULESET_Q3 && gear->options.current(gear->options.context);
 }
 
 static bool command_capture(void *context, const qa_command_context *command,
@@ -150,7 +150,7 @@ static bool send_command(void *context, int32_t client, const char *text, qa_err
 bool q3gear_services(application_q3_gear *gear, qa_error *error)
 {
     gear->cheats = qa_cvars_resolve(gear->options.host.engine_cvars, "sv_cheats");
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = gear, .print = print, .cheats_allowed = cheats,
         .declaration_save_policy = application_native_q3_cvar_save_policy};
     gear->cvars = qa_cvars_create_view(gear->options.host.engine_cvars, &cvars, error);

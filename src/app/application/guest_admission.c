@@ -46,7 +46,7 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
     bool round_frame = engine->round.phase == Q3G_ROUND_SETTLING && engine->round.source_entry &&
         provider->application->operation == APPLICATION_ADVANCING &&
         qa_session_active_frame(provider->application->session, provider->owner, &frame) &&
-        frame.kind == QA_CLOCK_Q3 && frame.phase == QA_FRAME_ENTRY &&
+        frame.kind == QA_RULESET_Q3 && frame.phase == QA_FRAME_ENTRY &&
         frame.elapsed_ns == UINT64_C(100000000) && frame.number == engine->round.last_frame;
     if (engine->round.phase != Q3G_ROUND_NONE &&
         (engine->round.phase != Q3G_ROUND_SETTLING ||

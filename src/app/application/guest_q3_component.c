@@ -136,7 +136,7 @@ bool application_q3_component_initialize(application_q3_component *c,qa_error *e
 {
     if(!c||!q3component_current(c,e)||c->initialized||!application_q3_component_idle(c)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component Initialize requires its fresh actual executor");
     qa_clock_state clock;
-    if(!qa_session_clock(c->options.host.session,c->options.host.owner,&clock)||clock.frame.kind!=QA_CLOCK_Q3||clock.frame.time_ns/1000000>INT32_MAX)
+    if(!qa_session_clock(c->options.host.session,c->options.host.owner,&clock)||clock.frame.kind!=QA_RULESET_Q3||clock.frame.time_ns/1000000>INT32_MAX)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component Initialize requires its admitted actual SOURCE clock");
     c->milliseconds=(int32_t)(clock.frame.time_ns/1000000);
     c->busy=true; application_q3_mod_inputs inputs={0}; inputs.values[Q3_MOD_TIME]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)c->milliseconds/1000};

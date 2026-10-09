@@ -45,7 +45,7 @@ static bool visible(void *context,int32_t a,int32_t b)
 static void print(void *context,const char *text)
 {
     component_game_row *row=context;
-    qa_command_context command={.owner=row->publication.owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
+    qa_command_context command={.owner=row->publication.owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     application_console_print(row->roster->options.application,&command,text);
 }
 static int32_t calendar(void *context,qa_q3_host_calendar *out)
@@ -117,7 +117,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .map_path=qa_launch_snapshot_choices(options->snapshot)->world.map,
         .host={.role=QA_QVM_GAME,.abi=layout,.session=options->application->session,.world=options->world,
             .owner=row->publication.owner,.service_owner=row->services,.mounts=row->publication.content,
-            .command_context={.owner=row->publication.owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER},
+            .command_context={.owner=row->publication.owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER},
             .common={.context=row,.print=print,.calendar=calendar},
             .collision={.context=row,.geometry=geometry,.load_map=load_map,.trace_scratch=trace_scratch},.entity_text=options->entity_text},
         .combat=options->application->combat,.inventory=options->application->inventory,

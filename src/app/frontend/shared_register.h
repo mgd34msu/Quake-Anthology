@@ -7,7 +7,7 @@
  * menu with no source. NULL retains generic effects/music defaults 0.7/1;
  * Q3 source defaults are 0.8/0.25. Native output/gamma come from their real
  * owners. Register before configuration or pure QACV import on ENGINE. */
-bool frontend_shared_register(qa_cvars *,const qa_console_dialect *,
+bool frontend_shared_register(qa_cvars *,const qa_ruleset_id *,
     qa_audio_output_format,float gamma,qa_error *);
 bool frontend_shared_menu_track_valid(const char *);
 /* Called by the real CLIENT initializer on its new physical heap. The retained

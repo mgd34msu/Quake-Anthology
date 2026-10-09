@@ -20,7 +20,7 @@ bool frontend_remote_input_create(const frontend_remote_input_options *options,
     frontend_remote_input *input = calloc(1, sizeof(*input));
     if (!input) return fail(error, QA_ERROR_MEMORY, "Allocating remote Q3 input builder");
     input->options = *options;
-    input->builder.kind = QA_MOVEMENT_Q3;
+    input->builder.kind = QA_RULESET_Q3;
     *out = input;
     return true;
 }
@@ -41,8 +41,8 @@ static bool source_valid(const frontend_remote_input_source *source)
         receiver->source_client < 64 &&
         !receiver->source_owner && !receiver->source_actor.registry &&
         receiver->command_context.owner == receiver->receiver &&
-        receiver->command_context.seat == receiver->seat && receiver->command_context.dialect == QA_CONSOLE_Q3 &&
-        source->frame.kind == QA_MOVEMENT_Q3;
+        receiver->command_context.seat == receiver->seat && receiver->command_context.dialect == QA_RULESET_Q3 &&
+        source->frame.kind == QA_RULESET_Q3;
 }
 bool frontend_remote_input_build(frontend_remote_input *input, const qa_seat_input_sample *sample,
     double source_frame_ms, qa_movement_command *out, bool *present, qa_error *error)
@@ -64,7 +64,7 @@ bool frontend_remote_input_build(frontend_remote_input *input, const qa_seat_inp
     }
     qa_input_command_tuning tuning;
     qa_movement_command command;
-    if (!qa_input_settings_read(source.input_settings, source.movement_settings, source.input_tuning, QA_MOVEMENT_Q3, &tuning, error) ||
+    if (!qa_input_settings_read(source.input_settings, source.movement_settings, source.input_tuning, QA_RULESET_Q3, &tuning, error) ||
         !qa_input_command_build(&next, &tuning, sample, &source.frame, source_frame_ms, &command, error)) return false;
     if (!input->options.source_current(input->options.context, &source))
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 receiver retired while building physical input");

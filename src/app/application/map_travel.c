@@ -283,7 +283,7 @@ static bool set_map_draft(qa_launch_draft *draft, const char *path,
     const qa_launch_choices *choices=qa_launch_draft_choices(draft);
     for (size_t i=0;ok && !restoring && i<choices->provider_count;++i) {
         qa_launch_provider provider=choices->providers[i];
-        if (provider.clock.kind!=QA_CLOCK_NETQUAKE ||
+        if (provider.clock.kind!=QA_RULESET_NETQUAKE ||
             provider.options.size!=sizeof(application_q1_original_constructor) || !provider.options.data ||
             memcmp(provider.options.data,application_q1_original_constructor,sizeof(application_q1_original_constructor))) continue;
         provider.options=(qa_bytes){0};

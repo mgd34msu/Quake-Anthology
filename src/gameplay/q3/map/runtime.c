@@ -344,7 +344,7 @@ bool q3_map_target_binding(qa_q3_game *game, qa_actor_id actor, qa_target_bindin
     if (!out || !q3_map_get(game, actor))
         return false;
     *out = (qa_target_binding){.actor = actor,
-                                 .source = QA_CLOCK_Q3,
+                                 .source = QA_RULESET_Q3,
                                  .context = game,
                                  .read = target_read,
                                  .use = target_use,

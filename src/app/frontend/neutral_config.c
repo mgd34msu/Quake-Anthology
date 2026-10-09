@@ -25,7 +25,7 @@
 #include "qa/application_native_q3_cvars.h"
 #include "qa/q3_product_policy.h"
 #include "qa/input_release.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,8 +52,8 @@ struct frontend_neutral_config {
     char *saved_instance;
     uint32_t physical_seat, saved_seat;
     uint64_t namespace_revision;
-    qa_movement_kind kind;
-    qa_console_dialect dialect;
+    qa_ruleset_id kind;
+    qa_ruleset_id dialect;
     bool issued, attached, found, ready, published, running, imported, retiring, movement_selected;
     bool write_registered,dump_registered;
     bool configuration_done,variables_seeded,archive_seeded,release_before,startup_owned,continuation;
@@ -70,11 +70,6 @@ struct frontend_neutral_configs {
 };
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e,code,0,"%s",message); return false; }
-static const char *dialect_name(qa_console_dialect dialect)
-{
-    static const char *const names[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
-    return dialect<=QA_CONSOLE_Q3?names[dialect]:NULL;
-}
 static const qa_launch_instance *descriptor(const frontend_neutral_config *row)
 { return row?qa_launch_instance_lease_view(row->metadata):NULL; }
 static bool physical_read(const frontend_neutral_config *row,qa_application_client_source *out,bool connection)
@@ -367,7 +362,7 @@ static bool defaults(void *context,qa_error *e)
 {
     frontend_neutral_config *row=context;
     if ((!row->continuation || !frontend_authored_bindings_ready(row->authored)) &&
-        !frontend_authored_bindings_defaults(row->authored,row->input,qa_movement_console_dialect(row->kind),e)) return false;
+        !frontend_authored_bindings_defaults(row->authored,row->input,(row->kind),e)) return false;
     if (!row->continuation) return true;
     qa_input_seat *configuration=NULL;
     if (!qa_input_seat_configuration_clone(row->owner->frontend->seats[row->physical_seat].input,
@@ -433,7 +428,7 @@ static bool declare_client(frontend_neutral_config *row,const qa_launch_instance
     if (product->family==QA_GAME_Q1 &&
         !frontend_legacy_source_register(client,command->dialect,command->owner,e)) return false;
     if (product->family==QA_GAME_Q2 && !frontend_source_q2_settings_register(selected,client,command,e)) return false;
-    if (command->dialect==QA_CONSOLE_Q3) {
+    if (command->dialect==QA_RULESET_Q3) {
         qa_q3_product_policy policy;
         if (product->family!=QA_GAME_Q3 || !product->builtin || product->program_kind!=QA_PROGRAM_BUILTIN ||
             !qa_application_q3_product_policy_read(f->application,&policy) || !policy.restriction_resolved ||
@@ -456,7 +451,7 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
 {
     frontend_neutral_config *row=context; qa_frontend *f=row->owner->frontend;
     if (!selected || !client || !command ||
-        command->origin!=QA_COMMAND_SEAT || command->dialect>QA_CONSOLE_Q3 ||
+        command->origin!=QA_COMMAND_SEAT || command->dialect>QA_RULESET_Q3 ||
         qa_cvars_dialect(client)!=command->dialect || command->cvar_view!=qa_cvars_view_identity(client) ||
         !qa_cvars_same_store(client,qa_application_cvars(f->application)) ||
         !qa_application_command_context_active(f->application,command) ||
@@ -472,7 +467,7 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     if (row->metadata)
         return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT declarations already retain their actual metadata");
     row->command=*command; row->client=client; row->dialect=command->dialect;
-    if (!row->movement_selected) row->kind=qa_console_movement_kind(row->dialect);
+    if (!row->movement_selected) row->kind=(row->dialect);
     qa_cvars *engine=qa_application_cvars(f->application);
     if (!engine || !qa_cvars_observer_idle(engine))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral configuration needs its returned canonical ENGINE");
@@ -500,8 +495,8 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     qa_cvar_options options={.dialect=row->dialect,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,
         .seat=command->seat,.default_save_policy=QA_CVAR_SAVE_SETTING};
     row->mouse=qa_cvars_create_view(client,&options,e);
-    if (qa_movement_console_dialect(row->kind)==row->dialect) row->movement=client;
-    else { options.dialect=qa_movement_console_dialect(row->kind); row->movement=qa_cvars_create_view(client,&options,e); }
+    if ((row->kind)==row->dialect) row->movement=client;
+    else { options.dialect=(row->kind); row->movement=qa_cvars_create_view(client,&options,e); }
     bool ok=row->mouse && row->movement &&
         qa_input_mouse_settings_register(row->mouse,row->kind,e) &&
         qa_input_movement_settings_register(row->movement,row->kind,e);
@@ -509,7 +504,7 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     return ok;
 }
 static bool restore_settings_view(frontend_neutral_config *row,qa_cvars **saved,
-    qa_console_dialect dialect,bool mouse,qa_error *e)
+    qa_ruleset_id dialect,bool mouse,qa_error *e)
 {
     if (!*saved || qa_cvars_dialect(*saved)!=dialect)
         return fail(e,QA_ERROR_FORMAT,"Neutral settings lost their decoded dialect view");
@@ -547,10 +542,10 @@ static bool install(void *context,const qa_application_client_source *source,boo
             return fail(e,QA_ERROR_FORMAT,"Neutral files differ from their real CLIENT product and global stores");
         row->client=source->context.cvars; row->command=source->context.command;
         if (!restore_settings_view(row,&row->mouse,row->dialect,true,e)) return false;
-        if (qa_movement_console_dialect(row->kind)==row->dialect) {
+        if ((row->kind)==row->dialect) {
             if (!qa_input_movement_settings_register(row->client,row->kind,e)) return false;
             row->movement=row->client;
-        } else if (!restore_settings_view(row,&row->movement,qa_movement_console_dialect(row->kind),false,e)) return false;
+        } else if (!restore_settings_view(row,&row->movement,(row->kind),false,e)) return false;
         qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
         row->imported=false;
     }
@@ -592,12 +587,12 @@ static bool install(void *context,const qa_application_client_source *source,boo
         snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)row->command.seat+1);
         const qa_product *product=qa_catalog_product(qa_launch_instance_catalog(held),held->selection.product);
         const char *client_owner[]={"client",product->key,held->selection.implementation,logical};
-        const char *mouse_owner[]={"input",dialect_name(row->dialect),logical};
-        const char *movement_owner[]={"movement",dialect_name(qa_movement_console_dialect(row->kind))};
+        const char *mouse_owner[]={"input",qa_ruleset_settings_name(row->dialect),logical};
+        const char *movement_owner[]={"movement",qa_ruleset_settings_name((row->kind))};
         if (!row->continuation && ((!frontend_config_store_has_canonical_archive(row->owner->manager) &&
             (!qa_settings_load_cvars(store,client_owner,4,row->dialect,&row->client_archive,e) ||
             !qa_settings_load_cvars(input_store,mouse_owner,3,row->dialect,&row->mouse_archive,e) ||
-            !qa_settings_load_cvars(input_store,movement_owner,2,qa_movement_console_dialect(row->kind),&row->movement_archive,e))) ||
+            !qa_settings_load_cvars(input_store,movement_owner,2,(row->kind),&row->movement_archive,e))) ||
             !qa_settings_load_seat(input_store,path,&row->settings,&row->found,e))) return false;
         if (!row->continuation && !frontend_config_store_seed_player_archive(row->owner->manager,row->client,row->command.seat,
             &row->client_archive,e)) return false;
@@ -937,9 +932,9 @@ bool frontend_neutral_configs_destroy(frontend_neutral_configs *owner,qa_error *
     free(owner); return true;
 }
 bool frontend_neutral_config_options(frontend_neutral_configs *owner,uint32_t physical,
-    qa_movement_kind movement,frontend_client_source_options *out,qa_error *e)
+    qa_ruleset_id movement,frontend_client_source_options *out,qa_error *e)
 {
-    if (!owner || !out || physical>=owner->frontend->options.seats || movement>QA_MOVEMENT_Q3)
+    if (!owner || !out || physical>=owner->frontend->options.seats || movement>QA_RULESET_Q3)
         return fail(e,QA_ERROR_ARGUMENT,"Neutral options require an actual physical seat and selected movement receipt");
     frontend_neutral_config *row=NULL;
     if (owner->restoring) {
@@ -978,7 +973,7 @@ bool frontend_neutral_config_pending_options(frontend_neutral_configs *owner,uin
         if (ok) saved->movement_selected=selected;
         return ok;
     }
-    if (!frontend_neutral_config_options(owner,physical,QA_MOVEMENT_NETQUAKE,out,e)) return false;
+    if (!frontend_neutral_config_options(owner,physical,QA_RULESET_NETQUAKE,out,e)) return false;
     frontend_neutral_config *row=out->context;
     row->movement_selected=false;
     return true;
@@ -998,9 +993,9 @@ bool frontend_neutral_config_options_cancel(frontend_neutral_configs *owner,
     *at=next; *options=(frontend_client_source_options){0}; return true;
 }
 bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *owner,const qa_cvars *view,
-    qa_movement_kind movement,qa_error *e)
+    qa_ruleset_id movement,qa_error *e)
 {
-    if (!owner || !view || movement>QA_MOVEMENT_Q3)
+    if (!owner || !view || movement>QA_RULESET_Q3)
         return fail(e,QA_ERROR_ARGUMENT,"Movement adoption needs the actual received recipe kind");
     for (frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->attached || row->source.context.cvars!=view) continue;
@@ -1014,18 +1009,18 @@ bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *owner,cons
             !qa_cvars_observer_idle(row->movement))
             return fail(e,QA_ERROR_ARGUMENT,"Movement replacement retains an entered physical CLIENT namespace");
         qa_cvars *next=row->client;
-        if (qa_movement_console_dialect(movement)!=row->dialect) {
-            next=qa_cvars_create_view(row->client,&(qa_cvar_options){.dialect=qa_movement_console_dialect(movement),
+        if ((movement)!=row->dialect) {
+            next=qa_cvars_create_view(row->client,&(qa_cvar_options){.dialect=(movement),
                 .side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,.seat=row->command.seat,
                 .default_save_policy=QA_CVAR_SAVE_SETTING},e);
             if (!next) return false;
         }
         qa_cvar_archive archive={0};
-        const char *path[]={"movement",dialect_name(qa_movement_console_dialect(movement))};
+        const char *path[]={"movement",qa_ruleset_settings_name((movement))};
         bool ok=qa_input_movement_settings_register(next,movement,e) &&
             (frontend_config_store_has_canonical_archive(owner->manager) ||
              (qa_settings_load_cvars(frontend_config_store_input_store(owner->manager),path,2,
-                qa_movement_console_dialect(movement),&archive,e) &&
+                (movement),&archive,e) &&
                 (!frontend_config_store_legacy_globals(owner->manager) || qa_cvar_archive_apply(next,&archive,e))));
         qa_cvar_archive_free(&archive);
         if (!ok) { if (next!=row->client) qa_cvars_destroy(next); return false; }
@@ -1201,7 +1196,7 @@ bool frontend_neutral_config_select_bindings(frontend_neutral_configs *owner,uin
         retain_bindings(row); return true;
     }
     return frontend_authored_bindings_select(row->authored,owner->frontend->seats[row->physical_seat].input,
-        qa_movement_console_dialect(row->kind),strings,items,count,controller<0?0:controller,e);
+        (row->kind),strings,items,count,controller<0?0:controller,e);
 }
 bool frontend_neutral_config_client_input(const frontend_neutral_configs *owner,
     const qa_application_client_preparation *preparation,uint32_t ordinal,qa_input_seat **out,qa_error *e)
@@ -1319,7 +1314,7 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
     if (io->offset>io->input.size || count>io->input.size-io->offset) return false;
     *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true;
 }
-static bool settings_fields(qa_source_save_io *io,qa_cvars **vars,qa_console_dialect dialect)
+static bool settings_fields(qa_source_save_io *io,qa_cvars **vars,qa_ruleset_id dialect)
 {
     qa_buffer data={0}; qa_bytes bytes={0}; bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
     bool ok=!writing || qa_cvars_save_capture(*vars,&data,io->error);
@@ -1341,14 +1336,14 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
     char *name=writing?(char *)held->selection.instance:NULL;
     uint32_t dialect=row->dialect,movement=row->kind,logical=writing?row->command.seat:0;
     bool ok=qa_source_save_owned_text(io,&name) && name && *name &&
-        qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
-        qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 && qa_source_save_u32(io,&logical) &&
+        qa_source_save_u32(io,&dialect) && dialect<=QA_RULESET_Q3 &&
+        qa_source_save_u32(io,&movement) && movement<=QA_RULESET_Q3 && qa_source_save_u32(io,&logical) &&
         qa_source_save_u32(io,&row->physical_seat) && row->physical_seat<row->owner->frontend->options.seats &&
         qa_source_save_u64(io,&row->namespace_revision) && row->namespace_revision &&
         qa_source_save_bool(io,&row->startup_owned) &&
         qa_source_save_bool(io,&row->movement_selected) &&
         (row->movement_selected ||
-         qa_console_movement_kind((qa_console_dialect)dialect)==(qa_movement_kind)movement);
+         ((qa_ruleset_id)dialect)==(qa_ruleset_id)movement);
     bool release=writing?row->retirement_release!=NULL:false;
     if (ok) ok=qa_source_save_bool(io,&row->retirement_started) &&
         qa_source_save_bool(io,&row->recipient_returned) && qa_source_save_bool(io,&row->retiring) &&
@@ -1357,7 +1352,7 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
         (!release || (row->retirement_started && !row->recipient_returned && !row->retiring));
     if (!writing) row->retirement_release_saved=release;
     if (!writing) { row->saved_instance=name;
-        row->saved_seat=logical; row->dialect=(qa_console_dialect)dialect; row->kind=(qa_movement_kind)movement; }
+        row->saved_seat=logical; row->dialect=(qa_ruleset_id)dialect; row->kind=(qa_ruleset_id)movement; }
     qa_buffer files={0}; qa_bytes bytes={0};
     if (ok && writing) { ok=frontend_config_files_checkpoint(row->files,graph,&files,io->error);
         bytes=(qa_bytes){files.data,files.size}; }
@@ -1365,8 +1360,8 @@ static bool row_fields(frontend_neutral_config *row,qa_source_save_io *io,
     if (ok && !writing) ok=frontend_config_files_restore((qa_application_content_graph *)graph,bytes,&row->files,io->error);
     qa_buffer_free(&files);
     if (ok) ok=settings_fields(io,&row->mouse,row->dialect);
-    if (ok && row->dialect!=qa_movement_console_dialect(row->kind))
-        ok=settings_fields(io,&row->movement,qa_movement_console_dialect(row->kind));
+    if (ok && row->dialect!=(row->kind))
+        ok=settings_fields(io,&row->movement,(row->kind));
     if (ok && !writing) { row->authored=frontend_authored_bindings_create(io->error); ok=row->authored!=NULL; }
     return ok && frontend_authored_bindings_fields(row->authored,io) && frontend_authored_bindings_completed(row->authored);
 }

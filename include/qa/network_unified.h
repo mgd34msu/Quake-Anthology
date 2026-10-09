@@ -72,7 +72,7 @@ bool qa_unified_channel_flush(qa_unified_channel *, uint64_t now_ns,
 /* Retain binary64 command values until the selected provider rounds them. */
 typedef struct qa_unified_vec3 { double x, y, z; } qa_unified_vec3;
 typedef struct qa_unified_movement {
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     union {
         struct { double acknowledged_seconds; qa_unified_vec3 angles;
                  double forward, side, up, buttons, impulse; } nq;

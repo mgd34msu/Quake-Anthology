@@ -57,12 +57,12 @@ bool application_startup_create(qa_application *app, const char *const *commands
     app->startup->count = count;
     for (size_t i = 0; i < count; ++i) {
         const char *text = commands[i];
-        if (!text || strpbrk(text, "\r\n") || qa_command_separator(text, strlen(text), QA_CONSOLE_Q3) != strlen(text)) {
+        if (!text || strpbrk(text, "\r\n") || qa_command_separator(text, strlen(text), QA_RULESET_Q3) != strlen(text)) {
             application_startup_dispose(app);
             return application_fail(error, QA_ERROR_ARGUMENT, "Startup requires one source command per original row");
         }
         qa_command_tokens tokens = {0};
-        bool okay = qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error);
+        bool okay = qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error);
         app->startup->rows[i].command = startup_copy(text, error);
         okay = okay && app->startup->rows[i].command;
         if (okay && tokens.count) app->startup->rows[i].safe_command=
@@ -142,7 +142,7 @@ static bool ascii_equal(const char *a, const char *b)
 static bool startup_set(qa_cvars *actual, const char *name, const char *value, qa_error *error)
 {
     if (!qa_cvars_set(actual, name, value, true, error)) return false;
-    if (qa_cvars_dialect(actual) != QA_CONSOLE_Q3) return true;
+    if (qa_cvars_dialect(actual) != QA_RULESET_Q3) return true;
     const qa_cvar_view *current=qa_cvars_find(actual,name);
     if (!current) return application_fail(error,QA_ERROR_NOT_FOUND,"Startup has no admitted physical cvar");
     uint64_t owner=current->owner;
@@ -247,7 +247,7 @@ bool application_startup_seed_console(application_provider *provider,const qa_ap
         return application_fail(error,QA_ERROR_ARGUMENT,"Startup replay has no physical GAME or CLIENT scope");
     if (client) {
         qa_application_startup_source actual;
-        if (command->origin!=QA_COMMAND_SEAT || command->dialect!=QA_CONSOLE_Q3 || command->seat!=source->scope.seat ||
+        if (command->origin!=QA_COMMAND_SEAT || command->dialect!=QA_RULESET_Q3 || command->seat!=source->scope.seat ||
             !qa_application_q3_client_configuration_read(app,source->scope.provider,source->scope.kind == QA_APPLICATION_CONSOLE_Q3_UI ? QA_QVM_UI : QA_QVM_CGAME,source->scope.seat,&actual,error) ||
             actual.console!=console || actual.cvars!=source->cvars || actual.scope.kind!=source->scope.kind ||
             actual.descriptor->storage!=source->descriptor->storage)
@@ -285,11 +285,11 @@ bool qa_application_client_prepare_startup_ready(const qa_application_client_pre
     qa_application *app=qa_application_client_prepare_application(preparation);
     const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
     if (!source) return false;
-    qa_console_dialect dialect=source->context.command.dialect;
-    if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE && dialect!=QA_CONSOLE_Q3) return true;
+    qa_ruleset_id dialect=source->context.command.dialect;
+    if (dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE && dialect!=QA_RULESET_Q3) return true;
     for (size_t i=0;app->startup && i<app->startup->count;++i) {
         application_startup_row *row=app->startup->rows+i;
-        if ((dialect==QA_CONSOLE_Q3?row->safe_command:row->name!=NULL) && row->queued_instance)
+        if ((dialect==QA_RULESET_Q3?row->safe_command:row->name!=NULL) && row->queued_instance)
             return false;
     }
     return true;
@@ -301,7 +301,7 @@ bool qa_application_client_prepare_safe_mode(const qa_application_client_prepara
     if (!safe || !source || !qa_application_client_prepare_phase_is(preparation,QA_CLIENT_PREPARE_CONFIGURATION))
         return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT safe mode requires its actual cfg owner");
     *safe=false;
-    if (source->context.command.dialect!=QA_CONSOLE_Q3) return true;
+    if (source->context.command.dialect!=QA_RULESET_Q3) return true;
     if (!qa_application_client_prepare_startup_current(preparation))
         return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT safe mode lost its genuine primary startup request");
     qa_application *app=qa_application_client_prepare_application(preparation);
@@ -318,12 +318,12 @@ void qa_application_client_prepare_startup_publish(qa_application_client_prepara
 {
     qa_application *app=qa_application_client_prepare_application(preparation);
     const qa_application_client_source *source=qa_application_client_prepare_source(preparation);
-    if (source->context.command.dialect==QA_CONSOLE_Q3) {
+    if (source->context.command.dialect==QA_RULESET_Q3) {
         for (size_t i=0;app->startup && i<app->startup->count;++i)
             if (app->startup->rows[i].safe_command) { app->startup->rows[i].consumed=true; break; }
         return;
     }
-    if (source->context.command.dialect!=QA_CONSOLE_Q2 && source->context.command.dialect!=QA_CONSOLE_Q2_RERELEASE) return;
+    if (source->context.command.dialect!=QA_RULESET_Q2_CLASSIC && source->context.command.dialect!=QA_RULESET_Q2_RERELEASE) return;
     /* Q2 early variables are the commands excluded from its late programme.
      * Q1/QW stuffed commands and Q3 late sets keep their original ordinals. */
     for (size_t i=0;app->startup && i<app->startup->count;++i)
@@ -344,7 +344,7 @@ bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_ins
         actual->storage==selected->storage && source->descriptor && source->descriptor->storage==selected->storage &&
         source->console==app->console && source->cvars && source->scope.provider==provider->owner &&
         source->command.cvar_view==qa_cvars_view_identity(source->cvars) &&
-        qa_cvars_dialect(source->cvars)==QA_CONSOLE_Q3) {
+        qa_cvars_dialect(source->cvars)==QA_RULESET_Q3) {
         for (size_t index=0;;++index) {
             qa_application_startup_source candidate;
             bool present;
@@ -574,10 +574,10 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
         }
         if (io->direction == QA_SOURCE_SAVE_READ) {
             if (memchr(row->command, 0, length) || strpbrk(row->command, "\r\n") ||
-                qa_command_separator(row->command, length, QA_CONSOLE_Q3) != length)
+                qa_command_separator(row->command, length, QA_RULESET_Q3) != length)
                 return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup command leaves its source text domain");
             qa_command_tokens tokens = {0};
-            bool okay = qa_command_tokenize(row->command, QA_CONSOLE_Q3, false, &tokens, io->error);
+            bool okay = qa_command_tokenize(row->command, QA_RULESET_Q3, false, &tokens, io->error);
             if (okay && tokens.count) row->safe_command=ascii_equal(tokens.values[0],"safe") ||
                 ascii_equal(tokens.values[0],"cvar_restart");
             if (okay && tokens.count && !strcmp(tokens.values[0], "set")) {
@@ -610,15 +610,15 @@ static bool valid_policy(const qa_q3_product_policy *policy)
 bool application_q3_product_initial(qa_cvars *cvars, const char *const *commands,
     size_t count, qa_q3_product_policy *out, qa_error *error)
 {
-    if (!cvars || !out || (count && !commands) || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
+    if (!cvars || !out || (count && !commands) || qa_cvars_dialect(cvars) != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 initial policy requires actual startup commands and registry");
     for (size_t i = 0; i < count; ++i) {
         const char *text = commands[i];
         if (!text || strpbrk(text, "\r\n") ||
-            qa_command_separator(text, strlen(text), QA_CONSOLE_Q3) != strlen(text))
+            qa_command_separator(text, strlen(text), QA_RULESET_Q3) != strlen(text))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 startup policy requires one source command per row");
         qa_command_tokens tokens = {0};
-        if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error)) return false;
+        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error)) return false;
         bool okay = true;
         if (tokens.count > 1 && !strcmp(tokens.values[0], "set"))
             for (size_t j = 0; j < sizeof(variables) / sizeof(*variables); ++j)
@@ -644,7 +644,7 @@ bool application_q3_product_initial(qa_cvars *cvars, const char *const *commands
 static bool register_policy_values(const qa_q3_product_policy *policy,
     qa_cvars *cvars, uint64_t owner, bool restricted, qa_error *error)
 {
-    if (!valid_policy(policy) || !cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
+    if (!valid_policy(policy) || !cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source registry requires retained initial policy");
     bool flags[] = {policy->prerelease_demo, policy->prerelease_team_arena_demo, restricted};
     for (size_t i = 0; i < sizeof(variables) / sizeof(*variables); ++i)

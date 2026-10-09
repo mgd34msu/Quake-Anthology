@@ -26,7 +26,7 @@ struct frontend_source_admin {
     uint64_t nonce;
     uint32_t random;
     qa_fs_object_reference saved_preferences;
-    qa_console_dialect saved_dialect;
+    qa_ruleset_id saved_dialect;
     bool restoring;
     bool busy;
 };
@@ -60,7 +60,7 @@ static const char *password(void *context,bool limited)
 {
     frontend_source_admin *owner=context;
     const qa_cvar_view *value=qa_cvars_find(owner->cvars,limited?"lrcon_password":
-        qa_cvars_dialect(owner->cvars)==QA_CONSOLE_Q3?"rconPassword":"rcon_password");
+        qa_cvars_dialect(owner->cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
     return value?value->value:"";
 }
 static qa_cvars *rate_registry(void *context)
@@ -132,15 +132,15 @@ static bool persist_filters(void *context,qa_error *error)
 }
 static bool policy(frontend_source_admin *owner,qa_error *error)
 {
-    qa_console_dialect dialect=qa_cvars_dialect(owner->cvars);
+    qa_ruleset_id dialect=qa_cvars_dialect(owner->cvars);
     const qa_cvar_view *filter=qa_cvars_find(owner->cvars,"filterban"),
         *published=qa_cvars_find(owner->cvars,"public"),*dedicated=qa_cvars_find(owner->cvars,"dedicated");
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    bool q2=dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE;
     return qa_server_admin_policy(owner->admin,dialect,!filter || filter->integer!=0,
         owner->frontend->options.network_host && owner->frontend->options.dedicated &&
-        (q2?published && published->number!=0:dialect!=QA_CONSOLE_Q3 || (dedicated && dedicated->integer==2)),error);
+        (q2?published && published->number!=0:dialect!=QA_RULESET_Q3 || (dedicated && dedicated->integer==2)),error);
 }
-static qa_admin_options admin_options(frontend_source_admin *owner,qa_console_dialect dialect)
+static qa_admin_options admin_options(frontend_source_admin *owner,qa_ruleset_id dialect)
 {
     return (qa_admin_options){.dialect=dialect,.filters=1024,.rate_entries=1024,.burst=10,
         .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),
@@ -276,10 +276,10 @@ static bool admin_fields(qa_source_save_io *io,frontend_source_admin *owner,qa_b
 {
     uint8_t magic[4]={'Q','F','S','A'}; uint32_t dialect=owner->saved_dialect;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFSA",4) ||
-        !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io,&dialect) || dialect>QA_RULESET_Q3 ||
         !qa_source_save_u64(io,&owner->nonce) || !qa_source_save_u32(io,&owner->random) ||
         !root_fields(io,&owner->saved_preferences) || !saved_blob(io,admin) || !admin->size) return false;
-    owner->saved_dialect=(qa_console_dialect)dialect;
+    owner->saved_dialect=(qa_ruleset_id)dialect;
     size_t count=0;
     if (io->direction==QA_SOURCE_SAVE_WRITE) for (admin_packet *p=owner->first;p;p=p->next) ++count;
     if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?(io->input.size-io->offset)/10:SIZE_MAX)) return false;

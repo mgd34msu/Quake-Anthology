@@ -7,7 +7,7 @@ static bool clock_read(struct application_native_q2 *engine, qa_clock_state *out
     return (engine && engine->provider && engine->provider->application &&
         qa_session_clock(engine->provider->application->session, engine->provider->owner, out) &&
         out->frame.provider == engine->provider->owner &&
-        out->frame.kind == (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE)) ||
+        out->frame.kind == (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE)) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine namespace lost its actual Source clock");
 }
 

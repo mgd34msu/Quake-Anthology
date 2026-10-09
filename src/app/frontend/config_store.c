@@ -11,7 +11,7 @@
 #include "startup_menus.h"
 #include "legacy_render_policy.h"
 #include "qa/source_frame_time.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 #include "qa/application_players.h"
 #include "network_config.h"
 #include "network_recipient.h"
@@ -44,7 +44,7 @@ typedef struct config_seat {
     qa_seat_console *publication_console;
     qa_command_context publication_command;
     uint32_t logical;
-    qa_console_dialect movement_dialect;
+    qa_ruleset_id movement_dialect;
     char *registry_instance;
     qa_cvars *cvars,*mouse;
     frontend_q1_motion_refs q1_motion;
@@ -75,7 +75,7 @@ struct frontend_config_source {
     qa_cvar_archive source_archive,movement_archive,fallback_archive;
     config_seat seats[QA_INPUT_LOCAL_SEATS];
     size_t seat_count,seat_index,registry_references,admin_registered;
-    qa_console_dialect movement_dialect;
+    qa_ruleset_id movement_dialect;
     bool primary,published,configured,released,running,write_registered,dump_registered,frag_registered,has_mod;
     bool imported;
     bool profile_carried,variables_carried,initial_variables;
@@ -176,23 +176,23 @@ static void print(void *context,const char *text)
 static bool cheats_allowed(void *context)
 {
     frontend_config_source *source=context;
-    const qa_cvar_view *value=source->command.dialect==QA_CONSOLE_Q3?
+    const qa_cvar_view *value=source->command.dialect==QA_RULESET_Q3?
         frontend_config_store_engine_value(source->manager,source->application,source->console,"sv_cheats"):
         qa_cvars_find(source->cvars,"sv_cheats");
     return value && value->number==1;
 }
-static qa_cvar_options registry_options(frontend_config_source *source,qa_console_dialect dialect)
+static qa_cvar_options registry_options(frontend_config_source *source,qa_ruleset_id dialect)
 {
     return (qa_cvar_options){.dialect=dialect,.user=source,.print=print,.cheats_allowed=cheats_allowed,
         .default_save_policy=QA_CVAR_SAVE_SETTING};
 }
-static qa_cvars *registry(frontend_config_source *source,qa_console_dialect dialect,qa_error *error)
+static qa_cvars *registry(frontend_config_source *source,qa_ruleset_id dialect,qa_error *error)
 {
     qa_cvar_options options=registry_options(source,dialect);
     options.side=QA_CVAR_SIDE_SERVER; options.role=QA_CVAR_ROLE_GAME;
     return qa_cvars_create_view(qa_application_cvars(source->application),&options,error);
 }
-static qa_cvars *seat_registry(frontend_config_source *source,qa_console_dialect dialect,
+static qa_cvars *seat_registry(frontend_config_source *source,qa_ruleset_id dialect,
     uint32_t logical,qa_error *error)
 {
     qa_cvar_options options=registry_options(source,dialect);
@@ -255,14 +255,14 @@ static bool local_seat_present(const qa_launch_choices *choices,uint32_t logical
     return false;
 }
 static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
-    qa_console_dialect *dialect,qa_error *error)
+    qa_ruleset_id *dialect,qa_error *error)
 {
     const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=logical},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
+    if (!selected || selected->selection.clock.kind>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lacks its actual selected seat movement source");
-    *dialect=qa_clock_console_dialect(selected->selection.clock.kind); return true;
+    *dialect=(selected->selection.clock.kind); return true;
 }
 static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
@@ -302,7 +302,7 @@ static bool seat_input_create(frontend_config_source *source,config_seat *seat,
         .seat=physical,.context_ready=input_context,.context_user=source};
     seat->input=qa_input_seat_create(&options,error);
     if (!seat->input || !qa_input_seat_profile(seat->input,seat->movement_dialect,error) ||
-        !qa_input_settings_register(seat->mouse,qa_console_movement_kind(seat->movement_dialect),error)) return false;
+        !qa_input_settings_register(seat->mouse,(seat->movement_dialect),error)) return false;
     if (!active) return true;
     size_t count=qa_input_seat_binding_count(active);
     if (count>SIZE_MAX/sizeof(qa_input_binding))
@@ -822,7 +822,7 @@ frontend_config_source *frontend_config_store_named_source(const frontend_config
     return NULL;
 }
 static bool source_archive_load(frontend_config_files *files,const qa_product *product,
-    const qa_launch_provider *selected,qa_console_dialect dialect,qa_cvar_archive *out,qa_error *error)
+    const qa_launch_provider *selected,qa_ruleset_id dialect,qa_cvar_archive *out,qa_error *error)
 {
     const char *owner[3]={"source",product->key,selected->implementation};
     return qa_settings_load_cvars(frontend_config_files_store(files,false),owner,3,dialect,out,error);
@@ -841,7 +841,7 @@ bool frontend_config_store_draft_archive(frontend_config_store *manager,const qa
     qa_catalog *catalog=qa_launch_draft_catalog(draft);
     const qa_product *product=selected?qa_catalog_product(catalog,selected->product):NULL;
     if (!manager || !manager->frontend || !product || !out || out->entries || out->count ||
-        selected->clock.kind>QA_CLOCK_Q3)
+        selected->clock.kind>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Startup archive requires its selected Source profile and empty output");
     if (!shared_storage_prepare(manager,error)) return false;
     if (frontend_shared_storage_has_archive(manager->storage)) {
@@ -871,7 +871,7 @@ bool frontend_config_store_draft_archive(frontend_config_store *manager,const qa
         frontend_global_settings_storage_device_store(f->global_settings_storage),error);
     if (!files) return false;
     bool ok=source_archive_load(files,product,selected,
-        qa_clock_console_dialect(selected->clock.kind),out,error);
+        (selected->clock.kind),out,error);
     qa_error first=error?*error:(qa_error){0},cleanup={0};
     if (!frontend_config_files_destroy(files,&cleanup)) { if (ok && error) *error=cleanup; ok=false; }
     else if (!ok && error) *error=first;
@@ -972,7 +972,7 @@ bool frontend_config_source_acquire_seat_registry(frontend_config_source *source
     return frontend_client_registry_retain(seat->registry,out,error);
 }
 qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *manager,uint32_t logical,
-    qa_movement_kind *movement)
+    qa_ruleset_id *movement)
 {
     qa_application *application=manager && manager->frontend?manager->frontend->application:NULL;
     const qa_launch_snapshot *published=application?qa_application_launch(application):NULL;
@@ -987,7 +987,7 @@ qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store 
             strcmp(retained->selection.instance,selected->selection.instance)) continue;
         size_t index=seat_index(source,logical);
         if (index>=source->seat_count) return NULL;
-        if (movement) *movement=qa_console_movement_kind(source->seats[index].movement_dialect);
+        if (movement) *movement=(source->seats[index].movement_dialect);
         return source->seats[index].mouse;
     }
     return NULL;
@@ -1056,7 +1056,7 @@ static frontend_config_source *qw_log_source(frontend_config_store *manager, qa_
     const qa_application_startup_source *physical)
 {
     if (!manager || manager->restoring || !physical || !physical->descriptor ||
-        physical->command.dialect!=QA_CONSOLE_QW) return NULL;
+        physical->command.dialect!=QA_RULESET_QUAKEWORLD) return NULL;
     frontend_config_source *source=frontend_config_store_source(manager,physical->cvars);
     const qa_launch_instance *selected=source?instance(source):NULL;
     return source && source->primary && !source->imported && source->application==app && selected &&
@@ -1113,7 +1113,7 @@ static frontend_config_source *source_files_owner(frontend_config_store *manager
         descriptor->storage==source->descriptor->storage && descriptor->state==source->descriptor->state &&
         physical->cvars==source->cvars && physical->scope.kind==source->scope.kind &&
         physical->scope.provider==source->scope.provider && physical->declaration_owner==source->declaration_owner &&
-        physical->command.owner==source->command.owner && source->command.dialect==QA_CONSOLE_QW?physical:NULL;
+        physical->command.owner==source->command.owner && source->command.dialect==QA_RULESET_QUAKEWORLD?physical:NULL;
 }
 static bool source_files(void *context,qa_application *app,const qa_application_startup_source *source,
     qa_launch_source_files *out,const char **directory,qa_error *error)
@@ -1142,7 +1142,7 @@ static bool source_command_realtime(void *context,qa_application *app,
     uint32_t seat;
     if (!physical || !call || !out || manager->frontend->application!=app ||
         physical!=published_primary(manager,app) || source->scope.kind!=QA_APPLICATION_CONSOLE_Q1_GAME ||
-        !call->context.actor.registry || call->context.dialect!=QA_CONSOLE_QW ||
+        !call->context.actor.registry || call->context.dialect!=QA_RULESET_QUAKEWORLD ||
         !qa_application_player_seat(app,call->context.actor,&seat) || seat!=call->context.seat ||
         (remote && !qa_console_invocation_current(call->console,call)) ||
         !qa_application_command_context_active(app,&call->context))
@@ -1163,7 +1163,7 @@ static bool fraglog_command(void *context,const qa_command_invocation *call,qa_e
 static bool source_callback_binding(frontend_config_source *source,const char *name,
     qa_command_handler *handler,void **user)
 {
-    if (source->command.dialect==QA_CONSOLE_QW && !strcmp(name,fraglog_declaration.name)) {
+    if (source->command.dialect==QA_RULESET_QUAKEWORLD && !strcmp(name,fraglog_declaration.name)) {
         *handler=fraglog_command; *user=source; return true;
     }
     return frontend_network_source_admin_binding(source->manager->frontend,source->console,
@@ -1299,7 +1299,7 @@ qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store
         manager->input_source && manager->input_source->published) {
         const qa_launch_instance *held=instance(manager->input_source);
         const config_seat *seat=manager->input_seats+ordinal;
-        qa_console_dialect movement;
+        qa_ruleset_id movement;
         if (held && held->storage==selected->storage && held->state==selected->state &&
             seat->logical==logical && seat->input &&
             seat_movement(candidate,seat->logical,&movement,NULL) && movement==seat->movement_dialect &&
@@ -1371,11 +1371,11 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
         if (!frontend_network_client_previous_configuration_read(f,logical,&view,&present,error)) return false;
         const qa_launch_instance *selected=present && view.receiver?
             qa_launch_snapshot_find(candidate,view.receiver->selection.instance):NULL;
-        qa_console_dialect movement;
+        qa_ruleset_id movement;
         unchanged=present && view.ready && view.published && view.physical_seat==ordinal &&
             view.scope.seat==logical && selected && selected->state==view.receiver->state &&
             selected->storage==view.receiver->storage && seat_movement(candidate,logical,&movement,error) &&
-            movement==qa_movement_console_dialect(view.movement);
+            movement==(view.movement);
     } else {
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
@@ -1383,7 +1383,7 @@ bool frontend_config_store_input_configuration(const frontend_config_store *mana
         frontend_config_source *source=published_primary(manager,application);
         const qa_launch_instance *held=source?instance(source):NULL;
         size_t index=source?seat_index(source,logical):0;
-        qa_console_dialect movement;
+        qa_ruleset_id movement;
         unchanged=source && held && selected && held->storage==selected->storage &&
             held->state==selected->state && source->configured && source->released &&
             !source->imported && !source->running && index<source->seat_count &&
@@ -1741,7 +1741,7 @@ static bool phase_create(frontend_config_source *source,qa_error *error)
         qa_application_capture_command_context(source->application,&source->command,&command,error);
     if (!captured) return false;
     bool safe=false;
-    if (command.dialect==QA_CONSOLE_Q3) {
+    if (command.dialect==QA_RULESET_Q3) {
         const qa_launch_instance *selected=qa_launch_snapshot_find(source->candidate,instance(source)->selection.instance);
         qa_application_startup_source actual={instance(source),source->scope,source->console,source->cvars,
             source->command,source->declaration_owner};
@@ -1800,7 +1800,7 @@ static bool config_command(void *context,const qa_command_invocation *command,qa
             qa_seat_console_buffer(f->seats[seat].console),error);
     }
     if (command->argc>2) { print(source,"writeconfig [filename]\n"); return true; }
-    const char *requested=command->argc==2?command->argv[1]:command->context.dialect==QA_CONSOLE_Q3?"q3config.cfg":"config.cfg";
+    const char *requested=command->argc==2?command->argv[1]:command->context.dialect==QA_RULESET_Q3?"q3config.cfg":"config.cfg";
     size_t length=strlen(requested);
     bool suffix=length>=4 && !strcmp(requested+length-4,".cfg");
     if (length>SIZE_MAX-5) return fail(error,QA_ERROR_MEMORY,"Configuration filename exceeds storage");
@@ -1919,7 +1919,7 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
 }
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
-    if (source->primary && source->command.dialect==QA_CONSOLE_QW && !source->frag_registered) {
+    if (source->primary && source->command.dialect==QA_RULESET_QUAKEWORLD && !source->frag_registered) {
         qa_command_handler handler=NULL; void *user=NULL;
         if (!source_callback_binding(source,fraglog_declaration.name,&handler,&user))
             return fail(error,QA_ERROR_ARGUMENT,"QuakeWorld frag declaration lost its actual Source callback");
@@ -2067,13 +2067,13 @@ static frontend_config_source *previous_source(frontend_config_store *manager,qa
         const qa_launch_binding *movement=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
-        if (!movement_source || qa_clock_console_dialect(
+        if (!movement_source || (
             movement_source->selection.clock.kind)!=source->movement_dialect)
             return NULL;
         for (size_t i=0;source->seat_count && choices && i<choices->seat_count;++i) {
             if (!choices->seats[i].local || choices->seats[i].bot) continue;
             size_t index=seat_index(source,choices->seats[i].id);
-            qa_console_dialect seat_dialect;
+            qa_ruleset_id seat_dialect;
             if (index>=source->seat_count ||
                 !seat_movement(candidate,source->seats[index].logical,&seat_dialect,NULL) ||
                 seat_dialect!=source->seats[index].movement_dialect) return NULL;
@@ -2388,7 +2388,6 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
     const qa_command_context *command=&source->command;
     qa_settings_store store=frontend_config_files_store(source->files,false);
-    const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     bool ok=true;
     seat->logical=logical;
     seat->authored=frontend_authored_bindings_create(error);
@@ -2397,7 +2396,7 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     if (!selected_defaults(source,seat,true,error)) return false;
     seat->cvars=seat_registry(source,command->dialect,logical,error);
     seat->mouse=seat_registry(source,seat->movement_dialect,logical,error);
-    if (seat->cvars && command->dialect==QA_CONSOLE_Q3) {
+    if (seat->cvars && command->dialect==QA_RULESET_Q3) {
         qa_q3_product_policy policy;
         ok=qa_application_q3_product_policy_read(application,&policy) &&
             qa_q3_product_policy_register_source(&policy,seat->cvars,0,error);
@@ -2411,8 +2410,8 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     char index[16],path[64]; snprintf(index,sizeof(index),"%" PRIu32,seat->logical);
     snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)seat->logical+1);
     const char *client_owner[4]={"client",product->key,selected->selection.implementation,index};
-    const char *mouse_owner[3]={"input",dialects[command->dialect],index};
-    const char *model=command->dialect==QA_CONSOLE_Q3?
+    const char *mouse_owner[3]={"input",qa_ruleset_settings_name(command->dialect),index};
+    const char *model=command->dialect==QA_RULESET_Q3?
         f->options.character_model?f->options.character_model:"sarge":
         f->options.character_model && (!f->options.character || !strcmp(f->options.character,"q2"))?
         f->options.character_model:"male";
@@ -2573,17 +2572,16 @@ static bool prepare_source_row(void *context,qa_application *application,const q
     }
     const qa_launch_binding *movement=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
-    source->movement_dialect=qa_clock_console_dialect(
+    source->movement_dialect=(
         movement_source?movement_source->selection.clock.kind:selected->selection.clock.kind);
     if (ok) source->movement=registry(source,source->movement_dialect,error);
     if (ok) source->fallback=source->movement_dialect==command->dialect?source->movement:registry(source,command->dialect,error);
     ok=ok && source->movement && source->fallback;
-    const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     if (ok && source->primary && !restored && !frontend_config_store_has_canonical_archive(manager))
         ok=source_archive_load(source->files,product,&selected->selection,command->dialect,&source->source_archive,error);
     if (ok && source->primary && !f->options.dedicated && !frontend_config_store_has_canonical_archive(manager)) {
-        const char *movement_owner[2]={"movement",dialects[source->movement_dialect]};
-        const char *fallback_owner[2]={"fallback",dialects[command->dialect]};
+        const char *movement_owner[2]={"movement",qa_ruleset_settings_name(source->movement_dialect)};
+        const char *fallback_owner[2]={"fallback",qa_ruleset_settings_name(command->dialect)};
         ok=qa_settings_load_cvars(input_store(source),movement_owner,2,source->movement_dialect,&source->movement_archive,error) &&
             qa_settings_load_cvars(input_store(source),fallback_owner,2,command->dialect,&source->fallback_archive,error);
     }
@@ -3462,7 +3460,7 @@ void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *fr
 { if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_source_admin_rebind(manager->admin,frontend); frontend_remote_configs_rebind(manager->clients,frontend,manager); frontend_neutral_configs_rebind(manager->neutral,frontend,manager); } }
 
 bool frontend_config_store_neutral_options(frontend_config_store *manager,uint32_t physical,
-    qa_movement_kind movement,frontend_client_source_options *out,qa_error *error)
+    qa_ruleset_id movement,frontend_client_source_options *out,qa_error *error)
 {
     if (!manager || manager->running || manager->prepared || manager->shared)
         return fail(error,QA_ERROR_ARGUMENT,"Neutral construction requires its returned configuration manager");
@@ -3664,7 +3662,7 @@ bool frontend_config_store_neutral_pending_options(frontend_config_store *manage
     return frontend_neutral_config_pending_options(manager->neutral,physical,out,error);
 }
 bool frontend_config_store_neutral_movement_adopt(frontend_config_store *manager,const qa_cvars *view,
-    qa_movement_kind movement,qa_error *error)
+    qa_ruleset_id movement,qa_error *error)
 {
     return manager && frontend_neutral_config_movement_adopt(manager->neutral,view,movement,error);
 }

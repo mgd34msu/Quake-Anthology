@@ -52,7 +52,7 @@ static char *file_path(const frontend_qw_logfile *owner,const char *name,qa_erro
 bool frontend_qw_logfile_toggle(qa_settings_store store, qa_console *console,
     const qa_command_context *command, frontend_qw_logfile **slot, qa_error *error)
 {
-    if (!slot || !console || !command || command->dialect != QA_CONSOLE_QW)
+    if (!slot || !console || !command || command->dialect != QA_RULESET_QUAKEWORLD)
         return fail(error, QA_ERROR_ARGUMENT, "QuakeWorld frag file requires its actual Source command");
     if (*slot) {
         if (!frontend_qw_logfile_close(slot, error)) return false;

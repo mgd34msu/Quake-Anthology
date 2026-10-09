@@ -104,7 +104,7 @@ bool application_guest_console_at(application_provider *provider, size_t index,
                 *console = game;
                 if (cvars) *cvars = application_guest_q3_console_registry(provider);
                 if (context) *context = (qa_command_context){.owner = provider->owner,
-                    .cvar_view = qa_cvars_view_identity(application_guest_q3_console_registry(provider)), .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+                    .cvar_view = qa_cvars_view_identity(application_guest_q3_console_registry(provider)), .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER};
             }
             return true;
         }
@@ -176,7 +176,7 @@ static bool client_context_read(qa_application *app, qa_actor_owner receiver,
     if (!qa_q3_host_client_context_read(role->host, &host) || host.role != QA_QVM_CGAME ||
         host.session != app->session || host.owner != receiver || host.service_owner != role->service_owner ||
         host.command_context.owner != receiver || host.command_context.seat != seat ||
-        host.command_context.dialect != QA_CONSOLE_Q3)
+        host.command_context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context differs from its actual CGAME host");
     qa_application_q3_client_context view = {.session = host.session, .receiver = receiver,
         .seat = seat, .source_client = role->client, .service_owner = host.service_owner,
@@ -225,7 +225,7 @@ static bool client_context_read(qa_application *app, qa_actor_owner receiver,
     if (read_clock) {
         qa_clock_state clock;
         if (!qa_session_clock(app->session, view.source_owner, &clock) ||
-            clock.frame.provider != view.source_owner || clock.frame.kind != QA_CLOCK_Q3 ||
+            clock.frame.provider != view.source_owner || clock.frame.kind != QA_RULESET_Q3 ||
             (clock.frame.number && clock.frame.phase != QA_FRAME_EXIT))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual GAME clock");
         view.source_frame = clock.frame;
@@ -557,7 +557,7 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
         !qa_q3_host_client_context_read(role->host, &host) || host.role != QA_QVM_CGAME ||
         host.session != app->session || host.owner != receiver || host.service_owner != role->service_owner ||
         host.command_context.owner != receiver || host.command_context.seat != seat ||
-        host.command_context.dialect != QA_CONSOLE_Q3)
+        host.command_context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context differs from its actual external-service host");
     *out = (qa_application_q3_client_context){.session = host.session, .receiver = receiver,
         .seat = seat, .source_client = UINT32_MAX, .service_owner = host.service_owner,
@@ -714,7 +714,7 @@ bool application_q3_guest_console_command(application_provider *provider, const 
         engine->round.phase != Q3G_ROUND_NONE || !text || !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console command requires initialized game");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
     qa_command_tokens prior = engine->arguments; engine->arguments = next;
     int32_t result;
     bool ok = q3g_call(engine->game, 9, NULL, 0, &result, error);
@@ -732,7 +732,7 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
     if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
     qa_command_tokens prior = role->arguments; role->arguments = next;
     bool prior_scope = role->arguments_scoped; role->arguments_scoped = true;
     int32_t result;

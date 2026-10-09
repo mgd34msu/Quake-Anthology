@@ -90,7 +90,7 @@ bool frontend_keys_prepare(frontend_keys *owner,frontend_config_files *files,qa_
 {
     const qa_product *product=files?qa_catalog_product(frontend_config_files_catalog(files),frontend_config_files_product(files)):NULL;
     if (!owner || owner->restoring || !product || product->family!=QA_GAME_Q3 || !cvars ||
-        qa_cvars_dialect(cvars)!=QA_CONSOLE_Q3 || !policy || !policy->restriction_resolved || !out || *out || owner->next_id==UINT64_MAX)
+        qa_cvars_dialect(cvars)!=QA_RULESET_Q3 || !policy || !policy->restriction_resolved || !out || *out || owner->next_id==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 key preparation requires its genuine source product, registry and frozen policy");
     frontend_key_profile *profile=calloc(1,sizeof(*profile));
     if (!profile) return fail(error,QA_ERROR_MEMORY,"Allocating selected Q3 key profile");
@@ -108,7 +108,7 @@ bool frontend_keys_carry(frontend_keys *owner,const frontend_key_profile *previo
     if (!owner || owner->restoring || !previous || previous->owner!=owner || previous->busy ||
         previous->imported_state || previous->detached || !previous->state || !previous->cvars ||
         !files || frontend_config_files_product(files)!=frontend_config_files_product(previous->files) ||
-        !cvars || qa_cvars_dialect(cvars)!=QA_CONSOLE_Q3 || !out || *out || owner->next_id==UINT64_MAX)
+        !cvars || qa_cvars_dialect(cvars)!=QA_RULESET_Q3 || !out || *out || owner->next_id==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Key carry requires its genuine live previous source profile");
     frontend_key_profile *profile=calloc(1,sizeof(*profile));
     if (!profile) return fail(error,QA_ERROR_MEMORY,"Retaining actual carried source key profile");
@@ -140,7 +140,7 @@ qa_application_console_scope frontend_key_profile_saved_scope(const frontend_key
 { return profile?profile->registry:(qa_application_console_scope){0}; }
 bool frontend_key_profile_bind(frontend_key_profile *profile,qa_cvars *cvars,const frontend_keys_cvar_refs *refs,qa_error *error)
 {
-    if (!profile || profile->busy || profile->detached || !cvars || qa_cvars_dialect(cvars)!=QA_CONSOLE_Q3)
+    if (!profile || profile->busy || profile->detached || !cvars || qa_cvars_dialect(cvars)!=QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 key binding requires its actual source registry");
     if (profile->imported_state) {
         qa_application_console_scope scope=profile->registry;

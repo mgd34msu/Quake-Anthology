@@ -104,7 +104,7 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if (ok) {
         qa_input_command_intent intent;
         qa_bot_input_intent(&input, &intent);
-        qa_input_command_frame frame = {.kind = QA_MOVEMENT_Q3, .server_time_ms = time,
+        qa_input_command_frame frame = {.kind = QA_RULESET_Q3, .server_time_ms = time,
             .weapon = input.weapon, .attack_allowed = true};
         memcpy(frame.delta_angle_words, delta, sizeof(delta));
         qa_input_usercmd built;

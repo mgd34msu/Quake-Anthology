@@ -1,16 +1,9 @@
 #ifndef QA_CONSOLE_H
 #define QA_CONSOLE_H
 
+#include "qa/ruleset.h"
 #include "qa/common.h"
 #include "qa/actors.h"
-
-typedef enum qa_console_dialect {
-    QA_CONSOLE_Q1,
-    QA_CONSOLE_QW,
-    QA_CONSOLE_Q2,
-    QA_CONSOLE_Q2_RERELEASE,
-    QA_CONSOLE_Q3
-} qa_console_dialect;
 
 typedef enum qa_command_origin {
     QA_COMMAND_LOCAL,
@@ -26,7 +19,7 @@ typedef struct qa_command_context {
     uint64_t owner;
     uint64_t client;
     uint32_t seat;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     qa_command_origin origin;
     bool direct;
     bool console_text;
@@ -46,7 +39,7 @@ typedef struct qa_command_tokens {
     char *storage;
 } qa_command_tokens;
 
-bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
+bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
                           bool console_text, qa_command_tokens *out, qa_error *error);
 void qa_command_tokens_free(qa_command_tokens *tokens);
 /* Copy literal tokens without reparsing; storage and args_text own independent
@@ -54,7 +47,7 @@ void qa_command_tokens_free(qa_command_tokens *tokens);
 bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *, qa_error *);
 /* First source separator, or length when absent. Quotes protect semicolons;
  * line feeds always split, and Q3 also splits at carriage returns. */
-size_t qa_command_separator(const char *text, size_t length, qa_console_dialect dialect);
+size_t qa_command_separator(const char *text, size_t length, qa_ruleset_id dialect);
 /* Original command-list filter accepts matching prefixes. */
 bool qa_command_filter(const char *pattern, const char *name, bool case_sensitive);
 
@@ -131,7 +124,7 @@ typedef enum qa_cvar_role {
 
 typedef struct qa_cvar_video_query {
     const char *member;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     qa_cvar_side side;
     qa_cvar_role role;
     uint32_t seat;
@@ -149,7 +142,7 @@ typedef bool (*qa_cvar_video_resolver)(void *, const qa_cvar_video_query *,
     qa_cvar_video_mode *, qa_error *);
 
 typedef struct qa_cvar_options {
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     qa_cvar_side side;
     qa_cvar_role role;
     uint32_t seat;
@@ -183,13 +176,13 @@ bool qa_cvars_retain(qa_cvars *, qa_error *);
 void qa_cvars_detach_callbacks(qa_cvars *);
 /* Select once at the active session publication boundary. Explicit values
  * remain shared; unset values use this game's canonical stock defaults. */
-bool qa_cvars_select_dialect(qa_cvars *, qa_console_dialect, qa_error *);
+bool qa_cvars_select_dialect(qa_cvars *, qa_ruleset_id, qa_error *);
 bool qa_cvars_is_set(const qa_cvars *, const char *name);
 /* Caller-owned borrowed projection, with the same native parser as find. */
 bool qa_cvars_effective_view(const qa_cvars *, const char *name,
     qa_cvar_view *out, qa_error *);
 void qa_cvars_destroy(qa_cvars *registry);
-qa_console_dialect qa_cvars_dialect(const qa_cvars *registry);
+qa_ruleset_id qa_cvars_dialect(const qa_cvars *registry);
 qa_cvar_side qa_cvars_side(const qa_cvars *registry);
 qa_cvar_role qa_cvars_role(const qa_cvars *registry);
 /* Actual canonical player scalar scopes, independent of the live view roster. */
@@ -197,7 +190,7 @@ size_t qa_cvars_player_count(const qa_cvars *);
 bool qa_cvars_player_at(const qa_cvars *, size_t index, uint32_t *seat);
 /* Validates a retained physical name under its registry's dialect. Q3
  * mutation APIs remap forbidden names to BADNAME before admission. */
-bool qa_cvars_name_valid(qa_console_dialect dialect, const char *name);
+bool qa_cvars_name_valid(qa_ruleset_id dialect, const char *name);
 /* Views and strings remain valid until their shared canonical owner is next mutated.
  * Output/effect callbacks may inspect state but must not mutate or destroy the
  * registry during notification. Host work can be queued through the console. */

@@ -22,7 +22,7 @@ typedef struct batch {
     size_t maximum_command, maximum_buffer, commands;
     llm_text text;
 } batch;
-static bool source_q2(qa_console_dialect dialect) { return dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE; }
+static bool source_q2(qa_ruleset_id dialect) { return dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE; }
 static bool known_variable(batch *b, const char *name) {
     if (qa_cvars_find(qa_console_cvar_owner(b->console, b->context, name), name)) return true;
     for (size_t i = 0;; ++i) {
@@ -49,11 +49,11 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     memcpy(text, line.data, line.size); text[line.size] = 0;
     qa_command_tokens tokens = {0}; bool ok = false;
     if (!qa_command_tokenize(text, b->context->dialect, false, &tokens, error)) goto done;
-    if (!tokens.count || (b->context->dialect != QA_CONSOLE_Q3 && tokens.count >= 80)) { llm_fail(error, "a command has no name or too many arguments"); goto done; }
+    if (!tokens.count || (b->context->dialect != QA_RULESET_Q3 && tokens.count >= 80)) { llm_fail(error, "a command has no name or too many arguments"); goto done; }
     const char *name = tokens.values[0];
     if (llm_command_indirect(name)) { llm_fail(error, "llm_exec requires literal commands without scripts, bindings, waits or LLM calls"); goto done; }
     const qa_console_entry *command = qa_console_find(b->console, b->context, name);
-    if (!command && b->context->dialect != QA_CONSOLE_Q3) {
+    if (!command && b->context->dialect != QA_RULESET_Q3) {
         const qa_console_entry *alias = NULL;
         for (size_t i = 0; (alias = qa_console_alias_at(b->console, b->context->owner, i)) != NULL; ++i) {
             if (!equal(alias->name, name)) continue;

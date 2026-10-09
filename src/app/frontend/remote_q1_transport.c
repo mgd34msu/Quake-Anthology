@@ -67,7 +67,7 @@ static bool command(frontend_remote_q1 *row, const qa_network_command *source, q
 static bool nq_command(void *context, const qa_network_command *source, qa_q1_command *out, qa_error *error)
 {
     frontend_remote_q1 *row = context;
-    if (!out || !source || source->movement.kind != QA_MOVEMENT_NETQUAKE || !command(row, source, error)) return false;
+    if (!out || !source || source->movement.kind != QA_RULESET_NETQUAKE || !command(row, source, error)) return false;
     const qa_movement_command *m = &source->movement;
     *out = (qa_q1_command){.time = (float)m->acknowledged_server_seconds,
         .angles = {m->angles.x, m->angles.y, m->angles.z}, .forward = source_short(m->forward_move),
@@ -78,7 +78,7 @@ static bool nq_command(void *context, const qa_network_command *source, qa_q1_co
 static bool qw_command(void *context, const qa_network_command *source, uint64_t now, qa_qw_command *out, qa_error *error)
 {
     frontend_remote_q1 *row = context;
-    if (!out || !source || source->movement.kind != QA_MOVEMENT_QUAKEWORLD || !command(row, source, error)) return false;
+    if (!out || !source || source->movement.kind != QA_RULESET_QUAKEWORLD || !command(row, source, error)) return false;
     const qa_movement_command *m = &source->movement;
     *out = (qa_qw_command){.angles = {m->angles.x, m->angles.y, m->angles.z},
         .forward = source_short(m->forward_move), .side = source_short(m->side_move), .up = source_short(m->up_move),

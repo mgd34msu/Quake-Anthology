@@ -345,7 +345,7 @@ static bool clock_tick(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         fields.target = e->map->event;
         fields.message = (qa_string_id){0};
         qa_target_use use = {.source = id, .activator = q1_ref_actor(g, e->activator),
-                             .dialect = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE,
+                             .dialect = g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
                              .fields = fields, .time_ns = g->time_ns};
         if (!qa_targets_use_request(g->maps->options.targets, &use, error))
             return false;
@@ -619,7 +619,7 @@ static bool event_targets(qa_q1_game *g, qa_actor_id id, qa_string_id target,
     fields.target = target;
     fields.message = message;
     qa_target_use use = {.source = id, .activator = q1_ref_actor(g, e->activator),
-        .dialect = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE,
+        .dialect = g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
         .fields = fields, .time_ns = g->time_ns};
     return qa_targets_use_request(g->maps->options.targets, &use, error);
 }

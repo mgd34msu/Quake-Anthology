@@ -723,7 +723,7 @@ bool qa_q1_game_force_retouch(qa_q1_game *g, uint32_t source_frames, qa_error *e
 bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
                               const qa_source_frame *frame, qa_error *error) {
     if (!g || !frame || frame->provider != g->options.provider ||
-        frame->kind != (g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE) ||
+        frame->kind != (g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE) ||
         frame->phase != QA_ENTITY_PHYSICS) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 retouch belongs to another source turn");
         return false;
@@ -819,7 +819,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
     }
     *out = (qa_component){
         .owner = g->options.provider,
-        .clock = qa_clock_defaults(g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE),
+        .clock = qa_clock_defaults(g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE),
         .state = g,
         .prepare_frame = prepare_frame,
         .begin_frame = begin_frame,
@@ -987,7 +987,7 @@ static bool think_callback(void *context, qa_actor_id actor, const qa_think_scop
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    qa_clock_kind clock = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE;
+    qa_ruleset_id clock = g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     bool admitted = scope &&
         ((scope->kind == QA_THINK_WORLD_FRAME &&
           scope->source.frame.provider == g->options.provider &&

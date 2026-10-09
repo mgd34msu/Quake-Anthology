@@ -11,7 +11,7 @@
 static bool declare(qa_cvars *cvars,const char *name,const char *value,uint32_t flags,qa_error *error)
 {
     const qa_cvar_view *previous=qa_cvars_find(cvars,name);
-    if (qa_cvars_dialect(cvars)<=QA_CONSOLE_QW && previous && !previous->console_created)
+    if (qa_cvars_dialect(cvars)<=QA_RULESET_QUAKEWORLD && previous && !previous->console_created)
         return (previous->flags&flags)==flags || qa_cvars_add_flags(cvars,name,flags,error);
     return qa_cvars_register(cvars,name,value,flags,0,"Prepared client identity",error);
 }
@@ -23,23 +23,23 @@ bool qa_application_player_userinfo_register(qa_cvars *cvars,uint32_t seat,const
     if (!cvars || !model || !*model) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Client configuration needs its actual identity declaration"); return false;
     }
-    qa_console_dialect dialect=qa_cvars_dialect(cvars);
+    qa_ruleset_id dialect=qa_cvars_dialect(cvars);
     const uint32_t identity=QA_CVAR_ARCHIVE|QA_CVAR_USERINFO;
     char name[64]; snprintf(name,sizeof(name),"Player %" PRIu64,(uint64_t)seat+1);
-    if (dialect<=QA_CONSOLE_QW && !declare(cvars,"qts_weapon_autoswitch","always",identity,error)) return false;
-    if (dialect==QA_CONSOLE_Q2_RERELEASE && !declare(cvars,"autoswitch","0",identity,error)) return false;
-    if (dialect==QA_CONSOLE_Q1) {
+    if (dialect<=QA_RULESET_QUAKEWORLD && !declare(cvars,"qts_weapon_autoswitch","always",identity,error)) return false;
+    if (dialect==QA_RULESET_Q2_RERELEASE && !declare(cvars,"autoswitch","0",identity,error)) return false;
+    if (dialect==QA_RULESET_NETQUAKE) {
         const qa_cvar_view *old_name=qa_cvars_find(cvars,"name"),*color=qa_cvars_find(cvars,"color");
         return declare(cvars,"_cl_name",old_name?old_name->value:name,QA_CVAR_ARCHIVE,error) &&
             declare(cvars,"_cl_color",color?color->value:"0",QA_CVAR_ARCHIVE,error);
     }
-    if (dialect==QA_CONSOLE_QW) {
+    if (dialect==QA_RULESET_QUAKEWORLD) {
         static const char *names[]={"topcolor","bottomcolor","team","skin"};
         if (!declare(cvars,"name",name,identity,error)) return false;
         for (size_t i=0;i<4;++i) if (!declare(cvars,names[i],i<2?"0":"",identity,error)) return false;
         return true;
     }
-    if (dialect==QA_CONSOLE_Q3) {
+    if (dialect==QA_RULESET_Q3) {
         static const struct {const char *name,*value; uint32_t flags;} prefix[]={
             {"vm_ui","2",QA_CVAR_ARCHIVE},{"vm_cgame","2",QA_CVAR_ARCHIVE},
             {"cl_allowDownload","0",QA_CVAR_ARCHIVE},
@@ -177,10 +177,10 @@ bool application_character_userinfo(qa_application *app,qa_catalog *catalog,cons
             !hooks->local_userinfo(hooks->context,app,choices,seat,&prepared,&field_of_view,
                 &configured,error)) return false;
         const qa_product *product=found?qa_catalog_product(catalog,declaration.product):NULL;
-        qa_console_dialect dialect=protocol==QA_GAME_Q3?QA_CONSOLE_Q3:configured && prepared &&
-            (qa_cvars_dialect(prepared)==QA_CONSOLE_Q2 || qa_cvars_dialect(prepared)==QA_CONSOLE_Q2_RERELEASE)?
+        qa_ruleset_id dialect=protocol==QA_GAME_Q3?QA_RULESET_Q3:configured && prepared &&
+            (qa_cvars_dialect(prepared)==QA_RULESET_Q2_CLASSIC || qa_cvars_dialect(prepared)==QA_RULESET_Q2_RERELEASE)?
             qa_cvars_dialect(prepared):product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_RERELEASE?
-            QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2;
+            QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC;
         const char *model=found && (protocol==QA_GAME_Q3 || declaration.family==QA_GAME_Q2)?
             declaration.appearance.model:protocol==QA_GAME_Q3?"sarge":"male";
         char *fov = NULL;

@@ -68,11 +68,11 @@ static bool binding_fields(qa_source_save_io *io,q3_cvar_binding *binding)
         qa_source_save_bool(io,&binding->read) && qa_source_save_u64(io,&binding->revision);
     if (io->direction==QA_SOURCE_SAVE_READ) {
         binding->reference=(qa_q3_host_cvar_namespace)reference;
-        binding->dialect=(qa_console_dialect)dialect;
+        binding->dialect=(qa_ruleset_id)dialect;
     }
     if (!ok) return false;
     if (reference<QA_Q3_HOST_CVAR_ENGINE || reference>QA_Q3_HOST_CVAR_SELECTED_VIEW ||
-        dialect>QA_CONSOLE_Q3 ||
+        dialect>QA_RULESET_Q3 ||
         (binding->read?!binding->revision:binding->revision!=0))
         return q3_fail(io->error,QA_ERROR_FORMAT,0,"Invalid Q3 cvar namespace or mirror identity");
     if (!qa_cvars_name_valid(binding->dialect,binding->name))
@@ -352,7 +352,7 @@ static bool classify(q3_call *call,q3_cvar_access access,const char *name,
 static bool declare(q3_call *call,q3_cvar_access access,const char *name,const char *value,
     uint32_t flags,qa_error *error)
 {
-    if (qa_cvars_dialect(access.registry)!=QA_CONSOLE_Q3) {
+    if (qa_cvars_dialect(access.registry)!=QA_RULESET_Q3) {
         const char *canonical=qa_cvars_canonical_name(access.registry,name);
         if (strcmp(canonical,name) && (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|QA_CVAR_SYSTEMINFO)))
             return q3_fail(error,QA_ERROR_ARGUMENT,0,"Guest alias requires its canonical protocol info-key mapping");
@@ -682,10 +682,10 @@ static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *er
             if (!qa_console_cvar_snapshot_at(options->console,&command,registry,index,&view,error)) return false;
             if (!view) break;
             if (strcmp(view->name,qa_cvars_canonical_name(registry,view->name))) continue;
-            qa_console_dialect dialect=qa_cvars_dialect(registry);
-            uint32_t projected=dialect==QA_CONSOLE_Q3?view->flags:
+            qa_ruleset_id dialect=qa_cvars_dialect(registry);
+            uint32_t projected=dialect==QA_RULESET_Q3?view->flags:
                 view->flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO);
-            if (!(projected&flags) || ((dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE) &&
+            if (!(projected&flags) || ((dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) &&
                 (view->flags&QA_Q2_CVAR_PRIVATE))) continue;
             q3_cvar_access access;
             if (!access_name(call,view->name,&access,error)) return false;

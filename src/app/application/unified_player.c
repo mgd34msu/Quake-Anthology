@@ -540,7 +540,7 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
             replacement.z + camera.view_offset.z - origin.z - height);
         origin = replacement; height = camera.view_offset.z;
     }
-    qa_vec3 punch = control.state.kind == QA_MOVEMENT_NETQUAKE ? control.state.data.nq.punch_angles : qa_v3(0, 0, 0);
+    qa_vec3 punch = control.state.kind == QA_RULESET_NETQUAKE ? control.state.data.nq.punch_angles : qa_v3(0, 0, 0);
     if (o->arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view weapon;
         if (!qa_q1_player_read(o->arsenal->state.q1, o->player->actor, &weapon))
@@ -557,8 +557,8 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
     out->has_blend = has_blend; out->has_damage_blend = has_damage;
     memcpy(out->blend, rgba, sizeof(rgba)); memcpy(out->damage_blend, damage_rgba, sizeof(damage_rgba));
     out->foreign_character_death = foreign_death;
-    if (control.state.kind == QA_MOVEMENT_NETQUAKE || control.state.kind == QA_MOVEMENT_QUAKEWORLD) {
-        bool nq = control.state.kind == QA_MOVEMENT_NETQUAKE;
+    if (control.state.kind == QA_RULESET_NETQUAKE || control.state.kind == QA_RULESET_QUAKEWORLD) {
+        bool nq = control.state.kind == QA_RULESET_NETQUAKE;
         out->has_pitch_drift = true; out->grounded = control.ground.hit != QA_TRACE_HIT_NONE;
         out->ideal_pitch = nq ? control.state.data.nq.ideal_pitch : 0;
         out->pitch_drift_disabled = camera.cutscene || o->intermission || view_combat.health <= 0 ||

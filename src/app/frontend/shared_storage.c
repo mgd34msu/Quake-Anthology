@@ -173,7 +173,7 @@ const qa_cvar_archive *frontend_shared_storage_player_archive(const frontend_sha
 }
 static qa_cvars *player_view(qa_cvars *shared,uint32_t seat,qa_error *e)
 {
-    qa_cvar_options options={.dialect=QA_CONSOLE_Q3,.side=QA_CVAR_SIDE_CLIENT,
+    qa_cvar_options options={.dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT,
         .role=QA_CVAR_ROLE_ENGINE,.seat=seat,.default_save_policy=QA_CVAR_SAVE_SETTING};
     return qa_cvars_create_view(shared,&options,e);
 }
@@ -271,7 +271,7 @@ bool frontend_shared_storage_load_devices(const frontend_shared_storage *owner,
     qa_cvar_archive *out,qa_error *e)
 {
     static const char *const input_owner[]={"input","devices"};
-    return qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,out,e);
+    return qa_settings_load_cvars(owner->devices,input_owner,2,QA_RULESET_Q3,out,e);
 }
 bool frontend_shared_storage_open(qa_settings_store user,qa_settings_store devices,
     qa_settings_store input,bool graphical,
@@ -290,7 +290,7 @@ bool frontend_shared_storage_open(qa_settings_store user,qa_settings_store devic
     bool ok=owner->user.vfs && owner->devices.vfs && (!input.vfs || owner->input.vfs) &&
         canonical_load(owner,e) &&
         (owner->canonical_present || !graphical || qa_settings_read(owner->user,"settings/images.cfg",&owner->images,&found,e)) &&
-        (owner->canonical_present || qa_settings_load_cvars(owner->devices,input_owner,2,QA_CONSOLE_Q3,&owner->archive,e)) &&
+        (owner->canonical_present || qa_settings_load_cvars(owner->devices,input_owner,2,QA_RULESET_Q3,&owner->archive,e)) &&
         (!graphical || !input.vfs || (audio_load(owner,e) && view_load(owner,e)));
     if (ok && owner->images) {
         qa_bytes bytes=qa_resource_bytes(owner->images);

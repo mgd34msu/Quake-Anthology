@@ -9,19 +9,19 @@ typedef enum qa_q1_chat_mode {
     QA_Q1_CHAT_UNKNOWN
 } qa_q1_chat_mode;
 
-static inline const char *qa_q1_chat_command_name(qa_console_dialect dialect, qa_q1_chat_mode mode)
+static inline const char *qa_q1_chat_command_name(qa_ruleset_id dialect, qa_q1_chat_mode mode)
 {
-    if (dialect != QA_CONSOLE_Q1 && dialect != QA_CONSOLE_QW) return NULL;
+    if (dialect != QA_RULESET_NETQUAKE && dialect != QA_RULESET_QUAKEWORLD) return NULL;
     switch (mode) {
     case QA_Q1_CHAT_ALL: return "say";
     case QA_Q1_CHAT_TEAM: return "say_team";
-    case QA_Q1_CHAT_TELL: return dialect == QA_CONSOLE_Q1 ? "tell" : NULL;
+    case QA_Q1_CHAT_TELL: return dialect == QA_RULESET_NETQUAKE ? "tell" : NULL;
     case QA_Q1_CHAT_UNKNOWN: return NULL;
     }
     return NULL;
 }
 
-static inline qa_q1_chat_mode qa_q1_chat_command_read(qa_console_dialect dialect,
+static inline qa_q1_chat_mode qa_q1_chat_command_read(qa_ruleset_id dialect,
     const char *text, bool fold_case)
 {
     if (!text) return QA_Q1_CHAT_UNKNOWN;

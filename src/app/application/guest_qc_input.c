@@ -27,13 +27,13 @@ float application_qc_input_scalar(const qa_movement_command *command, applicatio
 {
     switch (input) {
     case QC_INPUT_ATTACK: return (command->buttons & 1u) ? 1.0f : 0.0f;
-    case QC_INPUT_JUMP: return command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD ?
-        (command->buttons & 2u) ? 1.0f : 0.0f : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
+    case QC_INPUT_JUMP: return command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD ?
+        (command->buttons & 2u) ? 1.0f : 0.0f : command->kind == QA_RULESET_Q2_RERELEASE ?
         (command->buttons & 8u) ? 1.0f : 0.0f : command->up_move >= 10 ? 1.0f : 0.0f;
     case QC_INPUT_IMPULSE: return command->impulse;
     case QC_INPUT_FORWARD: return command->forward_move / qa_input_command_units(command->kind);
     case QC_INPUT_SIDE: return command->side_move / qa_input_command_units(command->kind);
-    case QC_INPUT_UP: return command->kind == QA_MOVEMENT_Q2_RERELEASE ?
+    case QC_INPUT_UP: return command->kind == QA_RULESET_Q2_RERELEASE ?
         (command->buttons & 8u) ? 1 : (command->buttons & 16u) ? -1 : 0 : command->up_move / qa_input_command_units(command->kind);
     default: return 0;
     }
@@ -44,9 +44,9 @@ static bool set_input(qa_movement_command *command, application_qc_input_id inpu
     switch (input) {
     case QC_INPUT_ATTACK: command->buttons = value != 0 ? command->buttons | 1u : command->buttons & ~1u; break;
     case QC_INPUT_JUMP:
-        if (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD)
+        if (command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD)
             command->buttons = value != 0 ? command->buttons | 2u : command->buttons & ~2u;
-        else if (command->kind == QA_MOVEMENT_Q2_RERELEASE)
+        else if (command->kind == QA_RULESET_Q2_RERELEASE)
             command->buttons = value != 0 ? command->buttons | 8u : command->buttons & ~8u;
         else if (value == 0) { if (command->up_move > 0) command->up_move = 0; }
         else command->up_move = fmaxf(command->up_move, qa_input_command_units(command->kind));
@@ -57,16 +57,16 @@ static bool set_input(qa_movement_command *command, application_qc_input_id inpu
         command->impulse = (uint8_t)value; break;
     }
     case QC_INPUT_FORWARD: case QC_INPUT_SIDE: case QC_INPUT_UP: {
-        if (input == QC_INPUT_UP && command->kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (input == QC_INPUT_UP && command->kind == QA_RULESET_Q2_RERELEASE) {
             command->buttons = (command->buttons & ~24u) | (value > 0 ? 8u : value < 0 ? 16u : 0u);
             break;
         }
         double scaled = (double)value * qa_input_command_units(command->kind);
-        if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
+        if (command->kind == QA_RULESET_Q2_RERELEASE) {
             if (fabs(scaled) > FLT_MAX) return application_fail(error, QA_ERROR_FORMAT, "QC movement output exceeds command range");
         } else {
-            double maximum = command->kind == QA_MOVEMENT_Q3 ? 127 : 32767;
-            double minimum = command->kind == QA_MOVEMENT_Q3 ? -127 : -32768;
+            double maximum = command->kind == QA_RULESET_Q3 ? 127 : 32767;
+            double minimum = command->kind == QA_RULESET_Q3 ? -127 : -32768;
             if (scaled < minimum || scaled > maximum)
                 return application_fail(error, QA_ERROR_FORMAT, "QC movement output exceeds command range");
             scaled = trunc(scaled);
@@ -270,12 +270,12 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
         qa_movement_command source = *command;
         bool jump = application_qc_input_scalar(command, QC_INPUT_JUMP) != 0;
         source.buttons = (command->buttons & 1u) | (jump ? 2u : 0u);
-        if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC) {
+        if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
             source.angles = qa_v3((float)((double)command->angle_words[0] * 360 / 65536),
                 (float)((double)command->angle_words[1] * 360 / 65536),
                 (float)((double)command->angle_words[2] * 360 / 65536));
         }
-        if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_RERELEASE) source.impulse = 0;
+        if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_RERELEASE) source.impulse = 0;
         return application_qc_player_command(provider, actor, &source, error);
     }
     bool subscribed = false;

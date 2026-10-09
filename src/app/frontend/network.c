@@ -353,8 +353,8 @@ static bool q2_timeout_sync(qa_frontend_network *n,qa_error *error)
     if(!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
     if(!present)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout requires its actual primary Source registry");
-    qa_console_dialect dialect=qa_cvars_dialect(source.cvars);
-    if(dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
+    qa_ruleset_id dialect=qa_cvars_dialect(source.cvars);
+    if(dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE) return true;
     const qa_cvar_view *timeout=qa_cvars_find(source.cvars,"timeout");
     if(!timeout)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout lacks its Source declaration");
@@ -382,7 +382,7 @@ static bool client_drain(frontend_q3_client *, bool, qa_error *);
 static bool q1_service_message(qa_frontend_network *, const qa_application_client_source *,
     const qa_nq_message *, qa_error *);
 static bool q1_controlled(frontend_network_q1_client *, qa_net_client_id, qa_net_seat_id,
-    qa_actor_id, qa_movement_kind, qa_bytes, qa_error *);
+    qa_actor_id, qa_ruleset_id, qa_bytes, qa_error *);
 static bool q2_download_nonce(void *, uint64_t *, qa_error *);
 static bool q2_download_stage(void *, qa_fs_root *, const char *, qa_fs_stage **,
     uint64_t *, qa_error *);
@@ -554,7 +554,7 @@ static bool local_q1_service(void *context, const qa_application_client_source *
     return q1_service_message(local->network, source, message, error);
 }
 static bool local_q1_controlled(void *context, qa_net_client_id client, qa_net_seat_id seat,
-    qa_actor_id actor, qa_movement_kind movement, qa_bytes arsenal, qa_error *error)
+    qa_actor_id actor, qa_ruleset_id movement, qa_bytes arsenal, qa_error *error)
 {
     frontend_local_client *local = context;
     return q1_controlled(local->q1, client, seat, actor, movement, arsenal, error);
@@ -812,11 +812,11 @@ static bool q1_service_message(qa_frontend_network *n,const qa_application_clien
     if(message->op!=QA_NQ_STUFFTEXT) return true;
     const char *pending=message->data.text;
     while(pending && *pending) {
-        size_t length=strlen(pending),offset=qa_command_separator(pending,length,QA_CONSOLE_Q1);
+        size_t length=strlen(pending),offset=qa_command_separator(pending,length,QA_RULESET_NETQUAKE);
         char *line=malloc(offset+1); qa_command_tokens tokens={0};
         if(!line) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining received Source command diagnostic");
         memcpy(line,pending,offset); line[offset]=0;
-        bool ok=qa_command_tokenize(line,QA_CONSOLE_Q1,false,&tokens,error);
+        bool ok=qa_command_tokenize(line,QA_RULESET_NETQUAKE,false,&tokens,error);
         const char *trimmed=line;
         while(*trimmed && (unsigned char)*trimmed<=32) ++trimmed;
         size_t trimmed_length=strlen(trimmed);
@@ -1266,20 +1266,20 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
     return frontend_fail(error, QA_ERROR_UNSUPPORTED, "remote signon/full-state producer is not bound to this frontend");
 }
 static bool controlled(void *context, qa_net_client_id client, qa_net_seat_id seat,
-    qa_actor_id actor, qa_movement_kind movement, qa_bytes arsenal, qa_error *error)
+    qa_actor_id actor, qa_ruleset_id movement, qa_bytes arsenal, qa_error *error)
 {
     qa_frontend_network *n = context;
     if(n->q1_client_owner) return q1_controlled(n->q1_client_owner, client, seat, actor, movement, arsenal, error);
     return qa_application_network_controlled(n->frontend->application, client, seat, actor, movement, arsenal, error);
 }
 static bool q1_controlled(frontend_network_q1_client *owner, qa_net_client_id client,
-    qa_net_seat_id seat, qa_actor_id actor, qa_movement_kind movement, qa_bytes arsenal, qa_error *error)
+    qa_net_seat_id seat, qa_actor_id actor, qa_ruleset_id movement, qa_bytes arsenal, qa_error *error)
 {
     frontend_remote_q1_source_view source; frontend_remote_q1_player_view player; bool present=false;
     if(!frontend_network_q1_client_source_read(owner,&source,error) ||
         !qa_net_client_id_equal(source.physical.source.client,client) ||
         source.physical.source.network_seat.owner!=seat.owner || source.physical.source.network_seat.index!=seat.index ||
-        arsenal.size || movement!=(qa_q1_is_qw(source.domain.protocol)?QA_MOVEMENT_QUAKEWORLD:QA_MOVEMENT_NETQUAKE) ||
+        arsenal.size || movement!=(qa_q1_is_qw(source.domain.protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE) ||
         !frontend_remote_q1_player_read(source.receiver,&player,&present,error) || !present ||
         !qa_actor_id_equal(player.actor,actor) || !frontend_remote_q1_source_current(&source))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input authority differs from its real received CLIENT player");
@@ -1449,7 +1449,7 @@ static const char *password(void *context, bool limited)
     if (!n->frontend->options.network_host ||
         !frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) || !present) return "";
     const qa_cvar_view *v = qa_cvars_find(source.cvars,
-        limited ? "lrcon_password" : qa_cvars_dialect(source.cvars)==QA_CONSOLE_Q3?"rconPassword":"rcon_password");
+        limited ? "lrcon_password" : qa_cvars_dialect(source.cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
     return v ? v->value : "";
 }
 static qa_cvars *admin_rate_registry(void *context)
@@ -1521,17 +1521,17 @@ static bool admin_options(qa_frontend_network *n,qa_admin_options *out,qa_error 
         if (!present) return frontend_fail(error,QA_ERROR_ARGUMENT,"Hosting administration has no actual primary Source registry");
         cvars=source.cvars;
     }
-    qa_console_dialect dialect=qa_cvars_dialect(cvars);
+    qa_ruleset_id dialect=qa_cvars_dialect(cvars);
     const frontend_engine_cvar_handles *refs=&n->frontend->engine_cvars;
     const qa_cvar_view *filter=qa_cvars_read(cvars,refs->filterban),
         *published=qa_cvars_read(cvars,refs->public_server),
         *dedicated=qa_cvars_read(cvars,refs->dedicated);
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
+    bool q2=dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE;
     *out=(qa_admin_options){.dialect=dialect,.filters=1024,.rate_entries=1024,.burst=10,
         .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),
         .deny_matches=!filter || filter->integer!=0,
         .public_server=n->frontend->options.network_host && n->frontend->options.dedicated &&
-            (q2?published && published->number!=0:dialect!=QA_CONSOLE_Q3 || (dedicated && dedicated->integer==2)),
+            (q2?published && published->number!=0:dialect!=QA_RULESET_Q3 || (dedicated && dedicated->integer==2)),
         .hooks={.context=n,.password=password,.execute=admin_execute,.send=send_address,
             .travel=travel,.players=player_count,.random=random_rotation,
             .rate_registry=admin_rate_registry,.print=admin_print}};
@@ -1746,7 +1746,7 @@ static bool q3_client_command(void *context, const qa_q3_command *command, bool 
     }
     args[used] = 0;
     qa_command_invocation invocation = {.console = qa_application_console(n->frontend->application),
-        .context = {.dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_REMOTE, .owner = owner,
+        .context = {.dialect = QA_RULESET_Q3, .origin = QA_COMMAND_REMOTE, .owner = owner,
             .actor = actor}, .argc = tokens.count, .argv = argv, .args_text = args, .raw = command->text};
     (void)qa_application_player_seat(n->frontend->application, actor, &invocation.context.seat);
     return qa_application_source_command(n->frontend->application, &invocation, error);
@@ -3538,7 +3538,7 @@ static bool client_input_source_read(void *context, frontend_remote_input_source
     qa_vec3 delta = qa_v3((float)(uint16_t)snapshot->player.deltaAngles[0] * (360.0f / 65536.0f),
         (float)(uint16_t)snapshot->player.deltaAngles[1] * (360.0f / 65536.0f),
         (float)(uint16_t)snapshot->player.deltaAngles[2] * (360.0f / 65536.0f));
-    out->frame = (qa_input_command_frame){.kind = QA_MOVEMENT_Q3, .sequence = (uint64_t)number + 1,
+    out->frame = (qa_input_command_frame){.kind = QA_RULESET_Q3, .sequence = (uint64_t)number + 1,
         .delta_angles = delta, .server_time_ms = n->q3_client_time, .weapon = (uint8_t)n->q3_weapon,
         .sensitivity = n->q3_sensitivity, .attack_allowed = true};
     out->initial_angles = qa_vec_sub(qa_v3(snapshot->player.viewangles[0], snapshot->player.viewangles[1],
@@ -3617,7 +3617,7 @@ bool frontend_network_prediction_input_read(const qa_frontend *f,
     out->input_settings=configuration.q3_mouse; out->movement_settings=configuration.q3_view;
     out->input_tuning=configuration.q3_input_tuning;
     out->media_owner=n->q3_client_content;
-    out->frame=(qa_input_command_frame){.kind=QA_MOVEMENT_Q3,.sequence=number,
+    out->frame=(qa_input_command_frame){.kind=QA_RULESET_Q3,.sequence=number,
         .server_time_ms=n->q3_client_time,.weapon=command->weapon};
     *present=true; return true;
 }
@@ -4183,8 +4183,8 @@ bool frontend_network_source_admin_dispatch(qa_frontend *f,qa_server_admin *admi
         return qa_server_admin_limited_command(admin,name,arguments,
             operator_print,(void *)call,error);
     if (!strcmp(name, "setmaster")) {
-        bool qw=call->context.dialect==QA_CONSOLE_QW;
-        bool q2=call->context.dialect==QA_CONSOLE_Q2 || call->context.dialect==QA_CONSOLE_Q2_RERELEASE;
+        bool qw=call->context.dialect==QA_RULESET_QUAKEWORLD;
+        bool q2=call->context.dialect==QA_RULESET_Q2_CLASSIC || call->context.dialect==QA_RULESET_Q2_RERELEASE;
         if (!qw && !q2) return frontend_fail(error,QA_ERROR_UNSUPPORTED,"This Source uses master cvars instead of setmaster");
         if (q2 && !f->options.dedicated) { emit(call,"Only dedicated servers use masters.\n"); return true; }
         if (q2) {
@@ -4258,11 +4258,11 @@ static bool source_admin_command(void *context,const qa_command_invocation *call
     } else if (!frontend_config_store_admin_dispatch(f->config_store,call,skip,&handled,error)) return false;
     return handled || qa_application_source_command(f->application,call,error);
 }
-static void source_admin_span(qa_console_dialect dialect,size_t *first,size_t *count)
+static void source_admin_span(qa_ruleset_id dialect,size_t *first,size_t *count)
 {
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
-    *first=dialect==QA_CONSOLE_Q3?6:q2?0:1;
-    *count=dialect==QA_CONSOLE_Q1?0:dialect==QA_CONSOLE_Q3?1:q2?12:8;
+    bool q2=dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE;
+    *first=dialect==QA_RULESET_Q3?6:q2?0:1;
+    *count=dialect==QA_RULESET_NETQUAKE?0:dialect==QA_RULESET_Q3?1:q2?12:8;
 }
 bool frontend_network_source_admin_binding(qa_frontend *f,const qa_console *console,const qa_command_context *command,
     const char *name,qa_command_handler *handler,void **user)
@@ -6158,7 +6158,7 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
     qa_admin_options policy;
     if (!admin_options(n,&policy,error) ||
         !qa_server_admin_policy(n->admin,policy.dialect,policy.deny_matches,policy.public_server,error)) return false;
-    if (f->options.network_host && policy.dialect==QA_CONSOLE_Q3) {
+    if (f->options.network_host && policy.dialect==QA_RULESET_Q3) {
         qa_application_startup_source source; bool present=false;
         if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error) || !present ||
             !qa_server_admin_refresh_masters(n->admin,source.cvars,error)) return false;
@@ -6427,7 +6427,7 @@ static bool client_predictor_initial(frontend_q3_client *n, bool *ready, qa_erro
         zero->serverTime || zero->buttons || zero->weapon || zero->forwardmove || zero->rightmove || zero->upmove ||
         zero->angles[0] || zero->angles[1] || zero->angles[2])
         return frontend_fail(error,QA_ERROR_FORMAT,"Prediction lost its genuine zero reset receipt before physical input");
-    qa_movement_command command={.kind=QA_MOVEMENT_Q3,.sequence=number};
+    qa_movement_command command={.kind=QA_RULESET_Q3,.sequence=number};
     if(!frontend_remote_prediction_admit_initial(prediction,&command,error)) return false;
     n->q3_predictor_zero_sequence=0; n->q3_predictor_zero_pending=false;
     *ready=true; return true;
@@ -6466,7 +6466,7 @@ bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id a
     if(!present) return true;
     const qa_q3_client_peer *peer=q3_view(n);
     uint64_t number=peer?qa_q3_client_peer_usercmd_number(peer):0;
-    if(!peer || raw.kind!=QA_MOVEMENT_Q3 || raw.sequence!=number+1 || number==UINT64_MAX)
+    if(!peer || raw.kind!=QA_RULESET_Q3 || raw.sequence!=number+1 || number==UINT64_MAX)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Paired raw input differs from its genuine next transport command");
     qa_q3_usercmd command={.serverTime=raw.server_time_ms,.buttons=(int32_t)raw.buttons,.weapon=raw.weapon,
         .forwardmove=(int8_t)raw.forward_move,.rightmove=(int8_t)raw.side_move,.upmove=(int8_t)raw.up_move};
@@ -7529,7 +7529,7 @@ bool frontend_network_restore_prediction_input_read(const qa_frontend *f,
     out->input_settings=configuration.q3_mouse; out->movement_settings=configuration.q3_view;
     out->input_tuning=configuration.q3_input_tuning;
     out->media_owner=n->q3_clients[0].q3_client_content;
-    out->frame=(qa_input_command_frame){.kind=QA_MOVEMENT_Q3,.sequence=number,
+    out->frame=(qa_input_command_frame){.kind=QA_RULESET_Q3,.sequence=number,
         .server_time_ms=n->q3_clients[0].q3_client_time,.weapon=command->weapon};
     if(!frontend_network_client_restore_domain_current(f,&domain)) return false;
     *present=true; return true;
@@ -7974,10 +7974,10 @@ static bool demo_local_format(const qa_frontend *f,frontend_demo_format *out,qa_
     if(!present||!source.descriptor)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local recording requires its actual primary Source configuration");
     switch(source.descriptor->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE:*out=FRONTEND_DEMO_NQ;return true;
-    case QA_CLOCK_QUAKEWORLD:*out=FRONTEND_DEMO_QW;return true;
-    case QA_CLOCK_Q2_CLASSIC:case QA_CLOCK_Q2_RERELEASE:*out=FRONTEND_DEMO_Q2;return true;
-    case QA_CLOCK_Q3:*out=FRONTEND_DEMO_Q3;return true;
+    case QA_RULESET_NETQUAKE:*out=FRONTEND_DEMO_NQ;return true;
+    case QA_RULESET_QUAKEWORLD:*out=FRONTEND_DEMO_QW;return true;
+    case QA_RULESET_Q2_CLASSIC:case QA_RULESET_Q2_RERELEASE:*out=FRONTEND_DEMO_Q2;return true;
+    case QA_RULESET_Q3:*out=FRONTEND_DEMO_Q3;return true;
     }
     return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Selected local Source has no native demo format");
 }
@@ -7994,10 +7994,10 @@ frontend_demo_format frontend_network_demo_format(const qa_frontend *f,const qa_
     if(n&&n->q3_clients[0].q3_client_attached) return FRONTEND_DEMO_Q3;
     frontend_demo_format format;
     if(demo_local_format(f,&format,NULL))return format;
-    if(source&&source->dialect==QA_CONSOLE_Q3) return FRONTEND_DEMO_Q3;
-    if(source&&(source->dialect==QA_CONSOLE_Q2||source->dialect==QA_CONSOLE_Q2_RERELEASE)) return FRONTEND_DEMO_Q2;
-    if(source&&source->dialect==QA_CONSOLE_QW) return FRONTEND_DEMO_QW;
-    if(source&&source->dialect==QA_CONSOLE_Q1) return FRONTEND_DEMO_NQ;
+    if(source&&source->dialect==QA_RULESET_Q3) return FRONTEND_DEMO_Q3;
+    if(source&&(source->dialect==QA_RULESET_Q2_CLASSIC||source->dialect==QA_RULESET_Q2_RERELEASE)) return FRONTEND_DEMO_Q2;
+    if(source&&source->dialect==QA_RULESET_QUAKEWORLD) return FRONTEND_DEMO_QW;
+    if(source&&source->dialect==QA_RULESET_NETQUAKE) return FRONTEND_DEMO_NQ;
     return f&&qa_q1_is_qw(f->options.network_protocol)?FRONTEND_DEMO_QW:FRONTEND_DEMO_NQ;
 }
 static bool demo_network_current(const qa_frontend_network *n)
@@ -8166,7 +8166,7 @@ static bool local_q3_demo_publish(void *context,qa_error *error)
     if(!local_q3_demo_current(source)||!source->sink.append||
         !qa_application_map_read(app,&map)||
         !qa_session_clock(qa_application_session(app),source->provider,&clock)||
-        clock.frame.provider!=source->provider||clock.frame.kind!=QA_CLOCK_Q3||clock.frame.phase!=QA_FRAME_EXIT)
+        clock.frame.provider!=source->provider||clock.frame.kind!=QA_RULESET_Q3||clock.frame.phase!=QA_FRAME_EXIT)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local Q3 recording requires its completed Source frame");
     if(source->map_revision!=map.revision)return local_q3_demo_seed(source,&source->sink,error);
     if(source->sequence==INT32_MAX)return frontend_fail(error,QA_ERROR_FORMAT,"Local Q3 demo message ordinal exhausted");

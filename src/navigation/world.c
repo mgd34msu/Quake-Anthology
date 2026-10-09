@@ -1,13 +1,13 @@
 #include "internal.h"
 
 bool nav_profile_valid(const qa_nav_profile *p, qa_error *e) {
-    if (p == NULL || (unsigned)p->movement.kind > QA_MOVEMENT_Q3 || p->team > 2 ||
+    if (p == NULL || (unsigned)p->movement.kind > QA_RULESET_Q3 || p->team > 2 ||
         !isfinite(p->maximum_step) || p->maximum_step < 0 || !isfinite(p->maximum_drop) ||
         p->maximum_drop < 0 || !isfinite(p->minimum_floor_normal) || p->minimum_floor_normal <= 0 ||
         p->minimum_floor_normal > 1)
         goto invalid;
-    qa_collision_family family = p->movement.kind <= QA_MOVEMENT_QUAKEWORLD     ? QA_COLLISION_Q1
-                                 : p->movement.kind <= QA_MOVEMENT_Q2_RERELEASE ? QA_COLLISION_Q2
+    qa_collision_family family = p->movement.kind <= QA_RULESET_QUAKEWORLD     ? QA_COLLISION_Q1
+                                 : p->movement.kind <= QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2
                                                                                 : QA_COLLISION_Q3;
     if (p->policy.family != family)
         goto invalid;

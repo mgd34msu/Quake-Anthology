@@ -247,10 +247,10 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
         memcpy(text,message->data.text,length+1);
         bool ok=true;
         for(size_t at=0;ok && at<length;) {
-            size_t count=qa_command_separator(text+at,length-at,QA_CONSOLE_Q1);
+            size_t count=qa_command_separator(text+at,length-at,QA_RULESET_NETQUAKE);
             text[at+count]=0;
             qa_command_tokens tokens={0};
-            ok=qa_command_tokenize(text+at,QA_CONSOLE_Q1,false,&tokens,error);
+            ok=qa_command_tokenize(text+at,QA_RULESET_NETQUAKE,false,&tokens,error);
             if(ok && tokens.count) {
                 const char *name=tokens.values[0];
                 if((name[0]=='b' || name[0]=='B') && (name[1]=='f' || name[1]=='F') && !name[2]) {

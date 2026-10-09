@@ -34,7 +34,7 @@ static bool respawned(void *context, qa_actor_id id, qa_error *e) {
         !qa_session_clock(g->services.session, g->options.owner, &clock) ||
         clock.frame.provider != g->options.owner ||
         clock.frame.kind != (g->options.edition == QA_Q2_RERELEASE
-                                 ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC) ||
+                                 ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
         clock.frame.time_ns > UINT64_MAX - 12 * Q2_NS ||
         a->character_birth_epoch == UINT64_MAX) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,

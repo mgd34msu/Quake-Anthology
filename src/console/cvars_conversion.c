@@ -132,7 +132,7 @@ static qa_cvar_video_query video_query(const qac_cvar_conversion_input *in,bool 
 {
     const qa_cvar_options *options=in->options;
     return (qa_cvar_video_query){.member=canonical?"r_mode":qa_cvar_catalog_string(in->binding->name),
-        .dialect=canonical?QA_CONSOLE_Q3:options->dialect,.side=options->side,
+        .dialect=canonical?QA_RULESET_Q3:options->dialect,.side=options->side,
         .role=options->role,.seat=options->seat,.modelist=video_operand(in,"vid_modelist")};
 }
 static bool video_lookup(const qac_cvar_conversion_input *in,
@@ -224,7 +224,7 @@ bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
         break;
     case QA_CATALOG_OP_SKILL: value = fmin(3, fmax(0, value - 1)); break;
     case QA_CATALOG_OP_VIEW_SIZE:
-        if (in->options->dialect != QA_CONSOLE_Q1 && in->options->dialect != QA_CONSOLE_QW) value = fmin(100, value);
+        if (in->options->dialect != QA_RULESET_NETQUAKE && in->options->dialect != QA_RULESET_QUAKEWORLD) value = fmin(100, value);
         break;
     case QA_CATALOG_OP_DEATHMATCH: value = family(value, false) ? 1 : 0; break;
     case QA_CATALOG_OP_COOP: value = value == 9; break;
@@ -238,22 +238,22 @@ bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
     case QA_CATALOG_OP_NO_EXIT: value=value==0; break;
     case QA_CATALOG_OP_NO_SKINS: value=value!=0; break;
     case QA_CATALOG_OP_DOWNLOAD:
-        if (in->options->dialect==QA_CONSOLE_Q2_RERELEASE && value<0) value=0;
+        if (in->options->dialect==QA_RULESET_Q2_RERELEASE && value<0) value=0;
         break;
     case QA_CATALOG_OP_MUSIC_MUTE:
 #ifdef __linux__
-        if (in->options->dialect==QA_CONSOLE_Q2) value=value!=0;
+        if (in->options->dialect==QA_RULESET_Q2_CLASSIC) value=value!=0;
 #endif
         break;
     case QA_CATALOG_OP_FORCE_RESPAWN: value = value > 0; break;
     case QA_CATALOG_OP_NEEDPASS:
-        if (in->options->dialect == QA_CONSOLE_Q3) value = value != 0;
+        if (in->options->dialect == QA_RULESET_Q3) value = value != 0;
         break;
     case QA_CATALOG_OP_SEX:
         out->value = qac_equal(in->value, "neuter") ? "none" : in->value;
         return true;
     case QA_CATALOG_OP_QW_SKIN:
-        if (in->options->dialect == QA_CONSOLE_QW) {
+        if (in->options->dialect == QA_RULESET_QUAKEWORLD) {
             const char *slash = strrchr(in->value, '/');
             out->value = slash ? slash + 1 : in->value;
         }
@@ -268,7 +268,7 @@ bool qac_cvar_read_conversion(const qac_cvar_conversion_input *in,
         break;
     }
     case QA_CATALOG_OP_SPECTATOR:
-        if (in->options->dialect == QA_CONSOLE_QW) return true;
+        if (in->options->dialect == QA_RULESET_QUAKEWORLD) return true;
         value = *in->value && strcmp(in->value, "0");
         break;
     case QA_CATALOG_OP_NONE:
@@ -314,7 +314,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
         break;
     case QA_CATALOG_OP_COOP: value = value != 0 ? 9 : current == 9 ? 8 : current; break;
     case QA_CATALOG_OP_TEAMPLAY:
-        if (in->options->dialect == QA_CONSOLE_Q1 &&
+        if (in->options->dialect == QA_RULESET_NETQUAKE &&
             (value == 1 || value == 2) && c->operand_count &&
             !change(out, qa_cvar_catalog_operands[c->operand_first].row_index, value == 2, error)) return false;
         value = value > 0 ? 3 : family(current, true) ? 0 : current;
@@ -339,9 +339,9 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
     case QA_CATALOG_OP_SOUND_BACKEND:
     case QA_CATALOG_OP_BOOL_DETAIL: value = value != 0; break;
     case QA_CATALOG_OP_NO_SKINS:
-        value=in->options->dialect==QA_CONSOLE_QW?value==1:value!=0; break;
+        value=in->options->dialect==QA_RULESET_QUAKEWORLD?value==1:value!=0; break;
     case QA_CATALOG_OP_DOWNLOAD:
-        if (in->options->dialect==QA_CONSOLE_Q2_RERELEASE && value<0) value=0;
+        if (in->options->dialect==QA_RULESET_Q2_RERELEASE && value<0) value=0;
         break;
     case QA_CATALOG_OP_SAME_LEVEL: value = value != 0; break;
     case QA_CATALOG_OP_NO_EXIT: value = value == 0; break;
@@ -359,7 +359,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
         break;
     }
     case QA_CATALOG_OP_QW_SKIN:
-        if (in->options->dialect == QA_CONSOLE_QW) {
+        if (in->options->dialect == QA_RULESET_QUAKEWORLD) {
             const char *slash = strrchr(in->current, '/');
             size_t prefix = slash ? (size_t)(slash - in->current + 1) : 0;
             size_t suffix=strlen(in->value);
@@ -374,7 +374,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
     case QA_CATALOG_OP_SPECTATOR: return true;
     case QA_CATALOG_OP_MUSIC_MUTE:
 #ifdef __linux__
-        if (in->options->dialect==QA_CONSOLE_Q2) {
+        if (in->options->dialect==QA_RULESET_Q2_CLASSIC) {
             if (value==0) {
                 if (current!=0) { out->detail=true; out->detail_value=in->current; }
                 value=0;

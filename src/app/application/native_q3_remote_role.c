@@ -33,14 +33,14 @@ static bool capture(void *context, const qa_command_context *source, qa_command_
     if (row->retiring || !source || (source->owner && source->owner != row->provider->owner) || source->seat != row->seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT console lost its selected receiver and authored seat");
     qa_command_context actual = *source;
-    actual.owner = row->provider->owner; actual.dialect = QA_CONSOLE_Q3;
+    actual.owner = row->provider->owner; actual.dialect = QA_RULESET_Q3;
     return application_command_capture(row->provider->application, &actual, out, error);
 }
 static bool active(void *context, const qa_command_context *command)
 {
     struct application_native_q3_remote_role *row = context;
     return !row->retiring && command && command->owner == row->provider->owner && command->seat == row->seat &&
-        command->dialect == QA_CONSOLE_Q3 && application_command_active(row->provider->application, command);
+        command->dialect == QA_RULESET_Q3 && application_command_active(row->provider->application, command);
 }
 static void print(void *context, const qa_command_context *command, const char *text)
 {
@@ -236,11 +236,11 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     char name[160];
     snprintf(name, sizeof(name), "q3-native-client:%u:%llu:%u", provider->owner,
         (unsigned long long)provider->launch->identity, seat->id);
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_CLIENT, .role = QA_CVAR_ROLE_CGAME, .seat = row->seat, .user = row, .print = cvar_print, .cheats_allowed = cheats};
     row->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .seat = seat->id,
-        .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars, .user = row,
+        .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars, .user = row,
         .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete, .allow_command = allowed,
         .source_command = dispatch, .forward = forward};
@@ -279,7 +279,7 @@ bool application_native_q3_remote_role_source_at(application_provider *provider,
         .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_CGAME, .seat = row->seat},
         .console = row->console, .cvars = row->cvars, .declaration_owner = provider->owner,
         .command = {.owner = provider->owner, .seat = row->seat,
-            .cvar_view = qa_cvars_view_identity(row->cvars), .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}};
+            .cvar_view = qa_cvars_view_identity(row->cvars), .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SEAT}};
     return true;
 }
 bool application_native_q3_remote_role_configuration(application_provider *provider, uint32_t seat,
@@ -323,7 +323,7 @@ bool application_native_q3_remote_role_context(application_provider *provider, u
         .console = row->console, .cvars = row->cvars, .client_time_cvars = row->cvars,
         .client_time_owner = provider->owner, .command_context = {.owner = provider->owner, .seat = seat,
             .cvar_view = qa_cvars_view_identity(row->cvars),
-            .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SEAT}, .native_source = true, .initialized = row->initialized};
+            .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SEAT}, .native_source = true, .initialized = row->initialized};
     return true;
 }
 bool application_native_q3_remote_role_current(application_provider *provider, const qa_application_q3_client_context *source)
@@ -336,7 +336,7 @@ bool application_native_q3_remote_role_current(application_provider *provider, c
         source->console == actual.console && source->cvars == actual.cvars && source->client_time_cvars == actual.cvars &&
         source->client_time_owner == actual.receiver && source->command_context.owner == actual.receiver &&
         source->command_context.seat == actual.seat && source->command_context.cvar_view == actual.command_context.cvar_view &&
-        source->command_context.dialect == QA_CONSOLE_Q3 &&
+        source->command_context.dialect == QA_RULESET_Q3 &&
         source->command_context.origin == QA_COMMAND_SEAT && !source->command_context.client &&
         qa_actor_id_equal(source->command_context.actor, (qa_actor_id){0}) &&
         source->native_source && source->initialized == actual.initialized;
@@ -628,7 +628,7 @@ bool application_native_q3_remote_role_modules_retained(application_provider *pr
         !receiver->source_owner && !receiver->source_cvars && qa_actor_id_equal(receiver->source_actor, (qa_actor_id){0}) &&
         receiver->native_source && command->owner == provider->owner && command->seat == row->seat &&
         command->cvar_view == qa_cvars_view_identity(row->cvars) &&
-        command->dialect == QA_CONSOLE_Q3 && command->origin == QA_COMMAND_SEAT && !command->client &&
+        command->dialect == QA_RULESET_Q3 && command->origin == QA_COMMAND_SEAT && !command->client &&
         qa_actor_id_equal(command->actor, (qa_actor_id){0});
 }
 bool application_native_q3_remote_role_modules_borrow(application_provider *provider,

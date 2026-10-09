@@ -11,29 +11,29 @@ static bool words(qa_source_save_io *io, double v[3])
 static bool movement(qa_source_save_io *io, qa_unified_movement *m)
 {
     uint32_t kind = (uint32_t)m->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3) return false;
-    m->kind = (qa_movement_kind)kind;
+    if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3) return false;
+    m->kind = (qa_ruleset_id)kind;
     switch (m->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         return qa_source_save_f64(io, &m->data.nq.acknowledged_seconds) && vector(io, &m->data.nq.angles) &&
             qa_source_save_f64(io, &m->data.nq.forward) && qa_source_save_f64(io, &m->data.nq.side) &&
             qa_source_save_f64(io, &m->data.nq.up) && qa_source_save_f64(io, &m->data.nq.buttons) &&
             qa_source_save_f64(io, &m->data.nq.impulse);
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         return qa_source_save_f64(io, &m->data.qw.milliseconds) && vector(io, &m->data.qw.angles) &&
             qa_source_save_f64(io, &m->data.qw.forward) && qa_source_save_f64(io, &m->data.qw.side) &&
             qa_source_save_f64(io, &m->data.qw.up) && qa_source_save_f64(io, &m->data.qw.buttons) &&
             qa_source_save_f64(io, &m->data.qw.impulse);
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         return qa_source_save_f64(io, &m->data.q2.milliseconds) && words(io, m->data.q2.angle_shorts) &&
             qa_source_save_f64(io, &m->data.q2.forward) && qa_source_save_f64(io, &m->data.q2.side) &&
             qa_source_save_f64(io, &m->data.q2.up) && qa_source_save_f64(io, &m->data.q2.buttons) &&
             qa_source_save_f64(io, &m->data.q2.impulse) && qa_source_save_f64(io, &m->data.q2.light_level);
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         return qa_source_save_f64(io, &m->data.q2r.milliseconds) && vector(io, &m->data.q2r.angles) &&
             qa_source_save_f64(io, &m->data.q2r.forward) && qa_source_save_f64(io, &m->data.q2r.side) &&
             qa_source_save_f64(io, &m->data.q2r.buttons) && qa_source_save_f64(io, &m->data.q2r.server_frame);
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         return qa_source_save_f64(io, &m->data.q3.server_time_ms) && words(io, m->data.q3.angle_words) &&
             qa_source_save_f64(io, &m->data.q3.buttons) && qa_source_save_f64(io, &m->data.q3.weapon) &&
             qa_source_save_f64(io, &m->data.q3.forward) && qa_source_save_f64(io, &m->data.q3.right) &&

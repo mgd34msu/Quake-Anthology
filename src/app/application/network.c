@@ -619,7 +619,7 @@ bool qa_application_network_q1_signon_at(qa_application *app, qa_actor_owner own
 }
 
 bool qa_application_network_controlled(qa_application *application, qa_net_client_id client,
-    qa_net_seat_id seat, qa_actor_id actor, qa_movement_kind kind, qa_bytes arsenal, qa_error *error)
+    qa_net_seat_id seat, qa_actor_id actor, qa_ruleset_id kind, qa_bytes arsenal, qa_error *error)
 {
     qa_actor_id admitted;
     qa_application_control_view control;
@@ -939,7 +939,7 @@ static bool q3_wire_time(const struct application_q3_guest *engine, int32_t *out
 {
     qa_clock_state clock;
     if (!engine || !out || !qa_session_clock(engine->provider->application->session, engine->provider->owner, &clock) ||
-        clock.frame.provider != engine->provider->owner || clock.frame.kind != QA_CLOCK_Q3)
+        clock.frame.provider != engine->provider->owner || clock.frame.kind != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 wire time lacks its actual source server clock");
     uint32_t bits = (uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
     memcpy(out, &bits, sizeof(bits));

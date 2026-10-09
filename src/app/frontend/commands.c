@@ -81,7 +81,7 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
         const qa_launch_instance *live=published && source->descriptor?
             qa_launch_snapshot_find(published,source->descriptor->selection.instance):NULL;
         if (!live || live->storage!=source->descriptor->storage || live->state!=source->descriptor->state) {
-            if (call->context.dialect==QA_CONSOLE_Q2_RERELEASE)
+            if (call->context.dialect==QA_RULESET_Q2_RERELEASE)
                 frontend_console_print(f,&call->context,"No server running.\n");
             return true;
         }
@@ -160,7 +160,7 @@ bool frontend_commands_source(qa_frontend *f,const qa_application_startup_source
         if (!alias) break;
         if (client_name(name,alias->name)) return true;
     }
-    if ((call->context.dialect==QA_CONSOLE_Q1 || call->context.dialect==QA_CONSOLE_QW) && client_name(name,"bf")) {
+    if ((call->context.dialect==QA_RULESET_NETQUAKE || call->context.dialect==QA_RULESET_QUAKEWORLD) && client_name(name,"bf")) {
         *handled=true;
         uint32_t physical; qa_actor_id actor;
         if (!frontend_command_seat_read(f,&call->context,&physical) ||

@@ -581,8 +581,8 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP)|QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP)|QA_NAV_CAPABILITY(QA_NAV_GRAPPLE),
         .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
     profile.crouched_shape.bounds.maxs.z=fminf(graph->bounds.maxs.z,16);
-    profile.policy=(qa_trace_policy){.family=graph->profile.kind==QA_MOVEMENT_Q3?QA_COLLISION_Q3:
-        graph->profile.kind==QA_MOVEMENT_NETQUAKE || graph->profile.kind==QA_MOVEMENT_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
+    profile.policy=(qa_trace_policy){.family=graph->profile.kind==QA_RULESET_Q3?QA_COLLISION_Q3:
+        graph->profile.kind==QA_RULESET_NETQUAKE || graph->profile.kind==QA_RULESET_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
         .q1_hull=-1,.curves=true,.player_curve_clip=true};
     profile.policy.contents_mask=qa_collision_contents_mask(0x2010001,profile.policy.family);
     qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
@@ -638,7 +638,7 @@ bool application_bot_navigation_restore_binding(application_bots *bots,qa_naviga
 bool application_bot_navigation_prepare(application_bots *bots,qa_error *error) {
     /* Engine map queries use the original Q3 standing/crouching hull before
      * clients exist. Admitted clients bind their actual selected policy below. */
-    qa_movement_profile profile=qa_movement_profile_default(QA_MOVEMENT_Q3);
+    qa_movement_profile profile=qa_movement_profile_default(QA_RULESET_Q3);
     qa_bounds bounds={qa_v3(-15,-15,-24),qa_v3(15,15,32)};
     application_bot_graph *shared;
     if(!navigation_graph(bots,NULL,&profile,bounds,&shared,error)) return false;

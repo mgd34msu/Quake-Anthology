@@ -25,7 +25,7 @@ typedef struct qa_network_q2_player {
     qa_actor_id actor;
     qa_actor_owner source_owner;
     uint32_t source_slot;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
 } qa_network_q2_player;
 typedef enum qa_q2_download_resource_status {
     QA_Q2_DOWNLOAD_UNHANDLED,

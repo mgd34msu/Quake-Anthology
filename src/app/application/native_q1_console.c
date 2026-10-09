@@ -100,9 +100,9 @@ bool application_native_q1_console_idle(const application_provider *provider)
     return !owner || (!owner->calls && qa_console_idle(owner->console));
 }
 
-static qa_console_dialect dialect(const application_provider *provider)
+static qa_ruleset_id dialect(const application_provider *provider)
 {
-    return provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
+    return provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
 }
 
 static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
@@ -150,10 +150,10 @@ bool application_q1_chat(application_provider *provider,
 {
     struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
     bool native = provider && provider->kind == APPLICATION_PROVIDER_Q1;
-    bool qw=provider && provider->launch && provider->launch->selection.clock.kind==QA_CLOCK_QUAKEWORLD;
+    bool qw=provider && provider->launch && provider->launch->selection.clock.kind==QA_RULESET_QUAKEWORLD;
     if (native && (!owner || !command ||
         !provider->constructed || !provider->attached || provider->close_pending ||
-        !provider->launch || (provider->launch->selection.clock.kind != QA_CLOCK_NETQUAKE && !qw) ||
+        !provider->launch || (provider->launch->selection.clock.kind != QA_RULESET_NETQUAKE && !qw) ||
         command->context.dialect != dialect(provider) ||
         (command->context.owner && command->context.owner != provider->owner) ||
         (mode != QA_Q1_CHAT_ALL && mode != QA_Q1_CHAT_TEAM &&
@@ -295,7 +295,7 @@ bool application_native_q1_console_engine_borrow(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command needs its actual invocation");
     *out = NULL;
     if (command->console != app->console || !command->context.actor.registry ||
-        (command->context.dialect != QA_CONSOLE_Q1 && command->context.dialect != QA_CONSOLE_QW))
+        (command->context.dialect != QA_RULESET_NETQUAKE && command->context.dialect != QA_RULESET_QUAKEWORLD))
         return true;
     if (!qa_console_invocation_current(app->console, command) ||
         !qa_application_command_context_active(app, &command->context))
@@ -340,12 +340,12 @@ static bool files_source(application_provider *provider,const qa_command_context
 {
     struct application_native_q1_console *owner=provider?provider->native_q1_console:NULL;
     const qa_launch_instance *descriptor=source_descriptor(provider);
-    if (!owner || !descriptor || dialect(provider)!=QA_CONSOLE_QW)
+    if (!owner || !descriptor || dialect(provider)!=QA_RULESET_QUAKEWORLD)
         return application_fail(error,QA_ERROR_ARGUMENT,"Native Source filesystem lost its actual QW descriptor");
     *out=(qa_application_startup_source){.descriptor=descriptor,
         .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q1_GAME},
         .console=owner->console,.cvars=owner->cvars,.declaration_owner=provider->owner,
-        .command=command?*command:(qa_command_context){.owner=provider->owner,.dialect=QA_CONSOLE_QW,.origin=QA_COMMAND_SERVER}};
+        .command=command?*command:(qa_command_context){.owner=provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.origin=QA_COMMAND_SERVER}};
     out->command.cvar_view=qa_cvars_view_identity(owner->cvars);
     return true;
 }
@@ -363,13 +363,13 @@ static bool log_source(application_provider *provider,qa_application_startup_sou
     struct application_native_q1_console *owner=provider?provider->native_q1_console:NULL;
     if (!owner || provider->kind!=APPLICATION_PROVIDER_Q1 || !provider->constructed ||
         !provider->attached || provider->close_pending || !provider->launch ||
-        provider->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD) return false;
+        provider->launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD) return false;
     const qa_launch_instance *descriptor = source_descriptor(provider);
     if (!descriptor) return false;
     *out=(qa_application_startup_source){.descriptor=descriptor,
         .scope={.provider=provider->owner,.kind=QA_APPLICATION_CONSOLE_Q1_GAME},
         .console=owner->console,.cvars=owner->cvars,
-        .command={.owner=provider->owner,.dialect=QA_CONSOLE_QW,.origin=QA_COMMAND_SERVER},
+        .command={.owner=provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.origin=QA_COMMAND_SERVER},
         .declaration_owner=provider->owner};
     return true;
 }
@@ -501,7 +501,7 @@ static void cvar_effect(void *opaque, qa_cvar_effect_kind kind, const qa_cvar_vi
 {
     struct application_native_q1_console *owner = opaque;
     if (kind != QA_CVAR_EFFECT_SERVERINFO || !owner->info_initialized ||
-        dialect(owner->provider) != QA_CONSOLE_QW) return;
+        dialect(owner->provider) != QA_RULESET_QUAKEWORLD) return;
     info_set(owner, owner->serverinfo, 512, variable->name, variable->value, false);
     info_change(owner, variable->name, variable->value);
 }
@@ -597,7 +597,7 @@ static bool info_command(void *opaque, const qa_command_invocation *invocation, 
                 okay = qa_console_cvar_apply(owner->console, &invocation->context,
                     &(qa_cvars_edit_command){.kind = QA_CVARS_EDIT_ASSIGN,
                         .name = invocation->argv[1], .value = invocation->argv[2], .force = true,
-                        .source_dialect = QA_CONSOLE_QW}, error);
+                        .source_dialect = QA_RULESET_QUAKEWORLD}, error);
             }
             if (okay) info_change(owner, invocation->argv[1], invocation->argv[2]);
         }
@@ -672,7 +672,7 @@ bool application_native_q1_source_info(application_provider *provider, bool loca
 {
     struct application_native_q1_console *owner = provider ? provider->native_q1_console : NULL;
     if (!owner || !out || provider->kind != APPLICATION_PROVIDER_Q1 || !provider->launch ||
-        dialect(provider) != QA_CONSOLE_QW || provider->close_pending)
+        dialect(provider) != QA_RULESET_QUAKEWORLD || provider->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld info lost its actual Source console");
     *out = local ? owner->localinfo : owner->serverinfo;
     return true;
@@ -719,7 +719,7 @@ bool application_native_q1_source_info_flush(application_provider *provider, qa_
     if (!qa_q1_game_clock_read(provider->state.q1, &time_ns, &seconds))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld serverinfo lost its Source clock");
     if (!application_emit_protocol(provider, &(qa_application_protocol_event){
-        .provider = provider->owner, .dialect = QA_CLOCK_QUAKEWORLD, .time_ns = time_ns,
+        .provider = provider->owner, .dialect = QA_RULESET_QUAKEWORLD, .time_ns = time_ns,
         .reliable = true, .payload = {owner->reliable_info, owner->reliable_info_size}}, error)) return false;
     owner->reliable_info_size = 0;
     return true;
@@ -815,7 +815,7 @@ bool application_native_q1_console_create_restored(application_provider *provide
     application_provider *prior = application->startup_preinit_provider;
     if (application->operation == APPLICATION_PERSISTING)
         application->startup_preinit_provider = provider;
-    bool registered = dialect(provider) != QA_CONSOLE_QW ||
+    bool registered = dialect(provider) != QA_RULESET_QUAKEWORLD ||
         (qa_console_register_context(owner->console, &options.context, "serverinfo", NULL, provider->owner, provider->owner,
             false, info_command, owner, error) &&
          qa_console_register_context(owner->console, &options.context, "localinfo", NULL, provider->owner, provider->owner,
@@ -1022,7 +1022,7 @@ bool application_native_q1_console_capture(application_provider *provider, qa_bu
     qa_buffer registry = {0};
     if (!qa_cvars_save_capture(cvars, &registry, error)) return false;
     qa_buffer chat={0};
-    if (dialect(provider)==QA_CONSOLE_QW) {
+    if (dialect(provider)==QA_RULESET_QUAKEWORLD) {
         native_q1_chat_policy policy=owner->chat;
         qa_source_save_io io={0};
         bool okay=qa_source_save_writer(&io,NULL,error) && chat_fields(&io,&policy) && qa_source_save_finish(&io,&chat);
@@ -1091,13 +1091,13 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     if (reader.failed) return false;
     if (magic != UINT32_C(0x3149514e) || source_dialect != dialect(provider) ||
         initialized > 1 || server_size > 512 || local_size > 32768 || reliable_size > 1450 ||
-        (source_dialect != QA_CONSOLE_QW && (initialized || server_size || local_size || reliable_size)))
+        (source_dialect != QA_RULESET_QUAKEWORLD && (initialized || server_size || local_size || reliable_size)))
         return application_fail(error, QA_ERROR_FORMAT, "native Q1 console checkpoint changes its Source recipe");
     qa_bytes registry, server, local, reliable;
     if (!qa_net_read_bytes(&reader, registry_size, &registry) || !qa_net_read_bytes(&reader, server_size, &server) ||
         !qa_net_read_bytes(&reader, local_size, &local) || !qa_net_read_bytes(&reader, reliable_size, &reliable)) return false;
     native_q1_chat_policy chat={0};
-    if (source_dialect==QA_CONSOLE_QW) {
+    if (source_dialect==QA_RULESET_QUAKEWORLD) {
         qa_bytes saved; qa_source_save_io io={0};
         if (!qa_net_read_bytes(&reader,QW_CHAT_SAVE_SIZE,&saved)) return false;
         bool okay=qa_source_save_reader(&io,NULL,saved,error) && chat_fields(&io,&chat) && qa_source_save_finish(&io,NULL);
@@ -1115,7 +1115,7 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     memcpy(owner->localinfo, local.data, local.size); owner->localinfo[local.size] = 0;
     memcpy(owner->reliable_info, reliable.data, reliable.size); owner->reliable_info_size = reliable.size;
     owner->info_initialized = initialized != 0; owner->info_error = (qa_error){0};
-    if (source_dialect==QA_CONSOLE_QW) owner->chat=chat;
+    if (source_dialect==QA_RULESET_QUAKEWORLD) owner->chat=chat;
     if (provider->application->operation == APPLICATION_PERSISTING) {
         qa_console *console = NULL;
         qa_command_context context;

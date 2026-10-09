@@ -5,13 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-size_t qa_command_separator(const char *text, size_t length, qa_console_dialect dialect)
+size_t qa_command_separator(const char *text, size_t length, qa_ruleset_id dialect)
 {
     bool quoted = false;
     for (size_t offset = 0; offset < length; ++offset) {
         char c = text[offset];
         if (c == '"') quoted = !quoted;
-        if ((!quoted && c == ';') || c == '\n' || (dialect == QA_CONSOLE_Q3 && c == '\r'))
+        if ((!quoted && c == ';') || c == '\n' || (dialect == QA_RULESET_Q3 && c == '\r'))
             return offset;
     }
     return length;
@@ -23,19 +23,19 @@ bool qac_fail(qa_error *error, qa_status code, const char *message)
     return false;
 }
 
-bool qac_dialect_valid(qa_console_dialect dialect)
+bool qac_dialect_valid(qa_ruleset_id dialect)
 {
-    return dialect >= QA_CONSOLE_Q1 && dialect <= QA_CONSOLE_Q3;
+    return dialect >= QA_RULESET_NETQUAKE && dialect <= QA_RULESET_Q3;
 }
 
-bool qac_q1(qa_console_dialect dialect)
+bool qac_q1(qa_ruleset_id dialect)
 {
-    return dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
+    return dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD;
 }
 
-bool qac_q2(qa_console_dialect dialect)
+bool qac_q2(qa_ruleset_id dialect)
 {
-    return dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    return dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
 }
 
 bool qac_equal(const char *left, const char *right)
@@ -117,7 +117,7 @@ static bool punctuation(char c)
 }
 
 bool qac_parse_token(const char *text, size_t length, size_t start,
-                      qa_console_dialect dialect, bool console_text,
+                      qa_ruleset_id dialect, bool console_text,
                       qac_token *out, qa_error *error)
 {
     size_t offset = start;
@@ -125,11 +125,11 @@ bool qac_parse_token(const char *text, size_t length, size_t start,
     for (;;) {
         while (offset < length && qac_space((unsigned char)text[offset], console_text)) ++offset;
         if (offset + 1 < length && text[offset] == '/' && text[offset + 1] == '/') {
-            if (dialect == QA_CONSOLE_Q3) return true;
+            if (dialect == QA_RULESET_Q3) return true;
             while (offset < length && text[offset] != '\n') ++offset;
             continue;
         }
-        if (dialect == QA_CONSOLE_Q3 && offset + 1 < length &&
+        if (dialect == QA_RULESET_Q3 && offset + 1 < length &&
             text[offset] == '/' && text[offset + 1] == '*') {
             offset += 2;
             while (offset + 1 < length && !(text[offset] == '*' && text[offset + 1] == '/')) ++offset;
@@ -144,12 +144,12 @@ bool qac_parse_token(const char *text, size_t length, size_t start,
     size_t token_start = offset;
     if (quoted) {
         while (offset < length && text[offset] != '"') ++offset;
-    } else if (dialect == QA_CONSOLE_Q1 && punctuation(text[offset])) {
+    } else if (dialect == QA_RULESET_NETQUAKE && punctuation(text[offset])) {
         ++offset;
     } else {
         while (offset < length && !qac_space((unsigned char)text[offset], console_text)) {
-            if (dialect == QA_CONSOLE_Q1 && punctuation(text[offset])) break;
-            if (dialect == QA_CONSOLE_Q3 && (text[offset] == '"' ||
+            if (dialect == QA_RULESET_NETQUAKE && punctuation(text[offset])) break;
+            if (dialect == QA_RULESET_Q3 && (text[offset] == '"' ||
                 (text[offset] == '/' && offset + 1 < length &&
                  (text[offset + 1] == '/' || text[offset + 1] == '*')))) break;
             ++offset;
@@ -167,7 +167,7 @@ bool qac_parse_token(const char *text, size_t length, size_t start,
     return true;
 }
 
-bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
+bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
                           bool console_text, qa_command_tokens *out, qa_error *error)
 {
     if (text == NULL || out == NULL || !qac_dialect_valid(dialect))
@@ -176,7 +176,7 @@ bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
     size_t length = strlen(text);
     if (length > (SIZE_MAX - 1) / 2)
         return qac_fail(error, QA_ERROR_MEMORY, "command tokenizer input is too large");
-    size_t maximum = dialect == QA_CONSOLE_Q3 ? 1024 : 80;
+    size_t maximum = dialect == QA_RULESET_Q3 ? 1024 : 80;
     size_t capacity = length < maximum ? length + 1 : maximum;
     out->values = calloc(capacity, sizeof(*out->values));
     out->storage = malloc(length * 2 + 1);
@@ -189,15 +189,15 @@ bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
     size_t args_start = length;
     while (offset < length) {
         while (offset < length && qac_space((unsigned char)text[offset], console_text) &&
-               (dialect == QA_CONSOLE_Q3 || text[offset] != '\n')) ++offset;
-        if (dialect != QA_CONSOLE_Q3 && offset < length && text[offset] == '\n') break;
+               (dialect == QA_RULESET_Q3 || text[offset] != '\n')) ++offset;
+        if (dialect != QA_RULESET_Q3 && offset < length && text[offset] == '\n') break;
         if (out->count == 1) args_start = offset;
         qac_token token;
         if (!qac_parse_token(text, length, offset, dialect, console_text, &token, error)) goto fail;
         if (!token.found) break;
         offset = token.end;
         if (out->count < maximum) {
-            if (dialect == QA_CONSOLE_Q3 && used + token.size + 1 > 9216) {
+            if (dialect == QA_RULESET_Q3 && used + token.size + 1 > 9216) {
                 qac_fail(error, QA_ERROR_FORMAT, "Q3 tokenized command exceeds 9216 bytes");
                 goto fail;
             }
@@ -206,9 +206,9 @@ bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
             used += token.size;
             out->storage[used++] = '\0';
         }
-        if (dialect == QA_CONSOLE_Q3 && out->count == maximum) break;
+        if (dialect == QA_RULESET_Q3 && out->count == maximum) break;
     }
-    if (dialect == QA_CONSOLE_Q3) {
+    if (dialect == QA_RULESET_Q3) {
         qac_text args = {0};
         for (size_t i = 1; i < out->count; ++i) {
             if ((i > 1 && !qac_text_add(&args, " ", 1, error)) ||
@@ -356,7 +356,7 @@ bool qa_command_filter(const char *pattern, const char *name, bool case_sensitiv
     return true;
 }
 
-float qac_number(const char *text, qa_console_dialect dialect)
+float qac_number(const char *text, qa_ruleset_id dialect)
 {
     if (qac_q1(dialect))
         return (float)qa_parse_quake_number(text,QA_QUAKE_NUMBER_SIGNED_QUOTE);

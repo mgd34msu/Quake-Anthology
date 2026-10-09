@@ -15,7 +15,7 @@ static bool end_frame(application_provider *provider,
         !provider->state.q3 || !provider->constructed || !provider->attached ||
         provider->close_pending || app->destroy_requested ||
         app->operation != APPLICATION_ADVANCING || frame->provider != provider->owner ||
-        frame->kind != QA_CLOCK_Q3 || frame->phase != QA_CLIENT_END_FRAME ||
+        frame->kind != QA_RULESET_Q3 || frame->phase != QA_CLIENT_END_FRAME ||
         !qa_session_active_frame(app->session, provider->owner, &active) ||
         active.provider != frame->provider || active.kind != frame->kind ||
         active.phase != frame->phase || active.number != frame->number ||

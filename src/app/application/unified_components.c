@@ -215,7 +215,7 @@ bool application_unified_components_prepare(application_unified_component_publis
             ok = application_fail(e, QA_ERROR_FORMAT, "Component presentation has no actual admitted runtime"); break;
         }
         qa_clock_state clock;
-        if (!qa_session_clock(source->session, publication.owner, &clock) || clock.frame.kind != QA_CLOCK_Q3) {
+        if (!qa_session_clock(source->session, publication.owner, &clock) || clock.frame.kind != QA_RULESET_Q3) {
             ok = application_fail(e, QA_ERROR_ARGUMENT, "Component publication lost its real Source clock"); break;
         }
         uint32_t word = (uint32_t)(clock.frame.time_ns / UINT64_C(1000000));

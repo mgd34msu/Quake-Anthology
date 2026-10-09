@@ -212,7 +212,7 @@ static bool touch(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e
     f.record.class_name=class_name;f.record.pickup_name=NULL;
     if(!resolve(o,&f.record,&item_id,&ammo,e)){free(class_name);return false;}
     qa_clock_state clock;qa_actor_owner owner=o->role->engine->provider->owner;
-    if(!qa_session_clock(application(o)->session,owner,&clock)||clock.frame.provider!=owner||clock.frame.kind!=QA_CLOCK_Q3){
+    if(!qa_session_clock(application(o)->session,owner,&clock)||clock.frame.provider!=owner||clock.frame.kind!=QA_RULESET_Q3){
         free(class_name);return application_fail(e,QA_ERROR_NOT_FOUND,"Touch_Item has no completed actual Source clock");}
     f.offer=(qa_pickup_offer){.recipient=b,.pickup=a,.source=owner,.item=item_id,.override_count=count!=0,.count=count,
         .dropped=((uint32_t)flags&o->profile->dropped_flag)!=0,.time_ns=clock.frame.time_ns};

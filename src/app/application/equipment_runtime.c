@@ -202,7 +202,7 @@ static bool server_command(void *context, int32_t index, const char *text, qa_er
 static void print(void *context, const char *text)
 {
     equipment_source *source = context;
-    qa_command_context command = {.owner = source->view.gear_owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+    qa_command_context command = {.owner = source->view.gear_owner, .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER};
     application_console_print(source->runtime->options.application, &command, text);
 }
 
@@ -610,7 +610,7 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
                 .session = runtime->options.services.session, .world = runtime->options.services.world,
                 .owner = source->view.gear_owner, .service_owner = source->view.service_owner,
                 .engine_cvars = runtime->options.application->cvars, .mounts = artifact->view,
-                .command_context = {.owner = source->view.gear_owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER},
+                .command_context = {.owner = source->view.gear_owner, .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER},
                 .common = {.context = source, .print = print, .calendar = calendar},
                 .server = {.context = source, .send_command = server_command},
                 .entity_text = saved ? saved->entities : runtime->options.entity_text},
@@ -702,7 +702,7 @@ static bool console_context(void *context, uint64_t captured_registry,
 {
     (void)captured_registry; equipment_source *source = context;
     qa_command_context actual;
-    if (saved->owner != source->view.gear_owner || saved->dialect != QA_CONSOLE_Q3 ||
+    if (saved->owner != source->view.gear_owner || saved->dialect != QA_RULESET_Q3 ||
         saved->origin != QA_COMMAND_SERVER || saved->session || saved->client || saved->seat ||
         saved->registry || saved->generation || saved->actor.registry || saved->actor.slot ||
         saved->actor.generation || !source_current(source))

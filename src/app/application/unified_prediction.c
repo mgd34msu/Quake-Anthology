@@ -215,7 +215,7 @@ bool application_unified_prediction_build(qa_application *app,
     const qa_movement_input *input = &configuration.input;
     const qa_application_movement_numeric *numeric = &configuration.prediction_numeric;
     out->actor = player->actor; out->sequence = acknowledged_input;
-    out->command_time_ms = input->state.kind == QA_MOVEMENT_Q3 ? input->state.data.q3.command_time_ms :
+    out->command_time_ms = input->state.kind == QA_RULESET_Q3 ? input->state.data.q3.command_time_ms :
         (double)source->frame.time_ns / 1e6;
     out->clock = configuration.clock; out->profile = input->profile; out->state = input->state;
     out->numeric = (qa_unified_movement_numeric){.radix = numeric->radix,
@@ -231,7 +231,7 @@ bool application_unified_prediction_build(qa_application *app,
     out->client_view_offset = configuration.client_view_offset;
     out->ground = configuration.ground; out->water_level = configuration.water_level;
     out->water_type = configuration.water_type;
-    out->has_rerelease_origin = input->state.kind == QA_MOVEMENT_Q2_RERELEASE;
+    out->has_rerelease_origin = input->state.kind == QA_RULESET_Q2_RERELEASE;
     if (out->has_rerelease_origin) out->rerelease_origin = configuration.q2r_pml_origin;
     bool ok = application_unified_frame_string(lease, &out->profile_id,
         qa_strings_cstr(qa_session_strings(app->session), configuration.profile_id), e) &&

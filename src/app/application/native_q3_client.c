@@ -60,7 +60,7 @@ bool qa_native_q3_client_service_current(const qa_native_q3_client_service *serv
 }
 static bool valid_origin(const qa_native_q3_client_services *services,const qa_command_context *origin)
 {
-    return origin->seat==services->client.seat && origin->dialect==QA_CONSOLE_Q3 &&
+    return origin->seat==services->client.seat && origin->dialect==QA_RULESET_Q3 &&
         origin->origin==QA_COMMAND_SEAT && origin->client==services->source_client_origin &&
         qa_actor_id_equal(origin->actor,services->client.source_actor);
 }
@@ -112,7 +112,7 @@ bool native_client_allocate_bound(qa_application *app,const qa_native_q3_client_
         !services->client.receiver || !services->client.service_owner || !services->client.frontend_lifetime ||
         !services->client.console || !services->client.cvars || !services->client.source_cvars || !services->input ||
         !services->wire_reader || !services->command_values ||
-        qa_cvars_dialect(services->client.cvars)!=QA_CONSOLE_Q3 ||
+        qa_cvars_dialect(services->client.cvars)!=QA_RULESET_Q3 ||
         !services->client.native_source || services->publication_generation!=source->publication_generation ||
         services->map_revision!=source->map_revision || !services->current || !services->idle || !services->release ||
         !services->reliable || !services->console || !services->reload_client_info ||

@@ -67,7 +67,7 @@ static bool console(void *context,const qa_command_context *origin,const char *t
     if(!owner || owner->retiring || owner->released || !origin || !text || owner->callbacks==SIZE_MAX ||
         !frontend_remote_q3_resources_read(owner->row,&resources,error) ||
         origin->owner!=resources.domain.source.receiver.receiver || origin->seat!=resources.domain.source.receiver.seat ||
-        origin->dialect!=QA_CONSOLE_Q3 || origin->origin!=QA_COMMAND_SEAT ||
+        origin->dialect!=QA_RULESET_Q3 || origin->origin!=QA_COMMAND_SEAT ||
         !qa_application_command_context_active(owner->row->application,origin))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Remote console command lost its actual captured CLIENT origin");
     ++owner->callbacks;

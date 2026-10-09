@@ -23,13 +23,13 @@ static bool command_fields(void *context,qa_source_save_io *io,qa_command_contex
     bool ok=qa_source_save_u64(io,&registry) && registry &&
         qa_source_save_u64(io,&command->session) && qa_source_save_u64(io,&command->owner) &&
         qa_source_save_u64(io,&command->client) && qa_source_save_u32(io,&command->seat) &&
-        qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
+        qa_source_save_u32(io,&dialect) && dialect<=QA_RULESET_Q3 &&
         qa_source_save_u32(io,&origin) && origin<=QA_COMMAND_REMOTE &&
         qa_source_save_bool(io,&command->direct) && qa_source_save_bool(io,&command->console_text) &&
         qa_source_save_u64(io,&command->registry) && qa_source_save_u64(io,&command->generation) &&
         qa_source_save_actor(io,&command->actor) && qa_source_save_text(io,&command->script);
     if (ok && io->direction==QA_SOURCE_SAVE_READ) {
-        command->dialect=(qa_console_dialect)dialect; command->origin=(qa_command_origin)origin;
+        command->dialect=(qa_ruleset_id)dialect; command->origin=(qa_command_origin)origin;
         if (command->registry==registry)
             command->registry=qa_actors_identity(qa_session_actors(qa_application_session(f->application)));
         else if (command->registry) return frontend_fail(io->error,QA_ERROR_FORMAT,"Restart command registry differs from its captured session");

@@ -389,7 +389,7 @@ bool application_unified_output_world(qa_application *app, const application_uni
         }
         v->presentation_seconds=(double)milliseconds/1000;
     } else v->presentation_seconds=(double)clock.source_time_ns/1000000000.0;
-    if (source->family==QA_GAME_Q1 && clock.launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD)
+    if (source->family==QA_GAME_Q1 && clock.launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD)
         v->presentation_seconds=(float)v->presentation_seconds;
     v->actors = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->actors), error) : NULL;
     v->bodies = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->bodies), error) : NULL;

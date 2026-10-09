@@ -72,7 +72,7 @@ typedef struct qa_cvar_archive {
 } qa_cvar_archive;
 void qa_cvar_archive_free(qa_cvar_archive *);
 bool qa_settings_load_cvars(qa_settings_store, const char *const *owner, size_t owner_count,
-                            qa_console_dialect, qa_cvar_archive *, qa_error *);
+                            qa_ruleset_id, qa_cvar_archive *, qa_error *);
 bool qa_settings_save_cvars(qa_settings_store, const char *const *owner, size_t owner_count,
                             const qa_cvars *, qa_error *);
 /* Apply typed values directly, never interpreting semicolons/newlines as commands.

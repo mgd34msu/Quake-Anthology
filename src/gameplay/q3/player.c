@@ -1116,7 +1116,7 @@ source_done:
 }
 bool qa_q3_player_command(qa_q3_game *game, qa_actor_id actor, const qa_movement_command *command,
                           float elapsed_ms, qa_error *error) {
-    if (!command || command->kind != QA_MOVEMENT_Q3)
+    if (!command || command->kind != QA_RULESET_Q3)
         return q3_fail(error, "Q3 command wrapper requires the Q3 input dialect");
     qa_q3_controls controls = {.attack = (command->buttons & 1u) != 0,
                                .use_holdable = (command->buttons & 4u) != 0,
@@ -1640,7 +1640,7 @@ static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_in
     bool native_command = !input->prediction && source_command_active(game, actor);
     if (!native_command) player->gauntlet_contact = false;
     if (prepare_weapon && !native_command && !player->cutscene.active && !input->prediction &&
-        input->command.kind == QA_MOVEMENT_Q3 &&
+        input->command.kind == QA_RULESET_Q3 &&
         player->weapon == QA_Q3_W_GAUNTLET && !(input->command.buttons & 2u) &&
         (input->command.buttons & 1u) && player->weapon_time_ms <= 0) {
         bool hit = false;
@@ -1667,7 +1667,7 @@ static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_in
     if (!entry)
         return true;
     player = &entry->state.player;
-    if (player->cutscene.active && input->state.kind == QA_MOVEMENT_Q3) {
+    if (player->cutscene.active && input->state.kind == QA_RULESET_Q3) {
         q3_cutscene_movement(&input->state, &input->command, &player->cutscene);
         input->view_offset = player->cutscene.view_offset;
     }
@@ -2067,7 +2067,7 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         return QA_MOVEMENT_CONTINUE;
     qa_q3_player_state *p = &entry->state.player;
     if (p->cutscene.active) {
-        if (call->state->kind == QA_MOVEMENT_Q3)
+        if (call->state->kind == QA_RULESET_Q3)
             q3_cutscene_movement(call->state, call->command, &p->cutscene);
         return QA_MOVEMENT_CONTINUE;
     }
@@ -2075,10 +2075,10 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         uint32_t native_slot;
         if (!qa_q3_native_client_slot(game, call->actor, &native_slot, NULL))
             p->last_command_ms = game->now_ms;
-        if (call->command->kind == QA_MOVEMENT_Q3)
+        if (call->command->kind == QA_RULESET_Q3)
             for (unsigned i = 0; i < 3; ++i)
                 p->last_command_angles[i] = call->command->angle_words[i];
-        if (call->state->kind == QA_MOVEMENT_Q3) {
+        if (call->state->kind == QA_RULESET_Q3) {
             p->noclip = call->state->data.q3.movement_type == 1;
             call->state->data.q3.delta_angle_words[0] = p->delta_pitch_word;
             call->state->data.q3.delta_angle_words[1] = p->delta_yaw_word;
@@ -2091,7 +2091,7 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
                 call->state->data.q3.jump_pad_frame = p->jumppad_frame;
             }
         }
-    } else if (phase == QA_MOVE_INPUT_END && call->state->kind == QA_MOVEMENT_Q3) {
+    } else if (phase == QA_MOVE_INPUT_END && call->state->kind == QA_RULESET_Q3) {
         qa_q3_movement_state *movement = &call->state->data.q3;
         p->command_time_ms = movement->command_time_ms;
         p->ground_entity_number = movement->ground.hit == QA_TRACE_HIT_WORLD ? 1022
@@ -2125,14 +2125,14 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
             movement->movement_flags |= 0x4000u;
     } else if (phase == QA_MOVE_WEAPON) {
         uint64_t teleport_revision = p->teleport_revision;
-        if (call->state->kind == QA_MOVEMENT_Q3) {
+        if (call->state->kind == QA_RULESET_Q3) {
             p->view_angles = call->state->data.q3.view_angles;
             p->view_height = *call->view_height;
             p->delta_yaw_word = call->state->data.q3.delta_angle_words[1];
             p->delta_pitch_word = call->state->data.q3.delta_angle_words[0];
             p->delta_roll_word = call->state->data.q3.delta_angle_words[2];
         }
-        if (call->command->kind != QA_MOVEMENT_Q3)
+        if (call->command->kind != QA_RULESET_Q3)
             return QA_MOVEMENT_CONTINUE;
         if (!arsenal_selected)
             goto phase_done;
@@ -2157,7 +2157,7 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         if (!entry)
             return QA_MOVEMENT_REMOVED;
         p = &entry->state.player;
-        if (call->state->kind == QA_MOVEMENT_Q3 && source_command_active(game, call->actor))
+        if (call->state->kind == QA_RULESET_Q3 && source_command_active(game, call->actor))
             call->state->data.q3.event_sequence = p->event_sequence;
         if (p->teleport_revision != teleport_revision) {
             qa_body_state body;
@@ -2165,7 +2165,7 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
                 !qa_movement_set_origin(call->state, body.origin, error) ||
                 !qa_movement_set_velocity(call->state, body.velocity, error))
                 return QA_MOVEMENT_ERROR;
-            if (call->state->kind == QA_MOVEMENT_Q3) {
+            if (call->state->kind == QA_RULESET_Q3) {
                 call->state->data.q3.view_angles = p->view_angles;
                 call->state->data.q3.movement_time_ms = p->teleport_lock_ms;
                 call->state->data.q3.movement_flags |= 0x40u;
@@ -2189,7 +2189,7 @@ phase_done:
     if (call->environment &&
         !qa_q3_movement_environment(game, call->actor, call->environment, error))
         return QA_MOVEMENT_ERROR;
-    if (call->state->kind == QA_MOVEMENT_Q3) {
+    if (call->state->kind == QA_RULESET_Q3) {
         p = &entry->state.player;
         if (p->grapple_pull) {
             call->state->data.q3.movement_flags |= 0x800u;
@@ -2212,7 +2212,7 @@ qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effec
     qa_q3_player_state *p = &entry->state.player;
     if (p->cutscene.active)
         return QA_MOVEMENT_CONTINUE;
-    if (effect->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_MOVEMENT_Q3) {
+    if (effect->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_RULESET_Q3) {
         if (!q3_player_event(game, call->actor, effect->value, effect->parameter, error))
             return QA_MOVEMENT_ERROR;
         if (source_command_active(game, call->actor))

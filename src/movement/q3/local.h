@@ -59,7 +59,7 @@ static inline float q3_speed(const qa_q3_step *step) {
 static inline int32_t q3_type(const qa_q3_step *step) {
     const qa_movement_environment *environment = &step->context->input->environment;
     return environment->has_mode && environment->health > 0
-        ? qa_move_mode_type(QA_MOVEMENT_Q3, environment->mode)
+        ? qa_move_mode_type(QA_RULESET_Q3, environment->mode)
         : step->context->state->data.q3.movement_type;
 }
 

@@ -771,7 +771,7 @@ bool frontend_native_q3_effect(qa_frontend *f,qa_application *application,qa_act
         switch(effect) {
         case QA_APPLICATION_Q3_SYSTEM_INFO:ok=qa_native_q3_client_system_info(row->view.client,e); break;
         case QA_APPLICATION_Q3_MAP_RESTART: {
-            frontend_seat *target=f->seats+row->view.seat; qa_movement_kind kind=target->builder.kind; qa_vec3 angles=target->builder.angles;
+            frontend_seat *target=f->seats+row->view.seat; qa_ruleset_id kind=target->builder.kind; qa_vec3 angles=target->builder.angles;
             qa_input_command_clear(&target->builder); target->builder.kind=kind; target->builder.angles=angles;
             ok=qa_q3_presentation_clear(row->view.presentation,e); break;
         }
@@ -1056,7 +1056,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
         actual.scope.provider!=row->view.source_owner || actual.scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME ||
         actual.scope.seat!=seat || actual.console!=game.console || !actual.cvars ||
         actual.command.cvar_view!=qa_cvars_view_identity(actual.cvars) || actual.command.owner!=row->view.source_owner ||
-        actual.command.seat!=seat || actual.command.dialect!=QA_CONSOLE_Q3 ||
+        actual.command.seat!=seat || actual.command.dialect!=QA_RULESET_Q3 ||
         !qa_application_command_context_active(f->application,&actual.command)))
         ok=frontend_fail(e,QA_ERROR_ARGUMENT,"Native client lost its actual prepared CGAME constructor");
     if(ok) {

@@ -34,7 +34,7 @@ bool frontend_legacy_render_policy_read_controls(const qa_cvars *,
     frontend_legacy_render_policy *, qa_error *);
 bool frontend_legacy_local_policy_read(const qa_frontend *, uint32_t physical_seat,
     const qa_product *, frontend_legacy_render_policy *, qa_error *);
-bool frontend_legacy_source_register(qa_cvars *, qa_console_dialect, uint64_t owner, qa_error *);
+bool frontend_legacy_source_register(qa_cvars *, qa_ruleset_id, uint64_t owner, qa_error *);
 bool frontend_legacy_source_owns(const qa_cvars *, const char *name);
 bool frontend_remote_q1_initial_clear(qa_frontend *, uint32_t seat, bool *active, bool *clear, qa_error *);
 bool frontend_remote_q2_initial_clear(qa_frontend *, uint32_t seat, bool *active, bool *clear, qa_error *);

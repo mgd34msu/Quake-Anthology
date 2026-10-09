@@ -110,7 +110,7 @@ bool qa_launch_validate(const qa_launch_draft *d, qa_error *error)
     for (size_t i = 0; i < v->provider_count; ++i) {
         const qa_launch_provider *p = &v->providers[i];
         if (!selected_product(d, p->product, error)) return false;
-        if ((unsigned)p->runtime > QA_PROGRAM_NATIVE || (unsigned)p->clock.kind > QA_CLOCK_Q3 || !*p->implementation)
+        if ((unsigned)p->runtime > QA_PROGRAM_NATIVE || (unsigned)p->clock.kind > QA_RULESET_Q3 || !*p->implementation)
             return fail(error, "invalid selected provider implementation or clock");
         if (p->runtime != QA_PROGRAM_BUILTIN && !path_valid(p->artifact, error)) return false;
         if (p->runtime == QA_PROGRAM_BUILTIN && *p->artifact) return fail(error, "built-in providers do not execute game modules");
@@ -119,7 +119,7 @@ bool qa_launch_validate(const qa_launch_draft *d, qa_error *error)
             if (!m || m->unavailable || m->product != p->product || m->runtime != p->runtime || strcmp(m->program_path, p->artifact))
                 return fail(error, "provider differs from its selected authored component");
         }
-        if (!p->clock.interval_ns && p->clock.kind != QA_CLOCK_NETQUAKE && p->clock.kind != QA_CLOCK_QUAKEWORLD)
+        if (!p->clock.interval_ns && p->clock.kind != QA_RULESET_NETQUAKE && p->clock.kind != QA_RULESET_QUAKEWORLD)
             return fail(error, "fixed source clock needs a nonzero interval");
         if (p->clock.maximum_frame_ns && p->clock.maximum_frame_ns < p->clock.minimum_frame_ns)
             return fail(error, "source clock maximum is below its minimum");

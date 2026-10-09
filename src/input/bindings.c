@@ -255,9 +255,9 @@ static const char *const default_rows[][2] = {{"w", "+forward"},
                                           {"GAMEPAD_LEFT_SHOULDER", "weapprev"},
                                           {"GAMEPAD_RIGHT_SHOULDER", "weapnext"},
                                           {"GAMEPAD_BACK", "+scores"}};
-bool qa_input_default_binding_at(qa_console_dialect dialect, int32_t device, size_t index,
+bool qa_input_default_binding_at(qa_ruleset_id dialect, int32_t device, size_t index,
                                   qa_input_binding *out) {
-    if (!out || (unsigned)dialect > QA_CONSOLE_Q3 || device < 0 ||
+    if (!out || (unsigned)dialect > QA_RULESET_Q3 || device < 0 ||
         index >= sizeof(default_rows) / sizeof(*default_rows)) return false;
     qa_input_binding binding = {.kind = QA_BIND_COMMAND, .command = default_rows[index][1]};
     if (!qa_input_physical_parse(default_rows[index][0], device, &binding.input)) return false;

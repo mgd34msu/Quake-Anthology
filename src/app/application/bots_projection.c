@@ -231,13 +231,13 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         out->teleported=player.teleport_lock_ms>0;
         out->air_time=(float)player.air_out_time/1000;
     }
-    if(control.state.kind==QA_MOVEMENT_Q3) {
+    if(control.state.kind==QA_RULESET_Q3) {
         memcpy(out->delta_angles,control.state.data.q3.delta_angle_words,sizeof(out->delta_angles));
         out->crouched=(control.state.data.q3.movement_flags&1)!=0;
-    } else if(control.state.kind==QA_MOVEMENT_Q2_CLASSIC) {
+    } else if(control.state.kind==QA_RULESET_Q2_CLASSIC) {
         for(size_t i=0;i<3;++i) out->delta_angles[i]=(uint16_t)control.state.data.q2.delta_angle_shorts[i];
         out->crouched=(control.state.data.q2.flags&1)!=0;
-    } else if(control.state.kind==QA_MOVEMENT_Q2_RERELEASE) {
+    } else if(control.state.kind==QA_RULESET_Q2_RERELEASE) {
         qa_vec3 delta=control.state.data.q2r.delta_angles;
         out->delta_angles[0]=qa_angle_to_word(delta.x);
         out->delta_angles[1]=qa_angle_to_word(delta.y);

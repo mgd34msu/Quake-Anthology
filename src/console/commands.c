@@ -454,7 +454,7 @@ bool qa_console_cvar_startup_set(qa_console *console,const qa_command_context *c
     if (!valid_cvar_context(console,context,error)) return false;
     cvar_access access=cvar_access_read(cvars_for(console,context));
     if (!cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,.name=name,.value=value,.force=true},error)) return false;
-    if (qa_cvars_dialect(access.registry)!=QA_CONSOLE_Q3) return true;
+    if (qa_cvars_dialect(access.registry)!=QA_RULESET_Q3) return true;
     const qa_cvar_view *actual=cvar_find(access,name);
     if (!actual) return qac_fail(error,QA_ERROR_NOT_FOUND,"startup value has no admitted physical cvar");
     uint64_t owner=actual->owner;
@@ -470,7 +470,7 @@ static size_t buffer_limit(const qa_console *console, const qa_command_context *
 {
     const qa_console_options *options=options_for(console,context);
     return options && options->maximum_buffer != 0 ? options->maximum_buffer :
-        context->dialect == QA_CONSOLE_Q3 ? 16384 : 8192;
+        context->dialect == QA_RULESET_Q3 ? 16384 : 8192;
 }
 
 bool qa_console_limits(qa_console *console, const qa_command_context *context,
@@ -517,7 +517,7 @@ static bool queue_text(qa_console *console, const qa_command_context *context,
     if (context == NULL && console->frame != NULL) inherited.direct = false;
     context = &inherited;
     if (!valid_context(console, context, error)) return false;
-    bool newline = insert && (context->dialect == QA_CONSOLE_QW || context->dialect == QA_CONSOLE_Q3);
+    bool newline = insert && (context->dialect == QA_RULESET_QUAKEWORLD || context->dialect == QA_RULESET_Q3);
     size_t length = strlen(text);
     size_t limit = buffer_limit(console, context);
     if (length > SIZE_MAX - (newline ? 1u : 0u))
@@ -525,7 +525,7 @@ static bool queue_text(qa_console *console, const qa_command_context *context,
     size_t added = length + (newline ? 1u : 0u);
     if (console->queued_bytes > limit || added > limit - console->queued_bytes ||
         (!insert && added == limit - console->queued_bytes) ||
-        (insert && context->dialect != QA_CONSOLE_Q3 && added >= limit))
+        (insert && context->dialect != QA_RULESET_Q3 && added >= limit))
         return qac_fail(error, QA_ERROR_FORMAT, "command buffer overflow");
     if (added == 0) return true;
     command_chunk *chunk = text_chunk(context, text, length, newline, error);
@@ -778,11 +778,11 @@ static const qa_console_entry builtin_entries[] = {
 };
 #undef COMMAND
 
-static bool builtin_allowed(qa_console_dialect dialect, const char *name)
+static bool builtin_allowed(qa_ruleset_id dialect, const char *name)
 {
-    if (strcmp(name, "alias") == 0) return dialect != QA_CONSOLE_Q3;
+    if (strcmp(name, "alias") == 0) return dialect != QA_RULESET_Q3;
     if (strcmp(name, "stuffcmds") == 0) return qac_q1(dialect);
-    if (strcmp(name, "cvar_restart") == 0) return dialect == QA_CONSOLE_Q3;
+    if (strcmp(name, "cvar_restart") == 0) return dialect == QA_RULESET_Q3;
     return true;
 }
 
@@ -818,7 +818,7 @@ static bool register_command(qa_console *console,const qa_command_context *const
     qa_cvars *registry = cvars_for(console,&context);
     cvar_access access=cvar_access_read(registry);
     const qa_cvar_view *variable=cvar_find(access,name);
-    if (context.dialect != QA_CONSOLE_Q3 && variable && *variable->value)
+    if (context.dialect != QA_RULESET_Q3 && variable && *variable->value)
         return qac_fail(error, QA_ERROR_ARGUMENT, "command name is already a cvar");
     command_contribution *part = calloc(1, sizeof(*part));
     if (!part) return qac_fail(error, QA_ERROR_MEMORY, "retaining console command owner");
@@ -1001,7 +1001,7 @@ bool qa_console_alias(qa_console *console, const qa_command_context *context,
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid console alias name");
     context = context_for(console, context);
     if (!valid_context(console, context, error)) return false;
-    if (context->dialect == QA_CONSOLE_Q3)
+    if (context->dialect == QA_RULESET_Q3)
         return qac_fail(error, QA_ERROR_UNSUPPORTED, "Q3 uses vstr rather than command aliases");
     char *copy = qac_copy(text, error);
     if (copy == NULL) return false;
@@ -1067,7 +1067,7 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
         if (quoted || text[offset] != '$') continue;
         qac_token token;
         size_t length = strlen(text);
-        if (!qac_parse_token(text, length, offset + 1, QA_CONSOLE_Q2, context->console_text, &token, error)) { free(text); return false; }
+        if (!qac_parse_token(text, length, offset + 1, QA_RULESET_Q2_CLASSIC, context->console_text, &token, error)) { free(text); return false; }
         if (!token.found) continue;
         char *name = qac_copy_n(text + token.start, token.size, error);
         if (name == NULL) { free(text); return false; }
@@ -1144,7 +1144,7 @@ static bool cvar_command(qa_console *console, const qa_command_invocation *comma
         if (command->argc > 1) return cvar_apply(access,&(qa_cvars_edit_command){
             .kind=QA_CVARS_EDIT_SET,.name=variable->name,.value=command->argv[1]},error);
         output_value(console, &command->context, variable->name, variable->value);
-        if (command->context.dialect == QA_CONSOLE_Q3) {
+        if (command->context.dialect == QA_RULESET_Q3) {
             output(console, &command->context, "default: ");
             output(console, &command->context, variable->reset_value);
             output(console, &command->context, "\n");
@@ -1166,7 +1166,7 @@ static bool fallback(qa_console *console, const qa_command_invocation *command, 
     bool handled;
     if (!cvar_command(console, command, &handled, error)) return false;
     if (handled) return true;
-    if (command->context.dialect == QA_CONSOLE_Q3) {
+    if (command->context.dialect == QA_RULESET_Q3) {
         qa_command_fallback callbacks[] = {options->client_game, options->server_game, options->ui};
         for (size_t i = 0; i < sizeof(callbacks) / sizeof(callbacks[0]); ++i) {
             qa_command_result result = fallback_call(console, callbacks[i], command, error);
@@ -1180,7 +1180,7 @@ static bool fallback(qa_console *console, const qa_command_invocation *command, 
         if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
         if (!local) return true;
     }
-    bool warn = local || command->context.dialect != QA_CONSOLE_QW;
+    bool warn = local || command->context.dialect != QA_RULESET_QUAKEWORLD;
     if (!warn) {
         const qa_cvar_view *warncmd=NULL,*developer=NULL;
         if (!qa_console_cvar_read(console,&command->context,"cl_warncmd",&warncmd,error) ||
@@ -1322,7 +1322,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         if (!success || handled) goto done;
     }
     command_entry *entry = select_command(console, context, tokens.values[0]);
-    if (entry == NULL && context->dialect != QA_CONSOLE_Q3) {
+    if (entry == NULL && context->dialect != QA_RULESET_Q3) {
         for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next) {
             if (!qac_equal(alias->view.name,tokens.values[0])) continue;
             if (qac_q2(context->dialect) && ++console->alias_count == 16) {
@@ -1336,12 +1336,12 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         }
     }
     command_contribution *part = select_contribution(console,entry,context);
-    if (!part || (context->dialect == QA_CONSOLE_Q3 && !part->handler)) {
+    if (!part || (context->dialect == QA_RULESET_Q3 && !part->handler)) {
         success = cvar_command(console, &command, &handled, error);
         if (!success || handled) goto done;
     }
     if (entry && part) {
-        if (context->dialect==QA_CONSOLE_Q3 && entry!=console->commands) {
+        if (context->dialect==QA_RULESET_Q3 && entry!=console->commands) {
             command_entry **link=&console->commands;
             while (*link!=entry) link=&(*link)->next;
             *link=entry->next; entry->next=console->commands; console->commands=entry;
@@ -1478,7 +1478,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         console->wait = console->wait > 0 ? console->wait - 1 : console->wait == INT32_MIN ? INT32_MAX : console->wait - 1;
     }
     while (console->head != NULL && (budget == 0 || count < budget)) {
-        if (console->wait_context.dialect == QA_CONSOLE_Q3 && console->wait != 0) {
+        if (console->wait_context.dialect == QA_RULESET_Q3 && console->wait != 0) {
             qac_console_program_touch(console, false);
             console->drain_yielded = true;
             if (console->wait > INT32_MIN) --console->wait;
@@ -1512,7 +1512,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             free((char *)context.script); free(text.data); break; }
         size_t maximum = options->maximum_command == 0 ? 1024 : options->maximum_command;
         if (offset >= maximum) {
-            if (context.dialect != QA_CONSOLE_Q3) {
+            if (context.dialect != QA_RULESET_Q3) {
                 success = qac_fail(error, QA_ERROR_FORMAT, "command line exceeds source buffer");
                 consume(console, consumed);
                 free((char *)context.script); free(text.data); break;
@@ -1527,7 +1527,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         free(text.data);
         ++count;
         if (!success) break;
-        if (console->wait_context.dialect != QA_CONSOLE_Q3 && console->wait != 0) {
+        if (console->wait_context.dialect != QA_RULESET_Q3 && console->wait != 0) {
             qac_console_program_touch(console, false);
             console->drain_yielded = true;
             console->wait = 0;
@@ -1688,7 +1688,7 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
     if (!qac_text_string(&filename, command->argv[1], error)) return false;
     const char *base = strrchr(filename.data, '/');
     if (base == NULL) base = filename.data;
-    if (command->context.dialect == QA_CONSOLE_Q3 && strchr(base, '.') == NULL &&
+    if (command->context.dialect == QA_RULESET_Q3 && strchr(base, '.') == NULL &&
         !qac_text_add(&filename, ".cfg", 4, error)) { free(filename.data); return false; }
     const qa_console_options *options=options_for(console,&command->context);
     if (!options) { free(filename.data); return qac_fail(error,QA_ERROR_ARGUMENT,"script Source callbacks have retired"); }
@@ -1714,8 +1714,8 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
     if (found) {
         size_t length = 0;
         while (length < bytes.size && bytes.data[length] != 0) ++length;
-        bool newline = command->context.dialect == QA_CONSOLE_Q3 || command->context.dialect == QA_CONSOLE_QW ||
-            (command->context.dialect == QA_CONSOLE_Q1 && (length == 0 || bytes.data[length - 1] != '\n'));
+        bool newline = command->context.dialect == QA_RULESET_Q3 || command->context.dialect == QA_RULESET_QUAKEWORLD ||
+            (command->context.dialect == QA_RULESET_NETQUAKE && (length == 0 || bytes.data[length - 1] != '\n'));
         text = text_chunk(&completion->context, (const char *)bytes.data, length, newline, error);
         if (text == NULL) goto fail;
         size_t limit = buffer_limit(console, &command->context);
@@ -1781,9 +1781,9 @@ static bool reset_all(qa_console *console,const qa_command_context *context,qa_e
 {
     cvar_access access=cvar_access_read(cvars_for(console,context));
     size_t count=cvar_count(access);
-    qa_console_dialect dialect=qa_cvars_dialect(access.registry);
+    qa_ruleset_id dialect=qa_cvars_dialect(access.registry);
     uint32_t protected=qac_q2(dialect)?QA_Q2_CVAR_NOSET|QA_Q2_CVAR_READONLY:
-        dialect==QA_CONSOLE_Q3?QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART:0;
+        dialect==QA_RULESET_Q3?QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART:0;
     for (size_t n=0;n<count;++n) {
         const qa_cvar_view *variable=cvar_at(access,n);
         if (!variable || strcmp(variable->name,"game")==0 || strcmp(variable->name,"fs_game")==0 ||
@@ -1809,7 +1809,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         free((char *)console->wait_context.script);
         console->wait_context = saved;
         console->program_wait_pending = false;
-        console->wait = context->dialect == QA_CONSOLE_Q3 && command->argc == 2 ? qac_integer(command->argv[1]) : 1;
+        console->wait = context->dialect == QA_RULESET_Q3 && command->argc == 2 ? qac_integer(command->argv[1]) : 1;
         return true;
     }
     if (qac_equal(name, "echo")) {
@@ -1821,7 +1821,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     if (qac_equal(name, "exec")) return execute_script(console, command, error);
     if (qac_equal(name, "stuffcmds") && qac_q1(context->dialect))
         return options->startup_commands == NULL || qa_console_insert(console, context, options->startup_commands, error);
-    if (qac_equal(name, "alias") && context->dialect != QA_CONSOLE_Q3) {
+    if (qac_equal(name, "alias") && context->dialect != QA_RULESET_Q3) {
         if (command->argc == 1) {
             for (alias_entry *alias = console->aliases; alias != NULL; alias = alias->next)
                 output_value(console,context,alias->view.name,alias->view.alias_text);
@@ -1847,12 +1847,12 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return ok;
     }
     if (qac_equal(name, "resetall")) return reset_all(console, context, error);
-    if (qac_equal(name, "cvar_restart") && context->dialect == QA_CONSOLE_Q3) {
+    if (qac_equal(name, "cvar_restart") && context->dialect == QA_RULESET_Q3) {
         cvar_access access=cvar_access_read(cvars_for(console,context));
         return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESTART},error);
     }
     if (qac_equal(name, "cmdlist")) {
-        const char *pattern = context->dialect == QA_CONSOLE_Q3 && command->argc > 1 ? command->argv[1] : NULL;
+        const char *pattern = context->dialect == QA_RULESET_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i) {
             const char *entry_name = builtin_entries[i].name;
@@ -1873,7 +1873,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return true;
     }
     if (qac_equal(name, "cvarlist")) {
-        const char *pattern = context->dialect == QA_CONSOLE_Q3 && command->argc > 1 ? command->argv[1] : NULL;
+        const char *pattern = context->dialect == QA_RULESET_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
         cvar_access access=cvar_access_read(cvars_for(console,context));
         size_t visible_count=cvar_count(access);
@@ -1882,7 +1882,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
             const qa_cvar_view *variable=cvar_at(access,n);
             if (variable && (pattern == NULL || qa_command_filter(pattern,variable->name,false))) {
                 char markers[9];
-                if (context->dialect == QA_CONSOLE_Q3) {
+                if (context->dialect == QA_RULESET_Q3) {
                     const uint32_t flags[] = {QA_CVAR_SERVERINFO, QA_CVAR_USERINFO, QA_CVAR_READONLY,
                         QA_CVAR_INIT, QA_CVAR_ARCHIVE, QA_CVAR_LATCH, QA_CVAR_CHEAT};
                     const char symbols[] = "SURIALC";
@@ -1906,7 +1906,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         char summary[64];
         (void)snprintf(summary, sizeof(summary), "%zu cvars\n", count);
         output(console, context, summary);
-        if (context->dialect == QA_CONSOLE_Q3) {
+        if (context->dialect == QA_RULESET_Q3) {
             (void)snprintf(summary, sizeof(summary), "%zu cvar indexes\n", handles);
             output(console, context, summary);
         }
@@ -1925,7 +1925,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     cvar_access access=cvar_access_read(registry);
     if (set || flagged) {
         if (command->argc < 3 || (set && qac_q2(context->dialect) && command->argc > 4) ||
-            (flagged && context->dialect == QA_CONSOLE_Q3 && command->argc != 3)) {
+            (flagged && context->dialect == QA_RULESET_Q3 && command->argc != 3)) {
             output(console, context, "set <variable> <value>\n"); return true;
         }
         if (set && qac_q2(context->dialect) && command->argc == 4) {
@@ -1937,7 +1937,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
                 .flags=strcmp(command->argv[3], "u") == 0 ? QA_CVAR_USERINFO : QA_CVAR_SERVERINFO},error);
         }
         qac_text value = {0};
-        bool ok = context->dialect == QA_CONSOLE_Q3 || flagged ? join_arguments(command, 2, &value, error) :
+        bool ok = context->dialect == QA_RULESET_Q3 || flagged ? join_arguments(command, 2, &value, error) :
             qac_text_string(&value, command->argv[2], error);
         if (ok) {
             if (flagged) {
@@ -1951,14 +1951,14 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return ok;
     }
     const qa_cvar_view *variable=cvar_find(access,variable_name);
-    if (toggle && context->dialect == QA_CONSOLE_Q3 && command->argc == 2) {
+    if (toggle && context->dialect == QA_RULESET_Q3 && command->argc == 2) {
         float value = variable == NULL ? 0 : variable->number;
         return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET,
             .name=variable_name,.value=truncf(value) == 0 ? "1" : "0"},error);
     }
     if (variable == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "cvar is not registered");
     if (reset) {
-        if (context->dialect == QA_CONSOLE_Q3 && command->argc != 2) { output(console, context, "reset <variable>\n"); return true; }
+        if (context->dialect == QA_RULESET_Q3 && command->argc != 2) { output(console, context, "reset <variable>\n"); return true; }
         return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_CONSOLE,
             .name=variable_name,.value=variable->reset_value},error);
     }
@@ -1978,7 +1978,7 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return true;
     }
     if (!decimal_text(variable->value)) { output(console, context, "increment requires a decimal cvar\n"); return true; }
-    float amount = command->argc > 2 ? qac_number(command->argv[2], QA_CONSOLE_Q2) : 1;
+    float amount = command->argc > 2 ? qac_number(command->argv[2], QA_RULESET_Q2_CLASSIC) : 1;
     float value = variable->number + (qac_equal(name, "dec") ? -amount : amount);
     if (value == variable->number) return cvar_apply(access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_SET_CONSOLE,
         .name=variable_name,.value=variable->value},error);

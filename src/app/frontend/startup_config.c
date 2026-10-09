@@ -30,34 +30,34 @@ frontend_startup_config *frontend_startup_config_create(const frontend_startup_c
 {
     if (!options || !options->read || !options->apply_defaults || !options->apply_archive ||
         !options->apply_launch || options->command.script || options->command.origin==QA_COMMAND_REMOTE ||
-        options->command.dialect>QA_CONSOLE_Q3)
+        options->command.dialect>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Startup configuration requires its actual local source owners"),NULL;
     frontend_startup_config *owner=calloc(1,sizeof(*owner));
     if (!owner) return fail(error,QA_ERROR_MEMORY,"Allocating startup configuration"),NULL;
     owner->options=*options;
     if (options->continuation) return owner;
-    qa_console_dialect dialect=options->command.dialect;
+    qa_ruleset_id dialect=options->command.dialect;
     if (options->seat_scope) {
-        add(owner,dialect==QA_CONSOLE_Q3?"q3config.cfg":"config.cfg",FRONTEND_SCRIPT_SEAT);
+        add(owner,dialect==QA_RULESET_Q3?"q3config.cfg":"config.cfg",FRONTEND_SCRIPT_SEAT);
         add(owner,"autoexec.cfg",FRONTEND_SCRIPT_SEAT); owner->defaults=true;
-    } else if (dialect==QA_CONSOLE_QW && options->command.origin==QA_COMMAND_SERVER)
+    } else if (dialect==QA_RULESET_QUAKEWORLD && options->command.origin==QA_COMMAND_SERVER)
         add(owner,"server.cfg",FRONTEND_SCRIPT_USER);
-    else if (dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW)
+    else if (dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD)
         add(owner,"quake.rc",FRONTEND_SCRIPT_MOUNTED);
     else {
         add(owner,"default.cfg",FRONTEND_SCRIPT_MOUNTED);
-        add(owner,dialect==QA_CONSOLE_Q3?"q3config.cfg":"config.cfg",
-            dialect==QA_CONSOLE_Q2_RERELEASE?FRONTEND_SCRIPT_LOOSE:FRONTEND_SCRIPT_USER);
-        if (dialect==QA_CONSOLE_Q2_RERELEASE && options->has_mod)
+        add(owner,dialect==QA_RULESET_Q3?"q3config.cfg":"config.cfg",
+            dialect==QA_RULESET_Q2_RERELEASE?FRONTEND_SCRIPT_LOOSE:FRONTEND_SCRIPT_USER);
+        if (dialect==QA_RULESET_Q2_RERELEASE && options->has_mod)
             add(owner,"autoexec.cfg",FRONTEND_SCRIPT_BASE_LOOSE);
-        add(owner,"autoexec.cfg",dialect==QA_CONSOLE_Q3?FRONTEND_SCRIPT_USER:FRONTEND_SCRIPT_GAME_LOOSE);
-        if (dialect==QA_CONSOLE_Q2_RERELEASE) add(owner,"postexec.cfg",FRONTEND_SCRIPT_LOOSE);
+        add(owner,"autoexec.cfg",dialect==QA_RULESET_Q3?FRONTEND_SCRIPT_USER:FRONTEND_SCRIPT_GAME_LOOSE);
+        if (dialect==QA_RULESET_Q2_RERELEASE) add(owner,"postexec.cfg",FRONTEND_SCRIPT_LOOSE);
     }
     return owner;
 }
 frontend_startup_config *frontend_startup_images_create(const qa_command_context *command,qa_bytes bytes,qa_error *error)
 {
-    if (!command || command->script || command->origin==QA_COMMAND_REMOTE || command->dialect>QA_CONSOLE_Q3 ||
+    if (!command || command->script || command->origin==QA_COMMAND_REMOTE || command->dialect>QA_RULESET_Q3 ||
         bytes.size==SIZE_MAX || (bytes.size && (!bytes.data || memchr(bytes.data,0,bytes.size))))
         return fail(error,QA_ERROR_ARGUMENT,"Image configuration requires its actual local source programme"),NULL;
     frontend_startup_config *owner=calloc(1,sizeof(*owner));
@@ -151,12 +151,12 @@ void frontend_startup_config_script_complete(frontend_startup_config *owner,
         if (owner->failure.code==QA_OK && (!strcmp(name,"config.cfg") || !strcmp(name,"q3config.cfg")) && !owner->archive) {
             owner->archive=true; apply(owner,owner->options.apply_archive);
         }
-        qa_console_dialect dialect=owner->options.command.dialect;
+        qa_ruleset_id dialect=owner->options.command.dialect;
         if (owner->failure.code==QA_OK && direct &&
-            (((dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) &&
+            (((dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) &&
               (!strcmp(name,"quake.rc") || !strcmp(name,"server.cfg"))) ||
-             (dialect==QA_CONSOLE_Q3 && !strcmp(name,"autoexec.cfg")) ||
-             ((dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE) && !strcmp(name,"config.cfg"))))
+             (dialect==QA_RULESET_Q3 && !strcmp(name,"autoexec.cfg")) ||
+             ((dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) && !strcmp(name,"config.cfg"))))
             apply(owner,owner->options.replay_startup_variables);
     }
     free(owner->stack[--owner->depth]);
@@ -198,7 +198,7 @@ bool frontend_startup_config_advance(frontend_startup_config *owner,qa_console *
         if (ok) { owner->index=1; owner->completed=done; *complete=done; }
     } else {
         if ((owner->options.continuation || (!owner->options.seat_scope &&
-            owner->options.command.dialect==QA_CONSOLE_QW &&
+            owner->options.command.dialect==QA_RULESET_QUAKEWORLD &&
             owner->options.command.origin==QA_COMMAND_SERVER)) && !owner->archive) {
             owner->defaults=true; ok=apply(owner,owner->options.apply_defaults);
             if (ok) { owner->archive=true; ok=apply(owner,owner->options.apply_archive); }
@@ -213,7 +213,7 @@ bool frontend_startup_config_advance(frontend_startup_config *owner,qa_console *
                     owner->completed=true; ok=apply(owner,owner->options.apply_launch); *complete=ok; break;
                 }
                 const startup_script *script=owner->scripts+owner->index++;
-                if (owner->options.command.dialect==QA_CONSOLE_Q3 && owner->options.safe_mode && !strcmp(script->name,"q3config.cfg")) {
+                if (owner->options.command.dialect==QA_RULESET_Q3 && owner->options.safe_mode && !strcmp(script->name,"q3config.cfg")) {
                     owner->archive=true; continue;
                 }
                 size_t length=strlen(script->name);

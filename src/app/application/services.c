@@ -1137,9 +1137,9 @@ static bool builtin_use_targets(void *opaque, qa_actor_id source,
     qa_application *application = opaque;
     application_provider *provider = application_provider_for(
         application, source, QA_ROLE_ENTITIES, "");
-    qa_clock_kind dialect = provider != NULL
+    qa_ruleset_id dialect = provider != NULL
                                 ? provider->component.clock.kind
-                                : QA_CLOCK_NETQUAKE;
+                                : QA_RULESET_NETQUAKE;
     uint64_t time_ns = qa_session_elapsed(application->session);
     qa_clock_state clock;
     if (provider != NULL &&
@@ -1186,10 +1186,10 @@ static bool target_message(void *opaque, const qa_target_use *request,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Target message lost its actual Source clock owner");
     qa_game_family family =
-        request->dialect == QA_CLOCK_Q3
+        request->dialect == QA_RULESET_Q3
             ? QA_GAME_Q3
-            : request->dialect == QA_CLOCK_Q2_CLASSIC ||
-                      request->dialect == QA_CLOCK_Q2_RERELEASE
+            : request->dialect == QA_RULESET_Q2_CLASSIC ||
+                      request->dialect == QA_RULESET_Q2_RERELEASE
                   ? QA_GAME_Q2
                   : QA_GAME_Q1;
     return application_emit(

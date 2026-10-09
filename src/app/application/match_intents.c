@@ -227,7 +227,7 @@ static bool assignments(application_match_intents *state, qa_application *app,
             !application_native_config_command_allowed(app, &state->plan, value->name, error)) return false;
         app->operation = APPLICATION_CONFIGURING;
         qa_cvars *cvars = qa_console_cvar_owner(console, &state->plan.context, value->name);
-        if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3) {
+        if (!cvars || qa_cvars_dialect(cvars) != QA_RULESET_Q3) {
             app->operation = APPLICATION_IDLE;
             return application_fail(error, QA_ERROR_NOT_FOUND, "match map assignment has no source cvar owner");
         }
@@ -364,9 +364,9 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         !qa_source_save_actor(io, &context->actor)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ)
         context->registry = qa_actors_identity(qa_session_actors(io->session));
-    context->owner = owner; context->dialect = (qa_console_dialect)dialect;
+    context->owner = owner; context->dialect = (qa_ruleset_id)dialect;
     context->origin = (qa_command_origin)origin;
-    return owner && dialect == QA_CONSOLE_Q3 && origin == QA_COMMAND_SERVER &&
+    return owner && dialect == QA_RULESET_Q3 && origin == QA_COMMAND_SERVER &&
         !context->client && !context->actor.registry && !context->direct && !context->console_text &&
         context->registry && context->generation;
 }

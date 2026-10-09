@@ -174,7 +174,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
     uint32_t remaining = scope->milliseconds;
-    qa_movement_command raw = {.kind = QA_MOVEMENT_Q3,
+    qa_movement_command raw = {.kind = QA_RULESET_Q3,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = remaining, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
@@ -183,23 +183,23 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         .weapon = input->command ? input->command->weapon : source.weapon,
         .impulse = input->command && input->input_applied ? input->applied_command.impulse
                  : input->command ? input->command->impulse : 0};
-    qa_input_command_basis from = {.kind = QA_MOVEMENT_Q3}, to = {.kind = control.state.kind};
-    if (to.kind == QA_MOVEMENT_Q3 || to.kind == QA_MOVEMENT_Q2_CLASSIC) {
+    qa_input_command_basis from = {.kind = QA_RULESET_Q3}, to = {.kind = control.state.kind};
+    if (to.kind == QA_RULESET_Q3 || to.kind == QA_RULESET_Q2_CLASSIC) {
         to.words = to.relative = to.wrap_words = true;
-        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = to.kind == QA_MOVEMENT_Q3 ?
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = to.kind == QA_RULESET_Q3 ?
             control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
-    } else if (to.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (to.kind == QA_RULESET_Q2_RERELEASE) {
         to.relative = true; to.delta_angles = control.state.data.q2r.delta_angles;
     }
     qa_movement_command command;
     qa_input_command_convert(&raw, NULL, &from, &to, (qa_input_axis_rule){0}, &command);
-    if (command.kind == QA_MOVEMENT_Q3) command.buttons = (uint32_t)source.buttons;
-    else if (command.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (command.kind == QA_RULESET_Q3) command.buttons = (uint32_t)source.buttons;
+    else if (command.kind == QA_RULESET_Q2_RERELEASE) {
         if (source.upmove > 0) command.buttons |= 8u;
         if (source.upmove < 0) command.buttons |= 16u;
         command.up_move = 0;
-    } else if (command.kind == QA_MOVEMENT_NETQUAKE && source.upmove > 0) command.buttons |= 2u;
-    if ((command.kind == QA_MOVEMENT_NETQUAKE || command.kind == QA_MOVEMENT_QUAKEWORLD) &&
+    } else if (command.kind == QA_RULESET_NETQUAKE && source.upmove > 0) command.buttons |= 2u;
+    if ((command.kind == QA_RULESET_NETQUAKE || command.kind == QA_RULESET_QUAKEWORLD) &&
         input->command && input->input_applied && input->command_projected &&
         input->applied_command.kind == command.kind && source.upmove == input->projected_command.upmove) {
         /* Q3 carries jump and upward movement in one source byte. Retain the
@@ -217,17 +217,17 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) { input->applied_command = applied; input->input_applied = true; }
     qa_q3_usercmd updated = source;
-    updated.buttons = command.kind == QA_MOVEMENT_Q3 ? (int32_t)applied.buttons
+    updated.buttons = command.kind == QA_RULESET_Q3 ? (int32_t)applied.buttons
         : (int32_t)(((uint32_t)source.buttons & ~1u) | (applied.buttons & 1u));
     qa_input_command_basis applied_from = {.kind = applied.kind};
-    if (applied.kind == QA_MOVEMENT_Q2_CLASSIC || applied.kind == QA_MOVEMENT_Q3) {
+    if (applied.kind == QA_RULESET_Q2_CLASSIC || applied.kind == QA_RULESET_Q3) {
         applied_from.words = applied_from.relative = applied_from.wrap_words = applied_from.repack_words = true;
-        for (unsigned i = 0; i < 3; ++i) applied_from.delta_words[i] = applied.kind == QA_MOVEMENT_Q3 ?
+        for (unsigned i = 0; i < 3; ++i) applied_from.delta_words[i] = applied.kind == QA_RULESET_Q3 ?
             control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
-    } else if (applied.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (applied.kind == QA_RULESET_Q2_RERELEASE) {
         applied_from.relative = true; applied_from.delta_angles = control.state.data.q2r.delta_angles;
     }
-    qa_input_command_basis source_to = {.kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    qa_input_command_basis source_to = {.kind = QA_RULESET_Q3, .words = true, .relative = true};
     memcpy(source_to.delta_words, player.deltaAngles, sizeof(source_to.delta_words));
     qa_movement_command projected;
     qa_input_command_convert(&applied, NULL, &applied_from, &source_to,
@@ -235,10 +235,10 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
             .minimum = -128, .maximum = 127, .float_product = true}, &projected);
     updated.forwardmove = (int8_t)projected.forward_move;
     updated.rightmove = (int8_t)projected.side_move; updated.upmove = (int8_t)projected.up_move;
-    if (applied.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (applied.kind == QA_RULESET_Q2_RERELEASE) {
         if (applied.buttons & 8u) updated.upmove = 127;
         else if (applied.buttons & 16u) updated.upmove = -127;
-    } else if (applied.kind == QA_MOVEMENT_NETQUAKE || applied.kind == QA_MOVEMENT_QUAKEWORLD) {
+    } else if (applied.kind == QA_RULESET_NETQUAKE || applied.kind == QA_RULESET_QUAKEWORLD) {
         if (applied.buttons & 2u) updated.upmove = 127;
         else if (updated.upmove > 0) updated.upmove = 0;
     }
@@ -328,10 +328,10 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_application_control_view control;
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest source input lost its continuation");
-    qa_movement_state state = qa_movement_state_default(QA_MOVEMENT_Q3,
+    qa_movement_state state = qa_movement_state_default(QA_RULESET_Q3,
         qa_v3(player.origin[0], player.origin[1], player.origin[2]));
     memcpy(state.data.q3.delta_angle_words, player.deltaAngles, sizeof(player.deltaAngles));
-    qa_movement_command command = {.kind = QA_MOVEMENT_Q3,
+    qa_movement_command command = {.kind = QA_RULESET_Q3,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = milliseconds, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
@@ -355,7 +355,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_q3_usercmd updated = source;
     memcpy(updated.angles, command.angle_words, sizeof(updated.angles));
     updated.buttons = (int32_t)command.buttons; updated.weapon = command.weapon;
-    qa_input_command_basis basis = {.kind = QA_MOVEMENT_Q3, .words = true};
+    qa_input_command_basis basis = {.kind = QA_RULESET_Q3, .words = true};
     qa_movement_command projected;
     qa_input_command_convert(&command, NULL, &basis, &basis,
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
@@ -729,7 +729,7 @@ static bool input_command_fields(qa_source_save_io *io, qa_movement_command *val
 {
     uint32_t kind = value->kind;
     if (!qa_source_save_u32(io, &kind)) return false;
-    if (kind > QA_MOVEMENT_Q3)
+    if (kind > QA_RULESET_Q3)
         return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input command has an invalid movement dialect");
     bool ok =
         qa_source_save_u64(io, &value->sequence) && qa_source_save_u32(io, &value->milliseconds) &&
@@ -740,7 +740,7 @@ static bool input_command_fields(qa_source_save_io *io, qa_movement_command *val
         qa_source_save_f32(io, &value->up_move) && qa_source_save_u32(io, &value->buttons) &&
         qa_source_save_u8(io, &value->impulse) && qa_source_save_u8(io, &value->light_level) &&
         qa_source_save_u8(io, &value->weapon);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) value->kind = (qa_movement_kind)kind;
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) value->kind = (qa_ruleset_id)kind;
     return ok;
 }
 
@@ -841,7 +841,7 @@ bool application_guest_input_applying(const qa_application *app, qa_actor_id act
     if (!app) return false;
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *provider = app->providers[i];
-        if (provider->component.clock.kind != QA_CLOCK_Q3) continue;
+        if (provider->component.clock.kind != QA_RULESET_Q3) continue;
         struct application_q3_guest *engine = q3g_engine(provider);
         application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
         if (input && qa_actor_id_equal(input->applying, actor)) return true;
@@ -854,7 +854,7 @@ bool application_guest_input_interval(const qa_application *app, qa_actor_id act
     if (!app || !out) return false;
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *provider = app->providers[i];
-        if (provider->component.clock.kind != QA_CLOCK_Q3) continue;
+        if (provider->component.clock.kind != QA_RULESET_Q3) continue;
         struct application_q3_guest *engine = q3g_engine(provider);
         application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
         if (input && qa_actor_id_equal(input->applying, actor) && input->scope && input->scope->input_active &&
@@ -873,7 +873,7 @@ bool application_guest_input_actor_idle(const qa_application *app, qa_actor_id a
          provider = provider->next_live) {
         if (provider->kind != APPLICATION_PROVIDER_QVM &&
             !(provider->kind == APPLICATION_PROVIDER_NATIVE &&
-              provider->component.clock.kind == QA_CLOCK_Q3)) continue;
+              provider->component.clock.kind == QA_RULESET_Q3)) continue;
         struct application_q3_guest *engine = q3g_engine(provider);
         for (q3g_role *role = engine ? engine->roles : NULL; role; role = role->next) {
             application_guest_input *input = role->input;
@@ -890,7 +890,7 @@ bool application_guest_input_actor_idle(const qa_application *app, qa_actor_id a
 static bool is_guest(const application_provider *provider)
 {
     return provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
-        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->component.clock.kind == QA_CLOCK_Q3));
+        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->component.clock.kind == QA_RULESET_Q3));
 }
 
 static bool weapons_capable(const application_guest_input *input)
@@ -1022,7 +1022,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     if (context && context->unified_command && !request_pending &&
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == guest &&
         ((context->unified_intent && !context->weapon) ||
-         (!context->unified_intent && command->kind != QA_MOVEMENT_Q3))) {
+         (!context->unified_intent && command->kind != QA_RULESET_Q3))) {
         application_q3_weapon_prediction current_weapon;
         if (!input->weapons || !application_q3_weapons_prediction_read(input->weapons,
                 actor, &current_weapon, error)) return false;
@@ -1084,7 +1084,7 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
 {
     application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     const application_control_context *context = application_control_frame_current(app, actor);
-    if (!is_guest(source) || !command || command->kind != QA_MOVEMENT_Q3 || !context ||
+    if (!is_guest(source) || !command || command->kind != QA_RULESET_Q3 || !context ||
         !context->source_guestcmd || !context->command_only || context->command.provider != source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 command has no genuine source admission");
     struct application_q3_guest *engine = q3g_engine(source);
@@ -1139,18 +1139,18 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     qa_q3_player player;
     if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
     qa_q3_usercmd source = {.serverTime = (int32_t)((uint32_t)player.commandTime + command->milliseconds),
-        .buttons = (int32_t)(command->kind == QA_MOVEMENT_Q3 ? command->buttons : command->buttons & 5u),
+        .buttons = (int32_t)(command->kind == QA_RULESET_Q3 ? command->buttons : command->buttons & 5u),
         .weapon = arsenal == guest ? command->weapon : (uint8_t)player.weapon};
     qa_application_control_view control;
     if (!qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest command has no shared control view");
     qa_input_command_basis from = {.kind = command->kind}, to = {
-        .kind = QA_MOVEMENT_Q3, .words = true, .relative = true, .wrap_words = true};
-    if (command->kind == QA_MOVEMENT_Q3 || command->kind == QA_MOVEMENT_Q2_CLASSIC) {
+        .kind = QA_RULESET_Q3, .words = true, .relative = true, .wrap_words = true};
+    if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
         from.words = from.relative = from.wrap_words = from.repack_words = true;
-        for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_MOVEMENT_Q3 ?
+        for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_RULESET_Q3 ?
             control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
-    } else if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (command->kind == QA_RULESET_Q2_RERELEASE) {
         from.relative = true; from.delta_angles = control.state.data.q2r.delta_angles;
     }
     memcpy(to.delta_words, player.deltaAngles, sizeof(to.delta_words));
@@ -1159,13 +1159,13 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
             .minimum = -127, .maximum = 127, .float_product = true}, &projected);
     memcpy(source.angles, projected.angle_words, sizeof(source.angles));
-    if (command->kind == QA_MOVEMENT_Q3 && movement == guest) {
+    if (command->kind == QA_RULESET_Q3 && movement == guest) {
         source.serverTime = command->server_time_ms;
         memcpy(source.angles, command->angle_words, sizeof(source.angles));
     }
     source.forwardmove = (int8_t)projected.forward_move;
     source.rightmove = (int8_t)projected.side_move; source.upmove = (int8_t)projected.up_move;
-    if (command->kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (command->kind == QA_RULESET_Q2_RERELEASE) {
         if (command->buttons & 8u) source.upmove = 127;
         if (command->buttons & 16u) source.upmove = -127;
     } else if ((command->buttons & 2u) && source.upmove == 0) source.upmove = 127;

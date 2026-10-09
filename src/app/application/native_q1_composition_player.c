@@ -91,7 +91,7 @@ bool application_native_q1_selected_q2_frame(qa_application *app, qa_actor_id ac
         (engine->profile != QA_NATIVE_Q2_GAME_API3 && engine->profile != QA_NATIVE_Q2_GAME_API2023) ||
         qa_native_terminal(qa_native_host_instance(provider->state.native.host)) ||
         !qa_session_clock(app->session, provider->owner, &clock) || clock.frame.provider != provider->owner ||
-        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE))
+        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 carried flag lost its returned original Q2 character");
     uint32_t slot = 0;
     for (uint32_t i = 1; i < 257; ++i) {

@@ -65,7 +65,7 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
     frontend_q1_view_settings view;
     if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, qw, &settings, error) ||
         !frontend_view_settings_q1_sample(row->frontend->view_settings,
-            qw ? QA_CONSOLE_QW : QA_CONSOLE_Q1, &view, error)) return false;
+            qw ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE, &view, error)) return false;
     qa_vec3 entity_angles = player.angles;
     for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
         qa_q1_entity entity = sampled(row, row->current.rows[i]);

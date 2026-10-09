@@ -27,10 +27,10 @@ bool qa_application_q2_rotation_read(qa_application *app, qa_actor_owner owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Rotation requires its actual constructed Q2 Source console");
     if (!qa_application_capture_command_context(app, &source.command, &view.command, error)) return false;
     view.console = source.console; view.cvars = source.cvars; view.scope = source.scope;
-    qa_console_dialect dialect = qa_cvars_dialect(view.cvars);
-    if (dialect != QA_CONSOLE_Q2 && dialect != QA_CONSOLE_Q2_RERELEASE)
+    qa_ruleset_id dialect = qa_cvars_dialect(view.cvars);
+    if (dialect != QA_RULESET_Q2_CLASSIC && dialect != QA_RULESET_Q2_RERELEASE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Rotation Source has no actual Q2 edition");
-    view.rerelease = dialect == QA_CONSOLE_Q2_RERELEASE;
+    view.rerelease = dialect == QA_RULESET_Q2_RERELEASE;
     const char *name = view.rerelease ? "g_map_list" : "sv_maplist";
     qa_cvars *actual = NULL; qa_cvars_edit *edit = NULL; const qa_cvar_view *desired = NULL;
     if (!qa_console_cvar_access(view.console, &view.command, name, &actual, &edit, error) || actual != view.cvars ||

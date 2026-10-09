@@ -62,7 +62,7 @@ static const char *text(const qa_cvars *cvars, const char *name) {
     return value ? value->value : "";
 }
 static bool rerelease(const qa_cvars *cvars) {
-    return qa_cvars_dialect(cvars) == QA_CONSOLE_Q2_RERELEASE;
+    return qa_cvars_dialect(cvars) == QA_RULESET_Q2_RERELEASE;
 }
 uint32_t qa_q2_source_deathmatch_flags(const qa_cvars *cvars) {
     const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, "dmflags") : NULL;
@@ -90,7 +90,7 @@ uint32_t qa_q2_source_deathmatch_flags(const qa_cvars *cvars) {
 
 bool qa_q2_source_player_rules(const qa_cvars *cvars, qa_q2_player_rules *rules,
                                 qa_error *error) {
-    if (!cvars || !rules || (qa_cvars_dialect(cvars) != QA_CONSOLE_Q2 && !rerelease(cvars))) {
+    if (!cvars || !rules || (qa_cvars_dialect(cvars) != QA_RULESET_Q2_CLASSIC && !rerelease(cvars))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 rules require their actual source registry");
         return false;
     }
@@ -216,7 +216,7 @@ bool qa_q2_source_apply(qa_q2_game *game, const qa_cvars *cvars, bool reset_rota
                          qa_error *error) {
     if (!game || !cvars || !game->player_runtime || !game->item_runtime ||
         qa_cvars_dialect(cvars) != (game->options.edition == QA_Q2_RERELEASE ?
-            QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2)) {
+            QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 source settings require their constructed GAME owner");
         return false;
     }

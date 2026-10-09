@@ -377,7 +377,7 @@ static bool reconnect(frontend_remote_q1 *row,const char *text,qa_error *error)
     if(!text) return remote_q1_fail(error,QA_ERROR_FORMAT,"Received Q1 server command has no text");
     size_t length=strlen(text);
     for(size_t at=0;at<length;) {
-        size_t count=qa_command_separator(text+at,length-at,QA_CONSOLE_Q1),first=0,last=count;
+        size_t count=qa_command_separator(text+at,length-at,QA_RULESET_NETQUAKE),first=0,last=count;
         while(first<last && trim_space((unsigned char)text[at+first])) ++first;
         while(last>first && trim_space((unsigned char)text[at+last-1])) --last;
         if(last-first==9 && !memcmp(text+at+first,"reconnect",9)) row->published=false;

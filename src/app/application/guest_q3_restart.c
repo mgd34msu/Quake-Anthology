@@ -79,7 +79,7 @@ bool application_q3_guest_round_ready(application_provider *provider, qa_error *
     if (!qa_q3_host_round_ready(engine->game->host, error)) return false;
     qa_clock_state clock;
     if (!qa_session_clock(provider->application->session, provider->owner, &clock) ||
-        clock.frame.provider != provider->owner || clock.frame.kind != QA_CLOCK_Q3 ||
+        clock.frame.provider != provider->owner || clock.frame.kind != QA_RULESET_Q3 ||
         clock.frame.time_ns > UINT64_MAX - UINT64_C(400000000) || clock.frame_number > UINT64_MAX - 4)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round source clock cannot admit four settlement frames");
     for (uint32_t slot = 0; slot < 64; ++slot) {
@@ -338,7 +338,7 @@ bool application_q3_guest_round_clock(application_provider *provider, int32_t *o
     if (!out || !readable(provider, &engine, error)) return false;
     qa_clock_state clock;
     if (!qa_session_clock(provider->application->session, provider->owner, &clock) ||
-        clock.frame.provider != provider->owner || clock.frame.kind != QA_CLOCK_Q3)
+        clock.frame.provider != provider->owner || clock.frame.kind != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 clock is outside its installed source owner");
     *out = (int32_t)(uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
     return true;
@@ -447,7 +447,7 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client bindings have not retired for round reset");
     qa_clock_state clock;
     if (!qa_session_clock(provider->application->session, provider->owner, &clock) ||
-        clock.frame.provider != provider->owner || clock.frame.kind != QA_CLOCK_Q3 ||
+        clock.frame.provider != provider->owner || clock.frame.kind != QA_RULESET_Q3 ||
         clock.frame.time_ns > UINT64_MAX - UINT64_C(400000000) || clock.frame_number > UINT64_MAX - 4)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round source clock cannot admit four settlement frames");
     engine->round.phase = Q3G_ROUND_RESETTING;
@@ -518,7 +518,7 @@ bool application_q3_guest_round_frame(application_provider *provider, qa_error *
         engine->round.phase != Q3G_ROUND_SETTLING || engine->round.completed_frames >= 4 ||
         !qa_world_idle(engine->world) || !application_q3_guest_idle(provider) ||
         !qa_session_active_frame(provider->application->session, provider->owner, &frame) ||
-        frame.kind != QA_CLOCK_Q3 || frame.phase != QA_FRAME_ENTRY ||
+        frame.kind != QA_RULESET_Q3 || frame.phase != QA_FRAME_ENTRY ||
         frame.elapsed_ns != UINT64_C(100000000) || frame.time_ns != frame.start_ns ||
         frame.start_ns != engine->round.start_ns + UINT64_C(100000000) * engine->round.completed_frames ||
         frame.number <= engine->round.last_frame ||

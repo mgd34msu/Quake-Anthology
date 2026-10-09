@@ -56,7 +56,7 @@ bool qa_q3_key_create_detached(bool dedicated,qa_q3_key **out,qa_error *error)
 
 bool qa_q3_key_rebind_cvars(qa_q3_key *key,qa_cvars *cvars,qa_error *error)
 {
-    if (!key || key->writing || (cvars && qa_cvars_dialect(cvars)!=QA_CONSOLE_Q3)) {
+    if (!key || key->writing || (cvars && qa_cvars_dialect(cvars)!=QA_RULESET_Q3)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 key registry binding requires its returned source owner"); return false;
     }
     key->cvars=cvars; return true;

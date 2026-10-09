@@ -55,7 +55,7 @@ static bool source_context(application_provider *provider, qa_application_q3_cam
     view->console = qa_q3_host_console(view->original_host, &view->cvars, &command);
     view->product = engine->product; view->game_type = engine->loaded_game_type;
     view->source_time = engine->milliseconds;
-    return view->console && view->cvars && command.owner == provider->owner && command.dialect == QA_CONSOLE_Q3;
+    return view->console && view->cvars && command.owner == provider->owner && command.dialect == QA_RULESET_Q3;
 }
 bool qa_application_q3_campaign_read(qa_application *app, qa_actor_owner owner,
     qa_application_q3_campaign *out, qa_error *error)
@@ -110,7 +110,7 @@ bool qa_application_q3_campaign_postgame_context(qa_application *app,
     const qa_application_q3_campaign *view, const qa_command_context *command, qa_error *error)
 {
     return (qa_application_q3_campaign_current(app, view) && command &&
-        command->origin == QA_COMMAND_SERVER && command->dialect == QA_CONSOLE_Q3 &&
+        command->origin == QA_COMMAND_SERVER && command->dialect == QA_RULESET_Q3 &&
         command->owner == view->source_owner && qa_application_command_context_active(app, command)) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Postgame command has no current actual GAME source");
 }

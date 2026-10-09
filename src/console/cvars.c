@@ -157,7 +157,7 @@ static const char *canonical_name(const qa_cvars *registry, const cvar_values *v
 }
 const char *qa_cvars_canonical_name(const qa_cvars *registry, const char *name)
 { return canonical_name(registry,qac_cvars_current_values(registry),name); }
-static bool format_number(qa_console_dialect dialect,float value,char out[32],
+static bool format_number(qa_ruleset_id dialect,float value,char out[32],
     bool *truncated,qa_error *error)
 {
     char text[64];
@@ -364,7 +364,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry,const qa_cvar_registry_state *
             if ((records[i].handle!=SIZE_MAX && records[i].handle==records[j].handle) || qac_equal(records[i].name,records[j].name))
                 return qac_fail(error,QA_ERROR_FORMAT,"duplicate saved Source metadata");
     }
-    if ((qa_cvars_dialect(registry)==QA_CONSOLE_Q3 && state->next_handle>1024) ||
+    if ((qa_cvars_dialect(registry)==QA_RULESET_Q3 && state->next_handle>1024) ||
         !qac_cvars_handles_reserve(values,state->next_handle,error)) return false;
     memset(values->handles,0,values->handle_capacity*sizeof(*values->handles));
     for (size_t i=0;i<count;++i) {
@@ -476,10 +476,10 @@ static bool valid_info(const char *text)
     return strpbrk(text, "\\\";") == NULL;
 }
 
-bool qa_cvars_name_valid(qa_console_dialect dialect, const char *text)
+bool qa_cvars_name_valid(qa_ruleset_id dialect, const char *text)
 {
     if (!text) return false;
-    if (dialect == QA_CONSOLE_Q3) return valid_info(text);
+    if (dialect == QA_RULESET_Q3) return valid_info(text);
     if (*text == '\0') return false;
     for (; *text != '\0'; ++text)
         if ((unsigned char)*text <= 32 || *text == '"' || *text == ';') return false;
@@ -488,7 +488,7 @@ bool qa_cvars_name_valid(qa_console_dialect dialect, const char *text)
 
 static const char *source_name(const qa_cvars *registry, const char *name)
 {
-    return qa_cvars_dialect(registry) == QA_CONSOLE_Q3 &&
+    return qa_cvars_dialect(registry) == QA_RULESET_Q3 &&
         !qa_cvars_name_valid(qa_cvars_dialect(registry), name) ? "BADNAME" : name;
 }
 
@@ -602,10 +602,10 @@ static void changed_value(qa_cvars *registry,const cvar *entry,const char *value
 static void propagate(cvar_target target, const cvar *entry, bool changed)
 {
     qa_cvars *registry=target.registry;
-    if (qa_cvars_dialect(registry) == QA_CONSOLE_Q1 && changed && target.values->server_active &&
+    if (qa_cvars_dialect(registry) == QA_RULESET_NETQUAKE && changed && target.values->server_active &&
         (entry->view.flags & QA_CVAR_SERVERINFO) != 0)
         effect(target, QA_CVAR_EFFECT_BROADCAST, entry);
-    else if (qa_cvars_dialect(registry) == QA_CONSOLE_QW) {
+    else if (qa_cvars_dialect(registry) == QA_RULESET_QUAKEWORLD) {
         if ((entry->view.flags & QA_CVAR_USERINFO) != 0) effect(target, QA_CVAR_EFFECT_USERINFO, entry);
         if ((entry->view.flags & QA_CVAR_SERVERINFO) != 0) effect(target, QA_CVAR_EFFECT_SERVERINFO, entry);
     }
@@ -615,7 +615,7 @@ typedef struct cvar_write {
     cvar *entry;
     const char *value, *reset_value, *latch_reset;
     const qa_cvar_catalog_binding *detail_binding;
-    qa_console_dialect detail_dialect;
+    qa_ruleset_id detail_dialect;
     const char *detail_value;
     bool clear_details, clear_latch, promote_details, pending, explicit_value, mark, silent, reuse_value;
     char *owned_value, *owned_detail, *owned_reset, *owned_latch;
@@ -655,8 +655,8 @@ static bool receives_value(qa_cvars *registry,const cvar_values *values,const qa
         if (observer->active && !observer->suppressed && qac_equal(
             canonical_name(registry,values,observer->name),canonical_name(registry,values,view->name))) return true;
     if (!registry->options.effect) return false;
-    if (qa_cvars_dialect(registry)==QA_CONSOLE_QW) return (view->flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO))!=0;
-    return qa_cvars_dialect(registry)==QA_CONSOLE_Q1 && values->server_active && (view->flags&QA_CVAR_SERVERINFO)!=0;
+    if (qa_cvars_dialect(registry)==QA_RULESET_QUAKEWORLD) return (view->flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO))!=0;
+    return qa_cvars_dialect(registry)==QA_RULESET_NETQUAKE && values->server_active && (view->flags&QA_CVAR_SERVERINFO)!=0;
 }
 static bool retain_fanout(cvar_target target,qa_cvars *receiver,const qa_cvar_view *view,
     const qa_cvar_binding *binding,bool bound,uint64_t order,bool observers,
@@ -1012,7 +1012,7 @@ void qa_cvars_destroy(qa_cvars *registry)
     if (!--store->references) { qac_cvars_values_free(&store->values); free(store); }
 }
 
-qa_console_dialect qa_cvars_dialect(const qa_cvars *registry)
+qa_ruleset_id qa_cvars_dialect(const qa_cvars *registry)
 {
     if (!registry->canonical_root || registry->options.role!=QA_CVAR_ROLE_ENGINE) return registry->options.dialect;
     qa_cvars_edit *edit=qac_cvars_current_edit(registry);
@@ -1239,7 +1239,7 @@ static bool source_handle(cvar_target target,cvar *entry,cvar_alias *alias,qa_er
     size_t *handle=alias?&alias->handle:&entry->view.handle;
     if (*handle!=SIZE_MAX) return true;
     if (target.values->next_handle==SIZE_MAX ||
-        (qac_cvars_view_options(target.registry,target.values).dialect==QA_CONSOLE_Q3 && target.values->next_handle>=1024))
+        (qac_cvars_view_options(target.registry,target.values).dialect==QA_RULESET_Q3 && target.values->next_handle>=1024))
         return qac_fail(error,QA_ERROR_MEMORY,"Source cvar handles exhausted");
     if (!qac_cvars_handles_reserve(target.values,target.values->next_handle+1,error)) return false;
     *handle=target.values->next_handle++;
@@ -1267,7 +1267,7 @@ static bool register_variable(cvar_target target,const char *name,const char *de
     const qa_cvar_catalog_binding *binding=alias?alias->catalog_binding:entry->catalog_binding;
     qac_cvar_conversion_output converted;
     if (!convert_input(target,binding,default_value,qac_cvars_canonical(entry)->view.value,&converted,error)) return false;
-    qa_console_dialect dialect=qac_cvars_view_options(registry,target.values).dialect;
+    qa_ruleset_id dialect=qac_cvars_view_options(registry,target.values).dialect;
     uint32_t native_flags=flags|qac_cvars_catalog_flags(registry,target.values,entry->catalog_row,name);
     if (qac_q2(qa_cvars_dialect(registry)) && (native_flags&6u) && (!valid_info(name) || !valid_info(default_value)))
         { free(converted.allocated_value); return qac_fail(error,QA_ERROR_FORMAT,"invalid Source info declaration"); }
@@ -1304,7 +1304,7 @@ static bool write_policy(cvar_target target,cvar_write *write,const char *name,
 {
     qa_cvars *registry=target.registry;
     cvar *canonical=qac_cvars_canonical(write->entry);
-    qa_console_dialect dialect=qac_cvars_view_options(registry,target.values).dialect;
+    qa_ruleset_id dialect=qac_cvars_view_options(registry,target.values).dialect;
     bool q2=qac_q2(dialect);
     if (registry->options.role==QA_CVAR_ROLE_ENGINE) {
         const cvar_alias *alias=find_alias(registry,target.values,name);
@@ -1464,7 +1464,7 @@ static bool apply_converted_as(cvar_target target,const char *name,const char *v
         entry=create_variable(target,name,"",error);
         if (!entry) return false;
         entry->view.console_created=true;
-        entry->view.flags=qa_cvars_dialect(registry)==QA_CONSOLE_Q3?QA_CVAR_USER_CREATED:qac_q2(qa_cvars_dialect(registry))?QA_Q2_CVAR_CUSTOM:0;
+        entry->view.flags=qa_cvars_dialect(registry)==QA_RULESET_Q3?QA_CVAR_USER_CREATED:qac_q2(qa_cvars_dialect(registry))?QA_Q2_CVAR_CUSTOM:0;
         entry->flags_dialect=qac_cvars_view_options(registry,target.values).dialect;
     }
     cvar *canonical=qac_cvars_canonical(entry);
@@ -1505,7 +1505,7 @@ static bool apply_converted(cvar_target target,const char *name,const char *valu
 { return apply_converted_as(target,name,value,force,staged,false,NULL,false,error); }
 
 bool qac_cvars_restore_row(qa_cvars_edit *edit,const char *name,const char *value,
-    const char *latch,qa_console_dialect dialect,bool canonical_value,qa_error *error)
+    const char *latch,qa_ruleset_id dialect,bool canonical_value,qa_error *error)
 {
     cvar_edit_view *view=qac_cvars_edit_view(edit,edit->registry);
     cvar_target target={edit->registry,&view->values,edit};
@@ -1535,7 +1535,7 @@ static bool set_number_variable(cvar_target target, const char *name, float valu
     if (!format_number(qa_cvars_dialect(registry),value,text,&truncated,error)) return false;
     if (truncated)
         print_message(target, NULL, "numeric cvar truncated to source value buffer\n");
-    return set_variable(target, name, text, qa_cvars_dialect(registry) == QA_CONSOLE_Q3, error);
+    return set_variable(target, name, text, qa_cvars_dialect(registry) == QA_RULESET_Q3, error);
 }
 
 static bool full_set_variable(cvar_target target,const char *name,const char *value,
@@ -1546,7 +1546,7 @@ static bool full_set_variable(cvar_target target,const char *name,const char *va
     if (!apply_converted(target,name,value,true,false,error)) return false;
     cvar_alias *alias=find_alias(target.registry,target.values,name);
     cvar *entry=qac_cvars_find_values(target.registry,target.values,alias?alias->target:name);
-    qa_console_dialect dialect=qac_cvars_view_options(target.registry,target.values).dialect;
+    qa_ruleset_id dialect=qac_cvars_view_options(target.registry,target.values).dialect;
     if (alias) {
         alias->flags=flags|qac_cvars_catalog_flags(target.registry,target.values,entry->catalog_row,name);
         alias->flags_dialect=dialect;
@@ -1622,7 +1622,7 @@ static bool restart_variables(cvar_target target,qa_error *error)
     for (cvar *entry=target.values->first;entry;entry=entry->next) {
         const qa_cvar_view *projection=qac_cvars_project(target.registry,target.values,entry);
         if (!source_visible(target.registry,entry,false) || !projection ||
-            (qac_cvars_flags(projection->flags,qac_cvars_view_options(target.registry,target.values).dialect,QA_CONSOLE_Q3)&
+            (qac_cvars_flags(projection->flags,qac_cvars_view_options(target.registry,target.values).dialect,QA_RULESET_Q3)&
              (QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART))) continue;
         if (!reset_variable(target,entry->view.name,true,error)) return false;
     }
@@ -1653,7 +1653,7 @@ static bool add_flags_variable(cvar_target target,const char *name,uint32_t flag
     cvar_alias *alias=find_alias(target.registry,target.values,name);
     cvar *entry=qac_cvars_find_values(target.registry,target.values,alias?alias->target:name);
     if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"flags need their actual Source declaration");
-    qa_console_dialect dialect=qac_cvars_view_options(target.registry,target.values).dialect;
+    qa_ruleset_id dialect=qac_cvars_view_options(target.registry,target.values).dialect;
     if (alias) {
         alias->flags=qac_cvars_flags(alias->flags,alias->flags_dialect,dialect)|flags;
         alias->flags_dialect=dialect;
@@ -1736,7 +1736,7 @@ bool qa_cvars_edit_vm_bind(qa_cvars_edit *edit,const char *name,const char *defa
     return ok;
 }
 static bool assign_variable(cvar_target target,const char *name,const char *value,
-    qa_console_dialect source_dialect,qa_error *error)
+    qa_ruleset_id source_dialect,qa_error *error)
 {
     if (!name || !value || !qac_dialect_valid(source_dialect) || !target_touch(target,error)) return false;
     name=source_name(target.registry,name);
@@ -1746,7 +1746,7 @@ static bool assign_variable(cvar_target target,const char *name,const char *valu
 }
 
 bool qa_cvars_assign(qa_cvars *registry, const char *name, const char *value,
-    qa_console_dialect source_dialect, qa_error *error)
+    qa_ruleset_id source_dialect, qa_error *error)
 {
     return qa_cvars_apply(registry,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_ASSIGN,
         .name=name,.value=value,.source_dialect=source_dialect,.force=true},error);
@@ -2170,8 +2170,8 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
 {
     if (registry == NULL || out == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar info arguments");
-    qa_console_dialect dialect = qa_cvars_dialect(registry);
-    if (maximum_length == 0) maximum_length = dialect == QA_CONSOLE_Q3 ? 1024 : 512;
+    qa_ruleset_id dialect = qa_cvars_dialect(registry);
+    if (maximum_length == 0) maximum_length = dialect == QA_RULESET_Q3 ? 1024 : 512;
     qac_text result = {0};
     cvar_values *values=qac_cvars_current_values(registry);
     for (const qa_cvar_view *value=qa_cvars_next(registry,NULL); value; value=qa_cvars_next(registry,value)) {
@@ -2180,10 +2180,10 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
         size_t value_length = strlen(value->value);
         if (*value->value == '\0' || strchr(value->name, '\\') != NULL || strchr(value->value, '\\') != NULL ||
             strchr(value->name, '"') != NULL || strchr(value->value, '"') != NULL ||
-            (dialect != QA_CONSOLE_QW && strchr(value->name, ';') != NULL) ||
-            (dialect == QA_CONSOLE_Q3 && strchr(value->value, ';') != NULL) ||
-            (dialect == QA_CONSOLE_QW && *value->name == '*') ||
-            (dialect != QA_CONSOLE_Q3 && (key_length >= 64 || value_length >= 64))) continue;
+            (dialect != QA_RULESET_QUAKEWORLD && strchr(value->name, ';') != NULL) ||
+            (dialect == QA_RULESET_Q3 && strchr(value->value, ';') != NULL) ||
+            (dialect == QA_RULESET_QUAKEWORLD && *value->name == '*') ||
+            (dialect != QA_RULESET_Q3 && (key_length >= 64 || value_length >= 64))) continue;
         qac_text pair = {0};
         if (!qac_text_add(&pair, "\\", 1, error) || !qac_text_string(&pair, value->name, error) ||
             !qac_text_add(&pair, "\\", 1, error) || !qac_text_string(&pair, value->value, error)) {
@@ -2191,18 +2191,18 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
             free(result.data);
             return false;
         }
-        if (dialect != QA_CONSOLE_Q3) {
+        if (dialect != QA_RULESET_Q3) {
             size_t count = 0;
             bool userinfo = (flags & QA_CVAR_USERINFO) != 0;
-            bool strip = dialect != QA_CONSOLE_QW || (userinfo ? !qac_equal(value->name, "name") : !values->high_characters);
+            bool strip = dialect != QA_RULESET_QUAKEWORLD || (userinfo ? !qac_equal(value->name, "name") : !values->high_characters);
             for (size_t i = 0; i < pair.size; ++i) {
                 unsigned char c = (unsigned char)pair.data[i];
                 if (strip) {
                     c &= 127;
-                    if (c < 32 || (dialect != QA_CONSOLE_QW && c == 127)) continue;
-                    if (dialect == QA_CONSOLE_QW && userinfo && qac_equal(value->name, "team") && c >= 'A' && c <= 'Z') c += 32;
+                    if (c < 32 || (dialect != QA_RULESET_QUAKEWORLD && c == 127)) continue;
+                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qac_equal(value->name, "team") && c >= 'A' && c <= 'Z') c += 32;
                 }
-                if (dialect == QA_CONSOLE_QW && c <= 13) continue;
+                if (dialect == QA_RULESET_QUAKEWORLD && c <= 13) continue;
                 pair.data[count++] = (char)c;
             }
             pair.size = count;
@@ -2213,7 +2213,7 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
             free(pair.data);
             continue;
         }
-        if (dialect == QA_CONSOLE_Q3 && maximum_length != 8192) {
+        if (dialect == QA_RULESET_Q3 && maximum_length != 8192) {
             if (!qac_text_add(&pair, result.data, result.size, error)) {
                 free(pair.data); free(result.data); return false;
             }
@@ -2276,7 +2276,7 @@ static bool config_filtered(const qa_cvars *registry,const cvar_values *values,
     if (registry == NULL || out == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar config arguments");
     qac_text result = {0};
-    qa_console_dialect dialect = qa_cvars_dialect(registry);
+    qa_ruleset_id dialect = qa_cvars_dialect(registry);
     if (values->canonical_values) values=values->canonical_values;
     for (const cvar *entry = values->first; entry != NULL; entry = entry->next) {
         if (entry->view.player_scoped && entry->player != registry->options.seat) continue;
@@ -2287,7 +2287,7 @@ static bool config_filtered(const qa_cvars *registry,const cvar_values *values,
             free(result.data);
             return qac_fail(error, QA_ERROR_FORMAT, "cvar value cannot be represented by source config quoting");
         }
-        const char *prefix = dialect == QA_CONSOLE_Q3 || variable->console_created ||
+        const char *prefix = dialect == QA_RULESET_Q3 || variable->console_created ||
             (qac_q2(dialect) && (variable->flags & QA_Q2_CVAR_CUSTOM) != 0) ? "seta " : qac_q2(dialect) ? "set " : "";
         if (!qac_text_string(&result, prefix, error) || !qac_text_string(&result, variable->name, error) ||
             !qac_text_add(&result, " \"", 2, error) || !qac_text_string(&result, value, error) ||

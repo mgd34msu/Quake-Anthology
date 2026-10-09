@@ -125,8 +125,8 @@ bool q2_train_wait(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                  .activator = s->activator,
                                  .fields = authored,
                                  .dialect = g->options.edition == QA_Q2_CLASSIC
-                                                ? QA_CLOCK_Q2_CLASSIC
-                                                : QA_CLOCK_Q2_RERELEASE,
+                                                ? QA_RULESET_Q2_CLASSIC
+                                                : QA_RULESET_Q2_RERELEASE,
                                  .time_ns = g->now_ns},
                 e);
         }

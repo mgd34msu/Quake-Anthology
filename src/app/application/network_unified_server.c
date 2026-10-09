@@ -208,7 +208,7 @@ static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_ne
         saved->source_slot && saved->source_slot<=owner->offered.max_clients;
     return (obsolete && owner->admitted && owner->player_attached && owner->admitted_receipt && saved->seat.owner==owner->seat.owner &&
         saved->seat.index==owner->seat.index && saved->source_owner==owner->offered.owner &&
-        slot && saved->movement>=QA_MOVEMENT_NETQUAKE && saved->movement<=QA_MOVEMENT_Q3 &&
+        slot && saved->movement>=QA_RULESET_NETQUAKE && saved->movement<=QA_RULESET_Q3 &&
         saved->arsenal.data==owner->admitted_arsenal.data && saved->arsenal.size==owner->admitted_arsenal.size &&
         (!saved->arsenal.size || saved->arsenal.data) &&
         qa_actors_save_reference(qa_session_actors(actual.session),saved->actor,&historical,error)) ||

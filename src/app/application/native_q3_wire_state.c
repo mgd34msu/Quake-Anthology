@@ -672,7 +672,7 @@ bool application_native_q3_bot_cycle_begin(application_provider *provider, const
         wire->world != provider->application->world || frame->provider != provider->owner ||
         !qa_session_active_frame(provider->application->session, provider->owner, &actual) ||
         !qa_session_frame_host_time(provider->application->session, &actual_host) || actual_host != host_ns ||
-        actual.kind != QA_CLOCK_Q3 || actual.kind != frame->kind || actual.number != frame->number ||
+        actual.kind != QA_RULESET_Q3 || actual.kind != frame->kind || actual.number != frame->number ||
         actual.start_ns != frame->start_ns || actual.elapsed_ns != frame->elapsed_ns ||
         actual.time_ns != frame->time_ns)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 bot cycle requires its genuine active source admission");
@@ -1333,7 +1333,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
     if (!text)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q3 server command predates its source gamestate");
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error)) return false;
     qa_command_tokens_free(lease->arguments);
     *lease->arguments = tokens;
     if (tokens.count && !strcmp(tokens.values[0], "disconnect")) {
@@ -1366,7 +1366,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
             client->big_configstring[client->big_configstring_length++] = '"';
             client->big_configstring[client->big_configstring_length] = 0;
             qa_command_tokens complete = {0};
-            bool ok = qa_command_tokenize(client->big_configstring, QA_CONSOLE_Q3, false, &complete, error);
+            bool ok = qa_command_tokenize(client->big_configstring, QA_RULESET_Q3, false, &complete, error);
             if (!ok) return false;
             qa_command_tokens_free(lease->arguments);
             *lease->arguments = complete;
@@ -1394,7 +1394,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
         bool okay = !(changed && index == 1) || leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
             qa_q3_configstring(client->gamestate, 1), error);
         qa_command_tokens restored = {0};
-        if (okay) okay = qa_command_tokenize(command_text, QA_CONSOLE_Q3, false, &restored, error);
+        if (okay) okay = qa_command_tokenize(command_text, QA_RULESET_Q3, false, &restored, error);
         free(command_text);
         if (!okay) return false;
         qa_command_tokens_free(lease->arguments);

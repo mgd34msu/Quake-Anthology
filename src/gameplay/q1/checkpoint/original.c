@@ -938,7 +938,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     if (!game || !save || save->entities || save->entity_count || save->globals.count ||
         game->destroy_pending || game->continuation_pending || game->observation_depth ||
         game->options.quakeworld || game->options.max_clients != 1 || game->options.deathmatch ||
-        !program || !movement || movement->kind != QA_MOVEMENT_NETQUAKE ||
+        !program || !movement || movement->kind != QA_RULESET_NETQUAKE ||
         !game->wire || game->wire->loading || !game->maps ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
         return fail(error, "Original native capture requires its idle single-player Source");
@@ -1389,7 +1389,7 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     if (map->action == Q1_MAP_DELAYED_USE) {
         original_field activator={"enemy",ORIGINAL_REF,offsetof(q1_actor,activator)};
         if (!restore_fields(strings,source,record,entity,&activator,1,slots,count,error)) return false;
-        map->pending.delayed.dialect = QA_CLOCK_NETQUAKE;
+        map->pending.delayed.dialect = QA_RULESET_NETQUAKE;
     }
     return true;
 }
@@ -1950,7 +1950,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         player->character_state.hazard_at = player->hazard_at;
         player->character_state.input.axe_pose = player->weapon == QA_Q1_AXE;
         if (!restore_player(player, record, error)) return false;
-        movement->kind = QA_MOVEMENT_NETQUAKE;
+        movement->kind = QA_RULESET_NETQUAKE;
         movement->data.nq = (qa_nq_movement_state){.origin = body.origin,.old_origin = body.origin,
             .velocity = body.velocity,.angles = body.angles,.angular_velocity = physics.angular_velocity,
             .view_angles = player->input.view_angles,.punch_angles = player->punch,

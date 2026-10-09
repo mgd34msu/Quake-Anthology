@@ -41,14 +41,14 @@ static char *copy(const char *text) {
 bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *error)
 {
     if (!cvars || !owner) return fail(error,"Source administration needs its actual declaration owner");
-    qa_console_dialect dialect=qa_cvars_dialect(cvars);
-    bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
-    const char *names[]={dialect==QA_CONSOLE_Q3?"rconPassword":"rcon_password",
+    qa_ruleset_id dialect=qa_cvars_dialect(cvars);
+    bool q2=dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE;
+    const char *names[]={dialect==QA_RULESET_Q3?"rconPassword":"rcon_password",
         "filterban","public","lrcon_password","sv_rcon_limit","timeout"};
     const char *values[]={"","1","0","","1","125"};
-    uint32_t flags[]={q2?QA_Q2_CVAR_PRIVATE:dialect==QA_CONSOLE_Q3?QA_CVAR_TEMPORARY:0,
+    uint32_t flags[]={q2?QA_Q2_CVAR_PRIVATE:dialect==QA_RULESET_Q3?QA_CVAR_TEMPORARY:0,
         0,QA_Q2_CVAR_LATCH,QA_Q2_CVAR_PRIVATE,0,0};
-    size_t count=q2?6:dialect==QA_CONSOLE_Q3?1:2;
+    size_t count=q2?6:dialect==QA_RULESET_Q3?1:2;
     for (size_t i=0;i<count;++i) {
         const qa_cvar_view *v=qa_cvars_find(cvars,names[i]);
         if (v && !v->console_created) {
@@ -56,7 +56,7 @@ bool qa_server_admin_declarations(qa_cvars *cvars, uint64_t owner, qa_error *err
         } else if (!qa_cvars_register(cvars,names[i],values[i],flags[i],owner,NULL,error)) return false;
         if (!qa_cvars_declare_save_policy(cvars,names[i],QA_CVAR_SAVE_SETTING,error)) return false;
     }
-    for (unsigned i=1;dialect==QA_CONSOLE_Q3 && i<=5;++i) {
+    for (unsigned i=1;dialect==QA_RULESET_Q3 && i<=5;++i) {
         char name[16]; snprintf(name,sizeof(name),"sv_master%u",i);
         const qa_cvar_view *v=qa_cvars_find(cvars,name); uint32_t master_flags=i==1?0:QA_CVAR_ARCHIVE;
         if (v && !v->console_created) {
@@ -101,10 +101,10 @@ void qa_server_admin_destroy(qa_server_admin *admin) {
     qa_buffer_free(&admin->master_names);
     strings_free(admin->prefixes, admin->prefix_count); strings_free(admin->rotation, admin->rotation_count); free(admin);
 }
-bool qa_server_admin_policy(qa_server_admin *admin,qa_console_dialect dialect,
+bool qa_server_admin_policy(qa_server_admin *admin,qa_ruleset_id dialect,
     bool deny_matches,bool public_server,qa_error *error)
 {
-    if (!admin || (admin->callback && !admin->executing) || dialect>QA_CONSOLE_Q3)
+    if (!admin || (admin->callback && !admin->executing) || dialect>QA_RULESET_Q3)
         return fail(error,"Administration policy requires its actual returned Source");
     if (admin->options.dialect!=dialect) admin->heartbeat_sent=false;
     admin->options.dialect=dialect; admin->options.deny_matches=deny_matches;
@@ -136,7 +136,7 @@ bool qa_server_admin_filter(qa_server_admin *admin, const char *text, bool remov
     admin->filters[admin->filter_count++] = value; return true;
 }
 bool qa_server_admin_rejects(const qa_server_admin *admin, const qa_net_address *address) {
-    if (!admin || !address || address->kind != QA_NET_IPV4 || admin->options.dialect == QA_CONSOLE_Q3) return false;
+    if (!admin || !address || address->kind != QA_NET_IPV4 || admin->options.dialect == QA_RULESET_Q3) return false;
     bool match = false;
     for (size_t i = 0; i < admin->filter_count; ++i) {
         bool equal = true;
@@ -211,7 +211,7 @@ bool qa_server_admin_limited_command(qa_server_admin *admin,const char *name,con
     --admin->prefix_count; return true;
 }
 bool qa_server_admin_filters_text(const qa_server_admin *admin,bool commands,
-    qa_console_dialect dialect,bool deny,qa_buffer *out,qa_error *error) {
+    qa_ruleset_id dialect,bool deny,qa_buffer *out,qa_error *error) {
     if (!admin || (admin->callback && !admin->executing) || !out || out->data || out->size)
         return fail(error,"Filter text requires its retained operator and empty output");
     size_t capacity=64+admin->filter_count*32;
@@ -219,7 +219,7 @@ bool qa_server_admin_filters_text(const qa_server_admin *admin,bool commands,
     if (!text) { qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding actual server filter commands"); return false; }
     int initial=commands ? snprintf(text,capacity,"set filterban %u\n",deny?1u:0u) : snprintf(text,capacity,"Filter list:\n");
     size_t used=(size_t)initial;
-    const char *prefix=commands ? (dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE ? "sv addip " : "addip ") : "";
+    const char *prefix=commands ? (dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE ? "sv addip " : "addip ") : "";
     for (size_t i=0;i<admin->filter_count;++i) {
         const uint8_t *v=admin->filters[i].compare;
         int n=snprintf(text+used,capacity-used,"%s%u.%u.%u.%u\n",prefix,(unsigned)v[0],(unsigned)v[1],(unsigned)v[2],(unsigned)v[3]);
@@ -267,7 +267,7 @@ static bool rerelease_allow(qa_server_admin *admin,uint64_t now,qa_error *error)
     qa_cvars *registry=admin->options.hooks.rate_registry(admin->options.hooks.context);
     admin->callback=outer;
     const qa_cvar_view *setting=registry?qa_cvars_find(registry,"sv_rcon_limit"):NULL;
-    if (!setting || qa_cvars_dialect(registry)!=QA_CONSOLE_Q2_RERELEASE)
+    if (!setting || qa_cvars_dialect(registry)!=QA_RULESET_Q2_RERELEASE)
         return fail(error,"Rerelease RCON requires its actual Source rate declaration");
     uint32_t time=(uint32_t)(now/UINT64_C(1000000));
     if (!admin->rate_text || strcmp(admin->rate_text,setting->value) ||
@@ -309,9 +309,9 @@ static bool rerelease_allow(qa_server_admin *admin,uint64_t now,qa_error *error)
     admin->credit-=admin->credit_cost; return true;
 }
 static bool allow(qa_server_admin *admin, const qa_net_address *address, uint64_t now,qa_error *error) {
-    if (admin->options.dialect==QA_CONSOLE_Q2_RERELEASE && admin->options.hooks.rate_registry)
+    if (admin->options.dialect==QA_RULESET_Q2_RERELEASE && admin->options.hooks.rate_registry)
         return rerelease_allow(admin,now,error);
-    if (admin->options.dialect == QA_CONSOLE_Q3) {
+    if (admin->options.dialect == QA_RULESET_Q3) {
         uint32_t milliseconds = (uint32_t)(now / 1000000), previous = (uint32_t)(admin->rcon_time / 1000000);
         if (milliseconds < previous + 500u) return false;
         admin->rcon_time = now; admin->rcon_sent = true; return true;
@@ -339,7 +339,7 @@ static bool flush(rcon_output *output, qa_error *error) {
     if (!output->size) return true;
     uint8_t bytes[1030]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool ok;
-    if (output->admin->options.dialect == QA_CONSOLE_QW) {
+    if (output->admin->options.dialect == QA_RULESET_QUAKEWORLD) {
         qa_net_write_u32(&writer, UINT32_MAX); qa_net_write_u8(&writer, 'n');
         ok = qa_net_write_string(&writer, output->text);
     } else {
@@ -382,14 +382,14 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     if (!qa_tokenizer_next(&lexer, &token, &found, error)) return false;
     if (found && !qa_token_copy(&token, supplied, sizeof(supplied), error)) return false;
     size_t offset = lexer.offset;
-    if (admin->options.dialect==QA_CONSOLE_Q3) {
+    if (admin->options.dialect==QA_RULESET_Q3) {
         offset=4;
         while (offset<text.size && text.data[offset]==' ') ++offset;
         while (offset<text.size && text.data[offset]!=' ') ++offset;
         while (offset<text.size && text.data[offset]==' ') ++offset;
     } else while (offset < text.size && (text.data[offset] == ' ' || text.data[offset] == '\t')) ++offset;
     size_t length = text.size - offset;
-    if (admin->options.dialect == QA_CONSOLE_Q3 && length > 1023) length = 1023;
+    if (admin->options.dialect == QA_RULESET_Q3 && length > 1023) length = 1023;
     char command[16385]; memcpy(command, text.data + offset, length); command[length] = 0;
     admin->callback = true;
     const char *full = admin->options.hooks.password(admin->options.hooks.context, false);
@@ -398,7 +398,7 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     const char *small = admin->options.hooks.password(admin->options.hooks.context, true);
     bool valid_limited = !is_full && small && *small && equal_secret(small, supplied);
     bool is_limited = valid_limited && limited(admin, command);
-    if ((is_full || valid_limited) && admin->rate_text && admin->options.dialect==QA_CONSOLE_Q2_RERELEASE) {
+    if ((is_full || valid_limited) && admin->rate_text && admin->options.dialect==QA_RULESET_Q2_RERELEASE) {
         admin->credit+=admin->credit_cost; if (admin->credit>admin->credit_cap) admin->credit=admin->credit_cap;
     }
     memset(supplied, 0, sizeof(supplied));
@@ -407,7 +407,7 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     if (!is_full && !is_limited) {
         *out = disabled ? QA_ADMIN_DISABLED : QA_ADMIN_DENIED;
         ok = write_output(&output, disabled ? "No rconpassword set on the server.\n" :
-            admin->options.dialect==QA_CONSOLE_Q3?"Bad rconpassword.\n":"Bad rconpassword or command not permitted.\n", error);
+            admin->options.dialect==QA_RULESET_Q3?"Bad rconpassword.\n":"Bad rconpassword or command not permitted.\n", error);
     } else {
         *out = QA_ADMIN_EXECUTED;
         admin->executing=true;
@@ -419,15 +419,15 @@ bool qa_server_admin_receive(qa_server_admin *admin, const qa_net_datagram *pack
     if (admin->options.hooks.record) admin->options.hooks.record(admin->options.hooks.context, &packet->from, *out);
     admin->callback = false; return ok;
 }
-static size_t master_group(qa_console_dialect dialect)
+static size_t master_group(qa_ruleset_id dialect)
 {
-    return dialect==QA_CONSOLE_QW?0:
-        dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE?1:
-        dialect==QA_CONSOLE_Q3?2:3;
+    return dialect==QA_RULESET_QUAKEWORLD?0:
+        dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE?1:
+        dialect==QA_RULESET_Q3?2:3;
 }
-bool qa_server_admin_source_masters(qa_server_admin *admin,qa_console_dialect dialect,
+bool qa_server_admin_source_masters(qa_server_admin *admin,qa_ruleset_id dialect,
     const qa_net_address *addresses,size_t count,qa_error *error) {
-    if (!admin || (admin->callback && !admin->executing) || dialect>QA_CONSOLE_Q3 || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
+    if (!admin || (admin->callback && !admin->executing) || dialect>QA_RULESET_Q3 || count > 32 || (count && !addresses)) return fail(error, "Invalid server masters");
     for (size_t i = 0; i < count; ++i)
         if (!service_address_valid(addresses + i)) return fail(error, "Invalid server master address");
     qa_net_address *owned = count ? malloc(count * sizeof(*owned)) : NULL;
@@ -449,8 +449,8 @@ bool qa_server_admin_request_heartbeat(qa_server_admin *admin,qa_error *error)
 }
 bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,qa_error *error)
 {
-    if (!admin || admin->callback || !registry || admin->options.dialect!=QA_CONSOLE_Q3 ||
-        qa_cvars_dialect(registry)!=QA_CONSOLE_Q3)
+    if (!admin || admin->callback || !registry || admin->options.dialect!=QA_RULESET_Q3 ||
+        qa_cvars_dialect(registry)!=QA_RULESET_Q3)
         return fail(error,"Q3 master refresh requires its returned Source registry");
     const char *values[5]; size_t size=0;
     for (unsigned i=0;i<5;++i) {
@@ -482,12 +482,12 @@ bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,q
 static bool heartbeat(qa_server_admin *admin, bool shutdown, qa_error *error) {
     uint8_t bytes[128]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool ok;
-    if (admin->options.dialect == QA_CONSOLE_QW) {
+    if (admin->options.dialect == QA_RULESET_QUAKEWORLD) {
         uint32_t players=0;
         if (!shutdown && !admin->options.hooks.players(admin->options.hooks.context,&players,error)) return false;
         ok = shutdown ? qa_qw_shutdown(&writer) : qa_qw_heartbeat(++admin->heartbeat_sequence,players,&writer);
     }
-    else if (admin->options.dialect == QA_CONSOLE_Q3)
+    else if (admin->options.dialect == QA_RULESET_Q3)
         ok = qa_q2_oob_write(&writer, shutdown ? "heartbeat flatline\n" : "heartbeat QuakeArena-1\n");
     else ok = qa_q2_oob_write(&writer, shutdown ? "shutdown\n" : "heartbeat\n");
     if (!ok) return false;

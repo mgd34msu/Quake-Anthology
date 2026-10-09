@@ -299,11 +299,11 @@ static bool time_write(frontend_source_lease *lease,qa_cvars *registry,const cha
     bool ok=qa_cvars_set(registry,name,value,true,error);
     return ok && (time_current(lease) || frontend_fail(error,QA_ERROR_ARGUMENT,"Frame time client retired during cvar publication"));
 }
-static size_t time_names(qa_console_dialect dialect,const char **names,bool collision)
+static size_t time_names(qa_ruleset_id dialect,const char **names,bool collision)
 {
     size_t count=0; names[count++]="timescale";
-    if (dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) names[count++]="host_framerate";
-    else { names[count++]="fixedtime"; if (dialect==QA_CONSOLE_Q3) names[count++]="com_cameraMode"; }
+    if (dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) names[count++]="host_framerate";
+    else { names[count++]="fixedtime"; if (dialect==QA_RULESET_Q3) names[count++]="com_cameraMode"; }
     if (collision) { names[count++]="cm_noAreas"; names[count++]="cm_noCurves"; names[count++]="cm_playerCurveClip"; }
     return count;
 }
@@ -405,7 +405,7 @@ bool frontend_source_effect(void *context,qa_application *application,qa_actor_o
          * actual command ring. CGAME consumes the reliable restart itself.
          * Reset only the frontend's command builder's private input history. */
         frontend_seat *target=f->seats+ordinal;
-        qa_movement_kind kind=target->builder.kind; qa_vec3 angles=target->builder.angles;
+        qa_ruleset_id kind=target->builder.kind; qa_vec3 angles=target->builder.angles;
         qa_input_command_clear(&target->builder); target->builder.kind=kind; target->builder.angles=angles;
         ok=qa_q3_presentation_clear(lease->source->presentation,error);
         break;

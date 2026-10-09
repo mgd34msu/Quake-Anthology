@@ -87,7 +87,7 @@ static bool frame_fields(qa_source_save_io *io, qa_source_frame *frame)
         !qa_source_save_u32(io, &phase) || !qa_source_save_u64(io, &frame->number) ||
         !qa_source_save_u64(io, &frame->start_ns) || !qa_source_save_u64(io, &frame->elapsed_ns) ||
         !qa_source_save_u64(io, &frame->time_ns)) return false;
-    frame->kind = (qa_clock_kind)kind; frame->phase = (qa_frame_phase)phase;
+    frame->kind = (qa_ruleset_id)kind; frame->phase = (qa_frame_phase)phase;
     return true;
 }
 static bool frame_equal(const qa_source_frame *a, const qa_source_frame *b)
@@ -150,7 +150,7 @@ bool application_unified_save_retained_source(qa_source_save_io *io, qa_applicat
     saved->family = (qa_game_family)family;
     if (!saved->owner || family > QA_GAME_Q3 || !saved->publication || !saved->max_clients ||
         saved->max_clients > 256 || !saved->frame.provider ||
-        (unsigned)saved->frame.kind > QA_CLOCK_Q3 || (unsigned)saved->frame.phase > QA_FRAME_EXIT ||
+        (unsigned)saved->frame.kind > QA_RULESET_Q3 || (unsigned)saved->frame.phase > QA_FRAME_EXIT ||
         !application_unified_save_source_obsolete(actual, saved)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         saved->launch = NULL; saved->session = NULL; saved->world = NULL;
@@ -175,9 +175,9 @@ bool application_unified_save_player_owned(qa_source_save_io *io, qa_unified_ses
     if (!qa_source_save_actor(io, &player->actor) || !player->actor.registry ||
         !qa_source_save_u64(io, &player->seat.owner) || !player->seat.owner ||
         !qa_source_save_u32(io, &player->seat.index) || !qa_source_save_u32(io, &movement) ||
-        movement > QA_MOVEMENT_Q3 || !qa_source_save_string(io, &player->source_owner) || !player->source_owner ||
+        movement > QA_RULESET_Q3 || !qa_source_save_string(io, &player->source_owner) || !player->source_owner ||
         !qa_source_save_u32(io, &player->source_slot) || !application_unified_save_blob(io, arsenal)) return false;
-    player->movement = (qa_movement_kind)movement;
+    player->movement = (qa_ruleset_id)movement;
     player->arsenal = (qa_bytes){arsenal->data, arsenal->size};
     return true;
 }

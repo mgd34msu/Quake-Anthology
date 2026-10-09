@@ -31,13 +31,13 @@ typedef struct cvar_projection {
     qa_cvar_view view;
     char value[64], reset[64], latched[64];
     uint64_t revision;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     bool valid, available;
 } cvar_projection;
 typedef struct cvar_detail {
     struct cvar_detail *next;
     const qa_cvar_catalog_binding *binding;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     char *value, *latched_value;
 } cvar_detail;
 typedef struct cvar_name_node {
@@ -55,7 +55,7 @@ struct cvar {
     struct cvar *definition; /* same catalog definition for another actual player */
     qa_cvars *player_default_source; /* weak, retired with Source callbacks */
     uint32_t player;
-    qa_console_dialect flags_dialect;
+    qa_ruleset_id flags_dialect;
     size_t ordinal;
     uint16_t catalog_row;
     const qa_cvar_catalog_binding *catalog_binding;
@@ -83,7 +83,7 @@ struct cvar_alias {
     uint64_t binding_order, owner, modification_count;
     bool modified;
     uint32_t flags;
-    qa_console_dialect flags_dialect;
+    qa_ruleset_id flags_dialect;
     size_t handle;
     bool vm_bound;
     cvar_projection projection;
@@ -109,7 +109,7 @@ typedef struct cvar_values {
 } cvar_values;
 struct cvar_store {
     cvar_values values;
-    qa_console_dialect active_dialect;
+    qa_ruleset_id active_dialect;
     qa_cvars *active_default_source;
     qa_cvars *video_owner;
     qa_cvar_video_resolver video_resolver;
@@ -137,7 +137,7 @@ struct qa_cvars_edit {
     qa_cvars *registry;
     cvar_values values; /* sole prepared canonical scalar snapshot */
     cvar_edit_view *views, *last_view;
-    qa_console_dialect active_dialect;
+    qa_ruleset_id active_dialect;
     qa_cvars *active_default_source;
     size_t owner_scope_depth;
     uint64_t revision;
@@ -212,12 +212,12 @@ bool qac_cvars_values_clone(qa_cvars *, const cvar_values *, cvar_values *,
     const cvar_values *, qa_error *);
 cvar_edit_view *qac_cvars_edit_view(qa_cvars_edit *, const qa_cvars *);
 bool qac_cvars_edit_add_view(qa_cvars_edit *, qa_cvars *, qa_error *);
-bool qac_cvars_restore_row(qa_cvars_edit *, const char *, const char *, const char *, qa_console_dialect, bool, qa_error *);
+bool qac_cvars_restore_row(qa_cvars_edit *, const char *, const char *, const char *, qa_ruleset_id, bool, qa_error *);
 bool qac_cvars_change_defaults(cvar_target, const char *const *, qa_error *);
 bool qac_cvars_default_declare(cvar_target, cvar *, const char *, qa_error *);
 bool qac_cvars_handles_reserve(cvar_values *, size_t, qa_error *);
 bool qac_cvars_rows_reserve(cvar_values *, size_t, size_t, qa_error *);
-uint32_t qac_cvars_flags(uint32_t, qa_console_dialect, qa_console_dialect);
+uint32_t qac_cvars_flags(uint32_t, qa_ruleset_id, qa_ruleset_id);
 uint32_t qac_cvars_catalog_flags(const qa_cvars *, const cvar_values *, uint16_t, const char *);
 const char *qac_cvars_operand(void *, uint16_t);
 bool qac_cvars_video(void *, const qa_cvar_video_query *, qa_cvar_video_mode *, qa_error *);

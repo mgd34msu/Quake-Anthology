@@ -261,7 +261,7 @@ static bool persistent_field(qa_source_save_io *io, event_store *store, applicat
         !qa_source_save_u64(io, &row->q2_source_interval_ns) ||
         ((row->q2_source_profile != 0) != (row->q2_source_interval_ns != 0)) ||
         !qa_source_save_u64(io, &row->time_ns) ||
-        !enum_field(io, &clock, QA_CLOCK_Q3) || !enum_field(io, &presentation_clock, QA_CLOCK_Q3) ||
+        !enum_field(io, &clock, QA_RULESET_Q3) || !enum_field(io, &presentation_clock, QA_RULESET_Q3) ||
         !enum_field(io, &family, QA_GAME_Q3) ||
         !normalized_actor_field(io, row, false) ||
         !provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||

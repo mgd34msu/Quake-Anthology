@@ -35,7 +35,7 @@ bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_sess
     if (!s->hooks.player(s->hooks.context, s->id, &player, e)) return false;
     if (!player.actor.registry || !player.source_owner ||
         player.seat.owner != s->seat.owner || player.seat.index != s->seat.index ||
-        (unsigned)player.movement > QA_MOVEMENT_Q3 || (player.arsenal.size && !player.arsenal.data))
+        (unsigned)player.movement > QA_RULESET_Q3 || (player.arsenal.size && !player.arsenal.data))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production player lacks its retained physical Source seat");
     *out = player;
     return true;
@@ -168,32 +168,32 @@ static qa_unified_movement command_movement(const qa_movement_command *command)
     qa_unified_movement movement = {.kind = command->kind};
     qa_unified_vec3 angles = {command->angles.x, command->angles.y, command->angles.z};
     switch (command->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         movement.data.nq.acknowledged_seconds = command->acknowledged_server_seconds;
         movement.data.nq.angles = angles;
         movement.data.nq.forward = command->forward_move; movement.data.nq.side = command->side_move;
         movement.data.nq.up = command->up_move; movement.data.nq.buttons = command->buttons;
         movement.data.nq.impulse = command->impulse;
         break;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         movement.data.qw.milliseconds = command->milliseconds; movement.data.qw.angles = angles;
         movement.data.qw.forward = command->forward_move; movement.data.qw.side = command->side_move;
         movement.data.qw.up = command->up_move; movement.data.qw.buttons = command->buttons;
         movement.data.qw.impulse = command->impulse;
         break;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         movement.data.q2.milliseconds = command->milliseconds;
         for (size_t i = 0; i < 3; ++i) movement.data.q2.angle_shorts[i] = command->angle_words[i];
         movement.data.q2.forward = command->forward_move; movement.data.q2.side = command->side_move;
         movement.data.q2.up = command->up_move; movement.data.q2.buttons = command->buttons;
         movement.data.q2.impulse = command->impulse; movement.data.q2.light_level = command->light_level;
         break;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         movement.data.q2r.milliseconds = command->milliseconds; movement.data.q2r.angles = angles;
         movement.data.q2r.forward = command->forward_move; movement.data.q2r.side = command->side_move;
         movement.data.q2r.buttons = command->buttons; movement.data.q2r.server_frame = command->server_frame;
         break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         movement.data.q3.server_time_ms = command->server_time_ms;
         for (size_t i = 0; i < 3; ++i) movement.data.q3.angle_words[i] = command->angle_words[i];
         movement.data.q3.forward = command->forward_move; movement.data.q3.right = command->side_move;

@@ -13,7 +13,7 @@ static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
     qa_movement_command *command = &input->command;
     uint32_t kind = command->kind;
     bool ok = qa_source_save_u32(io, &input->seat) &&
-        qa_source_save_u32(io, &kind) && kind <= QA_MOVEMENT_Q3 &&
+        qa_source_save_u32(io, &kind) && kind <= QA_RULESET_Q3 &&
         qa_source_save_u64(io, &command->sequence) &&
         qa_source_save_u32(io, &command->milliseconds) &&
         qa_source_save_i32(io, &command->server_time_ms) &&
@@ -33,7 +33,7 @@ static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
         !qa_vec_finite(command->angles) || !isfinite(command->forward_move) ||
         !isfinite(command->side_move) || !isfinite(command->up_move)))
         ok = persistence_io_fail(io, QA_ERROR_FORMAT, "Recovery input contains nonfinite movement");
-    if (ok) command->kind = (qa_movement_kind)kind;
+    if (ok) command->kind = (qa_ruleset_id)kind;
     return ok || persistence_io_fail(io, QA_ERROR_FORMAT, "Invalid recovery input fields");
 }
 

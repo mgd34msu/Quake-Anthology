@@ -80,7 +80,7 @@ static qa_binding_record *binding_find(const qa_input_seat *s, qa_physical_input
 static bool context_ready(const qa_input_seat_options *options,
                           const qa_command_context *context, qa_error *error) {
     if (!options || !context || options->seat >= 4 || context->origin != QA_COMMAND_SEAT ||
-        context->dialect < QA_CONSOLE_Q1 || context->dialect > QA_CONSOLE_Q3 ||
+        context->dialect < QA_RULESET_NETQUAKE || context->dialect > QA_RULESET_Q3 ||
         context->script || context->console_text) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input command context");
         return false;
@@ -171,7 +171,7 @@ static bool recipient_endpoints_ready(const qa_input_seat *s,qa_console *console
         !qa_console_idle(console) || !qa_cvars_same_store(qa_console_cvars(console),cvars) ||
         command->cvar_view!=qa_cvars_view_identity(cvars) || !qa_console_context_bound(console,command) ||
         command->origin!=QA_COMMAND_SEAT || command->script || command->console_text ||
-        command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3) return false;
+        command->dialect<QA_RULESET_NETQUAKE || command->dialect>QA_RULESET_Q3) return false;
     return true;
 }
 static bool recipient_release_ready(const qa_input_seat *s,qa_console *console,qa_cvars *cvars,
@@ -328,9 +328,9 @@ bool qa_input_seat_catcher_at(const qa_input_seat *s, size_t index, qa_input_cat
 }
 qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *s) { return &s->gamepad; }
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *s) { return &s->options.gamepad; }
-bool qa_input_seat_profile(qa_input_seat *s, qa_console_dialect dialect, qa_error *error) {
+bool qa_input_seat_profile(qa_input_seat *s, qa_ruleset_id dialect, qa_error *error) {
     if (!qa_input_release_mutation_access(s,error)) return false;
-    if (dialect < QA_CONSOLE_Q1 || dialect > QA_CONSOLE_Q3 || qa_input_seat_has_held(s)) {
+    if (dialect < QA_RULESET_NETQUAKE || dialect > QA_RULESET_Q3 || qa_input_seat_has_held(s)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Input profile requires valid dialect and released keys");
         return false;
@@ -810,9 +810,9 @@ bool qa_input_seat_sample(qa_input_seat *s, double now, double frame, qa_seat_in
                                    .impulse = s->impulse};
     if (!qa_gamepad_sample_read(&s->gamepad, &s->options.gamepad, frame, &result.gamepad, error))
         return false;
-    qa_console_dialect dialect = s->options.context.dialect;
-    qa_button_timing timing = dialect <= QA_CONSOLE_QW   ? QA_BUTTON_Q1
-                              : dialect == QA_CONSOLE_Q3 ? QA_BUTTON_Q3
+    qa_ruleset_id dialect = s->options.context.dialect;
+    qa_button_timing timing = dialect <= QA_RULESET_QUAKEWORLD   ? QA_BUTTON_Q1
+                              : dialect == QA_RULESET_Q3 ? QA_BUTTON_Q3
                                                          : QA_BUTTON_Q2;
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i) {
         result.buttons[i].active = s->buttons[i].count != 0;
@@ -832,8 +832,8 @@ bool qa_input_seat_impulse(qa_input_seat *s, const char *text, qa_error *error) 
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing impulse");
         return false;
     }
-    qa_console_dialect d = s->options.context.dialect;
-    if (d == QA_CONSOLE_Q3 || d == QA_CONSOLE_Q2_RERELEASE) {
+    qa_ruleset_id d = s->options.context.dialect;
+    if (d == QA_RULESET_Q3 || d == QA_RULESET_Q2_RERELEASE) {
         const char *start = text;
         while (*start && (unsigned char)*start <= 32)
             ++start;
@@ -849,16 +849,16 @@ bool qa_input_seat_impulse(qa_input_seat *s, const char *text, qa_error *error) 
     }
     const unsigned char *p = (const unsigned char *)text;
     bool negative = false;
-    if (d == QA_CONSOLE_Q2)
+    if (d == QA_RULESET_Q2_CLASSIC)
         while (*p && *p <= 32)
             ++p;
-    if (*p == '-' || (d == QA_CONSOLE_Q2 && *p == '+'))
+    if (*p == '-' || (d == QA_RULESET_Q2_CLASSIC && *p == '+'))
         negative = *p++ == '-';
     unsigned base = 10, value = 0;
-    if (d <= QA_CONSOLE_QW && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    if (d <= QA_RULESET_QUAKEWORLD && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
         base = 16;
         p += 2;
-    } else if (d <= QA_CONSOLE_QW && p[0] == '\'') {
+    } else if (d <= QA_RULESET_QUAKEWORLD && p[0] == '\'') {
         s->impulse = (uint8_t)(negative ? 0u - p[1] : p[1]);
         return true;
     }

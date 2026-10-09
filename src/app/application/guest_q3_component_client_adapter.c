@@ -460,7 +460,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
         const char *argument=text&&!strcmp(text,"team:red")?"red":text&&!strcmp(text,"team:blue")?"blue":NULL;
         if(!argument) return application_fail(e,QA_ERROR_ARGUMENT,"Component Q2 team has no Source command argument");
         const char *arguments[]={"team",argument};bool handled=false;
-        qa_command_invocation command={.context={.owner=source->owner,.actor=actor,.dialect=QA_CONSOLE_Q2,
+        qa_command_invocation command={.context={.owner=source->owner,.actor=actor,.dialect=QA_RULESET_Q2_CLASSIC,
             .origin=QA_COMMAND_SERVER},.argc=2,.argv=arguments,.args_text=argument};
         return qa_modes_console_command(app->modes,app->primary_mode,actor,&command,&handled,e)&&
             (handled||application_fail(e,QA_ERROR_UNSUPPORTED,"Actual Q2 CTF Source did not handle its team command"));

@@ -16,8 +16,8 @@ static bool declare(qa_cvars *vars, const struct setting *settings, size_t count
     return true;
 }
 bool qa_input_device_settings_register(qa_cvars *vars, qa_error *error) {
-    qa_console_dialect d = qa_cvars_dialect(vars);
-    uint32_t latch = d == QA_CONSOLE_Q3 ? QA_CVAR_LATCH : d >= QA_CONSOLE_Q2 ? QA_Q2_CVAR_LATCH : 0;
+    qa_ruleset_id d = qa_cvars_dialect(vars);
+    uint32_t latch = d == QA_RULESET_Q3 ? QA_CVAR_LATCH : d >= QA_RULESET_Q2_CLASSIC ? QA_Q2_CVAR_LATCH : 0;
     struct setting settings[] = {
         {"in_midi", "0", QA_CVAR_ARCHIVE},
         {"in_midiport", "1", QA_CVAR_ARCHIVE},
@@ -29,7 +29,7 @@ bool qa_input_device_settings_register(qa_cvars *vars, qa_error *error) {
         {"in_subframe", "1", QA_CVAR_ARCHIVE},
         {"in_nograb", "0", 0},
         {"in_joystick", "0", QA_CVAR_ARCHIVE | latch},
-        {"in_debugjoystick", "0", d == QA_CONSOLE_Q3 ? QA_CVAR_TEMPORARY : 0},
+        {"in_debugjoystick", "0", d == QA_RULESET_Q3 ? QA_CVAR_TEMPORARY : 0},
         {"joy_threshold", "0.15", QA_CVAR_ARCHIVE},
         {"in_joystickProfile", "linux", QA_CVAR_ARCHIVE | latch},
         {"in_joyBallScale", "0.02", QA_CVAR_ARCHIVE},
@@ -39,8 +39,8 @@ bool qa_input_device_settings_register(qa_cvars *vars, qa_error *error) {
 #endif
     return declare(vars, settings, sizeof(settings) / sizeof(*settings), error);
 }
-static bool settings_owner(const qa_cvars *vars, qa_movement_kind kind, qa_error *error) {
-    if (!vars || kind < QA_MOVEMENT_NETQUAKE || kind > QA_MOVEMENT_Q3) {
+static bool settings_owner(const qa_cvars *vars, qa_ruleset_id kind, qa_error *error) {
+    if (!vars || kind < QA_RULESET_NETQUAKE || kind > QA_RULESET_Q3) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing input settings owner or movement dialect");
         return false;
     }
@@ -61,8 +61,8 @@ static bool mouse_register(qa_cvars *vars, qa_error *error) {
                                        {"freelook", "1", QA_CVAR_ARCHIVE}};
     return declare(vars, settings, sizeof(settings) / sizeof(*settings), error);
 }
-static bool movement_register(qa_cvars *vars, qa_movement_kind kind, qa_error *error) {
-    bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
+static bool movement_register(qa_cvars *vars, qa_ruleset_id kind, qa_error *error) {
+    bool q1 = kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD;
     const struct setting settings[] = {{"cl_forwardspeed", "200", QA_CVAR_ARCHIVE},
                                        {"cl_backspeed", "200", QA_CVAR_ARCHIVE},
                                        {"cl_sidespeed", q1 ? "350" : "200", QA_CVAR_ARCHIVE},
@@ -73,24 +73,24 @@ static bool movement_register(qa_cvars *vars, qa_movement_kind kind, qa_error *e
                                        {"cl_movespeedkey", "2", QA_CVAR_ARCHIVE}};
     return declare(vars, settings, sizeof(settings) / sizeof(*settings), error);
 }
-static bool run_register(qa_cvars *vars, qa_movement_kind kind, qa_error *error) {
-    bool q1 = kind == QA_MOVEMENT_NETQUAKE || kind == QA_MOVEMENT_QUAKEWORLD;
+static bool run_register(qa_cvars *vars, qa_ruleset_id kind, qa_error *error) {
+    bool q1 = kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD;
     const struct setting setting = {"cl_run", q1 ? "0" : "1", QA_CVAR_ARCHIVE};
     return declare(vars, &setting, 1, error);
 }
-bool qa_input_mouse_settings_register(qa_cvars *vars, qa_movement_kind selected, qa_error *error) {
+bool qa_input_mouse_settings_register(qa_cvars *vars, qa_ruleset_id selected, qa_error *error) {
     if (!settings_owner(vars, selected, error) || !mouse_register(vars, error)) return false;
     const qa_cvar_view *run = qa_cvars_find(vars, "cl_run");
-    qa_console_dialect dialect = qa_cvars_dialect(vars);
-    if (run && !run->console_created && (dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW))
+    qa_ruleset_id dialect = qa_cvars_dialect(vars);
+    if (run && !run->console_created && (dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD))
         return qa_cvars_add_flags(vars, "cl_run", QA_CVAR_ARCHIVE, error);
-    bool q1 = selected == QA_MOVEMENT_NETQUAKE || selected == QA_MOVEMENT_QUAKEWORLD;
+    bool q1 = selected == QA_RULESET_NETQUAKE || selected == QA_RULESET_QUAKEWORLD;
     return qa_cvars_register(vars, "cl_run", q1 ? "0" : "1", QA_CVAR_ARCHIVE, 0, "Input setting", error);
 }
-bool qa_input_movement_settings_register(qa_cvars *vars, qa_movement_kind kind, qa_error *error) {
+bool qa_input_movement_settings_register(qa_cvars *vars, qa_ruleset_id kind, qa_error *error) {
     return settings_owner(vars, kind, error) && movement_register(vars, kind, error);
 }
-bool qa_input_settings_register(qa_cvars *vars, qa_movement_kind kind, qa_error *error) {
+bool qa_input_settings_register(qa_cvars *vars, qa_ruleset_id kind, qa_error *error) {
     /* Preserve the composed registry's original declaration and observer order. */
     return settings_owner(vars, kind, error) && mouse_register(vars, error) &&
         movement_register(vars, kind, error) && run_register(vars, kind, error);
@@ -126,7 +126,7 @@ static float value(const qa_cvars *vars, qa_cvar_handle handle, float fallback) 
     return v ? v->number : fallback;
 }
 bool qa_input_settings_read(const qa_cvars *mouse, const qa_cvars *movement,
-    const qa_input_tuning_handles *handles, qa_movement_kind kind, qa_input_command_tuning *out,
+    const qa_input_tuning_handles *handles, qa_ruleset_id kind, qa_input_command_tuning *out,
     qa_error *error) {
     if (!out || !handles) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing input settings owner");
@@ -139,7 +139,7 @@ bool qa_input_settings_read(const qa_cvars *mouse, const qa_cvars *movement,
     m->sensitivity = value(mouse, handles->sensitivity, m->sensitivity);
     m->acceleration = value(mouse, handles->acceleration, m->acceleration);
     const qa_cvar_view *filter = qa_cvars_read(mouse, handles->filter);
-    m->filter = filter && (qa_cvars_dialect(mouse) == QA_CONSOLE_Q3 ? filter->integer != 0
+    m->filter = filter && (qa_cvars_dialect(mouse) == QA_RULESET_Q3 ? filter->integer != 0
                                                                    : filter->number != 0);
     m->yaw = value(mouse, handles->yaw, m->yaw);
     float pitch = value(mouse, handles->pitch, m->pitch);

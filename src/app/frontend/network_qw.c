@@ -207,7 +207,7 @@ static bool source_input(void *context, qa_net_client_id id, const qa_qw_command
     if (!qa_net_client_id_equal(id, peer->client) || !commands || !count || count > 20 ||
         !peer_actor(peer, &actor, error) || !qa_application_control_read(peer->host->frontend->application, actor, &selected)) return false;
     qa_movement_command raw[20];
-    for (size_t i = 0; i < count; ++i) raw[i] = (qa_movement_command){.kind = QA_MOVEMENT_QUAKEWORLD,
+    for (size_t i = 0; i < count; ++i) raw[i] = (qa_movement_command){.kind = QA_RULESET_QUAKEWORLD,
         .sequence = sequence, .milliseconds = commands[i].msec,
         .angles = qa_v3(commands[i].angles[0], commands[i].angles[1], commands[i].angles[2]),
         .forward_move = commands[i].forward, .side_move = commands[i].side, .up_move = commands[i].up,
@@ -387,7 +387,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         const char *status = NULL;
         return source_status(host, &status, error) && print_text(peer, status, error);
     }
-    if (qa_q1_chat_command_read(QA_CONSOLE_QW, name, false) != QA_Q1_CHAT_UNKNOWN)
+    if (qa_q1_chat_command_read(QA_RULESET_QUAKEWORLD, name, false) != QA_Q1_CHAT_UNKNOWN)
         return qa_application_actor_command(host->frontend->application,actor,text,error);
     frontend_print(host->frontend, text); return true;
 }

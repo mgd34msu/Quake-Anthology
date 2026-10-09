@@ -135,7 +135,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
     bool rerelease = remote_q2_float_movement(row);
     bool wide = row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
         row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u);
-    qa_movement_kind kind = rerelease ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
+    qa_ruleset_id kind = rerelease ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     qa_movement_state state = qa_movement_state_default(kind, qa_v3(0, 0, 0));
     if (rerelease) {
         state.data.q2r = (qa_q2r_movement_state){.type = received->pmove.type,

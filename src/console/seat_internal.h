@@ -8,7 +8,7 @@
 
 typedef struct staged_line {
     struct staged_line *next;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     double time;
     char text[];
 } staged_line;

@@ -15,10 +15,10 @@ typedef struct qa_console_row {
     bool notify, wrapped;
 } qa_console_row;
 typedef struct qa_console_buffer qa_console_buffer;
-qa_console_buffer *qa_console_buffer_create(qa_console_dialect, size_t width,
+qa_console_buffer *qa_console_buffer_create(qa_ruleset_id, size_t width,
                                             size_t character_capacity, qa_error *);
 void qa_console_buffer_destroy(qa_console_buffer *);
-void qa_console_buffer_dialect(qa_console_buffer *, qa_console_dialect);
+void qa_console_buffer_dialect(qa_console_buffer *, qa_ruleset_id);
 /* All cells remain borrowed until the buffer changes. Printing uses retained
  * storage; resize prepares and publishes a complete replacement atomically. */
 bool qa_console_buffer_print(qa_console_buffer *, qa_bytes utf8, double time_ms, qa_error *);

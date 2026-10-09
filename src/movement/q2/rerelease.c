@@ -791,7 +791,7 @@ bool qa_move_q2r(qa_move_context *move)
     qa_movement_result *result = move->result;
     int32_t original_type = state->type;
     bool mode = env->has_mode && env->health > 0;
-    if (mode) state->type = qa_move_mode_type(QA_MOVEMENT_Q2_RERELEASE, env->mode);
+    if (mode) state->type = qa_move_mode_type(QA_RULESET_Q2_RERELEASE, env->mode);
     if (env->fixed_pose) { state->type = RR_FREEZE; state->velocity = qa_v3(0,0,0); }
     qa_bounds character = input->shape.kind == QA_SHAPE_POINT ? (qa_bounds){0} : input->shape.bounds;
     if (env->fixed_pose) character = env->pose.bounds;

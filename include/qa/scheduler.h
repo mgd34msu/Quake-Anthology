@@ -1,12 +1,8 @@
 #ifndef QA_SCHEDULER_H
 #define QA_SCHEDULER_H
 
+#include "qa/ruleset.h"
 #include "qa/actors.h"
-
-typedef enum qa_clock_kind {
-    QA_CLOCK_NETQUAKE, QA_CLOCK_QUAKEWORLD, QA_CLOCK_Q2_CLASSIC,
-    QA_CLOCK_Q2_RERELEASE, QA_CLOCK_Q3
-} qa_clock_kind;
 
 typedef enum qa_frame_phase {
     QA_FRAME_ENTRY, QA_CLIENT_COMMAND, QA_ENTITY_PRETHINK, QA_ENTITY_PHYSICS,
@@ -15,7 +11,7 @@ typedef enum qa_frame_phase {
 
 typedef struct qa_source_frame {
     qa_actor_owner provider;
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
     qa_frame_phase phase;
     uint64_t number;
     uint64_t start_ns;
@@ -28,7 +24,7 @@ typedef struct qa_source_frame {
 typedef struct qa_source_command {
     qa_actor_id actor;
     qa_actor_owner provider;
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
     qa_frame_phase phase;
     uint64_t completed_frame_number, time_ns, elapsed_ns, host_elapsed_ns;
 } qa_source_command;
@@ -84,11 +80,11 @@ bool qa_scheduler_create(qa_actor_registry *actors, uint32_t provider_capacity,
                           void *context, qa_scheduler **out, qa_error *error);
 bool qa_scheduler_destroy(qa_scheduler *scheduler, qa_error *error);
 bool qa_scheduler_register(qa_scheduler *scheduler, qa_actor_owner provider,
-                            qa_clock_kind kind, qa_error *error);
+                            qa_ruleset_id kind, qa_error *error);
 /* Reservations are invisible to dispatch. A nonzero retiring_owner reserves
  * that active provider's slot; it must be unregistered before commit. Commit consumes success;
  * abort consumes a pending token. The scheduler must outlive its tokens. */
-bool qa_scheduler_prepare(qa_scheduler *, qa_actor_owner, qa_clock_kind, qa_actor_owner retiring_owner,
+bool qa_scheduler_prepare(qa_scheduler *, qa_actor_owner, qa_ruleset_id, qa_actor_owner retiring_owner,
                            qa_scheduler_admission **, qa_error *);
 bool qa_scheduler_admission_validate(qa_scheduler_admission *, qa_error *);
 bool qa_scheduler_admission_commit(qa_scheduler_admission *, qa_error *);
@@ -122,7 +118,7 @@ bool qa_scheduler_active(const qa_scheduler *scheduler);
 bool qa_scheduler_has_admissions(const qa_scheduler *scheduler);
 typedef struct qa_scheduler_provider_checkpoint {
     qa_actor_owner owner;
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
     uint64_t order;
 } qa_scheduler_provider_checkpoint;
 typedef struct qa_scheduler_think_checkpoint {
@@ -149,6 +145,6 @@ bool qa_scheduler_checkpoint_restore(qa_scheduler *, const qa_scheduler_checkpoi
                                       qa_think_resolve_fn, void *, qa_error *);
 void qa_scheduler_checkpoint_free(qa_scheduler_checkpoint *);
 bool qa_frame_project(const qa_source_frame *frame, qa_actor_owner provider,
-                       qa_clock_kind kind, qa_source_frame *out, qa_error *error);
+                       qa_ruleset_id kind, qa_source_frame *out, qa_error *error);
 
 #endif

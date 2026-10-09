@@ -604,7 +604,7 @@ bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, ui
     if (h->has_event_sequence && event_sequence <= h->event_sequence) return true;
     if (recipient < 0 || recipient == (int32_t)c->constructor.client_number) {
         qa_command_tokens args = {0};
-        if (!qa_command_tokenize(text,QA_CONSOLE_Q3,false,&args,e)) return false;
+        if (!qa_command_tokenize(text,QA_RULESET_Q3,false,&args,e)) return false;
         bool ok = append(h,(const char *const *)args.values,args.count,e);
         qa_command_tokens_free(&args); if (!ok) return false;
     }

@@ -155,7 +155,7 @@ typedef struct qa_application_protocol_resource_reference {
 typedef struct qa_application_protocol_event {
     uint64_t event_id;
     qa_actor_owner provider;
-    qa_clock_kind dialect;
+    qa_ruleset_id dialect;
     uint64_t time_ns;
     qa_actor_id recipient;
     qa_vec3 origin;

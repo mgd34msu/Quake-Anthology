@@ -50,7 +50,7 @@
 #include "qa/game_q1_source_travel.h"
 #include "qa/modes_q1_source.h"
 #include "qa/network_q1_channel.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -61,7 +61,7 @@ bool application_player_qw_spectator(const application_provider *source,
                                     const application_player_record *record)
 {
     return source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_CLOCK_QUAKEWORLD && record->spectator;
+        source->component.clock.kind == QA_RULESET_QUAKEWORLD && record->spectator;
 }
 
 static const qa_launch_role player_roles[] = {
@@ -366,9 +366,9 @@ static application_provider *seat_provider(application_publication *publication,
 static bool player_adapter_available(const application_provider *provider)
 {
     return provider != NULL && (provider->kind != APPLICATION_PROVIDER_NATIVE ||
-                                provider->launch->selection.clock.kind == QA_CLOCK_Q3 ||
-                                provider->launch->selection.clock.kind == QA_CLOCK_Q2_CLASSIC ||
-                                provider->launch->selection.clock.kind == QA_CLOCK_Q2_RERELEASE);
+                                provider->launch->selection.clock.kind == QA_RULESET_Q3 ||
+                                provider->launch->selection.clock.kind == QA_RULESET_Q2_CLASSIC ||
+                                provider->launch->selection.clock.kind == QA_RULESET_Q2_RERELEASE);
 }
 
 static bool capture_player(qa_application *application, qa_actor_id actor,
@@ -762,7 +762,7 @@ bool application_players_prepare(qa_application *application,
                 .spectator = old->spectator, .bot = old->bot,
                 .source_begin_pending = old->source_begin_pending ||
                     (!old->bot && (publication->map_provider->kind == APPLICATION_PROVIDER_QC ||
-                     (publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3 &&
+                     (publication->map_provider->launch->selection.clock.kind == QA_RULESET_Q3 &&
                       (publication->map_provider->kind == APPLICATION_PROVIDER_QVM ||
                        publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE))))};
             if (!record_text(record, old->name, old->team, old->skin, old->userinfo, error)) {
@@ -820,7 +820,7 @@ bool application_players_prepare(qa_application *application,
             }
             if (provider != NULL && provider != publication->map_provider &&
                 provider->kind > APPLICATION_PROVIDER_Q3 &&
-                provider->launch->selection.clock.kind == QA_CLOCK_Q3) {
+                provider->launch->selection.clock.kind == QA_RULESET_Q3) {
                 application_players_dispose(travel);
                 return application_fail(error, QA_ERROR_UNSUPPORTED,
                     "secondary guest player/map ownership is not qualified");
@@ -845,7 +845,7 @@ bool application_players_prepare(qa_application *application,
         } else {
             if (i < local_count) travel->roster->records[i].client_slot = (uint32_t)i;
             travel->roster->records[i].source_slot = travel->roster->records[i].client_slot +
-                (character->launch->selection.clock.kind == QA_CLOCK_Q3 ? 0u : 1u);
+                (character->launch->selection.clock.kind == QA_RULESET_Q3 ? 0u : 1u);
         }
         if (i < local_count && had_player && !q3_replacement) {
             for (size_t j = 0; j < application->players->count; ++j) {
@@ -909,8 +909,8 @@ bool application_players_prepare(qa_application *application,
             application_players_dispose(travel);
             return false;
         }
-        if ((character->launch->selection.clock.kind == QA_CLOCK_Q3 ||
-             publication->map_provider->launch->selection.clock.kind == QA_CLOCK_Q3) &&
+        if ((character->launch->selection.clock.kind == QA_RULESET_Q3 ||
+             publication->map_provider->launch->selection.clock.kind == QA_RULESET_Q3) &&
             !q3_initial_userinfo(application,qa_launch_snapshot_catalog(publication->candidate),choices,
                 &travel->roster->records[i], seat, false, error)) {
             application_players_dispose(travel);
@@ -1557,7 +1557,7 @@ static bool q2_movement(void *context, qa_actor_id actor,
         .water_level = control->water_level, .grounded = control->ground.hit != QA_TRACE_HIT_NONE,
         .impact_delta = control->result.impact_delta,
         .noclip = control->player_mode_set && control->player_mode == QA_MOVEMENT_MODE_NOCLIP,
-        .on_ladder = control->state.kind == QA_MOVEMENT_Q2_RERELEASE &&
+        .on_ladder = control->state.kind == QA_RULESET_Q2_RERELEASE &&
                      (control->state.data.q2r.flags & 128u) != 0,
         .grounded_on_world = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(provider->application->session), body.ground), provider->application->physics->world_actor),
         .ducked = body.bounds.maxs.z < control->standing_bounds.maxs.z,
@@ -1610,8 +1610,8 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
     application_control_record *control;
     if (!application_control_ensure(application, actor, motion->angles, &control, error))
         return false;
-    bool relative_angles = control->state.kind == QA_MOVEMENT_Q2_CLASSIC ||
-        control->state.kind == QA_MOVEMENT_Q2_RERELEASE || control->state.kind == QA_MOVEMENT_Q3;
+    bool relative_angles = control->state.kind == QA_RULESET_Q2_CLASSIC ||
+        control->state.kind == QA_RULESET_Q2_RERELEASE || control->state.kind == QA_RULESET_Q3;
     if (relative_angles && !motion->preserve_view_angles)
         control->command_angles = motion->command_angles;
     qa_body_state body;
@@ -2493,8 +2493,8 @@ bool application_players_native_q1_respawn(qa_application *app,
         .frame = visual.frame, .skin = visual.skin, .color_map = visual.colormap};
     if (!qa_q1_source_copy_body(source->state.q1, actor, &corpse, physics.motion, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
-        ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor).standing.bounds;
+    body.bounds = qa_movement_input_default(character->component.clock.kind == QA_RULESET_Q3
+        ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE, actor).standing.bounds;
     body.ground = (qa_actor_reference){0};
     standing.bounds = body.bounds;
     if (!qa_world_body_write(app->world, actor, &standing, error) ||
@@ -2536,9 +2536,9 @@ bool application_players_native_q1_respawn(qa_application *app,
         if (!qa_q2_character_respawned(character->state.q2, actor, error)) return false;
     } else if (!native_q1_character_spawn(character, source, actor, NULL, 0, error)) return false;
     if (!q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    qa_collision_family family = app->controls[actor.slot].state.kind == QA_MOVEMENT_Q3
-        ? QA_COLLISION_Q3 : app->controls[actor.slot].state.kind == QA_MOVEMENT_Q2_CLASSIC ||
-          app->controls[actor.slot].state.kind == QA_MOVEMENT_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
+    qa_collision_family family = app->controls[actor.slot].state.kind == QA_RULESET_Q3
+        ? QA_COLLISION_Q3 : app->controls[actor.slot].state.kind == QA_RULESET_Q2_CLASSIC ||
+          app->controls[actor.slot].state.kind == QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
     qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
         .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
         .role = QA_COLLISION_SOLID};
@@ -2603,14 +2603,14 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
         if (initial_local_userinfo && !seat->bot &&
-            (character->component.clock.kind == QA_CLOCK_Q3 || map_source->component.clock.kind == QA_CLOCK_Q3) &&
+            (character->component.clock.kind == QA_RULESET_Q3 || map_source->component.clock.kind == QA_RULESET_Q3) &&
             !q3_initial_userinfo(application,application->catalog,choices,record,seat,true,error))
             return false;
         bool qw_spectator = application_player_qw_spectator(map_source, record);
         for (size_t i = 0; i < application->provider_count; ++i) {
             application_provider *provider = application->providers[i];
             if ((provider->kind != APPLICATION_PROVIDER_QC && provider->kind != APPLICATION_PROVIDER_Q1) ||
-                provider->component.clock.kind != QA_CLOCK_QUAKEWORLD) continue;
+                provider->component.clock.kind != QA_RULESET_QUAKEWORLD) continue;
             bool selected = provider == map_source;
             for (size_t j = 0; !selected && j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
                 selected = application_provider_for(application, actor, player_roles[j], "") == provider;
@@ -2633,7 +2633,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool rogue_reset = arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_ROGUE &&
             deathmatch(choices) && selected_teamplay(choices) >= 4;
-        qa_movement_kind movement_kind = qa_clock_movement_kind(movement->component.clock.kind);
+        qa_ruleset_id movement_kind = (movement->component.clock.kind);
         qa_body_state body = {.bounds = qa_movement_input_default(movement_kind, actor).standing.bounds};
         const char *current_map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
         bool keep = keep_native_travel(character, choices, carry, carry_players,
@@ -2694,7 +2694,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             application_provider *provider = application->providers[j];
             if (provider->kind <= APPLICATION_PROVIDER_Q3 ||
                 provider->kind == APPLICATION_PROVIDER_QC ||
-                provider->component.clock.kind != QA_CLOCK_Q3) continue;
+                provider->component.clock.kind != QA_RULESET_Q3) continue;
             if (original_q3_body && provider == character) continue;
             bool selected = provider == map_source;
             for (size_t k = 0; !selected && k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
@@ -2910,7 +2910,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             application_provider *provider = application->providers[j];
             if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
             bool selected = provider == map_source &&
-                (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_CLOCK_Q3);
+                (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_RULESET_Q3);
             for (size_t k = 0; k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
                 selected |= application_provider_for(application, actor, player_roles[k], "") == provider;
             if (!selected) continue;
@@ -2919,7 +2919,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 continued |= carry->guests[k].owner == provider->owner &&
                     carry->guests[k].identity == provider->launch->identity;
             if (provider->kind == APPLICATION_PROVIDER_QC) {
-                if (provider->component.clock.kind == QA_CLOCK_QUAKEWORLD &&
+                if (provider->component.clock.kind == QA_RULESET_QUAKEWORLD &&
                     !qw_initial_userinfo(application, record, error)) return false;
                 if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
                     (provider, record->client_slot + 1, seat->id, actor,
@@ -2927,7 +2927,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                                                 provider == character, error))
                     return false;
                 if (defer_source_begin) record->source_begin_pending = true;
-            } else if (provider->component.clock.kind == QA_CLOCK_Q3) {
+            } else if (provider->component.clock.kind == QA_RULESET_Q3) {
                 if (round) {
                     bool accepted = false;
                     if (provider != character ||
@@ -3088,11 +3088,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 admit_components(application, actor, error);
         }
         body.bounds = qa_movement_input_default(map_source->kind == APPLICATION_PROVIDER_Q1
-            ? character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE
+            ? character->component.clock.kind == QA_RULESET_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE
             : movement_kind, actor).standing.bounds;
         if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_reference){0};
-        qa_collision_family family = movement_kind == QA_MOVEMENT_Q3 ? QA_COLLISION_Q3
-            : movement_kind == QA_MOVEMENT_Q2_CLASSIC || movement_kind == QA_MOVEMENT_Q2_RERELEASE
+        qa_collision_family family = movement_kind == QA_RULESET_Q3 ? QA_COLLISION_Q3
+            : movement_kind == QA_RULESET_Q2_CLASSIC || movement_kind == QA_RULESET_Q2_RERELEASE
                 ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
             .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
@@ -3516,8 +3516,8 @@ bool application_players_advance(qa_application *application, qa_error *error)
         if (source->kind == APPLICATION_PROVIDER_Q1) {
             if (!q1_player_current(application, source, character, arsenal, actor,
                 true, &ordinal, error)) return false;
-            body.bounds = qa_movement_input_default(character->component.clock.kind == QA_CLOCK_Q3
-                ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor).standing.bounds;
+            body.bounds = qa_movement_input_default(character->component.clock.kind == QA_RULESET_Q3
+                ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE, actor).standing.bounds;
             body.ground = (qa_actor_reference){0};
         }
         qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,
@@ -3536,8 +3536,8 @@ bool application_players_advance(qa_application *application, qa_error *error)
         application_provider *movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
         if (!movement)
             return application_fail(error, QA_ERROR_ARGUMENT, "Deferred spawn lost its selected movement owner");
-        qa_collision_family family = movement->component.clock.kind == QA_CLOCK_Q3 ? QA_COLLISION_Q3
-            : movement->component.clock.kind == QA_CLOCK_Q2_CLASSIC || movement->component.clock.kind == QA_CLOCK_Q2_RERELEASE
+        qa_collision_family family = movement->component.clock.kind == QA_RULESET_Q3 ? QA_COLLISION_Q3
+            : movement->component.clock.kind == QA_RULESET_Q2_CLASSIC || movement->component.clock.kind == QA_RULESET_Q2_RERELEASE
                 ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
             .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
@@ -3623,7 +3623,7 @@ static bool disconnect_provider(qa_application *app,application_provider *source
     uint64_t generation=app->publication_generation;
     bool okay=true;
     if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q1) {
-        if(provider->component.clock.kind==QA_CLOCK_QUAKEWORLD&&!record->source_begin_pending)
+        if(provider->component.clock.kind==QA_RULESET_QUAKEWORLD&&!record->source_begin_pending)
             okay=record->spectator?application_native_q1_spectator_disconnect(provider,actor,error):
                 application_native_q1_client_disconnect(provider,actor,error);
     }
@@ -3682,7 +3682,7 @@ static bool retire_player(qa_application *app,application_provider *source,
         return application_fail(error,QA_ERROR_ARGUMENT,"Declared disconnect changed its full actor or Source publication");
     if(source->kind==APPLICATION_PROVIDER_Q1&&
         (!application_native_q1_check_client_retire(source,actor,error)||
-         (source->component.clock.kind==QA_CLOCK_QUAKEWORLD&&
+         (source->component.clock.kind==QA_RULESET_QUAKEWORLD&&
           !application_native_q1_qw_retire_capture(source,actor,error)))) return false;
     application_actor_routes_invalidate(app, actor);
     found->retiring=true;
@@ -3965,7 +3965,7 @@ bool application_players_bot_allocate(qa_application *app,
         !movement || movement->kind > APPLICATION_PROVIDER_Q3 ||
         !arsenal || arsenal->kind > APPLICATION_PROVIDER_Q3)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "catalogue bot selected roles require native admission owners");
-    uint32_t offset = character->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
+    uint32_t offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t physical;
     for (physical = 0; physical < maximum; ++physical) {
         bool occupied = qa_actors_at_source(qa_session_actors(app->session),
@@ -4096,8 +4096,8 @@ static bool player_source_slot(qa_application *application, application_provider
     bool *available, qa_error *error)
 {
     *available=false;
-    uint32_t source_offset = source->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
-    uint32_t character_offset = character->component.clock.kind == QA_CLOCK_Q3 ? 0u : 1u;
+    uint32_t source_offset = source->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
+    uint32_t character_offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     application_unified_source source_receipt;
     if (!application_unified_source_read(application, &source_receipt, error) ||
         source_receipt.owner != source->owner) return false;
@@ -4174,7 +4174,7 @@ static bool player_attach(qa_application *application,
     if (source == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "player admission requires its actual game source");
     if (source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+        source->component.clock.kind == QA_RULESET_QUAKEWORLD) {
         bool allowed;
         if (!application_native_q1_qw_admission(application, seat->spectator, &allowed, error))
             return false;
@@ -4187,7 +4187,7 @@ static bool player_attach(qa_application *application,
         return false;
     if (!available)
         return application_fail(error,QA_ERROR_MEMORY,"player source client capacity is exhausted");
-    uint32_t source_slot=client_slot+(character->component.clock.kind==QA_CLOCK_Q3?0u:1u);
+    uint32_t source_slot=client_slot+(character->component.clock.kind==QA_RULESET_Q3?0u:1u);
     application_player_record record = {.seat = seat->id, .configured_actor = seat->actor, .client_slot = client_slot,
         .source_slot = source_slot, .character = character, .remote_client = request->client,
         .remote_seat = request->network_seat, .remote = request->remote, .dynamic = request->remote,
@@ -4203,7 +4203,7 @@ static bool player_attach(qa_application *application,
                               seat, &application->players->records[index], &carry, index,
                               false, false, NULL, request->defer_source_begin,
                               request->defer_source_begin && source->kind == APPLICATION_PROVIDER_Q1 &&
-                                  source->component.clock.kind == QA_CLOCK_QUAKEWORLD
+                                  source->component.clock.kind == QA_RULESET_QUAKEWORLD
                                   ? PLAYER_ADMISSION_RESERVE : PLAYER_ADMISSION_COMPLETE,
                               NULL, &accepted, &denial, error);
     application->operation = APPLICATION_IDLE;
@@ -4258,7 +4258,7 @@ bool qa_application_local_player_available(qa_application *application, uint32_t
             return application_fail(error,QA_ERROR_ARGUMENT,"Local admission lost its actual Q2 GAME rules");
         if (!rules.cooperative && !rules.deathmatch) return true;
     }
-    if (source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_CLOCK_QUAKEWORLD) {
+    if (source->kind==APPLICATION_PROVIDER_Q1 && source->component.clock.kind==QA_RULESET_QUAKEWORLD) {
         bool allowed;
         if (!application_native_q1_qw_admission(application,false,&allowed,error)) return false;
         if (!allowed) return true;
@@ -5170,7 +5170,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
         application_provider *provider = application->providers[i];
         if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
         bool selected = provider == application->players->map_provider &&
-            (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_CLOCK_Q3);
+            (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_RULESET_Q3);
         for (size_t j = 0; j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
             selected |= application_provider_for(application, actor, player_roles[j], "") == provider;
         if (selected) {
@@ -5179,7 +5179,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
             else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
                 provider->state.native.q2_engine != NULL)
                 ok = application_native_q2_client_begin(provider, record->client_slot + 1, error);
-            else if (provider->component.clock.kind == QA_CLOCK_Q3)
+            else if (provider->component.clock.kind == QA_RULESET_Q3)
                 ok = application_q3_guest_client_begin(provider, record->client_slot, error);
         }
         if (ok && !qa_actors_get(qa_session_actors(application->session), actor))

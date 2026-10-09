@@ -112,7 +112,7 @@ static bool player_eye(qa_application *app, application_provider *physical, qa_a
             return application_fail(error,QA_ERROR_NOT_FOUND,"Q2 rail recipient lost its selected view");
         if (!application_control_outputs(app,actor,&outputs,error)) return false;
         offset=outputs.has_view_offset?outputs.view_offset:control.view_offset;
-        if (!outputs.has_view_offset && control.state.kind==QA_MOVEMENT_Q2_RERELEASE)
+        if (!outputs.has_view_offset && control.state.kind==QA_RULESET_Q2_RERELEASE)
             offset.z+=control.view_height;
     }
     *out=qa_vec_add(origin,offset);
@@ -157,15 +157,15 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     qa_clock_state clock;
     qa_q2_combat_rules rules;
     uint64_t now=0,started; bool intermission;
-    qa_clock_kind source_kind=original ?
-        (engine->profile==QA_NATIVE_Q2_GAME_API3?QA_CLOCK_Q2_CLASSIC:QA_CLOCK_Q2_RERELEASE) :
+    qa_ruleset_id source_kind=original ?
+        (engine->profile==QA_NATIVE_Q2_GAME_API3?QA_RULESET_Q2_CLASSIC:QA_RULESET_Q2_RERELEASE) :
         source->launch->selection.clock.kind;
     if (!source_current(app,source,world,roster,physical,publication,revision,geometry,routing,preparing) ||
         !geometry || !qa_session_clock(app->session,source->owner,&clock) ||
         clock.frame.provider!=source->owner ||
         clock.frame.kind!=source_kind ||
         (!original && (!qa_q2_combat_rules_read(source->state.q2,&rules) || rules.owner!=source->owner ||
-            source_kind!=(rules.edition==QA_Q2_CLASSIC?QA_CLOCK_Q2_CLASSIC:QA_CLOCK_Q2_RERELEASE) ||
+            source_kind!=(rules.edition==QA_Q2_CLASSIC?QA_RULESET_Q2_CLASSIC:QA_RULESET_Q2_RERELEASE) ||
             !qa_q2_bot_clock_read(source->state.q2,&now,&intermission,&started,error) ||
             now!=clock.frame.time_ns)) ||
         (original && clock.frame.number &&

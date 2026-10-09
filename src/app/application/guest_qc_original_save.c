@@ -19,7 +19,7 @@ const uint8_t application_q1_original_constructor[4]={'Q','1','O','I'};
 bool application_q1_original_clock(const application_provider *provider,uint64_t *out)
 {
     if (!provider || !provider->application || !provider->launch || !out ||
-        provider->launch->selection.clock.kind!=QA_CLOCK_NETQUAKE ||
+        provider->launch->selection.clock.kind!=QA_RULESET_NETQUAKE ||
         (provider->kind!=APPLICATION_PROVIDER_Q1 &&
          (provider->kind!=APPLICATION_PROVIDER_QC || !provider->launch->selection.artifact ||
           strcmp(provider->launch->selection.artifact,"progs.dat")))) return false;
@@ -300,7 +300,7 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
         !application_qc_control_state(engine->provider,actor,&control->state,&control->bounds,NULL,&control->view_angles,error)) return false;
     control->command_angles=control->view_angles; control->standing_bounds=body.bounds;
     control->ground=(qa_movement_ground){0};
-    if (control->state.kind==QA_MOVEMENT_NETQUAKE) {
+    if (control->state.kind==QA_RULESET_NETQUAKE) {
         if (control->state.data.nq.flags&UINT32_C(512))
             control->ground=(qa_movement_ground){
                 .hit=body.ground.kind==QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.slot==0 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
@@ -372,7 +372,7 @@ static bool import_apply(qa_application *app,struct application_q1_original_save
         const qa_launch_choices *choices=qa_launch_draft_choices(draft);
         qa_launch_world world=choices->world; world.skill=save->skill; world.start_command=NULL;
         qa_launch_provider primary=choices->providers[0];
-        primary.clock=qa_clock_defaults(QA_CLOCK_NETQUAKE); primary.clock.initial_time_ns=stage->initial_ns;
+        primary.clock=qa_clock_defaults(QA_RULESET_NETQUAKE); primary.clock.initial_time_ns=stage->initial_ns;
         primary.options=(qa_bytes){application_q1_original_constructor,sizeof(application_q1_original_constructor)};
         qa_launch_mode mode=choices->modes[0]; mode.rules=qa_mode_defaults(QA_MODE_Q1,QA_MODE_SINGLE_PLAYER);
         qa_launch_equipment equipment=choices->equipment[0]; equipment.selection.grapple=QA_GRAPPLE_DISABLED;

@@ -80,15 +80,15 @@ static bool kind_for(const qa_launch_instance *launch,
         return true;
     case QA_PROGRAM_BUILTIN:
         switch (launch->selection.clock.kind) {
-        case QA_CLOCK_NETQUAKE:
-        case QA_CLOCK_QUAKEWORLD:
+        case QA_RULESET_NETQUAKE:
+        case QA_RULESET_QUAKEWORLD:
             *out = APPLICATION_PROVIDER_Q1;
             return true;
-        case QA_CLOCK_Q2_CLASSIC:
-        case QA_CLOCK_Q2_RERELEASE:
+        case QA_RULESET_Q2_CLASSIC:
+        case QA_RULESET_Q2_RERELEASE:
             *out = APPLICATION_PROVIDER_Q2;
             return true;
-        case QA_CLOCK_Q3:
+        case QA_RULESET_Q3:
             *out = APPLICATION_PROVIDER_Q3;
             return true;
         }
@@ -190,15 +190,15 @@ static bool provider_family(const qa_launch_instance *launch,
                             qa_game_family *out)
 {
     switch (launch->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE:
-    case QA_CLOCK_QUAKEWORLD:
+    case QA_RULESET_NETQUAKE:
+    case QA_RULESET_QUAKEWORLD:
         *out = QA_GAME_Q1;
         return true;
-    case QA_CLOCK_Q2_CLASSIC:
-    case QA_CLOCK_Q2_RERELEASE:
+    case QA_RULESET_Q2_CLASSIC:
+    case QA_RULESET_Q2_RERELEASE:
         *out = QA_GAME_Q2;
         return true;
-    case QA_CLOCK_Q3:
+    case QA_RULESET_Q3:
         *out = QA_GAME_Q3;
         return true;
     }
@@ -242,7 +242,7 @@ static bool native_profile(const qa_launch_instance *launch,
                                   ? 3
                                   : choices->world.skill;
         profile.teamplay = has_mode ? mode.teamplay : 0;
-        profile.maximum_clients = launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD
+        profile.maximum_clients = launch->selection.clock.kind == QA_RULESET_QUAKEWORLD
             ? 32u : cooperative || deathmatch ? 16u : 1u;
         for (size_t index = 0; index < choices->mode_count; ++index)
             if (choices->modes[index].rules.enabled &&
@@ -1393,14 +1393,14 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
         return application_fail(error, QA_ERROR_ARGUMENT, "Source clock lost its actual GAME registry");
     const qa_cvar_view *setting = qa_cvars_read(cvars, provider->frame_time.dedicated);
     bool dedicated = setting ? setting->number != 0 : provider->application->dedicated;
-    qa_console_dialect dialect = qa_cvars_dialect(cvars);
+    qa_ruleset_id dialect = qa_cvars_dialect(cvars);
     *frame_ns = 0;
-    if (dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW) {
+    if (dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD) {
         if (pending_ns > UINT64_MAX - host_ns)
             return application_fail(error, QA_ERROR_ARGUMENT, "Source host interval exhausted");
         *pending_after_ns = pending_ns + host_ns;
         bool accepted;
-        return qa_source_frame_time_admit(&provider->frame_time, *pending_after_ns, dialect == QA_CONSOLE_QW, &accepted, frame_ns, error);
+        return qa_source_frame_time_admit(&provider->frame_time, *pending_after_ns, dialect == QA_RULESET_QUAKEWORLD, &accepted, frame_ns, error);
     }
     if (!host_ns) { *pending_after_ns = pending_ns; return true; }
     qa_source_frame_time_controls controls;
@@ -1409,7 +1409,7 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
         !qa_source_frame_time_transform(dialect, (double)host_ns / 1000000,
             &controls, dedicated, true, &milliseconds, error)) return false;
     const qa_cvar_view *fps = qa_cvars_read(cvars, provider->frame_time.capture_fps);
-    if (dialect == QA_CONSOLE_Q3 && !dedicated && fps && fps->number > 0 && milliseconds > 0 &&
+    if (dialect == QA_RULESET_Q3 && !dedicated && fps && fps->number > 0 && milliseconds > 0 &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider) {
         qa_capture_clock capture;
         if (!qa_capture_frame_time(milliseconds, fps->number, (float)controls.timescale,
@@ -1418,7 +1418,7 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
     }
     uint64_t prior = pending_ns;
     double ns;
-    if (dialect == QA_CONSOLE_Q2_RERELEASE && controls.fixedtime == 0 && controls.timescale > 0) {
+    if (dialect == QA_RULESET_Q2_RERELEASE && controls.fixedtime == 0 && controls.timescale > 0) {
         uint64_t fraction_ns = pending_ns % UINT64_C(1000000);
         float fraction = (float)((double)fraction_ns / 1000000);
         float product = (float)milliseconds;
@@ -1436,7 +1436,7 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
 
 static bool provider_clock_bind(application_provider *provider, qa_error *error)
 {
-    if (provider->component.clock.kind == QA_CLOCK_QUAKEWORLD) {
+    if (provider->component.clock.kind == QA_RULESET_QUAKEWORLD) {
         qa_console *console; qa_cvars *cvars;
         if (!application_guest_console_at(provider, 0, &console, &cvars, NULL) || !cvars)
             return application_fail(error, QA_ERROR_ARGUMENT, "QW clock requires its actual GAME registry");

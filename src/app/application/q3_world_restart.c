@@ -166,7 +166,7 @@ bool application_q3_world_restart_cvars(qa_application *app,
     application_q3_world_startup startup;
     if (!application_q3_world_restart_source(app, provider, &startup)) return true;
     if (!cvars || !qa_cvars_same_store(cvars, app->cvars) ||
-        qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || provider->attached)
+        qa_cvars_dialect(cvars) != QA_RULESET_Q3 || provider->attached)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 startup cvars require their canonical candidate view");
     return true;
@@ -308,7 +308,7 @@ static bool source_startup_values(application_q3_world_restart_state *state, qa_
     qa_cvars *source = source_cvars(state->source);
     qa_cvar_view capacity, game_type, warmup, restarted, dedicated;
     if (!source || !qa_cvars_same_store(source, state->application->cvars) ||
-        qa_cvars_dialect(source) != QA_CONSOLE_Q3)
+        qa_cvars_dialect(source) != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 replacement has no canonical cvar source view");
     if (!qa_cvars_effective_view(source, "sv_maxclients", &capacity, error) ||
@@ -684,7 +684,7 @@ bool application_q3_world_restart_admitted(qa_application *app,
     application_provider *provider = publication->map_provider;
     if (!(state->native ? import_native_handoff : import_guest_handoff)(state, provider, error)) return false;
     if (!qa_session_clock(app->session, provider->owner, &clock) ||
-        clock.frame.kind != QA_CLOCK_Q3 || clock.frame.provider != provider->owner ||
+        clock.frame.kind != QA_RULESET_Q3 || clock.frame.provider != provider->owner ||
         clock.frame.phase != QA_FRAME_EXIT || clock.frame_number || clock.elapsed_ns || clock.debt_ns ||
         clock.frame.time_ns != state->startup.initial_time_ns)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement has no genuine fresh source clock");
@@ -716,7 +716,7 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
     if (!boundary(app, error)) return false;
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
         provider->close_pending || !provider->launch || !provider->product ||
-        provider->product->family != QA_GAME_Q3 || provider->component.clock.kind != QA_CLOCK_Q3 ||
+        provider->product->family != QA_GAME_Q3 || provider->component.clock.kind != QA_RULESET_Q3 ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         provider != application_native_q3_mode_source_provider(app, mode) ||
         !app->primary_mode_ready || !same_mode(mode, app->primary_mode))
@@ -741,7 +741,7 @@ bool application_q3_world_restart(qa_application *app, application_provider *pro
         &loaded_type, &state.startup.random_seed, error);
     qa_clock_state clock;
     if (okay && (!qa_session_clock(app->session, provider->owner, &clock) ||
-        clock.frame.kind != QA_CLOCK_Q3 || clock.frame.provider != provider->owner ||
+        clock.frame.kind != QA_RULESET_Q3 || clock.frame.provider != provider->owner ||
         clock.frame.phase != QA_FRAME_EXIT || clock.paused))
         okay = application_fail(error, QA_ERROR_ARGUMENT,
             "Q3 replacement has no completed source EXIT clock");

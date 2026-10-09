@@ -13,9 +13,9 @@
 bool application_control_intermission(const qa_movement_state *state)
 {
     switch (state->kind) {
-    case QA_MOVEMENT_Q2_CLASSIC: return state->data.q2.type == 4;
-    case QA_MOVEMENT_Q2_RERELEASE: return state->data.q2r.type == 6;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q2_CLASSIC: return state->data.q2.type == 4;
+    case QA_RULESET_Q2_RERELEASE: return state->data.q2r.type == 6;
+    case QA_RULESET_Q3:
         return state->data.q3.movement_type == 5 || state->data.q3.movement_type == 6;
     default: return false;
     }
@@ -364,7 +364,7 @@ static int32_t physical_key(const qa_input_event *input)
         if (button < 1 || button > 5) return -1;
         code = QA_KEY_MOUSE1 + button - 1;
     } else if (input->input.kind != QA_PHYSICAL_KEY) return -1;
-    return code <= INT_MAX ? qa_input_source_key((int)code, QA_CONSOLE_Q3) : -1;
+    return code <= INT_MAX ? qa_input_source_key((int)code, QA_RULESET_Q3) : -1;
 }
 
 static bool event(q3g_role *role, const qa_input_event *input, bool *handled, qa_error *error)

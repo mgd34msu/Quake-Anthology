@@ -23,7 +23,7 @@ typedef struct frontend_round_local {
     qa_ui_mods *mods;
     qa_ui_rankings *rankings;
     qa_ui_llm *assistance;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     bool bound;
 } frontend_round_local;
 typedef struct frontend_round_group {
@@ -360,7 +360,7 @@ static bool admit_client(qa_application_q3_round_cut *cut,
             !qa_actor_id_equal(actual, actor) || !qa_application_control_read(cut->application, actor, &control) ||
             control.profile.kind != local->movement)
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round changed its actual local command execution profile");
-        if ((!local->bound || local->movement != QA_MOVEMENT_Q3) &&
+        if ((!local->bound || local->movement != QA_RULESET_Q3) &&
             !qa_input_command_angles(&seat->builder, control.command_angles, error)) return false;
         seat->builder.kind = control.profile.kind; seat->actor = actor;
         if (!frontend_native_q3_round_admit(cut->frontend, cut->source,

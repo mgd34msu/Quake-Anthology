@@ -277,8 +277,8 @@ bool application_qc_rerelease_command(application_provider *provider,qa_actor_id
             !target(engine,provider->state.qc.instance,reference,true,&actual,error) ||
             !prompt_get(engine,slot,&prompt,error)) return false;
         float forward=command->forward_move,side=command->side_move;
-        if (command->kind==QA_MOVEMENT_Q3) { forward*=320.f/127; side*=320.f/127; }
-        else if (command->kind==QA_MOVEMENT_Q2_CLASSIC || command->kind==QA_MOVEMENT_Q2_RERELEASE) { forward*=320.f/200; side*=320.f/200; }
+        if (command->kind==QA_RULESET_Q3) { forward*=320.f/127; side*=320.f/127; }
+        else if (command->kind==QA_RULESET_Q2_CLASSIC || command->kind==QA_RULESET_Q2_RERELEASE) { forward*=320.f/200; side*=320.f/200; }
         if (!isfinite(forward) || !isfinite(side)) return application_fail(error,QA_ERROR_ARGUMENT,"Source prompt movement is nonfinite");
         if (prompt->active) {
             if (forward>=100 && prompt->old_forward<100) {

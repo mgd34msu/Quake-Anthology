@@ -25,7 +25,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         provider->close_pending || choices->seat_count >= UINT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC console preparation requires its actual unconstructed source");
     qa_qc_profile selected = product->edition == QA_EDITION_RERELEASE ? QA_QC_RERELEASE :
-        provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_QC_QUAKEWORLD : QA_QC_NETQUAKE;
+        provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD ? QA_QC_QUAKEWORLD : QA_QC_NETQUAKE;
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine) {
         if (!engine->console_prepared || engine->provider != provider || engine->world != world ||
@@ -52,7 +52,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         !profile && program.api == QA_QC_API_QUAKEWORLD ? 32 :
         choices->seat_count ? (uint32_t)choices->seat_count : 1;
     engine->actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
-    qa_console_dialect dialect = selected == QA_QC_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
+    qa_ruleset_id dialect = selected == QA_QC_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     qa_cvar_options options = {.dialect = dialect,
         .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME};
     engine->cvars = qa_cvars_create_view(app->cvars, &options, error);

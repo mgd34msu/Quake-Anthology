@@ -285,8 +285,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         (options->script_globals_owner && (options->role == QA_QVM_GAME || !options->script_globals)) ||
         (options->role != QA_QVM_GAME && options->script_globals && !options->script_globals_owner) ||
         (options->engine_cvars && (options->role != QA_QVM_GAME || !options->cvars ||
-            qa_cvars_dialect(options->engine_cvars) != QA_CONSOLE_Q3 ||
-            qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
+            qa_cvars_dialect(options->engine_cvars) != QA_RULESET_Q3 ||
+            qa_cvars_dialect(options->cvars) != QA_RULESET_Q3)) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
         (!!options->source_entity != !!options->source_entity_context) ||
         (!!options->source_poly != !!options->source_poly_context) ||

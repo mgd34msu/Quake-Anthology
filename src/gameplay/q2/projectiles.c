@@ -1415,8 +1415,8 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     }
     qa_source_frame frame = {.provider = g->options.owner,
-                             .kind = g->options.edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC
-                                                                         : QA_CLOCK_Q2_RERELEASE,
+                             .kind = g->options.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC
+                                                                         : QA_RULESET_Q2_RERELEASE,
                              .phase = QA_ENTITY_PHYSICS,
                              .time_ns = g->now_ns,
                              .elapsed_ns = g->frame_ns,

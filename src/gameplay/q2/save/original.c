@@ -806,7 +806,7 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
         if (io->reading) {
             io->object = qa_json_get(io->document, saved, "pmove");
             if (io->object == QA_JSON_NONE || qa_json_type(io->document, io->object) == QA_JSON_NULL) {
-                movement->state = (qa_movement_state){.kind = QA_MOVEMENT_Q2_RERELEASE};
+                movement->state = (qa_movement_state){.kind = QA_RULESET_Q2_RERELEASE};
                 io->object = saved;
                 return true;
             }
@@ -829,7 +829,7 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
         if (okay && (gravity < INT16_MIN || gravity > INT16_MAX))
             okay = fail(io, 0, "Original rerelease Pmove gravity exceeds its Source short");
         if (okay && io->reading) {
-            movement->state.kind = QA_MOVEMENT_Q2_RERELEASE;
+            movement->state.kind = QA_RULESET_Q2_RERELEASE;
             state->gravity = (int16_t)gravity;
             movement->view_height = state->view_height;
         }
@@ -861,7 +861,7 @@ static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *move
         }
     }
     if (io->reading) {
-        movement->state.kind = QA_MOVEMENT_Q2_CLASSIC;
+        movement->state.kind = QA_RULESET_Q2_CLASSIC;
         state->gravity = (int16_t)gravity;
         state->flags = flags;
         state->time_eight_ms = (uint8_t)time;

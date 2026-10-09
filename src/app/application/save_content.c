@@ -687,8 +687,8 @@ static bool instance_fields(qa_source_save_io *io,qa_application_content_graph *
         !text_field(io,&p->artifact) || !text_field(io,&p->component)) return false;
     uint32_t runtime=p->runtime,clock=p->clock.kind;
     if (!qa_source_save_u32(io,&runtime) || runtime>QA_PROGRAM_NATIVE ||
-        !qa_source_save_u32(io,&clock) || clock>QA_CLOCK_Q3) return false;
-    p->runtime=(qa_program_kind)runtime; p->clock.kind=(qa_clock_kind)clock;
+        !qa_source_save_u32(io,&clock) || clock>QA_RULESET_Q3) return false;
+    p->runtime=(qa_program_kind)runtime; p->clock.kind=(qa_ruleset_id)clock;
     FIELD(u64,&p->clock,initial_time_ns); FIELD(u64,&p->clock,interval_ns);
     FIELD(u64,&p->clock,minimum_frame_ns); FIELD(u64,&p->clock,maximum_frame_ns);
     FIELD(u64,&p->clock,initial_lead_ns); FIELD(u32,&p->clock,maximum_steps);

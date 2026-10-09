@@ -1352,9 +1352,9 @@ static bool demos_request(frontend_content_library_services *owner, frontend_dem
     if (!bound(owner) || !owner->demo) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Demos require their actual playback and recording service");
     frontend_config_files *scripts; qa_command_context actual; qa_vfs *mounted;
     if (!frontend_content_library_source_read(owner->seat, &scripts, &actual, &mounted, NULL, NULL, error)) return false;
-    frontend_demo_format fallback = actual.dialect == QA_CONSOLE_Q3 ? FRONTEND_DEMO_Q3 :
-        actual.dialect == QA_CONSOLE_Q2 || actual.dialect == QA_CONSOLE_Q2_RERELEASE ? FRONTEND_DEMO_Q2 :
-        actual.dialect == QA_CONSOLE_QW ? FRONTEND_DEMO_QW : FRONTEND_DEMO_NQ;
+    frontend_demo_format fallback = actual.dialect == QA_RULESET_Q3 ? FRONTEND_DEMO_Q3 :
+        actual.dialect == QA_RULESET_Q2_CLASSIC || actual.dialect == QA_RULESET_Q2_RERELEASE ? FRONTEND_DEMO_Q2 :
+        actual.dialect == QA_RULESET_QUAKEWORLD ? FRONTEND_DEMO_QW : FRONTEND_DEMO_NQ;
     return frontend_demo_stage(owner->demo, &(frontend_demo_request){.action = action, .source = actual,
         .name = name, .fallback = fallback}, error);
 }

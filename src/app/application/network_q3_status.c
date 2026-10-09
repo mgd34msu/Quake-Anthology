@@ -54,7 +54,7 @@ bool qa_application_network_q3_cgame_host_read(qa_application *app,
         value.context.cvars != source->receiver.cvars ||
         value.context.command_context.owner != source->receiver.receiver ||
         value.context.command_context.seat != source->receiver.seat ||
-        value.context.command_context.dialect != QA_CONSOLE_Q3))
+        value.context.command_context.dialect != QA_RULESET_Q3))
         return application_fail(error, QA_ERROR_ARGUMENT, "CGAME cache differs from its actual host namespace");
     if (!qa_application_q3_remote_source_current(app, source))
         return application_fail(error, QA_ERROR_ARGUMENT, "CGAME cache source changed during its pure host observation");

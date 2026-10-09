@@ -4,7 +4,7 @@
 
 static bool movement_valid(const qa_movement_command *m)
 {
-    return (unsigned)m->kind <= QA_MOVEMENT_Q3 && isfinite(m->acknowledged_server_seconds) &&
+    return (unsigned)m->kind <= QA_RULESET_Q3 && isfinite(m->acknowledged_server_seconds) &&
         isfinite(m->angles.x) && isfinite(m->angles.y) && isfinite(m->angles.z) &&
         isfinite(m->forward_move) && isfinite(m->side_move) && isfinite(m->up_move);
 }
@@ -21,7 +21,7 @@ static bool put_movement(qa_net_writer *w, const qa_movement_command *m)
 }
 static bool get_movement(qa_net_reader *r, qa_movement_command *m)
 {
-    m->kind = (qa_movement_kind)qa_net_read_u32(r); m->sequence = qa_net_read_u64(r);
+    m->kind = (qa_ruleset_id)qa_net_read_u32(r); m->sequence = qa_net_read_u64(r);
     m->milliseconds = qa_net_read_u32(r); m->server_time_ms = qa_net_read_i32(r); m->server_frame = qa_net_read_i32(r);
     m->acknowledged_server_seconds = qa_net_read_f64(r);
     m->angles.x = qa_net_read_f32(r); m->angles.y = qa_net_read_f32(r); m->angles.z = qa_net_read_f32(r);

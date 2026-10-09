@@ -459,7 +459,7 @@ bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner sourc
     qa_clock_state clock;
     if (!engine || !engine->calls || !engine->network_unicast || !app->map_resource ||
         !qa_session_clock(app->session, source, &clock) || clock.frame.provider != source ||
-        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE) ||
+        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) ||
         (clock.frame.number && (engine->frame.provider != source ||
             engine->frame.number != clock.frame.number || engine->frame.time_ns != clock.frame.time_ns)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast lost its executing Source clock or cache owner");

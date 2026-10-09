@@ -69,7 +69,7 @@ static bool command_fields(qa_source_save_io *io,recovery_command *command)
 {
     return qa_source_save_u32(io,&command->seat) &&
         qa_source_save_u32(io,&command->kind) && command->kind<=QA_APPLICATION_CONSOLE_CLIENT &&
-        qa_source_save_u32(io,&command->dialect) && command->dialect<=QA_CONSOLE_Q3 &&
+        qa_source_save_u32(io,&command->dialect) && command->dialect<=QA_RULESET_Q3 &&
         qa_source_save_u32(io,&command->origin) && command->origin<=QA_COMMAND_SEAT &&
         qa_source_save_u64(io,&command->wall_ns) && qa_source_save_u64(io,&command->time_ns) &&
         qa_source_save_u64(io,&command->frame_number) &&
@@ -469,7 +469,7 @@ static bool recovery_console(qa_frontend *f,const recovery_command *saved,qa_con
               scope.kind==QA_APPLICATION_CONSOLE_Q3_UI) && scope.seat!=saved->seat)) continue;
         qa_command_context actual;
         if (!qa_console_context_read(console,&actual,error)) return false;
-        actual.seat=saved->seat;actual.dialect=(qa_console_dialect)saved->dialect;
+        actual.seat=saved->seat;actual.dialect=(qa_ruleset_id)saved->dialect;
         actual.origin=(qa_command_origin)saved->origin;actual.direct=saved->direct;
         actual.console_text=saved->console_text;actual.script=NULL;
         if (!qa_application_player_actor(f->application,saved->seat,&actual.actor))

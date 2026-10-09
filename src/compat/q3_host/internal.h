@@ -94,7 +94,7 @@ typedef struct q3_cvar_binding {
     float previous_number;
     int32_t previous_integer;
     uint64_t revision;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     bool read,previous_current;
 } q3_cvar_binding;
 typedef struct q3_cvar_cache {

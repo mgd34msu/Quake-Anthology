@@ -26,13 +26,13 @@ static application_provider *source_owner(const qa_application *app, qa_actor_ow
 static bool native_source(application_provider *provider) {
     return provider && provider->kind == APPLICATION_PROVIDER_Q1 &&
         provider == application_world_provider(provider->application, QA_ROLE_ENTITIES, "") &&
-        provider->launch && (provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE ||
-        provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD) &&
+        provider->launch && (provider->launch->selection.clock.kind == QA_RULESET_NETQUAKE ||
+        provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD) &&
         qa_q1_wire_enabled(provider->state.q1);
 }
 static bool event_valid(const qa_application_protocol_event *e, qa_error *error)
 {
-    if (!e || !e->provider || !e->signon || (e->dialect != QA_CLOCK_NETQUAKE && e->dialect != QA_CLOCK_QUAKEWORLD) ||
+    if (!e || !e->provider || !e->signon || (e->dialect != QA_RULESET_NETQUAKE && e->dialect != QA_RULESET_QUAKEWORLD) ||
         e->destination != 3 || e->multicast || !qa_vec_finite(e->origin) ||
         (e->payload.size && !e->payload.data) || (e->reference_count && !e->references))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid retained Q1 source signon event");
@@ -68,7 +68,7 @@ bool application_q1_signon_retain(application_provider *provider,
     const qa_application_protocol_event *event, qa_error *error)
 {
     if (!provider || !event) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 signon source emission");
-    if (!event->signon || (event->dialect != QA_CLOCK_NETQUAKE && event->dialect != QA_CLOCK_QUAKEWORLD)) return true;
+    if (!event->signon || (event->dialect != QA_RULESET_NETQUAKE && event->dialect != QA_RULESET_QUAKEWORLD)) return true;
     qa_application *app = provider->application;
     if (!app || !provider->launch ||
         (provider->kind != APPLICATION_PROVIDER_QC && !native_source(provider)) || provider->owner != event->provider ||
@@ -146,7 +146,7 @@ static bool record_fields(qa_source_save_io *io, application_q1_signon_record *r
         !qa_source_save_actor(io, &r->event.recipient) || !qa_source_save_vec3(io, &r->event.origin) ||
         !qa_source_save_i32(io, &r->event.destination) || !qa_source_save_bool(io, &r->event.reliable) ||
         !qa_source_save_bool(io, &r->event.multicast) || !qa_source_save_bool(io, &r->event.signon)) return false;
-    if (reading) r->event.dialect = (qa_clock_kind)dialect;
+    if (reading) r->event.dialect = (qa_ruleset_id)dialect;
     size_t size = reading ? 0 : r->event.payload.size;
     size_t maximum = reading ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &size, maximum)) return false;

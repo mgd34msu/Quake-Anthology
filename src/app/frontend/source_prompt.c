@@ -61,7 +61,7 @@ bool frontend_source_prompt_supported(const frontend_source_prompt *o,qa_actor_i
 {
     qa_actor_id actual;
     return bound(o) && o->registered && !o->retiring && !o->importing &&
-        (o->seat->builder.kind==QA_MOVEMENT_NETQUAKE || o->seat->builder.kind==QA_MOVEMENT_QUAKEWORLD) &&
+        (o->seat->builder.kind==QA_RULESET_NETQUAKE || o->seat->builder.kind==QA_RULESET_QUAKEWORLD) &&
         frontend_seat_actor_read(o->seat->frontend,o->seat->id,&actual) && qa_actor_id_equal(actual,actor);
 }
 static bool close_visible(frontend_source_prompt *o,qa_error *e)

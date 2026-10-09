@@ -207,7 +207,7 @@ bool native_remote_client_allocate(qa_native_q3_remote_client_services *services
     const qa_native_q3_remote_client_basis *basis = &services->basis;
     const qa_command_context *origins[] = {&services->reliable_origin, &services->console_origin};
     for (size_t i = 0; i < 2; ++i) if (origins[i]->owner != basis->client.receiver ||
-        origins[i]->seat != basis->client.seat || origins[i]->dialect != QA_CONSOLE_Q3 ||
+        origins[i]->seat != basis->client.seat || origins[i]->dialect != QA_RULESET_Q3 ||
         origins[i]->origin != QA_COMMAND_SEAT || !qa_application_command_context_active(basis->application, origins[i]))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native commands lack their actual receiver/input origins");
     qa_native_q3_remote_client_service *service = calloc(1, sizeof(*service));

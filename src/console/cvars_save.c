@@ -55,7 +55,7 @@ static bool header(qa_source_save_io *io, uint32_t *dialect, size_t *count)
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) ||
         !qa_source_save_u32(io, dialect) ||
         !qa_source_save_count(io, count, SIZE_MAX / sizeof(saved_cvar))) return false;
-    return (!memcmp(magic, "QACV", 4) && qac_dialect_valid((qa_console_dialect)*dialect)) ||
+    return (!memcmp(magic, "QACV", 4) && qac_dialect_valid((qa_ruleset_id)*dialect)) ||
         qac_fail(io->error, QA_ERROR_FORMAT, "invalid gameplay cvar state");
 }
 
@@ -144,7 +144,7 @@ static bool read_domains(qa_source_save_io *io,saved_cvar *rows,size_t expected)
             if (!detail) return qac_fail(io->error,QA_ERROR_MEMORY,"allocating canonical cvar detail");
             *tail=detail; tail=&detail->next;
             if (!detail_fields(io,detail) || !detail->binding ||
-                !qac_dialect_valid((qa_console_dialect)detail->dialect))
+                !qac_dialect_valid((qa_ruleset_id)detail->dialect))
                 return qac_fail(io->error,QA_ERROR_FORMAT,"invalid canonical cvar detail");
             for (const saved_detail *prior=row->details;prior!=detail;prior=prior->next)
                 if (prior->dialect==detail->dialect && qac_equal(prior->binding,detail->binding))
@@ -173,7 +173,7 @@ static bool restore_domain(qa_cvars_restore *state,const saved_cvar *saved,qa_er
         if (!binding) return qac_fail(error,QA_ERROR_FORMAT,"canonical cvar detail has a foreign alias");
         cvar_detail *detail=calloc(1,sizeof(*detail));
         if (!detail) return qac_fail(error,QA_ERROR_MEMORY,"restoring canonical cvar detail");
-        detail->binding=binding; detail->dialect=(qa_console_dialect)saved_domain->dialect;
+        detail->binding=binding; detail->dialect=(qa_ruleset_id)saved_domain->dialect;
         detail->value=saved_domain->value?qac_copy(saved_domain->value,error):NULL;
         detail->latched_value=saved_domain->latch?qac_copy(saved_domain->latch,error):NULL;
         *tail=detail; tail=&detail->next;
@@ -219,7 +219,7 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         const qa_cvar_view *actual=qa_cvars_edit_canonical_record(state->edit,row->name);
         if (actual && actual->save_policy==QA_CVAR_SAVE_SETTING) continue;
         okay=qac_cvars_restore_row(state->edit,row->name,row->value,row->latch,
-            (qa_console_dialect)dialect,canonical_metadata,error);
+            (qa_ruleset_id)dialect,canonical_metadata,error);
         actual=okay?qa_cvars_edit_canonical_record(state->edit,row->name):NULL;
         if (okay && actual->save_policy==QA_CVAR_SAVE_UNCLASSIFIED)
             okay=qa_cvars_edit_apply(state->edit,&(qa_cvars_edit_command){

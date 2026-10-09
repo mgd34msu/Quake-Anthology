@@ -474,7 +474,7 @@ static bool movement_execute(void *opaque, qa_native_host *host, qa_native_addre
     qa_movement_state physical=input->state;
     if (!qa_movement_set_origin(&physical,origin,error) ||
         !qa_movement_set_velocity(&physical,velocity,error)) return false;
-    if (physical.kind==QA_MOVEMENT_Q2_RERELEASE) physical.data.q2r.view_height=result->view_height;
+    if (physical.kind==QA_RULESET_Q2_RERELEASE) physical.data.q2r.view_height=result->view_height;
     result->state=physical;
     return true;
 }

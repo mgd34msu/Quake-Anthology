@@ -300,7 +300,7 @@ bool application_native_q3_ipfilters_console(application_provider *provider,
     if (!add && !remove && !list) return true;
     struct application_native_q3_ipfilters *owner = owner_at(provider);
     if (!owner || !owner->state.initialized || owner->operation != IP_IDLE ||
-        invocation->context.dialect != QA_CONSOLE_Q3 ||
+        invocation->context.dialect != QA_RULESET_Q3 ||
         (invocation->context.owner && invocation->context.owner != provider->owner) ||
         invocation->context.actor.registry || invocation->context.actor.generation ||
         invocation->context.actor.slot ||

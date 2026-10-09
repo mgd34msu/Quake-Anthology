@@ -21,7 +21,7 @@ static bool movement_fields(q2_save_io *io, qa_q2_wire_movement *s)
     Q2V(view_angles); Q2V(view_offset); Q2V(command_angles); Q2V(bounds.mins); Q2V(bounds.maxs);
     Q2U(water_type); Q2I(water_level); Q2F(view_height); Q2U(state.kind);
     qa_q2_game *g = io->game;
-    if (s->state.kind != (g->options.edition == QA_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC) ||
+    if (s->state.kind != (g->options.edition == QA_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
         s->water_level < 0 || s->water_level > 3 || (!s->command_seen && s->source_sequence) ||
         s->command_pending || s->pending_sequence)
         return q2_save_fail(io, "Q2 Source pmove continuation has invalid edition or command state");
@@ -38,7 +38,7 @@ static bool movement_fields(q2_save_io *io, qa_q2_wire_movement *s)
         s->ground = (qa_movement_ground){.hit = (qa_trace_hit)hit, .model = model,
             .actor = record ? record->id : (qa_actor_id){0}};
     }
-    if (s->state.kind == QA_MOVEMENT_Q2_CLASSIC) {
+    if (s->state.kind == QA_RULESET_Q2_CLASSIC) {
         qa_q2_movement_state *p = &s->state.data.q2;
         if (!q2_save_i32(io, &p->type) || !q2_save_u32(io, &p->flags) ||
             p->type < 0 || p->type > 4 || p->flags > UINT8_MAX) return q2_save_fail(io, "Invalid classic Q2 Source pmove");

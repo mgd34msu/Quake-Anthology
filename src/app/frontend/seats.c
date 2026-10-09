@@ -521,7 +521,7 @@ static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
             seat->controls[count]=button(seat,11,"Arena progress",260);
             seat->controls[count++].rect=(qa_scene_rect_f){64,260,512,28};
         }
-        if(qa_input_seat_context(seat->input).dialect==QA_CONSOLE_Q3) {
+        if(qa_input_seat_context(seat->input).dialect==QA_RULESET_Q3) {
             seat->controls[count]=button(seat,21,"Match controls",288);
             seat->controls[count].rect=(qa_scene_rect_f){64,288,512,28};
             ++count;
@@ -624,7 +624,7 @@ static bool seat_services_create(frontend_seat *seat, qa_error *error)
     qa_frontend *frontend = seat->frontend;
     unsigned i = seat->id;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
-    qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
+    qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_RULESET_NETQUAKE, .direct = true};
     if (!frontend_startup_launch_seat_read(frontend,i,&command.seat))
         (void)frontend_seat_launch_id_read(frontend,i,&command.seat);
     qa_input_seat_options input = {.seat=i,.context = command, .console = qa_application_console(frontend->application),
@@ -727,7 +727,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
         if (frontend->seats[i].ui || frontend->seats[i].input || frontend->seats[i].console)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local seat service destination is not qualified");
     qa_cvars *cvars = qa_application_cvars(frontend->application);
-    if (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) ||
+    if (!qa_input_settings_register(cvars, QA_RULESET_NETQUAKE, error) ||
         !qa_input_device_settings_register(cvars, error)) return false;
     qa_launch_seat players[QA_INPUT_LOCAL_SEATS] = {0};
     char player_names[QA_INPUT_LOCAL_SEATS][32];
@@ -889,10 +889,10 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
     frontend_seat *seat=context;
     bool client=(key&UINT64_C(256))!=0;
     uint64_t dialect=key>>16;
-    if (!saved_seat_ready(seat) || !out || dialect>QA_CONSOLE_Q3 ||
+    if (!saved_seat_ready(seat) || !out || dialect>QA_RULESET_Q3 ||
         (key&UINT64_C(65535)&~UINT64_C(256))!=(uint64_t)seat->id+1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
-    qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=(qa_console_dialect)dialect,.direct=true};
+    qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=(qa_ruleset_id)dialect,.direct=true};
     qa_console *console=qa_application_console(seat->frontend->application);
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     if (client) {
@@ -900,7 +900,7 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
         if (!frontend_network_client_retired_recipient_read(seat->frontend,seat->id,&recipient,&present,error)) return false;
         bool retired=present;
         if (!retired && !frontend_network_client_recipient_read(seat->frontend,seat->id,&recipient,&present,error)) return false;
-        if (!present || (!retired && !recipient.ready) || recipient.source.context.command.dialect!=(qa_console_dialect)dialect)
+        if (!present || (!retired && !recipient.ready) || recipient.source.context.command.dialect!=(qa_ruleset_id)dialect)
             return frontend_fail(error,QA_ERROR_FORMAT,"Saved input CLIENT recipient is absent or incomplete");
         command=recipient.source.context.command; console=recipient.source.context.console; cvars=recipient.source.context.cvars;
     }
@@ -973,7 +973,7 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
         !qa_source_save_u64(io,&registry) || !registry ||
         !qa_source_save_u64(io,&command.owner) || !command.owner || command.owner>UINT32_MAX ||
         !qa_source_save_u64(io,&command.session) || !qa_source_save_u64(io,&command.client) ||
-        !qa_source_save_u32(io,&command.seat) || !qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io,&command.seat) || !qa_source_save_u32(io,&dialect) || dialect>QA_RULESET_Q3 ||
         !qa_source_save_u32(io,&origin) || origin!=QA_COMMAND_SEAT ||
         !qa_source_save_bool(io,&command.direct) || !qa_source_save_bool(io,&command.console_text) || command.console_text ||
         !qa_source_save_u64(io,&command.registry) || command.registry!=registry ||
@@ -981,7 +981,7 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
         !qa_source_save_u64(io,&command.actor.generation) || !qa_source_save_u32(io,&command.actor.slot) ||
         command.actor.registry || command.actor.generation || command.actor.slot) return false;
     if (reading) {
-        command.dialect=(qa_console_dialect)dialect; command.origin=(qa_command_origin)origin;
+        command.dialect=(qa_ruleset_id)dialect; command.origin=(qa_command_origin)origin;
         if (!seat->frontend->source_restoring ||
             !qa_application_client_physical_read(seat->frontend->application,(qa_actor_owner)command.owner,
                 command.seat,&source,io->error) || !qa_application_client_associated(seat->frontend->application,&source) ||

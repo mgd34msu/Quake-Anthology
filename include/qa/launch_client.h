@@ -8,7 +8,7 @@ typedef struct qa_launch_client_metadata {
     const char *instance;
     uint32_t seat;
     /* Actual selected CLIENT dialect, independently of the remote protocol. */
-    qa_clock_kind clock;
+    qa_ruleset_id clock;
 } qa_launch_client_metadata;
 /* Retains only compiled CLIENT metadata and the actual prepared content.
  * Received content can carry an external GAME without executing that GAME. */

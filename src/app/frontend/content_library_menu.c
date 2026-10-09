@@ -138,7 +138,7 @@ static bool local_refresh(void *context,qa_error *e)
             if(!ok)break;
             if(kind==QA_FS_REGULAR)rows[i].detail="Current player";
         }
-        if(movie && qa_cvars_dialect(cvars)==QA_CONSOLE_Q3) {
+        if(movie && qa_cvars_dialect(cvars)==QA_RULESET_Q3) {
             const char *leaf=strrchr(name,'/');leaf=leaf?leaf+1:name;unsigned tier=0;
             char folded[12];size_t leaf_length=strlen(leaf);
             if(leaf_length<sizeof(folded)) {

@@ -15,7 +15,7 @@ HEADER = '''#ifndef QA_CVAR_CATALOG_GENERATED_H
 #define QA_CVAR_CATALOG_GENERATED_H
 #include <stddef.h>
 #include <stdint.h>
-/* Generated dialect order matches QA_CONSOLE_Q1..QA_CONSOLE_Q3. */
+/* Generated dialect order matches QA_RULESET_NETQUAKE..QA_RULESET_Q3. */
 #define QA_CVAR_CATALOG_DIALECTS 5
 #define QA_CVAR_CATALOG_NO_ROW UINT16_MAX
 /* Strings are offsets into one immutable UTF-8 pool; offset zero is empty. */

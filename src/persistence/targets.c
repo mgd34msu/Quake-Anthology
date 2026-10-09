@@ -55,9 +55,9 @@ static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *
         return fail(io->error, "Target owner cannot read its authored fields");
     if (!qa_source_save_actor(io, &binding->actor) ||
         !qa_actors_get(qa_session_actors(io->session), binding->actor) ||
-        !qa_source_save_u64(io, serial) || !*serial || !qa_source_save_u32(io, &source) || source > QA_CLOCK_Q3 ||
+        !qa_source_save_u64(io, serial) || !*serial || !qa_source_save_u32(io, &source) || source > QA_RULESET_Q3 ||
         !qa_source_save_u32(io, &mask) || !(mask & 1u) || (mask & ~127u) || !fields(io, &value)) return false;
-    binding->source = (qa_clock_kind)source;
+    binding->source = (qa_ruleset_id)source;
     if (reading) {
         qa_target_binding restored = {0}; qa_authored_target observed = {0};
         if (!resolve || !resolve->target ||
@@ -74,7 +74,7 @@ static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *
 static bool monster_record(qa_source_save_io *io, qa_authored_monster *row) {
     uint32_t source = row->source, activation = row->activation, placement = row->placement;
     if (!fields(io, &row->fields) || !qa_source_save_string(io, &row->owner) || !row->owner ||
-        !qa_source_save_u32(io, &source) || source > QA_CLOCK_Q3 ||
+        !qa_source_save_u32(io, &source) || source > QA_RULESET_Q3 ||
         !qa_source_save_u32(io, &row->ordinal) || !qa_source_save_u32(io, &row->spawnflags) ||
         !qa_source_save_string(io, &row->death_target) || !qa_source_save_string(io, &row->drop_item) ||
         !qa_source_save_string(io, &row->item_target) || !qa_source_save_string(io, &row->health_target) ||
@@ -95,7 +95,7 @@ static bool monster_record(qa_source_save_io *io, qa_authored_monster *row) {
     for (size_t i = 0; i < row->barrier_count; ++i)
         if (!qa_source_save_actor(io, &row->barriers[i].actor) ||
             !qa_source_save_vec3(io, &row->barriers[i].origin)) return false;
-    row->source = (qa_clock_kind)source;
+    row->source = (qa_ruleset_id)source;
     row->activation = (qa_monster_activation_kind)activation;
     row->placement = (qa_monster_placement_kind)placement;
     return true;

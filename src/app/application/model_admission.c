@@ -17,8 +17,8 @@ bool qa_application_model_admit(qa_application *app,
         !provider->launch || !provider->product || provider->product->family != request->family)
         return application_fail(error, QA_ERROR_ARGUMENT, "Model admission lost its selected BODY provider");
     qa_command_context source = {.owner = request->provider, .origin = QA_COMMAND_SERVER,
-        .dialect = request->family == QA_GAME_Q2 ? QA_CONSOLE_Q2 :
-            request->family == QA_GAME_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1}, captured;
+        .dialect = request->family == QA_GAME_Q2 ? QA_RULESET_Q2_CLASSIC :
+            request->family == QA_GAME_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE}, captured;
     if (!qa_application_capture_command_context(app, &source, &captured, error)) return false;
     qa_vfs *files = qa_application_context_files(app, &captured, NULL);
     if (!files || !qa_vfs_lookup_equal(files, request->view) ||

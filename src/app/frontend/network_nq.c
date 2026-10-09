@@ -327,7 +327,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!present) return true;
     if (!strcmp(command, "ping")) return source_ping(peer, error);
     if (!strcmp(command, "status")) return source_status(peer, error);
-    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_CONSOLE_Q1, command, false);
+    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_RULESET_NETQUAKE, command, false);
     if (chat != QA_Q1_CHAT_UNKNOWN)
         return qa_application_actor_command(host->frontend->application, actor, text, error);
     if (!strcmp(command, "kill"))
@@ -823,7 +823,7 @@ static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_n
         *saved_cursor = i + 1;
         if (!qa_application_protocol_event_at(app, i, &event)) continue;
         if (event.provider != host->owner || event.signon) continue;
-        if (event.dialect != QA_CLOCK_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
+        if (event.dialect != QA_RULESET_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
             return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
         if (event.recipient.registry && !qa_actor_id_equal(event.recipient, actor)) continue;
         if (event.reliable) {
@@ -1005,7 +1005,7 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
     if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
     qa_clock_state clock;
     if (!qa_session_clock(qa_application_session(host->frontend->application), host->owner, &clock) ||
-        clock.frame.provider != host->owner || clock.frame.kind != QA_CLOCK_NETQUAKE ||
+        clock.frame.provider != host->owner || clock.frame.kind != QA_RULESET_NETQUAKE ||
         clock.frame.phase != QA_FRAME_EXIT)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake ping publication lacks its completed source clock");
     host->published_source_time_ns = clock.frame.time_ns;
@@ -1116,7 +1116,7 @@ static bool nq_demo_publish(void *context,qa_error *error)
     qa_application *app=host->frontend->application;qa_clock_state clock;
     if(!nq_demo_current(record)||!record->sink.append||!qa_network_callbacks_idle(host->runtime)||
         !qa_session_clock(qa_application_session(app),host->owner,&clock)||
-        clock.frame.provider!=host->owner||clock.frame.kind!=QA_CLOCK_NETQUAKE||clock.frame.phase!=QA_FRAME_EXIT)
+        clock.frame.provider!=host->owner||clock.frame.kind!=QA_RULESET_NETQUAKE||clock.frame.phase!=QA_FRAME_EXIT)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local NQ recording requires its completed Source frame");
     if(record->published&&record->last_frame==clock.frame.number&&
         record->protocol_generation==qa_application_protocol_events_generation(app)&&

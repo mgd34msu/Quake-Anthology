@@ -162,7 +162,7 @@ static bool print_client(const vote_scope *scope, const char *text, qa_error *er
 static bool append(const vote_scope *scope, const char *text, qa_error *error)
 {
     qa_console *console;
-    qa_command_context command = {.owner = scope->source_owner, .dialect = QA_CONSOLE_Q3,
+    qa_command_context command = {.owner = scope->source_owner, .dialect = QA_RULESET_Q3,
                                   .origin = QA_COMMAND_SERVER};
     char line[VOTE_BYTES + 1];
     snprintf(line, sizeof(line), "%s\n", text);

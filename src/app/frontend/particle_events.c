@@ -649,7 +649,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         const char *instance = qa_application_provider_instance(frontend->application, provider);
         const qa_launch_instance *source = instance ?
             qa_launch_snapshot_find(qa_application_launch(frontend->application), instance) : NULL;
-        owner->q1_quakeworld = source && source->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+        owner->q1_quakeworld = source && source->selection.clock.kind == QA_RULESET_QUAKEWORLD;
         const qa_product *product = source ? qa_catalog_product(qa_application_catalog(frontend->application),
             source->selection.product) : NULL;
         owner->q1_rerelease = product && product->edition == QA_EDITION_RERELEASE;
@@ -744,8 +744,8 @@ static bool q2_controls(qa_frontend *frontend,uint32_t seat,frontend_q2_controls
     *out=(frontend_q2_controls){0};
     if (!frontend_source_client_registry_read(frontend,seat,&client,&found,error)) return false;
     if (!found) return true;
-    qa_console_dialect dialect=qa_cvars_dialect(client.cvars);
-    if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
+    qa_ruleset_id dialect=qa_cvars_dialect(client.cvars);
+    if (dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE) return true;
     const frontend_particle_cvars *bindings=particle_cvars_bind(frontend,seat,client.cvars,error);
     if (!bindings) return false;
     const qa_cvar_view *row=qa_cvars_read(client.cvars,bindings->smooth_explosions);
@@ -1733,7 +1733,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
         static const uint32_t splash_colors[]={0,0xe0,0xb0,0x50,0xd0,0xe0,0xe8};
         bool splash=temporary->type==QA_Q2_TE_SPLASH;
         electric_splash=splash && color->value.integer==7 &&
-            audience->source_frame.kind==QA_CLOCK_Q2_RERELEASE;
+            audience->source_frame.kind==QA_RULESET_Q2_RERELEASE;
         recipe=(frontend_q2_particle_recipe){.count=count->value.integer,
             .color=splash ? (color->value.integer>6?0:splash_colors[color->value.integer]) :
                 (uint32_t)color->value.integer,
@@ -1913,7 +1913,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
                 !(grenade_effect && (controls.disable_particles&1u)) &&
                 !(rocket_effect && (controls.disable_particles&4u)))
                 q2_burst_particles(owner,effect.origin,birth,temporary->type,
-                    audience->source_frame.kind == QA_CLOCK_Q2_RERELEASE);
+                    audience->source_frame.kind == QA_RULESET_Q2_RERELEASE);
             if (!bfg && !q2_fixed_sound(frontend,owner,&effect,seat,
                 temporary->type==QA_Q2_TE_ROCKET_EXPLOSION_WATER ||
                 temporary->type==QA_Q2_TE_GRENADE_EXPLOSION_WATER ? "weapons/xpld_wat.wav" :
@@ -1938,7 +1938,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
             }
         } else if (burst) {
             q2_burst_particles(owner,effect.origin,birth,temporary->type,
-                audience->source_frame.kind == QA_CLOCK_Q2_RERELEASE);
+                audience->source_frame.kind == QA_RULESET_Q2_RERELEASE);
             if (temporary->type==QA_Q2_TE_BOSSTPORT &&
                 !q2_fixed_sound(frontend,owner,&effect,seat,"misc/bigtele.wav",0,error)) return false;
         } else if (trail) {

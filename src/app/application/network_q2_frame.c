@@ -536,7 +536,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         !qa_q2_wire_view_read(game, actor, &retained, error) ||
         !qa_q2_wire_entity_read(game, physical.source_slot, &entity, error)) return false;
     qa_q2_player value = {.clientnum = (int32_t)(physical.source_slot - 1)};
-    if (movement.state.kind == QA_MOVEMENT_Q2_CLASSIC) {
+    if (movement.state.kind == QA_RULESET_Q2_CLASSIC) {
         const qa_q2_movement_state *state = &movement.state.data.q2;
         value.pmove.type = state->type; value.pmove.flags = (int32_t)state->flags;
         value.pmove.time = state->time_eight_ms; value.pmove.gravity = state->gravity;
@@ -546,7 +546,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
             value.pmove.velocity_f[i] = (float)state->velocity_eighths[i] / 8;
             value.pmove.delta_angles[i] = state->delta_angle_shorts[i];
         }
-    } else if (movement.state.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (movement.state.kind == QA_RULESET_Q2_RERELEASE) {
         const qa_q2r_movement_state *state = &movement.state.data.q2r;
         if (state->time_ms > INT32_MAX || !isfinite(state->view_height) ||
             state->view_height < INT8_MIN || state->view_height > INT8_MAX)

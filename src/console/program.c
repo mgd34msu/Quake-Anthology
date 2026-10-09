@@ -376,7 +376,7 @@ static bool context_live(const qa_console *candidate, const qa_command_context *
 static bool tail_valid(const qa_console_program *program, const program_state *tail, bool published, qa_error *error)
 {
     const qa_console *candidate = program->candidate;
-    qa_command_context largest = candidate->options.context; largest.dialect = QA_CONSOLE_Q3;
+    qa_command_context largest = candidate->options.context; largest.dialect = QA_RULESET_Q3;
     size_t maximum_command, maximum_buffer;
     if (!qa_console_limits((qa_console *)candidate, &largest, &maximum_command, &maximum_buffer, error)) return false;
     if (tail->queued_bytes > maximum_buffer || tail->deferred_bytes > maximum_buffer)

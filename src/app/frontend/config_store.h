@@ -109,7 +109,7 @@ qa_cvars *frontend_config_source_seat_cvars(const frontend_config_source *,uint3
 qa_cvars *frontend_config_source_mouse_cvars(const frontend_config_source *,uint32_t);
 /* Borrows the installed WORLD ENTITIES source's actual authored seat mouse
  * owner and selected movement kind. Absent source/seat returns NULL. */
-qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *,uint32_t,qa_movement_kind *);
+qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *,uint32_t,qa_ruleset_id *);
 typedef struct frontend_config_legacy_view {
     const frontend_config_source *source;
     const qa_launch_instance *descriptor;

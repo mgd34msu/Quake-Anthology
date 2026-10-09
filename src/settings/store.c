@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/ruleset.h"
 #include <limits.h>
 
 bool qa_settings_read(qa_settings_store store, const char *path, qa_resource **out, bool *found,
@@ -224,8 +225,6 @@ static bool owner_path(const char *const *owner, size_t count, char **out, qa_er
     *out = path;
     return true;
 }
-static const char *const dialects[] = {"q1-netquake", "q1-quakeworld", "q2-classic", "q2-rerelease",
-                                       "q3"};
 void qa_cvar_archive_free(qa_cvar_archive *archive) {
     if (!archive)
         return;
@@ -237,8 +236,8 @@ void qa_cvar_archive_free(qa_cvar_archive *archive) {
     *archive = (qa_cvar_archive){0};
 }
 bool qa_settings_load_cvars(qa_settings_store store, const char *const *owner, size_t count,
-                            qa_console_dialect dialect, qa_cvar_archive *out, qa_error *e) {
-    if (!out || dialect < QA_CONSOLE_Q1 || dialect > QA_CONSOLE_Q3)
+                            qa_ruleset_id dialect, qa_cvar_archive *out, qa_error *e) {
+    if (!out || dialect < QA_RULESET_NETQUAKE || dialect > QA_RULESET_Q3)
         return settings_fail(e, "Invalid cvar archive dialect");
     char *path;
     if (!owner_path(owner, count, &path, e))
@@ -261,7 +260,7 @@ bool qa_settings_load_cvars(qa_settings_store store, const char *const *owner, s
     }
     qa_json_id root = qa_json_root(d), entries = qa_json_get(d, root, "entries");
     ok = settings_version(d, root, e);
-    if (ok && !qa_json_string_equal(d, qa_json_get(d, root, "dialect"), dialects[dialect]))
+    if (ok && !qa_json_string_equal(d, qa_json_get(d, root, "dialect"), qa_ruleset_settings_name(dialect)))
         ok = settings_fail(e, "Cvar archive dialect mismatch");
     if (ok && qa_json_type(d, entries) != QA_JSON_ARRAY)
         ok = settings_fail(e, "Expected cvar archive entries");
@@ -303,7 +302,7 @@ bool qa_settings_save_cvars(qa_settings_store store, const char *const *owner, s
     qa_json_writer w = {0};
     qa_json_writer_object(&w);
     settings_key_number(&w, "version", 1);
-    settings_key_string(&w, "dialect", dialects[qa_cvars_dialect(vars)]);
+    settings_key_string(&w, "dialect", qa_ruleset_settings_name(qa_cvars_dialect(vars)));
     qa_json_writer_key(&w, "entries");
     qa_json_writer_array(&w);
     for (const qa_cvar_view *entry = qa_cvars_next(vars, NULL); entry;

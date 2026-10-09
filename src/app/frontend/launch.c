@@ -120,7 +120,7 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
     if (!f || !f->application || !f->seats || ordinal>=f->options.seats || seat!=f->seats+ordinal ||
         seat->id!=ordinal || !command || command->origin!=QA_COMMAND_SEAT || command->owner ||
         command->session || command->client || command->script || command->console_text || !command->direct ||
-        command->dialect<QA_CONSOLE_Q1 || command->dialect>QA_CONSOLE_Q3 ||
+        command->dialect<QA_RULESET_NETQUAKE || command->dialect>QA_RULESET_Q3 ||
         (!command->actor.registry && (command->actor.generation || command->actor.slot)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Input context requires its actual physical ENGINE seat");
     const qa_launch_snapshot *publication=qa_application_launch(f->application);

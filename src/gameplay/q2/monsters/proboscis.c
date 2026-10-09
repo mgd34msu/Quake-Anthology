@@ -319,7 +319,7 @@ bool q2_proboscis_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
         return false;
     if (!q2_actor_live(game, actor->id))
         return true;
-    qa_source_frame frame = {.provider = game->options.owner, .kind = QA_CLOCK_Q2_RERELEASE,
+    qa_source_frame frame = {.provider = game->options.owner, .kind = QA_RULESET_Q2_RERELEASE,
                              .phase = QA_ENTITY_PHYSICS, .time_ns = game->now_ns,
                              .elapsed_ns = game->frame_ns,
                              .start_ns = game->now_ns >= game->frame_ns ? game->now_ns - game->frame_ns : 0};

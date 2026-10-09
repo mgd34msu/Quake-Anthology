@@ -21,7 +21,7 @@ typedef struct qa_monster_barrier { qa_actor_id actor; qa_vec3 origin; } qa_mons
 typedef struct qa_authored_monster {
     qa_authored_target fields;
     qa_actor_owner owner;
-    qa_clock_kind source;
+    qa_ruleset_id source;
     uint32_t ordinal, spawnflags;
     qa_string_id death_target, drop_item, item_target, health_target, route, combat_target;
     qa_actor_id route_goal, combat_goal, activator, previous_corner;
@@ -49,7 +49,7 @@ typedef struct qa_target_field {
 } qa_target_field;
 typedef struct qa_target_binding {
     qa_actor_id actor;
-    qa_clock_kind source;
+    qa_ruleset_id source;
     void *context;
     /* Native and compatibility owners retain their source fields. Read is a
      * nonmutating callback; use may remove, replace or relink any actor. */
@@ -70,7 +70,7 @@ typedef struct qa_target_binding {
 } qa_target_binding;
 typedef struct qa_target_use {
     qa_actor_id source, activator;
-    qa_clock_kind dialect;
+    qa_ruleset_id dialect;
     qa_authored_target fields;
     uint64_t time_ns;
     /* Refresh fields after nested callbacks only for ordinary source use.

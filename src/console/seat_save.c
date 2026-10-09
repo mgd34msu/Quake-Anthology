@@ -124,10 +124,10 @@ static bool buffer(qa_source_save_io *io, qa_console_buffer **owned, size_t char
     uint32_t dialect = p ? (uint32_t)p->dialect : 0;
     if (!qa_source_save_count(io, &saved_capacity, character_capacity) || saved_capacity != character_capacity ||
         !qa_source_save_count(io, &width, character_capacity) || !width || !qa_source_save_u32(io, &dialect) ||
-        !qac_dialect_valid((qa_console_dialect)dialect))
+        !qac_dialect_valid((qa_ruleset_id)dialect))
         return invalid(io, "invalid seat console scrollback dimensions");
     if (io->direction == QA_SOURCE_SAVE_READ) {
-        p = qa_console_buffer_create((qa_console_dialect)dialect, width, character_capacity, io->error);
+        p = qa_console_buffer_create((qa_ruleset_id)dialect, width, character_capacity, io->error);
         if (!p) return false;
         *owned = p;
     }
@@ -161,7 +161,7 @@ static bool lines(qa_source_save_io *io, qa_seat_console *seat) {
         uint32_t dialect = p ? (uint32_t)p->dialect : 0;
         double time = p ? p->time : 0;
         char *line = io->direction == QA_SOURCE_SAVE_READ ? NULL : p->text;
-        if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_console_dialect)dialect) ||
+        if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_ruleset_id)dialect) ||
             !timestamp(io, &time) || !text(io, &line, SIZE_MAX - sizeof(staged_line) - 1)) return false;
         if (!line) return invalid(io, "seat publication row has no text");
         if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -171,7 +171,7 @@ static bool lines(qa_source_save_io *io, qa_seat_console *seat) {
                 free(line);
                 return qac_fail(io->error, QA_ERROR_MEMORY, "retaining staged seat output");
             }
-            *next = (staged_line){.dialect = (qa_console_dialect)dialect, .time = time};
+            *next = (staged_line){.dialect = (qa_ruleset_id)dialect, .time = time};
             memcpy(next->text, line, length + 1);
             free(line);
             if (seat->staged_last) seat->staged_last->next = next;
@@ -196,11 +196,11 @@ static bool continuation(qa_source_save_io *io, qa_seat_console *seat, const qa_
         return invalid(io, "seat console continuation names another physical route");
     qa_command_context *command = &seat->options.command;
     uint32_t dialect = command->dialect, origin = command->origin;
-    if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_console_dialect)dialect) ||
+    if (!qa_source_save_u32(io, &dialect) || !qac_dialect_valid((qa_ruleset_id)dialect) ||
         !qa_source_save_u32(io, &origin) || origin > QA_COMMAND_REMOTE || !qa_source_save_u32(io, &command->seat) ||
         !qa_source_save_bool(io, &command->direct) || !qa_source_save_bool(io, &command->console_text) ||
         !text(io, &seat->script, SIZE_MAX - 1)) return false;
-    command->dialect = (qa_console_dialect)dialect;
+    command->dialect = (qa_ruleset_id)dialect;
     command->origin = (qa_command_origin)origin;
     command->script = seat->script;
     size_t size = identity.size;

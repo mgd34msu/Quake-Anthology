@@ -153,7 +153,7 @@ bool application_q3_components_create(const application_q3_components_options *o
             return application_fail(e,QA_ERROR_FORMAT,"Enabled component resources differ from the actual catalog discovery");
         if(!qa_qvm_image_load(qa_resource_bytes(row->program),&row->image,e)||!namespace(row,e)||!q3components_identity(row,e)||!q3components_create_game(row,e)||
             (options->restoring&&!q3components_saved_import(row,e))) return false;
-        row->participant=(qa_component){.owner=row->publication.owner,.clock=qa_clock_defaults(QA_CLOCK_Q3),.state=row,.begin_frame=frame};
+        row->participant=(qa_component){.owner=row->publication.owner,.clock=qa_clock_defaults(QA_RULESET_Q3),.state=row,.begin_frame=frame};
         row->participant.clock.initial_time_ns=options->world_source->component.clock.initial_time_ns;
     }
     if(options->restoring) {
@@ -190,7 +190,7 @@ bool application_q3_components_commit(application_q3_components *owner,qa_error 
         qa_clock_state clock;
         if(!qa_session_clock(owner->options.application->session,owner->options.world_source->owner,&clock))
             return application_fail(e,QA_ERROR_ARGUMENT,"Component registration lost its actual shared WORLD clock");
-        clock.frame.provider=row->publication.owner; clock.frame.kind=QA_CLOCK_Q3;
+        clock.frame.provider=row->publication.owner; clock.frame.kind=QA_RULESET_Q3;
         if(!qa_session_restore_clock(owner->options.application->session,row->publication.owner,&clock,e)) return false;
     }
     return true;

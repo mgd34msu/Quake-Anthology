@@ -379,7 +379,7 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         options.session != owner->app->session || options.service_owner != role->service_owner ||
         options.cvars != actual.receiver.cvars || options.console != actual.receiver.console ||
         options.mounts != actual.descriptor->content || options.command_context.owner != actual.receiver.receiver ||
-        options.command_context.seat != actual.receiver.seat || options.command_context.dialect != QA_CONSOLE_Q3 ||
+        options.command_context.seat != actual.receiver.seat || options.command_context.dialect != QA_RULESET_Q3 ||
         options.command_context.origin != actual.receiver.command_context.origin ||
         options.command_context.client != actual.receiver.command_context.client ||
         !qa_actor_id_equal(options.command_context.actor, actual.receiver.command_context.actor) ||

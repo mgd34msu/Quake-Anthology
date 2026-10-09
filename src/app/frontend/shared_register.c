@@ -392,7 +392,7 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
         !descriptor->storage || !descriptor->content ||
         !registry || !command || !command->owner || command->origin!=QA_COMMAND_SEAT ||
         (profile->edition!=QA_EDITION_CLASSIC && profile->edition!=QA_EDITION_RERELEASE) ||
-        command->dialect!=(profile->edition==QA_EDITION_RERELEASE?QA_CONSOLE_Q2_RERELEASE:QA_CONSOLE_Q2) ||
+        command->dialect!=(profile->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC) ||
         qa_cvars_dialect(registry)!=command->dialect || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT declarations require their actual normalized profile and new private heap");
     return q2_client_register(registry,command,Q2_CLIENT_LAYOUT,Q2_CLIENT_EFFECTS,false,error) &&
@@ -436,10 +436,10 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
     frontend_q3_color_cvars_bind(frontend);
     frontend_render_controls_cvars_bind(frontend);
 }
-bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
+bool frontend_shared_register(qa_cvars *cvars,const qa_ruleset_id *source,
     qa_audio_output_format output,float gamma,qa_error *error)
 {
-    if (!cvars || (source && (unsigned)*source>QA_CONSOLE_Q3) || !isfinite(gamma) || gamma<.5f || gamma>3 ||
+    if (!cvars || (source && (unsigned)*source>QA_RULESET_Q3) || !isfinite(gamma) || gamma<.5f || gamma>3 ||
         output.sample_rate<8000 || output.sample_rate>192000 ||
         (output.channels!=1 && output.channels!=2) || (output.sample_bits!=8 && output.sample_bits!=16))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Shared settings require actual factory defaults");
@@ -447,10 +447,10 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     for (size_t i=0;i<sizeof(declarations)/sizeof(*declarations);++i) {
         const shared_declaration *row=declarations+i; const char *initial=row->initial; char text[32];
         if (!strcmp(row->name,"r_gamma")) { if (!qa_format_number(gamma,text,error)) return false; initial=text; }
-        else if (!strcmp(row->name,"volume") && source && *source==QA_CONSOLE_Q3) initial="0.8";
-        else if (!strcmp(row->name,"bgmvolume") && source && *source==QA_CONSOLE_Q3) initial="0.25";
+        else if (!strcmp(row->name,"volume") && source && *source==QA_RULESET_Q3) initial="0.8";
+        else if (!strcmp(row->name,"bgmvolume") && source && *source==QA_RULESET_Q3) initial="0.25";
         else if (!strcmp(row->name,"gl_flashblend") && source &&
-            (*source==QA_CONSOLE_Q1 || *source==QA_CONSOLE_QW)) initial="1";
+            (*source==QA_RULESET_NETQUAKE || *source==QA_RULESET_QUAKEWORLD)) initial="1";
         else if (!strcmp(row->name,"s_outputRate")) { snprintf(text,sizeof(text),"%u",output.sample_rate); initial=text; }
         else if (!strcmp(row->name,"s_outputBits")) { snprintf(text,sizeof(text),"%u",output.sample_bits); initial=text; }
         else if (!strcmp(row->name,"s_outputChannels")) { snprintf(text,sizeof(text),"%u",output.channels); initial=text; }
@@ -459,7 +459,7 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
             .owner=QA_FRONTEND_COMMAND_OWNER,.user=(void *)row,.validate=validate},error)) return false;
     }
     return frontend_view_settings_q1_motion_register(cvars,QA_FRONTEND_COMMAND_OWNER,false,error) &&
-        qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error) &&
+        qa_input_settings_register(cvars,QA_RULESET_NETQUAKE,error) &&
         qa_input_device_settings_register(cvars,error) &&
         qa_ui_preferences_register(cvars,QA_FRONTEND_COMMAND_OWNER,error);
 }

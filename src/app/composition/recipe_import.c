@@ -252,9 +252,9 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
         const qa_launch_mod_selection *choice = &r->choices.mods[i]; if (!choice->enabled || strcmp(choice->instance, s->instance)) continue;
         const qa_catalog_mod *mod = qa_catalog_mod_find(r->catalog, choice->component); const qa_product *product = mod ? qa_catalog_product(r->catalog, mod->product) : NULL;
         if (!mod || mod->unavailable || !product) return recipe_fail(error, "Offered addition is not installed");
-        qa_clock_kind kind = product->family == QA_GAME_Q3 ? QA_CLOCK_Q3 : product->family == QA_GAME_Q2 ?
-            (product->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC) :
-            (product->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
+        qa_ruleset_id kind = product->family == QA_GAME_Q3 ? QA_RULESET_Q3 : product->family == QA_GAME_Q2 ?
+            (product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) :
+            (product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE);
         mod_selection = (qa_launch_provider){.instance = choice->instance, .product = mod->product, .runtime = mod->runtime,
             .implementation = mod->key, .artifact = mod->program_path, .component = mod->key, .clock = qa_clock_defaults(kind)};
         selected = &mod_selection; break;

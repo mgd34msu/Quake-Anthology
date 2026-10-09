@@ -71,7 +71,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *,const frontend_
 bool frontend_remote_q1_view_pose_read(struct frontend_remote_q1 *,frontend_q1_view_pose *,qa_error *);
 /* Samples published canonical Q1/QW settings and applies the donor viewsize
  * clamp to that registry before returning. Candidate tickets remain fenced. */
-bool frontend_view_settings_q1_sample(frontend_view_settings *,qa_console_dialect,
+bool frontend_view_settings_q1_sample(frontend_view_settings *,qa_ruleset_id,
     frontend_q1_view_settings *,qa_error *);
 /* The caller supplies its genuine initial/replacement/borrowed publication
  * receipt. Preparation retains the actual previous and candidate scalar. */

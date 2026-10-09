@@ -3,8 +3,8 @@
 #include <limits.h>
 #include <stdlib.h>
 
-static bool valid_kind(qa_movement_kind kind) {
-    return kind >= QA_MOVEMENT_NETQUAKE && kind <= QA_MOVEMENT_Q3;
+static bool valid_kind(qa_ruleset_id kind) {
+    return kind >= QA_RULESET_NETQUAKE && kind <= QA_RULESET_Q3;
 }
 static bool fail(qa_move_context *c, const char *message) {
     c->failed = true;
@@ -12,15 +12,15 @@ static bool fail(qa_move_context *c, const char *message) {
     return false;
 }
 static bool valid_origin(const qa_movement_state *state) {
-    if (state->kind == QA_MOVEMENT_QUAKEWORLD) {
+    if (state->kind == QA_RULESET_QUAKEWORLD) {
         qa_qw_origin value = state->data.qw.origin;
         return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
     }
     return qa_vec_finite(qa_movement_origin(state));
 }
-static qa_collision_family family(qa_movement_kind kind) {
-    return kind <= QA_MOVEMENT_QUAKEWORLD ? QA_COLLISION_Q1 :
-        kind == QA_MOVEMENT_Q3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
+static qa_collision_family family(qa_ruleset_id kind) {
+    return kind <= QA_RULESET_QUAKEWORLD ? QA_COLLISION_Q1 :
+        kind == QA_RULESET_Q3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
 }
 
 float qa_move_component(qa_vec3 v, unsigned axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; }
@@ -55,53 +55,53 @@ qa_vec3 qa_move_clip(qa_vec3 velocity, qa_vec3 normal, float overbounce, float e
     return out;
 }
 
-qa_movement_profile qa_movement_profile_default(qa_movement_kind kind) {
+qa_movement_profile qa_movement_profile_default(qa_ruleset_id kind) {
     qa_movement_profile p = {.kind=kind};
     qa_q1_movement_parameters q1 = {800,100,320,500,10,10,10,4,4,1};
     switch (kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         p.data.nq.parameters=q1; p.data.nq.edition=QA_Q1_CLASSIC;
         p.data.nq.edge_friction=2; p.data.nq.max_velocity=2000;
         p.data.nq.ideal_pitch_scale=0.8f; p.data.nq.roll_speed=200;
         p.data.nq.roll_angle=2; p.data.nq.preserve_fixangle_roll=false;
         break;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         q1.air_accelerate=0.7f; p.data.qw.parameters=q1;
         p.data.qw.maximum_command_ms=50; break;
-    case QA_MOVEMENT_Q2_CLASSIC: p.data.q2.air_accelerate=0; break;
-    case QA_MOVEMENT_Q2_RERELEASE: p.data.q2r.air_accelerate=0; break;
-    case QA_MOVEMENT_Q3: break;
+    case QA_RULESET_Q2_CLASSIC: p.data.q2.air_accelerate=0; break;
+    case QA_RULESET_Q2_RERELEASE: p.data.q2r.air_accelerate=0; break;
+    case QA_RULESET_Q3: break;
     }
     return p;
 }
 qa_movement_environment qa_movement_environment_default(void) {
     return (qa_movement_environment){.health=100,.gravity_multiplier=1,.speed_multiplier=1};
 }
-qa_movement_state qa_movement_state_default(qa_movement_kind kind, qa_vec3 origin) {
+qa_movement_state qa_movement_state_default(qa_ruleset_id kind, qa_vec3 origin) {
     qa_movement_state s = {.kind=kind};
     switch (kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         s.data.nq.origin=origin; s.data.nq.old_origin=origin;
         s.data.nq.move_type=3; s.data.nq.health=100; s.data.nq.flags=4096;
         s.data.nq.water_type=-1; break;
-    case QA_MOVEMENT_QUAKEWORLD: s.data.qw.origin=qa_qw_origin_from_vec3(origin); break;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_QUAKEWORLD: s.data.qw.origin=qa_qw_origin_from_vec3(origin); break;
+    case QA_RULESET_Q2_CLASSIC:
         s.data.q2.gravity=800; (void)qa_movement_set_origin(&s,origin,NULL); break;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         s.data.q2r.origin=origin; s.data.q2r.gravity=800; s.data.q2r.view_height=22; break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         s.data.q3.origin=origin; s.data.q3.gravity=800; s.data.q3.speed=320;
         s.data.q3.view_height=26; break;
     }
     return s;
 }
-qa_movement_input qa_movement_input_default(qa_movement_kind kind, qa_actor_id actor) {
+qa_movement_input qa_movement_input_default(qa_ruleset_id kind, qa_actor_id actor) {
     qa_movement_input in = {.actor=actor,.state=qa_movement_state_default(kind,qa_v3(0,0,0)),
         .command={.kind=kind},.profile=qa_movement_profile_default(kind),
         .environment=qa_movement_environment_default(),.q1_solid=QA_Q1_SOLID_SLIDEBOX};
-    float radius=kind==QA_MOVEMENT_Q3?15.0f:16.0f;
-    in.standing=(qa_movement_posture){{qa_v3(-radius,-radius,-24),qa_v3(radius,radius,32)},kind==QA_MOVEMENT_Q3?26.0f:22.0f};
-    in.crouched=(qa_movement_posture){{qa_v3(-radius,-radius,-24),qa_v3(radius,radius,kind==QA_MOVEMENT_Q3?16.0f:4.0f)},kind==QA_MOVEMENT_Q3?12.0f:-2.0f};
+    float radius=kind==QA_RULESET_Q3?15.0f:16.0f;
+    in.standing=(qa_movement_posture){{qa_v3(-radius,-radius,-24),qa_v3(radius,radius,32)},kind==QA_RULESET_Q3?26.0f:22.0f};
+    in.crouched=(qa_movement_posture){{qa_v3(-radius,-radius,-24),qa_v3(radius,radius,kind==QA_RULESET_Q3?16.0f:4.0f)},kind==QA_RULESET_Q3?12.0f:-2.0f};
     in.dead=(qa_movement_posture){{qa_v3(-radius,-radius,-24),qa_v3(radius,radius,-8)},-16};
     in.invulnerability_bounds=(qa_bounds){qa_v3(-42,-42,-42),qa_v3(42,42,42)};
     in.shape=(qa_trace_shape){QA_SHAPE_BOX,in.standing.bounds};
@@ -112,22 +112,22 @@ qa_movement_input qa_movement_input_default(qa_movement_kind kind, qa_actor_id a
 qa_vec3 qa_movement_origin(const qa_movement_state *s) {
     if (!s) return qa_v3(0,0,0);
     switch (s->kind) {
-    case QA_MOVEMENT_NETQUAKE: return s->data.nq.origin;
-    case QA_MOVEMENT_QUAKEWORLD: return qa_qw_origin_to_vec3(s->data.qw.origin);
-    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,false,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,2)*0.125f);
-    case QA_MOVEMENT_Q2_RERELEASE: return s->data.q2r.origin;
-    case QA_MOVEMENT_Q3: return s->data.q3.origin;
+    case QA_RULESET_NETQUAKE: return s->data.nq.origin;
+    case QA_RULESET_QUAKEWORLD: return qa_qw_origin_to_vec3(s->data.qw.origin);
+    case QA_RULESET_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,false,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,false,2)*0.125f);
+    case QA_RULESET_Q2_RERELEASE: return s->data.q2r.origin;
+    case QA_RULESET_Q3: return s->data.q3.origin;
     }
     return qa_v3(0,0,0);
 }
 qa_vec3 qa_movement_velocity(const qa_movement_state *s) {
     if (!s) return qa_v3(0,0,0);
     switch (s->kind) {
-    case QA_MOVEMENT_NETQUAKE: return s->data.nq.velocity;
-    case QA_MOVEMENT_QUAKEWORLD: return s->data.qw.velocity;
-    case QA_MOVEMENT_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,true,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,2)*0.125f);
-    case QA_MOVEMENT_Q2_RERELEASE: return s->data.q2r.velocity;
-    case QA_MOVEMENT_Q3: return s->data.q3.velocity;
+    case QA_RULESET_NETQUAKE: return s->data.nq.velocity;
+    case QA_RULESET_QUAKEWORLD: return s->data.qw.velocity;
+    case QA_RULESET_Q2_CLASSIC: return qa_v3((float)qa_q2_movement_coordinate(&s->data.q2,true,0)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,1)*0.125f,(float)qa_q2_movement_coordinate(&s->data.q2,true,2)*0.125f);
+    case QA_RULESET_Q2_RERELEASE: return s->data.q2r.velocity;
+    case QA_RULESET_Q3: return s->data.q3.velocity;
     }
     return qa_v3(0,0,0);
 }
@@ -136,11 +136,11 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid movement vector or family"); return false;
     }
     switch (s->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         if (velocity) s->data.nq.velocity=value; else s->data.nq.origin=value; break;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=qa_qw_origin_from_vec3(value); break;
-    case QA_MOVEMENT_Q2_CLASSIC: {
+    case QA_RULESET_Q2_CLASSIC: {
         int32_t words[3];
         for (unsigned axis=0;axis<3;axis++) {
             float scaled=qa_move_component(value,axis)*8.0f;
@@ -151,9 +151,9 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
             qa_q2_movement_coordinate_set(&s->data.q2,velocity,axis,words[axis]);
         break;
     }
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         if (velocity) s->data.q2r.velocity=value; else s->data.q2r.origin=value; break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         if (velocity) s->data.q3.velocity=value; else s->data.q3.origin=value; break;
     }
     return true;
@@ -172,7 +172,7 @@ static qa_trace_policy policy(qa_move_context *c, qa_collision_bits mask) {
     qa_collision_family f=family(c->state->kind);
     qa_trace_policy p=c->input->has_trace_policy?c->input->trace_policy:qa_collision_default_policy(f);
     p.family=f; p.contents_mask=mask;
-    if (f==QA_COLLISION_Q2) p.q2_merged_contents=c->state->kind==QA_MOVEMENT_Q2_RERELEASE;
+    if (f==QA_COLLISION_Q2) p.q2_merged_contents=c->state->kind==QA_RULESET_Q2_RERELEASE;
     return p;
 }
 static bool trace_query(qa_move_context *c, const qa_trace_query *q, qa_trace_result *out) {
@@ -209,8 +209,8 @@ bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
 }
 static qa_movement_call call(qa_move_context *c) {
     return (qa_movement_call){.actor=c->input->actor,.state=c->state,.command=&c->command,
-        .bounds=&c->result->bounds,.view_height=c->state->kind==QA_MOVEMENT_Q3?&c->state->data.q3.view_height:
-            c->state->kind==QA_MOVEMENT_Q2_RERELEASE?&c->state->data.q2r.view_height:&c->result->view_height,
+        .bounds=&c->result->bounds,.view_height=c->state->kind==QA_RULESET_Q3?&c->state->data.q3.view_height:
+            c->state->kind==QA_RULESET_Q2_RERELEASE?&c->state->data.q2r.view_height:&c->result->view_height,
         .water_level=&c->result->water_level,.water_type=&c->result->water_type,
         .time_ns=c->time_ns,.milliseconds=c->milliseconds,.substep=c->substep,.elapsed_seconds=c->dt,.prediction=c->input->prediction,
         .source_time_ms=c->command.server_time_ms,.profile=&c->input->profile,.environment=&c->input->environment};
@@ -252,7 +252,7 @@ bool qa_move_emit(qa_move_context *c, qa_movement_effect effect) {
 }
 bool qa_move_event(qa_move_context *c, int32_t event, int32_t parameter) {
     uint32_t sequence=0;
-    if (c->state->kind==QA_MOVEMENT_Q3) sequence=c->state->data.q3.event_sequence++;
+    if (c->state->kind==QA_RULESET_Q3) sequence=c->state->data.q3.event_sequence++;
     return qa_move_emit(c,(qa_movement_effect){.kind=QA_MOVE_EFFECT_EVENT,.event_sequence=sequence,.value=event,.parameter=parameter});
 }
 bool qa_move_animation(qa_move_context *c, qa_movement_animation_kind kind, int32_t value, bool force, bool backwards) {
@@ -267,7 +267,7 @@ bool qa_move_touch(qa_move_context *c, const qa_trace_result *trace) {
 }
 bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touch_now, bool unique) {
     if (c->failed||c->removed) return false;
-    if (trace->hit==QA_TRACE_HIT_NONE&&(c->state->kind!=QA_MOVEMENT_QUAKEWORLD||touch_now)) return true;
+    if (trace->hit==QA_TRACE_HIT_NONE&&(c->state->kind!=QA_RULESET_QUAKEWORLD||touch_now)) return true;
     qa_movement_result *r=c->result;
     if (unique) for (size_t i=0;i<r->contact_count;i++)
         if (qa_move_same_ground(qa_move_ground(&r->contacts[i].trace),qa_move_ground(trace))) return true;
@@ -282,7 +282,7 @@ bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touc
     }
     r->contacts[r->contact_count++]=(qa_movement_contact){*trace,c->substep};
     if (touch_now) return qa_move_touch(c,trace);
-    if (c->state->kind==QA_MOVEMENT_Q3) return qa_move_emit(c,(qa_movement_effect){.kind=QA_MOVE_EFFECT_TOUCH,.trace=trace});
+    if (c->state->kind==QA_RULESET_Q3) return qa_move_emit(c,(qa_movement_effect){.kind=QA_MOVE_EFFECT_TOUCH,.trace=trace});
     return true;
 }
 bool qa_move_bounds(qa_move_context *c, qa_bounds requested, qa_collision_bits mask, qa_bounds *out) {
@@ -293,28 +293,28 @@ bool qa_move_bounds(qa_move_context *c, qa_bounds requested, qa_collision_bits m
     if (expands) {
         qa_vec3 origin=qa_movement_origin(c->state); qa_trace_result trace;
         if (!qa_move_trace(c,origin,origin,requested,mask,false,&trace)) return false;
-        if (trace.all_solid||(c->state->kind!=QA_MOVEMENT_Q3&&trace.start_solid)) { *out=previous; return true; }
+        if (trace.all_solid||(c->state->kind!=QA_RULESET_Q3&&trace.start_solid)) { *out=previous; return true; }
     }
     *out=requested; return true;
 }
-int32_t qa_move_mode_type(qa_movement_kind kind, qa_movement_mode mode) {
-    if (kind==QA_MOVEMENT_NETQUAKE) return mode==QA_MOVEMENT_MODE_NORMAL?3:mode==QA_MOVEMENT_MODE_NOCLIP?8:0;
-    if (kind==QA_MOVEMENT_QUAKEWORLD) return mode==QA_MOVEMENT_MODE_NOCLIP?1:0;
-    if (kind==QA_MOVEMENT_Q2_RERELEASE) return mode==QA_MOVEMENT_MODE_NORMAL?0:mode==QA_MOVEMENT_MODE_NOCLIP?2:6;
+int32_t qa_move_mode_type(qa_ruleset_id kind, qa_movement_mode mode) {
+    if (kind==QA_RULESET_NETQUAKE) return mode==QA_MOVEMENT_MODE_NORMAL?3:mode==QA_MOVEMENT_MODE_NOCLIP?8:0;
+    if (kind==QA_RULESET_QUAKEWORLD) return mode==QA_MOVEMENT_MODE_NOCLIP?1:0;
+    if (kind==QA_RULESET_Q2_RERELEASE) return mode==QA_MOVEMENT_MODE_NORMAL?0:mode==QA_MOVEMENT_MODE_NOCLIP?2:6;
     return mode==QA_MOVEMENT_MODE_NORMAL?0:mode==QA_MOVEMENT_MODE_NOCLIP?1:4;
 }
 bool qa_move_apply_stance(qa_move_context *c) {
     const qa_movement_environment *e=&c->input->environment;
     if (!e->has_stance) return true;
-    if (c->state->kind==QA_MOVEMENT_NETQUAKE) return fail(c,"NetQuake has no source crouch command");
-    if (c->state->kind==QA_MOVEMENT_Q2_RERELEASE) {
+    if (c->state->kind==QA_RULESET_NETQUAKE) return fail(c,"NetQuake has no source crouch command");
+    if (c->state->kind==QA_RULESET_Q2_RERELEASE) {
         if (e->crouched) c->command.buttons|=16u; else c->command.buttons&=~16u;
     } else {
         float up=fabsf(c->command.up_move);
         if (up==0) up=1;
         if (e->crouched) c->command.up_move=-up;
         else if (c->command.up_move<0) c->command.up_move=0;
-        if (c->state->kind==QA_MOVEMENT_QUAKEWORLD&&e->crouched) c->command.buttons&=~2u;
+        if (c->state->kind==QA_RULESET_QUAKEWORLD&&e->crouched) c->command.buttons&=~2u;
     }
     return true;
 }
@@ -325,10 +325,10 @@ void qa_movement_result_free(qa_movement_result *r) { if (r) { free(r->contacts)
 
 static bool move_stage(const qa_movement_input *input, const qa_movement_services *services, qa_movement_result *out, qa_error *error, unsigned stage) {
     if (!input||!services||!out||!services->trace||!services->point_contents||
-        !valid_kind(input->profile.kind)||(stage&&input->profile.kind!=QA_MOVEMENT_NETQUAKE)||
+        !valid_kind(input->profile.kind)||(stage&&input->profile.kind!=QA_RULESET_NETQUAKE)||
         input->state.kind!=input->profile.kind||input->command.kind!=input->profile.kind||
         !isfinite(input->command.forward_move)||!isfinite(input->command.side_move)||!isfinite(input->command.up_move)||
-        (input->state.kind!=QA_MOVEMENT_NETQUAKE&&
+        (input->state.kind!=QA_RULESET_NETQUAKE&&
          (!valid_origin(&input->state)||!qa_vec_finite(qa_movement_velocity(&input->state))))||
         input->shape.kind<QA_SHAPE_POINT||input->shape.kind>QA_SHAPE_CAPSULE||
         (input->shape.kind!=QA_SHAPE_POINT&&!qa_bounds_valid(input->shape.bounds))||
@@ -353,7 +353,7 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
      * rather than a kernel-local state that expires on return. */
     qa_move_context c={.input=&active_input,.services=services,.result=out,.state=&out->state,.command=active_input.command,.error=error,
         .milliseconds=active_input.command.milliseconds,.time_ns=active_input.time_ns,.dt=(float)((double)active_input.elapsed_ns/1000000000.0)};
-    bool q2=active_input.profile.kind==QA_MOVEMENT_Q2_CLASSIC||active_input.profile.kind==QA_MOVEMENT_Q2_RERELEASE;
+    bool q2=active_input.profile.kind==QA_RULESET_Q2_CLASSIC||active_input.profile.kind==QA_RULESET_Q2_RERELEASE;
     if (q2) {
         if (c.milliseconds>255) fail(&c,"Q2 command duration must fit its source byte");
         c.dt=(float)c.milliseconds*0.001f;
@@ -364,11 +364,11 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
     }
     bool ok=true;
     if (!c.failed&&!c.removed) switch (active_input.profile.kind) {
-    case QA_MOVEMENT_NETQUAKE: ok=stage==1?qa_move_nq_prepare(&c):stage==2?qa_move_nq_physics(&c):qa_move_nq(&c); break;
-    case QA_MOVEMENT_QUAKEWORLD: ok=qa_move_qw(&c); break;
-    case QA_MOVEMENT_Q2_CLASSIC: ok=qa_move_q2(&c); break;
-    case QA_MOVEMENT_Q2_RERELEASE: ok=qa_move_q2r(&c); break;
-    case QA_MOVEMENT_Q3: ok=qa_move_q3(&c); break;
+    case QA_RULESET_NETQUAKE: ok=stage==1?qa_move_nq_prepare(&c):stage==2?qa_move_nq_physics(&c):qa_move_nq(&c); break;
+    case QA_RULESET_QUAKEWORLD: ok=qa_move_qw(&c); break;
+    case QA_RULESET_Q2_CLASSIC: ok=qa_move_q2(&c); break;
+    case QA_RULESET_Q2_RERELEASE: ok=qa_move_q2r(&c); break;
+    case QA_RULESET_Q3: ok=qa_move_q3(&c); break;
     }
     if (!ok&&!c.removed) c.failed=true;
     if (c.input_open) (void)qa_move_phase(&c,c.failed?QA_MOVE_INPUT_ABORT:QA_MOVE_INPUT_END);
@@ -393,7 +393,7 @@ bool qa_movement_physics_netquake(const qa_movement_input *in, const qa_movement
 }
 bool qa_movement_apply_q2_contacts(const qa_movement_input *input, const qa_movement_services *services, qa_movement_result *result, qa_error *error) {
     if (!input||!services||!result||!qa_actor_id_equal(input->actor,result->actor)||
-        (input->profile.kind!=QA_MOVEMENT_Q2_CLASSIC&&input->profile.kind!=QA_MOVEMENT_Q2_RERELEASE)||result->state.kind!=input->profile.kind) {
+        (input->profile.kind!=QA_RULESET_Q2_CLASSIC&&input->profile.kind!=QA_RULESET_Q2_RERELEASE)||result->state.kind!=input->profile.kind) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 contact result belongs to another player or movement family"); return false;
     }
     if (result->status==QA_MOVEMENT_ACTOR_REMOVED) return true;
@@ -409,7 +409,7 @@ bool qa_movement_apply_q2_contacts(const qa_movement_input *input, const qa_move
 void qa_movement_q3_jump_pad(qa_movement_state *state, qa_actor_id pad, qa_vec3 velocity, bool flight, int32_t *event, int32_t *parameter) {
     if (event) *event=0;
     if (parameter) *parameter=0;
-    if (!state||state->kind!=QA_MOVEMENT_Q3||state->data.q3.movement_type!=0||flight) return;
+    if (!state||state->kind!=QA_RULESET_Q3||state->data.q3.movement_type!=0||flight) return;
     qa_q3_movement_state *s=&state->data.q3;
     bool changed=s->jump_pad.registry==0||!qa_actor_id_equal(s->jump_pad,pad);
     s->jump_pad=pad; s->jump_pad_frame=s->movement_frame; s->velocity=velocity;

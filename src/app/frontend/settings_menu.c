@@ -119,12 +119,12 @@ static bool match_command(frontend_seat *seat,match_operation operation,qa_error
     }
     qa_console *console; qa_cvars *cvars; qa_command_context command;
     if(!name || !qa_input_seat_recipient_read(seat->input,&console,&cvars,&command) ||
-        command.dialect!=QA_CONSOLE_Q3)
+        command.dialect!=QA_RULESET_Q3)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Match controls lost their actual Q3 CLIENT recipient");
     if((operation==MATCH_ADD || operation==MATCH_REMOVE) && !frontend_network_remote(seat->frontend)) {
         qa_application_startup_source source; bool present=false;
         if(!frontend_config_store_primary_server_read(seat->frontend->config_store,&source,&present,error)) return false;
-        if(!present || source.scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME || source.command.dialect!=QA_CONSOLE_Q3)
+        if(!present || source.scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME || source.command.dialect!=QA_RULESET_Q3)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Match administration has no actual primary Q3 Source");
         console=source.console; command=source.command;
     }
@@ -350,9 +350,9 @@ static qa_ui_control *choice(frontend_seat *seat,const char *label,const char *c
 }
 static bool enabled(const qa_cvars *cvars,const qa_cvar_view *row)
 {
-    qa_console_dialect dialect=qa_cvars_dialect(cvars);
-    uint32_t flags=dialect==QA_CONSOLE_Q3?QA_CVAR_READONLY|QA_CVAR_INIT:
-        dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE?QA_Q2_CVAR_NOSET:0;
+    qa_ruleset_id dialect=qa_cvars_dialect(cvars);
+    uint32_t flags=dialect==QA_RULESET_Q3?QA_CVAR_READONLY|QA_CVAR_INIT:
+        dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE?QA_Q2_CVAR_NOSET:0;
     return !(row->flags&flags);
 }
 static const char *value_text(const qa_cvar_view *row)
@@ -614,8 +614,8 @@ static bool primary_input_controls(frontend_seat *seat)
         cvar(seat,mouse,"m_filter","Mouse smoothing",QA_UI_TOGGLE,0,0,0);
         item=cvar(seat,mouse,"lookspring","Look spring",QA_UI_TOGGLE,0,0,0);
         if(item) { const qa_cvar_view *free_look=qa_cvars_find(mouse,"freelook");
-            qa_console_dialect dialect=qa_cvars_dialect(mouse);
-            item->enabled=(dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) && (!free_look || !free_look->integer); }
+            qa_ruleset_id dialect=qa_cvars_dialect(mouse);
+            item->enabled=(dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) && (!free_look || !free_look->integer); }
         cvar(seat,mouse,"lookstrafe","Look strafe",QA_UI_TOGGLE,0,0,0);
         cvar(seat,mouse,"freelook","Free look",QA_UI_TOGGLE,0,0,0);
     }
@@ -732,13 +732,13 @@ static void gameplay_input_controls(frontend_seat *seat)
 {
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(client) {
-        qa_console_dialect dialect=qa_cvars_dialect(client);
-        if(dialect==QA_CONSOLE_Q3) cvar(seat,client,"cg_autoswitch","Switch to picked-up weapons",QA_UI_TOGGLE,0,0,0);
-        if(dialect==QA_CONSOLE_Q2_RERELEASE) {
+        qa_ruleset_id dialect=qa_cvars_dialect(client);
+        if(dialect==QA_RULESET_Q3) cvar(seat,client,"cg_autoswitch","Switch to picked-up weapons",QA_UI_TOGGLE,0,0,0);
+        if(dialect==QA_RULESET_Q2_RERELEASE) {
             static const char *const labels_auto[]={"Smart","Always","Except consumable weapons","Never"},*const values_auto[]={"0","1","2","3"};
             cvar_choice(seat,client,"autoswitch","Switch to picked-up weapons",labels_auto,values_auto,4);
         }
-        if(dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) {
+        if(dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) {
             if(qa_cvars_find(client,"qts_weapon_autoswitch")) {
                 if(q1_pickup_shared(seat)) {
                     static const char *const labels_auto[]={"Always","New weapons","Never"},*const values_auto[]={"always","new","never"};
@@ -795,7 +795,7 @@ static bool graphics(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     qa_ui_control *item=cvar(seat,cvars,"r_model_distance","Model range (map units)",QA_UI_FIELD,0,16,0);
     if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
-    if(client && (qa_cvars_dialect(client)==QA_CONSOLE_Q2 || qa_cvars_dialect(client)==QA_CONSOLE_Q2_RERELEASE))
+    if(client && (qa_cvars_dialect(client)==QA_RULESET_Q2_CLASSIC || qa_cvars_dialect(client)==QA_RULESET_Q2_RERELEASE))
         cvar(seat,client,"fov","Field of view",QA_UI_SLIDER,1,160,1);
     return finish(seat,FRONTEND_GRAPHICS,"Graphics",out,error,false);
 }
@@ -813,30 +813,30 @@ static bool network(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     }
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(client) {
-        qa_console_dialect dialect=qa_cvars_dialect(client);
-        const char *name=dialect==QA_CONSOLE_Q1 && !qa_cvars_find(client,"name")?"_cl_name":"name";
-        qa_ui_control *item=cvar(seat,client,name,"Player name",QA_UI_FIELD,0,dialect==QA_CONSOLE_Q1?15:63,0);
+        qa_ruleset_id dialect=qa_cvars_dialect(client);
+        const char *name=dialect==QA_RULESET_NETQUAKE && !qa_cvars_find(client,"name")?"_cl_name":"name";
+        qa_ui_control *item=cvar(seat,client,name,"Player name",QA_UI_FIELD,0,dialect==QA_RULESET_NETQUAKE?15:63,0);
         if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
         const char *const names[]={"model","headmodel","skin"},*const labels[]={"Player model / skin","Head model / skin","Player skin (model/skin)"};
-        for(size_t i=dialect==QA_CONSOLE_Q3?0:2;i<(dialect==QA_CONSOLE_Q3?2:3);++i) {
-            if(dialect!=QA_CONSOLE_Q3 && dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) break;
+        for(size_t i=dialect==QA_RULESET_Q3?0:2;i<(dialect==QA_RULESET_Q3?2:3);++i) {
+            if(dialect!=QA_RULESET_Q3 && dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE) break;
             item=cvar(seat,client,names[i],labels[i],QA_UI_FIELD,0,63,0);
             if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
         }
         const char **colors=cache(seat->settings_menu,14,sizeof(*colors),_Alignof(const char *));
         if(!colors) return false;
         for(size_t i=0;i<14;++i) { char text[12]; snprintf(text,sizeof(text),"%zu",i); colors[i]=copy_text(seat->settings_menu,text); }
-        if(dialect==QA_CONSOLE_Q1) {
+        if(dialect==QA_RULESET_NETQUAKE) {
             const char *color=qa_cvars_find(client,"color")?"color":"_cl_color";
             const qa_cvar_view *row=qa_cvars_find(client,color);
             if(row) for(unsigned i=0;i<2;++i) {
                 item=choice(seat,i?"Pants color":"Shirt color",colors,colors,14,((unsigned)row->integer>>(i?0:4))&15u,SET_PACKED_COLOR);
                 setting_binding *binding=binding_of(item); binding->cvars=client; binding->name=color; binding->mask=i?0:4;
             }
-        } else if(dialect==QA_CONSOLE_QW) {
+        } else if(dialect==QA_RULESET_QUAKEWORLD) {
             cvar_choice(seat,client,"topcolor","Shirt color",colors,colors,14);
             cvar_choice(seat,client,"bottomcolor","Pants color",colors,colors,14);
-        } else if(dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE) {
+        } else if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
             static const char *const hands[]={"Right","Left","Center"},*const hand_values[]={"0","1","2"};
             cvar_choice(seat,client,"hand","Weapon hand",hands,hand_values,3);
         }
@@ -964,19 +964,19 @@ static bool gameplay_reset(frontend_seat *seat,qa_error *error)
     static const char *const names[]={"cg_drawGun","cg_simpleItems","cg_marks","cg_drawCrosshairNames"};
     for(size_t i=0;i<sizeof(names)/sizeof(*names);++i)
         if(!reset_existing(client,names[i],error)) return false;
-    qa_console_dialect dialect=qa_cvars_dialect(client);
-    const char *name=dialect==QA_CONSOLE_Q1 && !qa_cvars_find(client,"name")?"_cl_name":"name";
+    qa_ruleset_id dialect=qa_cvars_dialect(client);
+    const char *name=dialect==QA_RULESET_NETQUAKE && !qa_cvars_find(client,"name")?"_cl_name":"name";
     if(!reset_existing(client,name,error)) return false;
-    if(dialect==QA_CONSOLE_Q3) {
+    if(dialect==QA_RULESET_Q3) {
         if(!reset_existing(client,"cg_autoswitch",error) || !reset_existing(client,"model",error) ||
             !reset_existing(client,"headmodel",error)) return false;
-    } else if(dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE) {
+    } else if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
         if(!reset_existing(client,"skin",error) || !reset_existing(client,"hand",error) ||
             !reset_existing(client,"fov",error) ||
-            (dialect==QA_CONSOLE_Q2_RERELEASE && !reset_existing(client,"autoswitch",error))) return false;
+            (dialect==QA_RULESET_Q2_RERELEASE && !reset_existing(client,"autoswitch",error))) return false;
     } else {
         if(q1_pickup_shared(seat) && !reset_existing(client,"qts_weapon_autoswitch",error)) return false;
-        if(dialect==QA_CONSOLE_Q1) {
+        if(dialect==QA_RULESET_NETQUAKE) {
             if(!reset_existing(client,qa_cvars_find(client,"color")?"color":"_cl_color",error)) return false;
         } else if(!reset_existing(client,"topcolor",error) || !reset_existing(client,"bottomcolor",error)) return false;
     }

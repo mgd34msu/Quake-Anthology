@@ -14,7 +14,7 @@ typedef struct frontend_remote_config_view {
     qa_cvars *cvars,*q3_mouse,*q3_view,*movement_mouse;
     frontend_key_profile *keys;
     uint32_t physical_seat;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     bool ready,published;
     const qa_source_frame_time_binding *frame_time;
     const qa_input_tuning_handles *q3_input_tuning,*movement_input_tuning;

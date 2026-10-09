@@ -165,7 +165,7 @@ static void event_parameter(prediction_player *player, int32_t value, int32_t pa
 {
     event(player, value);
     player->view.player.eventParms[((uint32_t)player->view.player.eventSequence - 1u) & 1u] = parameter;
-    if (player->view.movement.kind == QA_MOVEMENT_Q3)
+    if (player->view.movement.kind == QA_RULESET_Q3)
         ++player->view.movement.data.q3.event_sequence;
 }
 static void torso(prediction_player *player, int32_t value, bool continuing, bool dead)
@@ -219,7 +219,7 @@ static bool weapon(replay_context *context, const qa_movement_command *command,
     qa_q3_player *p = &player->view.player;
     bool animate = context->source->configuration.q3_character;
     bool attack = (command->buttons & 1u) != 0;
-    bool use = ((command->kind == QA_MOVEMENT_Q3 ? command->buttons :
+    bool use = ((command->kind == QA_RULESET_Q3 ? command->buttons :
         context->command->source_buttons) & 4u) != 0;
     if (player->environment.health > 0 && !attack && !use) p->pmFlags &= ~512;
     double clock = (double)elapsed + player->fractional_weapon_ms;
@@ -242,7 +242,7 @@ static bool weapon(replay_context *context, const qa_movement_command *command,
     if (!use) p->pmFlags &= ~1024;
     if (p->weaponTime > 0) p->weaponTime = add_word(p->weaponTime, -msec);
     int32_t requested = player->requested_weapon >= 0 ? player->requested_weapon :
-        command->kind == QA_MOVEMENT_Q3 ? command->weapon : context->command->source_weapon;
+        command->kind == QA_RULESET_Q3 ? command->weapon : context->command->source_weapon;
     if (player->external_slot == 3) return true;
     if (player->external_slot == 2) {
         if (p->weaponTime <= 0) player->external_slot = 3;
@@ -326,7 +326,7 @@ static qa_movement_control phase(void *opaque, qa_movement_phase value,
     prediction_player *player = context->player;
     qa_q3_player *p = &player->view.player;
     bool character = context->source->configuration.q3_character;
-    bool dead = call->state->kind == QA_MOVEMENT_Q3 ?
+    bool dead = call->state->kind == QA_RULESET_Q3 ?
         call->state->data.q3.movement_type >= 3 : player->environment.health <= 0;
     if (value == QA_MOVE_WEAPON && context->source->configuration.q3_arsenal) {
         uint32_t before = (uint32_t)p->eventSequence;
@@ -334,7 +334,7 @@ static qa_movement_control phase(void *opaque, qa_movement_phase value,
         uint32_t emitted = (uint32_t)p->eventSequence - before;
         player->arsenal_event_sequence = signed_word((uint32_t)player->arsenal_event_sequence + emitted);
         if (player->requested_weapon == p->weapon) player->requested_weapon = -1;
-        if (call->state->kind == QA_MOVEMENT_Q3) {
+        if (call->state->kind == QA_RULESET_Q3) {
             call->state->data.q3.movement_flags =
                 (call->state->data.q3.movement_flags & ~(512u | 1024u)) | ((uint32_t)p->pmFlags & (512u | 1024u));
             call->state->data.q3.event_sequence += emitted;
@@ -345,7 +345,7 @@ static qa_movement_control phase(void *opaque, qa_movement_phase value,
         uint32_t buttons = call->command->buttons;
         if (buttons & 8u) {
             torso(player, 6, false, dead); p->torsoTimer = 34 * 66 + 50; event(player, 76);
-            if (call->state->kind == QA_MOVEMENT_Q3) ++call->state->data.q3.event_sequence;
+            if (call->state->kind == QA_RULESET_Q3) ++call->state->data.q3.event_sequence;
         } else if (p->product == QA_Q3_TEAM_ARENA) {
             static const uint32_t gesture_buttons[] = {128,256,512,1024,32,64};
             static const int32_t gesture_animations[] = {25,26,27,28,29,30};
@@ -365,7 +365,7 @@ static qa_movement_control effect(void *opaque, const qa_movement_effect *value,
     prediction_player *player = context->player;
     qa_q3_player *p = &player->view.player;
     bool character = context->source->configuration.q3_character;
-    if (value->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_MOVEMENT_Q3) {
+    if (value->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_RULESET_Q3) {
         if (value->value != 14 || character) {
             uint32_t slot = (uint32_t)p->eventSequence & 1u;
             p->events[slot] = value->value; p->eventParms[slot] = value->parameter;
@@ -389,7 +389,7 @@ static qa_movement_control effect(void *opaque, const qa_movement_effect *value,
                 case QA_MOVE_SWIM: animation = 17; break;
                 }
             }
-            bool dead = call->state->kind == QA_MOVEMENT_Q3 ?
+            bool dead = call->state->kind == QA_RULESET_Q3 ?
                 call->state->data.q3.movement_type >= 3 : player->environment.health <= 0;
             legs(player, animation, value->force, dead);
             if (landing) p->legsTimer = 130;
@@ -443,7 +443,7 @@ static bool seed_player(frontend_remote_prediction *owner,
     player.environment.invulnerable = p->product == QA_Q3_TEAM_ARENA && p->powerups[14] != 0;
     player.arsenal_event_sequence = p->eventSequence;
     qa_movement_state *state = &player.view.movement;
-    if (state->kind == QA_MOVEMENT_Q3) {
+    if (state->kind == QA_RULESET_Q3) {
         qa_movement_ground ground;
         if (!source_ground(owner, p->groundEntityNum, &ground, error)) return false;
         qa_actor_id pad = {0}; bool present = false;
@@ -482,13 +482,13 @@ static qa_movement_command relative_command(const prediction_command *entry,
 {
     qa_movement_command command = entry->selected;
     if (entry->angle_space != FRONTEND_REMOTE_PREDICTION_ABSOLUTE) return command;
-    if (state->kind == QA_MOVEMENT_Q3 || state->kind == QA_MOVEMENT_Q2_CLASSIC) {
+    if (state->kind == QA_RULESET_Q3 || state->kind == QA_RULESET_Q2_CLASSIC) {
         for (unsigned i = 0; i < 3; ++i) {
-            int32_t delta = state->kind == QA_MOVEMENT_Q3 ? state->data.q3.delta_angle_words[i] :
+            int32_t delta = state->kind == QA_RULESET_Q3 ? state->data.q3.delta_angle_words[i] :
                 state->data.q2.delta_angle_shorts[i];
             command.angle_words[i] = signed_word((uint32_t)command.angle_words[i] - (uint32_t)delta);
         }
-    } else if (state->kind == QA_MOVEMENT_Q2_RERELEASE)
+    } else if (state->kind == QA_RULESET_Q2_RERELEASE)
         command.angles = qa_vec_sub(command.angles, state->data.q2r.delta_angles);
     return command;
 }
@@ -505,7 +505,7 @@ static bool write_player(frontend_remote_prediction *owner, prediction_player *p
         return fail(error, QA_ERROR_FORMAT, "Prediction view height exceeds source PS domain");
     p->viewheight = (int32_t)player->view.view_height;
     if (!ground_number(owner, player->view.ground, &p->groundEntityNum, error)) return false;
-    if (state->kind == QA_MOVEMENT_Q3) {
+    if (state->kind == QA_RULESET_Q3) {
         const qa_q3_movement_state *s = &state->data.q3;
         p->commandTime = s->command_time_ms; p->pmType = s->movement_type;
         p->pmFlags = signed_word(s->movement_flags); p->pmTime = s->movement_time_ms;
@@ -527,21 +527,21 @@ static bool write_player(frontend_remote_prediction *owner, prediction_player *p
 static bool update_angles(prediction_player *player, const prediction_command *entry, qa_error *error)
 {
     qa_movement_state *state = &player->view.movement;
-    qa_movement_command command = state->kind == QA_MOVEMENT_Q3 ? entry->source : relative_command(entry, state);
+    qa_movement_command command = state->kind == QA_RULESET_Q3 ? entry->source : relative_command(entry, state);
     switch (state->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         player->view.view_angles = state->data.nq.fix_angle ? state->data.nq.view_angles : command.angles;
         break;
-    case QA_MOVEMENT_QUAKEWORLD: player->view.view_angles = command.angles; break;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_QUAKEWORLD: player->view.view_angles = command.angles; break;
+    case QA_RULESET_Q2_RERELEASE:
         player->view.view_angles = qa_vec_add(command.angles, state->data.q2r.delta_angles); break;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         player->view.view_angles = qa_v3(
             angle(add_word(command.angle_words[0], state->data.q2.delta_angle_shorts[0])),
             angle(add_word(command.angle_words[1], state->data.q2.delta_angle_shorts[1])),
             angle(add_word(command.angle_words[2], state->data.q2.delta_angle_shorts[2])));
         break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         if (!qa_q3_prediction_view(state, player->view.player.stats[0], &command, error)) return false;
         player->view.view_angles = state->data.q3.view_angles;
         break;
@@ -560,7 +560,7 @@ static bool interpolate(frontend_remote_prediction *owner, const frontend_remote
     const qa_q3_snapshot *snapshot = current_snapshot(owner, source);
     const qa_q3_player *a = &snapshot->player;
     prediction_player base = state->baseline;
-    if (base.view.movement.kind != QA_MOVEMENT_Q3 && base.view.command_time != a->commandTime) {
+    if (base.view.movement.kind != QA_RULESET_Q3 && base.view.command_time != a->commandTime) {
         bool found = false;
         for (size_t i = 0; i < state->count; ++i) {
             const prediction_command *entry = state->commands + i;
@@ -587,21 +587,21 @@ static bool interpolate(frontend_remote_prediction *owner, const frontend_remote
         float bob = (float)a->bobCycle + fraction * (float)subtract_word(cycle, a->bobCycle);
         int32_t bob_cycle = !isfinite(bob) || bob >= 2147483648.0f || bob < -2147483648.0f ? INT32_MIN : (int32_t)truncf(bob);
         state->predicted.view.player.bobCycle = bob_cycle;
-        if (state->predicted.view.movement.kind == QA_MOVEMENT_Q3)
+        if (state->predicted.view.movement.kind == QA_RULESET_Q3)
             state->predicted.view.movement.data.q3.bob_cycle = bob_cycle;
         if (!grab_angles) state->predicted.view.view_angles = qa_v3(
             lerp_angle(a->viewangles[0], b->viewangles[0], fraction),
             lerp_angle(a->viewangles[1], b->viewangles[1], fraction),
             lerp_angle(a->viewangles[2], b->viewangles[2], fraction));
     }
-    if (state->predicted.view.movement.kind == QA_MOVEMENT_Q3)
+    if (state->predicted.view.movement.kind == QA_RULESET_Q3)
         state->predicted.view.movement.data.q3.view_angles = state->predicted.view.view_angles;
     state->predicted.view.status = FRONTEND_REMOTE_PREDICTION_DISABLED;
     /* Interpolation starts with the complete current source PS. The selected
      * continuation supplies view input without projecting its contact or PM
      * fields back into that PS. Q3 view input can change delta pitch. */
     store_vector(state->predicted.view.player.viewangles, state->predicted.view.view_angles);
-    if (grab_angles && state->predicted.view.movement.kind == QA_MOVEMENT_Q3)
+    if (grab_angles && state->predicted.view.movement.kind == QA_RULESET_Q3)
         for (unsigned i = 0; i < 3; ++i)
             state->predicted.view.player.deltaAngles[i] = state->predicted.view.movement.data.q3.delta_angle_words[i];
     /* Source interpolation remains binary32 even when the selected provider
@@ -732,7 +732,7 @@ static bool touch_triggers(frontend_remote_prediction *owner, const frontend_rem
             }
             p->jumppadEnt = row.entity->number; p->jumppadFrame = p->pmoveFramecount;
             if (!qa_movement_set_velocity(&player->view.movement, velocity, error)) return false;
-            if (player->view.movement.kind == QA_MOVEMENT_Q3) {
+            if (player->view.movement.kind == QA_RULESET_Q3) {
                 qa_actor_id actor = {0}; bool found = false;
                 if (row.entity->number < 0 || row.entity->number >= QA_Q3_ENTITY_WORLD)
                     return fail(error, QA_ERROR_FORMAT, "Predicted jump pad has no source entity number");
@@ -745,7 +745,7 @@ static bool touch_triggers(frontend_remote_prediction *owner, const frontend_rem
     }
     if (p->jumppadFrame != p->pmoveFramecount) {
         p->jumppadFrame = 0; p->jumppadEnt = 0;
-        if (player->view.movement.kind == QA_MOVEMENT_Q3) qa_movement_q3_finish_jump_pads(&player->view.movement);
+        if (player->view.movement.kind == QA_RULESET_Q3) qa_movement_q3_finish_jump_pads(&player->view.movement);
     }
     return write_player(owner, player, error);
 }
@@ -755,11 +755,11 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
 {
     qa_movement_input input = source->configuration.input;
     input.state = player->view.movement;
-    input.command = input.state.kind == QA_MOVEMENT_Q3 ? entry->source : relative_command(selected, &input.state);
+    input.command = input.state.kind == QA_RULESET_Q3 ? entry->source : relative_command(selected, &input.state);
     input.environment = player->environment;
     input.current_bounds = player->view.bounds; input.has_current_bounds = true;
     input.prediction = true;
-    if (input.state.kind == QA_MOVEMENT_Q3) {
+    if (input.state.kind == QA_RULESET_Q3) {
         if (source->settings.pmove_fixed && captured_pmove_msec < 1)
             return fail(error, QA_ERROR_ARGUMENT, "Prediction captured a nonpositive fixed movement subdivision");
         input.profile.data.q3.fixed_ms = source->settings.pmove_fixed ? (uint32_t)captured_pmove_msec : 0;
@@ -775,17 +775,17 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     }
     input.view_offset = player->view.view_offset;
     input.q2r_pml_origin = pml;
-    input.snap_initial = input.state.kind == QA_MOVEMENT_Q2_RERELEASE && first;
-    if (input.state.kind == QA_MOVEMENT_Q2_CLASSIC) input.profile.data.q2.snap_initial = false;
-    int64_t duration = input.state.kind == QA_MOVEMENT_NETQUAKE || input.state.kind == QA_MOVEMENT_Q3 ?
+    input.snap_initial = input.state.kind == QA_RULESET_Q2_RERELEASE && first;
+    if (input.state.kind == QA_RULESET_Q2_CLASSIC) input.profile.data.q2.snap_initial = false;
+    int64_t duration = input.state.kind == QA_RULESET_NETQUAKE || input.state.kind == QA_RULESET_Q3 ?
         (int64_t)entry->source_time - player->view.command_time : input.command.milliseconds;
     if (duration < 0) duration = 0;
     input.elapsed_ns = (uint64_t)duration * UINT64_C(1000000);
     input.time_ns = selected->receipt_time_ns;
-    input.has_source_seconds = input.state.kind == QA_MOVEMENT_NETQUAKE;
+    input.has_source_seconds = input.state.kind == QA_RULESET_NETQUAKE;
     input.source_seconds = (double)entry->source_time / 1000.0;
     /* The event receipt clock is independent of signed source physics time. */
-    if (input.state.kind == QA_MOVEMENT_NETQUAKE) {
+    if (input.state.kind == QA_RULESET_NETQUAKE) {
         if (duration > UINT32_MAX) return fail(error, QA_ERROR_ARGUMENT, "Private NQ command interval exceeds native duration");
         input.command.milliseconds = (uint32_t)duration;
     }
@@ -797,7 +797,7 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     if (result->status != QA_MOVEMENT_ACTIVE)
         return fail(error, QA_ERROR_ARGUMENT, "Private prediction cannot retire an authoritative player");
     if (source->configuration.q3_arsenal &&
-        (input.state.kind == QA_MOVEMENT_Q2_CLASSIC || input.state.kind == QA_MOVEMENT_Q2_RERELEASE)) {
+        (input.state.kind == QA_RULESET_Q2_CLASSIC || input.state.kind == QA_RULESET_Q2_RERELEASE)) {
         uint32_t before = (uint32_t)player->view.player.eventSequence;
         if (!weapon(&context, &input.command, input.command.milliseconds, error)) return false;
         player->arsenal_event_sequence = signed_word((uint32_t)player->arsenal_event_sequence +
@@ -806,12 +806,12 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     }
     player->view.movement = result->state; player->view.bounds = result->bounds;
     player->view.view_angles = result->view_angles;
-    player->view.command_angles = input.command.kind == QA_MOVEMENT_Q3 || input.command.kind == QA_MOVEMENT_Q2_CLASSIC ?
+    player->view.command_angles = input.command.kind == QA_RULESET_Q3 || input.command.kind == QA_RULESET_Q2_CLASSIC ?
         qa_v3(angle(input.command.angle_words[0]), angle(input.command.angle_words[1]), angle(input.command.angle_words[2])) : input.command.angles;
     player->view.view_offset = result->view_offset; player->view.view_height = result->view_height;
     player->view.ground = result->ground; player->view.water_level = result->water_level;
     player->view.water_type = result->water_type;
-    player->view.command_time = input.state.kind == QA_MOVEMENT_Q3 ? result->state.data.q3.command_time_ms : entry->source_time;
+    player->view.command_time = input.state.kind == QA_RULESET_Q3 ? result->state.data.q3.command_time_ms : entry->source_time;
     player->view.sequence = entry->source_sequence;
     if (!write_player(owner, player, error) || !source_current(&context, error)) return false;
     entry->continuation = *player; entry->has_continuation = true;
@@ -826,7 +826,7 @@ static bool source_valid(const frontend_remote_prediction *owner,
     const qa_q3_snapshot *selected = seed_snapshot(source);
     return input->connection.owner && input->connection.generation && input->epoch &&
         input->receiver.session == owner->options.session && input->receiver.receiver &&
-        input->receiver.initialized && input->input_settings && input->frame.kind == QA_MOVEMENT_Q3 &&
+        input->receiver.initialized && input->input_settings && input->frame.kind == QA_RULESET_Q3 &&
         configuration->movement && configuration->character && configuration->arsenal &&
         qa_actors_get(qa_session_actors(owner->options.session), configuration->input.actor) &&
         configuration->input.state.kind == configuration->input.profile.kind &&
@@ -958,7 +958,7 @@ void frontend_remote_prediction_clear(frontend_remote_prediction *owner)
 bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *owner,
     const qa_movement_command *command, qa_error *error)
 {
-    if (!owner || owner->busy || owner->state.initialized || !command || command->kind != QA_MOVEMENT_Q3 ||
+    if (!owner || owner->busy || owner->state.initialized || !command || command->kind != QA_RULESET_Q3 ||
         !command->sequence || command->server_time_ms || command->forward_move != 0 || command->side_move != 0 ||
         command->up_move != 0 || command->buttons || command->weapon || command->impulse || command->milliseconds ||
         command->angle_words[0] || command->angle_words[1] || command->angle_words[2] ||
@@ -989,12 +989,12 @@ bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *owner,
 }
 static bool command_valid(const qa_movement_command *command)
 {
-    if (!command || command->kind > QA_MOVEMENT_Q3 || command->kind < QA_MOVEMENT_NETQUAKE ||
+    if (!command || command->kind > QA_RULESET_Q3 || command->kind < QA_RULESET_NETQUAKE ||
         !command->sequence || !qa_vec_finite(command->angles) || !isfinite(command->acknowledged_server_seconds) ||
         !isfinite(command->forward_move) || !isfinite(command->side_move) || !isfinite(command->up_move)) return false;
-    if ((command->kind == QA_MOVEMENT_Q2_CLASSIC || command->kind == QA_MOVEMENT_Q2_RERELEASE) &&
+    if ((command->kind == QA_RULESET_Q2_CLASSIC || command->kind == QA_RULESET_Q2_RERELEASE) &&
         command->milliseconds > 255) return false;
-    if (command->kind == QA_MOVEMENT_Q3)
+    if (command->kind == QA_RULESET_Q3)
         return command->forward_move == truncf(command->forward_move) && fabsf(command->forward_move) <= 127 &&
             command->side_move == truncf(command->side_move) && fabsf(command->side_move) <= 127 &&
             command->up_move == truncf(command->up_move) && fabsf(command->up_move) <= 127;
@@ -1003,7 +1003,7 @@ static bool command_valid(const qa_movement_command *command)
 static const prediction_command *selected_receipt(const prediction_state *state, size_t index)
 {
     const prediction_command *selected = state->commands + index;
-    if (state->baseline.view.movement.kind == QA_MOVEMENT_Q3) return selected;
+    if (state->baseline.view.movement.kind == QA_RULESET_Q3) return selected;
     /* The foreign adapter's command map replaces the selected payload at an
      * existing source clock. The literal source ring still retains each row. */
     for (size_t i = index + 1; i < state->count; ++i)
@@ -1016,7 +1016,7 @@ bool frontend_remote_prediction_submit(frontend_remote_prediction *owner,
     const qa_movement_command *source_command, qa_error *error)
 {
     if (!owner || owner->busy || !owner->state.initialized || !command_valid(selected) ||
-        !command_valid(source_command) || source_command->kind != QA_MOVEMENT_Q3 ||
+        !command_valid(source_command) || source_command->kind != QA_RULESET_Q3 ||
         selected->kind != owner->state.baseline.view.movement.kind ||
         angle_space > FRONTEND_REMOTE_PREDICTION_ABSOLUTE || angle_space < FRONTEND_REMOTE_PREDICTION_SOURCE_RELATIVE)
         return fail(error, QA_ERROR_ARGUMENT, "Prediction requires one real paired selected and source command");
@@ -1097,7 +1097,7 @@ static bool replay(frontend_remote_prediction *owner,
     /* Repeated raw clocks can acknowledge a row that did not move. Foreign
      * state still needs a genuine retained continuation at that exact PS
      * clock. Q3 carries its entire motion in the decoded PS. */
-    bool q3_motion = next.baseline.view.movement.kind == QA_MOVEMENT_Q3;
+    bool q3_motion = next.baseline.view.movement.kind == QA_RULESET_Q3;
     if (q3_motion) available = true;
     if (!available || (!q3_motion && next.has_discarded && next.discarded_sequence > source.acknowledged_sequence)) {
         next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_HISTORY_EXHAUSTED;
@@ -1126,8 +1126,8 @@ static bool replay(frontend_remote_prediction *owner,
         next.predicted.view.consumed_teleport = false;
         qa_movement_state *state = &next.predicted.view.movement;
         bool follow = (current->player.pmFlags & 4096) != 0;
-        bool disabled = (state->kind == QA_MOVEMENT_Q2_CLASSIC && (state->data.q2.flags & 64u)) ||
-            (state->kind == QA_MOVEMENT_Q2_RERELEASE && (state->data.q2r.flags & 64u));
+        bool disabled = (state->kind == QA_RULESET_Q2_CLASSIC && (state->data.q2.flags & 64u)) ||
+            (state->kind == QA_RULESET_Q2_RERELEASE && (state->data.q2r.flags & 64u));
         if (source.settings.demo_playback || follow || source.settings.no_predict || source.settings.synchronous_clients) {
             ok = interpolate(owner, &source, &next, !source.settings.demo_playback && !follow, error);
         } else if (disabled) {
@@ -1189,7 +1189,7 @@ static bool replay(frontend_remote_prediction *owner,
                     trace_mask, captured_pmove_msec, error);
                 if (ok) ok = touch_triggers(owner, &source, &next, error);
                 if (ok) { entry->continuation = next.predicted; entry->has_continuation = true; moved = true; }
-                if (ok && state->kind == QA_MOVEMENT_Q3 && source.settings.pmove_fixed)
+                if (ok && state->kind == QA_RULESET_Q3 && source.settings.pmove_fixed)
                     last_time = next.predicted.view.command_time;
             }
             if (ok && source.settings.show_miss > 1) {
@@ -1303,7 +1303,7 @@ static bool environment_fields(qa_source_save_io *io, qa_movement_environment *v
 static bool command_fields(qa_source_save_io *io, qa_movement_command *v)
 {
     uint32_t kind = v->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3 ||
+    if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3 ||
         !qa_source_save_u64(io, &v->sequence) || !qa_source_save_u32(io, &v->milliseconds) ||
         !qa_source_save_i32(io, &v->server_time_ms) || !qa_source_save_i32(io, &v->server_frame) ||
         !qa_source_save_f64(io, &v->acknowledged_server_seconds) || !qa_source_save_vec3(io, &v->angles)) return false;
@@ -1312,7 +1312,7 @@ static bool command_fields(qa_source_save_io *io, qa_movement_command *v)
         !qa_source_save_f32(io, &v->up_move) || !qa_source_save_u32(io, &v->buttons) ||
         !qa_source_save_u8(io, &v->weapon) || !qa_source_save_u8(io, &v->impulse) ||
         !qa_source_save_u8(io, &v->light_level)) return false;
-    v->kind = (qa_movement_kind)kind;
+    v->kind = (qa_ruleset_id)kind;
     return qa_vec_finite(v->angles) && isfinite(v->acknowledged_server_seconds) &&
         isfinite(v->forward_move) && isfinite(v->side_move) && isfinite(v->up_move);
 }
@@ -1335,7 +1335,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     uint32_t prediction_rounding = v->prediction_numeric.rounding;
     if (in->q2r_pml_origin || !qa_source_save_string(io, &v->movement) ||
         !qa_source_save_string(io, &v->character) || !qa_source_save_string(io, &v->arsenal) ||
-        !qa_source_save_string(io, &v->profile_id) || !qa_source_save_u32(io, &clock) || clock > QA_CLOCK_Q3 ||
+        !qa_source_save_string(io, &v->profile_id) || !qa_source_save_u32(io, &clock) || clock > QA_RULESET_Q3 ||
         !qa_source_save_u64(io, &v->clock.initial_time_ns) || !qa_source_save_u64(io, &v->clock.interval_ns) ||
         !qa_source_save_u64(io, &v->clock.minimum_frame_ns) || !qa_source_save_u64(io, &v->clock.maximum_frame_ns) ||
         !qa_source_save_u64(io, &v->clock.initial_lead_ns) || !qa_source_save_u32(io, &v->clock.maximum_steps) ||
@@ -1378,7 +1378,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_bool(io, &v->native_q3_arsenal) || !qa_source_save_f32(io, &v->fractional_weapon_ms) ||
         !qa_source_save_u32(io, &v->external_weapon_slot) || !qa_source_save_i32(io, &v->requested_weapon) ||
         !qa_source_save_bool(io, &v->has_client_view_offset) || !qa_source_save_vec3(io, &v->client_view_offset)) return false;
-    v->clock.kind = (qa_clock_kind)clock;
+    v->clock.kind = (qa_ruleset_id)clock;
     v->numeric.rounding = (qa_application_numeric_rounding)rounding;
     v->prediction_numeric.rounding = (qa_application_numeric_rounding)prediction_rounding;
     in->shape.kind = (qa_shape_kind)shape; in->q1_solid = (qa_q1_solid)solid;
@@ -1387,11 +1387,11 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     return v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
         v->prediction_numeric.native_c && v->prediction_numeric.id &&
         v->prediction_numeric.radix && v->prediction_numeric.scalar_mantissa_bits &&
-        v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) &&
+        v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_RULESET_QUAKEWORLD) &&
         in->actor.registry && in->prediction && qa_vec_finite(v->client_view_offset) &&
         (v->has_client_view_offset || (v->client_view_offset.x == 0 && v->client_view_offset.y == 0 && v->client_view_offset.z == 0)) &&
         (v->numeric.native_c ? v->numeric.id && v->numeric.radix && v->numeric.scalar_mantissa_bits &&
-            v->numeric.double_mantissa_bits && v->numeric.qw_origin_binary64 == (in->state.kind == QA_MOVEMENT_QUAKEWORLD) :
+            v->numeric.double_mantissa_bits && v->numeric.qw_origin_binary64 == (in->state.kind == QA_RULESET_QUAKEWORLD) :
             !v->numeric.id && !v->numeric.radix && !v->numeric.scalar_mantissa_bits &&
             !v->numeric.double_mantissa_bits && !v->numeric.evaluation_method &&
             !v->numeric.rounding && !v->numeric.qw_origin_binary64) &&
@@ -1473,7 +1473,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
         !player_fields(io, &state->baseline) || !player_fields(io, &state->predicted) ||
         !qa_source_save_bool(io, &state->has_discarded) || !qa_source_save_u64(io, &state->discarded_sequence) ||
         !qa_source_save_count(io, &state->count, 64)) return false;
-    qa_movement_kind kind = configuration->input.state.kind;
+    qa_ruleset_id kind = configuration->input.state.kind;
     if (!state->connection.owner || !state->connection.generation || !state->epoch || !state->map_identity ||
         !state->receiver || !state->service_owner || state->source_client >= 64 ||
         !qa_actor_id_equal(state->actor, configuration->input.actor) || state->movement != configuration->movement ||
@@ -1499,7 +1499,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
         prediction_command *entry = state->commands + i;
         uint32_t space = entry->angle_space;
         if (!command_fields(io, &entry->selected) || !command_valid(&entry->selected) ||
-            !command_fields(io, &entry->source) || !command_valid(&entry->source) || entry->source.kind != QA_MOVEMENT_Q3 ||
+            !command_fields(io, &entry->source) || !command_valid(&entry->source) || entry->source.kind != QA_RULESET_Q3 ||
             entry->selected.kind != kind || !qa_source_save_u32(io, &space) ||
             space > FRONTEND_REMOTE_PREDICTION_ABSOLUTE || !qa_source_save_u64(io, &entry->source_sequence) ||
             !qa_source_save_u64(io, &entry->receipt_time_ns) || !qa_source_save_i32(io, &entry->source_time) ||
@@ -1511,7 +1511,7 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
             entry->source.buttons != entry->source_buttons || entry->source.weapon != entry->source_weapon ||
             (entry->has_continuation && (entry->continuation.view.movement.kind != kind ||
                 entry->continuation.view.sequence != entry->source_sequence ||
-                (kind == QA_MOVEMENT_Q3 ? entry->continuation.view.command_time != entry->continuation.view.movement.data.q3.command_time_ms :
+                (kind == QA_RULESET_Q3 ? entry->continuation.view.command_time != entry->continuation.view.movement.data.q3.command_time_ms :
                     entry->continuation.view.command_time != entry->source_time)))) return false;
         entry->angle_space = (frontend_remote_prediction_angle_space)space;
         prior_source = entry->source_sequence; prior_selected = entry->selected.sequence;

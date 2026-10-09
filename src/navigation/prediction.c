@@ -39,7 +39,7 @@ static qa_movement_control touch(void *context, const qa_trace_result *hit, qa_m
 static qa_movement_control effect(void *context, const qa_movement_effect *effect,
                                   qa_movement_call *call, qa_error *e) {
     nav_prediction *p = context;
-    if (p->input.profile.kind == QA_MOVEMENT_Q3 && effect->kind == QA_MOVE_EFFECT_EVENT &&
+    if (p->input.profile.kind == QA_RULESET_Q3 && effect->kind == QA_MOVE_EFFECT_EVENT &&
         (effect->value == 11 || effect->value == 12))
         p->damaging_fall = true;
     return p->supplied.effect == NULL ? QA_MOVEMENT_CONTINUE
@@ -98,7 +98,7 @@ static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error
     if (!qa_movement_set_origin(&p->input.state, origin, e) ||
         !qa_movement_set_velocity(&p->input.state, qa_v3(0, 0, 0), e))
         return false;
-    if (p->input.state.kind == QA_MOVEMENT_Q3)
+    if (p->input.state.kind == QA_RULESET_Q3)
         p->input.state.data.q3.movement_flags &= ~UINT32_C(2);
     if (actor.registry && n->services.prediction_begin != NULL) {
         if (!n->services.prediction_begin(n->services.context, actor, &p->supplied, &p->lease, e))
@@ -143,25 +143,25 @@ static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t millisecond
                              .weapon = input->command.weapon};
     c.server_frame = signed_word((uint32_t)c.sequence);
     switch (input->state.kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         c.acknowledged_server_seconds = (double)input->time_ns / 1000000000;
         c.buttons = up > 0 ? 2 : 0;
         break;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         c.buttons = up > 0 ? 2 : 0;
         break;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         c.angle_words[0] = -input->state.data.q2.delta_angle_shorts[0];
         c.angle_words[1] = word - input->state.data.q2.delta_angle_shorts[1];
         c.angle_words[2] = -input->state.data.q2.delta_angle_shorts[2];
         break;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         c.angles = qa_vec_sub(c.angles, input->state.data.q2r.delta_angles);
         c.buttons = up > 0 ? 8 : up < 0 ? 16 : 0;
         c.up_move = 0;
         input->snap_initial = true;
         break;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         c.server_time_ms =
             signed_word((uint32_t)input->state.data.q3.command_time_ms + milliseconds);
         c.angle_words[0] = signed_word(0u - (uint32_t)input->state.data.q3.delta_angle_words[0]);
@@ -191,7 +191,7 @@ static bool same_vector(qa_vec3 a, qa_vec3 b) {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_result *b) {
-    if (a->state.kind != QA_MOVEMENT_Q2_CLASSIC || b->state.kind != QA_MOVEMENT_Q2_CLASSIC)
+    if (a->state.kind != QA_RULESET_Q2_CLASSIC || b->state.kind != QA_RULESET_Q2_CLASSIC)
         return false;
     const qa_q2_movement_state *left = &a->state.data.q2, *right = &b->state.data.q2;
     if (left->type != right->type || left->wide_coordinates != right->wide_coordinates ||
@@ -260,7 +260,7 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
     }
     if (!p->initialized && !begin(p, actor, from, e))
         return false;
-    bool fixed_point = p->input.profile.kind == QA_MOVEMENT_Q2_CLASSIC && !p->has_lease &&
+    bool fixed_point = p->input.profile.kind == QA_RULESET_Q2_CLASSIC && !p->has_lease &&
         p->supplied.trace == NULL && p->supplied.point_contents == NULL &&
         p->supplied.phase == NULL && p->supplied.touch == NULL &&
         p->supplied.effect == NULL && p->supplied.firing == NULL && p->supplied.is_bsp == NULL;
@@ -273,8 +273,8 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
         qa_movement_result *result = &p->result;
         if (!qa_movement_move(&p->input, &p->services, result, e))
             return false;
-        if ((p->input.profile.kind == QA_MOVEMENT_Q2_CLASSIC ||
-             p->input.profile.kind == QA_MOVEMENT_Q2_RERELEASE) &&
+        if ((p->input.profile.kind == QA_RULESET_Q2_CLASSIC ||
+             p->input.profile.kind == QA_RULESET_Q2_RERELEASE) &&
             !qa_movement_apply_q2_contacts(&p->input, &p->services, result, e))
             return false;
         if (result->status != QA_MOVEMENT_ACTIVE)
@@ -334,8 +334,8 @@ static bool prediction_stop(qa_navigation *n, qa_nav_workspace *w, const qa_nav_
         *area = QA_NAV_NO_INDEX;
     uint32_t flags = !was_grounded && grounded ? 1 : was_grounded && !grounded ? 2 : 0;
     if (result->water_level != 0) {
-        bool q1 = result->state.kind == QA_MOVEMENT_NETQUAKE ||
-                  result->state.kind == QA_MOVEMENT_QUAKEWORLD;
+        bool q1 = result->state.kind == QA_RULESET_NETQUAKE ||
+                  result->state.kind == QA_RULESET_QUAKEWORLD;
         flags |= (q1 ? result->water_type == -4 : (result->water_type & 16) != 0)  ? 8
                  : (q1 ? result->water_type == -5 : (result->water_type & 8) != 0) ? 16
                                                                                    : 4;
@@ -375,7 +375,7 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
         return false;
     }
     bool ok = qa_movement_set_velocity(&p.input.state, q->velocity, e);
-    if (p.input.state.kind == QA_MOVEMENT_Q3)
+    if (p.input.state.kind == QA_RULESET_Q3)
         p.input.state.data.q3.movement_flags =
             (p.input.state.data.q3.movement_flags & ~UINT32_C(1)) | (q->presence == 4 ? 1 : 0);
     for (uint32_t frame = 0; ok && frame < q->maximum_frames; ++frame) {
@@ -392,8 +392,8 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
             ok = false;
             break;
         }
-        if ((p.input.profile.kind == QA_MOVEMENT_Q2_CLASSIC ||
-             p.input.profile.kind == QA_MOVEMENT_Q2_RERELEASE) &&
+        if ((p.input.profile.kind == QA_RULESET_Q2_CLASSIC ||
+             p.input.profile.kind == QA_RULESET_Q2_RERELEASE) &&
             !qa_movement_apply_q2_contacts(&p.input, &p.services, result, e)) {
             ok = false;
             break;

@@ -312,7 +312,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         qa_command_tokens t={0};
         if (command->addressed&&command->arguments) {
             if(!qa_command_tokens_copy(command->arguments,&t,e)) return false;
-        } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_CONSOLE_Q3,false,&t,e)) return false;
+        } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,&t,e)) return false;
         q3scene_command *row=s->commands+(uint32_t)command->sequence%64;
         qa_command_tokens_free(&row->tokens); *row=(q3scene_command){command->sequence,t};
     }

@@ -654,7 +654,7 @@ static bool lightstyle_source(qa_frontend *frontend,qa_actor_owner owner,qa_game
     qa_application_selected_effects source;
     if (!qa_application_effects_producer_read(frontend->application,owner,&source,error)) return false;
     *seconds=(double)source.source_time_ns/1000000000.0;
-    if (family==QA_GAME_Q1 && source.launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD)
+    if (family==QA_GAME_Q1 && source.launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD)
         *seconds=(float)*seconds;
     return true;
 }

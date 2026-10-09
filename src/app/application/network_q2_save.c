@@ -147,19 +147,19 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     frame = qa_net_read_u64(reader); time = qa_net_read_u64(reader);
     clock.host_origin_ns = qa_net_read_u64(reader); clock.elapsed_ns = qa_net_read_u64(reader); clock.debt_ns = qa_net_read_u64(reader);
     uint8_t paused = qa_net_read_u8(reader); clock.paused = paused != 0;
-    clock.frame.provider = qa_net_read_u32(reader); clock.frame.kind = (qa_clock_kind)qa_net_read_u32(reader);
+    clock.frame.provider = qa_net_read_u32(reader); clock.frame.kind = (qa_ruleset_id)qa_net_read_u32(reader);
     clock.frame.phase = (qa_frame_phase)qa_net_read_u32(reader); clock.frame.number = qa_net_read_u64(reader);
     clock.frame.start_ns = qa_net_read_u64(reader); clock.frame.elapsed_ns = qa_net_read_u64(reader);
     clock.frame.time_ns = qa_net_read_u64(reader); clock.frame_number = frame;
     interval = qa_net_read_u64(reader);
-    policy.kind = (qa_clock_kind)qa_net_read_u32(reader);
+    policy.kind = (qa_ruleset_id)qa_net_read_u32(reader);
     policy.initial_time_ns = qa_net_read_u64(reader);
     policy.minimum_frame_ns = qa_net_read_u64(reader); policy.maximum_frame_ns = qa_net_read_u64(reader);
     policy.initial_lead_ns = qa_net_read_u64(reader); policy.maximum_steps = qa_net_read_u32(reader);
     if (!qa_net_read_string(reader, instance, sizeof(instance)) || !qa_net_read_string(reader, map, sizeof(map))) return false;
     if (reader->failed || memcmp(magic, "QAQ2WIRE", 8) || archival > 1 || paused > 1 ||
-        !source_owner || (uint32_t)clock.frame.kind > QA_CLOCK_Q3 || (uint32_t)clock.frame.phase > QA_FRAME_EXIT ||
-        (uint32_t)policy.kind > QA_CLOCK_Q3 ||
+        !source_owner || (uint32_t)clock.frame.kind > QA_RULESET_Q3 || (uint32_t)clock.frame.phase > QA_FRAME_EXIT ||
+        (uint32_t)policy.kind > QA_RULESET_Q3 ||
         owner->archival != (archival != 0) || materials_bound > 1 || materials_capability > 1 ||
         (!materials_bound && materials_capability))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 continuation has invalid Source custody domain");

@@ -84,7 +84,7 @@ bool qa_application_selected_q3_character_read(qa_application *app, qa_actor_id 
         .application_frame = application_frame_revision(app), .control_sequence = control.command_sequence,
         .view_angles = control.view_angles, .legs_animation = player.legs_animation,
         .torso_animation = player.torso_animation, .source_flags = player.flags,
-        .movement_direction = control.state.kind == QA_MOVEMENT_Q3 ? control.state.data.q3.movement_direction : 0,
+        .movement_direction = control.state.kind == QA_RULESET_Q3 ? control.state.data.q3.movement_direction : 0,
         .scale = 1, .opacity = 1};
     qa_clock_state clock;
     if (!qa_session_clock(app->session, provider->owner, &clock) ||

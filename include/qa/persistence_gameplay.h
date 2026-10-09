@@ -20,7 +20,7 @@ typedef struct qa_persistence_gameplay_resolvers {
     bool (*pickup_rule)(void *, qa_actor_id, qa_actor_owner, uint64_t serial, uint32_t rule,
                         qa_pickup_rule *, qa_error *);
     bool (*pickup_observer)(void *, qa_actor_id, qa_actor_owner, uint64_t serial, qa_pickup_observer *, qa_error *);
-    bool (*target)(void *, qa_actor_id, qa_clock_kind, qa_target_binding *, qa_error *);
+    bool (*target)(void *, qa_actor_id, qa_ruleset_id, qa_target_binding *, qa_error *);
 } qa_persistence_gameplay_resolvers;
 
 bool qa_persistence_combat_capture(qa_session *, qa_combat *, qa_inventory *, qa_buffer *, qa_error *);

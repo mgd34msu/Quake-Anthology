@@ -38,7 +38,7 @@
 #include "qa/application_client_prepare.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 #include <stdio.h>
 #ifdef QA_ALLOCATION_GATE
 #include "qa/allocation_gate.h"
@@ -171,9 +171,9 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
         }
     }
     uint64_t sampled = supplied;
-    qa_console_dialect source_dialect = cvars ? qa_cvars_dialect(cvars) : QA_CONSOLE_Q1;
-    if (cvars && (source_dialect == QA_CONSOLE_Q2 || source_dialect == QA_CONSOLE_Q2_RERELEASE ||
-        source_dialect == QA_CONSOLE_Q3))
+    qa_ruleset_id source_dialect = cvars ? qa_cvars_dialect(cvars) : QA_RULESET_NETQUAKE;
+    if (cvars && (source_dialect == QA_RULESET_Q2_CLASSIC || source_dialect == QA_RULESET_Q2_RERELEASE ||
+        source_dialect == QA_RULESET_Q3))
         sampled = qa_source_frame_time_host_delta(frontend->wall_time_ns, supplied);
     double milliseconds=(double)sampled/1000000.0;
     if (cvars && sampled && !qa_source_frame_time_sample(binding,milliseconds,frontend->options.dedicated,!remote,
@@ -189,8 +189,8 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
 static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_id actor,
     const qa_application_control_view *state,bool remote,qa_error *error)
 {
-    qa_movement_kind kind = state->profile.kind;
-    qa_console_dialect profile = qa_movement_console_dialect(kind);
+    qa_ruleset_id kind = state->profile.kind;
+    qa_ruleset_id profile = (kind);
     bool changed = !qa_actor_id_equal(seat->actor, actor) || seat->builder.kind != kind;
     if (changed) {
         double now=(double)frontend->wall_time_ns/1000000.0;
@@ -356,10 +356,10 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         if (!control_binding(frontend,seat,actor,&state,true,error)) return false;
         seat->client_frame_ns=elapsed_ns;
-        qa_movement_kind kind = state.profile.kind;
+        qa_ruleset_id kind = state.profile.kind;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
-        qa_movement_kind configured_kind;
+        qa_ruleset_id configured_kind;
         qa_cvars *input_settings, *view_settings;
         input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
         configured_kind=configuration.movement;
@@ -375,11 +375,11 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         qa_input_command_frame frame = {.kind = kind, .sequence = ++seat->sequence,
             .server_time_ms = server_time_ms,
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
-        if (kind==QA_MOVEMENT_Q2_CLASSIC) {
+        if (kind==QA_RULESET_Q2_CLASSIC) {
             const int16_t *delta=state.state.data.q2.delta_angle_shorts;
             frame.delta_angles=qa_v3((float)delta[0]*(360.f/65536.f),
                 (float)delta[1]*(360.f/65536.f),(float)delta[2]*(360.f/65536.f));
-        } else if (kind==QA_MOVEMENT_Q2_RERELEASE)
+        } else if (kind==QA_RULESET_Q2_RERELEASE)
             frame.delta_angles=state.state.data.q2r.delta_angles;
         qa_movement_command command;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error)) return false;
@@ -396,7 +396,7 @@ static bool runtime_console(qa_frontend *frontend, qa_console **console,
     qa_command_context *context, qa_error *error)
 {
     *console=qa_application_console(frontend->application);
-    *context=(qa_command_context){.origin=QA_COMMAND_LOCAL,.dialect=QA_CONSOLE_Q1,.direct=true};
+    *context=(qa_command_context){.origin=QA_COMMAND_LOCAL,.dialect=QA_RULESET_NETQUAKE,.direct=true};
     qa_application_startup_source source; bool present=false;
     if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
     if (present && (source.scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||

@@ -21,7 +21,7 @@ typedef struct command_entry {
 } command_entry;
 typedef struct alias_entry {
     qa_console_entry view;
-    qa_console_dialect dialect;
+    qa_ruleset_id dialect;
     bool console_text;
     struct alias_entry *next;
 } alias_entry;

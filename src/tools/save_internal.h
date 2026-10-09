@@ -69,14 +69,14 @@ static inline bool tool_save_context(qa_source_save_io *io, qa_command_context *
     uint32_t dialect = (uint32_t)value->dialect, origin = (uint32_t)value->origin;
     if (!qa_source_save_u64(io, &value->session) || !qa_source_save_u64(io, &value->owner) ||
         !qa_source_save_u64(io, &value->client) || !qa_source_save_u32(io, &value->seat) ||
-        !qa_source_save_u32(io, &dialect) || dialect > QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io, &dialect) || dialect > QA_RULESET_Q3 ||
         !qa_source_save_u32(io, &origin) || origin > QA_COMMAND_REMOTE ||
         !qa_source_save_bool(io, &value->direct) || !qa_source_save_bool(io, &value->console_text) ||
         !qa_source_save_u64(io, &value->registry) || !qa_source_save_u64(io, &value->generation) ||
         !qa_source_save_actor(io, &value->actor)) return tool_save_fail(io, "invalid deferred command context");
     if (io->direction == QA_SOURCE_SAVE_WRITE) *script = (char *)value->script;
     if (!tool_save_text(io, script)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) { value->dialect = (qa_console_dialect)dialect; value->origin = (qa_command_origin)origin; value->script = *script; }
+    if (io->direction == QA_SOURCE_SAVE_READ) { value->dialect = (qa_ruleset_id)dialect; value->origin = (qa_command_origin)origin; value->script = *script; }
     return true;
 }
 #endif

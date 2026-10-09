@@ -207,7 +207,7 @@ static bool saved_fields(qa_source_save_io *io,client_registry_saved *row)
         !qa_source_save_u64(io,&row->catalog) || !row->catalog ||
         !qa_source_save_u64(io,&row->view) || !row->view ||
         !qa_source_save_u32(io,&row->product) || !row->product ||
-        !qa_source_save_u32(io,&row->seat) || !qa_source_save_u32(io,&row->dialect) || row->dialect>QA_CONSOLE_Q3 ||
+        !qa_source_save_u32(io,&row->seat) || !qa_source_save_u32(io,&row->dialect) || row->dialect>QA_RULESET_Q3 ||
         !qa_source_save_u32(io,&row->side) || row->side>QA_CVAR_SIDE_SERVER ||
         !qa_source_save_u32(io,&row->role) || row->role>QA_CVAR_ROLE_UI)
         return false;

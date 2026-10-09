@@ -9,17 +9,17 @@ static bool frame_time_fail(qa_error *error, qa_status code, const char *message
     return false;
 }
 
-static bool q1_dialect(qa_console_dialect dialect)
+static bool q1_dialect(qa_ruleset_id dialect)
 {
-    return dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
+    return dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD;
 }
-static bool q2_dialect(qa_console_dialect dialect)
+static bool q2_dialect(qa_ruleset_id dialect)
 {
-    return dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    return dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
 }
-static bool known_dialect(qa_console_dialect dialect)
+static bool known_dialect(qa_ruleset_id dialect)
 {
-    return q1_dialect(dialect) || q2_dialect(dialect) || dialect == QA_CONSOLE_Q3;
+    return q1_dialect(dialect) || q2_dialect(dialect) || dialect == QA_RULESET_Q3;
 }
 
 static bool register_control(qa_cvars *cvars, const char *name, const char *value,
@@ -33,19 +33,19 @@ bool qa_source_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *er
 {
     if (!cvars || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame time requires an actual source registry");
-    qa_console_dialect dialect = qa_cvars_dialect(cvars);
+    qa_ruleset_id dialect = qa_cvars_dialect(cvars);
     uint32_t cheat = 0;
-    if (dialect == QA_CONSOLE_Q2_RERELEASE) cheat = QA_Q2_CVAR_CHEAT;
-    else if (dialect == QA_CONSOLE_Q3) cheat = QA_CVAR_CHEAT;
-    if (dialect == QA_CONSOLE_Q1)
+    if (dialect == QA_RULESET_Q2_RERELEASE) cheat = QA_Q2_CVAR_CHEAT;
+    else if (dialect == QA_RULESET_Q3) cheat = QA_CVAR_CHEAT;
+    if (dialect == QA_RULESET_NETQUAKE)
         return register_control(cvars, "host_framerate", "0", 0, owner, error);
-    if (dialect == QA_CONSOLE_QW)
+    if (dialect == QA_RULESET_QUAKEWORLD)
         return register_control(cvars, "cl_maxfps", "0", QA_CVAR_ARCHIVE, owner, error) &&
             register_control(cvars, "rate", "2500", QA_CVAR_ARCHIVE | QA_CVAR_USERINFO, owner, error);
     if (!register_control(cvars, "timescale", "1",
-            cheat | (dialect == QA_CONSOLE_Q3 ? QA_CVAR_SYSTEMINFO : 0), owner, error)) return false;
+            cheat | (dialect == QA_RULESET_Q3 ? QA_CVAR_SYSTEMINFO : 0), owner, error)) return false;
     return register_control(cvars, "fixedtime", "0", cheat, owner, error) &&
-        (dialect != QA_CONSOLE_Q3 || register_control(cvars, "com_cameraMode", "0", cheat, owner, error));
+        (dialect != QA_RULESET_Q3 || register_control(cvars, "com_cameraMode", "0", cheat, owner, error));
 }
 
 void qa_source_frame_time_bind(const qa_cvars *cvars, qa_source_frame_time_binding *binding)
@@ -76,8 +76,8 @@ bool qa_source_frame_time_controls_read(const qa_source_frame_time_binding *bind
     const qa_cvar_view *view;
     if ((view = qa_cvars_read(cvars, binding->timescale))) controls.timescale = view->number;
     if ((view = qa_cvars_read(cvars, binding->fixedtime)))
-        controls.fixedtime = qa_cvars_dialect(cvars) == QA_CONSOLE_Q3 ||
-            qa_cvars_dialect(cvars) == QA_CONSOLE_Q2_RERELEASE ? (double)view->integer : (double)view->number;
+        controls.fixedtime = qa_cvars_dialect(cvars) == QA_RULESET_Q3 ||
+            qa_cvars_dialect(cvars) == QA_RULESET_Q2_RERELEASE ? (double)view->integer : (double)view->number;
     if ((view = qa_cvars_read(cvars, binding->host_framerate))) controls.host_framerate = view->number;
     if ((view = qa_cvars_read(cvars, binding->camera_mode))) controls.camera_mode = view->integer;
     if ((view = qa_cvars_read(cvars, binding->maximum_fps))) controls.maximum_fps = view->number;
@@ -88,27 +88,27 @@ bool qa_source_frame_time_controls_read(const qa_source_frame_time_binding *bind
     return true;
 }
 
-bool qa_source_frame_time_transform(qa_console_dialect dialect, double supplied_milliseconds,
+bool qa_source_frame_time_transform(qa_ruleset_id dialect, double supplied_milliseconds,
     const qa_source_frame_time_controls *controls, bool dedicated, bool local_server,
     double *out, qa_error *error)
 {
     if (!controls || !out || !known_dialect(dialect) || !isfinite(supplied_milliseconds) ||
         supplied_milliseconds < 0 ||
-        (dialect == QA_CONSOLE_Q1 && !isfinite(controls->host_framerate)) ||
+        (dialect == QA_RULESET_NETQUAKE && !isfinite(controls->host_framerate)) ||
         (!q1_dialect(dialect) && (!isfinite(controls->timescale) || !isfinite(controls->fixedtime))) ||
-        (dialect == QA_CONSOLE_Q3 && !isfinite(controls->camera_mode)))
+        (dialect == QA_RULESET_Q3 && !isfinite(controls->camera_mode)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame milliseconds and controls must be finite and the supplied delta nonnegative");
     double milliseconds;
-    if (dialect == QA_CONSOLE_Q1) {
+    if (dialect == QA_RULESET_NETQUAKE) {
         if (controls->host_framerate > 0) milliseconds = controls->host_framerate * 1000;
         else {
             milliseconds = supplied_milliseconds;
             if (milliseconds > 100) milliseconds = 100;
             if (milliseconds < 1) milliseconds = 1;
         }
-    } else if (dialect == QA_CONSOLE_QW) {
+    } else if (dialect == QA_RULESET_QUAKEWORLD) {
         milliseconds = !dedicated && supplied_milliseconds > 200 ? 200 : supplied_milliseconds;
-    } else if (dialect == QA_CONSOLE_Q2) {
+    } else if (dialect == QA_RULESET_Q2_CLASSIC) {
         milliseconds = trunc(supplied_milliseconds);
         if (controls->fixedtime != 0) {
             if (controls->fixedtime < -2147483648.0 || controls->fixedtime >= 2147483648.0)
@@ -127,7 +127,7 @@ bool qa_source_frame_time_transform(qa_console_dialect dialect, double supplied_
             }
             if (controls->timescale != 0 && milliseconds < 1) milliseconds = 1;
         }
-    } else if (dialect == QA_CONSOLE_Q2_RERELEASE) {
+    } else if (dialect == QA_RULESET_Q2_RERELEASE) {
         milliseconds = trunc(supplied_milliseconds);
         if (milliseconds > 250) milliseconds = 100;
         if (controls->fixedtime != 0) {
@@ -179,12 +179,12 @@ bool qa_source_frame_time_admit(const qa_source_frame_time_binding *binding, uin
 {
     qa_source_frame_time_controls controls;
     if (!accepted || !source_ns || !qa_source_frame_time_controls_read(binding, &controls, error)) return false;
-    qa_console_dialect dialect = qa_cvars_dialect(binding->cvars);
+    qa_ruleset_id dialect = qa_cvars_dialect(binding->cvars);
     if (!q1_dialect(dialect))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "host admission requires an actual Q1 registry");
     double seconds = (double)pending_ns / 1000000000.0;
     double ns;
-    if (dialect == QA_CONSOLE_QW && server) {
+    if (dialect == QA_RULESET_QUAKEWORLD && server) {
         if (!isfinite(controls.server_minimum_seconds) || !isfinite(controls.server_maximum_seconds) ||
             controls.server_maximum_seconds <= 0)
             return frame_time_fail(error, QA_ERROR_ARGUMENT, "QW server physics controls must have a finite positive maximum");
@@ -195,7 +195,7 @@ bool qa_source_frame_time_admit(const qa_source_frame_time_binding *binding, uin
         ns = duration * 1000000000;
     } else {
         double fps = 72;
-        if (dialect == QA_CONSOLE_QW) {
+        if (dialect == QA_RULESET_QUAKEWORLD) {
             if (!isfinite(controls.maximum_fps) || !isfinite(controls.rate))
                 return frame_time_fail(error, QA_ERROR_ARGUMENT, "QW client frame controls must be finite");
             float rate = (float)controls.rate;

@@ -186,7 +186,7 @@ bool application_startup_source_configuration(application_provider *provider, qa
     qa_application_startup_source source = {.descriptor = selected,
         .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
         .console = console, .cvars = cvars, .declaration_owner = provider->owner,
-        .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER,
+        .command = {.owner = provider->owner, .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER,
             .cvar_view = qa_cvars_view_identity(cvars)}};
     if (!provider->product || provider->product->family != QA_GAME_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Campaign configuration requires its actual Q3 GAME source");

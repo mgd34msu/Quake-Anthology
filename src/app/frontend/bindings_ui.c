@@ -42,7 +42,7 @@ static const char *weapon_item(const char *command,const qa_input_weapon_binding
 {
     if (!count || strpbrk(command,";\r\n\\") || strstr(command,"//") || strstr(command,"/*")) return NULL;
     qa_command_tokens tokens={0};
-    if (!qa_command_tokenize(command,QA_CONSOLE_Q3,false,&tokens,NULL)) return NULL;
+    if (!qa_command_tokenize(command,QA_RULESET_Q3,false,&tokens,NULL)) return NULL;
     const qa_input_weapon_binding *item=NULL;
     if (tokens.count==2) item=qa_input_weapon_resolve(tokens.values[0],tokens.values[1],items,count);
     else if (tokens.count>2) {
@@ -326,11 +326,11 @@ static char *retain_text(char **cursor, const char *text)
 static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id;
-    qa_console_dialect dialect = qa_input_seat_context(seat->input).dialect;
+    qa_ruleset_id dialect = qa_input_seat_context(seat->input).dialect;
     const qa_launch_choices *choices = seat->library ? qa_ui_library_choices(seat->library) : NULL;
     const qa_catalog *catalog = seat->library ? qa_ui_library_catalog(seat->library) : NULL;
-    qa_game_family entities_family=dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW?QA_GAME_Q1:
-        dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE?QA_GAME_Q2:QA_GAME_Q3;
+    qa_game_family entities_family=dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD?QA_GAME_Q1:
+        dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE?QA_GAME_Q2:QA_GAME_Q3;
     if (choices && catalog) {
         qa_launch_scope scope={.kind=QA_SCOPE_DEFAULT_PLAYER};
         if (seat->id<choices->seat_count) scope=(qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=choices->seats[seat->id].id};
@@ -341,7 +341,7 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
             const qa_product *product=qa_catalog_product(catalog,provider->product);
             if (!product) continue;
             if (movement && !strcmp(provider->instance,movement->instance))
-                dialect=product->family==QA_GAME_Q1?QA_CONSOLE_Q1:product->family==QA_GAME_Q2?QA_CONSOLE_Q2:QA_CONSOLE_Q3;
+                dialect=product->family==QA_GAME_Q1?QA_RULESET_NETQUAKE:product->family==QA_GAME_Q2?QA_RULESET_Q2_CLASSIC:QA_RULESET_Q3;
             if (entities && !strcmp(provider->instance,entities->instance)) entities_family=product->family;
         }
     }

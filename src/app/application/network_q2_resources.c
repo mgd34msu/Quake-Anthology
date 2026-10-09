@@ -655,8 +655,8 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
         !provider->launch || provider->product->id != visual->content)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 model acquisition lost its selected BODY content owner");
     qa_command_context request = {.owner = visual->provider, .origin = QA_COMMAND_SERVER,
-        .dialect = visual->family == QA_GAME_Q2 ? QA_CONSOLE_Q2 :
-            visual->family == QA_GAME_Q3 ? QA_CONSOLE_Q3 : QA_CONSOLE_Q1}, captured;
+        .dialect = visual->family == QA_GAME_Q2 ? QA_RULESET_Q2_CLASSIC :
+            visual->family == QA_GAME_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE}, captured;
     if (!qa_application_capture_command_context(owner->app, &request, &captured, error)) return false;
     qa_vfs *files = qa_application_context_files(owner->app, &captured, NULL);
     if (!files) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 selected model has no actual provider file scope");

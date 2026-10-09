@@ -16,7 +16,7 @@
 #include "qa/console_save.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/catalog_save.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -29,7 +29,7 @@ typedef struct remote_input {
     qa_seat_console *publication_console;
     qa_command_context source_command,publication_command;
     uint32_t physical_seat,logical_seat;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     size_t references;
     bool ready;
 } remote_input;
@@ -61,7 +61,7 @@ struct frontend_remote_config {
     qa_cvar_archive archive,mouse_archive,view_archive,movement_archive;
     qa_seat_settings settings;
     uint32_t physical_seat;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     size_t callback_references;
     bool hosted,hosted_pending,found,configured,released,published,running,imported,secondary_pending,write_registered,dump_registered;
     bool frontend_retired,retargeting,initial_variables,input_fresh;
@@ -93,7 +93,7 @@ static bool scope_equal(qa_application_console_scope a,qa_application_console_sc
 static bool active(const frontend_remote_config *row,const qa_command_context *command)
 {
     if (!row || row->retargeting || !command || command->origin==QA_COMMAND_REMOTE ||
-        command->dialect!=QA_CONSOLE_Q3 || command->session!=row->command.session ||
+        command->dialect!=QA_RULESET_Q3 || command->session!=row->command.session ||
         !qa_application_command_context_active(row->application,command)) return false;
     if (command->origin==QA_COMMAND_SEAT && command->owner==row->scope.provider &&
         command->seat==row->scope.seat && command->cvar_view==row->command.cvar_view) return true;
@@ -108,7 +108,7 @@ static bool cvar_context(const frontend_remote_config *row,const qa_command_cont
     if (active(row,command)) return true;
     return row && command && !row->retargeting && !row->imported && row->configured && row->released &&
         descriptor(row) && row->console && row->cvars && qa_cvars_same_store(qa_console_cvars(row->console),row->cvars) &&
-        command->origin==QA_COMMAND_SEAT && command->dialect==QA_CONSOLE_Q3 &&
+        command->origin==QA_COMMAND_SEAT && command->dialect==QA_RULESET_Q3 &&
         command->owner==row->scope.provider && command->seat==row->scope.seat &&
         command->session==row->command.session && command->cvar_view==row->command.cvar_view &&
         qa_console_cvar_entered(row->console,command);
@@ -126,7 +126,7 @@ static bool cheats(void *context)
     const qa_cvar_view *value=frontend_config_store_engine_value(row->owner->manager,row->application,row->console,"sv_cheats");
     return value && value->integer!=0;
 }
-static qa_cvars *settings_registry(frontend_remote_config *row,qa_console_dialect dialect,qa_error *error)
+static qa_cvars *settings_registry(frontend_remote_config *row,qa_ruleset_id dialect,qa_error *error)
 {
     qa_cvar_options options={.dialect=dialect,.side=QA_CVAR_SIDE_CLIENT,
         .role=row->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI?QA_CVAR_ROLE_UI:QA_CVAR_ROLE_CGAME,
@@ -425,7 +425,7 @@ static bool input_context(void *context,uint32_t ordinal,const qa_command_contex
 {
     remote_input *input=context;
     if (input && command && ordinal==input->physical_seat && command->origin==QA_COMMAND_SEAT &&
-        command->seat==input->logical_seat && command->dialect==QA_CONSOLE_Q3 &&
+        command->seat==input->logical_seat && command->dialect==QA_RULESET_Q3 &&
         qa_application_command_context_active(input->application,command))
         for (const frontend_remote_config *row=input->owner->rows;row;row=row->next)
             if (row->staging==input && row->application==input->application &&
@@ -445,7 +445,7 @@ static bool apply_defaults(void *context,qa_error *error)
 {
     frontend_remote_config *row=context;
     return frontend_authored_bindings_ready(row->authored) ||
-        frontend_authored_bindings_defaults(row->authored,row->input,qa_movement_console_dialect(row->movement),error);
+        frontend_authored_bindings_defaults(row->authored,row->input,(row->movement),error);
 }
 static bool selected_defaults(frontend_remote_config *row,bool seed,qa_error *error)
 {
@@ -453,9 +453,9 @@ static bool selected_defaults(frontend_remote_config *row,bool seed,qa_error *er
     frontend_config_weapon_catalog catalog;
     if (!frontend_config_weapon_defaults(row->application,row->candidate,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},strings,&catalog,error)) return false;
-    return seed?frontend_authored_bindings_seed(row->authored,qa_movement_console_dialect(row->movement),strings,
+    return seed?frontend_authored_bindings_seed(row->authored,(row->movement),strings,
         catalog.items,catalog.count,error):frontend_authored_bindings_select(row->authored,row->input,
-        qa_movement_console_dialect(row->movement),strings,catalog.items,catalog.count,0,error);
+        (row->movement),strings,catalog.items,catalog.count,0,error);
 }
 static frontend_remote_config *same_receiver_previous(const frontend_remote_config *fresh)
 {
@@ -588,7 +588,7 @@ static frontend_remote_config *previous(const frontend_remote_configs *owner,qa_
         const qa_launch_binding *binding=qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
         const qa_launch_instance *movement=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
-        if (movement && qa_clock_movement_kind(movement->selection.clock.kind)==row->movement) return row;
+        if (movement && (movement->selection.clock.kind)==row->movement) return row;
     }
     return NULL;
 }
@@ -622,7 +622,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     if (!owner || !application || !candidate || !source || !source->descriptor || !out || *out ||
         !source->console || !source->cvars || !source->scope.provider ||
         (source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME && source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI) ||
-        source->command.dialect!=QA_CONSOLE_Q3 || source->command.origin!=QA_COMMAND_SEAT ||
+        source->command.dialect!=QA_RULESET_Q3 || source->command.origin!=QA_COMMAND_SEAT ||
         source->command.seat!=source->scope.seat || source->command.owner!=source->scope.provider ||
         frontend_remote_config_find(owner,source->cvars))
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT preparation needs its fresh physical receiver tuple");
@@ -644,9 +644,9 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     const qa_launch_binding *movement=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
+    if (!selected || selected->selection.clock.kind>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"CLIENT input lacks its actual selected movement source");
-    row->movement=qa_clock_movement_kind(selected->selection.clock.kind);
+    row->movement=(selected->selection.clock.kind);
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *game=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
     qa_application_startup_source game_source={0};
@@ -701,18 +701,18 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
         const char *archive_owner[]={"client",product->key,source->descriptor->selection.implementation,seat};
         if (!old && !frontend_config_store_has_canonical_archive(owner->manager) &&
             !qa_settings_load_cvars(frontend_config_files_store(row->files,false),archive_owner,4,
-            QA_CONSOLE_Q3,&row->archive,error)) return false;
+            QA_RULESET_Q3,&row->archive,error)) return false;
     }
     if (row->hosted) {
         row->q3_mouse=row->q3_view=row->movement_mouse=frontend_config_source_mouse_cvars(hosted,row->scope.seat);
         if (!row->q3_mouse) return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT lacks its actual GAME-seat input settings");
     } else {
-        row->q3_mouse=settings_registry(row,QA_CONSOLE_Q3,error);
-        row->q3_view=settings_registry(row,QA_CONSOLE_Q3,error);
-        row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:settings_registry(row,qa_movement_console_dialect(row->movement),error);
+        row->q3_mouse=settings_registry(row,QA_RULESET_Q3,error);
+        row->q3_view=settings_registry(row,QA_RULESET_Q3,error);
+        row->movement_mouse=row->movement==QA_RULESET_Q3?row->q3_view:settings_registry(row,(row->movement),error);
         if (!row->q3_mouse || !row->q3_view || !row->movement_mouse ||
             !qa_input_mouse_settings_register(row->q3_mouse,row->movement,error) ||
-            !qa_input_movement_settings_register(row->q3_view,QA_MOVEMENT_Q3,error) ||
+            !qa_input_movement_settings_register(row->q3_view,QA_RULESET_Q3,error) ||
             (row->movement_mouse!=row->q3_view && !qa_input_movement_settings_register(row->movement_mouse,row->movement,error))) return false;
         if (old && (!copy_registry(row->q3_mouse,old->q3_mouse,error) ||
             !copy_registry(row->q3_view,old->q3_view,error) ||
@@ -752,14 +752,13 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     char logical[16],path[64]; snprintf(logical,sizeof(logical),"%" PRIu32,row->scope.seat);
     snprintf(path,sizeof(path),"input/seat-%" PRIu64 ".json",(uint64_t)row->scope.seat+1);
     const char *mouse_owner[]={"input","q3",logical};
-    const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
     const char *view_owner[]={"movement","q3"};
-    const char *movement_owner[]={"movement",dialects[qa_movement_console_dialect(row->movement)]};
+    const char *movement_owner[]={"movement",qa_ruleset_settings_name((row->movement))};
     if ((!frontend_config_store_has_canonical_archive(owner->manager) &&
-        (!qa_settings_load_cvars(input_store,mouse_owner,3,QA_CONSOLE_Q3,&row->mouse_archive,error) ||
-         !qa_settings_load_cvars(input_store,view_owner,2,QA_CONSOLE_Q3,&row->view_archive,error) ||
+        (!qa_settings_load_cvars(input_store,mouse_owner,3,QA_RULESET_Q3,&row->mouse_archive,error) ||
+         !qa_settings_load_cvars(input_store,view_owner,2,QA_RULESET_Q3,&row->view_archive,error) ||
          (row->movement_mouse!=row->q3_view && !qa_settings_load_cvars(input_store,movement_owner,2,
-             qa_movement_console_dialect(row->movement),&row->movement_archive,error)))) ||
+             (row->movement),&row->movement_archive,error)))) ||
         !qa_settings_load_seat(input_store,path,&row->settings,&row->found,error)) return false;
     if (!frontend_config_store_seed_player_archive(owner->manager,row->cvars,row->scope.seat,&row->archive,error)) return false;
     bool safe=false;
@@ -798,7 +797,7 @@ bool frontend_remote_config_advance(frontend_remote_config *row,qa_console *cons
             primary=primary->next;
         if (!primary || !primary->configured || !frontend_authored_bindings_completed(primary->authored))
             return fail(error,QA_ERROR_ARGUMENT,"Secondary CLIENT scripts precede their actual primary authored defaults");
-        if (!frontend_authored_bindings_secondary(row->authored,primary->authored,row->input,qa_movement_console_dialect(row->movement),error)) return false;
+        if (!frontend_authored_bindings_secondary(row->authored,primary->authored,row->input,(row->movement),error)) return false;
         frontend_remote_config *old=NULL;
         if (!previous_seat(row,&old,error) || (old && !selected_defaults(row,false,error))) return false;
         row->secondary_pending=false;
@@ -871,7 +870,7 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
             !qa_input_seat_configuration_ready(input,row->input,error)) return false;
         qa_command_context command=qa_input_seat_context(input);
         command.registry=command.generation=0; command.actor=(qa_actor_id){0};
-        command.origin=QA_COMMAND_SEAT; command.seat=row->scope.seat; command.dialect=qa_movement_console_dialect(row->movement);
+        command.origin=QA_COMMAND_SEAT; command.seat=row->scope.seat; command.dialect=(row->movement);
         if (!qa_input_seat_context_ready(input,&command,error) || !qa_seat_console_context_ready(console,&command,error)) return false;
         shared->publication_input=input; shared->publication_console=console;
         shared->publication_command=command; shared->ready=true;
@@ -1027,9 +1026,9 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     const qa_launch_binding *movement=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=target->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *selected=movement?qa_launch_snapshot_find(candidate,movement->instance):NULL;
-    if (!selected || selected->selection.clock.kind>QA_CLOCK_Q3)
+    if (!selected || selected->selection.clock.kind>QA_RULESET_Q3)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT rebinding lacks its selected movement source");
-    row->movement=qa_clock_movement_kind(selected->selection.clock.kind);
+    row->movement=(selected->selection.clock.kind);
     if (row->cvars && row->cvars!=target->cvars)
         return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT changed its actual Source view");
     row->cvars=target->cvars;
@@ -1203,12 +1202,12 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
         qa_source_save_u32(io,&scope) &&
         (scope==QA_APPLICATION_CONSOLE_Q3_CGAME || scope==QA_APPLICATION_CONSOLE_Q3_UI) &&
         qa_source_save_u32(io,&row->scope.seat) && qa_source_save_u32(io,&row->physical_seat) &&
-        row->physical_seat<row->owner->frontend->options.seats && qa_source_save_u32(io,&movement) && movement<=QA_MOVEMENT_Q3 &&
+        row->physical_seat<row->owner->frontend->options.seats && qa_source_save_u32(io,&movement) && movement<=QA_RULESET_Q3 &&
         qa_source_save_bool(io,&row->hosted) && qa_source_save_u64(io,&key) && key &&
         qa_source_save_owned_text(io,&registry) && registry && *registry;
     if (!writing) {
         row->saved_instance=name; row->saved_registry=registry;
-        row->scope.kind=(qa_application_console_kind)scope; row->movement=(qa_movement_kind)movement;
+        row->scope.kind=(qa_application_console_kind)scope; row->movement=(qa_ruleset_id)movement;
         row->keys=ok?frontend_keys_profile(keys,key):NULL;
         if (ok) ok=row->keys && frontend_key_profile_retain(row->keys,io->error);
         if (!ok) row->keys=NULL;
@@ -1216,10 +1215,10 @@ static bool fields(frontend_remote_config *row,qa_source_save_io *io,frontend_ke
     }
     if (ok && !row->hosted && strcmp(name,registry)) ok=false;
     if (ok && !writing && !row->hosted) {
-        row->q3_mouse=settings_registry(row,QA_CONSOLE_Q3,io->error);
-        row->q3_view=settings_registry(row,QA_CONSOLE_Q3,io->error);
-        row->movement_mouse=row->movement==QA_MOVEMENT_Q3?row->q3_view:
-            settings_registry(row,qa_movement_console_dialect(row->movement),io->error);
+        row->q3_mouse=settings_registry(row,QA_RULESET_Q3,io->error);
+        row->q3_view=settings_registry(row,QA_RULESET_Q3,io->error);
+        row->movement_mouse=row->movement==QA_RULESET_Q3?row->q3_view:
+            settings_registry(row,(row->movement),io->error);
         ok=row->q3_mouse && row->q3_view && row->movement_mouse;
     }
     if (ok && !writing) { row->authored=frontend_authored_bindings_create(io->error); ok=row->authored!=NULL; }
@@ -1300,13 +1299,13 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
         descriptor(row)->storage==source->descriptor->storage) ||
         fail(error,QA_ERROR_FORMAT,"Restored CLIENT alias changed its canonical physical registry");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    qa_movement_kind movement=QA_MOVEMENT_Q3;
+    qa_ruleset_id movement=QA_RULESET_Q3;
     const qa_launch_binding *binding=qa_launch_binding_for(choices,
         (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=row->scope.seat},QA_ROLE_MOVEMENT,"");
     const qa_launch_instance *movement_source=binding?qa_launch_snapshot_find(candidate,binding->instance):NULL;
     uint32_t logical;
     if (!frontend_local_seat_read(choices,row->physical_seat,&logical) || logical!=row->scope.seat ||
-        !movement_source || (movement=qa_clock_movement_kind(movement_source->selection.clock.kind))!=row->movement)
+        !movement_source || (movement=(movement_source->selection.clock.kind))!=row->movement)
         return fail(error,QA_ERROR_FORMAT,"Decoded CLIENT changed its real physical seat or movement selection");
     const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(source->descriptor),source->descriptor->selection.product);
     const qa_product *saved=qa_catalog_product(frontend_config_files_catalog(row->files),frontend_config_files_product(row->files));

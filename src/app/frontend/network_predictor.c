@@ -58,7 +58,7 @@ static bool profile_equal(const qa_movement_profile *a, const qa_movement_profil
 {
     if(a->kind!=b->kind) return false;
     switch(a->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         return q1_parameters_equal(&a->data.nq.parameters,&b->data.nq.parameters) &&
             a->data.nq.edition==b->data.nq.edition && float_equal(a->data.nq.edge_friction,b->data.nq.edge_friction) &&
             float_equal(a->data.nq.max_velocity,b->data.nq.max_velocity) &&
@@ -67,15 +67,15 @@ static bool profile_equal(const qa_movement_profile *a, const qa_movement_profil
             a->data.nq.no_clip_angle_hack==b->data.nq.no_clip_angle_hack && a->data.nq.no_step==b->data.nq.no_step &&
             a->data.nq.source_jump_authority==b->data.nq.source_jump_authority &&
             a->data.nq.preserve_fixangle_roll==b->data.nq.preserve_fixangle_roll;
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         return q1_parameters_equal(&a->data.qw.parameters,&b->data.qw.parameters) &&
             a->data.qw.maximum_command_ms==b->data.qw.maximum_command_ms && a->data.qw.shared_controls==b->data.qw.shared_controls;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         return float_equal(a->data.q2.air_accelerate,b->data.q2.air_accelerate) &&
             a->data.q2.snap_initial==b->data.q2.snap_initial && a->data.q2.strafejump_hack==b->data.q2.strafejump_hack;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         return float_equal(a->data.q2r.air_accelerate,b->data.q2r.air_accelerate) && a->data.q2r.n64_physics==b->data.q2r.n64_physics;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         return a->data.q3.missionpack==b->data.q3.missionpack && a->data.q3.no_footsteps==b->data.q3.no_footsteps &&
             a->data.q3.fixed_ms==b->data.q3.fixed_ms;
     }

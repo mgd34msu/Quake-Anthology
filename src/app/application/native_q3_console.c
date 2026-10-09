@@ -285,7 +285,7 @@ bool application_native_q3_source_command_begin(application_provider *provider,q
     if(!app||!scope||provider->kind!=APPLICATION_PROVIDER_Q3||!provider->state.q3||
         !provider->launch||!provider->launch->selection.instance||!command||!command->argc||!command->argv||
         !command->args_text||command->context.owner!=provider->owner||
-        command->context.origin!=QA_COMMAND_REMOTE||command->context.dialect!=QA_CONSOLE_Q3||
+        command->context.origin!=QA_COMMAND_REMOTE||command->context.dialect!=QA_RULESET_Q3||
         !qa_actor_id_equal(command->context.actor,actor)||
         !qa_application_command_context_active(app,&command->context))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source Q3 command lacks its actual captured client invocation");
@@ -320,7 +320,7 @@ static bool capture(void *context, const qa_command_context *source,
     if (command.owner && command.owner != owner->provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 console received another source owner");
     command.owner = owner->provider->owner;
-    command.dialect = QA_CONSOLE_Q3;
+    command.dialect = QA_RULESET_Q3;
     return application_command_capture(owner->provider->application, &command, out, error);
 }
 
@@ -328,7 +328,7 @@ static bool active(void *context, const qa_command_context *command)
 {
     struct application_native_q3_console *owner = context;
     return command && command->owner == owner->provider->owner &&
-        command->dialect == QA_CONSOLE_Q3 &&
+        command->dialect == QA_RULESET_Q3 &&
         application_command_active(owner->provider->application, command);
 }
 
@@ -467,7 +467,7 @@ bool application_native_q3_console_at(application_provider *provider, qa_console
     if (cvars) *cvars = owner->cvars;
     if (context) *context = (qa_command_context){.owner = provider->owner,
         .cvar_view = qa_cvars_view_identity(owner->cvars),
-        .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+        .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER};
     return true;
 }
 
@@ -511,11 +511,11 @@ bool application_native_q3_console_create(application_provider *provider,
     struct application_native_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q3 source console");
     owner->provider = provider;
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = owner, .print = cvar_print,
         .cheats_allowed = cheats_allowed};
     owner->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
-    qa_console_options options = {.context = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
+    qa_console_options options = {.context = {.owner = provider->owner, .dialect = QA_RULESET_Q3,
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,

@@ -27,7 +27,7 @@ static bool native_movement(void *context, qa_actor_id actor, qa_q3_movement_sta
     if (!out || !selected || !native_source_actor(provider, actor, &slot, error) ||
         !qa_application_control_read(provider->application, actor, &control))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire has no actual selected control holder");
-    *selected = control.state.kind == QA_MOVEMENT_Q3;
+    *selected = control.state.kind == QA_RULESET_Q3;
     if (*selected) *out = control.state.data.q3;
     return true;
 }
@@ -225,7 +225,7 @@ bool application_q3_wire_time(const application_provider *provider, int32_t *out
     qa_clock_state clock;
     if (!provider || !out || !provider->application ||
         !qa_session_clock(provider->application->session, provider->owner, &clock) ||
-        clock.frame.provider != provider->owner || clock.frame.kind != QA_CLOCK_Q3 ||
+        clock.frame.provider != provider->owner || clock.frame.kind != QA_RULESET_Q3 ||
         (clock.frame.number && clock.frame.phase != QA_FRAME_EXIT))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 snapshot requires its completed source server clock");

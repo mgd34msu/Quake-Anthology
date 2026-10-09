@@ -65,7 +65,7 @@ bool application_q1_native_save_capture(qa_application *app, application_provide
     if (!(combat.health > 0))
         return application_fail(error, QA_ERROR_ARGUMENT, "Cannot save a dead original Quake player");
     qa_application_control_view control;
-    if (!qa_application_control_read(app, player->actor, &control) || control.state.kind != QA_MOVEMENT_NETQUAKE)
+    if (!qa_application_control_read(app, player->actor, &control) || control.state.kind != QA_RULESET_NETQUAKE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original native save lost its actual NetQuake movement");
     qa_qc_program *program = NULL;
     qa_vfs *content = application_native_q1_wire_content(provider, error);

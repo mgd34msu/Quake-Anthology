@@ -28,7 +28,7 @@ const qa_unified_input_batch *qa_unified_document_inputs(const qa_unified_docume
 typedef struct qa_unified_session_player {
     qa_actor_id actor;
     qa_net_seat_id seat;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     qa_bytes arsenal;
     qa_actor_owner source_owner;
     uint32_t source_slot;

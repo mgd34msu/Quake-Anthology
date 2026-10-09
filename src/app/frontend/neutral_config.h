@@ -16,7 +16,7 @@ typedef struct frontend_neutral_config_view {
     qa_application_client_source source;
     qa_cvars *client, *mouse, *movement;
     const qa_input_tuning_handles *input_tuning;
-    qa_movement_kind kind;
+    qa_ruleset_id kind;
     uint32_t physical_seat;
     uint64_t namespace_revision;
     bool ready, published;
@@ -27,12 +27,12 @@ bool frontend_neutral_configs_destroy(frontend_neutral_configs *, qa_error *);
 bool frontend_neutral_configs_empty(const frontend_neutral_configs *);
 bool frontend_neutral_configs_restore_abort_unbound(frontend_neutral_configs *,qa_error *);
 bool frontend_neutral_config_options(frontend_neutral_configs *, uint32_t physical_seat,
-    qa_movement_kind actual_movement, frontend_client_source_options *, qa_error *);
+    qa_ruleset_id actual_movement, frontend_client_source_options *, qa_error *);
 bool frontend_neutral_config_pending_options(frontend_neutral_configs *,uint32_t physical_seat,
     frontend_client_source_options *,qa_error *);
 bool frontend_neutral_config_options_cancel(frontend_neutral_configs *,frontend_client_source_options *,qa_error *);
 bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *,const qa_cvars *,
-    qa_movement_kind actual_movement,qa_error *);
+    qa_ruleset_id actual_movement,qa_error *);
 bool frontend_neutral_config_read(const frontend_neutral_configs *, const qa_cvars *,
     frontend_neutral_config_view *, qa_error *);
 bool frontend_neutral_config_current(const frontend_neutral_config_view *);
@@ -59,12 +59,12 @@ bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *
 bool frontend_config_store_neutral_retired_recipient(const frontend_config_store *,
     const qa_application_client_source *,bool *,qa_error *);
 bool frontend_config_store_neutral_options(frontend_config_store *,uint32_t physical_seat,
-    qa_movement_kind actual_movement,frontend_client_source_options *,qa_error *);
+    qa_ruleset_id actual_movement,frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_pending_options(frontend_config_store *,uint32_t physical_seat,
     frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_options_cancel(frontend_config_store *,frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_movement_adopt(frontend_config_store *,const qa_cvars *,
-    qa_movement_kind actual_movement,qa_error *);
+    qa_ruleset_id actual_movement,qa_error *);
 bool frontend_config_store_client_profile(const frontend_config_store *,qa_product_id,
     qa_product_id *,qa_error *);
 bool frontend_config_store_neutral_adopt_store(frontend_config_store *,const qa_launch_instance *,

@@ -217,7 +217,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     uint8_t bytes[384];
     if (!native_host_read(host, address, bytes, layout->pmove.bytes, error))
         return false;
-    qa_movement_input input = qa_movement_input_default(QA_MOVEMENT_Q2_CLASSIC,
+    qa_movement_input input = qa_movement_input_default(QA_RULESET_Q2_CLASSIC,
                                                         (qa_actor_id){0});
     input.state.data.q2.type = qa_load_i32le(bytes);
     for (size_t index = 0; index < 3; ++index) {
@@ -279,7 +279,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
         !qa_actors_get(qa_session_actors(host->world.session),input.actor)) {
         qa_movement_result_free(&movement); return true;
     }
-    if (movement.state.kind != QA_MOVEMENT_Q2_CLASSIC ||
+    if (movement.state.kind != QA_RULESET_Q2_CLASSIC ||
         !qa_actor_id_equal(movement.actor, input.actor)) {
         qa_movement_result_free(&movement);
         return native_host_fail(error, QA_ERROR_FORMAT, 0,

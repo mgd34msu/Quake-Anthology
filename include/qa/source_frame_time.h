@@ -27,7 +27,7 @@ static inline uint64_t qa_source_frame_time_host_delta(uint64_t boundary_ns, uin
 bool qa_source_frame_time_register(qa_cvars *, uint64_t owner, qa_error *);
 void qa_source_frame_time_bind(const qa_cvars *, qa_source_frame_time_binding *);
 bool qa_source_frame_time_controls_read(const qa_source_frame_time_binding *, qa_source_frame_time_controls *, qa_error *);
-bool qa_source_frame_time_transform(qa_console_dialect, double supplied_milliseconds,
+bool qa_source_frame_time_transform(qa_ruleset_id, double supplied_milliseconds,
     const qa_source_frame_time_controls *, bool dedicated, bool local_server,
     double *source_milliseconds, qa_error *);
 bool qa_source_frame_time_sample(const qa_source_frame_time_binding *, double supplied_milliseconds,

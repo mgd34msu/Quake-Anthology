@@ -283,9 +283,9 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         !(provider->launch->roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
           QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
     engine->profile = cgame ? QA_NATIVE_Q2_CGAME_API2023 :
-        provider->launch->selection.clock.kind == QA_CLOCK_Q2_RERELEASE ?
+        provider->launch->selection.clock.kind == QA_RULESET_Q2_RERELEASE ?
             QA_NATIVE_Q2_GAME_API2023 : QA_NATIVE_Q2_GAME_API3;
-    if (cgame && provider->launch->selection.clock.kind != QA_CLOCK_Q2_RERELEASE)
+    if (cgame && provider->launch->selection.clock.kind != QA_RULESET_Q2_RERELEASE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 has no native cgame API");
     if (!qa_native_module_load(qa_resource_bytes(provider->launch->artifact),
             provider->launch->selection.artifact, engine->profile,
@@ -301,7 +301,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         !application_native_q2_attack_prepare(engine, error)) return false;
     if (!application_native_q2_combat_prepare(engine, error) ||
         !application_q2_control_prepare(engine, error)) return false;
-    qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
+    qa_ruleset_id dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
     qa_cvar_options cvars = {.dialect = dialect,

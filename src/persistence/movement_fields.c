@@ -43,20 +43,20 @@ bool qa_persistence_ground(qa_source_save_io *io, qa_movement_ground *value)
 bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
 {
     if (!state) return false;
-    if (io->direction == QA_SOURCE_SAVE_WRITE && (unsigned)state->kind > QA_MOVEMENT_Q3)
+    if (io->direction == QA_SOURCE_SAVE_WRITE && (unsigned)state->kind > QA_RULESET_Q3)
         return fail(io, "Invalid saved movement family");
     uint32_t kind = state->kind;
     const uint32_t wide_tag = UINT32_C(0x80000000);
-    if (io->direction == QA_SOURCE_SAVE_WRITE && state->kind == QA_MOVEMENT_Q2_CLASSIC &&
+    if (io->direction == QA_SOURCE_SAVE_WRITE && state->kind == QA_RULESET_Q2_CLASSIC &&
         state->data.q2.wide_coordinates) kind |= wide_tag;
     if (!qa_source_save_u32(io, &kind)) return false;
     bool wide = (kind & wide_tag) != 0;
     kind &= ~wide_tag;
-    if (kind > QA_MOVEMENT_Q3 || (wide && kind != QA_MOVEMENT_Q2_CLASSIC))
+    if (kind > QA_RULESET_Q3 || (wide && kind != QA_RULESET_Q2_CLASSIC))
         return fail(io, "Invalid saved movement family");
-    state->kind = (qa_movement_kind)kind;
+    state->kind = (qa_ruleset_id)kind;
     switch (state->kind) {
-    case QA_MOVEMENT_NETQUAKE: {
+    case QA_RULESET_NETQUAKE: {
         qa_nq_movement_state *s = &state->data.nq;
         V(s->origin); V(s->velocity); V(s->angles); V(s->old_origin); V(s->angular_velocity);
         V(s->view_angles); V(s->punch_angles); V(s->water_jump_direction);
@@ -65,13 +65,13 @@ bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
         I(s->water_level); I(s->water_type); FIELD(f64, s->teleport_time_seconds); F(s->ideal_pitch); B(s->fix_angle);
         return true;
     }
-    case QA_MOVEMENT_QUAKEWORLD: {
+    case QA_RULESET_QUAKEWORLD: {
         qa_qw_movement_state *s = &state->data.qw;
         FIELD(f64, s->origin.x); FIELD(f64, s->origin.y); FIELD(f64, s->origin.z);
         V(s->velocity); V(s->angles); U(s->old_buttons); F(s->water_jump_time_seconds);
         B(s->dead); I(s->spectator); return qa_persistence_ground(io, &s->ground);
     }
-    case QA_MOVEMENT_Q2_CLASSIC: {
+    case QA_RULESET_Q2_CLASSIC: {
         qa_q2_movement_state *s = &state->data.q2;
         s->wide_coordinates = wide;
         I(s->type);
@@ -88,13 +88,13 @@ bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
         for (size_t i = 0; i < 3; ++i) if (!short_field(io, &s->delta_angle_shorts[i])) return false;
         return true;
     }
-    case QA_MOVEMENT_Q2_RERELEASE: {
+    case QA_RULESET_Q2_RERELEASE: {
         qa_q2r_movement_state *s = &state->data.q2r;
         I(s->type); V(s->origin); V(s->velocity); U(s->flags); U(s->time_ms);
         if (!short_field(io, &s->gravity)) return false;
         V(s->delta_angles); F(s->view_height); return true;
     }
-    case QA_MOVEMENT_Q3: {
+    case QA_RULESET_Q3: {
         qa_q3_movement_state *s = &state->data.q3;
         I(s->command_time_ms); I(s->movement_type); I(s->bob_cycle); U(s->movement_flags); I(s->movement_time_ms);
         V(s->origin); V(s->velocity); I(s->gravity); I(s->speed);
@@ -118,10 +118,10 @@ bool qa_persistence_movement_profile(qa_source_save_io *io, qa_movement_profile 
 {
     if (!profile) return false;
     uint32_t kind = profile->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_MOVEMENT_Q3) return fail(io, "Invalid movement profile family");
-    profile->kind = (qa_movement_kind)kind;
+    if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3) return fail(io, "Invalid movement profile family");
+    profile->kind = (qa_ruleset_id)kind;
     switch (profile->kind) {
-    case QA_MOVEMENT_NETQUAKE: {
+    case QA_RULESET_NETQUAKE: {
         uint32_t edition = profile->data.nq.edition;
         if (!parameters(io, &profile->data.nq.parameters) || !qa_source_save_u32(io, &edition) || edition > QA_Q1_QUAKE64)
             return fail(io, "Invalid saved NetQuake profile");
@@ -131,14 +131,14 @@ bool qa_persistence_movement_profile(qa_source_save_io *io, qa_movement_profile 
         B(profile->data.nq.no_step); B(profile->data.nq.source_jump_authority); B(profile->data.nq.preserve_fixangle_roll);
         return true;
     }
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         if (!parameters(io, &profile->data.qw.parameters)) return false;
         U(profile->data.qw.maximum_command_ms); B(profile->data.qw.shared_controls); return true;
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         F(profile->data.q2.air_accelerate); B(profile->data.q2.snap_initial); B(profile->data.q2.strafejump_hack); return true;
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         F(profile->data.q2r.air_accelerate); B(profile->data.q2r.n64_physics); return true;
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         B(profile->data.q3.missionpack); B(profile->data.q3.no_footsteps); U(profile->data.q3.fixed_ms); return true;
     }
     return fail(io, "Invalid movement profile");

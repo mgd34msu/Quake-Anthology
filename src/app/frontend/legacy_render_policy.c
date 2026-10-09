@@ -95,7 +95,7 @@ bool frontend_legacy_render_policy_read_controls(const qa_cvars *registry,
         product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3, .mirror_alpha = 1};
     if (value.family != QA_SCENE_Q3) {
         value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD ||
-            (value.family == QA_SCENE_Q1 && qa_cvars_dialect(registry) == QA_CONSOLE_QW);
+            (value.family == QA_SCENE_Q1 && qa_cvars_dialect(registry) == QA_RULESET_QUAKEWORLD);
         float flash = 0, eyes = 1, shadows, mirror = 1, texture_sort = 0;
         if (!number(registry, value.family == QA_SCENE_Q1 ? refs->r_shadows : refs->gl_shadows,
             value.family == QA_SCENE_Q1 ? "r_shadows" : "gl_shadows", &shadows, error)) return false;
@@ -144,13 +144,13 @@ bool frontend_legacy_render_policy_read_controls(const qa_cvars *registry,
     return true;
 }
 
-bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dialect,
+bool frontend_legacy_source_register(qa_cvars *registry, qa_ruleset_id dialect,
     uint64_t owner, qa_error *error)
 {
     if (!registry || !owner || qa_cvars_dialect(registry) != dialect)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer requires its actual source registry");
-    bool q1 = dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
-    bool q2 = dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    bool q1 = dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD;
+    bool q2 = dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
     if (!q1 && !q2) return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy renderer requires a Q1/Q2 source dialect");
     static const struct { const char *name, *value; uint32_t flags; } shared[] = {
         {"r_fullbright", "0", 0}, {"gl_polyblend", "1", 0}, {"gl_cull", "1", 0}, {"gl_clear", "0", 0}};
@@ -166,16 +166,16 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
         if (!qa_cvars_register(registry, shared[i].name, shared[i].value, shared[i].flags,
             owner, "", error)) return false;
     if (q1) {
-        if (!frontend_view_settings_q1_motion_register(registry, owner, dialect == QA_CONSOLE_QW, error)) return false;
+        if (!frontend_view_settings_q1_motion_register(registry, owner, dialect == QA_RULESET_QUAKEWORLD, error)) return false;
         for (size_t i = 0; i < sizeof(quake) / sizeof(*quake); ++i)
             if (!qa_cvars_register(registry, quake[i].name, quake[i].value, quake[i].flags,
                 owner, "", error)) return false;
-        if (dialect == QA_CONSOLE_Q1 && !qa_cvars_register(registry, "gl_doubleeys", "1", 0, owner, "", error)) return false;
+        if (dialect == QA_RULESET_NETQUAKE && !qa_cvars_register(registry, "gl_doubleeys", "1", 0, owner, "", error)) return false;
     } else {
         for (size_t i = 0; i < sizeof(quake2) / sizeof(*quake2); ++i)
             if (!qa_cvars_register(registry, quake2[i].name, quake2[i].value, quake2[i].flags,
                 owner, "", error)) return false;
-        if (dialect == QA_CONSOLE_Q2_RERELEASE &&
+        if (dialect == QA_RULESET_Q2_RERELEASE &&
             !qa_cvars_register(registry, "cl_flares", "1", 0, owner, "", error)) return false;
     }
     return true;
@@ -184,13 +184,13 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_console_dialect dial
 bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
 {
     if (!registry || !name) return false;
-    qa_console_dialect dialect = qa_cvars_dialect(registry);
-    bool q1 = dialect == QA_CONSOLE_Q1 || dialect == QA_CONSOLE_QW;
-    bool q2 = dialect == QA_CONSOLE_Q2 || dialect == QA_CONSOLE_Q2_RERELEASE;
+    qa_ruleset_id dialect = qa_cvars_dialect(registry);
+    bool q1 = dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD;
+    bool q2 = dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE;
     if (!q1 && !q2) return false;
     const qa_cvar_view *row = qa_cvars_find(registry, name);
     if (!row || !row->owner || row->console_created) return false;
-    if (q1 && frontend_view_settings_q1_motion_owns(name,dialect == QA_CONSOLE_QW)) return true;
+    if (q1 && frontend_view_settings_q1_motion_owns(name,dialect == QA_RULESET_QUAKEWORLD)) return true;
     const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
     const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys", "r_drawviewmodel"};
     const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares", "gl_flashblend"};
@@ -333,7 +333,7 @@ static bool local_policy(const qa_frontend *frontend, const qa_product *product,
         out->family = product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
             product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
         out->quakeworld = out->family == QA_SCENE_Q1 &&
-            (product->edition == QA_EDITION_QUAKEWORLD || qa_cvars_dialect(actual_source->registry) == QA_CONSOLE_QW);
+            (product->edition == QA_EDITION_QUAKEWORLD || qa_cvars_dialect(actual_source->registry) == QA_RULESET_QUAKEWORLD);
         if (out->family != QA_SCENE_Q1 || out->lighting.source_family != QA_SCENE_Q1) out->texture_sort = false;
         if (!out->texture_sort || out->quakeworld) out->mirror_alpha = 1;
         if (out->quakeworld) out->lighting.fullbright = out->lighting.lightmap = false;

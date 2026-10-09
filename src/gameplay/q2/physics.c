@@ -29,7 +29,7 @@ static bool think_due(const qa_q2_game *g, const q2_actor *a) {
 
 static qa_source_frame source_frame(const qa_q2_game *g) {
     return (qa_source_frame){.provider = g->options.owner,
-        .kind = g->options.edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE,
+        .kind = g->options.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE,
         .phase = QA_ENTITY_PHYSICS, .time_ns = g->now_ns, .elapsed_ns = g->frame_ns,
         .start_ns = g->now_ns >= g->frame_ns ? g->now_ns - g->frame_ns : 0};
 }

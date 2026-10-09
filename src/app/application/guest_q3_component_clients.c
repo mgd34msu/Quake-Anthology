@@ -98,7 +98,7 @@ bool application_q3_component_command(application_q3_component *c,qa_actor_id ac
 bool application_q3_component_frame(application_q3_component *c,const qa_source_frame *frame,qa_error *e)
 {
     if(!c||!frame||!q3component_current(c,e)||!c->initialized||!application_q3_component_idle(c)||
-        frame->provider!=c->options.host.owner||frame->kind!=QA_CLOCK_Q3||frame->time_ns/1000000>INT32_MAX)
+        frame->provider!=c->options.host.owner||frame->kind!=QA_RULESET_Q3||frame->time_ns/1000000>INT32_MAX)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component frame requires its actual admitted SOURCE interval");
     qa_source_frame actual;
     if(!qa_session_active_frame(c->options.host.session,c->options.host.owner,&actual)||actual.number!=frame->number||actual.time_ns!=frame->time_ns||actual.elapsed_ns!=frame->elapsed_ns)

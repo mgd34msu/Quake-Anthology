@@ -15,7 +15,7 @@ static uint8_t byte(double);
 bool application_native_q1_qw_selected(qa_application *app) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     return p && p->kind == APPLICATION_PROVIDER_Q1 && p->launch &&
-        p->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+        p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD;
 }
 static const application_player_record *record(qa_application *app, qa_actor_id actor) {
     for (size_t i = 0; app->players && i < app->players->count; ++i) {
@@ -201,7 +201,7 @@ bool application_native_q1_qw_client(qa_application *app,qa_actor_id actor,
 }
 bool application_native_q1_qw_retire_capture(application_provider *p,qa_actor_id actor,qa_error *error) {
     if (!p || !p->launch || p->kind!=APPLICATION_PROVIDER_Q1 ||
-        p->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD || !p->constructed || !p->attached ||
+        p->launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD || !p->constructed || !p->attached ||
         p->close_pending || application_world_provider(p->application,QA_ROLE_ENTITIES,"")!=p)
         return application_fail(error,QA_ERROR_ARGUMENT,"QW physical retirement lost its actual source owner");
     application_native_q1_wire_source source={0};
@@ -284,7 +284,7 @@ bool application_native_q1_qw_receives(qa_application *app,qa_actor_id actor,
     uint32_t slot;const application_player_record *row;
     bool okay=binding(&source,actor,&slot,&row,error);*out=false;
     if (okay && event->provider==source.provider->owner && !event->signon) {
-        if (event->dialect!=QA_CLOCK_QUAKEWORLD) okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld message changes its source dialect");
+        if (event->dialect!=QA_RULESET_QUAKEWORLD) okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld message changes its source dialect");
         else if (!event->multicast) {
             if (event->destination<0 || event->destination>3) okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld message destination is invalid");
             else *out=!event->recipient.registry || qa_actor_id_equal(event->recipient,actor);
@@ -358,7 +358,7 @@ bool application_native_q1_qw_commands(qa_application *app,const qa_network_comm
     if (okay && (row->source_begin_pending || row->deferred))
         okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld commands require genuine source Begin");
     for (size_t i=0;okay && i<group->count;++i)
-        if (group->commands[i].sequence!=group->commands[0].sequence || group->commands[i].kind!=QA_MOVEMENT_QUAKEWORLD)
+        if (group->commands[i].sequence!=group->commands[0].sequence || group->commands[i].kind!=QA_RULESET_QUAKEWORLD)
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld command group changes its literal source packet");
     application_native_q1_wire_end(&source);
     return okay && qa_application_control_qw_commands(app,group->actor,group->commands,group->count,error);
@@ -540,7 +540,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     }
     uint8_t bytes[8192];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
     if (!qa_qw_service_write(&writer,(qa_net_protocol_id){.kind=QA_NET_QW28},&service,NULL)) return false;
-    qa_application_protocol_event output={.provider=p->owner,.dialect=QA_CLOCK_QUAKEWORLD,.time_ns=event->time_ns,
+    qa_application_protocol_event output={.provider=p->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=event->time_ns,
         .recipient=recipient,.origin=event->kind==QA_BUILTIN_IMPACT && event->flags&QA_Q1_IMPACT_GROUPED?
             event->end:event->origin,.payload={bytes,qa_net_writer_size(&writer)},
         .references=ref,.reference_count=ref?1:0,.destination=destination,.reliable=reliable,.signon=signon,.multicast=multicast};
@@ -553,7 +553,7 @@ bool application_native_q1_qw_setangle(application_provider *p,qa_actor_id actor
     qa_vec3 angles,qa_error *error) {
     qa_q1_options options;double elapsed;uint64_t time_ns;
     if (!p || p->kind!=APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
-        p->close_pending || !p->launch || p->launch->selection.clock.kind!=QA_CLOCK_QUAKEWORLD ||
+        p->close_pending || !p->launch || p->launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD ||
         !qa_vec_finite(angles) || !application_native_q1_qw_selected(p->application) ||
         !qa_q1_source_respawn_options_read(p->state.q1,&options,&elapsed,error) ||
         !options.quakeworld || options.program!=QA_Q1_ID1 || options.edition!=QA_Q1_CLASSIC)
@@ -598,7 +598,7 @@ bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
          * Preserve the source's binary64 center until coordinate conversion. */
         okay=qa_nq_write_damage(&writer,byte(feedback.armor),byte(feedback.blood),feedback.origin);
         if (okay) okay=application_emit_protocol(source.provider,&(qa_application_protocol_event){
-            .provider=source.provider->owner,.dialect=QA_CLOCK_QUAKEWORLD,.time_ns=time_ns,
+            .provider=source.provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=time_ns,
             .recipient=actor,.payload={bytes,qa_net_writer_size(&writer)},.destination=1,.reliable=true},error);
     }
     application_native_q1_wire_end(&source);return okay;

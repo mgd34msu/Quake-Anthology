@@ -123,7 +123,7 @@ static bool returned(qa_application *app, struct application_native_q2 *engine,
         !qa_native_terminal(qa_native_host_instance(p->state.native.host)) &&
         qa_session_clock(app->session, p->owner, clock) && clock->frame.provider == p->owner &&
         clock->frame.phase == QA_FRAME_EXIT && clock->frame.number == clock->frame_number &&
-        clock->frame.kind == (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE) &&
+        clock->frame.kind == (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) &&
         (!clock->frame.number || (engine->frame.provider == clock->frame.provider &&
             engine->frame.kind == clock->frame.kind && engine->frame.number == clock->frame.number &&
             engine->frame.start_ns == clock->frame.start_ns && engine->frame.time_ns == clock->frame.time_ns &&

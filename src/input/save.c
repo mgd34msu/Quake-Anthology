@@ -208,8 +208,8 @@ static bool ui_graph(qa_source_save_io *io, qa_input_seat *seat, const qa_input_
 static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_input_checkpoint_refs *refs)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ; uint32_t dialect=seat->options.context.dialect, focus=seat->focus;
-    if (!qa_source_save_u32(io,&dialect) || dialect>QA_CONSOLE_Q3 || !qa_source_save_u32(io,&focus) || focus>QA_INPUT_UI) return false;
-    if (reading) { seat->options.context.dialect=(qa_console_dialect)dialect; seat->focus=(qa_input_focus)focus; }
+    if (!qa_source_save_u32(io,&dialect) || dialect>QA_RULESET_Q3 || !qa_source_save_u32(io,&focus) || focus>QA_INPUT_UI) return false;
+    if (reading) { seat->options.context.dialect=(qa_ruleset_id)dialect; seat->focus=(qa_input_focus)focus; }
     FIELD(bool,seat,focused); FIELD(u8,seat,impulse);
     if (!tuning(io,&seat->options.gamepad) || !gamepad(io,&seat->gamepad) || !pair(io,&seat->mouse)) return false;
     for (size_t i=0;i<QA_INPUT_ACTION_COUNT;++i) if (!button(io,&seat->buttons[i])) return false;

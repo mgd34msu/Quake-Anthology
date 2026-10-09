@@ -14,7 +14,7 @@ static void write_frame(qa_net_writer *w, const qa_source_frame *v)
 }
 static void read_frame(qa_net_reader *r, qa_source_frame *v)
 {
-    v->provider = qa_net_read_u32(r); v->kind = (qa_clock_kind)qa_net_read_u32(r);
+    v->provider = qa_net_read_u32(r); v->kind = (qa_ruleset_id)qa_net_read_u32(r);
     v->phase = (qa_frame_phase)qa_net_read_u32(r); v->number = qa_net_read_u64(r);
     v->start_ns = qa_net_read_u64(r); v->elapsed_ns = qa_net_read_u64(r); v->time_ns = qa_net_read_u64(r);
 }
@@ -114,7 +114,7 @@ bool qa_save_session_decode(qa_bytes bytes, qa_session_checkpoint *out, qa_error
     }
     for (size_t i = 0; i < v.component_count && !r.failed; ++i) {
         qa_session_component_checkpoint *c = v.components + i;
-        c->owner = qa_net_read_u32(&r); c->config.kind = (qa_clock_kind)qa_net_read_u32(&r);
+        c->owner = qa_net_read_u32(&r); c->config.kind = (qa_ruleset_id)qa_net_read_u32(&r);
         c->config.initial_time_ns = qa_net_read_u64(&r); c->config.interval_ns = qa_net_read_u64(&r);
         c->config.minimum_frame_ns = qa_net_read_u64(&r); c->config.maximum_frame_ns = qa_net_read_u64(&r);
         c->config.initial_lead_ns = qa_net_read_u64(&r); c->config.maximum_steps = qa_net_read_u32(&r);
@@ -131,7 +131,7 @@ bool qa_save_session_decode(qa_bytes bytes, qa_session_checkpoint *out, qa_error
     }
     for (size_t i = 0; i < v.scheduler.provider_count && !r.failed; ++i) {
         qa_scheduler_provider_checkpoint *p = v.scheduler.providers + i;
-        p->owner = qa_net_read_u32(&r); p->kind = (qa_clock_kind)qa_net_read_u32(&r); p->order = qa_net_read_u64(&r);
+        p->owner = qa_net_read_u32(&r); p->kind = (qa_ruleset_id)qa_net_read_u32(&r); p->order = qa_net_read_u64(&r);
     }
     for (size_t i = 0; i < v.scheduler.think_count && !r.failed; ++i) {
         qa_scheduler_think_checkpoint *t = v.scheduler.thinks + i;

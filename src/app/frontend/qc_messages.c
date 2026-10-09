@@ -91,11 +91,11 @@ static bool row_current(const frontend_qc_messages *owner, const qc_recipient *r
         source.product->family != QA_GAME_Q1 || source.descriptor->selection.runtime != QA_PROGRAM_BUILTIN) return false;
     if (qa_q1_is_qw(row->native_protocol)) {
         qa_application_network_qw_source physical;
-        return source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD &&
+        return source.descriptor->selection.clock.kind == QA_RULESET_QUAKEWORLD &&
             qa_application_network_qw_source_read(owner->application,&physical,NULL) && physical.owner == row->native_provider;
     }
     qa_actor_owner provider; uint32_t slot; qa_net_protocol_id protocol;
-    return source.descriptor->selection.clock.kind == QA_CLOCK_NETQUAKE &&
+    return source.descriptor->selection.clock.kind == QA_RULESET_NETQUAKE &&
         qa_application_network_q1_source(owner->application,actor,&provider,&slot,&protocol,NULL) &&
         provider == row->native_provider && protocol.kind == row->native_protocol.kind &&
         protocol.revision == row->native_protocol.revision && protocol.flags == row->native_protocol.flags;
@@ -111,9 +111,9 @@ static bool native_rows(frontend_qc_messages *owner, qa_error *error)
             !qa_application_player_actor(owner->application,logical,&actor)) continue;
         if (!frontend_config_store_primary_legacy_read(owner->frontend->config_store,logical,&source,&present,error)) return false;
         if (!present || source.product->family != QA_GAME_Q1 || source.descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
-            (source.descriptor->selection.clock.kind != QA_CLOCK_NETQUAKE &&
-             source.descriptor->selection.clock.kind != QA_CLOCK_QUAKEWORLD)) continue;
-        bool qw=source.descriptor->selection.clock.kind == QA_CLOCK_QUAKEWORLD;
+            (source.descriptor->selection.clock.kind != QA_RULESET_NETQUAKE &&
+             source.descriptor->selection.clock.kind != QA_RULESET_QUAKEWORLD)) continue;
+        bool qw=source.descriptor->selection.clock.kind == QA_RULESET_QUAKEWORLD;
         admitted_qw=admitted_qw || qw;
         if (frontend_network_local_input_owned(owner->frontend,seat)) continue;
         bool retained=false;
@@ -316,7 +316,7 @@ static bool packet(frontend_qc_messages *owner,qc_recipient *row,
     const qa_application_protocol_event *event,size_t *offset,qa_error *error)
 {
     bool qw=qa_q1_is_qw(row_protocol(row));
-    if(event->provider!=row_provider(row) || event->dialect!=(qw?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE) ||
+    if(event->provider!=row_provider(row) || event->dialect!=(qw?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE) ||
         (event->multicast && !qw) ||
         (event->recipient.registry && !qa_actor_id_equal(event->recipient,row_actor(row))) || *offset>event->payload.size)
         return frontend_fail(error,QA_ERROR_FORMAT,"Local QC packet leaves its actual source and recipient");

@@ -44,7 +44,7 @@ typedef struct application_control_context {
 } application_control_context;
 static inline qa_actor_owner application_control_provider(const application_control_context *context)
 { return context->command_only ? context->command.provider : context->frame.provider; }
-static inline qa_clock_kind application_control_kind(const application_control_context *context)
+static inline qa_ruleset_id application_control_kind(const application_control_context *context)
 { return context->command_only ? context->command.kind : context->frame.kind; }
 static inline uint64_t application_control_time(const application_control_context *context)
 { return context->command_only ? context->command.time_ns : context->frame.time_ns; }

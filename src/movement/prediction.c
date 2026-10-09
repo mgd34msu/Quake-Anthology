@@ -9,10 +9,10 @@ static int32_t difference(int32_t a, int32_t b) { return signed_word((uint32_t)a
 void qa_q3_command_history_init(qa_q3_command_history *history) {
     if (!history) return;
     memset(history,0,sizeof(*history));
-    for (size_t i=0;i<64;i++) history->commands[i].kind=QA_MOVEMENT_Q3;
+    for (size_t i=0;i<64;i++) history->commands[i].kind=QA_RULESET_Q3;
 }
 bool qa_q3_command_history_append(qa_q3_command_history *history, const qa_movement_command *command, uint32_t *number, qa_error *error) {
-    if (!history||!command||command->kind!=QA_MOVEMENT_Q3) {
+    if (!history||!command||command->kind!=QA_RULESET_Q3) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 command history requires a Q3 command"); return false;
     }
     history->current_number++;
@@ -31,8 +31,8 @@ bool qa_q3_command_history_read(const qa_q3_command_history *history, uint32_t n
 void qa_q3_prediction_init(qa_q3_prediction *prediction) {
     if (!prediction) return;
     memset(prediction,0,sizeof(*prediction));
-    prediction->predicted.kind=QA_MOVEMENT_Q3;
-    prediction->command.kind=QA_MOVEMENT_Q3;
+    prediction->predicted.kind=QA_RULESET_Q3;
+    prediction->command.kind=QA_RULESET_Q3;
 }
 void qa_q3_prediction_free(qa_q3_prediction *prediction) {
     if (!prediction) return;
@@ -40,7 +40,7 @@ void qa_q3_prediction_free(qa_q3_prediction *prediction) {
     memset(prediction,0,sizeof(*prediction));
 }
 bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_movement_command *command, qa_error *error) {
-    if (!state||!command||state->kind!=QA_MOVEMENT_Q3||command->kind!=QA_MOVEMENT_Q3) {
+    if (!state||!command||state->kind!=QA_RULESET_Q3||command->kind!=QA_RULESET_Q3) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction view requires Q3 state and command"); return false;
     }
     qa_q3_movement_state *s=&state->data.q3;
@@ -49,7 +49,7 @@ bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_mo
     return true;
 }
 void qa_movement_q3_finish_jump_pads(qa_movement_state *state) {
-    if (state&&state->kind==QA_MOVEMENT_Q3&&state->data.q3.jump_pad_frame!=state->data.q3.movement_frame) {
+    if (state&&state->kind==QA_RULESET_Q3&&state->data.q3.jump_pad_frame!=state->data.q3.movement_frame) {
         state->data.q3.jump_pad=(qa_actor_id){0}; state->data.q3.jump_pad_frame=0;
     }
 }
@@ -94,8 +94,8 @@ static void warn(const qa_q3_prediction_host *host, const qa_q3_prediction_setti
 bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const qa_q3_prediction_settings *settings,
                     const qa_q3_prediction_frame *frame, qa_q3_prediction_output *out, qa_error *error) {
     if (!p||!host||!settings||!frame||!out||!host->commands||!frame->snapshot||
-        frame->snapshot->movement.kind!=QA_MOVEMENT_Q3||
-        (frame->next_snapshot&&frame->next_snapshot->movement.kind!=QA_MOVEMENT_Q3)||
+        frame->snapshot->movement.kind!=QA_RULESET_Q3||
+        (frame->next_snapshot&&frame->next_snapshot->movement.kind!=QA_RULESET_Q3)||
         !isfinite(settings->error_decay_value)||(settings->error_decay_integer&&settings->error_decay_value<=0)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q3 prediction frame or settings"); return false;
     }
@@ -158,7 +158,7 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
         qa_movement_input input;
         if (!host->movement_input(host->context,&p->predicted,&p->command,number,physics_time,&input,error)) return false;
         input.state=p->predicted; input.command=p->command; input.command.sequence=number;
-        input.prediction=true; input.profile.kind=QA_MOVEMENT_Q3; input.profile.data.q3.fixed_ms=settings->fixed?msec:0;
+        input.prediction=true; input.profile.kind=QA_RULESET_Q3; input.profile.data.q3.fixed_ms=settings->fixed?msec:0;
         qa_movement_result *movement=&p->scratch;
         if (!qa_movement_move(&input,&host->movement_services,movement,error)) return false;
         if (movement->status==QA_MOVEMENT_ACTOR_REMOVED) {
@@ -172,7 +172,7 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
             result.hyperspace|=hyperspace;
             if (state==QA_MOVEMENT_ERROR) return false;
             if (state==QA_MOVEMENT_REMOVED) { result.status=QA_PREDICTION_ACTOR_REMOVED; result.movement=p->predicted; *out=result; return true; }
-            if (state!=QA_MOVEMENT_CONTINUE||p->predicted.kind!=QA_MOVEMENT_Q3) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction trigger changed its movement family"); return false; }
+            if (state!=QA_MOVEMENT_CONTINUE||p->predicted.kind!=QA_RULESET_Q3) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction trigger changed its movement family"); return false; }
         }
     }
     if (moved) {

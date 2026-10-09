@@ -271,7 +271,7 @@ bool application_q3_guest_client_command(application_provider *provider, uint32_
     if (!client || !client->connected || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 command requires a connected client");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
     qa_command_tokens prior = engine->arguments; engine->arguments = next;
     int32_t argument = (int32_t)slot, result;
     bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
@@ -430,7 +430,7 @@ static bool server_command(void *context, int32_t number, bool *present, qa_erro
     const char *text = qa_q3_reliable_lookup(&client->reliable, number);
 rescan: ;
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error)) return false;
     qa_command_tokens_free(&role->arguments); role->arguments = tokens;
     if (tokens.count && !strcmp(tokens.values[0], "disconnect")) {
         const char *reason = tokens.count >= 2 ? tokens.values[1] : "Server disconnected";
@@ -484,7 +484,7 @@ rescan: ;
             client->pending_system_info = false;
         }
         qa_command_tokens restored = {0};
-        if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &restored, error)) return false;
+        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &restored, error)) return false;
         qa_command_tokens_free(&role->arguments); role->arguments = restored;
     }
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "map_restart") &&
@@ -576,7 +576,7 @@ static bool ui_client_state(void *context, const qa_q3_host *host,
         !qa_q3_host_client_context_read(host, &actual) || actual.role != QA_QVM_UI ||
         actual.session != receiver->application->session || actual.owner != receiver->owner ||
         actual.service_owner != role->service_owner || actual.command_context.owner != receiver->owner ||
-        actual.command_context.seat != role->seat || actual.command_context.dialect != QA_CONSOLE_Q3)
+        actual.command_context.seat != role->seat || actual.command_context.dialect != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "UI client state lost its actual local role and GAME source");
     bool retained = false;
     for (q3g_role *row = engine->roles; row; row = row->next) if (row == role) retained = true;

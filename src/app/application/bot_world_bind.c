@@ -164,7 +164,7 @@ static bool print(void *context,const char *text,qa_error *error) {
     application_bot_world_binding *binding=context;
     if(!source_live(binding,error) || !text) return false;
     qa_application *app=binding->bots->application;
-    qa_command_context request={.owner=binding->source->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER},actual;
+    qa_command_context request={.owner=binding->source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER},actual;
     if(!qa_application_capture_command_context(app,&request,&actual,error)) return false;
     qa_console_emit(app->console,&actual,text);return true;
 }
@@ -226,7 +226,7 @@ static bool exit_level(void *context,qa_error *error) {
 static bool console(void *context,const char *text,qa_error *error) {
     application_bot_world_binding *binding=context;
     if(!source_live(binding,error)) return false;
-    qa_command_context request={.owner=binding->source->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
+    qa_command_context request={.owner=binding->source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     return qa_console_insert(binding->bots->application->console,&request,text,error);
 }
 static bool message(void *context,uint32_t slot,const char *text,qa_error *error) {

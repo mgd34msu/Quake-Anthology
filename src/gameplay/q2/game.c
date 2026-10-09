@@ -395,8 +395,8 @@ qa_component qa_q2_component(qa_q2_game *g) {
                               .command_actor = command_actor,
                               .actor_released = released};
     component.clock = qa_clock_defaults(g->options.edition == QA_Q2_CLASSIC
-                                            ? QA_CLOCK_Q2_CLASSIC
-                                            : QA_CLOCK_Q2_RERELEASE);
+                                            ? QA_RULESET_Q2_CLASSIC
+                                            : QA_RULESET_Q2_RERELEASE);
     if (g->options.frame_ns != 0)
         component.clock.interval_ns = g->options.frame_ns;
     return component;

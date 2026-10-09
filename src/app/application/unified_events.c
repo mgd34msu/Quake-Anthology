@@ -42,7 +42,7 @@ bool application_unified_event_source_read(qa_application *app, qa_actor_owner o
     if (!component.descriptor || !component.product || !component.content || !component.catalog)
         return application_fail(error, QA_ERROR_ARGUMENT, "Component Source event lost its retained content owner");
     *out = (application_unified_event_source){owner, component.descriptor, component.product,
-        component.content, QA_CLOCK_Q3, true};
+        component.content, QA_RULESET_Q3, true};
     return true;
 }
 
@@ -741,7 +741,7 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
             activation = app->unified_event_owners + i;
     if (!activation || !activation->generation)
         return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
-    if (!clock || !clock->provider || (unsigned)clock->kind > QA_CLOCK_Q3)
+    if (!clock || !clock->provider || (unsigned)clock->kind > QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
     application_event_write write;
     if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, error)) return false;
@@ -776,8 +776,8 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
         .value.owner = {.kind = QA_UNIFIED_OWNER_RETIRED,
             .owner = {.provider = event_alias(app, owner), .generation = activation->generation}}};
     application_unified_event_record first = {.presentation = &retired, .provider = owner,
-        .content = activation->content, .family = clock->kind == QA_CLOCK_Q3 ? QA_GAME_Q3 :
-            clock->kind == QA_CLOCK_Q2_CLASSIC || clock->kind == QA_CLOCK_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1,
+        .content = activation->content, .family = clock->kind == QA_RULESET_Q3 ? QA_GAME_Q3 :
+            clock->kind == QA_RULESET_Q2_CLASSIC || clock->kind == QA_RULESET_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1,
         .clock = clock->kind, .presentation_clock = clock->kind,
         .time_ns = clock->time_ns, .simulation_time_ns = clock->time_ns};
     if (!application_unified_event_append(app, &first, error)) goto abort;
@@ -813,7 +813,7 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     qa_q2_edition q2_edition; bool q2_profile; uint64_t q2_interval;
     if (!qa_application_native_q2_source_clock_read(app, owner, &q2_edition, &q2_interval, &q2_profile, e)) return false;
     if (q2_profile) {
-        qa_clock_kind actual = q2_edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE;
+        qa_ruleset_id actual = q2_edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE;
         if (source.clock != actual) return application_fail(e, QA_ERROR_FORMAT, "Q2 Source rules differ from its emitted clock receipt");
         borrowed.q2_source_profile = q2_edition == QA_Q2_CLASSIC ? 1 : 2; borrowed.q2_source_interval_ns = q2_interval;
     }
@@ -854,9 +854,9 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     return !own || application_event_stream_commit(app, &write, e);
 }
 
-static double source_time(uint64_t ns, qa_clock_kind clock, bool milliseconds)
+static double source_time(uint64_t ns, qa_ruleset_id clock, bool milliseconds)
 {
-    if (clock == QA_CLOCK_Q3) {
+    if (clock == QA_RULESET_Q3) {
         uint32_t bits = (uint32_t)(ns / UINT64_C(1000000)); int32_t signed_bits;
         memcpy(&signed_bits, &bits, sizeof(bits)); return milliseconds ? signed_bits : (double)signed_bits / 1000;
     }
@@ -878,8 +878,8 @@ bool application_unified_damage_emit(qa_application *app, const qa_damage_outcom
     const qa_damage_request *request = &outcome->request; const qa_attack *attack = &request->attack;
     application_provider *source = source_provider(app, attack->weapon_provider);
     if (!source || !source->launch) return application_fail(e, QA_ERROR_FORMAT, "Damage attack lost its genuine source weapon provider");
-    qa_clock_kind clock = source->launch->selection.clock.kind;
-    bool ms = clock == QA_CLOCK_Q2_RERELEASE || clock == QA_CLOCK_Q3;
+    qa_ruleset_id clock = source->launch->selection.clock.kind;
+    bool ms = clock == QA_RULESET_Q2_RERELEASE || clock == QA_RULESET_Q3;
     application_event_write write;
     bool own = app->event_write == NULL;
     if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
@@ -1118,7 +1118,7 @@ static bool events_project(qa_application *app, const application_unified_source
             ok = qa_unified_presentation_event_clone(&borrowed, target, e);
         }
         if (ok && simulation_for(r, recipient, player->actor)) {
-            bool milliseconds = r->clock == QA_CLOCK_Q2_RERELEASE;
+            bool milliseconds = r->clock == QA_RULESET_Q2_RERELEASE;
             qa_unified_simulation_event borrowed = {.sequence = r->simulation_sequence,
                 .time = source_time(r->simulation_time_ns, r->clock, milliseconds), .milliseconds = milliseconds,
                 .private_audience = r->simulation_recipient.registry != 0, .client_slot = r->client.slot,

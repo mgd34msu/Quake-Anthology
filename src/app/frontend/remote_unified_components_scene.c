@@ -186,12 +186,12 @@ static bool console_prepare(remote_component *r,const frontend_remote_unified_do
         !registry||!r->frame||r->frame->viewer.registry!=qa_actors_identity(registry)||
         !r->owner||!r->services||!r->state.generation||r->state.owner_generation!=r->state.generation)
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Received CG constructor lost its actual common owners or player provenance");
-    qa_cvar_options cvars={.dialect=QA_CONSOLE_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,
+    qa_cvar_options cvars={.dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME,
         .seat=domain->command_context.seat,.user=r,.print=print,.cheats_allowed=cheats};
     if(!r->cvars) r->cvars=qa_cvars_create_view(shared,&cvars,e);
     if(!r->cvars) return false;
     qa_command_context command=domain->command_context;
-    command.owner=r->services; command.dialect=QA_CONSOLE_Q3; command.origin=QA_COMMAND_REMOTE;
+    command.owner=r->services; command.dialect=QA_RULESET_Q3; command.origin=QA_COMMAND_REMOTE;
     command.registry=qa_actors_identity(registry); command.generation=r->state.generation;
     command.actor=r->frame->viewer; command.cvar_view=qa_cvars_view_identity(r->cvars);
     command.direct=false; command.console_text=false; command.script=NULL;

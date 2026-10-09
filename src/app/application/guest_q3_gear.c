@@ -23,7 +23,7 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
         !qa_strings_cstr(qa_session_strings(options->host.session), options->host.owner) ||
         options->host.role != QA_QVM_GAME || options->host.abi != QA_QVM_Q3_MODERN ||
         options->host.command_context.owner != options->host.owner ||
-        options->host.command_context.dialect != QA_CONSOLE_Q3 ||
+        options->host.command_context.dialect != QA_RULESET_Q3 ||
         options->host.frontend_lifetime || options->host.bots || options->host.script_globals ||
         !options->current || !options->target || !options->damage || !options->velocity ||
         !options->configstring ||

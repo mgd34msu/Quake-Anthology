@@ -452,7 +452,7 @@ static bool bot_print(void *opaque,const char *text,qa_error *error) {
     if(!source || !source->constructed || !source->attached || source->close_pending || !text)
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot Print source has retired");
     if(source->kind==APPLICATION_PROVIDER_Q3) return application_native_q3_console_print(source,text,error);
-    qa_command_context command={.owner=source->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
+    qa_command_context command={.owner=source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     if(!qa_application_capture_command_context(bots->application,&command,&command,error)) return false;
     application_console_print(bots->application,&command,text);return true;
 }
@@ -686,7 +686,7 @@ static bool bot_insert_command(void *opaque,const char *text,qa_error *error) {
     application_provider *source=bot_source(opaque);qa_console *console;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 ||
        !application_native_q3_console_at(source,&console,NULL,NULL)) return false;
-    qa_command_context context={.owner=source->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
+    qa_command_context context={.owner=source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     return qa_console_insert(console,&context,text,error);
 }
 static bool bot_random(void *opaque,float *out,qa_error *error) {

@@ -54,7 +54,7 @@ static bool client_flush(void *context, qa_network_runtime *runtime, qa_net_clie
 static bool client_command(void *context, const qa_network_command *command, qa_error *error)
 {
     q3_runtime_client *p = context;
-    if (command->movement.kind != QA_MOVEMENT_Q3 || command->has_arsenal ||
+    if (command->movement.kind != QA_RULESET_Q3 || command->has_arsenal ||
         command->movement.forward_move < -127 || command->movement.forward_move > 127 ||
         command->movement.side_move < -127 || command->movement.side_move > 127 ||
         command->movement.up_move < -127 || command->movement.up_move > 127)

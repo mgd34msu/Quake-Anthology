@@ -377,7 +377,7 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
     }
     case APPLICATION_PROVIDER_QVM: {
         uint32_t slot;
-        okay = character->component.clock.kind == QA_CLOCK_Q3 &&
+        okay = character->component.clock.kind == QA_RULESET_Q3 &&
             application_q3_guest_actor_client(character, actor, &slot);
         break;
     }

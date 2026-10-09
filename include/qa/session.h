@@ -8,7 +8,7 @@ typedef struct qa_session qa_session;
 typedef void (*qa_cleanup_fn)(void *context);
 
 typedef struct qa_clock_config {
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
     uint64_t initial_time_ns;
     uint64_t interval_ns;
     uint64_t minimum_frame_ns;
@@ -108,7 +108,7 @@ typedef struct qa_session_options {
     void *release_context;
 } qa_session_options;
 
-qa_clock_config qa_clock_defaults(qa_clock_kind kind);
+qa_clock_config qa_clock_defaults(qa_ruleset_id kind);
 bool qa_session_create(const qa_session_options *options, qa_session **out, qa_error *error);
 /* Requires a safe point and no component or scheduler admissions. If ready,
  * destruction consumes the session even when false reports a cleanup error.

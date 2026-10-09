@@ -259,7 +259,7 @@ bool application_native_mode_q3_clock(void *opaque, qa_mode_id mode, int32_t *ou
     if (p->kind == APPLICATION_PROVIDER_Q3 && p->state.q3)
         return qa_q3_source_clock(p->state.q3, out, e);
     if ((p->kind == APPLICATION_PROVIDER_QVM || p->kind == APPLICATION_PROVIDER_NATIVE) &&
-        p->component.clock.kind == QA_CLOCK_Q3)
+        p->component.clock.kind == QA_RULESET_Q3)
         return application_q3_guest_round_clock(p, out, e);
     return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 mode has no running GAME clock owner");
 }
@@ -547,7 +547,7 @@ bool application_native_q3_source_end_frame(void *opaque,
     qa_source_frame active;
     int32_t time;
     if (!app || !frame || p->kind != APPLICATION_PROVIDER_Q3 ||
-        frame->provider != p->owner || frame->kind != QA_CLOCK_Q3 ||
+        frame->provider != p->owner || frame->kind != QA_RULESET_Q3 ||
         frame->phase != QA_CLIENT_END_FRAME || app->operation != APPLICATION_ADVANCING ||
         !p->constructed || !p->attached || p->close_pending || app->destroy_requested ||
         !application_native_q3_console_settings_bound(p) || !app->modes ||

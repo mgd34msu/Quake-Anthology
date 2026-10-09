@@ -22,10 +22,10 @@ static bool ground_read(const frontend_remote_unified_prediction *p,const qa_uni
 static bool state_actors_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_movement_state *state,qa_error *e)
 {
     switch(state->kind){
-    case QA_MOVEMENT_NETQUAKE:return ground_read(p,frame,&state->data.nq.ground,e);
-    case QA_MOVEMENT_QUAKEWORLD:return ground_read(p,frame,&state->data.qw.ground,e);
-    case QA_MOVEMENT_Q2_CLASSIC:case QA_MOVEMENT_Q2_RERELEASE:return true;
-    case QA_MOVEMENT_Q3:return ground_read(p,frame,&state->data.q3.ground,e) && actor_read(p,frame,state->data.q3.jump_pad,&state->data.q3.jump_pad,e);
+    case QA_RULESET_NETQUAKE:return ground_read(p,frame,&state->data.nq.ground,e);
+    case QA_RULESET_QUAKEWORLD:return ground_read(p,frame,&state->data.qw.ground,e);
+    case QA_RULESET_Q2_CLASSIC:case QA_RULESET_Q2_RERELEASE:return true;
+    case QA_RULESET_Q3:return ground_read(p,frame,&state->data.q3.ground,e) && actor_read(p,frame,state->data.q3.jump_pad,&state->data.q3.jump_pad,e);
     }
     return false;
 }
@@ -43,7 +43,7 @@ static bool profile_read(const frontend_remote_unified_prediction *p,const qa_un
     const qa_unified_movement_numeric *numeric=&received->numeric;
     if (!numeric->native_c || numeric->radix!=FLT_RADIX || numeric->scalar_mantissa_bits!=FLT_MANT_DIG ||
         numeric->double_mantissa_bits!=DBL_MANT_DIG || numeric->evaluation_method!=FLT_EVAL_METHOD ||
-        numeric->qw_origin_binary64!=(received->profile.kind==QA_MOVEMENT_QUAKEWORLD))
+        numeric->qw_origin_binary64!=(received->profile.kind==QA_RULESET_QUAKEWORLD))
         return fail(e,QA_ERROR_UNSUPPORTED,"Received movement arithmetic differs from the actual native kernel");
     if (numeric->rounding!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
     *rounding=numeric->rounding; return true;
@@ -179,19 +179,19 @@ static bool same_command(const qa_unified_movement *a, const qa_unified_movement
     if(a->kind!=b->kind) return false;
 #define EQ(field) same_number(a->data.field,b->data.field)
     switch(a->kind) {
-    case QA_MOVEMENT_NETQUAKE:
+    case QA_RULESET_NETQUAKE:
         return EQ(nq.acknowledged_seconds) && EQ(nq.angles.x) && EQ(nq.angles.y) && EQ(nq.angles.z) &&
             EQ(nq.forward) && EQ(nq.side) && EQ(nq.up) && EQ(nq.buttons) && EQ(nq.impulse);
-    case QA_MOVEMENT_QUAKEWORLD:
+    case QA_RULESET_QUAKEWORLD:
         return EQ(qw.milliseconds) && EQ(qw.angles.x) && EQ(qw.angles.y) && EQ(qw.angles.z) &&
             EQ(qw.forward) && EQ(qw.side) && EQ(qw.up) && EQ(qw.buttons) && EQ(qw.impulse);
-    case QA_MOVEMENT_Q2_CLASSIC:
+    case QA_RULESET_Q2_CLASSIC:
         return EQ(q2.milliseconds) && EQ(q2.angle_shorts[0]) && EQ(q2.angle_shorts[1]) && EQ(q2.angle_shorts[2]) &&
             EQ(q2.forward) && EQ(q2.side) && EQ(q2.up) && EQ(q2.buttons) && EQ(q2.impulse) && EQ(q2.light_level);
-    case QA_MOVEMENT_Q2_RERELEASE:
+    case QA_RULESET_Q2_RERELEASE:
         return EQ(q2r.milliseconds) && EQ(q2r.angles.x) && EQ(q2r.angles.y) && EQ(q2r.angles.z) &&
             EQ(q2r.forward) && EQ(q2r.side) && EQ(q2r.buttons) && EQ(q2r.server_frame);
-    case QA_MOVEMENT_Q3:
+    case QA_RULESET_Q3:
         return EQ(q3.server_time_ms) && EQ(q3.angle_words[0]) && EQ(q3.angle_words[1]) && EQ(q3.angle_words[2]) &&
             EQ(q3.buttons) && EQ(q3.weapon) && EQ(q3.forward) && EQ(q3.right) && EQ(q3.up);
     }
@@ -237,15 +237,15 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
     if(matched) *matched=false;
     *s=p->snapshot;
     *status=FRONTEND_UNIFIED_PREDICTION_UNCHANGED;
-    bool disabled=(s->input.state.kind==QA_MOVEMENT_Q2_CLASSIC && (s->input.state.data.q2.flags&64u)) ||
-        (s->input.state.kind==QA_MOVEMENT_Q2_RERELEASE && (s->input.state.data.q2r.flags&64u));
+    bool disabled=(s->input.state.kind==QA_RULESET_Q2_CLASSIC && (s->input.state.data.q2.flags&64u)) ||
+        (s->input.state.kind==QA_RULESET_Q2_RERELEASE && (s->input.state.data.q2r.flags&64u));
     if(disabled) {
         *status=FRONTEND_UNIFIED_PREDICTION_DISABLED;
         if(p->command_count) {
             qa_movement_command command;
             const prediction_command *last=p->commands+p->command_count-1;
             if(!qa_application_control_project_unified(&last->raw,&s->input.state,last->sequence,&command,e)) return false;
-            if(command.kind==QA_MOVEMENT_Q2_CLASSIC) {
+            if(command.kind==QA_RULESET_Q2_CLASSIC) {
                 float angles[3];
                 for(unsigned i=0;i<3;++i) {
                     uint16_t word=(uint16_t)command.angle_words[i];
@@ -268,22 +268,22 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
         in.view_offset=s->offset; in.q2r_pml_origin=&s->pml; in.snap_initial=i==0;
         ok=qa_application_control_project_unified(&entry->raw,&in.state,entry->sequence,&in.command,e);
         if(!ok) break;
-        double duration=in.state.kind==QA_MOVEMENT_NETQUAKE || in.state.kind==QA_MOVEMENT_Q3?fmax(0,entry->time_ms-s->time_ms):in.command.milliseconds;
+        double duration=in.state.kind==QA_RULESET_NETQUAKE || in.state.kind==QA_RULESET_Q3?fmax(0,entry->time_ms-s->time_ms):in.command.milliseconds;
         if(!isfinite(duration) || duration>=(double)UINT64_MAX/1000000.0 || entry->time_ms>=(double)UINT64_MAX/1000000.0)
             { ok=fail(e,QA_ERROR_FORMAT,"Prediction clock exceeds its native duration domain"); break; }
         in.elapsed_ns=(uint64_t)(duration*1000000.0);
         in.time_ns=entry->time_ms<=0?0:(uint64_t)(entry->time_ms*1000000.0);
-        in.has_source_seconds=in.state.kind==QA_MOVEMENT_NETQUAKE; in.source_seconds=entry->time_ms/1000;
-        if(in.state.kind==QA_MOVEMENT_Q2_CLASSIC) in.profile.data.q2.snap_initial=false;
-        if(in.state.kind==QA_MOVEMENT_Q3) in.environment.gravity_multiplier=1;
-        if(in.state.kind==QA_MOVEMENT_QUAKEWORLD && in.environment.has_stance) { in.profile.data.qw.shared_controls=true; in.shape.bounds=in.current_bounds; }
-        bool boundary=prior_command_time&&in.state.kind==QA_MOVEMENT_Q3&&
+        in.has_source_seconds=in.state.kind==QA_RULESET_NETQUAKE; in.source_seconds=entry->time_ms/1000;
+        if(in.state.kind==QA_RULESET_Q2_CLASSIC) in.profile.data.q2.snap_initial=false;
+        if(in.state.kind==QA_RULESET_Q3) in.environment.gravity_multiplier=1;
+        if(in.state.kind==QA_RULESET_QUAKEWORLD && in.environment.has_stance) { in.profile.data.qw.shared_controls=true; in.shape.bounds=in.current_bounds; }
+        bool boundary=prior_command_time&&in.state.kind==QA_RULESET_Q3&&
             in.state.data.q3.command_time_ms==*prior_command_time&&
             in.command.server_time_ms>in.state.data.q3.command_time_ms;
         ok=qa_movement_move(&in,&services,&result,e);
         if(ok && result.status!=QA_MOVEMENT_ACTIVE) ok=fail(e,QA_ERROR_FORMAT,"Private movement cannot retire an authoritative actor");
         if(ok) {
-            if(boundary&&result.state.kind==QA_MOVEMENT_Q3&&
+            if(boundary&&result.state.kind==QA_RULESET_Q3&&
                 result.state.data.q3.command_time_ms!=in.state.data.q3.command_time_ms&&matched) *matched=true;
             s->input.state=result.state; s->input.current_bounds=result.bounds;
             s->angles=result.view_angles; s->height=result.view_height;
@@ -443,7 +443,7 @@ bool frontend_remote_unified_prediction_merged_q3(frontend_remote_unified_predic
     uint32_t clock=(uint32_t)(int64_t)predicted.command_time_ms;
     memcpy(&merged.commandTime,&clock,sizeof(clock));
     if(!q3_ground_number(source,predicted.ground,&merged.groundEntityNum,e)) return false;
-    if(predicted.state.kind==QA_MOVEMENT_Q3) {
+    if(predicted.state.kind==QA_RULESET_Q3) {
         const qa_q3_movement_state *state=&predicted.state.data.q3;
         merged.commandTime=state->command_time_ms;merged.pmType=state->movement_type;
         memcpy(&merged.pmFlags,&state->movement_flags,sizeof(merged.pmFlags));

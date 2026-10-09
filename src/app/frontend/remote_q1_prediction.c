@@ -140,7 +140,7 @@ static bool replay(frontend_remote_q1 *row,qa_error *error)
     qa_actor_id actor;
     if(!remote_q1_actor_read(row,row->view_entity,&actor,error)) return false;
     const qa_qw_movevars *v=&row->qw.movement;
-    qa_movement_profile profile=qa_movement_profile_default(QA_MOVEMENT_QUAKEWORLD);
+    qa_movement_profile profile=qa_movement_profile_default(QA_RULESET_QUAKEWORLD);
     profile.data.qw.maximum_command_ms=50; profile.data.qw.shared_controls=false;
     profile.data.qw.parameters=(qa_q1_movement_parameters){v->gravity,v->stop_speed,v->max_speed,
         v->spectator_max_speed,v->accelerate,v->air_accelerate,v->water_accelerate,v->friction,v->water_friction,v->entity_gravity};
@@ -148,14 +148,14 @@ static bool replay(frontend_remote_q1 *row,qa_error *error)
     qa_movement_result result={0}; bool ok=true;
     for(size_t i=0;ok && i<p->count;++i) {
         sent_command *entry=p->history+i;
-        qa_movement_input input=qa_movement_input_default(QA_MOVEMENT_QUAKEWORLD,actor);
+        qa_movement_input input=qa_movement_input_default(QA_RULESET_QUAKEWORLD,actor);
         input.profile=profile; input.state.data.qw=state; input.prediction=true;
         input.environment.health=(float)row->data.health;
         input.environment.gravity_multiplier=1;
         input.time_ns=entry->sent_ns; input.elapsed_ns=(uint64_t)entry->command.msec*1000000;
         input.standing.bounds=input.crouched.bounds=input.dead.bounds=(qa_bounds){qa_v3(-16,-16,-24),qa_v3(16,16,32)};
         input.standing.view_height=input.crouched.view_height=input.dead.view_height=p->view_height;
-        input.command=(qa_movement_command){.kind=QA_MOVEMENT_QUAKEWORLD,.sequence=entry->sequence,
+        input.command=(qa_movement_command){.kind=QA_RULESET_QUAKEWORLD,.sequence=entry->sequence,
             .milliseconds=entry->command.msec,.angles=vector(entry->command.angles),
             .forward_move=entry->command.forward,.side_move=entry->command.side,.up_move=entry->command.up,
             .buttons=entry->command.buttons,.impulse=entry->command.impulse};

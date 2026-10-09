@@ -255,7 +255,7 @@ static bool selected_command(native_q3_think_call *call,
         .milliseconds = call->movement_milliseconds,
         .server_time_ms = raw->serverTime, .buttons = (uint32_t)raw->buttons,
         .weapon = raw->weapon};
-    if (out->kind == QA_MOVEMENT_Q3) {
+    if (out->kind == QA_RULESET_Q3) {
         memcpy(out->angle_words, raw->angles, sizeof(out->angle_words));
         out->forward_move = raw->forwardmove; out->side_move = raw->rightmove;
         out->up_move = raw->upmove;
@@ -267,24 +267,24 @@ static bool selected_command(native_q3_think_call *call,
         !qa_q3_wire_player_read(call->provider->state.q3, slot, &source, error)) return false;
     memcpy(out->angle_words, raw->angles, sizeof(out->angle_words));
     out->forward_move = raw->forwardmove; out->side_move = raw->rightmove; out->up_move = raw->upmove;
-    qa_input_command_basis from = {.kind = QA_MOVEMENT_Q3, .words = true, .relative = true};
+    qa_input_command_basis from = {.kind = QA_RULESET_Q3, .words = true, .relative = true};
     memcpy(from.delta_words, source.deltaAngles, sizeof(from.delta_words));
     qa_input_command_basis to = {.kind = out->kind};
-    if (out->kind == QA_MOVEMENT_Q2_CLASSIC) {
+    if (out->kind == QA_RULESET_Q2_CLASSIC) {
         to.words = to.relative = to.wrap_words = true;
         for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = record->state.data.q2.delta_angle_shorts[i];
-    } else if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
+    } else if (out->kind == QA_RULESET_Q2_RERELEASE) {
         to.relative = to.wide_delta = true; to.delta_angles = record->state.data.q2r.delta_angles;
     }
     qa_input_command_convert(out, NULL, &from, &to, (qa_input_axis_rule){0}, out);
     out->buttons &= 1u;
-    if (out->kind == QA_MOVEMENT_NETQUAKE)
+    if (out->kind == QA_RULESET_NETQUAKE)
         out->acknowledged_server_seconds = (double)raw->serverTime / 1000;
-    if (out->kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (out->kind == QA_RULESET_Q2_RERELEASE) {
         if (raw->upmove > 0) out->buttons |= 8u;
         if (raw->upmove < 0) out->buttons |= 16u;
         out->up_move = 0;
-    } else if (out->kind == QA_MOVEMENT_NETQUAKE && raw->upmove > 0) out->buttons |= 2u;
+    } else if (out->kind == QA_RULESET_NETQUAKE && raw->upmove > 0) out->buttons |= 2u;
     return true;
 }
 
@@ -343,7 +343,7 @@ static bool client_think_body(void *opaque, qa_session *session,
     int32_t type, gravity, speed; bool projected_spectator;
     if (!application_native_q3_client_movement_parameters(provider, call->actor,
         true, &type, &gravity, &speed, &projected_spectator, error)) return false;
-    if (record->state.kind == QA_MOVEMENT_Q3) {
+    if (record->state.kind == QA_RULESET_Q3) {
         record->state.data.q3.movement_type = type;
         record->state.data.q3.gravity = gravity;
         record->state.data.q3.speed = speed;
@@ -369,7 +369,7 @@ static bool client_think_body(void *opaque, qa_session *session,
             ? result->water_type == -3 ? 32 : result->water_type == -4 ? 16 : result->water_type == -5 ? 8 : 0
             : result->water_type;
         qa_bounds bounds = result->bounds;
-        int32_t completed_time = result->state.kind == QA_MOVEMENT_Q3
+        int32_t completed_time = result->state.kind == QA_RULESET_Q3
             ? result->state.data.q3.command_time_ms : call->accepted.serverTime;
         if (!qa_q3_client_movement_complete(provider->state.q3, call->actor,
             completed_time, result->view_angles, result->view_height,
@@ -483,7 +483,7 @@ application_control_outcome application_control_q3_client_think(application_prov
             uint64_t elapsed = (uint64_t)call.movement_milliseconds * UINT64_C(1000000);
             qa_source_command active;
             if (qa_session_active_command(app->session, provider->owner, &active) &&
-                active.provider == provider->owner && active.kind == QA_CLOCK_Q3 &&
+                active.provider == provider->owner && active.kind == QA_RULESET_Q3 &&
                 active.phase == QA_CLIENT_COMMAND && qa_actor_id_equal(active.actor, actor))
                 ok = client_think(&call, app->session, &active, error);
             else

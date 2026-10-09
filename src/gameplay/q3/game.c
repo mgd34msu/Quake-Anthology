@@ -840,7 +840,7 @@ bool qa_q3_source_run_actor(qa_q3_game *game, qa_actor_id actor,
                             const qa_source_frame *frame, qa_error *error) {
     uint32_t slot;
     qa_source_frame active;
-    if (!game || !frame || frame->provider != game->options.owner || frame->kind != QA_CLOCK_Q3 ||
+    if (!game || !frame || frame->provider != game->options.owner || frame->kind != QA_RULESET_Q3 ||
         frame->phase != QA_ENTITY_PHYSICS ||
         !qa_session_active_frame(game->options.services.session, frame->provider, &active) ||
         active.number != frame->number || active.time_ns != frame->time_ns ||
@@ -861,7 +861,7 @@ static bool component_end(void *context, qa_session *session, const qa_source_fr
                            qa_error *error) {
     qa_q3_game *game = context;
     if (!frame || session != game->options.services.session ||
-        frame->provider != game->options.owner || frame->kind != QA_CLOCK_Q3 ||
+        frame->provider != game->options.owner || frame->kind != QA_RULESET_Q3 ||
         frame->phase != QA_CLIENT_END_FRAME || game->source_restored)
         return q3_fail(error, "Q3 frame tail requires its actual source END phase");
     if (game->options.hooks.source_client_end)
@@ -887,7 +887,7 @@ static bool component_command_actor(void *context, qa_session *session, qa_actor
 }
 qa_component qa_q3_component(qa_q3_game *game) {
     return (qa_component){.owner = game->options.owner,
-                          .clock = qa_clock_defaults(QA_CLOCK_Q3),
+                          .clock = qa_clock_defaults(QA_RULESET_Q3),
                           .state = game,
                           .begin_frame = component_begin,
                           .actor_frame = component_actor,

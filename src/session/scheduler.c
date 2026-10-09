@@ -7,7 +7,7 @@
 
 typedef struct provider_clock {
     qa_actor_owner owner;
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
     uint64_t order;
     bool active;
     qa_scheduler_admission *reservation;
@@ -17,7 +17,7 @@ struct qa_scheduler_admission {
     qa_scheduler *scheduler;
     provider_clock *slot;
     qa_actor_owner owner;
-    qa_clock_kind kind;
+    qa_ruleset_id kind;
 };
 
 typedef struct pending_think {
@@ -207,7 +207,7 @@ bool qa_scheduler_destroy(qa_scheduler *scheduler, qa_error *error)
 }
 
 bool qa_scheduler_register(qa_scheduler *scheduler, qa_actor_owner owner,
-                            qa_clock_kind kind, qa_error *error)
+                            qa_ruleset_id kind, qa_error *error)
 {
     qa_scheduler_admission *token;
     if (!qa_scheduler_prepare(scheduler, owner, kind, 0, &token, error)) return false;
@@ -216,10 +216,10 @@ bool qa_scheduler_register(qa_scheduler *scheduler, qa_actor_owner owner,
     return false;
 }
 
-bool qa_scheduler_prepare(qa_scheduler *scheduler, qa_actor_owner owner, qa_clock_kind kind,
+bool qa_scheduler_prepare(qa_scheduler *scheduler, qa_actor_owner owner, qa_ruleset_id kind,
                            qa_actor_owner retiring_owner, qa_scheduler_admission **out, qa_error *error)
 {
-    if (scheduler == NULL || out == NULL || qa_scheduler_active(scheduler) || kind < QA_CLOCK_NETQUAKE || kind > QA_CLOCK_Q3)
+    if (scheduler == NULL || out == NULL || qa_scheduler_active(scheduler) || kind < QA_RULESET_NETQUAKE || kind > QA_RULESET_Q3)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid scheduler provider registration");
     if (provider(scheduler, owner) != NULL && owner != retiring_owner)
         return fail(error, QA_ERROR_ARGUMENT, "Duplicate scheduler provider");
@@ -328,32 +328,32 @@ const qa_think *qa_scheduler_pending(qa_scheduler *scheduler, qa_actor_id actor)
 }
 
 bool qa_frame_project(const qa_source_frame *frame, qa_actor_owner owner,
-                       qa_clock_kind kind, qa_source_frame *out, qa_error *error)
+                       qa_ruleset_id kind, qa_source_frame *out, qa_error *error)
 {
-    if (frame == NULL || out == NULL || kind < QA_CLOCK_NETQUAKE || kind > QA_CLOCK_Q3
+    if (frame == NULL || out == NULL || kind < QA_RULESET_NETQUAKE || kind > QA_RULESET_Q3
         || frame->start_ns > UINT64_MAX - frame->elapsed_ns)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid source frame projection");
     qa_source_frame projected = *frame;
     projected.provider = owner;
     projected.kind = kind;
     projected.time_ns = frame->start_ns;
-    if (kind != QA_CLOCK_NETQUAKE && kind != QA_CLOCK_QUAKEWORLD) projected.time_ns += frame->elapsed_ns;
+    if (kind != QA_RULESET_NETQUAKE && kind != QA_RULESET_QUAKEWORLD) projected.time_ns += frame->elapsed_ns;
     *out = projected;
     return true;
 }
 
-static bool due_time(qa_clock_kind kind, uint64_t due, uint64_t start,
+static bool due_time(qa_ruleset_id kind, uint64_t due, uint64_t start,
                        uint64_t elapsed, uint64_t *time)
 {
     if (due == 0) return false;
     uint64_t end = start + elapsed;
-    if (kind == QA_CLOCK_NETQUAKE || kind == QA_CLOCK_QUAKEWORLD) {
+    if (kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD) {
         if (due > end) return false;
         *time = due > start ? due : start;
     } else {
-        if (kind == QA_CLOCK_Q2_CLASSIC) {
+        if (kind == QA_RULESET_Q2_CLASSIC) {
             if (due > end && due - end > UINT64_C(1000000)) return false;
-        } else if (kind == QA_CLOCK_Q3) {
+        } else if (kind == QA_RULESET_Q3) {
             if ((double)(float)((double)due / 1000000.0) > (double)end / 1000000.0) return false;
         } else if (due > end) return false;
         *time = end;
@@ -379,7 +379,7 @@ static bool scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
         uint64_t time;
         if (!due_time(clock->kind, pending->due_ns, frame->start_ns, frame->elapsed_ns, &time)) break;
         qa_think think = *pending;
-        qa_clock_kind kind = clock->kind;
+        qa_ruleset_id kind = clock->kind;
         qa_scheduler_cancel(scheduler, actor);
         qa_think_scope scope = {.kind = QA_THINK_WORLD_FRAME,
             .source.frame = *frame, .time_ns = time,
@@ -391,7 +391,7 @@ static bool scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
         if (!ok) return false;
         ++result.invocations;
         result.alive = qa_actors_get(scheduler->actors, actor) != NULL;
-        if (!result.alive || once || kind != QA_CLOCK_QUAKEWORLD) break;
+        if (!result.alive || once || kind != QA_RULESET_QUAKEWORLD) break;
     }
     *out = result;
     return true;

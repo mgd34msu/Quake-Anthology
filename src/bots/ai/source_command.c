@@ -19,7 +19,7 @@ bool bot_ai_source_command_read(qa_bots *bots, bot_ai_state *state,
     uint8_t *command;
     if (!out || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
-    *out = (qa_movement_command){.kind = QA_MOVEMENT_Q3,
+    *out = (qa_movement_command){.kind = QA_RULESET_Q3,
         .server_time_ms = bot_source_i32_read(command),
         .buttons = bot_source_word_read(command + 16), .weapon = command[20]};
     for (uint32_t axis = 0; axis < 3; ++axis)

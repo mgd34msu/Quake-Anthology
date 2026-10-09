@@ -9,7 +9,7 @@ typedef struct application_unified_event_record {
     qa_unified_presentation_payload *presentation;
     qa_unified_simulation_payload *simulation;
     uint64_t order, presentation_sequence, simulation_sequence, time_ns, simulation_time_ns;
-    qa_clock_kind clock, presentation_clock;
+    qa_ruleset_id clock, presentation_clock;
     qa_game_family family;
     qa_actor_id recipient, simulation_recipient;
     qa_saved_actor_id recipient_saved, simulation_recipient_saved;
@@ -51,7 +51,7 @@ typedef struct application_unified_event_source {
     const qa_launch_instance *descriptor;
     const qa_product *product;
     qa_vfs *content;
-    qa_clock_kind clock;
+    qa_ruleset_id clock;
     bool component;
 } application_unified_event_source;
 bool application_unified_event_source_read(qa_application *, qa_actor_owner,

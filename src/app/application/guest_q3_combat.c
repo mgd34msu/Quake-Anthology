@@ -211,7 +211,7 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     qa_application *app = owner->role->engine->provider->application;
     qa_clock_state clock;
     if (!qa_session_clock(app->session, owner->role->engine->provider->owner, &clock) ||
-        clock.frame.provider != owner->role->engine->provider->owner || clock.frame.kind != QA_CLOCK_Q3)
+        clock.frame.provider != owner->role->engine->provider->owner || clock.frame.kind != QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Reached Source damage has no actual Q3 clock");
     request.attack.time_ns = clock.frame.time_ns;
     application_provider *combat = application_provider_for(app, request.target, QA_ROLE_COMBAT, "");

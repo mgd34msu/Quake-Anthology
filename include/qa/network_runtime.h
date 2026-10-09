@@ -30,7 +30,7 @@ typedef struct qa_network_command_group {
     qa_net_seat_id seat;
     qa_actor_id actor;
     uint64_t epoch;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     const qa_movement_command *commands;
     size_t count;
 } qa_network_command_group;
@@ -41,7 +41,7 @@ typedef struct qa_network_q3_source_command {
     qa_net_seat_id seat;
     qa_actor_id actor;
     uint64_t epoch, sequence;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     qa_q3_usercmd command;
 } qa_network_q3_source_command;
 /* Literal NetQuake words and physical source identity are independent of the
@@ -53,7 +53,7 @@ typedef struct qa_network_nq_source_command {
     uint64_t epoch, sequence;
     qa_actor_owner source_owner;
     uint32_t source_slot;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     qa_q1_command command;
 } qa_network_nq_source_command;
 /* A snapshot borrows the admitted producer's complete owner checkpoint. The
@@ -61,7 +61,7 @@ typedef struct qa_network_nq_source_command {
 typedef struct qa_network_snapshot {
     qa_net_seat_id seat;
     qa_actor_id actor;
-    qa_movement_kind movement;
+    qa_ruleset_id movement;
     uint64_t epoch, sequence, acknowledged_command, server_time_ns;
     const void *owner_checkpoint;
 } qa_network_snapshot;
@@ -69,7 +69,7 @@ typedef struct qa_network_hooks {
     void *context;
     qa_net_admit_fn admit;
     bool (*controlled)(void *, qa_net_client_id, qa_net_seat_id,
-                       qa_actor_id, qa_movement_kind, qa_bytes arsenal, qa_error *);
+                       qa_actor_id, qa_ruleset_id, qa_bytes arsenal, qa_error *);
     bool (*command)(void *, const qa_network_command *, qa_error *);
     /* Restore every prediction-owned component together before replay. replay
      * must use the selected movement kernel and prediction effects policy. */

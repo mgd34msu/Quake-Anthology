@@ -154,8 +154,8 @@ static bool variables(qa_application_client_preparation *p,bool initial,qa_error
     if (!p->startup_current) return true;
     if (!qa_application_client_prepare_startup_current(p))
         return application_fail(e,QA_ERROR_ARGUMENT,"CLIENT startup variables lost their actual remote request");
-    qa_console_dialect dialect=p->source.context.command.dialect;
-    if (dialect==QA_CONSOLE_Q1 || dialect==QA_CONSOLE_QW) return true;
+    qa_ruleset_id dialect=p->source.context.command.dialect;
+    if (dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) return true;
     char *early=NULL; size_t early_size=0;
     for (size_t i=0;i<qa_application_startup_command_count(p->application);++i) {
         const char *text=qa_application_startup_command(p->application,i);
@@ -163,7 +163,7 @@ static bool variables(qa_application_client_preparation *p,bool initial,qa_error
         if (!text || !qa_command_tokenize(text,dialect,false,&tokens,e)) { free(early); return false; }
         bool ok=true;
         if (tokens.count && !strcmp(tokens.values[0],"set")) {
-            if (dialect==QA_CONSOLE_Q3)
+            if (dialect==QA_RULESET_Q3)
                 ok=qa_console_cvar_startup_set(p->source.context.console,&p->source.context.command,
                     tokens.count>1?tokens.values[1]:"",tokens.count>2?tokens.values[2]:"",e);
             else {

@@ -83,7 +83,7 @@ bool application_native_q1_spectator_begin(application_provider *source, qa_acto
 {
     if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->application ||
         !source->state.q1 || !source->constructed || !source->attached || source->close_pending ||
-        source->component.clock.kind != QA_CLOCK_QUAKEWORLD)
+        source->component.clock.kind != QA_RULESET_QUAKEWORLD)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator Begin needs its native source owner");
     qa_application *app = source->application;
     if ((app->operation != APPLICATION_CONFIGURING && app->operation != APPLICATION_ADVANCING &&
@@ -144,7 +144,7 @@ static bool source_call(application_provider *source, qa_actor_id actor,
 {
     if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->application ||
         !source->state.q1 || !source->constructed || !source->attached || source->close_pending ||
-        source->component.clock.kind != QA_CLOCK_QUAKEWORLD)
+        source->component.clock.kind != QA_RULESET_QUAKEWORLD)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator callback has no actual source owner");
     *call = (spectator_call){.source = source, .actor = actor, .postthink = true};
     return qa_q1_game_operation_begin(source->state.q1, &call->operation, error) &&
@@ -195,7 +195,7 @@ bool application_native_q1_client_disconnect(application_provider *source, qa_ac
 {
     if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->application ||
         !source->state.q1 || !source->constructed || !source->attached || source->close_pending ||
-        source->component.clock.kind != QA_CLOCK_QUAKEWORLD)
+        source->component.clock.kind != QA_RULESET_QUAKEWORLD)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW ClientDisconnect needs its actual source owner");
     spectator_call call = {.source = source, .actor = actor, .postthink = true, .ordinary = true};
     bool okay = qa_q1_game_operation_begin(source->state.q1, &call.operation, error);
@@ -239,7 +239,7 @@ bool application_native_q1_spectator_postthink(application_provider *source, qa_
     const qa_q1_input *input, qa_error *error)
 {
     if (!source || source->kind != APPLICATION_PROVIDER_Q1 || !source->application ||
-        !source->state.q1 || source->component.clock.kind != QA_CLOCK_QUAKEWORLD || !input)
+        !source->state.q1 || source->component.clock.kind != QA_RULESET_QUAKEWORLD || !input)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW SpectatorThink has no actual source input");
     spectator_call call = {.source = source, .actor = actor, .postthink = true};
     qa_application *app = source->application;

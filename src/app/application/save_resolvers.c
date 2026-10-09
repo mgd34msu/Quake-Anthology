@@ -175,7 +175,7 @@ static bool pickup_rule(void *opaque,qa_actor_id actor,qa_actor_owner owner,
     return application_supplies_pickup_rule(app->supplies,actor,owner,serial,id,out,error);
 }
 
-static bool target(void *opaque, qa_actor_id actor, qa_clock_kind clock,
+static bool target(void *opaque, qa_actor_id actor, qa_ruleset_id clock,
                      qa_target_binding *out, qa_error *error)
 {
     qa_application *app = opaque;

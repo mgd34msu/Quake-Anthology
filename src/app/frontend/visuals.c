@@ -1163,7 +1163,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its retained draw settings");
         frontend_q1_view_settings settings;
         if (!frontend_view_settings_q1_sample(frontend->view_settings,
-            source.product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+            source.product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
             &settings, error)) return false;
         if (gun->number == 0 || entities->number == 0 || settings.chase) return true;
         if (recipient->q1_view_ready && qa_actor_id_equal(actor, recipient->q1_view_actor)) {
@@ -1362,12 +1362,12 @@ static bool static_models_submit(qa_frontend *frontend, qa_actor_owner exclude,
     const qa_product *product = source ? qa_catalog_product(qa_application_catalog(frontend->application),
         source->selection.product) : NULL;
     if (product && product->family == QA_GAME_Q1 && source->selection.runtime == QA_PROGRAM_BUILTIN &&
-        (source->selection.clock.kind == QA_CLOCK_NETQUAKE || source->selection.clock.kind == QA_CLOCK_QUAKEWORLD)) {
+        (source->selection.clock.kind == QA_RULESET_NETQUAKE || source->selection.clock.kind == QA_RULESET_QUAKEWORLD)) {
         qa_actor_owner provider;
         if (!qa_application_provider_owner(frontend->application, source->selection.instance, &provider))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 static presentation lost its actual source owner");
         if (provider != exclude && !static_source_submit(frontend, provider,
-            source->selection.clock.kind == QA_CLOCK_QUAKEWORLD, NULL, world, frame, error)) return false;
+            source->selection.clock.kind == QA_RULESET_QUAKEWORLD, NULL, world, frame, error)) return false;
     }
     size_t count = qa_application_qc_message_source_count(frontend->application);
     for (size_t i = 0; i < count; ++i) {

@@ -155,13 +155,13 @@ static bool valid_event(qa_application *application,
 static qa_game_family progress_family(const qa_launch_instance *instance)
 {
     switch (instance->selection.clock.kind) {
-    case QA_CLOCK_NETQUAKE:
-    case QA_CLOCK_QUAKEWORLD:
+    case QA_RULESET_NETQUAKE:
+    case QA_RULESET_QUAKEWORLD:
         return QA_GAME_Q1;
-    case QA_CLOCK_Q2_CLASSIC:
-    case QA_CLOCK_Q2_RERELEASE:
+    case QA_RULESET_Q2_CLASSIC:
+    case QA_RULESET_Q2_RERELEASE:
         return QA_GAME_Q2;
-    case QA_CLOCK_Q3:
+    case QA_RULESET_Q3:
         return QA_GAME_Q3;
     }
     return QA_GAME_Q3;

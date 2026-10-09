@@ -48,7 +48,7 @@ bool application_guest_q3_console_startup(application_provider *provider, qa_err
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
     if (!provider || !engine || !cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME startup lost its physical registry");
-    qa_command_context command = {.owner = provider->owner, .cvar_view = qa_cvars_view_identity(cvars), .dialect = QA_CONSOLE_Q3,
+    qa_command_context command = {.owner = provider->owner, .cvar_view = qa_cvars_view_identity(cvars), .dialect = QA_RULESET_Q3,
         .origin = QA_COMMAND_SERVER};
     if (!provider->attached && !application_startup_source_preinit(provider,
         application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
@@ -84,7 +84,7 @@ static bool capture(void *context, const qa_command_context *source,
     if (command.owner && command.owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 console received another GAME owner");
     command.owner = provider->owner;
-    command.dialect = QA_CONSOLE_Q3;
+    command.dialect = QA_RULESET_Q3;
     return application_command_capture(provider->application, &command, out, error);
 }
 
@@ -92,7 +92,7 @@ static bool active(void *context, const qa_command_context *command)
 {
     struct application_guest_q3_console *owner = context;
     return command && command->owner == owner->engine->provider->owner &&
-        command->dialect == QA_CONSOLE_Q3 &&
+        command->dialect == QA_RULESET_Q3 &&
         application_command_active(owner->engine->provider->application, command);
 }
 
@@ -230,13 +230,13 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
     struct application_guest_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original GAME console");
     owner->engine = engine;
-    qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
+    qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = owner,
         .print = cvar_print, .cheats_allowed = cheats_allowed,
         .declaration_save_policy = application_native_q3_cvar_save_policy};
     owner->cvars = qa_cvars_create_view(engine->provider->application->cvars, &cvars, error);
     qa_console_options options = {.context = {.owner = engine->provider->owner,
-        .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
+        .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
         .user = owner, .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .script_complete = script_complete,
         .allow_command = allow_command, .source_command = command};

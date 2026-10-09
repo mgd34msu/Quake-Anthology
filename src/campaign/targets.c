@@ -178,7 +178,7 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
     if (!targets->monster_resolve || !targets->monster_resolve(targets->monster_context,
         authored->owner, &row->mission, error)) { free(row); return false; }
     const char *classname = qa_strings_cstr(qa_session_strings(targets->options.session), authored->fields.classname);
-    bool zombie = (authored->source == QA_CLOCK_NETQUAKE || authored->source == QA_CLOCK_QUAKEWORLD) &&
+    bool zombie = (authored->source == QA_RULESET_NETQUAKE || authored->source == QA_RULESET_QUAKEWORLD) &&
         classname && !strcmp(classname, "monster_zombie");
     row->mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
     if (authored->barrier_count) {
@@ -196,8 +196,8 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
 bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_error *error) {
     qa_authored_target fields;
     if (!targets || !entry || !entry->read || entry->actor.slot >= targets->capacity ||
-        !live(targets, entry->actor) || entry->source < QA_CLOCK_NETQUAKE ||
-        entry->source > QA_CLOCK_Q3 || !entry->read(entry->context, entry->actor, &fields) ||
+        !live(targets, entry->actor) || entry->source < QA_RULESET_NETQUAKE ||
+        entry->source > QA_RULESET_Q3 || !entry->read(entry->context, entry->actor, &fields) ||
         !valid_fields(targets, &fields))
         return fail(error, "Invalid authored target binding");
     if (targets->next_binding_serial == UINT64_MAX)
@@ -598,8 +598,8 @@ static bool named(const qa_targets *targets, qa_string_id id, const char *text) 
     return value && !strcmp(value, text);
 }
 static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error) {
-    bool q1 = request.dialect == QA_CLOCK_NETQUAKE || request.dialect == QA_CLOCK_QUAKEWORLD;
-    bool q3 = request.dialect == QA_CLOCK_Q3;
+    bool q1 = request.dialect == QA_RULESET_NETQUAKE || request.dialect == QA_RULESET_QUAKEWORLD;
+    bool q3 = request.dialect == QA_RULESET_Q3;
     const qa_target_binding *source_binding = q3 ? binding(targets, request.source) : NULL;
     uint64_t source_serial = source_binding ? targets->binding_serial[request.source.slot] : 0;
     if (q3) {
@@ -692,7 +692,7 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
 }
 static bool prepare_request(const qa_targets *targets, const qa_target_use *request,
                             qa_target_use *normalized, qa_error *error) {
-    if (!request || request->dialect < QA_CLOCK_NETQUAKE || request->dialect > QA_CLOCK_Q3 ||
+    if (!request || request->dialect < QA_RULESET_NETQUAKE || request->dialect > QA_RULESET_Q3 ||
         !valid_fields(targets, &request->fields))
         return fail(error, "Invalid authored target request");
     *normalized = *request;
@@ -715,7 +715,7 @@ bool qa_targets_use_request(qa_targets *targets, const qa_target_use *request, q
     qa_target_use normalized;
     if (!prepare_request(targets, request, &normalized, error))
         return false;
-    if (normalized.dialect != QA_CLOCK_Q3 && normalized.fields.delay_seconds != 0) {
+    if (normalized.dialect != QA_RULESET_Q3 && normalized.fields.delay_seconds != 0) {
         if (!targets->options.defer)
             return fail(error, "Authored delayed use has no source scheduler owner");
         normalized.live_fields = false;

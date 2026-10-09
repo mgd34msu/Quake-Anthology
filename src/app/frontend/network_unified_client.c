@@ -3,7 +3,7 @@
 #include "remote_unified_save.h"
 #include "internal.h"
 #include "qa/source_frame_time.h"
-#include "qa/game_domains.h"
+#include "qa/ruleset.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_native_q3_cvars.h"
 #include <inttypes.h>
@@ -60,12 +60,12 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
     else snprintf(name,sizeof(name),"Player %" PRIu64,(uint64_t)command->seat+1);
     bool ok=true;
     switch (command->dialect) {
-    case QA_CONSOLE_Q1:
+    case QA_RULESET_NETQUAKE:
         ok=qa_cvars_register(variables,"name",name,identity,command->owner,description,e) &&
             qa_cvars_register(variables,"color","0",QA_CVAR_ARCHIVE,command->owner,description,e) &&
             qa_cvars_register(variables,"password","",QA_CVAR_USERINFO,command->owner,description,e);
         break;
-    case QA_CONSOLE_QW: {
+    case QA_RULESET_QUAKEWORLD: {
         static const struct { const char *name,*value; uint32_t flags; } values[]={
             {"cl_hightrack","0",0},{"cl_chasecam","0",0},
             {"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
@@ -78,7 +78,7 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
             ok=qa_cvars_register(variables,values[i].name,values[i].value,values[i].flags,command->owner,description,e);
         break;
     }
-    case QA_CONSOLE_Q2: case QA_CONSOLE_Q2_RERELEASE: {
+    case QA_RULESET_Q2_CLASSIC: case QA_RULESET_Q2_RERELEASE: {
         const char *model=o->options.frontend->options.character_model;
         qa_native_q3_character_declaration defaults;
         if (!model) {
@@ -102,7 +102,7 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
             qa_cvars_register(variables,"spectator","0",QA_CVAR_USERINFO,command->owner,description,e);
         break;
     }
-    case QA_CONSOLE_Q3:
+    case QA_RULESET_Q3:
         ok=qa_native_q3_client_defaults(descriptor,variables,command,o->options.frontend->options.character_model,e);
         break;
     default: return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT has no admitted source dialect");
@@ -354,16 +354,16 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     if (!o) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified CLIENT services");
     *out=o; o->options=*options;
     if (!o->options.selected) o->options.selected=profile->id;
-    qa_clock_kind clock=profile->family==QA_GAME_Q1?
-        (profile->edition==QA_EDITION_QUAKEWORLD?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE):
-        profile->family==QA_GAME_Q2?(profile->edition==QA_EDITION_RERELEASE?QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC):QA_CLOCK_Q3;
+    qa_ruleset_id clock=profile->family==QA_GAME_Q1?
+        (profile->edition==QA_EDITION_QUAKEWORLD?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE):
+        profile->family==QA_GAME_Q2?(profile->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC):QA_RULESET_Q3;
     qa_vfs *prepared=NULL;
     if (!parent(o) || !qa_catalog_open(catalog,o->options.selected,&prepared,e)) return false;
     frontend_client_source_options source=physical_options(o);
     source.input_origin=qa_input_seat_context(f->seats[options->physical_seat].input);
     source.input_origin.owner=0; source.input_origin.actor=(qa_actor_id){0}; source.input_origin.client=0;
     source.input_origin.registry=source.input_origin.generation=0; source.input_origin.script=false;
-    source.input_origin.dialect=qa_clock_console_dialect(clock);
+    source.input_origin.dialect=(clock);
     source.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile->id,.selected=o->options.selected,
         .prepared=prepared,.instance="remote-unified-client",.seat=source.input_origin.seat,.clock=clock};
     bool ok=frontend_client_source_create(f,&source,&o->physical,e);

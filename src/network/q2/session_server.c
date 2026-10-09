@@ -150,7 +150,7 @@ static bool string_command(q2_session *session, uint8_t seat, const char *text, 
     }
     text = (const char *)expanded.data;
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_CONSOLE_Q2, false, &tokens, error)) { qa_buffer_free(&expanded); return false; }
+    if (!qa_command_tokenize(text, QA_RULESET_Q2_CLASSIC, false, &tokens, error)) { qa_buffer_free(&expanded); return false; }
     const char *name = token(&tokens, 0); bool ok = true;
     if (!strcmp(name, "disconnect")) {
         ok = q2_server_drop_request(session, "client disconnected", error);

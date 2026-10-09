@@ -622,7 +622,7 @@ bool qa_move_q2(qa_move_context *context)
     qa_q2_movement_state *state = &context->state->data.q2;
     int32_t original_type = state->type;
     bool mode_override = environment->has_mode && environment->health > 0;
-    if (mode_override) state->type = qa_move_mode_type(QA_MOVEMENT_Q2_CLASSIC, environment->mode);
+    if (mode_override) state->type = qa_move_mode_type(QA_RULESET_Q2_CLASSIC, environment->mode);
     if (environment->fixed_pose) {
         state->type = Q2_FREEZE;
         for (unsigned i = 0; i < 3; ++i) qa_q2_movement_coordinate_set(state, true, i, 0);

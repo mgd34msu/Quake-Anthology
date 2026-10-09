@@ -38,7 +38,7 @@ static bool q3_command_named(const char *text, const char *name)
 static qa_command_result q3_round_command(qa_application *application,
     const qa_command_invocation *invocation, qa_error *error)
 {
-    if (invocation->context.dialect != QA_CONSOLE_Q3 ||
+    if (invocation->context.dialect != QA_RULESET_Q3 ||
         !q3_command_named(invocation->argv[0], "map_restart"))
         return QA_COMMAND_UNHANDLED;
     qa_mode_id mode = application->primary_mode;
@@ -341,16 +341,16 @@ static qa_command_result chat_command(qa_application *application,
     }
     if (provider->kind == APPLICATION_PROVIDER_Q1 ||
         (provider->kind == APPLICATION_PROVIDER_QC &&
-         provider->launch->selection.clock.kind == QA_CLOCK_NETQUAKE)) {
+         provider->launch->selection.clock.kind == QA_RULESET_NETQUAKE)) {
         qa_application_startup_source source;
         bool present;
         if (!application_provider_startup_source_at(provider, 0, &source, &present, error))
             return QA_COMMAND_FAILED;
         if (!present) return QA_COMMAND_UNHANDLED;
         if (!actor.registry && (mode == QA_Q1_CHAT_TELL ||
-            (source.command.dialect == QA_CONSOLE_QW && mode != QA_Q1_CHAT_ALL) ||
+            (source.command.dialect == QA_RULESET_QUAKEWORLD && mode != QA_Q1_CHAT_ALL) ||
             command->context.origin != QA_COMMAND_SERVER)) return QA_COMMAND_UNHANDLED;
-        if (source.command.dialect == QA_CONSOLE_QW && mode == QA_Q1_CHAT_TELL)
+        if (source.command.dialect == QA_RULESET_QUAKEWORLD && mode == QA_Q1_CHAT_TELL)
             return QA_COMMAND_UNHANDLED;
         const qa_command_invocation *delivered = invocation;
         if (command->context.owner != source.command.owner ||
@@ -380,7 +380,7 @@ static qa_command_result command_dispatch(qa_application *application,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
     application_snapshot_mutated(application);
-    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_CONSOLE_Q1, command.argv[0], true);
+    qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_RULESET_NETQUAKE, command.argv[0], true);
     if (chat != QA_Q1_CHAT_UNKNOWN)
         return chat_command(application, invocation, &command, chat, error);
     qa_command_result flight = application_native_engine_fly(application, invocation,
@@ -404,7 +404,7 @@ static qa_command_result command_dispatch(qa_application *application,
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
     uint32_t source_slot;
     if (!actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
-        command.context.dialect == QA_CONSOLE_Q3 &&
+        command.context.dialect == QA_RULESET_Q3 &&
         (!command.context.owner || command.context.owner == game->owner)) {
         if (!application_native_q3_postgame_console(game, &command, &handled, error))
             return QA_COMMAND_FAILED;
@@ -414,7 +414,7 @@ static qa_command_result command_dispatch(qa_application *application,
         if (handled) return QA_COMMAND_HANDLED;
     }
     if (actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
-        command.context.dialect == QA_CONSOLE_Q3 &&
+        command.context.dialect == QA_RULESET_Q3 &&
         (!command.context.owner || command.context.owner == game->owner) &&
         qa_q3_native_client_slot(game->state.q3, actor, &source_slot, NULL)) {
         if (!application_native_q3_client_command(game, actor, &command, &handled, error))
@@ -468,12 +468,12 @@ bool qa_application_actor_command(qa_application *application, qa_actor_id actor
         qa_actors_get(qa_session_actors(application->session), actor) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "actor command requires an admitted actor");
     application_provider *provider = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
-    qa_console_dialect dialect = QA_CONSOLE_Q3;
+    qa_ruleset_id dialect = QA_RULESET_Q3;
     if (provider != NULL && provider->product != NULL) {
         if (provider->product->family == QA_GAME_Q1)
-            dialect = provider->product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
+            dialect = provider->product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
         else if (provider->product->family == QA_GAME_Q2)
-            dialect = provider->product->edition == QA_EDITION_RERELEASE ? QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
+            dialect = provider->product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     }
     qa_command_context context = {.dialect = dialect, .origin = QA_COMMAND_REMOTE,
         .actor = actor};

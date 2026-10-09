@@ -220,7 +220,7 @@ bool qa_application_qc_message_receives(qa_application *app,const qa_application
     *out=false;
     if(event->provider!=view->provider || event->signon)return true;
     bool qw=qa_q1_is_qw(view->protocol);
-    if(event->dialect!=(qw?QA_CLOCK_QUAKEWORLD:QA_CLOCK_NETQUAKE))
+    if(event->dialect!=(qw?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE))
         return application_fail(error,QA_ERROR_FORMAT,"QC source message changes its physical dialect");
     if(!event->multicast) {
         if(event->destination<0 || event->destination>3)

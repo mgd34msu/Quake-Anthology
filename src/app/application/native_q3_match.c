@@ -130,7 +130,7 @@ static bool begin(application_provider *provider, match_scope *scope, qa_error *
     scope->time_ns = (uint64_t)(uint32_t)scope->time * UINT64_C(1000000);
     qa_source_frame frame;
     if (qa_session_active_frame(app->session, scope->owner, &frame) &&
-        frame.kind == QA_CLOCK_Q3 &&
+        frame.kind == QA_RULESET_Q3 &&
         (uint32_t)(frame.time_ns / UINT64_C(1000000)) == (uint32_t)scope->time)
         scope->time_ns = frame.time_ns;
     return application_native_q3_console_borrow(provider, error);
@@ -221,7 +221,7 @@ static bool send(const match_scope *scope, const char *text, qa_error *error)
 static bool append(const match_scope *scope, const char *text, qa_error *error)
 {
     qa_console *console;
-    qa_command_context context = {.owner = scope->owner, .dialect = QA_CONSOLE_Q3,
+    qa_command_context context = {.owner = scope->owner, .dialect = QA_RULESET_Q3,
                                   .origin = QA_COMMAND_SERVER};
     if (!live(scope, error) ||
         !application_native_q3_console_at(scope->provider, &console, NULL, NULL)) return false;
@@ -751,7 +751,7 @@ bool application_native_q3_match_frame(application_provider *provider,
     match_scope scope;
     if (!begin(provider, &scope, error)) return false;
     qa_source_frame active;
-    bool current = frame && frame->provider == scope.owner && frame->kind == QA_CLOCK_Q3 &&
+    bool current = frame && frame->provider == scope.owner && frame->kind == QA_RULESET_Q3 &&
         frame->phase == QA_CLIENT_END_FRAME &&
         scope.application->operation == APPLICATION_ADVANCING &&
         qa_session_active_frame(scope.application->session, scope.owner, &active) &&

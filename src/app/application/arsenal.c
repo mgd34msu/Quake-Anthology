@@ -127,7 +127,7 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
                 !qa_q3_source_run_actor(source->state.q3, actor, frame, error)) return false;
         } else if ((source->kind == APPLICATION_PROVIDER_Q1 ||
             (source->kind == APPLICATION_PROVIDER_QC && !source->state.qc.qualified)) &&
-            frame->kind == QA_CLOCK_NETQUAKE &&
+            frame->kind == QA_RULESET_NETQUAKE &&
             source->component.command_actor &&
             source->component.command_actor(source->component.state, session, actor) &&
             actor.slot < application->control_capacity && application->controls[actor.slot].active &&

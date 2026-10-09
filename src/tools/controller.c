@@ -103,7 +103,7 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         const char *argument = call->argc > 1 ? call->argv[1] : NULL;
         bool levelshot = equal_name(name, "levelshot") || (argument && !strcmp(argument, "levelshot"));
         bool silent = argument && !strcmp(argument, "silent");
-        if (equal_name(name, "levelshot") && call->context.dialect == QA_CONSOLE_Q3) {
+        if (equal_name(name, "levelshot") && call->context.dialect == QA_RULESET_Q3) {
             if (tools->options.forward) success = tools->options.forward(tools->options.context, call, error);
             else tools_fail(error, "Q3 levelshot needs the active source command route");
         } else {

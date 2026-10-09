@@ -62,7 +62,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
         return application_fail(error,QA_ERROR_ARGUMENT,"bot movement has no actual command admission owner");
     if(seen && sequence==UINT64_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot command sequence exhausted");
     qa_movement_command command;
-    if (view.state.kind == QA_MOVEMENT_Q3) {
+    if (view.state.kind == QA_RULESET_Q3) {
         /* Already built by the common path, including stock paused angles. */
         command = *source;
         command.sequence = seen ? sequence + 1 : 0;
@@ -74,9 +74,9 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
         qa_input_command_frame frame = {.kind = view.state.kind, .sequence = seen ? sequence + 1 : 0,
             .acknowledged_server_seconds = (double)source->server_time_ms / 1000.0,
             .attack_allowed = true};
-        if (view.state.kind == QA_MOVEMENT_Q2_CLASSIC)
+        if (view.state.kind == QA_RULESET_Q2_CLASSIC)
             for (unsigned i = 0; i < 3; ++i) frame.delta_angle_words[i] = view.state.data.q2.delta_angle_shorts[i];
-        else if (view.state.kind == QA_MOVEMENT_Q2_RERELEASE)
+        else if (view.state.kind == QA_RULESET_Q2_RERELEASE)
             frame.delta_angles = view.state.data.q2r.delta_angles;
         qa_input_usercmd built;
         qa_input_usercmd_build(&intent, &frame, (double)admitted.elapsed_ns / 1000000.0,

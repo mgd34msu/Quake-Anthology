@@ -563,7 +563,7 @@ static void movement_output_owner(void)
     qa_movement_services services = {.context = &fixture,
         .trace = movement_trace, .point_contents = movement_contents,
         .phase = movement_phase};
-    for (qa_movement_kind kind = QA_MOVEMENT_NETQUAKE; kind <= QA_MOVEMENT_Q3; ++kind) {
+    for (qa_ruleset_id kind = QA_RULESET_NETQUAKE; kind <= QA_RULESET_Q3; ++kind) {
         qa_movement_input input = qa_movement_input_default(kind, (qa_actor_id){0});
         input.elapsed_ns = UINT64_C(14000000);
         input.command.milliseconds = 14;
@@ -578,7 +578,7 @@ static void movement_output_owner(void)
         GAME_CHECK(fixture.borrowed->kind == kind);
         qa_movement_result_free(&output);
     }
-    qa_movement_input input = qa_movement_input_default(QA_MOVEMENT_NETQUAKE,
+    qa_movement_input input = qa_movement_input_default(QA_RULESET_NETQUAKE,
         (qa_actor_id){0});
     input.elapsed_ns = UINT64_C(14000000);
     input.command.milliseconds = 14;

@@ -112,7 +112,7 @@ static bool frame_read(frontend_unified_input *p,double time,
     frontend_unified_command_frame frame={.kind=snapshot->state.kind,
         .acknowledged_server_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
         .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
-    if(frame.kind==QA_MOVEMENT_Q2_RERELEASE)
+    if(frame.kind==QA_RULESET_Q2_RERELEASE)
         frame.server_frame=(double)received->world->source.number;
     if(view->has_pitch_drift) {
         frame.has_pitch_drift=true;
@@ -120,7 +120,7 @@ static bool frame_read(frontend_unified_input *p,double time,
         frame.drift_disabled=view->pitch_drift_disabled;
         frame.ideal_pitch=(float)view->ideal_pitch;
     }
-    if(frame.kind==QA_MOVEMENT_Q3) {
+    if(frame.kind==QA_RULESET_Q3) {
         const qa_unified_weapon_state *weapon=&predicted->prediction->weapon;
         if(weapon->kind==QA_UNIFIED_WEAPON_Q3) frame.weapon=weapon->source_weapon;
         if(p->has_q3_values) { frame.weapon=p->q3_weapon; frame.sensitivity=p->q3_sensitivity; }
@@ -161,7 +161,7 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         !qa_input_settings_read(p->configuration.mouse,p->configuration.movement,p->configuration.input_tuning,p->builder.kind,&tuning,e)) return false;
     bool acknowledged=p->submitted && snapshot.sequence>=0 && (uint64_t)snapshot.sequence>=p->last_sequence;
     double baseline=snapshot.command_time_ms;
-    double duration=p->builder.kind==QA_MOVEMENT_NETQUAKE || p->builder.kind==QA_MOVEMENT_Q3?
+    double duration=p->builder.kind==QA_RULESET_NETQUAKE || p->builder.kind==QA_RULESET_Q3?
         p->retained_elapsed:trunc(p->retained_elapsed>250?100:p->retained_elapsed);
     double time=fmax(acknowledged?baseline:p->command_time,baseline)+duration;
     frontend_unified_command_frame frame;
@@ -177,7 +177,7 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         .use_holdable=sample->game_focus &&
             (sample->buttons[QA_INPUT_USE].active || sample->buttons[QA_INPUT_USE].pressed ||
              sample->buttons[QA_INPUT_BUTTON2].active || sample->buttons[QA_INPUT_BUTTON2].pressed)};
-    if(input.command.kind==QA_MOVEMENT_Q3) {
+    if(input.command.kind==QA_RULESET_Q3) {
         qa_movement_command actual;
         if(!qa_application_control_project_unified(&input.command,&snapshot.state,input.sequence,&actual,e)) return false;
         if(p->q3_command_count==64) {
@@ -217,7 +217,7 @@ bool frontend_unified_input_oldest_q3(const frontend_unified_input *p,qa_movemen
     if(!p||!out||!available||p->busy||!current(p,e))
         return fail(e,"Q3 command history requires its actual returned input owner");
     *available=false;
-    if(p->builder.kind==QA_MOVEMENT_Q3&&p->q3_command_count) {
+    if(p->builder.kind==QA_RULESET_Q3&&p->q3_command_count) {
         uint64_t latest=p->q3_commands[p->q3_command_count-1].sequence;
         if(latest>=63) for(size_t i=0;i<p->q3_command_count;++i) if(p->q3_commands[i].sequence==latest-63) {
             *available=true;*out=p->q3_commands[i];break;

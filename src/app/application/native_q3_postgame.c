@@ -193,7 +193,7 @@ static bool tournament_info(postgame_scope *scope, qa_error *error)
     qa_console *console;
     if (!application_native_q3_console_at(scope->provider, &console, NULL, NULL))
         return application_fail(error, QA_ERROR_NOT_FOUND, "postgame has no real source console");
-    qa_command_context command = {.owner = scope->owner, .dialect = QA_CONSOLE_Q3,
+    qa_command_context command = {.owner = scope->owner, .dialect = QA_RULESET_Q3,
                                   .origin = QA_COMMAND_SERVER};
     return application_unified_q3_console(scope->provider, false, message, error) &&
         qa_console_append(console, &command, message, error) && live(scope, error);

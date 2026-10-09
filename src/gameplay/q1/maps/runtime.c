@@ -523,8 +523,8 @@ bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_bindi
         return false;
     *out = (qa_target_binding){.actor = entity->id,
                                  .context = g,
-                                 .source = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD
-                                                                 : QA_CLOCK_NETQUAKE,
+                                 .source = g->options.quakeworld ? QA_RULESET_QUAKEWORLD
+                                                                 : QA_RULESET_NETQUAKE,
                                  .read = target_read,
                                  .use = target_use,
                                  .field = target_field,

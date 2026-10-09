@@ -376,7 +376,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     const qa_q2_frame_player *frame = frame_player(row, &row->frame);
     if (!remote_q2_live(row, error)) return false;
     if (!row->media_ready || !frame) return true;
-    qa_movement_kind kind = remote_q2_float_movement(row) ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
+    qa_ruleset_id kind = remote_q2_float_movement(row) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     qa_input_command_tuning tuning;
     if (!qa_input_settings_read(row->options.domain.cvars, row->options.domain.cvars, &row->input_tuning, kind, &tuning, error)) return false;
     qa_vec3 delta = frame->player.pmove.float_delta_angles ? vector(frame->player.pmove.delta_angles_f) :
@@ -398,7 +398,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         .msec = command.milliseconds > 255 ? 255 : (uint8_t)command.milliseconds,
         .buttons = (uint8_t)command.buttons, .impulse = command.impulse, .lightlevel = command.light_level,
         .forwardmove = command.forward_move, .sidemove = command.side_move, .upmove = command.up_move};
-    if (kind == QA_MOVEMENT_Q2_RERELEASE) {
+    if (kind == QA_RULESET_Q2_RERELEASE) {
         float values[3] = {command.angles.x, command.angles.y, command.angles.z};
         for (size_t i = 0; i < 3; ++i) {
             uint16_t bits = qa_angle_to_word(values[i]);

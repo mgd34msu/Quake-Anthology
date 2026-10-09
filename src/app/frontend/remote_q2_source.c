@@ -361,12 +361,12 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
         if (!qa_cvars_register(source->domain.cvars, values[i].name, values[i].value, values[i].flags,
             source->domain.command_context.owner, "", error)) return false;
     if (!qa_cvars_register(source->domain.cvars, "crosshair",
-        source->domain.command_context.dialect == QA_CONSOLE_Q2_RERELEASE ? "3" : "0", QA_CVAR_ARCHIVE,
+        source->domain.command_context.dialect == QA_RULESET_Q2_RERELEASE ? "3" : "0", QA_CVAR_ARCHIVE,
         source->domain.command_context.owner, "", error)) return false;
     return frontend_legacy_source_register(source->domain.cvars,
         source->domain.command_context.dialect, source->domain.command_context.owner, error) &&
         qa_input_settings_register(source->domain.cvars,
-        source->domain.command_context.dialect == QA_CONSOLE_Q2_RERELEASE ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC, error);
+        source->domain.command_context.dialect == QA_RULESET_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC, error);
 }
 bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_source_options *options,
     frontend_remote_q2_source **out, qa_error *error)
@@ -404,7 +404,7 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
         source->domain.command_context.script)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 app namespace changed its pending transport/content claim");
     const qa_product *profile = qa_catalog_product(options->metadata.catalog, options->metadata.profile);
-    qa_console_dialect dialect = profile->edition == QA_EDITION_RERELEASE ? QA_CONSOLE_Q2_RERELEASE : QA_CONSOLE_Q2;
+    qa_ruleset_id dialect = profile->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     if (source->domain.command_context.dialect != dialect || source->domain.command_context.seat != options->metadata.seat) return false;
     qa_cvar_options variables = {.dialect = dialect, .side = QA_CVAR_SIDE_CLIENT,
         .role = QA_CVAR_ROLE_CGAME, .seat = options->metadata.seat, .user = source, .print = cvar_print,

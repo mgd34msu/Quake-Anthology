@@ -206,7 +206,7 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     world.q1_sky_environment=&sky;
     frontend_q1_view_settings settings;
     if(!frontend_view_settings_q1_sample(row->frontend->view_settings,
-        qa_q1_is_qw(row->options.domain.protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1,&settings,error)) return false;
+        qa_q1_is_qw(row->options.domain.protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE,&settings,error)) return false;
     remote_scene scene={.row=row,.count=frontend_remote_q1_entity_count(row),.revision=row->revision,
         .viewer_origin=player.origin};
     if(scene.count>SIZE_MAX/sizeof(*scene.entities)) return false;

@@ -17,9 +17,9 @@ static row_state *row(qa_console_buffer *buffer, size_t index) {
 static qa_console_cell *cells(qa_console_buffer *buffer, size_t index) {
     return buffer->cells + slot(buffer, index) * buffer->width;
 }
-qa_console_buffer *qa_console_buffer_create(qa_console_dialect dialect, size_t width,
+qa_console_buffer *qa_console_buffer_create(qa_ruleset_id dialect, size_t width,
                                             size_t capacity, qa_error *error) {
-    if (dialect < QA_CONSOLE_Q1 || dialect > QA_CONSOLE_Q3 || !width || width > capacity ||
+    if (dialect < QA_RULESET_NETQUAKE || dialect > QA_RULESET_Q3 || !width || width > capacity ||
         capacity > SIZE_MAX / sizeof(qa_console_cell) ||
         capacity / width > SIZE_MAX / sizeof(row_state)) {
         fail(error, QA_ERROR_ARGUMENT, "Invalid console scrollback dimensions");
@@ -51,7 +51,7 @@ void qa_console_buffer_destroy(qa_console_buffer *buffer) {
     free(buffer->rows);
     free(buffer);
 }
-void qa_console_buffer_dialect(qa_console_buffer *buffer, qa_console_dialect dialect) {
+void qa_console_buffer_dialect(qa_console_buffer *buffer, qa_ruleset_id dialect) {
     buffer->dialect = dialect;
 }
 static void append(qa_console_buffer *buffer, row_state value, const qa_console_cell *text) {
@@ -92,7 +92,7 @@ bool qa_console_buffer_print(qa_console_buffer *buffer, qa_bytes text, double ti
         notify = false;
         at = 12;
     }
-    if (buffer->dialect != QA_CONSOLE_Q3 && at < text.size &&
+    if (buffer->dialect != QA_RULESET_Q3 && at < text.size &&
         (text.data[at] == 1 || text.data[at] == 2)) {
         alternate = true;
         ++at;
@@ -100,7 +100,7 @@ bool qa_console_buffer_print(qa_console_buffer *buffer, qa_bytes text, double ti
     uint8_t color = 7;
     uint32_t code;
     while (qa_utf8_next(text, &at, &code)) {
-        if ((buffer->dialect == QA_CONSOLE_Q3 || buffer->dialect == QA_CONSOLE_Q2_RERELEASE) &&
+        if ((buffer->dialect == QA_RULESET_Q3 || buffer->dialect == QA_RULESET_Q2_RERELEASE) &&
             code == '^' && at < text.size && text.data[at] >= '0' && text.data[at] <= '9') {
             color = (uint8_t)((text.data[at++] - '0') & 7);
             continue;

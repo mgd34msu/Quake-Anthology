@@ -64,7 +64,7 @@ bool qa_console_discovery_find(qa_console *console, const qa_command_context *co
                                             .documentation = command->documentation};
         return true;
     }
-    if (context->dialect != QA_CONSOLE_Q3) {
+    if (context->dialect != QA_RULESET_Q3) {
         const qa_console_entry *alias;
         for (size_t i = 0; (alias = qa_console_alias_at(console, context->owner, i)); ++i)
             if (qac_equal(alias->name, name)) {
@@ -125,7 +125,7 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
                  error))
             goto fail;
     }
-    if (context->dialect != QA_CONSOLE_Q3) {
+    if (context->dialect != QA_RULESET_Q3) {
         for (size_t i = 0; (entry = qa_console_alias_at(console, context->owner, i)); ++i)
             if (!add(&list,
                      (qa_console_discovery_entry){

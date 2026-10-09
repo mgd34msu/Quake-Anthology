@@ -175,7 +175,7 @@ const qa_cvar_view *qac_cvars_project_alias(const qa_cvars *registry,
     const cvar *canonical=qac_cvars_canonical(entry);
     const qa_cvar_catalog_binding *binding=alias?alias->catalog_binding:entry->catalog_binding;
     uint32_t flags=alias?alias->flags:entry->view.flags;
-    qa_console_dialect flags_dialect=alias?alias->flags_dialect:entry->flags_dialect;
+    qa_ruleset_id flags_dialect=alias?alias->flags_dialect:entry->flags_dialect;
     const char *name=alias?alias->name:entry->view.name;
     if (registry->options.role==QA_CVAR_ROLE_ENGINE)
         view->flags=qac_cvars_flags(flags,flags_dialect,options.dialect)|canonical->view.flags|
@@ -311,7 +311,7 @@ static const qa_cvar_catalog_binding *catalog_name(const char *name, qa_cvar_sid
     return fallback;
 }
 
-static qa_cvar_role stock_default_role(const cvar *canonical,qa_console_dialect dialect)
+static qa_cvar_role stock_default_role(const cvar *canonical,qa_ruleset_id dialect)
 {
     if (canonical->catalog_row==QA_CVAR_CATALOG_NO_ROW) return QA_CVAR_ROLE_GAME;
     const qa_cvar_catalog_dialect *native=&qa_cvar_catalog_rows[canonical->catalog_row].dialect[dialect];
@@ -329,7 +329,7 @@ static qa_cvar_role stock_default_role(const cvar *canonical,qa_console_dialect 
     return role;
 }
 static char *catalog_default(const qa_cvars *registry,const cvar *canonical,
-    qa_console_dialect dialect,qa_error *error)
+    qa_ruleset_id dialect,qa_error *error)
 {
     const qa_cvar_catalog_row *row=&qa_cvar_catalog_rows[canonical->catalog_row];
     const qa_cvar_catalog_dialect *native=&row->dialect[dialect];
@@ -363,7 +363,7 @@ static char *catalog_default(const qa_cvars *registry,const cvar *canonical,
     return selected;
 }
 
-uint32_t qac_cvars_flags(uint32_t flags, qa_console_dialect from, qa_console_dialect to)
+uint32_t qac_cvars_flags(uint32_t flags, qa_ruleset_id from, qa_ruleset_id to)
 {
     if (qac_q2(from)==qac_q2(to)) return flags;
     uint32_t normalized=flags&(QA_CVAR_ARCHIVE|QA_CVAR_USERINFO|QA_CVAR_SERVERINFO);
@@ -388,14 +388,14 @@ uint32_t qac_cvars_catalog_flags(const qa_cvars *registry, const cvar_values *va
 {
     if (index == QA_CVAR_CATALOG_NO_ROW) return 0;
     const qa_cvar_catalog_row *row = &qa_cvar_catalog_rows[index];
-    qa_console_dialect active=qac_cvars_view_options(registry,values).dialect;
+    qa_ruleset_id active=qac_cvars_view_options(registry,values).dialect;
     const qa_cvar_catalog_dialect *dialect = &row->dialect[active];
     uint32_t flags = row->archive_flags;
     for (size_t i = 0; i < dialect->flags_count; ++i) {
         const qa_cvar_catalog_flags *clause = &qa_cvar_catalog_flag_clauses[dialect->flags_first + i];
         const char *name = qa_cvar_catalog_string(clause->member);
         if (!clause->issues && (!*name || qac_equal(member, name) || qac_equal(member,qa_cvar_catalog_string(row->name))))
-            flags |= qac_cvars_flags(clause->flags, QA_CONSOLE_Q3, active);
+            flags |= qac_cvars_flags(clause->flags, QA_RULESET_Q3, active);
     }
     if (row->policies & QA_CATALOG_POLICY_LATCH_ALL)
         flags |= qac_q2(active) ? (uint32_t)QA_Q2_CVAR_LATCH : (uint32_t)QA_CVAR_LATCH;
@@ -625,7 +625,7 @@ bool qac_cvars_default_declare(cvar_target target, cvar *entry,
     if (!definition) return false;
     qa_cvars *authority=target.edit?target.edit->active_default_source:target.registry->store->active_default_source;
     cvar *canonical=qac_cvars_canonical(entry);
-    qa_console_dialect active=target.edit?target.edit->active_dialect:target.registry->store->active_dialect;
+    qa_ruleset_id active=target.edit?target.edit->active_dialect:target.registry->store->active_dialect;
     bool player_authority=canonical->view.player_scoped && target.registry->options.side==QA_CVAR_SIDE_CLIENT &&
         (!canonical->player_default_source || canonical->player_default_source==target.registry ||
          target.registry->options.role==QA_CVAR_ROLE_ENGINE);
@@ -649,7 +649,7 @@ bool qac_cvars_default_declare(cvar_target target, cvar *entry,
     return true;
 }
 
-bool qa_cvars_select_dialect(qa_cvars *registry, qa_console_dialect dialect,
+bool qa_cvars_select_dialect(qa_cvars *registry, qa_ruleset_id dialect,
     qa_error *error)
 {
     if (!registry || !qac_dialect_valid(dialect) || !qac_cvars_touch(registry, error)) return false;
@@ -672,7 +672,7 @@ bool qa_cvars_select_dialect(qa_cvars *registry, qa_console_dialect dialect,
             if (player_default && player_default->declaration_default) defaults[entry->ordinal]=player_default->declaration_default;
         }
     }
-    qa_console_dialect previous=edit?edit->active_dialect:registry->store->active_dialect;
+    qa_ruleset_id previous=edit?edit->active_dialect:registry->store->active_dialect;
     qa_cvars *authority=edit?edit->active_default_source:registry->store->active_default_source;
     if (edit) { edit->active_dialect=dialect; edit->active_default_source=source; }
     else { registry->store->active_dialect=dialect; registry->store->active_default_source=source; }
@@ -692,7 +692,7 @@ static bool catalog_composite_defaults(qa_cvars *registry,qa_error *error)
         const qa_cvar_catalog_row *row=&qa_cvar_catalog_rows[entry->catalog_row];
         if (row->not_stored) continue;
         for (size_t d=0;d<QA_CVAR_CATALOG_DIALECTS;++d) {
-            qa_cvar_options options=registry->options; options.dialect=(qa_console_dialect)d;
+            qa_cvar_options options=registry->options; options.dialect=(qa_ruleset_id)d;
             options.role=stock_default_role(entry,options.dialect);
             const qa_cvar_catalog_dialect *native=&row->dialect[d];
             for (size_t i=0;i<native->default_count;++i) {
@@ -758,7 +758,7 @@ static bool player_definition(const qa_cvar_catalog_binding *binding)
 /* The catalog definition remains singular. Only actual player identity/state
  * receives another scalar record, in the same canonical table. */
 static bool admit_player(qa_cvars *registry,cvar_values *values,uint32_t player,
-    qa_console_dialect dialect,qa_error *error)
+    qa_ruleset_id dialect,qa_error *error)
 {
     if (!player) return true;
     for (const cvar *entry=values->first;entry;entry=entry->next)
@@ -833,7 +833,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
         if (entry->view.player_scoped) entry->view.save_policy=QA_CVAR_SAVE_SETTING;
         if (!entry->view.name || !entry->view.description) { qac_cvars_entry_free(entry); goto failed; }
         for (size_t d = 0; d < QA_CVAR_CATALOG_DIALECTS; ++d)
-            entry->defaults[d] = catalog_default(registry, entry, (qa_console_dialect)d, error);
+            entry->defaults[d] = catalog_default(registry, entry, (qa_ruleset_id)d, error);
         const char *initial = entry->defaults[options->dialect];
         if (!initial) initial = "";
         entry->view.reset_value = qac_copy(initial, error); entry->view.value = qac_copy(initial, error);

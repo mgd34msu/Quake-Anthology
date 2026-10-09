@@ -142,7 +142,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     (void)explicit_override;
     frontend_q1_view_settings settings;
     if (!frontend_view_settings_q1_sample(f->view_settings,
-        qa_q1_is_qw(source.protocol)?QA_CONSOLE_QW:QA_CONSOLE_Q1,&settings,error)) return false;
+        qa_q1_is_qw(source.protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE,&settings,error)) return false;
     qa_scene_view view=*fallback;
     frontend_q1_view_pose pose;
     if (!frontend_remote_q1_view_pose_read(selected, &pose, error)) return false;
@@ -216,8 +216,8 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     uint32_t items = 0;
     if (!qa_application_control_read(f->application, actor, &control))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view lost its actual selected player motion");
-    if (!q1_character && control.state.kind != QA_MOVEMENT_NETQUAKE &&
-        control.state.kind != QA_MOVEMENT_QUAKEWORLD) return true;
+    if (!q1_character && control.state.kind != QA_RULESET_NETQUAKE &&
+        control.state.kind != QA_RULESET_QUAKEWORLD) return true;
     if (!qa_world_body_read(qa_application_world(f->application), actor, &body, error) ||
         !qa_application_equipment_read(f->application, actor, &equipment, error) ||
         !qa_combat_read(qa_application_combat(f->application), actor, &combat, error)) return false;
@@ -442,7 +442,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (local_product && local_product->family == QA_GAME_Q1) {
             frontend_q1_view_settings settings;
             if (!frontend_view_settings_q1_sample(frontend->view_settings,
-                local_product->edition == QA_EDITION_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1,
+                local_product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
                 &settings, error)) return false;
             if (!local_q1_view(frontend, i, actor, &camera, &settings, &view, error)) return false;
             view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene, preferences.hud_scale);
@@ -572,7 +572,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (!frontend_console_font_selection(frontend, i, &console_fonts, error)) return false;
             qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, message));
             float field_scale = preferences.text_scale *
-                (message && qa_seat_console_context_read(seat->console).dialect == QA_CONSOLE_Q3 ? 2.0f : 1.0f);
+                (message && qa_seat_console_context_read(seat->console).dialect == QA_RULESET_Q3 ? 2.0f : 1.0f);
             const qa_cvar_view *notify_time = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.con_notifytime);
             qa_console_draw_options console = {.target = rect, .font = &console_fonts,
                 .buffer = message && !notify ? NULL : qa_seat_console_buffer(seat->console),

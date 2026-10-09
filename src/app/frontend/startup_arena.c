@@ -65,7 +65,7 @@ static bool load(frontend_startup_arena *owner,const qa_launch_draft *draft,qa_e
     const qa_launch_provider *selected=source(draft);
     qa_catalog *catalog=qa_launch_draft_catalog(draft);
     const qa_product *product=selected?qa_catalog_product(catalog,selected->product):NULL;
-    if (!owner || !product || product->family!=QA_GAME_Q3 || selected->clock.kind!=QA_CLOCK_Q3 ||
+    if (!owner || !product || product->family!=QA_GAME_Q3 || selected->clock.kind!=QA_RULESET_Q3 ||
         product->availability!=QA_CONTENT_INSTALLED ||
         (strcmp(product->campaign,"baseq3") && strcmp(product->campaign,"missionpack")))
         return fail(error,QA_ERROR_ARGUMENT,"Startup arenas require an installed official Q3 Source selection");
@@ -122,7 +122,7 @@ static qa_cvars *live_registry(frontend_startup_arena *owner,const qa_launch_dra
     if (!product || !chosen || strcmp(product->identity,chosen->identity) ||
         strcmp(actual.descriptor->selection.implementation,selected->implementation) ||
         actual.descriptor->selection.runtime!=selected->runtime ||
-        qa_cvars_dialect(actual.cvars)!=QA_CONSOLE_Q3) return NULL;
+        qa_cvars_dialect(actual.cvars)!=QA_RULESET_Q3) return NULL;
     return actual.cvars;
 }
 
@@ -135,7 +135,7 @@ static bool progress(frontend_startup_arena *owner,const qa_launch_draft *draft,
         return true;
     }
     if (refresh || !owner->preview) {
-        qa_cvars *preview=qa_cvars_create(&(qa_cvar_options){.dialect=QA_CONSOLE_Q3},error);
+        qa_cvars *preview=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_Q3},error);
         qa_cvar_archive archive={0}; qa_arena_progress view={0};
         bool ok=preview && qa_arena_progress_init(&view,preview,
             qa_base_arena_catalog_levels(owner->base),0,error) &&
@@ -340,8 +340,8 @@ static bool baseline_apply(qa_cvars *registry,const qa_team_arena_setting *rows,
 bool frontend_startup_arena_prepare_settings(qa_cvars *server,qa_cvars *client,
     bool first_source,const qa_application_q3_setting *client_rows,size_t client_count,qa_error *error)
 {
-    if (!server || qa_cvars_dialect(server)!=QA_CONSOLE_Q3 ||
-        (client && (client==server || qa_cvars_dialect(client)!=QA_CONSOLE_Q3)) ||
+    if (!server || qa_cvars_dialect(server)!=QA_RULESET_Q3 ||
+        (client && (client==server || qa_cvars_dialect(client)!=QA_RULESET_Q3)) ||
         (client_count && !client_rows))
         return fail(error,QA_ERROR_ARGUMENT,"Team Arena preparation requires its actual separate GAME and client registries");
     if (first_source) {

@@ -670,7 +670,7 @@ static bool builtin_client_source(const qa_launch_instance *source)
     const qa_product *product = source ? qa_catalog_product(qa_launch_instance_catalog(source),
         source->selection.product) : NULL;
     return source && source->storage && product && product->family == QA_GAME_Q3 &&
-        source->selection.runtime == QA_PROGRAM_BUILTIN && source->selection.clock.kind == QA_CLOCK_Q3 &&
+        source->selection.runtime == QA_PROGRAM_BUILTIN && source->selection.clock.kind == QA_RULESET_Q3 &&
         source->selection.artifact && !*source->selection.artifact &&
         source->selection.component && !*source->selection.component &&
         !source->artifact && !source->artifact_acquisition && !source->declaration &&
@@ -759,7 +759,7 @@ static bool q2_client_selection(const qa_launch_q2_client_metadata *request,
         return error_message(error, "Q2 CLIENT metadata requires its real compiled profile and prepared selected view");
     *selection = (qa_launch_provider){.instance = request->instance, .product = selected->id,
         .runtime = QA_PROGRAM_BUILTIN, .implementation = program->key, .artifact = "", .component = "",
-        .clock = qa_clock_defaults(profile->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)};
+        .clock = qa_clock_defaults(profile->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)};
     selection->clock.initial_lead_ns = 0;
     return true;
 }
@@ -817,10 +817,10 @@ static bool client_profile_selection(const qa_launch_client_metadata *request,
     const qa_product *program = profile && profile->program_product ?
         qa_catalog_product(request->catalog, profile->program_product) : profile;
     bool clock = profile && ((profile->family == QA_GAME_Q1 &&
-            (request->clock == QA_CLOCK_NETQUAKE || request->clock == QA_CLOCK_QUAKEWORLD)) ||
+            (request->clock == QA_RULESET_NETQUAKE || request->clock == QA_RULESET_QUAKEWORLD)) ||
         (profile->family == QA_GAME_Q2 && request->clock ==
-            (profile->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)) ||
-        (profile->family == QA_GAME_Q3 && request->clock == QA_CLOCK_Q3));
+            (profile->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)) ||
+        (profile->family == QA_GAME_Q3 && request->clock == QA_RULESET_Q3));
     if (!request || !request->instance || !*request->instance || !profile || !selected || !program || !clock ||
         !profile->builtin || !program->builtin || profile->program_kind != QA_PROGRAM_BUILTIN ||
         program->program_kind != QA_PROGRAM_BUILTIN ||
@@ -1108,11 +1108,11 @@ static bool source_clock_policy(qa_launch_draft *draft, qa_error *error)
         const qa_product *product = qa_catalog_product(draft->catalog, selection->product);
         if (selection->runtime != QA_PROGRAM_BUILTIN || product->family != QA_GAME_Q2)
             continue;
-        qa_clock_kind kind = product->edition == QA_EDITION_RERELEASE
-            ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC;
+        qa_ruleset_id kind = product->edition == QA_EDITION_RERELEASE
+            ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
         if (selection->clock.kind != kind || !selection->clock.interval_ns)
             return error_message(error, "Compiled Q2 source needs its actual edition clock");
-        selection->clock.initial_lead_ns = kind == QA_CLOCK_Q2_CLASSIC && entities &&
+        selection->clock.initial_lead_ns = kind == QA_RULESET_Q2_CLASSIC && entities &&
             !strcmp(entities->instance, selection->instance) ? selection->clock.interval_ns : 0;
         if (selection->clock.initial_time_ns > UINT64_MAX - selection->clock.initial_lead_ns)
             return error_message(error, "Compiled Q2 source lead exhausts its actual clock");
@@ -1149,9 +1149,9 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
         if (!selection->enabled) continue;
         const qa_catalog_mod *mod = qa_catalog_mod_find(s->draft->catalog, selection->component);
         const qa_product *product = qa_catalog_product(s->draft->catalog, mod->product);
-        qa_clock_kind clock = product->family == QA_GAME_Q3 ? QA_CLOCK_Q3 : product->family == QA_GAME_Q2
-            ? (product->edition == QA_EDITION_RERELEASE ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC)
-            : (product->edition == QA_EDITION_QUAKEWORLD ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE);
+        qa_ruleset_id clock = product->family == QA_GAME_Q3 ? QA_RULESET_Q3 : product->family == QA_GAME_Q2
+            ? (product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)
+            : (product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE);
         qa_launch_provider provider = {.instance = selection->instance, .product = mod->product,
             .runtime = mod->runtime, .implementation = mod->key, .artifact = mod->program_path,
             .component = mod->key, .clock = qa_clock_defaults(clock)};

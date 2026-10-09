@@ -8,14 +8,14 @@
 
 bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t seat,qa_error *error)
 {
-    if (!cvars || !owner || qa_cvars_dialect(cvars)>QA_CONSOLE_QW) return false;
+    if (!cvars || !owner || qa_cvars_dialect(cvars)>QA_RULESET_QUAKEWORLD) return false;
     if (!frontend_legacy_source_register(cvars, qa_cvars_dialect(cvars), owner, error)) return false;
-    if (qa_cvars_dialect(cvars)==QA_CONSOLE_Q1) {
+    if (qa_cvars_dialect(cvars)==QA_RULESET_NETQUAKE) {
         char name[48]; if (seat==0) snprintf(name,sizeof(name),"Player");
         else snprintf(name,sizeof(name),"Player %llu",(unsigned long long)seat+1);
         return qa_cvars_register(cvars,"name",name,QA_CVAR_ARCHIVE,owner,"",error) &&
             qa_cvars_register(cvars,"color","0",QA_CVAR_ARCHIVE,owner,"",error) &&
-            qa_input_settings_register(cvars,QA_MOVEMENT_NETQUAKE,error);
+            qa_input_settings_register(cvars,QA_RULESET_NETQUAKE,error);
     }
     static const struct { const char *name,*value; uint32_t flags; } settings[]={
         {"cl_hightrack","0",0},{"cl_chasecam","0",0},
@@ -28,7 +28,7 @@ bool frontend_remote_q1_source_defaults(qa_cvars *cvars,uint64_t owner,uint32_t 
         {"spectator","",QA_CVAR_USERINFO}};
     for (size_t i=0;i<sizeof(settings)/sizeof(*settings);++i)
         if (!qa_cvars_register(cvars,settings[i].name,settings[i].value,settings[i].flags,owner,"",error)) return false;
-    return qa_input_settings_register(cvars,QA_MOVEMENT_QUAKEWORLD,error);
+    return qa_input_settings_register(cvars,QA_RULESET_QUAKEWORLD,error);
 }
 bool frontend_remote_q1_skin_recipe(qa_catalog *catalog,qa_product_id selected,
     qa_vfs **view,qa_fs_root **root,qa_error *error)

@@ -465,7 +465,7 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
             !qa_session_clock(g->services.session,g->options.owner,&clock) ||
             clock.frame.provider!=g->options.owner || clock.frame.time_ns!=g->now_ns ||
             clock.frame.kind!=(g->options.edition==QA_Q2_RERELEASE?
-                QA_CLOCK_Q2_RERELEASE:QA_CLOCK_Q2_CLASSIC)) {
+                QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC)) {
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 VIEW lost its executing Source clock");
             return false;
         }
@@ -493,8 +493,8 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
 static bool movement_valid(const qa_q2_game *g, const qa_q2_wire_movement *value,
     qa_error *error)
 {
-    qa_movement_kind kind = g->options.edition == QA_Q2_RERELEASE ?
-        QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
+    qa_ruleset_id kind = g->options.edition == QA_Q2_RERELEASE ?
+        QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
     if (!value->present || value->state.kind != kind || value->frame > g->wire_frame ||
         value->time_ns > g->now_ns || !qa_vec_finite(value->view_angles) ||
         !qa_vec_finite(value->view_offset) || !qa_vec_finite(value->command_angles) || !qa_vec_finite(value->bounds.mins) ||
@@ -506,7 +506,7 @@ static bool movement_valid(const qa_q2_game *g, const qa_q2_wire_movement *value
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source pmove receipt has invalid identity, clock or fields");
         return false;
     }
-    if (kind == QA_MOVEMENT_Q2_CLASSIC) {
+    if (kind == QA_RULESET_Q2_CLASSIC) {
         if (value->state.data.q2.type < 0 || value->state.data.q2.type > 4 ||
             value->state.data.q2.flags > UINT8_MAX) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Classic Q2 Source pmove leaves its SDK fields");
@@ -567,7 +567,7 @@ static int16_t source_short(float value)
 
 static qa_vec3 source_command_angles(const qa_movement_command *command)
 {
-    return command->kind == QA_MOVEMENT_Q2_CLASSIC ?
+    return command->kind == QA_RULESET_Q2_CLASSIC ?
         qa_v3((float)command->angle_words[0] * (360.f / 65536.f),
             (float)command->angle_words[1] * (360.f / 65536.f),
             (float)command->angle_words[2] * (360.f / 65536.f)) : command->angles;
@@ -663,7 +663,7 @@ bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
         return false;
     }
     if (source_movement) value.state = result->state;
-    else if (value.state.kind == QA_MOVEMENT_Q2_RERELEASE) {
+    else if (value.state.kind == QA_RULESET_Q2_RERELEASE) {
         value.state.data.q2r.origin = origin; value.state.data.q2r.velocity = velocity;
         value.state.data.q2r.view_height = result->view_height;
     } else {
@@ -703,7 +703,7 @@ bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
     if (change->kind == QA_Q2_PLAYER_SPAWN && !change->preserve_view_angles) {
         bool seen = value.command_seen; uint64_t sequence = value.source_sequence;
         bool pending = value.command_pending; uint64_t pending_sequence = value.pending_sequence;
-        value = (qa_q2_wire_movement){.state.kind = rr ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC,
+        value = (qa_q2_wire_movement){.state.kind = rr ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
             .command_seen = seen, .source_sequence = sequence,
             .command_pending = pending, .pending_sequence = pending_sequence};
         a->wire_view = (qa_q2_wire_view){0};

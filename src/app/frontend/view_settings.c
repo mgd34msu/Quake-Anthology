@@ -155,10 +155,10 @@ static char *copy(const char *value,qa_error *e)
     if (!out) { frontend_fail(e,QA_ERROR_MEMORY,"Retaining candidate view scalar"); return NULL; }
     strcpy(out,value); return out;
 }
-bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_dialect dialect,
+bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_ruleset_id dialect,
     frontend_q1_view_settings *out,qa_error *e)
 {
-    if (!current(owner) || !out || (dialect!=QA_CONSOLE_Q1 && dialect!=QA_CONSOLE_QW) ||
+    if (!current(owner) || !out || (dialect!=QA_RULESET_NETQUAKE && dialect!=QA_RULESET_QUAKEWORLD) ||
         owner->preparation || owner->notifying || !qa_cvars_observer_idle(owner->registry))
         return fail(e,"Q1 view settings require their returned published canonical parent");
     const char *size_name=NULL;
@@ -176,8 +176,8 @@ bool frontend_view_settings_q1_sample(frontend_view_settings *owner,qa_console_d
         numbers[0]=numbers[0]<30?30:120;
     }
     *out=(frontend_q1_view_settings){.size=numbers[0],
-        .overlay_status=dialect==QA_CONSOLE_QW && numbers[1]==0,
-        .chase=dialect==QA_CONSOLE_Q1 && numbers[2]!=0,
+        .overlay_status=dialect==QA_RULESET_QUAKEWORLD && numbers[1]==0,
+        .chase=dialect==QA_RULESET_NETQUAKE && numbers[2]!=0,
         .back=numbers[3],.up=numbers[4],.right=numbers[5]};
     return true;
 }
@@ -293,12 +293,12 @@ bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char 
 {
     if (!state || !text) return fail(error, "Q1 bonus command lost its actual client text");
     for (const char *at = text; *at;) {
-        size_t length = strlen(at), size = qa_command_separator(at, length, QA_CONSOLE_Q1);
+        size_t length = strlen(at), size = qa_command_separator(at, length, QA_RULESET_NETQUAKE);
         char *line = malloc(size + 1);
         if (!line) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 client command");
         memcpy(line, at, size); line[size] = 0;
         qa_command_tokens tokens = {0};
-        bool okay = qa_command_tokenize(line, QA_CONSOLE_Q1, false, &tokens, error);
+        bool okay = qa_command_tokenize(line, QA_RULESET_NETQUAKE, false, &tokens, error);
         if (okay && tokens.count && strlen(tokens.values[0]) == 2 &&
             (tokens.values[0][0] == 'b' || tokens.values[0][0] == 'B') &&
             (tokens.values[0][1] == 'f' || tokens.values[0][1] == 'F'))
