@@ -90,8 +90,10 @@ bool application_rankings_warmup(void *context)
 static bool publish_active(qa_application *app, application_provider *provider, qa_error *error)
 {
     qa_cvars *cvars = application_native_q3_console_registry(provider);
-    const qa_cvar_view *enabled = qa_cvars_find(cvars, "sv_enableRankings");
-    const qa_cvar_view *active = qa_cvars_find(cvars, "sv_rankingsActive");
+    const qa_cvar_view *enabled = qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_ENABLE));
+    const qa_cvar_view *active = qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_ACTIVE));
     if (!enabled || !active || enabled->owner != provider->owner || active->owner != provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Rankings require the actual Q3 source cvar declarations");
     const char *text = app->ranked_source && enabled->number != 0 &&
@@ -429,7 +431,8 @@ static bool frame_players(qa_application *app, application_rankings *owner,
         } else if (state.kind==QA_RANKING_DENIED_PLAYER) {
             if (!backend_result(app,owner,qa_rankings_reset(app->rankings,(int32_t)row->slot,error))) return false;
         } else if (state.kind==QA_RANKING_ACTIVE_PLAYER) {
-            const qa_cvar_view *game_type=qa_cvars_find(cvars,"g_gametype");
+            const qa_cvar_view *game_type=qa_cvars_read(cvars,
+                application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_GAME_TYPE));
             if (!game_type || game_type->owner!=provider->owner)
                 return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source lacks its actual game type");
             if (member.state.spectator && !qa_game_type_is_team(game_type->integer) &&
@@ -446,7 +449,10 @@ static bool frame_players(qa_application *app, application_rankings *owner,
             }
         }
     }
-    const qa_cvar_view *frag=qa_cvars_find(cvars,"fraglimit"), *time=qa_cvars_find(cvars,"timelimit");
+    const qa_cvar_view *frag=qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_FRAGLIMIT));
+    const qa_cvar_view *time=qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_TIMELIMIT));
     if (!frag || !time) return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source lacks its actual limits");
     double fraglimit, timelimit;
     if (!cvar_number(frag->value,&fraglimit,error) || !cvar_number(time->value,&timelimit,error)) return false;
@@ -465,8 +471,10 @@ bool application_rankings_frame(qa_application *app, qa_error *error)
     if (owner && (owner->busy || owner->restoring || !agreement(app,owner,error)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Ranking frame reentered or changed its actual source owner");
     qa_cvars *cvars=application_native_q3_console_registry(provider);
-    const qa_cvar_view *enable=qa_cvars_find(cvars,"sv_enableRankings");
-    const qa_cvar_view *game_type=qa_cvars_find(cvars,"g_gametype");
+    const qa_cvar_view *enable=qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_ENABLE));
+    const qa_cvar_view *game_type=qa_cvars_read(cvars,
+        application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_GAME_TYPE));
     qa_mode_view mode;
     if (!enable || enable->owner!=provider->owner || !game_type || game_type->owner!=provider->owner ||
         !qa_modes_read(app->modes,app->primary_mode,&mode,error))
@@ -515,7 +523,8 @@ bool application_rankings_frame_ordinary(qa_application *app, qa_error *error)
     if (owner && !owner->busy) owner->backend_failed=false;
     application_provider *provider=source(app);
     if (owner && provider && !owner->busy && !owner->restoring) {
-        const qa_cvar_view *enable=qa_cvars_find(application_native_q3_console_registry(provider),"sv_enableRankings");
+        const qa_cvar_view *enable=qa_cvars_read(application_native_q3_console_registry(provider),
+            application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_ENABLE));
         qa_ranking_service_kind kind=qa_rankings_state(app->rankings).kind;
         if (enable && enable->owner==provider->owner && owner->enabled==(enable->number!=0) &&
             (kind==QA_RANKING_DISABLED || kind==QA_RANKING_UNAVAILABLE))

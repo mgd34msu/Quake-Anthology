@@ -53,11 +53,23 @@ struct application_native_q3_console {
     application_provider *provider;
     qa_console *console;
     qa_cvars *cvars;
+    qa_cvar_handle no_areas;
+    qa_cvar_handle rankings[APPLICATION_Q3_RANKINGS_CONTROL_COUNT];
     size_t calls;
     bool settings_bound;
     application_native_q3_source_command_scope *source_command;
     application_native_q3_source_drop_scope *source_drop;
 };
+
+static void bind_controls(struct application_native_q3_console *owner)
+{
+    owner->no_areas = qa_cvars_resolve(owner->cvars, "cm_noAreas");
+    owner->rankings[APPLICATION_Q3_RANKINGS_ENABLE] = qa_cvars_resolve(owner->cvars, "sv_enableRankings");
+    owner->rankings[APPLICATION_Q3_RANKINGS_ACTIVE] = qa_cvars_resolve(owner->cvars, "sv_rankingsActive");
+    owner->rankings[APPLICATION_Q3_RANKINGS_GAME_TYPE] = qa_cvars_resolve(owner->cvars, "g_gametype");
+    owner->rankings[APPLICATION_Q3_RANKINGS_FRAGLIMIT] = qa_cvars_resolve(owner->cvars, "fraglimit");
+    owner->rankings[APPLICATION_Q3_RANKINGS_TIMELIMIT] = qa_cvars_resolve(owner->cvars, "timelimit");
+}
 
 bool application_native_q3_console_settings_bound(const application_provider *provider)
 {
@@ -73,6 +85,19 @@ qa_cvars *application_native_q3_console_registry(const application_provider *pro
 {
     return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
         ? provider->native_q3_console->cvars : NULL;
+}
+
+qa_cvar_handle application_native_q3_console_no_areas_handle(const application_provider *provider)
+{
+    return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
+        ? provider->native_q3_console->no_areas : (qa_cvar_handle){0};
+}
+
+qa_cvar_handle application_native_q3_console_rankings_handle(const application_provider *provider,
+    application_native_q3_rankings_control control)
+{
+    return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
+        ? provider->native_q3_console->rankings[control] : (qa_cvar_handle){0};
 }
 
 bool application_native_q3_console_capture(application_provider *provider,
@@ -95,6 +120,7 @@ bool application_native_q3_console_restore(application_provider *provider,
     bool okay = qa_cvars_save_prepare(registry, bytes, &ticket, error) &&
         qa_cvars_save_commit(ticket, error);
     if (!okay) qa_cvars_save_abort(ticket);
+    else bind_controls(provider->native_q3_console);
     return okay;
 }
 
@@ -505,6 +531,7 @@ bool application_native_q3_console_create(application_provider *provider,
         free(owner);
         return false;
     }
+    bind_controls(owner);
     provider->native_q3_console = owner;
     qa_application *application=provider->application;
     application_provider *previous=application->startup_preinit_provider;

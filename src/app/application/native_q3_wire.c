@@ -340,7 +340,8 @@ bool application_native_q3_wire_current_view(application_provider *provider, uin
     qa_world *source_world = app->world;
     qa_collision_geometry *geometry = qa_world_geometry(source_world);
     qa_cvars *cvars = application_native_q3_console_registry(provider);
-    const qa_cvar_view *areas = cvars ? qa_cvars_find(cvars, "cm_noAreas") : NULL;
+    const qa_cvar_view *areas = cvars ? qa_cvars_read(cvars,
+        application_native_q3_console_no_areas_handle(provider)) : NULL;
     if (!geometry || !cvars || !areas)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 view has no actual collision world");
     struct application_q3_wire_capture *capture = capture_workspace(provider, error);

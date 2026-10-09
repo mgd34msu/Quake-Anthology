@@ -510,8 +510,8 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
             float expiration = qa_load_f32le(bytes);
             if (!isfinite(expiration)) return application_fail(error, QA_ERROR_FORMAT, "Native invulnerability expiration is invalid");
             until = expiration > (float)now ? now + 1 : 0;
-            const qa_cvar_view *coop = qa_cvars_find(p->engine->cvars, "coop"),
-                *rules = qa_cvars_find(p->engine->cvars, "dmflags");
+            const qa_cvar_view *coop = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.coop),
+                *rules = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.dmflags);
             if (coop && coop->number != 0) {
                 if (!qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session), "q2:coop", &out->team, error)) return false;
             } else if (rules && ((uint32_t)rules->integer & (p->model_team | p->skin_team))) {

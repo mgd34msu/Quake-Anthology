@@ -132,6 +132,7 @@ typedef struct frontend_q3_client {
     uint32_t q3_client_launch_seat;
     qa_q3_product q3_client_product;
     qa_q3_client_clock q3_client_clock;
+    qa_cvar_handle cl_maxpackets, cl_packetdup, cl_timeNudge, cg_smoothClients;
     frontend_q3_content *q3_client_content;
     qa_q3_client_downloads *q3_client_downloads;
     qa_q3_prediction_scene *q3_prediction_scene;
@@ -169,6 +170,13 @@ typedef struct frontend_q3_client {
     char q3_client_message[1024], q3_client_update_info[1024];
     int32_t q3_ui_client_number;
 } frontend_q3_client;
+static void client_cvars_bind(frontend_q3_client *client, const qa_cvars *cvars)
+{
+    client->cl_maxpackets = qa_cvars_resolve(cvars, "cl_maxpackets");
+    client->cl_packetdup = qa_cvars_resolve(cvars, "cl_packetdup");
+    client->cl_timeNudge = qa_cvars_resolve(cvars, "cl_timeNudge");
+    client->cg_smoothClients = qa_cvars_resolve(cvars, "cg_smoothClients");
+}
 typedef struct frontend_local_client {
     qa_frontend_network *network;
     qa_network_runtime *runtime;
@@ -2187,8 +2195,8 @@ static bool remote_client_settings(void *context, const qa_net_client *client,
         client->seats[0].remote_index || !qa_net_address_equal(&client->endpoint, &n->q3_client_admission.address, true) ||
         !qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 send policy lost its actual receiver and admitted transport seat");
-    const qa_cvar_view *maximum = qa_cvars_find(role.cvars, "cl_maxpackets"),
-        *duplicate = qa_cvars_find(role.cvars, "cl_packetdup");
+    const qa_cvar_view *maximum = qa_cvars_read(role.cvars, n->cl_maxpackets),
+        *duplicate = qa_cvars_read(role.cvars, n->cl_packetdup);
     if (!maximum || !duplicate)
         return frontend_fail(error, QA_ERROR_FORMAT, "Q3 client send policy lacks its installed receiver cvars");
     ready->maximum_packets = maximum->integer < 15 ? 15 : maximum->integer > 125 ? 125 : (unsigned)maximum->integer;
@@ -2523,6 +2531,7 @@ static bool client_native_gamestate(frontend_q3_client *n, const qa_q3_gamestate
         .connection_epoch=n->q3_client_epoch,.producer=n,.prepared_current=client_native_prepared};
     qa_application_q3_remote_source published; qa_network_q3_client_init counters;
     if(!qa_application_native_q3_remote_content_admit(n->frontend->application,&admission,&published,error)) return false;
+    client_cvars_bind(n, published.receiver.cvars);
     frontend_q3_content_publication publication={published.descriptor,published.receiver,
         published.configuration_generation,published.connection_epoch};
     if(!frontend_q3_content_publish(n->q3_client_content,&publication,error) ||
@@ -2594,6 +2603,7 @@ static bool client_gamestate(void *context, const qa_q3_gamestate *state, qa_err
     n->q3_client_initializing = true;
     bool ok = qa_application_q3_remote_replace(n->frontend->application, &replacement, &published, error);
     if (ok) {
+        client_cvars_bind(n, published.receiver.cvars);
         frontend_q3_content_publication publication = {.descriptor = published.descriptor,
             .receiver = published.receiver, .configuration_generation = published.configuration_generation,
             .connection_epoch = published.connection_epoch};
@@ -2735,6 +2745,7 @@ static bool client_bind_attempt(frontend_q3_client *n, qa_error *error)
         qa_native_q3_remote_client_rebind(n->frontend->application,&request,&rebound,error) :
         qa_application_q3_remote_rebind(n->frontend->application,&request,&rebound,error);
     if(!ok) return false;
+    client_cvars_bind(n, rebound.receiver.cvars);
     n->q3_client_rebind = false;
     return true;
 }
@@ -2985,8 +2996,8 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
     if (!presentation_frame) return true;
     if(n->network->demo_playback) return client_project(n,error);
     qa_q3_clock_options options = {.timescale = 1};
-    const qa_cvar_view *nudge = qa_cvars_find(role.cvars, "cl_timeNudge");
-    const qa_cvar_view *scale = qa_cvars_find(role.cvars, "timescale");
+    const qa_cvar_view *nudge = qa_cvars_read(role.cvars, n->cl_timeNudge);
+    const qa_cvar_view *scale = qa_cvars_read(role.cvars, n->frontend->engine_cvars.timescale);
     if (scale) options.timescale = scale->number;
     if (nudge) options.time_nudge = nudge->integer;
     if (!qa_q3_clock_advance(&n->q3_client_clock,
@@ -3577,6 +3588,7 @@ static bool local_q3_prepare(frontend_local_client *local, qa_actor_id actor, qa
     qa_application_q3_client_context receiver;
     if (!qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner,
         n->q3_client_launch_seat, &receiver, error)) return false;
+    client_cvars_bind(n, receiver.cvars);
     if (receiver.native_source) {
         qa_application_control_prediction_configuration initial;
         if (!qa_application_control_prediction_read(n->frontend->application, actor, &initial, error) ||
@@ -4426,6 +4438,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         if (!frontend_remote_input_create(&input_options, &n->q3_clients[0].q3_input, error)) goto failed;
         qa_application_q3_client_context receiver;
         if (!qa_application_q3_remote_context_read(f->application,n->q3_clients[0].q3_cgame_owner,n->q3_clients[0].q3_client_launch_seat,&receiver,error)) goto failed;
+        client_cvars_bind(&n->q3_clients[0], receiver.cvars);
         if (receiver.native_source) {
             qa_application_control_prediction_configuration initial;
             if (!qa_application_control_prediction_read(f->application,actor,&initial,error) ||
@@ -5893,7 +5906,7 @@ bool frontend_network_client_pose_publish(qa_frontend *f, qa_error *error)
             n->q3_client_launch_seat, &receiver, error) ||
             !frontend_network_prediction_source_read(f, &receiver, &source, &present, error)) return false;
         if (!present) continue;
-        const qa_cvar_view *smooth = qa_cvars_find(source.receiver.cvars, "cg_smoothClients");
+        const qa_cvar_view *smooth = qa_cvars_read(source.receiver.cvars, n->cg_smoothClients);
         if (!qa_q3_prediction_scene_publish_poses(n->q3_prediction_scene,
             smooth && smooth->integer != 0, error)) return false;
         n->q3_previous_presentation_time = source.scene.time;
@@ -8302,7 +8315,8 @@ static bool demo_playback_advance(void *context,frontend_demo_reader *reader,uin
     qa_application_q3_client_context role;
     if(!qa_application_q3_remote_context_read(n->frontend->application,n->q3_clients[0].q3_cgame_owner,n->q3_clients[0].q3_client_launch_seat,&role,error))return false;
     qa_q3_clock_options options={.demo=true,.timedemo=timedemo,.timescale=1};
-    const qa_cvar_view *scale=qa_cvars_find(role.cvars,"timescale"),*nudge=qa_cvars_find(role.cvars,"cl_timeNudge");
+    const qa_cvar_view *scale=qa_cvars_read(role.cvars,n->frontend->engine_cvars.timescale),
+        *nudge=qa_cvars_read(role.cvars,n->q3_clients[0].cl_timeNudge);
     if(scale)options.timescale=scale->number;
     if(nudge)options.time_nudge=nudge->integer;
     if(!qa_q3_clock_advance(&n->q3_clients[0].q3_client_clock,(int32_t)((n->frontend->time_ns/UINT64_C(1000000))&INT32_MAX),

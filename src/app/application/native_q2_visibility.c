@@ -79,7 +79,7 @@ bool application_native_q2_visibility_complete(struct application_native_q2 *eng
     if (!engine || engine->profile != QA_NATIVE_Q2_GAME_API2023) return true;
     qa_native_host *host = engine->provider->state.native.host;
     qa_native_entity_table table;
-    const qa_cvar_view *clients = qa_cvars_find(engine->cvars, "maxclients");
+    const qa_cvar_view *clients = qa_cvars_read(engine->cvars, engine->provider->q2_maxclients);
     qa_source_frame frame;
     application_provider *clock_owner = engine->callbacks ?
         application_world_provider(engine->provider->application, QA_ROLE_ENTITIES, "") : engine->provider;

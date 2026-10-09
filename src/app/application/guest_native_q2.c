@@ -386,6 +386,8 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
             "native-q2:entity", &engine->definition, error)) return false;
     engine->platform.content_files = provider->launch->content;
     engine->platform.cvars = engine->cvars;
+    engine->combat_cvars.coop = qa_cvars_resolve(engine->cvars, "coop");
+    engine->combat_cvars.dmflags = qa_cvars_resolve(engine->cvars, "dmflags");
     engine->platform.owner_context = engine;
     engine->platform.owner_idle = frontend_owner_idle;
     if (app->native_q2_services && !app->native_q2_services(app->guest_context, app,

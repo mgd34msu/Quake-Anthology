@@ -31,6 +31,7 @@ struct application_q3_gear {
     qa_q3_host *host;
     qa_qvm_options lower;
     qa_cvars *cvars;
+    qa_cvar_handle no_curves, player_curve_clip, cheats;
     qa_console *console;
     qa_buffer entities;
     char *path, *configstrings[1024], *userinfo[64];

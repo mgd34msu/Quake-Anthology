@@ -670,13 +670,11 @@ bool application_qc_control_profile(application_provider *provider, qa_actor_id 
     int32_t reference; bool spectator;
     if (!control_client(engine, actor, &reference, &spectator, error)) return false;
     qa_q1_movement_parameters *parameters = &profile->data.qw.parameters;
-    const char *names[] = {"sv_gravity", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
-        "sv_wateraccelerate", "sv_friction", "sv_waterfriction", "sv_maxspeed"};
     float *values[] = {&parameters->gravity, &parameters->stop_speed, &parameters->spectator_max_speed,
         &parameters->accelerate, &parameters->air_accelerate, &parameters->water_accelerate,
         &parameters->friction, &parameters->water_friction, &parameters->max_speed};
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
-        const qa_cvar_view *variable = qa_cvars_find(engine->cvars, names[i]);
+    for (size_t i = 0; i < sizeof(values) / sizeof(*values); ++i) {
+        const qa_cvar_view *variable = qa_cvars_read(engine->cvars, engine->cvar_handles.qw_movement[i]);
         *values[i] = variable ? variable->number : 0;
         if (!isfinite(*values[i])) return application_fail(error, QA_ERROR_FORMAT, "QC movement cvar is nonfinite");
     }

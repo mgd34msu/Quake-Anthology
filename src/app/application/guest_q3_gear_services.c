@@ -25,7 +25,7 @@ static void console_print(void *context, const qa_command_context *command, cons
 static bool cheats(void *context)
 {
     application_q3_gear *gear = context;
-    const qa_cvar_view *value = qa_cvars_find(gear->options.host.engine_cvars, "sv_cheats");
+    const qa_cvar_view *value = qa_cvars_read(gear->options.host.engine_cvars, gear->cheats);
     return value && value->integer != 0;
 }
 
@@ -149,6 +149,7 @@ static bool send_command(void *context, int32_t client, const char *text, qa_err
 
 bool q3gear_services(application_q3_gear *gear, qa_error *error)
 {
+    gear->cheats = qa_cvars_resolve(gear->options.host.engine_cvars, "sv_cheats");
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
         .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME, .user = gear, .print = print, .cheats_allowed = cheats,
         .declaration_save_policy = application_native_q3_cvar_save_policy};
@@ -185,6 +186,8 @@ bool q3gear_services(application_q3_gear *gear, qa_error *error)
                 !qa_cvars_set(gear->cvars, value.name, value.value, true, error)) return false;
         }
     }
+    gear->no_curves = qa_cvars_resolve(gear->cvars, "cm_noCurves");
+    gear->player_curve_clip = qa_cvars_resolve(gear->cvars, "cm_playerCurveClip");
     qa_q3_host_options host = gear->options.host;
     host.cvars = gear->cvars; host.console = gear->console;
     host.common = (qa_q3_host_common_services){.context = gear, .print = print,
@@ -211,8 +214,8 @@ static bool spatial_trace(application_q3_gear *gear, const qa_qvm_call *call,
     qa_trace_query query = {.shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     query.policy.contents_mask = (uint32_t)words[6];
-    const qa_cvar_view *curves = qa_cvars_find(gear->cvars, "cm_noCurves");
-    const qa_cvar_view *clip = qa_cvars_find(gear->cvars, "cm_playerCurveClip");
+    const qa_cvar_view *curves = qa_cvars_read(gear->cvars, gear->no_curves);
+    const qa_cvar_view *clip = qa_cvars_read(gear->cvars, gear->player_curve_clip);
     query.policy.curves = !curves || curves->number == 0;
     query.policy.player_curve_clip = !clip || clip->number != 0;
     if (!q3gear_vector(gear, qa_qvm_mask_address(gear->vm, words[1]), &query.start, error) ||

@@ -4,6 +4,16 @@
 #include "startup_flow.h"
 #include <stdio.h>
 
+static void controls_bind(struct application_qc_state *engine)
+{
+    static const char *const names[] = {"sv_gravity", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
+        "sv_wateraccelerate", "sv_friction", "sv_waterfriction", "sv_maxspeed"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
+        engine->cvar_handles.qw_movement[i] = qa_cvars_resolve(engine->cvars, names[i]);
+    engine->cvar_handles.sv_aim = qa_cvars_resolve(engine->cvars, "sv_aim");
+    engine->cvar_handles.teamplay = qa_cvars_resolve(engine->cvars, "teamplay");
+}
+
 bool application_qc_console_prepare(qa_application *app, application_provider *provider,
     qa_world *world, const qa_product *product, const qa_launch_choices *choices,
     qa_console **console, qa_cvars **cvars, qa_command_context *command, qa_error *error)
@@ -99,6 +109,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         if (actual->save_policy == QA_CVAR_SAVE_UNCLASSIFIED &&
             !qa_cvars_declare_save_policy(engine->cvars, entry->name, QA_CVAR_SAVE_GAMEPLAY, error)) return false;
     }
+    controls_bind(engine);
     qa_builtin_random_seed(&engine->random, (uint32_t)(provider->owner * UINT32_C(2654435761)));
     engine->console_prepared = true;
     *console = engine->console; *cvars = engine->cvars; *command = engine->command_context;

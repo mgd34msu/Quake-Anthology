@@ -54,6 +54,9 @@ typedef struct application_qc_actor {
     int32_t reference;
     bool collision_bound;
 } application_qc_actor;
+typedef struct application_qc_cvar_handles {
+    qa_cvar_handle qw_movement[9], sv_aim, teamplay;
+} application_qc_cvar_handles;
 struct application_qc_state {
     struct application_qc_items *items;
     struct application_qc_combat *combat;
@@ -66,6 +69,7 @@ struct application_qc_state {
     qa_builtin_services services;
     qa_builtin_random random;
     qa_cvars *cvars;
+    application_qc_cvar_handles cvar_handles;
     qa_console *console;
     qa_command_context command_context;
     qa_qc_profile profile;

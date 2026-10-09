@@ -187,7 +187,8 @@ static bool in_pvs(const team_combat_scope *scope, qa_vec3 first, qa_vec3 second
         return false;
     if (!*out) return true;
     qa_cvars *registry = application_native_q3_console_registry(scope->provider);
-    const qa_cvar_view *no_areas = qa_cvars_find(registry, "cm_noAreas");
+    const qa_cvar_view *no_areas = qa_cvars_read(registry,
+        application_native_q3_console_no_areas_handle(scope->provider));
     if (!no_areas)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native TEAM PVS lost its source area policy");
     if (no_areas->number != 0) return true;

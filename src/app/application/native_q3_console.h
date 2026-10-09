@@ -15,6 +15,17 @@ void application_native_q3_console_release(application_provider *);
 bool application_native_q3_console_at(application_provider *, qa_console **,
                                        qa_cvars **, qa_command_context *);
 qa_cvars *application_native_q3_console_registry(const application_provider *);
+qa_cvar_handle application_native_q3_console_no_areas_handle(const application_provider *);
+typedef enum application_native_q3_rankings_control {
+    APPLICATION_Q3_RANKINGS_ENABLE,
+    APPLICATION_Q3_RANKINGS_ACTIVE,
+    APPLICATION_Q3_RANKINGS_GAME_TYPE,
+    APPLICATION_Q3_RANKINGS_FRAGLIMIT,
+    APPLICATION_Q3_RANKINGS_TIMELIMIT,
+    APPLICATION_Q3_RANKINGS_CONTROL_COUNT
+} application_native_q3_rankings_control;
+qa_cvar_handle application_native_q3_console_rankings_handle(const application_provider *,
+    application_native_q3_rankings_control);
 bool application_native_q3_console_capture(application_provider *, qa_buffer *, qa_error *);
 bool application_native_q3_console_restore(application_provider *, qa_bytes, qa_error *);
 bool application_native_q3_console_settings_bound(const application_provider *);

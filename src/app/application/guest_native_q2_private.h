@@ -63,6 +63,7 @@ struct application_native_q2 {
     qa_native_host_q2_application_fn application;
     void *application_context;
     qa_cvars *cvars;
+    struct { qa_cvar_handle coop, dmflags; } combat_cvars;
     qa_console *console;
     qa_command_context command_context;
     qa_command_tokens arguments;
