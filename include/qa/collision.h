@@ -4,8 +4,8 @@
 #include "qa/actors.h"
 #include "qa/bsp.h"
 #include "qa/math.h"
+#include "qa/collision_bits.h"
 
-typedef enum qa_collision_family { QA_COLLISION_Q1 = 1, QA_COLLISION_Q2, QA_COLLISION_Q3 } qa_collision_family;
 typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa_shape_kind;
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
 typedef enum qa_q1_move_kind { QA_Q1_MOVE_NORMAL, QA_Q1_MOVE_NO_MONSTERS, QA_Q1_MOVE_MISSILE } qa_q1_move_kind;

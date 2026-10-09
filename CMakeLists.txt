@@ -127,6 +127,7 @@ add_library(qa_world STATIC
     src/world/live_fields.c
     src/world/checkpoint.c
     src/world/collision/contents.c
+    src/world/collision/contents_bits.c
     src/world/collision/geometry.c
     src/world/collision/q1.c
     src/world/collision/q1/geometry.c
