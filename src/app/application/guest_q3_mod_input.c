@@ -1,4 +1,5 @@
 #include "guest_q3_mod_private.h"
+#include "qa/input.h"
 
 typedef struct input_field { const mod_output *definition; application_q3_mod_output before; } input_field;
 typedef struct input_command {
@@ -74,9 +75,9 @@ static double command_scalar(const qa_q3_usercmd *c, application_q3_mod_input in
     switch (input) {
         case Q3_MOD_ATTACK:return (c->buttons&1)!=0;
         case Q3_MOD_JUMP:return c->upmove>=10;
-        case Q3_MOD_FORWARD:return c->forwardmove/127.0;
-        case Q3_MOD_SIDE:return c->rightmove/127.0;
-        case Q3_MOD_UP:return c->upmove/127.0;
+        case Q3_MOD_FORWARD:return (double)c->forwardmove/qa_input_command_units(QA_RULESET_Q3);
+        case Q3_MOD_SIDE:return (double)c->rightmove/qa_input_command_units(QA_RULESET_Q3);
+        case Q3_MOD_UP:return (double)c->upmove/qa_input_command_units(QA_RULESET_Q3);
         default:return 0;
     }
 }
@@ -93,10 +94,15 @@ static bool commands(application_q3_mod_capture *c, input_command *command, bool
             if (before.angles[0]==after.angles[0] && before.angles[1]==after.angles[1] && before.angles[2]==after.angles[2]) continue;
             qa_q3_player player;
             if (!c->owner->services.player_state(c->owner->services.context,c->application->actor,&player,e) || !q3mod_current(c->owner,e)) return false;
-            value.value.angles=(qa_vec3){
-                (float)(((uint32_t)after.angles[0]+(uint32_t)player.deltaAngles[0])&65535)*360.0f/65536,
-                (float)(((uint32_t)after.angles[1]+(uint32_t)player.deltaAngles[1])&65535)*360.0f/65536,
-                (float)(((uint32_t)after.angles[2]+(uint32_t)player.deltaAngles[2])&65535)*360.0f/65536};
+            qa_movement_command source = {.kind = QA_RULESET_Q3}, projected;
+            memcpy(source.angle_words, after.angles, sizeof(source.angle_words));
+            qa_input_command_basis from = {.kind = QA_RULESET_Q3,
+                .words = true, .relative = true, .wrap_words = true};
+            memcpy(from.delta_words, player.deltaAngles, sizeof(from.delta_words));
+            qa_input_command_basis to = {.kind = QA_RULESET_Q3};
+            qa_input_command_convert(&source, NULL, &from, &to,
+                (qa_input_axis_rule){0}, &projected);
+            value.value.angles = projected.angles;
         } else {
             value.value.scalar=command_scalar(&after,(application_q3_mod_input)i);
             if (value.value.scalar==command_scalar(&before,(application_q3_mod_input)i)) continue;

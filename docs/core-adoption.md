@@ -116,7 +116,11 @@ Remaining duplicated conversion/projection bodies are
 Q2 ABI writers in `guest_native_q2_clients.c:311,381` and
 `native_q2_client_stages.c:482`, and raw Q3 projections in `control_frame.c:339`,
 `arsenal_guest.c:177`, frontend `network.c:6472` and `network/runtime/q3.c:63`.
-The QVM scalar/delta-angle adapter is being migrated to the existing converter.
+The QVM scalar/delta-angle adapter now uses the existing converter. Eight
+GCC/Clang original/candidate executions, with sanitizer and rounding-mode
+cases, compare 6,440,048 command bytes per pair. Its isolated production,
+ASan/UBSan and allocation-gate builds and all seven core checks each pass.
+This does not close the remaining adapters or the full guest gameplay proof.
 
 The KEX wire API still narrows float angles into `int16_t` in
 `include/qa/network_q2.h:16` / `src/app/frontend/remote_q2_presentation.c:403`.
