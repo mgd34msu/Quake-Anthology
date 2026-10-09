@@ -2,6 +2,9 @@
 #define QA_FRONTEND_Q3_RENDER_POLICY_H
 #include "shared_render_controls.h"
 
+/* Bind fixed ENGINE row references after shared registration or registry replacement. */
+void frontend_render_cvars_bind(qa_frontend *);
+
 /* Actual Source constructors use committed ENGINE rows before registration;
  * prepared resource children use their returned candidate ENGINE edit. */
 bool frontend_q3_material_profile_read(qa_frontend *, const qa_cvars_edit *,

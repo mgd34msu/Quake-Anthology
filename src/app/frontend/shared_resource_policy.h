@@ -12,6 +12,9 @@ typedef struct frontend_model_policy {
     double q2_distance, distance;
 } frontend_model_policy;
 
+/* Bind the existing shared recipe row references at the ENGINE load boundary. */
+void frontend_shared_resource_policy_cvars_bind(qa_frontend *);
+
 /* Actual ENGINE values, preserving the source numeric thresholds and the
  * literal source-distance policy. No source-family registry substitutes. */
 bool frontend_model_policy_edit_read(const qa_cvars_edit *, frontend_model_policy *, qa_error *);

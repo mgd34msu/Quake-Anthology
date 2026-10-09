@@ -1,4 +1,6 @@
 #include "shared_register.h"
+#include "q3_render_policy.h"
+#include "shared_resource_policy.h"
 #include "legacy_render_policy.h"
 #include "shared_settings.h"
 #include "shared_video.h"
@@ -414,6 +416,8 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .r_gamma=qa_cvars_resolve(registry,"r_gamma"),
         .con_notifytime=qa_cvars_resolve(registry,"con_notifytime"),
         .r_drawentities=qa_cvars_resolve(registry,"r_drawentities")};
+    frontend_render_cvars_bind(frontend);
+    frontend_shared_resource_policy_cvars_bind(frontend);
 }
 bool frontend_shared_register(qa_cvars *cvars,const qa_console_dialect *source,
     qa_audio_output_format output,float gamma,qa_error *error)

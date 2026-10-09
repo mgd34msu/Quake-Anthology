@@ -198,6 +198,20 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle timedemo, com_maxfps, r_maxfps;
     qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
     qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
+    qa_cvar_handle r_maxpolys, r_maxpolyverts, r_textureMode, r_drawBuffer;
+    qa_cvar_handle r_nobind, r_uifullscreen, r_detailtextures, r_vertexLight;
+    qa_cvar_handle r_ignoreFastPath, r_allowExtensions, r_ext_multitexture, r_ext_texture_env_add;
+    qa_cvar_handle r_znear, r_lodscale, r_lodbias, r_lodCurveError;
+    qa_cvar_handle r_railCoreWidth, r_railWidth, r_railSegmentLength, r_drawworld;
+    qa_cvar_handle r_nocull, r_novis, r_nocurves, r_facePlaneCull;
+    qa_cvar_handle r_lockpvs, r_noportals, r_portalOnly, r_fastsky;
+    qa_cvar_handle r_dynamiclight, r_ambientScale, r_directedScale, r_norefresh;
+    qa_cvar_handle r_showcluster, r_debugSort, r_showtris, r_shownormals;
+    qa_cvar_handle r_showsky, r_offsetfactor, r_offsetunits, r_lightmap;
+    qa_cvar_handle r_skipBackEnd, r_clear, r_subdivisions, r_mapOverBrightBits;
+    qa_cvar_handle r_fullbright, r_finish, r_showImages, r_speeds;
+    qa_cvar_handle r_measureOverdraw, r_shadows;
+    qa_cvar_handle resource_policy[15];
 } frontend_engine_cvar_handles;
 struct qa_frontend {
     qa_frontend_options options;

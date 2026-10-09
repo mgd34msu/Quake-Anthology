@@ -15,9 +15,9 @@ static bool frame_policy(void *context,qa_scene_frame *reached,qa_error *error)
     if (reached && !reached->source_backend) return true;
     qa_frontend *f=context;
     const qa_cvar_view *row=f && f->application && reached && (f->cpu || f->gl) && !(f->cpu && f->gl)?
-        frontend_render_control_record(qa_application_cvars(f->application),"r_skipBackEnd"):NULL;
+        qa_cvars_read(qa_application_cvars(f->application), f->engine_cvars.r_skipBackEnd):NULL;
     if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source swap lost its actual physical ENGINE skip row");
-    const qa_cvar_view *buffer=frontend_render_control_record(qa_application_cvars(f->application),"r_drawBuffer");
+    const qa_cvar_view *buffer=qa_cvars_read(qa_application_cvars(f->application), f->engine_cvars.r_drawBuffer);
     if (!buffer) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source swap lost its actual physical ENGINE draw buffer");
     const unsigned char *a=(const unsigned char *)buffer->value,*b=(const unsigned char *)"GL_FRONT";
     while (*a && *b) {
@@ -44,11 +44,12 @@ bool frontend_source_renderer_runtime_bind(qa_frontend *f,qa_error *error)
 bool frontend_source_renderer_policy(qa_frontend *f,qa_error *error)
 {
     qa_cvars *registry=f && f->application?qa_application_cvars(f->application):NULL;
-    const char *names[]={"r_finish","r_showImages","r_speeds","r_measureOverdraw","r_shadows","r_nobind"};
     const qa_cvar_view *rows[6];
     if (!registry || (f->cpu && f->gl)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Renderer diagnostics lost ENGINE ownership");
+    const qa_cvar_handle handles[]={f->engine_cvars.r_finish,f->engine_cvars.r_showImages,
+        f->engine_cvars.r_speeds,f->engine_cvars.r_measureOverdraw,f->engine_cvars.r_shadows,f->engine_cvars.r_nobind};
     for (size_t i=0;i<6;++i) {
-        rows[i]=frontend_render_control_record(registry,names[i]);
+        rows[i]=qa_cvars_read(registry,handles[i]);
         if (!rows[i]) return frontend_fail(error,QA_ERROR_ARGUMENT,"Renderer diagnostics lost an ENGINE setting");
     }
     uint32_t stencil_bits=0;
@@ -68,7 +69,8 @@ bool frontend_source_renderer_policy(qa_frontend *f,qa_error *error)
         if (!qa_cvars_set(registry,"r_measureOverdraw","0",true,error)) return false;
         overdraw=false;
     }
-    qa_cvars_clear_modified(registry,"r_measureOverdraw");
+    if (qa_cvars_read(registry,f->engine_cvars.r_measureOverdraw)->modified)
+        qa_cvars_clear_modified(registry,"r_measureOverdraw");
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
     uint32_t clock_word=(uint32_t)(f->wall_time_ns/UINT64_C(1000000));
     int32_t clock_value; memcpy(&clock_value,&clock_word,sizeof(clock_value));
@@ -85,7 +87,7 @@ bool frontend_source_renderer_image_grid(qa_frontend *f,int32_t mode,qa_error *e
 }
 bool frontend_source_renderer_end_registration(qa_frontend *f,qa_error *error)
 {
-    const qa_cvar_view *row=f && f->application?frontend_render_control_record(qa_application_cvars(f->application),"r_showImages"):NULL;
+    const qa_cvar_view *row=f && f->application?qa_cvars_read(qa_application_cvars(f->application), f->engine_cvars.r_showImages):NULL;
     if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"EndRegistration lost its actual ENGINE image policy");
     int32_t mode=row->integer;
     bool ok=f->cpu?qa_cpu_execute(f->cpu,&f->frame,error):f->gl?qa_gl_execute(f->gl,&f->frame,error):false;

@@ -22,6 +22,7 @@
 #include "qa/application_engine_shutdown.h"
 #include "qa/source_save.h"
 #include "qa/q3_cinematic_handles.h"
+#include "qa/cvars_alias.h"
 
 static bool policy_fail(qa_error *error, const char *text)
 { return frontend_fail(error, QA_ERROR_ARGUMENT, text); }
@@ -80,7 +81,6 @@ bool frontend_model_policy_edit_read(const qa_cvars_edit *edit, frontend_model_p
 
 bool frontend_model_policy_read(const qa_frontend *frontend, frontend_model_policy *out, qa_error *error)
 {
-    static const char *const names[] = {"r_enhancedmodels", "gl_md5_load", "gl_md5_use", "gl_md5_distance", "r_model_distance"};
     if (!frontend || !frontend->application || !out)
         return policy_fail(error, "Model policy requires its actual frontend ENGINE registry");
     const qa_cvars_edit *edit = NULL;
@@ -88,7 +88,7 @@ bool frontend_model_policy_read(const qa_frontend *frontend, frontend_model_poli
     if (edit) return frontend_model_policy_edit_read(edit, out, error);
     const qa_cvars *registry = qa_application_cvars(frontend->application);
     const qa_cvar_view *rows[5];
-    for (unsigned i = 0; i < 5; ++i) rows[i] = qa_cvars_find(registry, names[i]);
+    for (unsigned i = 0; i < 5; ++i) rows[i] = qa_cvars_read(registry, frontend->engine_cvars.resource_policy[3 + i]);
     return model_policy_rows(rows, out, error);
 }
 
@@ -163,8 +163,9 @@ bool frontend_image_policy_read(const qa_frontend *frontend, qa_scene_image_poli
 {
     if (!frontend || !frontend->application || !out) return policy_fail(error, "Image policy requires its actual ENGINE registry");
     const qa_cvars *registry = qa_application_cvars(frontend->application);
-    const qa_cvar_view *rows[] = {qa_cvars_find(registry, "r_override_textures"),
-        qa_cvars_find(registry, "r_texture_overrides"), qa_cvars_find(registry, "r_texture_formats")};
+    const qa_cvar_view *rows[] = {qa_cvars_read(registry, frontend->engine_cvars.resource_policy[0]),
+        qa_cvars_read(registry, frontend->engine_cvars.resource_policy[1]),
+        qa_cvars_read(registry, frontend->engine_cvars.resource_policy[2])};
     return image_policy_rows(rows, out, error);
 }
 bool frontend_image_policy_initialize(qa_frontend *frontend, qa_scene_resources *images, qa_error *error)
@@ -206,6 +207,14 @@ static const char *const policy_names[] = {"r_override_textures", "r_texture_ove
     "r_allowExtensions", "r_ext_multitexture", "r_ext_texture_env_add"};
 enum { BASE_POLICY_VALUES = 8 };
 enum { POLICY_VALUES = sizeof(policy_names) / sizeof(policy_names[0]) };
+void frontend_shared_resource_policy_cvars_bind(qa_frontend *f)
+{
+    const qa_cvars *registry = qa_application_cvars(f->application);
+    for (size_t i = 0; i < POLICY_VALUES; ++i)
+        f->engine_cvars.resource_policy[i] = qa_cvars_resolve(registry, i < BASE_POLICY_VALUES ?
+            policy_names[i] : qa_cvars_canonical_name(registry, policy_names[i]));
+}
+
 struct frontend_live_resource_policy {
     qa_frontend *frontend;
     qa_application *application;
@@ -283,8 +292,7 @@ static bool scalar_current(const frontend_shared_resource_policy *ticket, bool s
                 qa_cvars_edit_returned_is(ticket->edit, ticket->registry))))) return false;
     for (size_t i = 0; i < ticket->scalar_count; ++i) {
         const qa_cvar_view *row = (ticket->video || ticket->live) ?
-            (i < BASE_POLICY_VALUES ? qa_cvars_find(ticket->registry, policy_names[i]) :
-                frontend_render_control_record(ticket->registry, policy_names[i])) :
+            qa_cvars_read(ticket->registry, ticket->frontend->engine_cvars.resource_policy[i]) :
             (i < BASE_POLICY_VALUES ? qa_cvars_edit_find(ticket->edit, policy_names[i]) :
                 qa_cvars_edit_canonical_record(ticket->edit, policy_names[i]) ?
                     qa_cvars_edit_find(ticket->edit, policy_names[i]) : NULL);
@@ -515,8 +523,7 @@ static bool policy_committed_prepare(qa_frontend *f, const frontend_video_guests
         ok = frontend_q3_source_upload_read(f, true, true, &ticket->restart_upload, error);
     if (ticket->source_profile) ticket->scalar_count = sizeof(policy_names) / sizeof(policy_names[0]);
     for (size_t i = 0; ok && i < ticket->scalar_count; ++i) {
-        const qa_cvar_view *row = i < BASE_POLICY_VALUES ? qa_cvars_find(ticket->registry, policy_names[i]) :
-            frontend_render_control_record(ticket->registry, policy_names[i]);
+        const qa_cvar_view *row = qa_cvars_read(ticket->registry, f->engine_cvars.resource_policy[i]);
         if (!row || !row->value) { ok = policy_fail(error, "Source restart lost its real canonical resource policy"); break; }
         size_t size = strlen(row->value) + 1;
         ticket->scalars[i].value = malloc(size);
@@ -854,8 +861,7 @@ static bool live_recipe_changed(const struct frontend_live_resource_policy *owne
     for (size_t i = 0; i < owner->applied_count; ++i) {
         /* Use and distance update the selected model without reopening assets. */
         if (i >= 5 && i < BASE_POLICY_VALUES) continue;
-        const qa_cvar_view *row = i < BASE_POLICY_VALUES ? qa_cvars_find(owner->registry, policy_names[i]) :
-            frontend_render_control_record(owner->registry, policy_names[i]);
+        const qa_cvar_view *row = qa_cvars_read(owner->registry, owner->frontend->engine_cvars.resource_policy[i]);
         if (!row || !row->value || !owner->applied[i].value)
             return policy_fail(error, "Live resource refresh lost its canonical Source declaration");
         if (i == 3 || i == 4) {

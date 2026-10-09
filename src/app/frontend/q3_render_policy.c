@@ -3,16 +3,74 @@
 #include "q3_color_policy.h"
 #include "source_renderer_runtime.h"
 #include "qa/material_library_save.h"
+#include "qa/cvars_alias.h"
+
+void frontend_render_cvars_bind(qa_frontend *f)
+{
+    const qa_cvars *registry = qa_application_cvars(f->application);
+#define BIND(name) f->engine_cvars.name = qa_cvars_resolve(registry, qa_cvars_canonical_name(registry, #name))
+    BIND(r_maxpolys);
+    BIND(r_maxpolyverts);
+    BIND(r_textureMode);
+    BIND(r_drawBuffer);
+    BIND(r_nobind);
+    BIND(r_uifullscreen);
+    BIND(r_detailtextures);
+    BIND(r_vertexLight);
+    BIND(r_ignoreFastPath);
+    BIND(r_allowExtensions);
+    BIND(r_ext_multitexture);
+    BIND(r_ext_texture_env_add);
+    BIND(r_znear);
+    BIND(r_lodscale);
+    BIND(r_lodbias);
+    BIND(r_lodCurveError);
+    BIND(r_railCoreWidth);
+    BIND(r_railWidth);
+    BIND(r_railSegmentLength);
+    BIND(r_drawworld);
+    BIND(r_nocull);
+    BIND(r_novis);
+    BIND(r_nocurves);
+    BIND(r_facePlaneCull);
+    BIND(r_lockpvs);
+    BIND(r_noportals);
+    BIND(r_portalOnly);
+    BIND(r_fastsky);
+    BIND(r_dynamiclight);
+    BIND(r_ambientScale);
+    BIND(r_directedScale);
+    BIND(r_norefresh);
+    BIND(r_showcluster);
+    BIND(r_debugSort);
+    BIND(r_showtris);
+    BIND(r_shownormals);
+    BIND(r_showsky);
+    BIND(r_offsetfactor);
+    BIND(r_offsetunits);
+    BIND(r_lightmap);
+    BIND(r_skipBackEnd);
+    BIND(r_clear);
+    BIND(r_subdivisions);
+    BIND(r_mapOverBrightBits);
+    BIND(r_fullbright);
+    BIND(r_finish);
+    BIND(r_showImages);
+    BIND(r_speeds);
+    BIND(r_measureOverdraw);
+    BIND(r_shadows);
+#undef BIND
+}
 
 static bool source_cluster_clear(void *context, qa_error *error)
 {
     qa_frontend *f = context;
     qa_cvars *registry = f && f->application ? qa_application_cvars(f->application) : NULL;
-    const qa_cvar_view *row = frontend_render_control_record(registry, "r_showcluster");
+    const qa_cvar_view *row = registry ? qa_cvars_read(registry, f->engine_cvars.r_showcluster) : NULL;
     if (!row || !row->value)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source visibility lost its actual ENGINE cluster row");
-    qa_cvars_clear_modified(registry, "r_showcluster");
-    row = frontend_render_control_record(registry, "r_showcluster");
+    if (row->modified) qa_cvars_clear_modified(registry, "r_showcluster");
+    row = qa_cvars_read(registry, f->engine_cvars.r_showcluster);
     return (row && !row->modified) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Source visibility could not acknowledge its actual cluster row");
 }
@@ -20,7 +78,7 @@ static bool source_cluster_modified(void *context, bool *out, qa_error *error)
 {
     qa_frontend *f = context;
     const qa_cvar_view *row = f && f->application ?
-        frontend_render_control_record(qa_application_cvars(f->application), "r_showcluster") : NULL;
+        qa_cvars_read(qa_application_cvars(f->application), f->engine_cvars.r_showcluster) : NULL;
     if (!out || !row || !row->value)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source visibility lost its actual cluster modification cell");
     *out = row->modified;
@@ -119,7 +177,9 @@ static bool texture_mode_apply(qa_frontend *f,qa_render_controls *controls,
     return qa_render_controls_source_texture_mode(controls,filter,no_bind,error);
 }
 
-static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const *names,
+#define REF(name) offsetof(frontend_engine_cvar_handles, name)
+
+static bool records(qa_frontend *f, const qa_cvars_edit *edit, const size_t *offsets,
     size_t count, const qa_cvar_view **out, qa_error *error)
 {
     if (!f || !f->application || (edit &&
@@ -129,13 +189,10 @@ static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const
         return false;
     }
     for (size_t i = 0; i < count; ++i) {
-        const qa_cvar_view *canonical = edit ? qa_cvars_edit_canonical_record(edit, names[i]) :
-            frontend_render_control_record(qa_application_cvars(f->application), names[i]);
-        if (!canonical || !canonical->value) {
-            frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
-            return false;
-        }
-        out[i] = edit ? qa_cvars_edit_find(edit, canonical->name) : canonical;
+        const qa_cvar_handle *handle = (const qa_cvar_handle *)
+            ((const unsigned char *)&f->engine_cvars + offsets[i]);
+        out[i] = edit ? qa_cvars_edit_read(edit, *handle) :
+            qa_cvars_read(qa_application_cvars(f->application), *handle);
         if (!out[i] || !out[i]->value) {
             frontend_fail(error, QA_ERROR_ARGUMENT, "Source renderer policy lacks a physical canonical row");
             return false;
@@ -146,10 +203,10 @@ static bool records(qa_frontend *f, const qa_cvars_edit *edit, const char *const
 bool frontend_q3_source_restart_read(qa_frontend *f,const qa_cvars_edit *edit,
     qa_render_source_restart_values *out,qa_error *error)
 {
-    static const char *const names[]={"r_maxpolys","r_maxpolyverts","r_textureMode"};
+    static const size_t offsets[] = {REF(r_maxpolys), REF(r_maxpolyverts), REF(r_textureMode)};
     const qa_cvar_view *rows[3];
     if (!out || !f || (f->cpu && f->gl) || (!f->cpu && !f->gl) ||
-        !records(f,edit,names,3,rows,error))
+        !records(f,edit,offsets,3,rows,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source restart lost its actual renderer and constructor rows");
     qa_scene_filter filter;
     if (!texture_mode_resolve(f,rows[2]->value,&filter)) {
@@ -185,9 +242,9 @@ bool frontend_q3_texture_mode_initialize(qa_frontend *f,qa_error *error)
     if (initialized) return true;
     const qa_cvars_edit *edit=NULL;
     const qa_cvar_view *row;
-    static const char *const names[]={"r_textureMode"};
+    static const size_t offsets[] = {REF(r_textureMode)};
     return frontend_resource_policy_admission_edit(f,&edit,error) &&
-        records(f,edit,names,1,&row,error) && texture_mode_apply(f,controls,edit,row,error);
+        records(f,edit,offsets,1,&row,error) && texture_mode_apply(f,controls,edit,row,error);
 }
 bool frontend_q3_scene_limits_initialize(qa_frontend *f,qa_error *error)
 {
@@ -199,9 +256,9 @@ bool frontend_q3_scene_limits_initialize(qa_frontend *f,qa_error *error)
     if (!qa_render_controls_source_scene_limits_read(controls,&max_polys,&max_polyverts,&initialized,error)) return false;
     if (initialized) return true;
     const qa_cvars_edit *edit=NULL;
-    static const char *const names[]={"r_maxpolys","r_maxpolyverts"};
+    static const size_t offsets[] = {REF(r_maxpolys), REF(r_maxpolyverts)};
     const qa_cvar_view *rows[2];
-    return frontend_resource_policy_admission_edit(f,&edit,error) && records(f,edit,names,2,rows,error) &&
+    return frontend_resource_policy_admission_edit(f,&edit,error) && records(f,edit,offsets,2,rows,error) &&
         qa_render_controls_source_scene_limits_initialize(controls,rows[0]->integer,rows[1]->integer,error);
 }
 bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
@@ -214,13 +271,13 @@ bool frontend_q3_texture_mode_begin_frame(qa_frontend *f,qa_error *error)
     if (!qa_render_controls_source_texture_mode_read(controls,&filter,&initialized,error)) return false;
     if (!initialized) return frontend_q3_texture_mode_initialize(f,error);
     qa_cvars *registry=qa_application_cvars(f->application);
-    const qa_cvar_view *row=frontend_render_control_record(registry,"r_textureMode");
+    const qa_cvar_view *row=qa_cvars_read(registry, f->engine_cvars.r_textureMode);
     if (!row || !row->value)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame has no real ENGINE mode row");
     if (!row->modified) return true;
     if (!texture_mode_apply(f,controls,NULL,row,error)) return false;
     qa_cvars_clear_modified(registry,"r_textureMode");
-    row=frontend_render_control_record(registry,"r_textureMode");
+    row=qa_cvars_read(registry, f->engine_cvars.r_textureMode);
     return (row && !row->modified) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Source texture frame lost its modification acknowledgment");
 }
@@ -238,9 +295,9 @@ bool frontend_q3_source_begin_frame(qa_frontend *f,int32_t stereo_frame,qa_error
     qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):f->gl?qa_gl_render_controls(f->gl):NULL;
     if (controls && !qa_render_controls_source_begin_frame(controls,error)) return false;
     if (!frontend_q3_texture_mode_begin_frame(f,error)) return false;
-    static const char *const names[]={"r_drawBuffer"};
+    static const size_t offsets[] = {REF(r_drawBuffer)};
     const qa_cvar_view *row;
-    if (!records(f,NULL,names,1,&row,error)) return false;
+    if (!records(f,NULL,offsets,1,&row,error)) return false;
     const unsigned char *a=(const unsigned char *)row->value,*b=(const unsigned char *)"GL_FRONT";
     while (*a && *b) {
         unsigned char c=*a;
@@ -273,9 +330,9 @@ bool frontend_q3_source_image_admit(void *context,const qa_scene_image *image,ui
 }
 bool frontend_q3_source_no_bind_read(qa_frontend *f,const qa_cvars_edit *edit,bool *out,qa_error *error)
 {
-    static const char *const names[]={"r_nobind"};
+    static const size_t offsets[] = {REF(r_nobind)};
     const qa_cvar_view *row;
-    if (!out || !records(f,edit,names,1,&row,error)) return false;
+    if (!out || !records(f,edit,offsets,1,&row,error)) return false;
     *out=row->integer!=0; return true;
 }
 bool frontend_q3_material_source_bind(qa_frontend *f, qa_material_library *library, qa_error *error)
@@ -291,20 +348,23 @@ bool frontend_q3_material_ui_fullscreen_read(void *context, bool *out, qa_error 
 {
     qa_frontend *f = context;
     const qa_cvars_edit *edit = NULL;
-    static const char *const names[] = {"r_uifullscreen"};
+    static const size_t offsets[] = {REF(r_uifullscreen)};
     const qa_cvar_view *row;
     if (!out || !frontend_resource_policy_admission_edit(f, &edit, error) ||
-        !records(f, edit, names, 1, &row, error)) return false;
+        !records(f, edit, offsets, 1, &row, error)) return false;
     *out = row->integer != 0;
     return true;
 }
 bool frontend_q3_material_profile_read(qa_frontend *f, const qa_cvars_edit *edit,
     qa_material_profile *out, qa_error *error)
 {
-    static const char *const names[] = {"r_detailtextures", "r_vertexLight", "r_uifullscreen",
-        "r_ignoreFastPath", "r_allowExtensions", "r_ext_multitexture", "r_ext_texture_env_add"};
-    const qa_cvar_view *rows[sizeof(names)/sizeof(*names)];
-    if (!out || !records(f, edit, names, sizeof(names)/sizeof(*names), rows, error)) return false;
+    static const size_t offsets[] = {
+        REF(r_detailtextures), REF(r_vertexLight), REF(r_uifullscreen),
+        REF(r_ignoreFastPath), REF(r_allowExtensions), REF(r_ext_multitexture),
+        REF(r_ext_texture_env_add)
+    };
+    const qa_cvar_view *rows[sizeof(offsets)/sizeof(*offsets)];
+    if (!out || !records(f, edit, offsets, sizeof(offsets)/sizeof(*offsets), rows, error)) return false;
     const qa_gl_capabilities *caps = f->gl ? qa_gl_capabilities_get(f->gl) : NULL;
     *out = (qa_material_profile){.detail_textures = rows[0]->integer != 0,
         .vertex_lighting = rows[1]->integer != 0, .ui_fullscreen = rows[2]->integer != 0,
@@ -318,11 +378,11 @@ bool frontend_q3_material_profile_read(qa_frontend *f, const qa_cvars_edit *edit
 bool frontend_q3_renderer_options_read(qa_frontend *f, qa_q3_presentation_options *out,
     qa_error *error)
 {
-    static const char *const names[] = {"r_znear"};
+    static const size_t offsets[] = {REF(r_znear)};
     const qa_cvars_edit *edit = NULL;
     const qa_cvar_view *row;
     if (!out || !frontend_resource_policy_admission_edit(f, &edit, error) ||
-        !records(f, edit, names, 1, &row, error)) return false;
+        !records(f, edit, offsets, 1, &row, error)) return false;
     qa_q3_color_lighting lighting;
     if (!frontend_q3_source_color_lighting_read(f, edit, &lighting, error)) return false;
     out->near_clip = (float)row->number;
@@ -331,13 +391,18 @@ bool frontend_q3_renderer_options_read(qa_frontend *f, qa_q3_presentation_option
 }
 bool frontend_q3_scene_policy_read(qa_frontend *f, qa_q3_scene_options *out, qa_error *error)
 {
-    static const char *const names[] = {"r_lodscale", "r_lodbias", "r_lodCurveError",
-        "r_railCoreWidth", "r_railWidth", "r_railSegmentLength", "r_drawworld", "r_drawentities",
-        "r_nocull", "r_novis", "r_nocurves", "r_facePlaneCull", "r_lockpvs", "r_noportals",
-        "r_portalOnly", "r_fastsky", "r_dynamiclight", "r_vertexLight", "r_ambientScale",
-        "r_directedScale", "r_znear", "r_norefresh", "r_showcluster"};
-    const qa_cvar_view *rows[sizeof(names)/sizeof(*names)];
-    if (!out || !records(f, NULL, names, sizeof(names)/sizeof(*names), rows, error)) return false;
+    static const size_t offsets[] = {
+        REF(r_lodscale), REF(r_lodbias), REF(r_lodCurveError),
+        REF(r_railCoreWidth), REF(r_railWidth), REF(r_railSegmentLength),
+        REF(r_drawworld), REF(r_drawentities), REF(r_nocull),
+        REF(r_novis), REF(r_nocurves), REF(r_facePlaneCull),
+        REF(r_lockpvs), REF(r_noportals), REF(r_portalOnly),
+        REF(r_fastsky), REF(r_dynamiclight), REF(r_vertexLight),
+        REF(r_ambientScale), REF(r_directedScale), REF(r_znear),
+        REF(r_norefresh), REF(r_showcluster)
+    };
+    const qa_cvar_view *rows[sizeof(offsets)/sizeof(*offsets)];
+    if (!out || !records(f, NULL, offsets, sizeof(offsets)/sizeof(*offsets), rows, error)) return false;
     out->lod_scale = (float)rows[0]->number; out->lod_bias = (float)rows[1]->integer;
     out->world.curve_error = (float)rows[2]->number;
     out->rail = (qa_scene_rail_options){.core_width = rows[3]->integer,
@@ -367,12 +432,15 @@ bool frontend_q3_scene_policy_read(qa_frontend *f, qa_q3_scene_options *out, qa_
 bool frontend_q3_material_diagnostics_read(qa_frontend *f, qa_scene_source_diagnostics *out,
     qa_error *error)
 {
-    static const char *const names[] = {"r_debugSort", "r_showtris", "r_shownormals", "r_showsky",
-        "r_nobind", "r_offsetfactor", "r_offsetunits", "r_fastsky",
-        "r_railCoreWidth", "r_railWidth", "r_railSegmentLength", "r_lightmap",
-        "r_vertexLight", "r_uiFullScreen"};
-    const qa_cvar_view *rows[sizeof(names)/sizeof(*names)];
-    if (!out || !records(f, NULL, names, sizeof(names)/sizeof(*names), rows, error)) return false;
+    static const size_t offsets[] = {
+        REF(r_debugSort), REF(r_showtris), REF(r_shownormals),
+        REF(r_showsky), REF(r_nobind), REF(r_offsetfactor),
+        REF(r_offsetunits), REF(r_fastsky), REF(r_railCoreWidth),
+        REF(r_railWidth), REF(r_railSegmentLength), REF(r_lightmap),
+        REF(r_vertexLight), REF(r_uifullscreen)
+    };
+    const qa_cvar_view *rows[sizeof(offsets)/sizeof(*offsets)];
+    if (!out || !records(f, NULL, offsets, sizeof(offsets)/sizeof(*offsets), rows, error)) return false;
     *out = (qa_scene_source_diagnostics){.debug_sort = rows[0]->integer,
         .show_triangles = rows[1]->integer != 0, .show_normals = rows[2]->integer != 0,
         .show_sky = rows[3]->integer != 0, .no_bind = rows[4]->integer != 0,
@@ -397,9 +465,9 @@ bool frontend_q3_material_diagnostics_read(qa_frontend *f, qa_scene_source_diagn
 }
 bool frontend_q3_frame_policy_read(qa_frontend *f, qa_error *error)
 {
-    static const char *const names[] = {"r_skipBackEnd", "r_clear"};
+    static const size_t offsets[] = {REF(r_skipBackEnd), REF(r_clear)};
     const qa_cvar_view *rows[2];
-    if (!records(f, NULL, names, 2, rows, error)) return false;
+    if (!records(f, NULL, offsets, 2, rows, error)) return false;
     f->frame.source_backend = true;
     f->frame.source_skip_backend = rows[0]->integer != 0;
     f->frame.source_clear_draw_buffer = rows[1]->integer != 0;
@@ -408,9 +476,9 @@ bool frontend_q3_frame_policy_read(qa_frontend *f, qa_error *error)
 bool frontend_q3_world_policy_read(qa_frontend *f, const qa_cvars_edit *edit,
     qa_scene_world_options *out, qa_error *error)
 {
-    static const char *const names[] = {"r_subdivisions", "r_mapOverBrightBits", "r_fullbright"};
+    static const size_t offsets[] = {REF(r_subdivisions), REF(r_mapOverBrightBits), REF(r_fullbright)};
     const qa_cvar_view *rows[3];
-    if (!out || !records(f, edit, names, 3, rows, error)) return false;
+    if (!out || !records(f, edit, offsets, 3, rows, error)) return false;
     qa_q3_color_lighting lighting;
     if (!frontend_q3_source_color_lighting_read(f, edit, &lighting, error) ||
         !qa_q3_color_map_shift(rows[1]->integer, &lighting, &out->q3_overbright, error)) return false;
