@@ -1514,8 +1514,10 @@ static bool admin_options(qa_frontend_network *n,qa_admin_options *out,qa_error 
         cvars=source.cvars;
     }
     qa_console_dialect dialect=qa_cvars_dialect(cvars);
-    const qa_cvar_view *filter=qa_cvars_find(cvars,"filterban"),*published=qa_cvars_find(cvars,"public"),
-        *dedicated=qa_cvars_find(cvars,"dedicated");
+    const frontend_engine_cvar_handles *refs=&n->frontend->engine_cvars;
+    const qa_cvar_view *filter=qa_cvars_read(cvars,refs->filterban),
+        *published=qa_cvars_read(cvars,refs->public_server),
+        *dedicated=qa_cvars_read(cvars,refs->dedicated);
     bool q2=dialect==QA_CONSOLE_Q2 || dialect==QA_CONSOLE_Q2_RERELEASE;
     *out=(qa_admin_options){.dialect=dialect,.filters=1024,.rate_entries=1024,.burst=10,
         .rate_interval_ns=UINT64_C(1000000000),.heartbeat_interval_ns=UINT64_C(300000000000),

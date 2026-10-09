@@ -24,7 +24,7 @@ typedef struct frontend_legacy_cvar_handles {
     qa_cvar_handle r_mirroralpha, gl_texsort, r_fullbright, r_lightmap, gl_lightmap;
     qa_cvar_handle r_dynamic, gl_dynamic, gl_polyblend, gl_cull, gl_clear;
     qa_cvar_handle gl_modulate, gl_monolightmap, gl_saturatelighting, cl_flares;
-    qa_cvar_handle cl_predict, r_drawviewmodel, cl_gun, hand;
+    qa_cvar_handle cl_predict, r_drawviewmodel, cl_gun, hand, cl_footsteps;
     qa_hud_cvar_handles hud;
 } frontend_legacy_cvar_handles;
 

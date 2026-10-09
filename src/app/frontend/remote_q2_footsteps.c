@@ -143,7 +143,7 @@ bool remote_q2_footstep(void *context, const frontend_remote_q2_effects_pose *po
     frontend_remote_q2 *row = context;
     if (!row || !pose || !random || !row->footsteps || !remote_q2_live(row, error)) return false;
     frontend_q2_footstep_sample sample = {.pose = *pose, .milliseconds = time, .event = event, .bottom = -66};
-    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_footsteps);
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_footsteps);
     sample.footsteps = setting ? (float)setting->number : 1;
     if (event == 9) {
         frontend_q2_footstep_source source = source_read(row);

@@ -197,8 +197,10 @@ typedef struct frontend_seat {
 typedef struct frontend_engine_cvar_handles {
     uint64_t view_identity;
     qa_cvar_handle timedemo, com_maxfps, r_maxfps;
+    qa_cvar_handle cl_avidemo, cl_forceavidemo, timescale;
     qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
     qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
+    qa_cvar_handle filterban, public_server, dedicated;
     qa_cvar_handle r_maxpolys, r_maxpolyverts, r_textureMode, r_drawBuffer;
     qa_cvar_handle r_nobind, r_uifullscreen, r_detailtextures, r_vertexLight;
     qa_cvar_handle r_ignoreFastPath, r_allowExtensions, r_ext_multitexture, r_ext_texture_env_add;

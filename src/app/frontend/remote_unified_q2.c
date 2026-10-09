@@ -593,7 +593,8 @@ static bool footstep(void *ctx,const frontend_remote_q2_effects_pose *pose_value
 {
     q2_bank *b=ctx;
     if (!b->footsteps || !pose_value || !current(b->owner,e)) return false;
-    const qa_cvar_view *control=qa_cvars_find(frontend_remote_unified_domain_read(b->owner->replica)->cvars,"cl_footsteps");
+    const qa_cvar_view *control=qa_cvars_read(frontend_remote_unified_domain_read(b->owner->replica)->cvars,
+        b->owner->replica->legacy_cvars.cl_footsteps);
     if (!control || !isfinite(control->number) || fabs(control->number)>FLT_MAX)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 footstep has no actual finite CLIENT control");
     qa_body_state body;
@@ -1706,7 +1707,8 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
     qa_actor_id viewer; uint32_t number_id;
     if (!frontend_remote_unified_player(o->replica,&viewer,&number_id)) return false;
     const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
-    const qa_cvar_view *steps=qa_cvars_find(registry,"cl_footsteps"),*hand=qa_cvars_find(registry,"hand");
+    const qa_cvar_view *steps=qa_cvars_read(registry,o->replica->legacy_cvars.cl_footsteps),
+        *hand=qa_cvars_read(registry,o->replica->legacy_cvars.hand);
     bool has_effects=false;
     for (q2_bank *b=o->banks;b;b=b->next) if (b->effects) has_effects=true;
     if (has_effects && (!steps || !hand || !isfinite(steps->number) || fabs(steps->number)>FLT_MAX))

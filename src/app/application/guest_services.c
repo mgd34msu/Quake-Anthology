@@ -67,6 +67,7 @@ bool application_console_create(qa_application *application, qa_error *error)
         .user = application, .print = cvar_print};
     application->cvars = qa_cvars_create(&cvars, error);
     if (application->cvars == NULL) return false;
+    application->bot_minplayers = qa_cvars_resolve(application->cvars, "bot_minplayers");
     if (!qa_cvars_register(application->cvars, "sv_cheats", "", 0, 0, NULL, error)) return false;
     qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,

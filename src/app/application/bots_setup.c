@@ -38,7 +38,7 @@ bool application_bots_frame_request(qa_application *app,const qa_source_frame *f
     if(app->bots && app->bots->population) return true;
     application_provider *source;
     if(!live_shared_source(app,&source)) return true;
-    const qa_cvar_view *minimum=qa_cvars_find(app->cvars,"bot_minplayers");
+    const qa_cvar_view *minimum=qa_cvars_read(app->cvars,app->bot_minplayers);
     if(!minimum || !(minimum->number>0)) return true;
     const qa_source_frame *frame=NULL;
     for(size_t i=0;i<count;++i) if(frames[i].provider==source->owner) {frame=frames+i;break;}

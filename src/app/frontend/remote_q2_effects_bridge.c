@@ -352,7 +352,7 @@ bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
     frontend_remote_q2_effects_pose *poses=row->effect_poses;
     bool ok = true;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) ok = actor(row, row->frame.entities[i].number, poses + i, error);
-    const qa_cvar_view *footsteps = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_footsteps);
+    const qa_cvar_view *footsteps = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_footsteps);
     frontend_remote_q2_effects_sample sample = {
         .milliseconds = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms,
         .server_milliseconds = (double)row->frame.server_frame * row->frame_ms,

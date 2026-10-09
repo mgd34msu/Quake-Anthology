@@ -71,6 +71,7 @@ void frontend_legacy_cvars_bind(const qa_cvars *registry, frontend_legacy_cvar_h
         .r_drawviewmodel=qa_cvars_resolve(registry,"r_drawviewmodel"),
         .cl_gun=qa_cvars_resolve(registry,"cl_gun"),
         .hand=qa_cvars_resolve(registry,"hand"),
+        .cl_footsteps=qa_cvars_resolve(registry,"cl_footsteps"),
     };
     qa_hud_cvars_bind(registry, QA_HUD_CVAR_DEATHMATCH | QA_HUD_CVAR_SWAP | QA_HUD_CVAR_TEAMPLAY | QA_HUD_CVAR_USE_FONT, &out->hud);
 }

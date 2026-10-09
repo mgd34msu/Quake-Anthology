@@ -65,7 +65,6 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle cl_disable_particles;
     qa_cvar_handle cl_dlight_hacks;
     qa_cvar_handle cl_entities;
-    qa_cvar_handle cl_footsteps;
     qa_cvar_handle cl_gunfov;
     qa_cvar_handle cl_hit_markers;
     qa_cvar_handle cl_lights;

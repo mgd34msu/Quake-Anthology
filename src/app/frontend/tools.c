@@ -553,10 +553,10 @@ bool frontend_tools_capture_clock(qa_frontend *f,const qa_cvars *registry,uint64
     if (!f || !out) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend capture clock");
     if (!f->tools || f->options.dedicated || !f->options.seats || !registry) { *out = elapsed_ns; return true; }
     qa_command_context source = qa_input_seat_context(f->seats[0].input);
-    const qa_cvar_view *fps = qa_cvars_find(registry, "cl_avidemo");
+    const qa_cvar_view *fps = qa_cvars_read(registry, f->engine_cvars.cl_avidemo);
     if (!fps || fps->number <= 0 || elapsed_ns == 0) { *out = elapsed_ns; return true; }
-    const qa_cvar_view *force = qa_cvars_find(registry,"cl_forceavidemo");
-    const qa_cvar_view *scale = qa_cvars_find(registry,"timescale");
+    const qa_cvar_view *force = qa_cvars_read(registry, f->engine_cvars.cl_forceavidemo);
+    const qa_cvar_view *scale = qa_cvars_read(registry, f->engine_cvars.timescale);
     qa_capture_clock clock;
     if (!qa_capture_frame_time((double)elapsed_ns / 1000000.0, fps->number, scale ? scale->number : 1,
         frontend_network_remote(f)?frontend_network_client_ready(f):

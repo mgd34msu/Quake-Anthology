@@ -1930,6 +1930,11 @@ static bool install_commands(frontend_config_source *source,qa_error *error)
     }
     if (source->primary && !source->imported &&
         !qa_server_admin_declarations(source->cvars,source->declaration_owner,error)) return false;
+    if (source->primary) {
+        (void)qa_cvars_resolve(source->cvars,"filterban");
+        (void)qa_cvars_resolve(source->cvars,"public");
+        (void)qa_cvars_resolve(source->cvars,"dedicated");
+    }
     if (source->primary && !source->imported && !source->manager->frontend->network) {
         frontend_config_store *manager=source->manager;
         if (manager->admin) {

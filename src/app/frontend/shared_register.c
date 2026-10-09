@@ -408,6 +408,9 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
     if (frontend->engine_cvars.view_identity==identity) return;
     frontend->engine_cvars=(frontend_engine_cvar_handles){.view_identity=identity,
         .timedemo=qa_cvars_resolve(registry,"timedemo"),
+        .cl_avidemo=qa_cvars_resolve(registry,"cl_avidemo"),
+        .cl_forceavidemo=qa_cvars_resolve(registry,"cl_forceavidemo"),
+        .timescale=qa_cvars_resolve(registry,"timescale"),
         .com_maxfps=qa_cvars_resolve(registry,"com_maxfps"),
         .r_maxfps=qa_cvars_resolve(registry,"r_maxfps"),
         .s_volume=qa_cvars_resolve(registry,"s_volume"),
@@ -416,7 +419,10 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .gl_farclip=qa_cvars_resolve(registry,"gl_farclip"),
         .r_gamma=qa_cvars_resolve(registry,"r_gamma"),
         .con_notifytime=qa_cvars_resolve(registry,"con_notifytime"),
-        .r_drawentities=qa_cvars_resolve(registry,"r_drawentities")};
+        .r_drawentities=qa_cvars_resolve(registry,"r_drawentities"),
+        .filterban=qa_cvars_resolve(registry,"filterban"),
+        .public_server=qa_cvars_resolve(registry,"public"),
+        .dedicated=qa_cvars_resolve(registry,"dedicated")};
     frontend_legacy_cvars_bind(registry,&frontend->engine_cvars.legacy);
     frontend_render_cvars_bind(frontend);
     frontend_shared_resource_policy_cvars_bind(frontend);

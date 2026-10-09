@@ -182,7 +182,6 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .cl_disable_particles=qa_cvars_resolve(registry,"cl_disable_particles"),
         .cl_dlight_hacks=qa_cvars_resolve(registry,"cl_dlight_hacks"),
         .cl_entities=qa_cvars_resolve(registry,"cl_entities"),
-        .cl_footsteps=qa_cvars_resolve(registry,"cl_footsteps"),
         .cl_gunfov=qa_cvars_resolve(registry,"cl_gunfov"),
         .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
         .cl_lights=qa_cvars_resolve(registry,"cl_lights"),

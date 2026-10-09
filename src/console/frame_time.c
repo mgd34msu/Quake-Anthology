@@ -61,6 +61,8 @@ void qa_source_frame_time_bind(const qa_cvars *cvars, qa_source_frame_time_bindi
         .server_maximum_seconds = qa_cvars_resolve(cvars, "sv_maxtic"),
         .dedicated = qa_cvars_resolve(cvars, "dedicated"),
         .capture_fps = qa_cvars_resolve(cvars, "cl_avidemo")};
+    /* Prime the capture flag on this actual Source view at adoption. */
+    (void)qa_cvars_resolve(cvars, "cl_forceavidemo");
 }
 
 bool qa_source_frame_time_controls_read(const qa_source_frame_time_binding *binding,
