@@ -6535,7 +6535,7 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
         }
         return frontend_network_unified_publish(n->unified,NULL,error);
     }
-    if(f->options.network_connect && (n->q1_client_owner || n->q2_client_owner))
+    if(frontend_network_client_only(f) && (n->q1_client_owner || n->q2_client_owner))
         return frontend_network_q1_client_idle(n->q1_client_owner) && frontend_network_q2_client_idle(n->q2_client_owner);
     if(n->q2_host) return frontend_network_q2_host_publish(n->q2_host,f->wall_time_ns,error);
     if (n->nq_host) return frontend_nq_publish(n->nq_host, error);

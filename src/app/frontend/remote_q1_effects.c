@@ -121,7 +121,9 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
         qa_actor_id source;
         if (!remote_q1_actor_read(row, number, &source, error) ||
             (actor = frontend_audio_actor(f, source, error)) == QA_AUDIO_NO_ACTOR) {
-            qa_audio_asset_release(asset); return false;
+            qa_audio_asset_release(asset);
+            if (error && error->code == QA_ERROR_NOT_FOUND) { *error=(qa_error){0}; return true; }
+            return false;
         }
     }
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
@@ -217,7 +219,10 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
     case QA_NQ_STOPSOUND: {
         if (!row->frontend->audio) return true;
         qa_actor_id source;
-        if (!remote_q1_actor_read(row, message->data.stop_sound.entity, &source, error)) return false;
+        if (!remote_q1_actor_read(row, message->data.stop_sound.entity, &source, error)) {
+            if (error && error->code == QA_ERROR_NOT_FOUND) { *error=(qa_error){0}; return true; }
+            return false;
+        }
         uint64_t actor = frontend_audio_actor(row->frontend, source, error);
         if (actor == QA_AUDIO_NO_ACTOR) return false;
         qa_audio_engine_stop_channel(row->frontend->audio, actor, row->options.domain.actor_owner,

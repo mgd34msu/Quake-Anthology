@@ -16,5 +16,6 @@ struct frontend_shared_settings {
     qa_input_platform_settings projected;
     bool projected_window;
     bool before_complete,after_started,after_complete,aborting,scalar_aborted,consumed;
+    bool release_deferred_warned;
 };
 #endif

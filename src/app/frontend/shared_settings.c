@@ -193,15 +193,25 @@ bool frontend_shared_settings_advance(frontend_shared_settings *owner,bool valid
     bool *complete,qa_error *error)
 {
     if (complete) *complete=false;
-    if (!complete || !owner || owner->aborting ||
+    if (!complete || !owner ||
+        !owner->frontend || owner->frontend->application!=owner->application ||
+        owner->manager!=owner->frontend->config_store ||
+        frontend_shared_values_registry(owner->values)!=qa_application_cvars(owner->application))
+        return fail(error,"Invalid settings release owner");
+    bool *finished=validated?&owner->after_complete:&owner->before_complete;
+    if (*finished) { *complete=true; return true; }
+    if (owner->aborting ||
         !frontend_shared_settings_current(owner,owner->frontend,owner->application,owner->candidate) ||
         !(owner->client?(qa_application_client_prepare_entered(owner->client,QA_CLIENT_PREPARE_RELEASE) &&
             !qa_application_client_prepare_cancel_entered(owner->client)):
             qa_application_startup_resource_phase(owner->application,owner->candidate)) ||
-        (validated && !owner->before_complete) || (!validated && owner->after_started))
-        return fail(error,"Shared release advancement lost its actual candidate phase");
-    bool *finished=validated?&owner->after_complete:&owner->before_complete;
-    if (*finished) { *complete=true; return true; }
+        (validated && !owner->before_complete) || (!validated && owner->after_started)) {
+        if (!owner->release_deferred_warned) {
+            owner->release_deferred_warned=true;
+            frontend_console_print(owner->frontend,NULL,"Settings release pending; retaining current settings.\n");
+        }
+        return true;
+    }
     if (validated) owner->after_started=true;
     qa_frontend *f=owner->frontend;
     if (f->options.dedicated) { *finished=true; *complete=true; return true; }

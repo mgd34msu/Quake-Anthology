@@ -102,10 +102,11 @@ bool qa_application_client_bind(qa_application *, const qa_application_client_so
 bool qa_application_client_rebind(qa_application *, const qa_application_client_source *,
     const qa_launch_instance *, const qa_command_context *, uint64_t configuration_generation,
     qa_application_client_source *, qa_error *);
+/* Reuses the last completed map's observer while publication changes.
+ * An unknown entity before publication returns NOT_FOUND without an actor. */
 bool qa_application_client_entity_read(qa_application *, const qa_application_client_source *,
     uint32_t source_number, qa_actor_id *, qa_error *);
-/* Retires absent observer identities at genuine decoded-frame publication.
- * Surviving source rows retain their existing full actor identities. */
+/* Observer identities survive packet/PVS absence and retire on map change. */
 bool qa_application_client_entities_refresh(qa_application *,
     const qa_application_client_source *, qa_error *);
 bool qa_application_client_idle(qa_application *, const qa_application_client_source *);
