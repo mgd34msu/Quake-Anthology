@@ -13,7 +13,7 @@ authoritative engine store; preserve their required fields and numeric rules.
 
 | Capability | Canonical definition and current adoption | Remaining implementation or caller migration |
 | --- | --- | --- |
-| Entity identity and lifetime | `include/qa/actors.h:12,43`, `src/world/actors_internal.h:9,16`; created by `src/session/session.c:308`. Q1/Q2/Q3 rule attachments and QC/QVM/native bindings use this registry. | `src/app/frontend/remote_q1_client.c:237` retains another source-number-to-actor cache. Remove its array, scans, growth, cleanup and redundant checkpoint state in favor of the existing canonical source lookup. Native rule-tail allocations are also allocation-gate work; their original rules remain. |
+| Entity identity and lifetime | `include/qa/actors.h:12,43`, `src/world/actors_internal.h:9,16`; created by `src/session/session.c:308`. Q1/Q2/Q3 rule attachments and QC/QVM/native bindings use this registry. Q1 frontend actor lookup at `src/app/frontend/remote_q1_client.c:237` now reads this source index; its separate actor type, array, scans, growth and cleanup are deleted. | Native rule-tail allocations are also allocation-gate work; their original rules remain. CLIENT ownership and saved actor references remain canonical lifecycle data. |
 | Body | `include/qa/world.h:7`, `src/world/entity_internal.h:12`, `src/world/body.c:340,351,369,400`. Application controls, QC, owned native Q2/Q3 hosts and Unified prediction use the shared world. | Legacy prediction bypasses remain in `src/app/frontend/remote_q1_prediction.c:60`, `remote_q2_prediction.c:56` and `src/network/q3/prediction_scene.c:363`. Project received solids and poses into common linked bodies, retain caller trace/order rules and delete all three independent scan/merge paths. |
 | Body field selection | `src/world/live_fields.c:96` decodes live external backing. | Five-field selection/update is copied in `src/app/application/guest_q3_component_records_calls.c:45,121` and `native_q2_records_calls.c:82,303`. Resolve the external field kind into one common typed selector; retain module encodings at the boundary. |
 | Current player movement and view | `include/qa/movement.h:136` is the common movement type. Actor-indexed controls in `src/app/application/internal.h:158` own the selected movement and completed view/bounds/ground/water. | Q2 retains the same selected data in `include/qa/game_q2_wire.h:20`, stored at `src/gameplay/q2/internal.h:95` and recopied in `wire.c:665`. Q3 duplicates movement/view fields in `include/qa/game_q3.h:135` and bridges them in `src/app/application/control.c:3079` and `src/gameplay/q3/player.c:2083`. Remove duplicate current-state custody, preserving genuinely source-specific mixed-role PM fields and exact ABI projections. A complete common PlayerState owner is still open. |
@@ -31,6 +31,14 @@ It is a component proof, not a full guest execution or checkpoint round trip.
 Production, ASan/UBSan and allocation-gate builds and all seven core checks in
 each pass for the isolated ten-source-path item-type slice. The full checklist
 above remains open; this does not close THE-344 or whole-frame allocation.
+
+The Q1 source-index migration admits missing actors through the existing CLIENT
+boundary and retires prior-map actors once at loaded SETVIEW. Actual-source
+components cover busy receive, generation reuse, retired metadata and actor
+checkpoint references. Three engine builds and seven core checks each pass.
+Private copied-profile CPU runs show classic/rerelease start, retail NetQuake
+demo playback and the menu; all quit normally and their final images were
+reviewed. This does not prove every legacy protocol or a frame-time speedup.
 
 ## Geometry and live entities: THE-2873 / THE-2861
 

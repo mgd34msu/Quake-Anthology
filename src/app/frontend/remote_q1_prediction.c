@@ -116,13 +116,16 @@ static bool is_brush(void *context,const qa_trace_result *hit,bool *out,qa_error
 {
     frontend_remote_q1 *row=context; (void)error;
     *out=hit->hit==QA_TRACE_HIT_WORLD;
-    if(hit->hit==QA_TRACE_HIT_ACTOR)
-        for(size_t i=0;i<row->actor_count;++i) if(qa_actor_id_equal(hit->actor,row->actors[i].id))
+    if(hit->hit==QA_TRACE_HIT_ACTOR) {
+        const qa_actor_record *record=qa_actors_get(row->options.domain.actors,hit->actor);
+        if(record && record->has_source && record->owner==row->options.domain.actor_owner &&
+            record->definition==row->options.domain.actor_definition)
             for(size_t j=0;j<row->current.count;++j) {
                 const qa_q1_entity *e=row->current.rows+j;
-                if(e->number==row->actors[i].number && e->model && e->model<=row->model_count)
+                if(e->number==record->source_slot && e->model && e->model<=row->model_count)
                     *out=row->models[e->model-1][0]=='*';
             }
+    }
     return true;
 }
 static bool exhausted(const frontend_remote_q1_prediction *p)

@@ -236,19 +236,14 @@ bool remote_q1_entity_set(remote_q1_entities *table, const qa_q1_entity *entity,
 }
 bool remote_q1_actor_read(frontend_remote_q1 *row, uint32_t number, qa_actor_id *out, qa_error *error)
 {
-    for (size_t i = 0; i < row->actor_count; ++i) if (row->actors[i].number == number) {
-        const qa_actor_record *record = qa_actors_get(row->options.domain.actors, row->actors[i].id);
-        if (!record || record->owner != row->options.domain.actor_owner ||
-            record->definition != row->options.domain.actor_definition || !record->has_source || record->source_slot != number)
-            return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 presentation actor generation retired");
+    const qa_actor_record *record = qa_actors_at_source(row->options.domain.actors,
+        row->options.domain.actor_owner, number);
+    if (record && record->definition == row->options.domain.actor_definition) {
         *out = record->id; return true;
     }
-    if (row->actor_count >= 65536) return remote_q1_fail(error, QA_ERROR_FORMAT, "Remote Q1 actor cache is full");
-    if (!grow((void **)&row->actors, &row->actor_capacity, row->actor_count + 1, sizeof(*row->actors), error)) return false;
-    qa_application_client_source source; qa_actor_id id;
-    if (!frontend_remote_q1_application_read(row, &source, error) ||
-        !qa_application_client_entity_read(row->options.domain.application, &source, number, &id, error)) return false;
-    row->actors[row->actor_count++] = (remote_q1_actor){number, id}; *out = id; return true;
+    qa_application_client_source source;
+    return frontend_remote_q1_application_read(row, &source, error) &&
+        qa_application_client_entity_read(row->options.domain.application, &source, number, out, error);
 }
 static void names_free(char ***names, size_t *count)
 { for (size_t i = 0; i < *count; ++i) free((*names)[i]); free(*names); *names = NULL; *count = 0; }
@@ -266,7 +261,6 @@ static bool names_copy(char ***out, size_t *count, const char *const *names, siz
 void remote_q1_clear(frontend_remote_q1 *row)
 {
     if (!qa_q1_is_qw(row->options.domain.protocol)) remote_q1_demo_clear(row);
-    row->actor_count = 0;
     remote_q1_camera_reset(row);
     row->view_motion = (frontend_q1_view_motion){0};
     row->view_entity_pose_number = 0;
@@ -409,7 +403,16 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
         entity.number = 65536u + (uint32_t)row->statics.count;
         ok = remote_q1_entity_set(&row->statics, &entity, error); break;
     }
-    case QA_NQ_SETVIEW: row->view_entity = message->data.value; break;
+    case QA_NQ_SETVIEW: {
+        row->view_entity = message->data.value;
+        if (row->loaded) {
+            qa_application_client_source source; qa_actor_id actor;
+            ok = frontend_remote_q1_application_read(row, &source, error) &&
+                qa_application_client_entity_read(row->options.domain.application, &source,
+                    row->view_entity, &actor, error);
+        }
+        break;
+    }
     case QA_NQ_SETANGLE: row->view_angles = qa_v3(message->data.angles[0], message->data.angles[1], message->data.angles[2]); break;
     case QA_NQ_CLIENTDATA: row->data = message->data.clientdata; row->has_data = true; break;
     case QA_NQ_STAT: row->stats[message->data.indexed.index] = message->data.indexed.value; break;
@@ -480,7 +483,9 @@ bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_re
 {
     if (!row || !out || row->busy) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 metadata requires returned receiver callbacks");
     qa_actor_id viewer = {0};
-    for (size_t i = 0; i < row->actor_count; ++i) if (row->actors[i].number == row->view_entity) { viewer = row->actors[i].id; break; }
+    const qa_actor_record *record = row->view_entity ? qa_actors_at_source(row->options.domain.actors,
+        row->options.domain.actor_owner, row->view_entity) : NULL;
+    if (record && record->definition == row->options.domain.actor_definition) viewer = record->id;
     *out = (frontend_remote_q1_view){row, row->options.domain, row->content, row->revision, row->map_generation,
         row->received_ns, row->frame_number, row->seconds, row->previous_seconds,
         row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction, row->fraction,
@@ -556,7 +561,7 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     if (!ok) return false;
     remote_q1_clear(row); remote_q1_demo_clear(row);
     free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
-    free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending); free(row->actors);
+    free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending);
     *link = row->next;
     free(row->qw_directory); free(row->level_name); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;
 }

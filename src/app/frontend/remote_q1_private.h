@@ -20,7 +20,6 @@ typedef struct remote_q1_model {
 } remote_q1_model;
 
 typedef struct remote_q1_entities { qa_q1_entity *rows; size_t count, capacity; } remote_q1_entities;
-typedef struct remote_q1_actor { uint32_t number; qa_actor_id id; } remote_q1_actor;
 typedef struct remote_q1_pending { qa_nq_message message; char *text; } remote_q1_pending;
 typedef struct remote_q1_demo_seed {
     struct remote_q1_demo_seed *next;
@@ -75,8 +74,6 @@ struct frontend_remote_q1 {
     bool bound, loaded, retired, has_data, intermission, published;
     unsigned busy;
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;
-    remote_q1_actor *actors;
-    size_t actor_count, actor_capacity;
     char **models, **sounds;
     bool *sound_available;
     size_t model_count, sound_count;
