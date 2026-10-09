@@ -3012,6 +3012,7 @@ static bool startup_source(void *context,qa_application *application,const qa_la
 {
     frontend_config_store *manager=context;
     const qa_launch_instance *selected=source && source->descriptor && snapshot?
+        source->scope.kind==QA_APPLICATION_CONSOLE_CLIENT?source->descriptor:
         qa_launch_snapshot_find(snapshot,source->descriptor->selection.instance):NULL;
     if (!manager || !application || !source || !primary || !selected ||
         selected->storage!=source->descriptor->storage || !source->scope.provider ||

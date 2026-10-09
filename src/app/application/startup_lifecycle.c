@@ -163,10 +163,11 @@ bool qa_application_startup_source_primary(qa_application *app,
     application_provider *provider = NULL;
     for (application_provider *current = app->live_providers; current; current = current->next_live)
         if (current->owner == source->scope.provider) { provider = current; break; }
-    qa_application_startup_source qualified;
+    qa_application_startup_source qualified = *source;
     const qa_application_startup_hooks *hooks = hooks_for(provider);
+    bool client = provider && provider->client_only_owned && source->scope.kind == QA_APPLICATION_CONSOLE_CLIENT;
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
-        !hooks || !hooks->startup_source || !qualify_source(provider, snapshot, source, &qualified, error))
+        !hooks || !hooks->startup_source || (!client && !qualify_source(provider, snapshot, source, &qualified, error)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup selection lost its published Source capability");
     return hooks->startup_source(hooks->context, app, snapshot, &qualified, primary, error);
 }
