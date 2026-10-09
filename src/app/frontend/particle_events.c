@@ -143,8 +143,14 @@ typedef struct frontend_visual_sample {
     uint64_t frame;
     bool found, sampled;
 } frontend_visual_sample;
+typedef struct frontend_particle_cvars {
+    uint64_t view_identity;
+    qa_cvar_handle smooth_explosions, disable_particles, disable_explosions, dlight_hacks;
+    qa_cvar_handle hand, gun, gun_fov;
+} frontend_particle_cvars;
 struct frontend_particle_state {
     frontend_particle_owner *owners;
+    frontend_particle_cvars cvars[QA_INPUT_LOCAL_SEATS];
     uint64_t sample_ns, previous_sample_ns;
     qa_actor_owner clock_source;
     qa_session *clock_session;
@@ -171,6 +177,24 @@ static bool particle_state(qa_frontend *frontend, qa_error *error)
     frontend->particles->sample_ns = frontend->particles->previous_sample_ns =
         qa_session_elapsed(qa_application_session(frontend->application));
     return true;
+}
+static const frontend_particle_cvars *particle_cvars_bind(qa_frontend *frontend,
+    uint32_t seat, const qa_cvars *registry, qa_error *error)
+{
+    if (!particle_state(frontend,error)) return NULL;
+    frontend_particle_cvars *bindings=frontend->particles->cvars+seat;
+    uint64_t identity=qa_cvars_view_identity(registry);
+    if (bindings->view_identity!=identity) {
+        *bindings=(frontend_particle_cvars){.view_identity=identity,
+            .smooth_explosions=qa_cvars_resolve(registry,"cl_smooth_explosions"),
+            .disable_particles=qa_cvars_resolve(registry,"cl_disable_particles"),
+            .disable_explosions=qa_cvars_resolve(registry,"cl_disable_explosions"),
+            .dlight_hacks=qa_cvars_resolve(registry,"cl_dlight_hacks"),
+            .hand=qa_cvars_resolve(registry,"hand"),
+            .gun=qa_cvars_resolve(registry,"cl_gun"),
+            .gun_fov=qa_cvars_resolve(registry,"cl_gunfov")};
+    }
+    return bindings;
 }
 
 bool frontend_particle_visual_read(qa_frontend *frontend,qa_actor_id actor,
@@ -722,14 +746,16 @@ static bool q2_controls(qa_frontend *frontend,uint32_t seat,frontend_q2_controls
     if (!found) return true;
     qa_console_dialect dialect=qa_cvars_dialect(client.cvars);
     if (dialect!=QA_CONSOLE_Q2 && dialect!=QA_CONSOLE_Q2_RERELEASE) return true;
-    const qa_cvar_view *row=qa_cvars_find(client.cvars,"cl_smooth_explosions");
+    const frontend_particle_cvars *bindings=particle_cvars_bind(frontend,seat,client.cvars,error);
+    if (!bindings) return false;
+    const qa_cvar_view *row=qa_cvars_read(client.cvars,bindings->smooth_explosions);
     out->smooth=row && row->integer!=0;
     out->modern=row && !(row->flags&QA_CVAR_USER_CREATED);
-    row=qa_cvars_find(client.cvars,"cl_disable_particles");
+    row=qa_cvars_read(client.cvars,bindings->disable_particles);
     if (row) out->disable_particles=(uint32_t)row->integer;
-    row=qa_cvars_find(client.cvars,"cl_disable_explosions");
+    row=qa_cvars_read(client.cvars,bindings->disable_explosions);
     if (row) out->disable_explosions=(uint32_t)row->integer;
-    row=qa_cvars_find(client.cvars,"cl_dlight_hacks");
+    row=qa_cvars_read(client.cvars,bindings->dlight_hacks);
     if (row) out->dlight_hacks=(uint32_t)row->integer;
     return frontend_source_client_registry_current(frontend,&client) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 explosion control lost its physical CLIENT registry");
@@ -2196,9 +2222,11 @@ static bool q2_beams_draw(qa_frontend *frontend,frontend_particle_owner *owner,u
     frontend_source_client_registry source;bool found;
     if (!frontend_source_client_registry_read(frontend,seat,&source,&found,error)) return false;
     if (found) {
-        const qa_cvar_view *setting=qa_cvars_find(source.cvars,"hand");if (setting) view.hand=setting->integer;
-        setting=qa_cvars_find(source.cvars,"cl_gun");if (setting) view.gun=setting->integer;
-        setting=qa_cvars_find(source.cvars,"cl_gunfov");if (setting) view.gun_fov=(float)setting->number;
+        const frontend_particle_cvars *bindings=particle_cvars_bind(frontend,seat,source.cvars,error);
+        if (!bindings) return false;
+        const qa_cvar_view *setting=qa_cvars_read(source.cvars,bindings->hand);if (setting) view.hand=setting->integer;
+        setting=qa_cvars_read(source.cvars,bindings->gun);if (setting) view.gun=setting->integer;
+        setting=qa_cvars_read(source.cvars,bindings->gun_fov);if (setting) view.gun_fov=(float)setting->number;
     }
     qa_application_native_q2_player_sample player;uint32_t old_frame;float back_lerp;
     if (!frontend_particle_q2_player_sample(frontend,seat,owner->recipient,&player,&old_frame,&back_lerp,&found,error)) return false;
