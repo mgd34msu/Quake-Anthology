@@ -18,7 +18,7 @@ authoritative engine store; preserve their required fields and numeric rules.
 | Body field selection | `src/world/live_fields.c:96` decodes live external backing. | Five-field selection/update is copied in `src/app/application/guest_q3_component_records_calls.c:45,121` and `native_q2_records_calls.c:82,303`. Resolve the external field kind into one common typed selector; retain module encodings at the boundary. |
 | Current player movement and view | `include/qa/movement.h:136` is the common movement type. Actor-indexed controls in `src/app/application/internal.h:158` own the selected movement and completed view/bounds/ground/water. | Q2 retains the same selected data in `include/qa/game_q2_wire.h:20`, stored at `src/gameplay/q2/internal.h:95` and recopied in `wire.c:665`. Q3 duplicates movement/view fields in `include/qa/game_q3.h:135` and bridges them in `src/app/application/control.c:3079` and `src/gameplay/q3/player.c:2083`. Remove duplicate current-state custody, preserving genuinely source-specific mixed-role PM fields and exact ABI projections. A complete common PlayerState owner is still open. |
 | Player roster, life and travel | Common roster is `src/app/application/map_players_private.h:40`; combat and inventory have shared owners. | Generic view/life/connection fields coexist with rule tails in Q1/Q2/Q3 player records. Q2 score mirrors are `src/gameplay/q2/player/state.c:440,498`. Common travel combat is copied alongside Q2 carry health in `map_players_private.h:13` and `include/qa/game_q2_player.h:166`. Move current generic fields to their common owner; retain prior coop/spawn history and original rule tails. |
-| Item identity and inventory | `qa_item_id`, `qa_item_definition`, `qa_inventory_entry` and `qa_item_bit` in `include/qa/inventory.h`; one definition lookup in `src/gameplay/inventory.c:1020`. QC/QVM/native Q2 use the same item-bit type; their three former definitions are deleted. | Equipment presentation's full-catalog copy at `src/app/application/equipment_presentation.c:305` is a separate caller migration being verified. |
+| Item identity and inventory | `qa_item_id`, `qa_item_definition`, `qa_inventory_entry` and `qa_item_bit` in `include/qa/inventory.h`; one definition lookup in `src/gameplay/inventory.c:1020`. QC/QVM/native Q2 use the same item-bit type; their three former definitions are deleted. Equipment presentation at `src/app/application/equipment_presentation.c:305` reads the selected item through that lookup. Its catalog copy, scan and allocation are deleted. | No alternate selected-equipment definition lookup remains in this caller. Other current item consumers remain subject to the full custody audit. |
 | Weapon request state | `qa_weapon_request_status` in `include/qa/equipment_weapon_slot.h:10` now serves equipment and QVM requests/status/cancellation/checkpoints. The duplicate QVM enum and identity translation are deleted. | Original game weapon phases and foreign ABI constants remain rule data. Other common weapon custody still needs the full caller audit. |
 | Damage | Shared combat service and damage dispatch; native game code supplies original damage/armor rules. | Complete current-caller audit is pending. Do not infer complete adoption from shared service existence or delete distinct damage rules. |
 | HUD state | Shared `qa_hud` in `src/ui/hud.c`. Original layout interpreters supply each game's presentation rules. | Q3 centerprint has separate storage at `src/presentation/q3_native/hud.h:50` and mutation at `hud.c:84`; Unified uses shared HUD but discards Q3 position/width. Move all centerprint callers to one per-seat store with caller layout/reveal/fade policy, then delete Q3's copy. |
@@ -78,13 +78,20 @@ capacity exhaustion. Every edition still fails the allocation target.
 | `src/app/frontend/remote_unified_render.c:69,319,361` | Reuse retained presentation records and interned identity fields; stop cloning text and UI arrays for each frame. |
 | `src/app/frontend/remote_unified_q2.c:194,206` | Retain immutable changed configuration and reuse player records, preserving original status layouts. |
 | `src/app/frontend/unified_q3_client.c:192,204` | Retain bounded history and reliable command storage; stop deep-copying 64 command token records on every frame. |
-| `src/app/application/equipment_presentation.c:314` | Read the selected item from the existing inventory definition lookup without copying the whole catalog. |
 | `src/app/application/native_q3_client_time.c:41` | Refresh actual SystemInfo only when its reliable revision changes; invalidate on existing lifecycle reset boundaries. |
 | `src/render/scene/models/images.c:8`, `src/render/material/library.c:204` | Keep admitted image/material handles through model submission rather than creating copied names. |
 
 The census is diagnostic attribution, not a timing comparison. The gate must
 reach zero over full-frame runs in all five editions before these issues move
 to In Review.
+
+The selected-equipment caller now uses the existing inventory lookup. Actual
+inventory component comparisons preserve active/inactive group selection,
+mixed-source overlap, missing items, labels, ammunition and weapon status.
+Across 600 unchanged publications, its 600 catalog allocations and frees
+become zero. GCC/Clang plain and sanitizer pairs, all three engine builds and
+seven core checks per build pass. This removes one attributed caller; the
+whole-frame requirement remains open.
 
 ## Jobs: THE-2871
 

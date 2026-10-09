@@ -21,7 +21,6 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 bool qa_application_equipment_q3_product_read(const qa_application *app,
@@ -306,29 +305,16 @@ static bool item_definition(qa_application *app, qa_application_equipment_view *
     qa_error *error)
 {
     if (!view->item) return true;
-    size_t count = 0;
-    if (!qa_inventory_item_definitions(app->inventory, view->actor, NULL, 0, &count, error)) return false;
-    if (count > SIZE_MAX / sizeof(qa_item_definition))
-        return application_fail(error, QA_ERROR_MEMORY, "Selected equipment definition inventory is too large");
-    qa_item_definition *definitions = count ? calloc(count, sizeof(*definitions)) : NULL;
-    if (count && !definitions)
-        return application_fail(error, QA_ERROR_MEMORY, "Reading actual selected equipment definitions");
-    size_t actual = 0;
-    bool ok = qa_inventory_item_definitions(app->inventory, view->actor, definitions, count, &actual, error);
-    const qa_item_definition *selected = NULL;
-    for (size_t i = 0; ok && i < actual; ++i)
-        if (definitions[i].item == view->item) {
-            if (selected) ok = application_fail(error, QA_ERROR_FORMAT, "Selected equipment has ambiguous canonical definitions");
-            selected = definitions + i;
-        }
-    if (ok && selected && !selected->weapon)
-        ok = application_fail(error, QA_ERROR_FORMAT, "Selected equipment canonical definition is not a weapon");
-    if (ok && selected) {
-        view->label = selected->label; view->ammo = selected->ammo;
+    qa_item_definition selected; bool found;
+    if (!qa_inventory_item_definition_find(app->inventory, view->actor, NULL,
+        view->item, &selected, &found, error)) return false;
+    if (found && !selected.weapon)
+        return application_fail(error, QA_ERROR_FORMAT, "Selected equipment canonical definition is not a weapon");
+    if (found) {
+        view->label = selected.label; view->ammo = selected.ammo;
         view->has_weapon_status = view->has_start_requirement;
     }
-    free(definitions);
-    return ok;
+    return true;
 }
 
 static bool qc_model(application_provider *provider, qa_actor_id actor,
