@@ -445,7 +445,8 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
 {
     *submitted=false;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    const qa_cvar_view *draw_gun=qa_cvars_find(qa_application_cvars(o->frontend->application),"cg_drawGun");
+    const qa_cvar_view *draw_gun=qa_cvars_read(qa_application_cvars(o->frontend->application),
+        o->frontend->engine_cvars.hud.draw_gun);
     if ((draw_gun && !draw_gun->integer) || world->view.clip_enabled ||
         o->frontend->seats[domain->physical_seat].q1_chase) return true;
     qa_actor_id id;
@@ -484,8 +485,9 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
             .bob_cycle=wire->bob_cycle,.draw_gun=true};
         qa_cvars *cvars=qa_application_cvars(o->frontend->application);
-        const qa_cvar_view *x=qa_cvars_find(cvars,"cg_gunX"),*y=qa_cvars_find(cvars,"cg_gunY"),
-            *z=qa_cvars_find(cvars,"cg_gunZ"),*gun_frame=qa_cvars_find(cvars,"cg_gun_frame");
+        const frontend_engine_cvar_handles *refs=&o->frontend->engine_cvars;
+        const qa_cvar_view *x=qa_cvars_read(cvars,refs->cg_gunX),*y=qa_cvars_read(cvars,refs->cg_gunY),
+            *z=qa_cvars_read(cvars,refs->cg_gunZ),*gun_frame=qa_cvars_read(cvars,refs->cg_gun_frame);
         camera.gun_offset=qa_v3(x?(float)x->number:0,y?(float)y->number:0,z?(float)z->number:0);
         camera.gun_frame=gun_frame?gun_frame->integer:0;
         q3n_selected_weapon_media media;

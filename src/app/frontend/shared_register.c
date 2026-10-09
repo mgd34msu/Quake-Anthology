@@ -66,6 +66,7 @@ static const shared_declaration declarations[]={
     {"r_drawworld","1","Draw the source world",QA_CVAR_CHEAT,ANY},
     {"r_drawentities","1","Draw source entities",QA_CVAR_CHEAT,ANY},
     {"r_drawviewmodel","1","Draw the Quake first-person weapon",0,FINITE},
+    {"cg_gun_frame","0","Selected weapon animation frame override",0,ANY},
     {"r_nocull","0","Disable source frustum culling",QA_CVAR_CHEAT,ANY},
     {"r_novis","0","Disable source visibility culling",QA_CVAR_CHEAT,ANY},
     {"r_nocurves","0","Disable source curves",QA_CVAR_CHEAT,ANY},
@@ -422,7 +423,12 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .r_drawentities=qa_cvars_resolve(registry,"r_drawentities"),
         .filterban=qa_cvars_resolve(registry,"filterban"),
         .public_server=qa_cvars_resolve(registry,"public"),
-        .dedicated=qa_cvars_resolve(registry,"dedicated")};
+        .dedicated=qa_cvars_resolve(registry,"dedicated"),
+        .cg_gunX=qa_cvars_resolve(registry,"cg_gunX"),
+        .cg_gunY=qa_cvars_resolve(registry,"cg_gunY"),
+        .cg_gunZ=qa_cvars_resolve(registry,"cg_gunZ"),
+        .cg_gun_frame=qa_cvars_resolve(registry,"cg_gun_frame")};
+    qa_hud_cvars_bind(registry,QA_HUD_CVAR_DRAW_GUN,&frontend->engine_cvars.hud);
     frontend_legacy_cvars_bind(registry,&frontend->engine_cvars.legacy);
     frontend_render_cvars_bind(frontend);
     frontend_shared_resource_policy_cvars_bind(frontend);

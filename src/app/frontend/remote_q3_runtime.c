@@ -31,6 +31,7 @@ struct frontend_remote_q3_runtime {
     frontend_remote_q3 *parent;
     qa_frontend *frontend;
     frontend_remote_q3_services_view services;
+    qa_cvar_handle no_curves, player_curve_clip;
     frontend_remote_q3_runtime_owners children;
     frontend_remote_q3_frame *frames;
     frontend_remote_q3_commands *console;
@@ -485,7 +486,8 @@ static bool policy(frontend_remote_q3_runtime *o,const q3n_frame *f,qa_trace_pol
     if(!cut(o,f,e) || !out)return false;
     *out=qa_collision_default_policy(QA_COLLISION_Q3);
     const qa_cvars *cvars=f->remote->source.basis.client.source_cvars;
-    const qa_cvar_view *curves=qa_cvars_find(cvars,"cm_noCurves"),*players=qa_cvars_find(cvars,"cm_playerCurveClip");
+    const qa_cvar_view *curves=qa_cvars_read(cvars,o->no_curves),
+        *players=qa_cvars_read(cvars,o->player_curve_clip);
     if(!curves || !players)return fail(e,QA_ERROR_FORMAT,"Remote collision lost its actual source controls");
     out->curves=curves->integer==0; out->player_curve_clip=players->integer!=0; return true;
 }
@@ -818,6 +820,8 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     o->attached=true; *out=o;
     qa_native_q3_remote_client_basis basis;
     if(!qa_native_q3_remote_client_basis_read(services.client,&basis,e))return false;
+    o->no_curves=qa_cvars_resolve(basis.client.source_cvars,"cm_noCurves");
+    o->player_curve_clip=qa_cvars_resolve(basis.client.source_cvars,"cm_playerCurveClip");
     const frontend_remote_q3_resources *r=&services.resources;
     qa_q3_presentation_options backend={.assets=r->assets,.audio=f->audio,.clock={o,clock_time},
         .seat=r->physical_seat,.owner=r->identity,.viewport=frontend_viewport(f,r->physical_seat),

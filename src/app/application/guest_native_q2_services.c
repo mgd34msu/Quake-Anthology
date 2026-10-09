@@ -428,7 +428,7 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     input->time_ns = raw ? raw->time_ns : stage ? application_control_time(&stage->source)
         : application_control_time(control_source);
     input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
-    const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
+    const qa_cvar_view *air = qa_cvars_read(engine->cvars, engine->provider->q2_airaccelerate);
     if (!air || !isfinite(air->number))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 Pmove lost its physical Source air acceleration");
     input->profile.data.q2.air_accelerate = (float)air->number;

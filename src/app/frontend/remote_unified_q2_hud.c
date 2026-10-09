@@ -70,6 +70,7 @@ struct frontend_unified_q2_rr_hud {
     rr_retired *retired;
     qa_scene_view view;
     bool have_view, busy, help_open, controls_registered;
+    struct { qa_cvar_handle pois, damage, damage_ms, edge, maximum; } controls;
 };
 static bool fail(qa_error *e, const char *message)
 { return frontend_unified_fail(e, QA_ERROR_FORMAT, message); }
@@ -277,11 +278,11 @@ static bool controls(frontend_unified_q2_rr_hud *o, bool *pois, bool *damage, do
     double *edge, double *maximum, qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    const qa_cvar_view *p=d?qa_cvars_find(d->cvars,"scr_pois"):NULL,
-        *a=d?qa_cvars_find(d->cvars,"scr_damage_indicators"):NULL,
-        *t=d?qa_cvars_find(d->cvars,"scr_damage_indicator_time"):NULL,
-        *f=d?qa_cvars_find(d->cvars,"scr_poi_edge_frac"):NULL,
-        *s=d?qa_cvars_find(d->cvars,"scr_poi_max_scale"):NULL;
+    const qa_cvar_view *p=d?qa_cvars_read(d->cvars,o->controls.pois):NULL,
+        *a=d?qa_cvars_read(d->cvars,o->controls.damage):NULL,
+        *t=d?qa_cvars_read(d->cvars,o->controls.damage_ms):NULL,
+        *f=d?qa_cvars_read(d->cvars,o->controls.edge):NULL,
+        *s=d?qa_cvars_read(d->cvars,o->controls.maximum):NULL;
     if (!p || !a || !t || !f || !s || !isfinite(t->number) || t->number<0 ||
         !isfinite(f->number) || f->number<0 || f->number>FLT_MAX ||
         !isfinite(s->number) || s->number<1 || s->number>FLT_MAX)
@@ -292,6 +293,14 @@ static const struct { const char *name, *value; } control_defaults[]={
     {"scr_pois","1"},{"scr_poi_edge_frac","0.15"},{"scr_poi_max_scale","1"},
     {"scr_damage_indicators","1"},{"scr_damage_indicator_time","1000"}
 };
+static void controls_bind(frontend_unified_q2_rr_hud *o, const qa_cvars *cvars)
+{
+    o->controls.pois=qa_cvars_resolve(cvars,"scr_pois");
+    o->controls.damage=qa_cvars_resolve(cvars,"scr_damage_indicators");
+    o->controls.damage_ms=qa_cvars_resolve(cvars,"scr_damage_indicator_time");
+    o->controls.edge=qa_cvars_resolve(cvars,"scr_poi_edge_frac");
+    o->controls.maximum=qa_cvars_resolve(cvars,"scr_poi_max_scale");
+}
 static bool controls_admit(frontend_unified_q2_rr_hud *o, qa_error *e)
 {
     if (o->controls_registered) return true;
@@ -301,7 +310,7 @@ static bool controls_admit(frontend_unified_q2_rr_hud *o, qa_error *e)
     for (size_t i=0; i<sizeof(control_defaults)/sizeof(*control_defaults); ++i)
         if (!qa_cvars_register(d->cvars,control_defaults[i].name,control_defaults[i].value,0,
             d->command_context.owner,"Received RR HUD",e) || !current(o,e)) return false;
-    o->controls_registered=true; return true;
+    controls_bind(o,d->cvars); o->controls_registered=true; return true;
 }
 static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
 {
@@ -495,6 +504,7 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     if (!o->localizations || !current(o,e)) {
         qa_localization_pool_destroy(o->localizations); free(o); return false;
     }
+    if (f->source_restoring) controls_bind(o,domain->cvars);
     *out=o; return true;
 }
 bool frontend_unified_q2_rr_checkpoint_ready(const frontend_unified_q2_rr_hud *o)

@@ -115,6 +115,9 @@ typedef struct q2_native {
     bool hud,replace_status,camera;
     const qa_font *font;
 } q2_native;
+typedef struct q2_marker_cvars {
+    qa_cvar_handle mode, crosshair, duration, scale, alpha, x, y;
+} q2_marker_cvars;
 struct frontend_unified_q2 {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
@@ -157,6 +160,7 @@ struct frontend_unified_q2 {
     uint32_t marker_count;
     bool marker_set;
     qa_scene_image *marker_image;
+    q2_marker_cvars marker_cvars;
     uint64_t effects_wall_ns;
     float effects_frame_seconds;
     qa_vec3 viewer_origin;
@@ -478,7 +482,7 @@ static bool hit(void *ctx,int32_t damage,qa_error *e)
         o->marker_image=image;
     }
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-    const qa_cvar_view *mode=qa_cvars_find(domain->cvars,"cl_hit_markers");
+    const qa_cvar_view *mode=qa_cvars_read(domain->cvars,o->marker_cvars.mode);
     if (!mode) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker has no actual CLIENT mode row");
     o->marker_set=true; o->marker_frame=o->frame_number; o->marker_wall_ns=o->frontend->wall_time_ns;
     if (o->marker_count<UINT32_MAX) ++o->marker_count;
@@ -716,6 +720,14 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
+    o->marker_cvars=(q2_marker_cvars){
+        .mode=qa_cvars_resolve(domain->cvars,"cl_hit_markers"),
+        .crosshair=qa_cvars_resolve(domain->cvars,"crosshair"),
+        .duration=qa_cvars_resolve(domain->cvars,"scr_hit_marker_time"),
+        .scale=qa_cvars_resolve(domain->cvars,"ch_scale"),
+        .alpha=qa_cvars_resolve(domain->cvars,"ch_alpha"),
+        .x=qa_cvars_resolve(domain->cvars,"ch_x"),
+        .y=qa_cvars_resolve(domain->cvars,"ch_y")};
     o->hud=f->seats[domain->physical_seat].hud;
     if (!o->localizations || !current(o,e) ||
         !frontend_unified_q2_rr_create(f,r,media,events,&o->rr_hud,e)) {
@@ -1736,9 +1748,10 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
 {
     if (!o->marker_count) return true;
     const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
-    const qa_cvar_view *crosshair=qa_cvars_find(registry,"crosshair"),*duration=qa_cvars_find(registry,"scr_hit_marker_time"),
-        *size=qa_cvars_find(registry,"ch_scale"),*alpha=qa_cvars_find(registry,"ch_alpha"),
-        *x=qa_cvars_find(registry,"ch_x"),*y=qa_cvars_find(registry,"ch_y");
+    const qa_cvar_view *crosshair=qa_cvars_read(registry,o->marker_cvars.crosshair),
+        *duration=qa_cvars_read(registry,o->marker_cvars.duration),
+        *size=qa_cvars_read(registry,o->marker_cvars.scale),*alpha=qa_cvars_read(registry,o->marker_cvars.alpha),
+        *x=qa_cvars_read(registry,o->marker_cvars.x),*y=qa_cvars_read(registry,o->marker_cvars.y);
     if (!crosshair || !duration || !size || !alpha || !x || !y)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker draw has no admitted physical CLIENT crosshair controls");
     if (crosshair->number == 0 || (o->view_layouts&(4|32))) return true;
