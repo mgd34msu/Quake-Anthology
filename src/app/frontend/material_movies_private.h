@@ -25,6 +25,7 @@ typedef struct frontend_material_movie_cinematic_receipt {
 } frontend_material_movie_cinematic_receipt;
 struct frontend_material_movies {
     frontend_material_movie_source source;
+    qa_cvar_handle timescale, in_game_video;
     struct frontend_material_movies *next;
     frontend_material_movie_row **rows;
     size_t count, capacity;

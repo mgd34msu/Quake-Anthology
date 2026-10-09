@@ -68,7 +68,7 @@ static uint64_t cinematic_bus(void *context)
 { return ((const frontend_material_movies *)context)->cinematic_bus; }
 static double cinematic_clock_value(const frontend_material_movies *owner)
 {
-    const qa_cvar_view *timescale=qa_cvars_find(qa_application_cvars(owner->source.frontend->application),"timescale");
+    const qa_cvar_view *timescale=qa_cvars_read(qa_application_cvars(owner->source.frontend->application),owner->timescale);
     if (!timescale || !isfinite(timescale->number)) return NAN;
     float wall=(float)((double)owner->source.frontend->wall_time_ns/1000000.0);
     float scaled=wall*timescale->number;
@@ -83,7 +83,7 @@ static bool cinematic_in_game_video(void *context, int32_t *out, qa_error *error
     const frontend_material_movies *owner=context;
     if (!out || !frontend_material_movies_current(owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original cinematic video control lost its actual provider");
-    const qa_cvar_view *row=qa_cvars_find(qa_application_cvars(owner->source.frontend->application),"r_inGameVideo");
+    const qa_cvar_view *row=qa_cvars_read(qa_application_cvars(owner->source.frontend->application),owner->in_game_video);
     if (!row || !isfinite(row->number))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original cinematic lacks its physical r_inGameVideo row");
     *out=row->integer; return true;
@@ -404,6 +404,9 @@ bool frontend_material_movies_create(const frontend_material_movie_source *sourc
     frontend_material_movies *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining provider shader movie cache");
     owner->source = *source; owner->next_target = 1;
+    qa_cvars *registry=qa_application_cvars(source->frontend->application);
+    owner->timescale=qa_cvars_resolve(registry,"timescale");
+    owner->in_game_video=qa_cvars_resolve(registry,"r_inGameVideo");
     owner->registry = qa_material_movies_create(source->images, error);
     if (!owner->registry) { free(owner); return false; }
     if (!qa_material_movies_prepare(owner->registry, &source->frontend->frame, error)) {
