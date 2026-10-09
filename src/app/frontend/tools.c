@@ -21,6 +21,7 @@ struct qa_frontend_tools {
     qa_mount_id private_mount, output_mount;
     char *output_root;
     uint64_t configuration, map_revision;
+    qa_cvar_handle debug_width_handle;
     float debug_width;
     double profiler_offset, profiler_anchor;
     bool profiler_reanchor;
@@ -434,7 +435,8 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!services) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend tools services");
     services->frontend = f; f->tools = services;
     services->debug_width = 2;
-    const qa_cvar_view *debug_width=qa_cvars_find(qa_application_cvars(f->application),"gl_debug_linewidth");
+    services->debug_width_handle = qa_cvars_resolve(qa_application_cvars(f->application), "gl_debug_linewidth");
+    const qa_cvar_view *debug_width = qa_cvars_read(qa_application_cvars(f->application), services->debug_width_handle);
     if (!debug_width || debug_width->owner!=QA_FRONTEND_COMMAND_OWNER)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Tools require their actual declared ENGINE debug width");
     char *base = SDL_GetBasePath();
@@ -463,6 +465,7 @@ bool frontend_tools_create_diagnostics(qa_frontend *f, qa_vfs *files, qa_error *
     qa_frontend_tools *services=calloc(1,sizeof(*services));
     if (!services) return frontend_fail(error,QA_ERROR_MEMORY,"allocating detached frontend diagnostics");
     services->frontend=f; services->debug_width=2; f->tools=services;
+    services->debug_width_handle = qa_cvars_resolve(qa_application_cvars(f->application), "gl_debug_linewidth");
     services->files=qa_vfs_clone(files,error);
     return services->files && qa_tools_create_diagnostics(services->files,QA_FRONTEND_COMMAND_OWNER,
         milliseconds,f,&services->owner,error);
@@ -515,7 +518,7 @@ bool frontend_tools_camera(qa_frontend *f, uint32_t seat, bool portal, qa_scene_
 bool frontend_tools_debug(qa_frontend *f, const qa_scene_view *view, qa_error *error) {
     if (!f || !f->tools) return true;
     qa_cvars *cvars = qa_application_cvars(f->application);
-    const qa_cvar_view *width = qa_cvars_find(cvars, "gl_debug_linewidth");
+    const qa_cvar_view *width = qa_cvars_read(cvars, f->tools->debug_width_handle);
     if (width && isfinite(width->number) && width->number > 0) f->tools->debug_width = width->number;
     else if (width && !qa_cvars_set_number(cvars, "gl_debug_linewidth", f->tools->debug_width, error)) return false;
     qa_arena scratch = {0}; const qa_debug_line *lines; size_t count;
@@ -668,6 +671,7 @@ bool frontend_tools_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *e
         if (!tools) ok = frontend_fail(error, QA_ERROR_MEMORY, "allocating restored frontend tools");
         else {
             f->tools = tools; tools->frontend = f; tools->private_mount = saved.private_mount; tools->output_mount = saved.output_mount;
+            tools->debug_width_handle = qa_cvars_resolve(qa_application_cvars(f->application), "gl_debug_linewidth");
             tools->configuration = saved.configuration; tools->map_revision = saved.map_revision; tools->debug_width = saved.debug_width;
             tools->profiler_anchor = saved.profiler_anchor; tools->profiler_reanchor = true;
             tools->output_root = saved.output_root; saved.output_root = NULL;
@@ -723,4 +727,5 @@ void frontend_tools_rebind(qa_frontend *owned, qa_frontend *destination)
     qa_frontend_tools *tools = owned->tools;
     qa_tools_rebind_context(tools->owner, destination); qa_llm_rebind_context(tools->llm, destination);
     tools->frontend = destination;
+    tools->debug_width_handle = qa_cvars_resolve(qa_application_cvars(destination->application), "gl_debug_linewidth");
 }

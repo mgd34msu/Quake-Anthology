@@ -869,7 +869,7 @@ static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_er
     if (o->source->family != QA_GAME_Q1 || strcmp(o->primary->product->campaign, "rogue")) return true;
     qa_cvars *cvars = qa_application_network_q1_cvars(o->app, o->primary->owner, e);
     if (!cvars) return false;
-    const qa_cvar_view *teamplay = qa_cvars_find(cvars, "teamplay");
+    const qa_cvar_view *teamplay = qa_cvars_read(cvars, o->primary->teamplay);
     if (!teamplay || !qa_q1_rogue_team_face_active(o->source->max_clients, teamplay->number)) return true;
     qa_application_network_q1_status_player players[255]; size_t count = 0;
     if (!qa_application_network_q1_status(o->app, o->primary->owner, players, &count, e) || !current(o, e)) return false;
