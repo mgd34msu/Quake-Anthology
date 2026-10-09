@@ -163,20 +163,40 @@ bool qa_world_visit(qa_world *world,qa_bounds bounds,qa_collision_role role,qa_s
     return true;
 }
 
-typedef struct query_context { qa_actor_id *actors; size_t capacity,count; bool overflow; } query_context;
-static qa_spatial_visit collect_actor(void *opaque,const qa_spatial_actor *actor)
+typedef struct query_context {
+    qa_world *world;
+    qa_collision_role role;
+    qa_actor_id *actors;
+    size_t capacity,count;
+    bool overflow,failed;
+    qa_error error;
+} query_context;
+static qa_spatial_visit collect_actor(void *opaque,uint32_t slot)
 {
     query_context *context=opaque;
-    if(context->count<context->capacity) context->actors[context->count++]=actor->body.actor;
+    qa_actor_id actor=qa_actors_body(context->world->actors->pages,slot)->actor;
+    qa_world_body *body=qa_world_find_body(context->world,actor);
+    if(body==NULL) return QA_SPATIAL_CONTINUE;
+    qa_actor_collision collision; qa_error error={0};
+    if(!qa_world_collision_sample(body,false,&collision,&error)) {
+        if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
+        return QA_SPATIAL_CONTINUE;
+    }
+    if(context->role!=QA_COLLISION_BOTH && collision.role!=context->role
+        && collision.role!=QA_COLLISION_BOTH) return QA_SPATIAL_CONTINUE;
+    if(context->count<context->capacity) context->actors[context->count++]=actor;
     else context->overflow=true;
     return QA_SPATIAL_CONTINUE;
 }
 
 bool qa_world_query(qa_world *world,qa_bounds bounds,qa_collision_role role,qa_actor_id *actors,size_t capacity,size_t *count,bool *overflow,qa_error *error)
 {
-    if(count==NULL || overflow==NULL || (capacity!=0 && actors==NULL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial query output");
-    query_context context={actors,capacity,0,false};
-    if(!qa_world_visit(world,bounds,role,collect_actor,&context,error)) return false;
+    if(count==NULL || overflow==NULL || (capacity!=0 && actors==NULL)
+        || role<QA_COLLISION_SOLID || role>QA_COLLISION_BOTH)
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial query output");
+    query_context context={.world=world,.role=role,.actors=actors,.capacity=capacity};
+    if(!qa_spatial_visit_raw(world,bounds,collect_actor,&context,error)) return false;
+    if(context.failed) { if(error!=NULL) *error=context.error; return false; }
     *count=context.count; *overflow=context.overflow; return true;
 }
 
