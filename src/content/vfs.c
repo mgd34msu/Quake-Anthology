@@ -2207,15 +2207,6 @@ bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *re
     const qa_resource *resource = qa_resource_pool_find(vfs->pool, receipt->resource_id);
     qa_vfs_resource_origin origin;
     if (!resource || !qa_vfs_resource_origin_read(vfs, receipt->mount, resource, &origin)) goto invalid;
-    const char *paths[] = {receipt->path, receipt->lookup_path, receipt->link_source, receipt->link_target};
-    for (size_t i = 0; i < 4; ++i) {
-        char *normalized = i < 2 ? qa_vfs_normalize_path(paths[i], error) : link_prefix(paths[i], true, error);
-        bool matches = normalized && !strcmp(normalized, paths[i]); free(normalized);
-        if (!matches) {
-            if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained acquisition path");
-            return false;
-        }
-    }
     qa_vfs_read_reference recipe = {.mount = receipt->mount, .path = receipt->path,
         .lookup_path = receipt->lookup_path, .link_source = receipt->link_source,
         .link_target = receipt->link_target};
@@ -2232,9 +2223,6 @@ bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *re
         (opening->order_count && !opening->order)) goto invalid;
     size_t prefix_length = opening->prefix ? strlen(opening->prefix) : 0;
     if (prefix_length) {
-        char *normalized = qa_vfs_normalize_path(opening->prefix, error);
-        bool matches = normalized && !strcmp(normalized, opening->prefix); free(normalized);
-        if (!matches) return false;
         if (opening->user_overlay || strlen(receipt->path) <= prefix_length ||
             receipt->path[prefix_length] != '/') goto invalid;
         for (size_t i = 0; i < prefix_length; ++i) {
