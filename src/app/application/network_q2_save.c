@@ -276,7 +276,8 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             slot && slot <= candidate->host.client_slots && slot > previous &&
             (profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023) &&
             qa_actors_reference_saved(qa_session_actors(candidate->app->session), saved, candidate->archival, &actor, error) &&
-            qa_hud_q2_layout_stat_references(text, profile == QA_NATIVE_Q2_GAME_API2023, &references, error);
+            qa_hud_q2_layout_stat_references(text, profile == QA_NATIVE_Q2_GAME_API2023,
+                &candidate->layout_scratch, &references, error);
         if (ok && !candidate->archival) {
             qa_network_q2_player physical;
             ok = qa_application_network_q2_player(candidate, actor, &physical, error) && physical.source_slot == slot;

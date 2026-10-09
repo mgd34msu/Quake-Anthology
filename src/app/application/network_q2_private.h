@@ -93,6 +93,8 @@ struct qa_application_network_q2 {
     uint32_t config_count, item_base, skin_base, light_base;
     uint32_t checksum_index, clients_index, air_index, n64_index;
     char **configs;
+    qa_hud_q2_stat_references status_references;
+    qa_arena layout_scratch;
     application_q2_resource_table resources[3];
     qa_q2_config_entry *entries;
     application_q2_layout_receipt *layouts;

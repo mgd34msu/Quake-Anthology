@@ -156,23 +156,23 @@ bool application_q3_weapon_models_record(application_q3_weapon_models *owner, in
         if (profile->fields[i] && !word(owner, base + profile->offsets[i], &record.handles[i], error)) return false;
     if (record.handles[APPLICATION_Q3_WEAPON_GUN] < 0)
         return application_fail(error, QA_ERROR_FORMAT, "Registered CG weapon has an invalid source gun model handle");
-    qa_arena scratch = {0}; const qa_q3_registered_model *models = NULL; size_t count = 0;
-    bool ok = qa_q3_registered_models(owner->module.assets, &scratch, &models, &count, error);
+    bool ok = true;
     const char *path = NULL;
     for (size_t i = 0; ok && i <= APPLICATION_Q3_WEAPON_FLASH; ++i) {
         int32_t handle = record.handles[i];
         if (!handle) continue;
-        const qa_q3_registered_model *model = NULL;
-        for (size_t j = 0; j < count; ++j) if (models[j].handle == handle) { model = models + j; break; }
-        if (!model || model->world || model->inline_model)
+        qa_q3_registered_model model; bool found_model;
+        if (!qa_q3_registered_model_read(owner->module.assets, handle, &model, &found_model, error)) {
+            ok = false; break;
+        }
+        if (!found_model || model.world || model.inline_model)
             ok = application_fail(error, QA_ERROR_FORMAT, "CG weapon table handle has no real registered model parent");
-        else if (i == APPLICATION_Q3_WEAPON_GUN) path = model->name;
+        else if (i == APPLICATION_Q3_WEAPON_GUN) path = model.name;
     }
     for (size_t i = APPLICATION_Q3_WEAPON_INVISIBILITY; ok && i < APPLICATION_Q3_WEAPON_MODEL_FIELDS; ++i) {
         const qa_material *material;
         if (record.handles[i]) ok = qa_q3_assets_shader_read(owner->module.assets, record.handles[i], &material, error);
     }
-    qa_arena_destroy(&scratch);
     if (ok) ok = application_q3_weapon_models_current(owner, error);
     if (!ok) return false;
     *out = record; *present = true;

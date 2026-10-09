@@ -449,6 +449,30 @@ static const char *registered_name(const qa_q3_presentation_assets *assets, q3p_
             if (entry->kind == kind && entry->handle == handle && (!name || strcmp(entry->name, name) < 0)) name = entry->name;
     return name;
 }
+static bool registered_model_read(const qa_q3_presentation_assets *assets, size_t index,
+    qa_q3_registered_model *out, bool *present, qa_error *error)
+{
+    *out = (qa_q3_registered_model){0}; *present = false;
+    const q3p_model *model = assets->models[index];
+    if (!model || model->registration_bad) return true;
+    int32_t handle = (int32_t)index + 1;
+    const char *name = registered_name(assets, Q3P_MODEL, handle);
+    if (!name) return q3p_fail(error, QA_ERROR_FORMAT, "source model handle has no retained registration name");
+    const qa_model *base = q3p_model_source(model, 0);
+    *out = (qa_q3_registered_model){.handle = handle, .name = name,
+        .world = model->world != NULL, .inline_model = model->world && !model->owns_world,
+        .format = model->source_registration ? model->source_kind : base ? base->format : QA_MODEL_MDL};
+    *present = true; return true;
+}
+bool qa_q3_registered_model_read(const qa_q3_presentation_assets *assets, int32_t handle,
+    qa_q3_registered_model *out, bool *present, qa_error *error)
+{
+    if (!assets || !out || !present || assets->busy)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid source model inventory observation");
+    *out = (qa_q3_registered_model){0}; *present = false;
+    if (handle <= 0 || (size_t)handle > assets->model_count) return true;
+    return registered_model_read(assets, (size_t)handle - 1, out, present, error);
+}
 bool qa_q3_registered_models(const qa_q3_presentation_assets *assets, qa_arena *scratch,
                              const qa_q3_registered_model **out, size_t *count, qa_error *error)
 {
@@ -458,13 +482,9 @@ bool qa_q3_registered_models(const qa_q3_presentation_assets *assets, qa_arena *
     if (assets->model_count && !rows) return false;
     size_t n = 0;
     for (size_t i = 0; i < assets->model_count; ++i) {
-        const q3p_model *model = assets->models[i]; if (!model || model->registration_bad) continue;
-        const char *name = registered_name(assets, Q3P_MODEL, (int32_t)i + 1);
-        if (!name) return q3p_fail(error, QA_ERROR_FORMAT, "source model handle has no retained registration name");
-        const qa_model *base = q3p_model_source(model, 0);
-        rows[n++] = (qa_q3_registered_model){.handle = (int32_t)i + 1, .name = name,
-            .world = model->world != NULL, .inline_model = model->world && !model->owns_world,
-            .format = model->source_registration ? model->source_kind : base ? base->format : QA_MODEL_MDL};
+        bool present;
+        if (!registered_model_read(assets, i, rows + n, &present, error)) return false;
+        if (present) ++n;
     }
     *out = rows; *count = n; return true;
 }

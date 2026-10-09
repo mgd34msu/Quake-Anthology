@@ -83,9 +83,14 @@ bool application_network_q2_config(qa_application_network_q2 *owner, uint32_t in
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source configstring leaves its wire table");
     const char *old = owner->configs[index];
     if ((!old && !*text) || (old && !strcmp(old, text))) return true;
+    qa_hud_q2_stat_references references = {0};
+    if (index == 5 && !qa_hud_q2_layout_stat_references(text,
+        owner->host.source.edition == QA_Q2_RERELEASE, &owner->layout_scratch,
+        &references, error)) return false;
     char *copy = *text ? application_network_q2_copy(text, error) : NULL;
     if (*text && !copy) return false;
     free(owner->configs[index]); owner->configs[index] = copy;
+    if (index == 5) owner->status_references = references;
     owner->source_entities_ready = false;
     return true;
 }
@@ -106,6 +111,8 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     owner->entries = calloc(owner->config_count, sizeof(*owner->entries));
     owner->layouts = calloc((size_t)owner->host.client_slots + 1, sizeof(*owner->layouts));
     if (!owner->configs || !owner->entries || !owner->layouts) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
+    if (!qa_arena_reserve(&owner->layout_scratch, 3u * APPLICATION_Q2_LAYOUT_BYTES, error)) return false;
+    qa_arena_seal(&owner->layout_scratch);
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
         owner->resources[i].paths = calloc(maximum[i], sizeof(char *));
@@ -120,6 +127,8 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
     free(owner->configs); free(owner->entries);
     if (owner->layouts) for (uint32_t i = 1; i <= owner->host.client_slots; ++i) free(owner->layouts[i].text);
     free(owner->layouts); owner->layouts = NULL;
+    qa_arena_destroy(&owner->layout_scratch);
+    owner->status_references = (qa_hud_q2_stat_references){0};
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
         if (table->paths) for (uint32_t j = 1; j <= table->count; ++j) free(table->paths[j]);
@@ -310,7 +319,8 @@ bool qa_application_network_q2_event_layout(qa_application_network_q2 *owner, qa
         return application_fail(error, QA_ERROR_FORMAT, "Q2 layout exceeds its actual Source message domain");
     if (!qa_application_network_q2_player(owner, actor, &physical, error)) return false;
     qa_hud_q2_stat_references references;
-    if (!qa_hud_q2_layout_stat_references(layout, profile == QA_NATIVE_Q2_GAME_API2023, &references, error)) return false;
+    if (!qa_hud_q2_layout_stat_references(layout, profile == QA_NATIVE_Q2_GAME_API2023,
+        &owner->layout_scratch, &references, error)) return false;
     char *text = application_network_q2_copy(layout, error);
     if (!text) return false;
     application_q2_layout_receipt *row = &owner->layouts[physical.source_slot];

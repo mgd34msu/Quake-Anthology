@@ -9,6 +9,7 @@ typedef struct layout_context {
     const qa_hud_q2_options *options;
     const qa_hud_q2_frame *frame;
     qa_scene_frame *scene;
+    qa_arena *storage;
     qa_error *error;
     qa_tokenizer parser;
     qa_hud_q2_table *table;
@@ -23,7 +24,7 @@ static void fail(layout_context *c, const char *message) {
     c->failed = true;
 }
 static char *allocate(layout_context *c, size_t bytes) {
-    char *out = qa_arena_alloc(&c->scene->storage, bytes, 1, c->error);
+    char *out = qa_arena_alloc(c->storage, bytes, 1, c->error);
     if (!out) c->failed = true;
     return out;
 }
@@ -229,7 +230,7 @@ static const char *localized(layout_context *c, const char *base, const char *co
     typedef struct replacement { const char *name; size_t offset, end; } replacement;
     size_t maximum = total / 4;
     if (maximum > SIZE_MAX / sizeof(replacement)) { fail(c, "HUD player substitution overflow"); return ""; }
-    replacement *replacements = maximum ? qa_arena_alloc(&c->scene->storage, maximum * sizeof(replacement),
+    replacement *replacements = maximum ? qa_arena_alloc(c->storage, maximum * sizeof(replacement),
                                                          _Alignof(replacement), c->error) : NULL;
     if (maximum && !replacements) { c->failed = true; return ""; }
     size_t found = 0;
@@ -295,7 +296,7 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
                            !isfinite(frame->arsenal->ammunition)))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q2 HUD frame or resources"); return false;
     }
-    *c = (layout_context){.options = options, .frame = frame, .scene = scene, .error = error,
+    *c = (layout_context){.options = options, .frame = frame, .scene = scene, .storage = &scene->storage, .error = error,
         .width = (float)options->viewport.width / options->scale, .height = (float)options->viewport.height / options->scale,
         .table = options->table};
     if (!isfinite(c->width) || !isfinite(c->height)) {
@@ -412,7 +413,7 @@ static bool execute(layout_context *c, const char *source) {
             bool enabled = draw && (!strcmp(command, "if") ? stat(c, value) != 0 : c->frame->server_frame >= value);
             if (depth == capacity) {
                 if (capacity > SIZE_MAX / (2 * sizeof(bool))) { fail(c, "HUD conditional nesting overflow"); break; }
-                bool *larger = qa_arena_alloc(&c->scene->storage, capacity * 2 * sizeof(bool), _Alignof(bool), c->error);
+                bool *larger = qa_arena_alloc(c->storage, capacity * 2 * sizeof(bool), _Alignof(bool), c->error);
                 if (!larger) { c->failed = true; break; }
                 memcpy(larger, conditions, depth * sizeof(bool)); conditions = larger; capacity *= 2;
             }
@@ -593,14 +594,14 @@ static bool execute(layout_context *c, const char *source) {
     if (c->rerelease && depth && !c->failed) fail(c, "HUD if without matching endif");
     return !c->failed;
 }
-bool qa_hud_q2_layout_stat_references(const char *source, bool rerelease,
+bool qa_hud_q2_layout_stat_references(const char *source, bool rerelease, qa_arena *scratch,
     qa_hud_q2_stat_references *out, qa_error *error) {
+    qa_arena_reset(scratch);
     if (!source || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 layout reference input"); return false; }
-    qa_scene_frame scratch = {0};
     qa_hud_q2_stat_references value = {0};
-    layout_context c = {.scene = &scratch, .error = error, .rerelease = rerelease, .references = &value};
+    layout_context c = {.storage = scratch, .error = error, .rerelease = rerelease, .references = &value};
     bool ok = execute(&c, source);
-    qa_arena_destroy(&scratch.storage);
+    qa_arena_reset(scratch);
     if (ok) *out = value;
     return ok;
 }

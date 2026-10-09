@@ -60,6 +60,10 @@ typedef struct qa_q3_registered_skin {
     const char *name;
     const qa_model_skin_map *surfaces;
 } qa_q3_registered_skin;
+/* One live source handle; the name borrows this registry until mutation.
+ * Absent and failed registrations report present=false without resource work. */
+bool qa_q3_registered_model_read(const qa_q3_presentation_assets *, int32_t,
+    qa_q3_registered_model *, bool *present, qa_error *);
 /* Arrays in scratch; names and maps borrow the source registry until its next
  * mutation. Includes live source handles only, and never acquires resources. */
 bool qa_q3_registered_models(const qa_q3_presentation_assets *, qa_arena *,

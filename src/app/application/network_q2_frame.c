@@ -496,10 +496,8 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         if (!qa_native_host_q2_wire_player((qa_native_host *)owner->host.source.source.original.host,
             physical.source_slot, actor, &value, error) ||
             !application_network_q2_source_resource(owner, 0, value.gunindex, &value.gunindex, error)) return false;
-        qa_hud_q2_stat_references refs = {0};
-        const char *layout = owner->configs[5] ? owner->configs[5] : "";
+        qa_hud_q2_stat_references refs = owner->status_references;
         bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
-        if (!qa_hud_q2_layout_stat_references(layout, rr, &refs, error)) return false;
         const application_q2_layout_receipt *overlay = &owner->layouts[physical.source_slot];
         if (qa_actor_id_equal(overlay->actor, actor)) {
             refs.images |= overlay->references.images; refs.configstrings |= overlay->references.configstrings;

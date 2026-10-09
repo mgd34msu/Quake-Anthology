@@ -47,3 +47,27 @@ frame-speedup evidence. Remaining arena/pool sites are inventoried at exact
 source coordinates in `/tmp/qa-the2874-arena-audit-20261009/callers.csv` and
 `report.md`; scene frame buffers, syscall scratch and typed frame leases remain
 migration work.
+
+## Retained parser and model storage
+
+Q2 status-layout reference masks now update in the existing changed-configstring setter, together with the text. Player publication reads those masks while continuing to read live player stats and overlays. The same existing parser serves status changes, overlay changes and restore with one owner scratch arena, reserved and sealed at load. Its 196608-byte capacity follows the existing 65536-byte text admission bound. Maximum-input component usage was 131070 requested bytes, with zero overflow. Per-frame status parsing and fresh parser arenas are deleted; changed text still owns a copy.
+
+Q3 weapon records now read their four gun/hands/barrel/flash handles directly from the existing model registry. Cold enumeration uses the same row projection. The hot copied model array, arena and nested row scan are deleted. Lexicographic alias names and independent forked registries retain their meaning. Alias-name selection still scans the existing registry, and unchanged namespace normalization still allocates.
+
+GCC/Clang and sanitizer before/after components preserve exact results. Eight unchanged-layout Q2 player publications per edition drop from eight parses and allocation/free pairs to zero. Q3 direct model metadata reads drop from 4000 pairs to zero; 100 actual weapon-record fixture reads drop from 300 to 200 pairs. The residual work prevents a whole-path zero-allocation claim. Full production and ASan builds and both seven core suites pass for source `03cd5e7c`. Evidence: `/tmp/qa-the2874-q2-layout-references-20261009`, `/tmp/qa-the2874-q3-model-lookup-20261009` and `/tmp/qa-the2874-hud-model-build-20261009`. These are bounded components, not retail play or a frame-time gain. No install was made.
+
+## Latest actual frame census
+
+The recipe-resource fix's instrumented source `84bc7b01` completed seven private copied-profile cases with 878 measured frontend steps each. Owner files were unchanged and recorded owned processes cleaned. These counts are observed work, not an isolated ratio against the older composed candidate: real tick admission and source composition differ.
+
+| Case | malloc requests | calloc | realloc |
+| --- | ---: | ---: | ---: |
+| Q1 classic e1m1 CPU | 10594 | 29172 | 896 |
+| Q1 rerelease e1m1 CPU | 14106 | 29172 | 894 |
+| Q2 classic base1 CPU | 37621 | 79791 | 2293 |
+| Q2 rerelease base1 CPU | 8223971 | 298013 | 8149 |
+| Q3 q3dm1 CPU | 268013 | 33032 | 36594 |
+| Q2 rerelease base1 GL | 8116130 | 279048 | 7628 |
+| Q3 q3dm1 GL | 240663 | 32022 | 31059 |
+
+All runs exited normally; failed requests and observed size overflows were zero. The Q3 GL captured image says Awaiting snapshot, so that row proves collected frontend-step counters, not rendered gameplay. The other captures show retail worlds and player/HUD presentation. This software-GL/dummy-delivery census supports no GPU timing or sound claim. It does not contain the newer parser/model slice above and does not close the zero-allocation target. Raw records and visual review: `/tmp/qa-the2874-live-gate-after-20261009/results.json` and `visual-review.json`.
