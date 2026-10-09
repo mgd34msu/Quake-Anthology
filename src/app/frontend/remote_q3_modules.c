@@ -512,6 +512,12 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
 }
 static qa_collision_geometry *geometry(void *context)
 { remote_module_lease *lease = context; return lease->owner->kind == REMOTE_MODULE_DECODED && entered(lease, NULL, NULL, NULL) ? lease->owner->basis.decoded.view.geometry : NULL; }
+static qa_trace_scratch *geometry_scratch(void *context,const qa_collision_geometry *geometry)
+{
+    remote_module_lease *lease=context;
+    const frontend_remote_q3_resources *resources=&lease->owner->basis.decoded.view;
+    return lease->owner->kind==REMOTE_MODULE_DECODED && resources->geometry==geometry?resources->trace_scratch:NULL;
+}
 static bool load_map(void *context, const char *path, qa_error *error)
 {
     remote_module_lease *lease = context;
@@ -560,6 +566,11 @@ static bool prepare_view(void *context, const qa_q3_refdef *definition, qa_q3_sc
     if (!render_current(lease) || definition != lease->render_definition || !options)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module view lost its actual entered RenderScene");
     options->world_family = QA_SCENE_Q3;
+    if (lease->owner->kind==REMOTE_MODULE_DECODED) {
+        const frontend_remote_q3_resources *resources=&lease->owner->basis.decoded.view;
+        options->world.scratch=resources->world_scratch.view;
+        options->world.child_scratch=resources->world_scratch.child;
+    }
     options->split_screen = lease->owner->frontend->options.seats > 1;
     if (lease->equipment && !frontend_equipment_source_prepare_view(lease->equipment, definition, options, error)) return false;
     if (!render_current(lease) || !frontend_q3_scene_policy_read(lease->owner->frontend, options, error)) return false;
@@ -833,7 +844,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     host->scene_resources = images(owner); host->scene_frame = &f->frame; host->sound_bank = sounds(owner);
     if (owner->kind == REMOTE_MODULE_DECODED) {
         host->scene_world = owner->basis.decoded.view.world;
-        host->collision = (qa_q3_host_collision_services){lease, geometry, load_map};
+        host->collision = (qa_q3_host_collision_services){lease, geometry, load_map, geometry_scratch};
     }
     host->presentation = (qa_q3_host_presentation_services){.context = lease,
         .seat = lease->presentation, .fonts = fonts(owner), .configuration = configuration,

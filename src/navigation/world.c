@@ -45,7 +45,8 @@ bool nav_trace(const qa_navigation_services *s, const qa_nav_profile *p, qa_acto
     if (geometry || s->topology_geometry_only) {
         q.target.inline_model = true;
         q.target.model = 0;
-        return qa_collision_trace(qa_world_geometry(s->world), &q, out, e);
+        qa_collision_geometry *map=qa_world_geometry(s->world);
+        return qa_collision_trace(map, qa_world_trace_scratch(s->world,map), &q, out, e);
     }
     return qa_world_trace(s->world, &q, out, e);
 }
@@ -65,7 +66,8 @@ bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_a
     if (geometry) {
         q.target.inline_model = true;
         q.target.model = 0;
-        if (!qa_collision_point_contents(qa_world_geometry(s->world), &q, &sample, e))
+        qa_collision_geometry *map=qa_world_geometry(s->world);
+        if (!qa_collision_point_contents(map, qa_world_trace_scratch(s->world,map), &q, &sample, e))
             return false;
     } else if (!qa_world_point_contents(s->world, &q, &sample, e))
         return false;

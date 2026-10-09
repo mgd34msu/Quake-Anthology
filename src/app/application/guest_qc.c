@@ -120,6 +120,7 @@ bool application_qc_model_publish(struct application_qc_state *engine,
                                     const application_qc_resource *entry,qa_error *error)
 {
     if(entry->kind!=QA_QC_RESOURCE_MODEL) return true;
+    if(entry->geometry!=NULL && !qa_world_prepare_trace_geometry(engine->world,entry->geometry,error)) return false;
     uint32_t index=entry->value.index;
     if(index>=engine->model_fields.count) {
         uint32_t count=engine->model_fields.count?engine->model_fields.count:32;

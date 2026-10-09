@@ -1043,7 +1043,13 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
         services.goals.pickup=NULL;
         services.goals.owns_item=NULL;
     }
-    return qa_bot_runtime_create(&options,&services,out,error);
+    qa_bot_runtime *runtime=NULL;
+    if (!qa_bot_runtime_create(&options,&services,&runtime,error)) return false;
+    for (application_bot_graph *graph=bots->graphs;graph;graph=graph->next)
+        if (!qa_bot_runtime_prepare_navigation(runtime,qa_nav_graph_read(graph->graph)->edge_count,error)) {
+            (void)qa_bot_runtime_destroy(runtime,NULL);return false;
+        }
+    *out=runtime;return true;
 }
 qa_bot_runtime *application_bots_runtime(qa_application *application) {
     return application && application->bots?application->bots->runtime:NULL;

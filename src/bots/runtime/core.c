@@ -242,6 +242,11 @@ qa_bot_log *qa_bot_runtime_log(qa_bot_runtime *r) { return r ? r->log : NULL; }
 qa_bot_actions *qa_bot_runtime_actions(qa_bot_runtime *r) { return r ? r->actions : NULL; }
 qa_bot_goals *qa_bot_runtime_goals(qa_bot_runtime *r) { return r ? r->goals : NULL; }
 qa_bot_moves *qa_bot_runtime_moves(qa_bot_runtime *r) { return r ? r->moves : NULL; }
+bool qa_bot_runtime_prepare_navigation(qa_bot_runtime *r, size_t edges, qa_error *e) {
+    size_t capacity=edges>r->route_edge_capacity?edges:r->route_edge_capacity;
+    if (r->moves && !qa_bot_moves_prepare_graph(r->moves,capacity,e)) return false;
+    r->route_edge_capacity=capacity;return true;
+}
 qa_bot_chat_system *qa_bot_runtime_chat_system(qa_bot_runtime *r) { return r ? r->chat_system : NULL; }
 qa_bot_navigation *qa_bot_runtime_navigation(qa_bot_runtime *r, int32_t client) {
     if (!r) return NULL;
@@ -271,6 +276,8 @@ bool qa_bot_runtime_attach_map(qa_bot_runtime *r, const qa_bot_runtime_map *map,
     if (!bot_runtime_mutable(r, e) || !bot_runtime_owners_idle(r, e)) return false;
     if (!map || !map->name || !map->navigation || (map->source_entities.size && !map->source_entities.data))
         return bot_runtime_fail(e, "invalid bot map binding");
+    if (!qa_bot_runtime_prepare_navigation(r,
+            qa_navigation_graph(qa_bot_navigation_runtime(map->navigation))->edge_count,e)) return false;
     size_t size = strlen(map->name) + 1;
     char *name = malloc(size);
     if (!name) { qa_error_set(e, QA_ERROR_MEMORY, size, "retaining bot map identity"); return false; }
@@ -290,7 +297,9 @@ bool qa_bot_runtime_rebind_round(qa_bot_runtime *r, const qa_bot_runtime_map *ma
         map->source_entities.size != r->map.source_entities.size)
         return bot_runtime_fail(e, "bot round must retain its actual map and source metadata");
     const qa_entities *entities = r->bsp ? qa_bot_bsp_entities(r->bsp) : r->map.entities;
-    if (!qa_bot_goals_rebind_world(r->goals, r->loaded ? entities : NULL, e)) return false;
+    if (!qa_bot_runtime_prepare_navigation(r,
+            qa_navigation_graph(qa_bot_navigation_runtime(map->navigation))->edge_count,e) ||
+        !qa_bot_goals_rebind_world(r->goals, r->loaded ? entities : NULL, e)) return false;
     r->map.navigation = map->navigation;
     bot_runtime_observations_clear(r);
     return true;

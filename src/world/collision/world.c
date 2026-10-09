@@ -200,7 +200,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     if(world==NULL || query==NULL || out==NULL || (exclude_count!=0 && excluded==NULL))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid shared world trace");
     qa_trace_result result;
-    if(!qa_collision_trace(world->geometry,query,&result,error)) return false;
+    if(!qa_collision_trace(world->geometry,world->trace_scratch,query,&result,error)) return false;
     if(query->target.inline_model || result.all_solid || (query->policy.family==QA_COLLISION_Q3 && result.fraction==0.0f)) { *out=result; return true; }
     qa_actor_collision pass_collision;
     qa_error local={0};
@@ -237,7 +237,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         int32_t contents=qa_world_actor_contents(&collision,query->policy.family);
         if(query->policy.family==QA_COLLISION_Q1?contents!=-2:((uint32_t)contents&query->policy.contents_mask)==0) continue;
         qa_body_state state;
-        if(!qa_world_body_sample(body,QA_ENTITY_CLIP_POSE,&state,error)) {
+        if(!qa_world_body_sample(body,QA_ENTITY_CLIP_POSE,QA_ENTITY_BODY_SPATIAL,&state,error)) {
             ok=false; break;
         }
         if(pass_has_width && state.bounds.maxs.x==state.bounds.mins.x) continue;
@@ -246,7 +246,8 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         qa_trace_result hit;
         if(collision.inline_model) {
             moving.target=(qa_collision_target){true,collision.model,state.origin,state.angles};
-            ok=qa_collision_trace(qa_world_model_geometry(world,&collision),&moving,&hit,error);
+            ok=qa_collision_trace(qa_world_model_geometry(world,&collision),
+                qa_world_trace_scratch(world,qa_world_model_geometry(world,&collision)),&moving,&hit,error);
         } else ok=qa_collision_trace_body(&moving,collision.family,collision.shape,state.bounds,state.origin,contents,&hit,error);
         if(!ok) break;
         if(hit.hit!=QA_TRACE_HIT_NONE) { hit.hit=QA_TRACE_HIT_ACTOR; hit.actor=id; }
@@ -272,7 +273,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
         || (query->q3_server_entities && query->policy.family!=QA_COLLISION_Q3))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid shared contents query");
     qa_point_contents result;
-    if(!qa_collision_point_contents(world->geometry,query,&result,error)) return false;
+    if(!qa_collision_point_contents(world->geometry,world->trace_scratch,query,&result,error)) return false;
     if(query->target.inline_model || query->policy.family==QA_COLLISION_Q1) { *out=result; return true; }
     qa_world_actor_snapshot candidates;
     if(!qa_world_snapshot_capture(world,(qa_bounds){query->point,query->point},QA_COLLISION_BOTH,&candidates,error)) return false;
@@ -281,7 +282,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
         qa_actor_id id=candidates.actors[i];
         if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,id)) continue;
         qa_spatial_actor actor; qa_error refresh_error={0};
-        if(!qa_world_refresh(world,id,QA_ENTITY_CONTENTS_POSE,&actor,&refresh_error)) {
+        if(!qa_world_refresh(world,id,QA_ENTITY_CONTENTS_POSE,QA_ENTITY_BODY_SPATIAL,&actor,&refresh_error)) {
             if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
             continue;
         }
@@ -292,7 +293,8 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
             qa_point_query local=*query;
             local.target=(qa_collision_target){true,actor.collision.model,actor.body.state.origin,actor.body.state.angles};
             qa_point_contents sample;
-            if(!qa_collision_point_contents(qa_world_model_geometry(world,&actor.collision),&local,&sample,error)) { ok=false; break; }
+            if(!qa_collision_point_contents(qa_world_model_geometry(world,&actor.collision),
+                qa_world_trace_scratch(world,qa_world_model_geometry(world,&actor.collision)),&local,&sample,error)) { ok=false; break; }
             added=sample.family==QA_COLLISION_Q2?(query->policy.q2_merged_contents?sample.merged:sample.stored):sample.contents;
         } else {
             qa_vec3 point=qa_vec_sub(query->point,actor.body.state.origin);

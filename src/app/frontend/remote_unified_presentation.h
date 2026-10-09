@@ -12,6 +12,7 @@
 #include "remote_unified_q3.h"
 #include "remote_unified_components.h"
 #include "unified_q3_runtime_factory.h"
+qa_trace_scratch *frontend_remote_unified_presentation_trace_scratch(const frontend_remote_unified *);
 typedef struct frontend_unified_q3_video frontend_unified_q3_video;
 bool frontend_remote_unified_presentation_video_associate(frontend_remote_unified *,
     const frontend_unified_q3_video *,qa_error *);

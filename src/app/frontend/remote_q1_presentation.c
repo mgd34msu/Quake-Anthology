@@ -196,7 +196,8 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
         if (ordinal < 0) ordinal += (double)count;
         styles[i] = count ? (float)((unsigned char)pattern[(size_t)ordinal] - 97) * 22 : 256;
     }
-    qa_scene_world_input world = {.view = *view, .seconds = seconds,
+    qa_scene_world_input world = {.scratch=row->world_scratch.view,
+        .child_scratch=row->world_scratch.child, .view = *view, .seconds = seconds,
         .q1_styles = styles, .style_count = 256, .identity_light = 1, .curve_error = 4,
         .override_sky = row->sky_found != 0, .sky_axis = {0, 0, 1}};
     for (unsigned i = 0; i < 6; ++i) world.sky_images[i] = row->sky_images[i];

@@ -226,6 +226,8 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
 {
     frontend_remote_q3_runtime *o=context;
     if(!definition || !options || !o->entered || !current(o,o->entered,e))return false;
+    options->world.scratch=o->services.resources.world_scratch.view;
+    options->world.child_scratch=o->services.resources.world_scratch.child;
     options->world_family=QA_SCENE_Q3; options->split_screen=o->frontend->options.seats>1;
     return frontend_q3_scene_policy_read(o->frontend,options,e) &&
         frontend_q3_shadow_mode_read(o->entered->source.basis.client.cvars,qa_native_q3_remote_client_cvar_refs(o->services.client)->rows[QA_NATIVE_Q3_CVAR_cg_shadows],&options->shadow_mode,e) &&
@@ -550,12 +552,12 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 f
     frontend_remote_q3_runtime *o=context; qa_trace_query query={.start=start,.end=finish,.shape={QA_SHAPE_BOX,bounds}};
     if(!policy(o,f,&query.policy,e))return false;
     query.policy.contents_mask=mask;
-    return qa_collision_trace(o->services.resources.geometry,&query,out,e) && cut(o,f,e);
+    return qa_collision_trace(o->services.resources.geometry,o->services.resources.trace_scratch,&query,out,e) && cut(o,f,e);
 }
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
 {
     frontend_remote_q3_runtime *o=context; qa_point_query query={.point=point}; qa_point_contents result;
-    if(!out || !policy(o,f,&query.policy,e) || !qa_collision_point_contents(o->services.resources.geometry,&query,&result,e) ||
+    if(!out || !policy(o,f,&query.policy,e) || !qa_collision_point_contents(o->services.resources.geometry,o->services.resources.trace_scratch,&query,&result,e) ||
        !cut(o,f,e))return false;
     *out=(uint32_t)result.contents; return true;
 }
@@ -824,6 +826,7 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     o->player_curve_clip=qa_cvars_resolve(basis.client.source_cvars,"cm_playerCurveClip");
     const frontend_remote_q3_resources *r=&services.resources;
     qa_q3_presentation_options backend={.assets=r->assets,.audio=f->audio,.clock={o,clock_time},
+        .world_scratch=r->world_scratch.view,.world_child_scratch=r->world_scratch.child,
         .seat=r->physical_seat,.owner=r->identity,.viewport=frontend_viewport(f,r->physical_seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=o,.audio_actor=actor,.listener=listener,.music=music,.frame_number=frame_number,.milliseconds=milliseconds,

@@ -12,6 +12,8 @@
 
 static bool fail(qa_error *e, qa_status code, const char *message)
 { return frontend_unified_fail(e,code,message); }
+qa_trace_scratch *frontend_remote_unified_prediction_scratch(const frontend_remote_unified_prediction *p)
+{ return p?qa_world_trace_scratch(p->scene,p->geometry):NULL; }
 static bool actor_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,
     qa_actor_id source,qa_actor_id *out,qa_error *e)
 { return frontend_remote_unified_source_actor(p->replica,frame,source,p->importing,out,e); }

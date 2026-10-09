@@ -5175,12 +5175,12 @@ static bool prediction_map(frontend_q3_client *n, const qa_resource **map, qa_er
     *map = content.map; return true;
 }
 static bool prediction_geometry(const qa_frontend *f, const qa_application_q3_client_context *receiver,
-    const qa_collision_geometry **geometry, const qa_resource **map, bool *present, qa_error *error)
+    const qa_collision_geometry **geometry, qa_trace_scratch **scratch, const qa_resource **map, bool *present, qa_error *error)
 {
     if (receiver->native_source)
-        return frontend_remote_q3_geometry_read(f, receiver, map, geometry, present, error);
+        return frontend_remote_q3_geometry_read(f, receiver, map, geometry, scratch, present, error);
     return frontend_source_role_geometry_read(f, receiver->receiver, QA_QVM_CGAME,
-        receiver->seat, receiver->service_owner, geometry, map, present, error);
+        receiver->seat, receiver->service_owner, geometry, scratch, map, present, error);
 }
 bool frontend_network_prediction_source_read(const qa_frontend *f,
     const qa_application_q3_client_context *receiver,
@@ -5201,7 +5201,7 @@ bool frontend_network_prediction_source_read(const qa_frontend *f,
         !client_player(n, &out->viewer, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote prediction lost its actual decoded scene or viewing receiver");
     bool geometry_present = false; const qa_resource *map = NULL;
-    if (!prediction_geometry(f, &out->receiver, &out->geometry, &out->map, &geometry_present, error) ||
+    if (!prediction_geometry(f, &out->receiver, &out->geometry, &out->scratch, &out->map, &geometry_present, error) ||
         !prediction_map(n, &map, error)) return false;
     if (!geometry_present || !out->geometry || !out->map || map != out->map)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote prediction lacks its actual private map and geometry");
@@ -5215,6 +5215,7 @@ bool frontend_network_prediction_source_current(const qa_frontend *f,
     if (!f || !source || !f->network) return false;
     frontend_q3_client *n = q3_client_receiver(f, &source->receiver);
     const qa_collision_geometry *geometry = NULL; const qa_resource *map = NULL, *prepared = NULL; bool present = false;
+    qa_trace_scratch *scratch=NULL;
     qa_actor_id viewer = {0}; qa_error ignored = {0};
     return n && n->q3_client_attached && n->q3_client_active && n->q3_client_gamestate &&
         !n->q3_client_retiring && !n->q3_client_closed &&
@@ -5227,7 +5228,7 @@ bool frontend_network_prediction_source_current(const qa_frontend *f,
         source->receiver.source_milliseconds == n->q3_client_time &&
         source->receiver.receiver == n->q3_cgame_owner && source->receiver.seat == n->q3_client_launch_seat &&
         client_player(n, &viewer, &ignored) && qa_actor_id_equal(viewer, source->viewer) &&
-        prediction_geometry(f, &source->receiver, &geometry, &map, &present, &ignored) &&
+        prediction_geometry(f, &source->receiver, &geometry, &scratch, &map, &present, &ignored) &&
         present && geometry == source->geometry && map == source->map &&
         prediction_map(n, &prepared, &ignored) && prepared == map;
 }
@@ -5371,8 +5372,8 @@ bool frontend_network_prediction_number_of(const qa_frontend *f,
 static qa_q3_prediction_scene_collision prediction_collision(frontend_q3_client *n,
     const frontend_network_prediction_source *source)
 {
-    return (qa_q3_prediction_scene_collision){(qa_collision_geometry *)source->geometry,
-        n, prediction_actor_at, prediction_number_of};
+    return (qa_q3_prediction_scene_collision){.geometry=(qa_collision_geometry *)source->geometry,
+        .context=n,.actor_at=prediction_actor_at,.number_of=prediction_number_of,.scratch=source->scratch};
 }
 bool frontend_network_prediction_trace(qa_frontend *f, const frontend_network_prediction_source *source,
     const qa_trace_query *query, qa_trace_result *out, qa_error *error)
@@ -5440,7 +5441,7 @@ bool frontend_network_prediction_trigger_overlap(qa_frontend *f, const frontend_
     if (!frontend_network_prediction_source_current(f, source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote trigger overlap source is stale");
     return qa_q3_prediction_scene_trigger_overlap(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene,
-        (qa_collision_geometry *)source->geometry, entity, origin, bounds, out, error) &&
+        (qa_collision_geometry *)source->geometry, source->scratch, entity, origin, bounds, out, error) &&
         (frontend_network_prediction_source_current(f, source) || frontend_fail(error, QA_ERROR_ARGUMENT, "Remote trigger source changed"));
 }
 bool frontend_network_prediction_item_position(qa_frontend *f, const frontend_network_prediction_source *source,
@@ -7470,7 +7471,8 @@ bool frontend_network_restore_prediction_read(const qa_frontend *f,
         resources.map!=domain.map || !resources.geometry || !remote_player(f->application,&out->viewer,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Imported prediction lost its actual resource parent or viewer");
     out->connection=domain.connection; out->epoch=domain.epoch; out->restart_generation=domain.restart_generation;
-    out->receiver=domain.source.receiver; out->geometry=resources.geometry; out->map=resources.map;
+    out->receiver=domain.source.receiver; out->geometry=resources.geometry;
+    out->scratch=resources.trace_scratch; out->map=resources.map;
     out->previous_presentation_time=n->q3_clients[0].q3_previous_presentation_time;
     if(!frontend_network_client_restore_domain_current(f,&domain) ||
         !frontend_remote_q3_resources_import_current(&resources))

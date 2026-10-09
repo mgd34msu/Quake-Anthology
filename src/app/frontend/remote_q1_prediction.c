@@ -36,6 +36,7 @@ static bool retain(frontend_remote_q1 *row,qa_error *error)
 void remote_q1_prediction_clear(frontend_remote_q1 *row)
 {
     if (!row) return;
+    qa_trace_scratch_destroy(row->collision_scratch); row->collision_scratch=NULL;
     qa_collision_destroy(row->collision); row->collision = NULL;
     free(row->prediction); row->prediction = NULL;
 }
@@ -43,14 +44,6 @@ bool remote_q1_collision_acquire(frontend_remote_q1 *row, qa_collision_geometry 
 {
     if (!row || !out || !remote_q1_mutable(row) || !remote_q1_live(row,error) || !row->loaded || !row->map)
         return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Q1 collision requires its actual received map owner");
-    if (!row->collision) {
-        qa_bsp_view bsp;
-        if (!qa_bsp_open(qa_resource_bytes(row->map),&bsp,error) || bsp.family!=QA_BSP_Q1 ||
-            !qa_bsp_validate(&bsp,error) || !qa_collision_create(&bsp,&row->collision,error)) return false;
-        if (!qa_collision_bind_resource(row->collision,row->map,error)) {
-            qa_collision_destroy(row->collision); row->collision=NULL; return false;
-        }
-    }
     *out=row->collision; return true;
 }
 static bool geometry(frontend_remote_q1 *row,qa_error *error)
@@ -68,7 +61,7 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
 {
     frontend_remote_q1 *row=context;
     qa_trace_query q=*query; q.target=(qa_collision_target){0};
-    if(!qa_collision_trace(row->collision,&q,out,error)) return false;
+    if(!qa_collision_trace(row->collision,row->collision_scratch,&q,out,error)) return false;
     for(size_t i=0;i<row->current.count;++i) {
         const qa_q1_entity *entity=row->current.rows+i;
         if(entity->number==row->view_entity || !entity->model || entity->model>row->model_count) continue;
@@ -79,7 +72,7 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
             if(end==path+1 || *end || !model || model>=qa_collision_model_count(row->collision))
                 return remote_q1_fail(error,QA_ERROR_FORMAT,"Received QW brush has no actual collision model");
             q=*query; q.target=(qa_collision_target){.inline_model=true,.model=(uint32_t)model,.origin=vector(entity->origin)};
-            if(!qa_collision_trace(row->collision,&q,&hit,error)) return false;
+            if(!qa_collision_trace(row->collision,row->collision_scratch,&q,&hit,error)) return false;
         } else {
             if(query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS) continue;
             if(!entity->number || entity->number>32 || !row->qw_player_valid[entity->number-1] ||
@@ -116,7 +109,7 @@ static bool contents(void *context,const qa_point_query *query,qa_point_contents
 {
     frontend_remote_q1 *row=context;
     qa_point_query q=*query; q.target=(qa_collision_target){0};
-    return qa_collision_point_contents(row->collision,&q,out,error);
+    return qa_collision_point_contents(row->collision,row->collision_scratch,&q,out,error);
 }
 static bool is_brush(void *context,const qa_trace_result *hit,bool *out,qa_error *error)
 {

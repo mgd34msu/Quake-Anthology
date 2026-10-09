@@ -761,7 +761,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     bool borrowed = binding.kind == QA_NATIVE_SLOT_BORROWED;
     const native_host_edict_layout *layout = host->edict;
     qa_body_state body;
-    if (!qa_entity_body_read(&host->q2_fields[slot].body, QA_ENTITY_CLIP_POSE,
+    if (!qa_entity_body_read(&host->q2_fields[slot].body, QA_ENTITY_CLIP_POSE, QA_ENTITY_BODY_ALL,
         &body, error)) return false;
     qa_vec3 origin = body.origin, angles = body.angles;
     qa_vec3 minimum = body.bounds.mins, maximum = body.bounds.maxs;
@@ -1169,7 +1169,8 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
             !native_host_actor_for_address(host, forced_entity, true, &actor, &slot, error))
             return false;
         if (slot == 0) {
-            if (!qa_collision_trace(qa_world_geometry(host->world.world), &query, &trace,
+            if (!qa_collision_trace(qa_world_geometry(host->world.world),
+                                    qa_world_trace_scratch(host->world.world,qa_world_geometry(host->world.world)), &query, &trace,
                                     error))
                 return false;
         } else {
@@ -1185,7 +1186,8 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
             if (collision.inline_model) {
                 query.target = (qa_collision_target){true, collision.model, body.origin,
                                                       body.angles};
-                if (!qa_collision_trace(qa_world_geometry(host->world.world), &query,
+                if (!qa_collision_trace(qa_world_geometry(host->world.world),
+                                        qa_world_trace_scratch(host->world.world,qa_world_geometry(host->world.world)), &query,
                                         &trace, error))
                     return false;
             } else if (!qa_collision_trace_body(&query, collision.family,

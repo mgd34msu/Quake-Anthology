@@ -43,6 +43,7 @@ struct frontend_unified_media {
     unified_media_model *models;
     qa_scene_world *world;
     unified_media_bank *world_bank;
+    frontend_world_scratch world_scratch;
     uint64_t saved_world;
     uint32_t physical_seat;
     bool busy, importing, roots_attached;

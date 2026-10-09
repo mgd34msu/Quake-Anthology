@@ -121,7 +121,9 @@ struct frontend_source {
     qa_q3_presentation *presentation;
     qa_resource *map_resource;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *trace_scratch;
     qa_scene_world *world;
+    frontend_world_scratch world_scratch;
     bool private_map, packet_client;
     qa_audio_listener listener;
     bool has_listener, music_attached;
@@ -764,6 +766,10 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     source_render_scope *scope=source->render_scope;
     if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source view preparation requires its live application lease");
+    const frontend_world_scratch *scratch=source->private_map?&source->world_scratch:
+        source->frontend->world_scratch?source->frontend->world_scratch+source->seat:NULL;
+    options->world.scratch=scratch?scratch->view:NULL;
+    options->world.child_scratch=scratch?scratch->child:NULL;
     qa_actor_id viewer;
     if(!options->world.no_world && !(source->companion && source->companion->entered) &&
         source->frontend->qc_messages && frontend_seat_actor_read(source->frontend,source->seat,&viewer)) {
@@ -1081,7 +1087,9 @@ static bool source_free(frontend_source *source)
     if (!frontend_material_movies_destroy(&source->shader_movies,&error)) return false;
     if (source->assets && !qa_q3_assets_services_retire(source->assets,&error)) return false;
     qa_q3_presentation_assets_destroy(source->assets); source->assets=NULL;
+    frontend_world_scratch_destroy(&source->world_scratch);
     qa_scene_world_destroy(source->world);
+    qa_trace_scratch_destroy(source->trace_scratch);
     qa_collision_destroy(source->geometry);
     qa_resource_release(source->map_resource);
     qa_q3_key_destroy(source->keys);
@@ -1327,7 +1335,8 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
         return frontend_fail(error,QA_ERROR_FORMAT,"Private Q3 receiver requires its actual Q3 collision map");
     source->map_resource=(qa_resource *)map; qa_resource_retain(source->map_resource);
     if (!qa_collision_create(&bsp,&source->geometry,error) ||
-        !qa_collision_bind_resource(source->geometry,source->map_resource,error)) return false;
+        !qa_collision_bind_resource(source->geometry,source->map_resource,error) ||
+        !qa_trace_scratch_create(source->geometry,&source->trace_scratch,error)) return false;
     if (!world) return true;
     qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
@@ -1335,6 +1344,7 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
     if (!frontend_q3_world_policy_initialize(source->frontend,&options,error)) return false;
     return qa_scene_world_create(&bsp,source->images,source->materials,&options,&source->world,error) &&
         qa_scene_world_source_resource_bind(source->world,source->map_resource,error) &&
+        frontend_world_scratch_create(source->world,&source->world_scratch,error) &&
         frontend_material_remaps(source->frontend,source->materials,error);
 }
 static qa_collision_geometry *source_map_geometry(void *context)
@@ -1342,6 +1352,11 @@ static qa_collision_geometry *source_map_geometry(void *context)
     const frontend_source *source=context;
     return source && source->constructed && source->leases && source->application==source->frontend->application ?
         source->geometry:NULL;
+}
+static qa_trace_scratch *source_map_scratch(void *context,const qa_collision_geometry *geometry)
+{
+    frontend_source *source=context;
+    return source->geometry==geometry?source->trace_scratch:NULL;
 }
 static bool source_map_load(void *context,const char *path,qa_error *error)
 {
@@ -1524,7 +1539,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     host->scene_world = source->private_map?source->world:frontend->scene_world;
     host->sound_bank = source->sounds;
     if (source->private_map)
-        host->collision=(qa_q3_host_collision_services){source,source_map_geometry,source_map_load};
+        host->collision=(qa_q3_host_collision_services){source,source_map_geometry,source_map_load,source_map_scratch};
     host->presentation = (qa_q3_host_presentation_services){.context=source,.seat=source->presentation,
         .fonts=source->fonts,.configuration=configuration,.update_screen=update_screen,.end_registration=end_registration};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
@@ -2695,7 +2710,7 @@ bool frontend_source_role_media_current(const qa_frontend *frontend,qa_actor_own
 }
 bool frontend_source_role_geometry_read(const qa_frontend *frontend,qa_actor_owner receiver,
     qa_qvm_role role,uint32_t seat,uint64_t service,const qa_collision_geometry **out,
-    const qa_resource **map,bool *present,qa_error *error)
+    qa_trace_scratch **scratch,const qa_resource **map,bool *present,qa_error *error)
 {
     if (!frontend || !frontend->application || !receiver || !service || !out || !map || !present ||
         (role!=QA_QVM_CGAME && role!=QA_QVM_UI))
@@ -2721,7 +2736,8 @@ bool frontend_source_role_geometry_read(const qa_frontend *frontend,qa_actor_own
     if (!qa_application_q3_scene_world_read(frontend->application,&actual,&world,error)) return false;
     if (selected->private_map && world!=selected->world)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision host retains a different source world");
-    *out=selected->geometry; *map=selected->map_resource; *present=selected->geometry!=NULL; return true;
+    *out=selected->geometry; *scratch=selected->trace_scratch;
+    *map=selected->map_resource; *present=selected->geometry!=NULL; return true;
 }
 bool frontend_source_world_adopt_ready(qa_frontend *frontend,size_t index,qa_scene_world *world,qa_error *error)
 {
@@ -2732,7 +2748,7 @@ bool frontend_source_world_adopt_ready(qa_frontend *frontend,size_t index,qa_sce
         !world || !qa_scene_world_idle(world) || qa_scene_world_resource_owner(world)!=source->images ||
         qa_scene_world_material_owner(world)!=source->materials)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Private source world adoption requires its decoded root and paired heaps");
-    return true;
+    return frontend_world_scratch_create(world,&source->world_scratch,error);
 }
 void frontend_source_world_adopt(qa_frontend *frontend,size_t index,qa_scene_world *world)
 {

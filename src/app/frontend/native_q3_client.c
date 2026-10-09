@@ -292,6 +292,9 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
 {
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
     if(!frontend_native_q3_current(row))return false;
+    const frontend_world_scratch *scratch=f->world_scratch?f->world_scratch+row->view.seat:NULL;
+    options->world.scratch=scratch?scratch->view:NULL;
+    options->world.child_scratch=scratch?scratch->child:NULL;
     const qa_native_q3_cvar_refs *refs = qa_native_q3_client_cvar_refs(row->view.client);
     qa_cvar_handle shadows = refs ? refs->rows[QA_NATIVE_Q3_CVAR_cg_shadows] : (qa_cvar_handle){0};
     return frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
@@ -526,7 +529,7 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 e
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e) ||
         !qa_q3_presentation_binding_read(f->presentation,&binding,e) || !binding.geometry)return false;
     query.policy.contents_mask=mask;
-    return qa_collision_trace(binding.geometry,&query,out,e) && frontend_native_q3_cut(row,f,e);
+    return qa_collision_trace(binding.geometry,qa_world_trace_scratch(qa_application_world(row->frontend->application),binding.geometry),&query,out,e) && frontend_native_q3_cut(row,f,e);
 }
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
 {
@@ -534,7 +537,7 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
     qa_point_query query={.point=point}; qa_point_contents result;
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e) ||
         !qa_q3_presentation_binding_read(f->presentation,&binding,e) || !binding.geometry ||
-        !qa_collision_point_contents(binding.geometry,&query,&result,e) || !frontend_native_q3_cut(row,f,e))return false;
+        !qa_collision_point_contents(binding.geometry,qa_world_trace_scratch(qa_application_world(row->frontend->application),binding.geometry),&query,&result,e) || !frontend_native_q3_cut(row,f,e))return false;
     *out=(uint32_t)result.contents; return true;
 }
 static bool mark_fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,

@@ -1,19 +1,5 @@
 #include "internal.h"
 
-static bool reserve(void **data, size_t *capacity, size_t count, size_t width, qa_error *e) {
-    if (count <= *capacity)
-        return true;
-    if (count > SIZE_MAX / width)
-        return bot_move_fail(e, "bot route storage exceeds address range");
-    void *p = realloc(*data, count * width);
-    if (!p) {
-        qa_error_set(e, QA_ERROR_MEMORY, count, "retaining bot route workspace");
-        return false;
-    }
-    *data = p;
-    *capacity = count;
-    return true;
-}
 bool bot_travel_ready(const qa_bot_moves *moves, qa_error *e) {
     for (size_t i = 0; i < BOT_MOVE_VARIABLE_COUNT; ++i)
         if (!moves->variables[i])
@@ -270,22 +256,7 @@ bool bot_travel_points(bot_travel *t, const qa_bot_vector_source *source, uint32
     qa_bot_moves *m = t->moves;
     *found = false;
     m->point_count = 0;
-    if (t->graph->edge_count > (SIZE_MAX - 1) / 2)
-        return bot_move_fail(e, "estimated bot path capacity overflow");
-    size_t old_capacity = m->visited_capacity;
-    if (!reserve((void **)&m->points, &m->point_capacity, t->graph->edge_count * 2 + 1,
-                 sizeof(*m->points), e) ||
-        !reserve((void **)&m->visited, &m->visited_capacity, t->graph->edge_count,
-                 sizeof(*m->visited), e))
-        return false;
-    if (m->visited_capacity > old_capacity)
-        memset(m->visited + old_capacity, 0,
-               (m->visited_capacity - old_capacity) * sizeof(*m->visited));
-    if (!++m->visit_generation) {
-        if (m->visited_capacity)
-            memset(m->visited, 0, m->visited_capacity * sizeof(*m->visited));
-        m->visit_generation = 1;
-    }
+    qa_stamp_set_begin(&m->visited);
     /* The initial point stays borrowed until its consumer reaches it. */
     m->points[m->point_count++] = qa_v3(0, 0, 0);
     qa_vec3 origin;
@@ -309,9 +280,8 @@ bool bot_travel_points(bot_travel *t, const qa_bot_vector_source *source, uint32
         if (!edge)
             return true;
         size_t ordinal = (size_t)(edge - t->graph->edges);
-        if (m->visited[ordinal] == m->visit_generation)
+        if (!qa_stamp_set_mark(&m->visited, ordinal))
             return true;
-        m->visited[ordinal] = m->visit_generation;
         m->points[m->point_count++] = edge->start;
         m->points[m->point_count++] = edge->end;
         area = qa_bot_navigation_source_area(t->navigation, edge->to);

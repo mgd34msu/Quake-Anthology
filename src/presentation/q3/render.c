@@ -1330,6 +1330,7 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
         .identity_light = p->options.identity_light, .curve_error = 250,
         .render_texts = texts, .render_text_count = 8, .video_frame = p->options.video_frame,
         .video_context = p->options.video_context, .source_scratch = p->options.source_scratch,
+        .scratch = p->options.world_scratch, .child_scratch = p->options.world_child_scratch,
         .source_white = qa_material_library_has_source_profile(p->options.assets->options.provider.materials) ?
             qa_scene_source_q3_white(p->options.assets->options.provider.images) :
             qa_scene_white(p->options.assets->options.provider.images),
@@ -1401,7 +1402,9 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
             qa_q3_scene_options child_options = options;
             child_options.world.view = child; child_options.world.pvs_origin = pvs;
             child_options.world.use_pvs_origin = true;
-            ok = qa_scene_world_source_prepare_view(p->world, &child_options.world, p->frame, error);
+            child_options.world.scratch = options.world.child_scratch;
+            ok = qa_scene_world_source_begin_scene(p->world, &child_options.world, error);
+            if (ok) ok = qa_scene_world_source_prepare_view(p->world, &child_options.world, p->frame, error);
             if (ok) {
                 float far_clip = child_options.world.source_far_clip, near_clip = child_options.near_clip;
                 child_options.world.view.projection.m[10] = -(far_clip + near_clip) / (far_clip - near_clip);

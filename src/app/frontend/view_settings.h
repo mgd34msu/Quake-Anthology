@@ -62,7 +62,7 @@ const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
 bool frontend_view_q1_damage_origin(const double from[3],qa_vec3 *,qa_error *);
 bool frontend_view_q1_local_damage(qa_frontend *,qa_actor_id,uint8_t armor,uint8_t blood,
     qa_vec3 from,qa_error *);
-bool frontend_view_q1_chase(const frontend_q1_view_settings *,qa_collision_geometry *,
+bool frontend_view_q1_chase(const frontend_q1_view_settings *,qa_collision_geometry *,qa_trace_scratch *,
     qa_vec3 eye,qa_vec3 aim_angles,qa_vec3 *origin,qa_vec3 *angles,qa_error *);
 /* One original Q1/QW refdef kernel; history belongs to the actual CLIENT seat
  * or received source and is rebuilt by fresh/load constructors. */

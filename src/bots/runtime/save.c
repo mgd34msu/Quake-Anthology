@@ -290,9 +290,12 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         runtime->weapon_setup_revision=state.weapon_setup_revision;
         runtime->map_name = (char *)state.map.name; state.map.name = NULL;
         runtime->map = map ? *map : (qa_bot_runtime_map){0}; runtime->map.name = runtime->map_name;
+        if (runtime->map.navigation)
+            ok=qa_bot_runtime_prepare_navigation(runtime,
+                qa_navigation_graph(qa_bot_navigation_runtime(runtime->map.navigation))->edge_count,error);
         if (state.library) {
             qa_bot_library_reload(runtime->library, state.reload);
-            ok = qa_bot_library_variables_restore(runtime->library, parts[VARIABLES], error) &&
+            ok = ok && qa_bot_library_variables_restore(runtime->library, parts[VARIABLES], error) &&
                  qa_bot_runtime_assets_restore(runtime, parts[ASSETS], &assets, error);
         } else {
             qa_bot_moves_destroy(runtime->moves); runtime->moves = NULL;

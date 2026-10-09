@@ -85,6 +85,8 @@ bool qa_bot_runtime_variable_set_from(qa_bot_runtime *, void *context,
 qa_bot_actions *qa_bot_runtime_actions(qa_bot_runtime *);
 qa_bot_goals *qa_bot_runtime_goals(qa_bot_runtime *);
 qa_bot_moves *qa_bot_runtime_moves(qa_bot_runtime *);
+/* Called while loading/binding each admitted map or player navigation graph. */
+bool qa_bot_runtime_prepare_navigation(qa_bot_runtime *, size_t edge_count, qa_error *);
 qa_bot_chat_system *qa_bot_runtime_chat_system(qa_bot_runtime *);
 qa_bot_navigation *qa_bot_runtime_navigation(qa_bot_runtime *, int32_t client);
 bool qa_bot_runtime_predict_movement(qa_bot_runtime *, int32_t entity,

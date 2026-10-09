@@ -186,6 +186,28 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
     *out = m;
     return true;
 }
+bool qa_bot_moves_prepare_graph(qa_bot_moves *m, size_t edges, qa_error *e) {
+    if (edges <= m->visited.count && m->point_capacity)
+        return true;
+    if (edges > (SIZE_MAX - 1) / 2 ||
+        edges * 2 + 1 > SIZE_MAX / sizeof(*m->points) ||
+        edges > SIZE_MAX / sizeof(*m->visited.marks))
+        return bot_move_fail(e, "bot route storage exceeds address range");
+    size_t count = edges * 2 + 1;
+    qa_vec3 *points = malloc(count * sizeof(*points));
+    uint32_t *marks = edges ? malloc(edges * sizeof(*marks)) : NULL;
+    if (!points || (edges && !marks)) {
+        free(points); free(marks);
+        qa_error_set(e, QA_ERROR_MEMORY, edges, "preparing bot route workspace");
+        return false;
+    }
+    free(m->points); free(m->visited.marks);
+    m->points = points;
+    m->point_count = 0;
+    m->point_capacity = count;
+    qa_stamp_set_init(&m->visited, marks, edges);
+    return true;
+}
 void qa_bot_moves_destroy(qa_bot_moves *m) {
     if (!m || m->busy)
         return;
@@ -195,7 +217,7 @@ void qa_bot_moves_destroy(qa_bot_moves *m) {
     qa_nav_route_free(&m->trajectory);
     qa_nav_workspace_destroy(m->workspace);
     free(m->points);
-    free(m->visited);
+    free(m->visited.marks);
     free(m->slots);
     free(m);
 }

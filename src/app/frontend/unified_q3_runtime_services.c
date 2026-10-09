@@ -119,6 +119,7 @@ static uint64_t audio_bus(void *context)
 static bool prepare_view(void *context,const qa_q3_refdef *refdef,qa_q3_scene_options *out,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;
+    frontend_unified_media_world_scratch(o->options.media,&out->world);
     const qa_q3_presentation_options *actual=&o->options.operations.presentation;
     qa_native_q3_client_cvar shadows;
     if(!frontend_unified_q3_runtime_services_current(o) ||
@@ -257,7 +258,7 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 e
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
         .policy={.family=QA_COLLISION_Q3,.contents_mask=mask,.curves=true}};
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
-    return geometry && qa_collision_trace(geometry,&query,out,e) && cut(o,f,e);
+    return geometry && qa_collision_trace(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,out,e) && cut(o,f,e);
 }
 static bool contents(void *context,const q3n_frame *f,qa_vec3 point,int32_t pass,uint32_t *out,qa_error *e)
 {
@@ -276,7 +277,7 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
     qa_point_query query={.point=point,.policy={.family=QA_COLLISION_Q3,.curves=true}};
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
     qa_point_contents result;
-    if(!geometry || !qa_collision_point_contents(geometry,&query,&result,e) || !cut(o,f,e))return false;
+    if(!geometry || !qa_collision_point_contents(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,&result,e) || !cut(o,f,e))return false;
     *out=(uint32_t)result.contents;return true;
 }
 static bool fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,

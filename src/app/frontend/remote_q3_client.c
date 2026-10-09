@@ -187,8 +187,10 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
     if (!frontend_q3_world_policy_initialize(f,&options,error)) return false;
     if((!v->geometry && !qa_collision_create(&bsp,&v->geometry,error)) ||
         !qa_collision_bind_resource(v->geometry,row->map,error) ||
+        (!v->trace_scratch && !qa_trace_scratch_create(v->geometry,&v->trace_scratch,error)) ||
         !qa_scene_world_create(&bsp,v->images,v->materials,&options,&v->world,error) ||
         !qa_scene_world_source_resource_bind(v->world,row->map,error) ||
+        !frontend_world_scratch_create(v->world,&v->world_scratch,error) ||
         !qa_q3_presentation_assets_create(&assets,&v->assets,error)) return false;
     if(!frontend_network_client_domain_current(f,domain))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote constructor callbacks changed their actual CLIENT domain");
@@ -200,6 +202,7 @@ static bool rebuild_media(frontend_remote_q3 *row,qa_error *error)
     if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
+    frontend_world_scratch_destroy(&v->world_scratch);
     qa_scene_world_destroy(v->world); v->world=NULL;
     qa_media_library_destroy(v->movies); v->movies=NULL;
     qa_font_library_destroy(v->fonts); v->fonts=NULL;
@@ -350,7 +353,7 @@ bool frontend_remote_q3_resources_world_adopt_ready(frontend_remote_q3 *row,qa_s
         !qa_scene_world_idle(world) || qa_scene_world_resource_owner(world)!=v.images ||
         qa_scene_world_material_owner(world)!=v.materials)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Restored remote world adoption requires its decoded root and paired heaps");
-    return true;
+    return frontend_world_scratch_create(world,&row->resources.world_scratch,error);
 }
 void frontend_remote_q3_resources_world_adopt(frontend_remote_q3 *row,qa_scene_world *world)
 { row->resources.world=world; }
@@ -486,11 +489,11 @@ frontend_remote_q3 *frontend_remote_q3_at(const qa_frontend *f,size_t ordinal)
     return row;
 }
 bool frontend_remote_q3_geometry_read(const qa_frontend *f,const qa_application_q3_client_context *receiver,
-    const qa_resource **map,const qa_collision_geometry **geometry,bool *present,qa_error *error)
+    const qa_resource **map,const qa_collision_geometry **geometry,qa_trace_scratch **scratch,bool *present,qa_error *error)
 {
     if(!f || !receiver || !map || !geometry || !present)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote geometry requires its actual CLIENT recipient");
-    *map=NULL; *geometry=NULL; *present=false;
+    *map=NULL; *geometry=NULL; *scratch=NULL; *present=false;
     for(const frontend_remote_q3 *row=f->remote_q3;row;row=row->next) {
         const qa_application_q3_client_context *expected=&row->resources.domain.source.receiver;
         if(expected->receiver!=receiver->receiver || expected->seat!=receiver->seat) continue;
@@ -502,7 +505,7 @@ bool frontend_remote_q3_geometry_read(const qa_frontend *f,const qa_application_
             receiver->source_client!=actual->source_client || receiver->native_source!=actual->native_source ||
             !frontend_network_q3_client_context_current((qa_frontend *)f,receiver))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote geometry differs from its true physical service lease");
-        *map=v.map; *geometry=v.geometry; *present=true; return true;
+        *map=v.map; *geometry=v.geometry; *scratch=v.trace_scratch; *present=true; return true;
     }
     return true;
 }
@@ -527,7 +530,10 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
     }
     if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
-    qa_q3_presentation_assets_destroy(v->assets); qa_scene_world_destroy(v->world);
+    qa_q3_presentation_assets_destroy(v->assets);
+    frontend_world_scratch_destroy(&v->world_scratch);
+    qa_scene_world_destroy(v->world);
+    qa_trace_scratch_destroy(v->trace_scratch);
     qa_collision_destroy(v->geometry); qa_resource_release(row->map);
     qa_media_library_destroy(v->movies); qa_font_library_destroy(v->fonts); qa_audio_bank_destroy(v->sounds);
     qa_material_library_destroy(v->materials); qa_scene_resources_destroy(v->images); qa_vfs_destroy(v->mounts);

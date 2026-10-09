@@ -143,7 +143,7 @@ static qa_spatial_visit visit_current(void *opaque,uint32_t slot)
     world_visit_context *context=opaque;
     qa_spatial_actor actor; qa_error error={0};
     qa_actor_id id=qa_actors_body(context->world->actors->pages,slot)->actor;
-    if(!qa_world_refresh(context->world,id,QA_ENTITY_CLIP_POSE,&actor,&error)) {
+    if(!qa_world_refresh(context->world,id,QA_ENTITY_CLIP_POSE,QA_ENTITY_BODY_ALL,&actor,&error)) {
         if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
         return QA_SPATIAL_CONTINUE;
     }

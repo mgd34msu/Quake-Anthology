@@ -192,7 +192,7 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
         qa_collision_geometry_family(app->geometry) == QA_COLLISION_Q1) {
         size_t bytes = qa_collision_q1_pvs_bytes(app->geometry);
         uint8_t *pvs = (uint8_t *)(v + 1);
-        if (!qa_collision_q1_fat_pvs(app->geometry, pvs_origin, pvs, bytes, error)) return false;
+        if (!qa_collision_q1_fat_pvs(app->geometry, qa_world_trace_scratch(app->world,app->geometry), pvs_origin, pvs, bytes, error)) return false;
         v->q1_pvs = (qa_bytes){pvs, bytes}; v->q1 = true;
         if (source->kind == APPLICATION_PROVIDER_Q1) {
             qa_q1_source_client_view client;

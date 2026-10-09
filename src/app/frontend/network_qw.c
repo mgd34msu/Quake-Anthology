@@ -1047,7 +1047,8 @@ static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physic
     size_t extent = qa_collision_q1_pvs_bytes(geometry);
     uint8_t *bytes = extent ? malloc(extent) : NULL;
     if (extent && !bytes) return frontend_fail(error, QA_ERROR_MEMORY, "Observing QuakeWorld source fat PVS");
-    bool ok = qa_collision_q1_fat_pvs(geometry, eye, bytes, extent, error) &&
+    bool ok = qa_collision_q1_fat_pvs(geometry,
+        qa_world_trace_scratch(qa_application_world(host->frontend->application),geometry),eye, bytes, extent, error) &&
         publish_entities(peer, physical, viewer, (qa_bytes){bytes, extent}, &writer, error);
     free(bytes);
     return ok;

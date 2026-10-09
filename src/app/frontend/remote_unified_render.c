@@ -610,6 +610,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     r->busy=true;
     qa_scene_world_input world={.view=view,.seconds=r->seconds,.milliseconds=r->milliseconds,.identity_light=1,
         .no_world=native_camera && (native_camera->render_flags&1)!=0};
+    frontend_unified_media_world_scratch(r->media,&world);
     world.video_frame=frontend_material_movies_frontend_resolve; world.video_context=r->frontend;
     world.visible_areas=r->area_bits.data; world.visible_area_bytes=r->area_bits.size;
     float q1[256]; qa_vec3 q2[256]; for (size_t i=0;i<256;++i) { q1[i]=256; q2[i]=qa_v3(1,1,1); }

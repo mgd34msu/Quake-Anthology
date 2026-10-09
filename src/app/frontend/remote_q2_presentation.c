@@ -590,7 +590,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         float value = length ? (style[((size_t)fmax(0, floor(time * 0.01))) % length] - 'a') / 12.0f : 1;
         styles[i] = qa_v3(value, value, value);
     }
-    qa_scene_world_input world = {.view = view, .seconds = time * 0.001, .milliseconds = (int64_t)time,
+    qa_scene_world_input world = {.scratch=row->world_scratch.view,
+        .child_scratch=row->world_scratch.child, .view = view, .seconds = time * 0.001, .milliseconds = (int64_t)time,
         .visible_areas = frame->area_bits.data, .visible_area_bytes = frame->area_bits.size,
         .q2_styles = styles, .style_count = 256, .no_world = (frame->player.rdflags & 2) != 0,
         .legacy_policy = policy.lighting,

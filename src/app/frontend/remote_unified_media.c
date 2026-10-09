@@ -147,7 +147,8 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
         }
         okay = (family != QA_SCENE_Q3 || frontend_q3_world_policy_initialize(frontend, &options, error)) &&
             qa_scene_world_create(&bsp, owner->world_bank->images, owner->world_bank->materials, &options, &owner->world, error) &&
-            qa_scene_world_source_resource_bind(owner->world, map, error);
+            qa_scene_world_source_resource_bind(owner->world, map, error) &&
+            frontend_world_scratch_create(owner->world,&owner->world_scratch,error);
     }
     if (!okay) {
         if (!frontend_unified_media_destroy(owner, NULL)) *out = owner;
@@ -280,6 +281,11 @@ bool frontend_unified_media_importing(const frontend_unified_media *owner)
 { return owner && owner->importing; }
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner)
 { return owner ? owner->world : NULL; }
+void frontend_unified_media_world_scratch(const frontend_unified_media *owner, qa_scene_world_input *input)
+{
+    input->scratch=owner->world_scratch.view;
+    input->child_scratch=owner->world_scratch.child;
+}
 bool frontend_unified_media_q3_row(size_t bank, size_t model, uint64_t *out)
 {
     if (!out || bank >= UINT32_MAX || model >= UINT32_MAX) return false;
@@ -365,6 +371,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     for (unified_media_bank *row = owner->banks; row; row = row->next) {
         qa_q3_presentation_assets_destroy(row->q3_assets); row->q3_assets = NULL;
     }
+    frontend_world_scratch_destroy(&owner->world_scratch);
     qa_scene_world_destroy(owner->world);
     while (owner->models) {
         unified_media_model *row = owner->models; owner->models = row->next;

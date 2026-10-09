@@ -1150,7 +1150,7 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
     const qa_entity_body_fields *fields;
     qa_body_state state;
     if (!qa_qc_entity_body_fields(instance, slot, &fields, error) ||
-        !qa_entity_body_read(fields, QA_ENTITY_CONTROL_POSE, &state, error)) return false;
+        !qa_entity_body_read(fields, QA_ENTITY_CONTROL_POSE, QA_ENTITY_BODY_ALL, &state, error)) return false;
     qa_body_state existing;
     bool has_body;
     if (!read_body_optional(world, actor, &existing, &has_body, error)) return false;

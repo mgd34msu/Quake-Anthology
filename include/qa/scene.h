@@ -788,7 +788,14 @@ typedef struct qa_scene_legacy_policy {
     float modulate;
     uint8_t monolightmap;
 } qa_scene_legacy_policy;
+typedef struct qa_scene_world_scratch qa_scene_world_scratch;
+
+/* Each independent seat/subview owns load-sized traversal and visibility storage. */
+bool qa_scene_world_scratch_create(const qa_scene_world *, qa_scene_world_scratch **, qa_error *);
+void qa_scene_world_scratch_destroy(qa_scene_world_scratch *);
+
 typedef struct qa_scene_world_input {
+    qa_scene_world_scratch *scratch, *child_scratch;
     qa_scene_view view;
     double seconds;
     int64_t milliseconds;

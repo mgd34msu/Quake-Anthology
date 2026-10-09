@@ -57,7 +57,7 @@ bool application_q2_visibility_recipient_prepare(qa_application *app, qa_actor_i
     uint32_t fat_leaves[64];
     qa_leaf_list fat;
     qa_bounds bounds = {qa_vec_sub(origin, qa_v3(8, 8, 8)), qa_vec_add(origin, qa_v3(8, 8, 8))};
-    if (!qa_collision_box_leaves(app->geometry, bounds, fat_leaves, 64, &fat, error)) return false;
+    if (!qa_collision_box_leaves(app->geometry, qa_world_trace_scratch(app->world,app->geometry), bounds, fat_leaves, 64, &fat, error)) return false;
     if (!fat.count) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source fat PVS has no geometry leaf");
     for (size_t j = 0; j < fat.count; ++j) {
         qa_collision_leaf leaf;

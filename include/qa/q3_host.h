@@ -91,6 +91,8 @@ typedef struct qa_q3_host_collision_services {
     void *context;
     qa_collision_geometry *(*geometry)(void *);
     bool (*load_map)(void *, const char *, qa_error *);
+    /* Borrow scratch created by this actual map owner during load. */
+    qa_trace_scratch *(*trace_scratch)(void *, const qa_collision_geometry *);
 } qa_q3_host_collision_services;
 
 typedef struct qa_q3_host_presentation_services {

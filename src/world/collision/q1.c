@@ -6,6 +6,10 @@
 
 #define Q1_EMPTY (-1)
 #define Q1_SOLID (-2)
+#define Q1_CACHE_ENTRIES 128u
+#define Q1_CACHE_CELLS 1024u
+#define Q1_CACHE_FACES 4096u
+#define Q1_CACHE_VERTICES 16384u
 
 static const qa_bounds hull_bounds[3]={
     {{0,0,0},{0,0,0}},{{-16,-16,-24},{16,16,32}},{{-32,-32,-24},{32,32,64}}
@@ -24,22 +28,19 @@ typedef struct q1model {
 } q1model;
 typedef struct q1clip_cache {
     struct q1clip_cache *previous,*next;
-    qa_arena storage;
     size_t model,face_count,vertex_count;
     q1bounds envelope;
     q1cells cells;
 } q1clip_cache;
 typedef struct q1state {
     qa_bsp_view bsp;
-    qa_arena retained,scratch;
+    qa_arena retained;
     const qa_collision_plane *planes; size_t plane_count;
     q1node *drawing,*clip; size_t drawing_count,clip_count;
     int32_t *leaf_contents; size_t leaf_count;
     q1model *models; size_t model_count;
     qa_bsp_brush_list brushes;
     q1cell **brush_cells;
-    q1clip_cache *cache_first,*cache_last;
-    size_t cache_count,cache_cells,cache_faces,cache_vertices;
 } q1state;
 typedef struct native_trace {
     float fraction; qa_vec3 end;
@@ -78,27 +79,33 @@ typedef struct hull_frame {
     qa_vec3 p1,p2,mid;
     uint32_t plane; bool awaiting_near;
 } hull_frame;
+typedef struct q1scratch {
+    qa_arena scratch,cache_storage[2];
+    hull_frame *frames;
+    size_t frame_capacity;
+    q1clip_cache entries[Q1_CACHE_ENTRIES],*cache_first,*cache_last;
+    size_t cache_count,cache_cells,cache_faces,cache_vertices;
+    unsigned active_cache;
+} q1scratch;
 /* An explicit continuation stack preserves RecursiveHullCheck's ordering and
  * backs out by the source 0.1 fraction, without trusting BSP depth to C's stack. */
-static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,const qa_trace_policy *policy,native_trace *out) {
+static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec3 end,const qa_trace_policy *policy,native_trace *out,qa_error *error) {
     native_trace trace={1,end,false,true,false,false,{{0,0,0},0,0,0},Q1_EMPTY};
     float epsilon=qa_collision_rules(policy).brush.epsilon;
-    if(hull->count==SIZE_MAX) { qa_error_set(w->error,QA_ERROR_MEMORY,0,"Quake hull depth overflow"); return false; }
-    hull_frame local_stack[64];
-    hull_frame *stack=local_stack;
-    size_t count=1,capacity=64;
+    if(hull->count==SIZE_MAX) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake hull depth overflow"); return false; }
+    size_t count=1;
     stack[0]=(hull_frame){.node=hull->root,.p1f=0,.p2f=1,.p1=start,.p2=end};
     while(count>0) {
         hull_frame *frame=&stack[count-1];
         if(!frame->awaiting_near) {
-            if(frame->depth>hull->count) { qa_error_set(w->error,QA_ERROR_FORMAT,0,"Cycle in Quake trace hull"); return false; }
+            if(frame->depth>hull->count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Cycle in Quake trace hull"); return false; }
             if(frame->node<0) {
                 if(blocks(frame->node,policy)) { trace.start_solid=true; trace.contents=frame->node; }
                 else { trace.all_solid=false; if(frame->node==Q1_EMPTY) trace.in_open=true; else trace.in_water=true; }
                 count--; continue;
             }
             const q1node *node;
-            if(!hull_node(hull,frame->node,&node,w->error)) return false;
+            if(!hull_node(hull,frame->node,&node,error)) return false;
             qa_collision_plane plane=hull->planes[node->plane];
             float t1=plane_distance(plane,frame->p1),t2=plane_distance(plane,frame->p2);
             if((t1>=0 && t2>=0)||(t1<0 && t2<0)) {
@@ -109,18 +116,13 @@ static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,co
             frame->midf=frame->p1f+(frame->p2f-frame->p1f)*fraction;
             frame->mid=qa_vec_lerp(frame->p1,frame->p2,fraction);
             frame->far_node=node->children[t1<0?0:1]; frame->awaiting_near=true;
-            if(count>=hull->count+1) { qa_error_set(w->error,QA_ERROR_FORMAT,0,"Cycle in Quake trace hull"); return false; }
-            if(count==capacity) {
-                void *data=stack;
-                if(!q1_grow(w,&data,&capacity,count+1,sizeof(*stack),alignof(hull_frame))) return false;
-                stack=data; frame=&stack[count-1];
-            }
+            if(count>=hull->count+1) { qa_error_set(error,QA_ERROR_FORMAT,0,"Cycle in Quake trace hull"); return false; }
             stack[count++]=(hull_frame){.node=node->children[t1<0?1:0],.depth=frame->depth+1,
                 .p1f=frame->p1f,.p2f=frame->midf,.p1=frame->p1,.p2=frame->mid};
             continue;
         }
         int32_t far_contents;
-        if(!hull_contents(hull,frame->mid,frame->far_node,&far_contents,w->error)) return false;
+        if(!hull_contents(hull,frame->mid,frame->far_node,&far_contents,error)) return false;
         if(!blocks(far_contents,policy)) {
             frame->node=frame->far_node; frame->p1f=frame->midf; frame->p1=frame->mid;
             frame->depth++; frame->awaiting_near=false; continue;
@@ -134,7 +136,7 @@ static bool trace_hull(q1work *w,const q1hull *hull,qa_vec3 start,qa_vec3 end,co
         trace.contents=far_contents;
         for(;;) {
             int32_t at;
-            if(!hull_contents(hull,frame->mid,hull->root,&at,w->error)) return false;
+            if(!hull_contents(hull,frame->mid,hull->root,&at,error)) return false;
             if(!blocks(at,policy)) break;
             frame->fraction-=0.1f;
             if(frame->fraction<0) { trace.fraction=frame->midf; trace.end=frame->mid; *out=trace; return true; }
@@ -287,72 +289,101 @@ static bool same_envelope(q1bounds a,q1bounds b) {
     return same_coordinate(a.min.x,b.min.x)&&same_coordinate(a.min.y,b.min.y)&&same_coordinate(a.min.z,b.min.z)
         &&same_coordinate(a.max.x,b.max.x)&&same_coordinate(a.max.y,b.max.y)&&same_coordinate(a.max.z,b.max.z);
 }
-static void cache_unlink(q1state *state,q1clip_cache *cache) {
-    if(cache->previous!=NULL) cache->previous->next=cache->next; else state->cache_first=cache->next;
-    if(cache->next!=NULL) cache->next->previous=cache->previous; else state->cache_last=cache->previous;
+static void cache_unlink(q1scratch *scratch,q1clip_cache *cache) {
+    if(cache->previous!=NULL) cache->previous->next=cache->next; else scratch->cache_first=cache->next;
+    if(cache->next!=NULL) cache->next->previous=cache->previous; else scratch->cache_last=cache->previous;
     cache->previous=NULL; cache->next=NULL;
 }
-static void cache_append(q1state *state,q1clip_cache *cache) {
-    cache->previous=state->cache_last;
-    if(state->cache_last!=NULL) state->cache_last->next=cache; else state->cache_first=cache;
-    state->cache_last=cache;
+static void cache_append(q1scratch *scratch,q1clip_cache *cache) {
+    cache->previous=scratch->cache_last;
+    if(scratch->cache_last!=NULL) scratch->cache_last->next=cache; else scratch->cache_first=cache;
+    scratch->cache_last=cache;
 }
-static void cache_remove(q1state *state,q1clip_cache *cache) {
-    cache_unlink(state,cache);
-    state->cache_count--; state->cache_cells-=cache->cells.count;
-    state->cache_faces-=cache->face_count; state->cache_vertices-=cache->vertex_count;
-    qa_arena_destroy(&cache->storage); free(cache);
+static void cache_remove(q1scratch *scratch,q1clip_cache *cache) {
+    cache_unlink(scratch,cache);
+    scratch->cache_count--; scratch->cache_cells-=cache->cells.count;
+    scratch->cache_faces-=cache->face_count; scratch->cache_vertices-=cache->vertex_count;
+    *cache=(q1clip_cache){.model=SIZE_MAX};
 }
-/* Only completed cells enter the bounded cache. Intermediate clipping storage
- * remains in query scratch, and an allocation failure merely skips caching. */
-static void cache_store(q1state *state,size_t model,q1bounds envelope,const q1cells *cells) {
-    if(cells->count>1024) return;
+static void cache_clear(q1scratch *scratch) {
+    while(scratch->cache_first!=NULL) cache_remove(scratch,scratch->cache_first);
+    qa_arena_reset(&scratch->cache_storage[0]);
+    qa_arena_reset(&scratch->cache_storage[1]);
+}
+static bool cache_copy(q1work *work,const q1cells *source,q1cells *out) {
+    q1cells copy={.capacity=source->count};
+    copy.items=q1_alloc(work,source->count,sizeof(*copy.items),alignof(q1cell *));
+    for(size_t i=0;i<source->count && !work->failed;i++) {
+        q1cell *cell=q1_alloc(work,1,sizeof(*cell),alignof(q1cell));
+        if(cell==NULL) break;
+        *cell=*source->items[i];
+        cell->faces=q1_alloc(work,cell->count,sizeof(*cell->faces),alignof(q1face));
+        if(work->failed) break;
+        for(size_t f=0;f<cell->count;f++) {
+            cell->faces[f]=source->items[i]->faces[f];
+            cell->faces[f].vertices=q1_alloc(work,cell->faces[f].count,sizeof(q1v),alignof(q1v));
+            if(work->failed) break;
+            memcpy(cell->faces[f].vertices,source->items[i]->faces[f].vertices,cell->faces[f].count*sizeof(q1v));
+        }
+        copy.items[copy.count++]=cell;
+    }
+    if(work->failed) return false;
+    *out=copy; return true;
+}
+/* Reclaim evicted payloads in the other reserved arena. Entry addresses and
+ * LRU order stay fixed; only completed cell storage moves. */
+static bool cache_compact(q1scratch *scratch) {
+    unsigned next=scratch->active_cache^1u;
+    qa_arena_reset(&scratch->cache_storage[next]);
+    q1work work={&scratch->cache_storage[next],NULL,false};
+    for(q1clip_cache *cache=scratch->cache_first;cache!=NULL;cache=cache->next) {
+        q1cells copy;
+        if(!cache_copy(&work,&cache->cells,&copy)) { cache_clear(scratch); return false; }
+        cache->cells=copy;
+    }
+    qa_arena_reset(&scratch->cache_storage[scratch->active_cache]);
+    scratch->active_cache=next; return true;
+}
+/* Cache capacity includes every payload and alignment gap. Intermediate
+ * clipping remains in query scratch; a full cache never changes the trace. */
+static void cache_store(q1scratch *scratch,size_t model,q1bounds envelope,const q1cells *cells) {
+    if(cells->count>Q1_CACHE_CELLS) return;
     size_t faces=0,vertices=0;
     for(size_t i=0;i<cells->count;i++) {
-        if(cells->items[i]->count>4096-faces) return;
+        if(cells->items[i]->count>Q1_CACHE_FACES-faces) return;
         faces+=cells->items[i]->count;
         for(size_t f=0;f<cells->items[i]->count;f++) {
-            if(cells->items[i]->faces[f].count>16384-vertices) return;
+            if(cells->items[i]->faces[f].count>Q1_CACHE_VERTICES-vertices) return;
             vertices+=cells->items[i]->faces[f].count;
         }
     }
-    q1clip_cache *cache=calloc(1,sizeof(*cache));
-    if(cache==NULL) return;
-    cache->model=model; cache->envelope=envelope; cache->face_count=faces; cache->vertex_count=vertices;
-    q1work work={&cache->storage,NULL,false};
-    cache->cells.items=q1_alloc(&work,cells->count,sizeof(*cache->cells.items),alignof(q1cell *));
-    cache->cells.capacity=cells->count;
-    for(size_t i=0;i<cells->count && !work.failed;i++) {
-        q1cell *cell=q1_alloc(&work,1,sizeof(*cell),alignof(q1cell));
-        if(cell==NULL) break;
-        *cell=*cells->items[i];
-        cell->faces=q1_alloc(&work,cell->count,sizeof(*cell->faces),alignof(q1face));
-        if(work.failed) break;
-        for(size_t f=0;f<cell->count;f++) {
-            cell->faces[f]=cells->items[i]->faces[f];
-            cell->faces[f].vertices=q1_alloc(&work,cell->faces[f].count,sizeof(q1v),alignof(q1v));
-            if(work.failed) break;
-            memcpy(cell->faces[f].vertices,cells->items[i]->faces[f].vertices,cell->faces[f].count*sizeof(q1v));
-        }
-        cache->cells.items[cache->cells.count++]=cell;
+    bool evicted=false;
+    while(scratch->cache_first!=NULL && (scratch->cache_count>=Q1_CACHE_ENTRIES || scratch->cache_cells+cells->count>Q1_CACHE_CELLS
+        ||scratch->cache_faces+faces>Q1_CACHE_FACES || scratch->cache_vertices+vertices>Q1_CACHE_VERTICES)) {
+        cache_remove(scratch,scratch->cache_first); evicted=true;
     }
-    if(work.failed) { qa_arena_destroy(&cache->storage); free(cache); return; }
-    while(state->cache_first!=NULL && (state->cache_count>=128 || state->cache_cells+cells->count>1024
-        ||state->cache_faces+faces>4096 || state->cache_vertices+vertices>16384)) cache_remove(state,state->cache_first);
-    cache_append(state,cache);
-    state->cache_count++; state->cache_cells+=cells->count; state->cache_faces+=faces; state->cache_vertices+=vertices;
+    if(evicted && !cache_compact(scratch)) return;
+    q1clip_cache *cache=NULL;
+    for(size_t i=0;i<Q1_CACHE_ENTRIES;i++) if(scratch->entries[i].model==SIZE_MAX) { cache=&scratch->entries[i]; break; }
+    if(cache==NULL) return;
+    q1work work={&scratch->cache_storage[scratch->active_cache],NULL,false};
+    q1cells copy;
+    if(!cache_copy(&work,cells,&copy)) { cache_clear(scratch); return; }
+    *cache=(q1clip_cache){.model=model,.envelope=envelope,.face_count=faces,.vertex_count=vertices,.cells=copy};
+    cache_append(scratch,cache);
+    scratch->cache_count++; scratch->cache_cells+=cells->count; scratch->cache_faces+=faces; scratch->cache_vertices+=vertices;
 }
-static bool cached_clip(q1work *w,q1state *state,size_t model,q1bounds envelope,q1cells *out) {
-    for(q1clip_cache *cache=state->cache_first;cache!=NULL;cache=cache->next) {
+static bool cached_clip(q1work *w,const q1state *state,q1scratch *scratch,size_t model,q1bounds envelope,q1cells *out) {
+    for(q1clip_cache *cache=scratch->cache_first;cache!=NULL;cache=cache->next) {
         if(cache->model!=model || !same_envelope(cache->envelope,envelope)) continue;
-        cache_unlink(state,cache); cache_append(state,cache); *out=cache->cells; return true;
+        cache_unlink(scratch,cache); cache_append(scratch,cache); *out=cache->cells; return true;
     }
     if(!derive_clip(w,state,model,envelope,out)) return false;
-    cache_store(state,model,envelope,out); return true;
+    cache_store(scratch,model,envelope,out); return true;
 }
-static bool collect_clip(q1work *w,q1state *state,size_t model,q1bounds envelope,sweep_context *sweep,bool *starts_solid) {
+static bool collect_clip(q1work *w,const q1state *state,q1scratch *scratch,size_t model,q1bounds envelope,sweep_context *sweep,bool *starts_solid) {
     q1cells clip={0};
-    if(!cached_clip(w,state,model,envelope,&clip)) return false;
+    if(!cached_clip(w,state,scratch,model,envelope,&clip)) return false;
     *starts_solid=false;
     for(size_t i=0;i<clip.count;i++) {
         size_t before=sweep->count;
@@ -361,7 +392,7 @@ static bool collect_clip(q1work *w,q1state *state,size_t model,q1bounds envelope
     }
     return true;
 }
-static bool arbitrary_trace(q1state *state,q1work *w,const qa_trace_query *query,size_t model,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
+static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,const qa_trace_query *query,size_t model,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
     qa_bounds bounds=query->shape.bounds;
     q1v center=qscale(qadd(qfrom(bounds.mins),qfrom(bounds.maxs)),0.5);
     q1v extents=qscale(qsub(qfrom(bounds.maxs),qfrom(bounds.mins)),0.5);
@@ -392,8 +423,8 @@ static bool arbitrary_trace(q1state *state,q1work *w,const qa_trace_query *query
             for(size_t i=0;i<sweep.count;i++) first=fmin(first,sweep.intervals[i].enter);
             bool prefix=first>0 && first<1,starts_solid;
             q1bounds clipped=prefix?sweep_envelope(&sweep,qlerp(sweep.start,sweep.end,first)):envelope;
-            if(!collect_clip(w,state,model,clipped,&sweep,&starts_solid)) return false;
-            if(starts_solid && prefix) { sweep.count=drawing_count; if(!collect_clip(w,state,model,envelope,&sweep,&starts_solid)) return false; }
+            if(!collect_clip(w,state,scratch,model,clipped,&sweep,&starts_solid)) return false;
+            if(starts_solid && prefix) { sweep.count=drawing_count; if(!collect_clip(w,state,scratch,model,envelope,&sweep,&starts_solid)) return false; }
         }
     }
     if(sweep.count>1) qsort(sweep.intervals,sweep.count,sizeof(*sweep.intervals),interval_compare);
@@ -406,8 +437,8 @@ static bool arbitrary_trace(q1state *state,q1work *w,const qa_trace_query *query
     }
     q1hull point_hull=model_hull(state,model,0); native_trace environment;
     qa_vec3 reached=qa_vec_lerp(query->start,query->end,(float)fraction);
-    if(!trace_hull(w,&point_hull,qa_collision_to_local(qa_vec_sub(query->start,origin),basis),
-        qa_collision_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment)) return false;
+    if(!trace_hull(scratch->frames,&point_hull,qa_collision_to_local(qa_vec_sub(query->start,origin),basis),
+        qa_collision_to_local(qa_vec_sub(reached,origin),basis),NULL,&environment,w->error)) return false;
     bool all_solid=start_solid && covered>=1;
     if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) fraction=0;
     reached=qa_vec_lerp(query->start,query->end,(float)fraction);
@@ -479,9 +510,9 @@ static bool surface_at_contact(const q1state *state,size_t model,qa_vec3 point,q
     }
     return true;
 }
-static bool q1_trace(void *opaque,const qa_trace_query *query,qa_trace_result *out,qa_error *error) {
-    q1state *state=opaque;
-    qa_arena_reset(&state->scratch); q1work work={&state->scratch,error,false};
+static bool q1_trace(const void *opaque,void *workspace,const qa_trace_query *query,qa_trace_result *out,qa_error *error) {
+    const q1state *state=opaque; q1scratch *scratch=workspace;
+    qa_arena_reset(&scratch->scratch); q1work work={&scratch->scratch,error,false};
     size_t model; qa_vec3 origin,basis[3];
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     qa_bounds bounds=query->shape.kind==QA_SHAPE_POINT?hull_bounds[0]:query->shape.bounds;
@@ -498,18 +529,18 @@ static bool q1_trace(void *opaque,const qa_trace_query *query,qa_trace_result *o
         q1hull hull=model_hull(state,model,(unsigned)hull_index);
         qa_vec3 offset=qa_vec_add(origin,qa_vec_sub(hull_bounds[hull_index].mins,bounds.mins));
         native_trace trace;
-        if(!trace_hull(&work,&hull,qa_collision_to_local(qa_vec_sub(query->start,offset),basis),
-            qa_collision_to_local(qa_vec_sub(query->end,offset),basis),&query->policy,&trace)) return false;
+        if(!trace_hull(scratch->frames,&hull,qa_collision_to_local(qa_vec_sub(query->start,offset),basis),
+            qa_collision_to_local(qa_vec_sub(query->end,offset),basis),&query->policy,&trace,error)) return false;
         qa_trace_result result;
         native_result(query,&trace,offset,basis,&result);
         if(hull_index==0 && trace.fraction<1 && !trace.all_solid
             && !surface_at_contact(state,model,trace.end,trace.plane,&result,error)) return false;
         *out=result; return true;
     }
-    return arbitrary_trace(state,&work,query,model,origin,basis,out);
+    return arbitrary_trace(state,scratch,&work,query,model,origin,basis,out);
 }
-static bool q1_point_contents(void *opaque,const qa_point_query *query,qa_point_contents *out,qa_error *error) {
-    const q1state *state=opaque;
+static bool q1_point_contents(const void *opaque,void *workspace,const qa_point_query *query,qa_point_contents *out,qa_error *error) {
+    const q1state *state=opaque; (void)workspace;
     size_t model; qa_vec3 origin,basis[3];
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     q1hull hull=model_hull(state,model,0); int32_t contents;
@@ -519,11 +550,54 @@ static bool q1_point_contents(void *opaque,const qa_point_query *query,qa_point_
 static void q1_destroy(void *opaque) {
     q1state *state=opaque;
     if(state==NULL) return;
-    while(state->cache_first!=NULL) cache_remove(state,state->cache_first);
     qa_bsp_brush_list_free(&state->brushes);
-    qa_arena_destroy(&state->scratch); qa_arena_destroy(&state->retained); free(state);
+    qa_arena_destroy(&state->retained); free(state);
 }
-static const qa_collision_ops q1_ops={q1_destroy,q1_trace,q1_point_contents};
+static void q1_destroy_scratch(void *opaque) {
+    q1scratch *scratch=opaque;
+    if(scratch==NULL) return;
+    qa_arena_destroy(&scratch->scratch);
+    qa_arena_destroy(&scratch->cache_storage[0]);
+    qa_arena_destroy(&scratch->cache_storage[1]);
+    free(scratch->frames); free(scratch);
+}
+static void *q1_create_scratch(const void *opaque,qa_error *error) {
+    const q1state *state=opaque;
+    size_t topology=state->drawing_count;
+    size_t additions[]={state->clip_count,state->brushes.brush_count,state->brushes.plane_count,1};
+    for(size_t i=0;i<sizeof(additions)/sizeof(*additions);i++) {
+        if(additions[i]>SIZE_MAX-topology) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake collision scratch topology overflow"); return NULL; }
+        topology+=additions[i];
+    }
+    /* Retail 1024-unit cross-policy sweeps peak below 258 bytes per loaded
+     * node. Reserve about four times that measured amount, scaling with map data. */
+    /* Cell, separating-plane and sweep arrays also have fixed bootstrap
+     * storage: the one-node gameplay floor uses 3291 bytes per query. */
+    const size_t bootstrap_bytes=4096;
+    if(topology>(SIZE_MAX-bootstrap_bytes)/1024) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake collision scratch size overflow"); return NULL; }
+    size_t query_bytes=bootstrap_bytes+topology*1024;
+    size_t frame_count=(state->drawing_count>state->clip_count?state->drawing_count:state->clip_count)+1;
+    if(frame_count==0 || frame_count>SIZE_MAX/sizeof(hull_frame)) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake collision continuation size overflow"); return NULL; }
+    size_t cache_bytes=Q1_CACHE_CELLS*(sizeof(q1cell *)+alignof(q1cell *)-1+sizeof(q1cell)+alignof(q1cell)-1+alignof(q1face)-1)
+        +Q1_CACHE_FACES*(sizeof(q1face)+alignof(q1v)-1)+Q1_CACHE_VERTICES*sizeof(q1v);
+    q1scratch *scratch=calloc(1,sizeof(*scratch));
+    if(scratch==NULL) { qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Quake collision scratch"); return NULL; }
+    scratch->frames=malloc(frame_count*sizeof(*scratch->frames));
+    scratch->frame_capacity=frame_count;
+    if(scratch->frames==NULL) { qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Quake hull continuations"); goto fail; }
+    for(size_t i=0;i<Q1_CACHE_ENTRIES;i++) scratch->entries[i].model=SIZE_MAX;
+    if(!qa_arena_reserve(&scratch->scratch,query_bytes,error)
+        || !qa_arena_reserve(&scratch->cache_storage[0],cache_bytes,error)
+        || !qa_arena_reserve(&scratch->cache_storage[1],cache_bytes,error)) goto fail;
+    qa_arena_seal(&scratch->scratch);
+    qa_arena_seal(&scratch->cache_storage[0]);
+    qa_arena_seal(&scratch->cache_storage[1]);
+    return scratch;
+fail:
+    q1_destroy_scratch(scratch); return NULL;
+}
+static const qa_collision_ops q1_ops={.destroy=q1_destroy,.trace=q1_trace,.point_contents=q1_point_contents,
+    .create_scratch=q1_create_scratch,.destroy_scratch=q1_destroy_scratch};
 
 static bool build_contact_faces(q1work *work,q1state *state,q1model *model) {
     size_t count=model->source.faces.count;
@@ -578,7 +652,7 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
     if(bsp==NULL || out==NULL || bsp->family!=QA_BSP_Q1) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Quake collision requires a Q1 BSP"); return false; }
     q1state *state=calloc(1,sizeof(*state));
     if(state==NULL) { qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Quake collision geometry"); return false; }
-    state->bsp=*bsp; qa_arena_init(&state->retained,65536); qa_arena_init(&state->scratch,65536);
+    state->bsp=*bsp; qa_arena_init(&state->retained,65536);
     q1work work={&state->retained,error,false};
     state->planes=topology->planes; state->plane_count=topology->plane_count;
     state->drawing_count=qa_bsp_record_count(bsp,QA_BSP_NODES);
@@ -626,6 +700,7 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
         if(!build_contact_faces(&work,state,model)) goto fail;
     }
     if(!load_brushes(&work,state)) goto fail;
+    qa_arena_seal(&state->retained);
     *out=(qa_collision_kernel){state,&q1_ops}; return true;
 fail:
     q1_destroy(state); return false;
@@ -648,13 +723,13 @@ bool qa_q1_trace_box(const qa_trace_query *query,qa_bounds target,qa_vec3 origin
         int32_t next=i==5?Q1_SOLID:(int32_t)i+1;
         nodes[i]=(q1node){i,{i%2==0?Q1_EMPTY:next,i%2==0?next:Q1_EMPTY}};
     }
-    q1hull hull={nodes,6,planes,6,0}; qa_arena arena={0}; q1work work={&arena,error,false};
+    q1hull hull={nodes,6,planes,6,0}; hull_frame frames[7];
     native_trace trace;
-    bool ok=trace_hull(&work,&hull,qa_vec_sub(query->start,origin),qa_vec_sub(query->end,origin),NULL,&trace);
+    bool ok=trace_hull(frames,&hull,qa_vec_sub(query->start,origin),qa_vec_sub(query->end,origin),NULL,&trace,error);
     if(ok) {
         qa_vec3 basis[3]={qa_v3(1,0,0),qa_v3(0,1,0),qa_v3(0,0,1)};
         native_result(query,&trace,origin,basis,out);
         if(out->hit!=QA_TRACE_HIT_NONE) out->hit=QA_TRACE_HIT_ACTOR;
     }
-    qa_arena_destroy(&arena); return ok;
+    return ok;
 }

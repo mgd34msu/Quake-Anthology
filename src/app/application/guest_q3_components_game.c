@@ -6,6 +6,8 @@
 
 static qa_collision_geometry *geometry(void *context)
 { component_game_row *row=context; return qa_world_geometry(row->roster->options.world); }
+static qa_trace_scratch *trace_scratch(void *context,const qa_collision_geometry *map)
+{ component_game_row *row=context; return qa_world_trace_scratch(row->roster->options.world,map); }
 static bool load_map(void *context,const char *path,qa_error *e)
 {
     component_game_row *row=context; const qa_launch_choices *choices=qa_launch_snapshot_choices(row->roster->options.snapshot);
@@ -117,7 +119,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
             .owner=row->publication.owner,.service_owner=row->services,.mounts=row->publication.content,
             .command_context={.owner=row->publication.owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER},
             .common={.context=row,.print=print,.calendar=calendar},
-            .collision={.context=row,.geometry=geometry,.load_map=load_map},.entity_text=options->entity_text},
+            .collision={.context=row,.geometry=geometry,.load_map=load_map,.trace_scratch=trace_scratch},.entity_text=options->entity_text},
         .combat=options->application->combat,.inventory=options->application->inventory,
         .application=options->application,.equipment=options->equipment,
         .visibility={.context=row,.point=point,.area_bits=areas,.areas_connected=connected,.cluster_visible=visible},

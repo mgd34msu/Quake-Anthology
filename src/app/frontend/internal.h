@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_INTERNAL_H
 #define QA_FRONTEND_INTERNAL_H
 #include "qa/frontend.h"
+#include "world_scratch.h"
 #include "legacy_render_policy.h"
 #include "qa/audio.h"
 #include "qa/console_draw.h"
@@ -337,6 +338,7 @@ struct qa_frontend {
     qa_material_order *order;
     qa_material_library *materials;
     qa_scene_world *scene_world;
+    frontend_world_scratch *world_scratch;
     qa_resource *map_resource;
     qa_scene_frame frame;
     qa_audio_engine *audio;
@@ -545,7 +547,7 @@ bool frontend_source_registry_scope_read(const qa_frontend *,const qa_cvars *,qa
 bool frontend_source_role_media_read(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,qa_vfs **);
 bool frontend_source_role_media_current(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,const qa_vfs *);
 bool frontend_source_role_geometry_read(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,
-    const qa_collision_geometry **,const qa_resource **,bool *,qa_error *);
+    const qa_collision_geometry **,qa_trace_scratch **,const qa_resource **,bool *,qa_error *);
 bool frontend_network_client_map_read(const qa_frontend *,qa_application *,qa_actor_owner,qa_qvm_role,
     uint32_t,const qa_vfs *,const qa_resource **,bool *,qa_error *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
