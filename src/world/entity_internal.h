@@ -3,6 +3,12 @@
 
 #include "qa/world.h"
 
+typedef struct qa_spatial_link {
+    qa_bounds bounds;
+    uint32_t previous, next, sector;
+    bool linked;
+} qa_spatial_link;
+
 typedef struct qa_world_body {
     qa_world *world;
     qa_actor_id actor;
@@ -15,11 +21,9 @@ typedef struct qa_world_body {
     uint64_t collision_serial;
     qa_body_attachment attachment;
     uint64_t attachment_order;
-    qa_linked_body link;
+    qa_body_state linked_state;
+    qa_actor_collision linked_collision;
     uint64_t link_count;
-    qa_actor_collision spatial_collision;
-    uint32_t spatial_previous, spatial_next, spatial_sector;
-    bool spatial_linked;
     qa_collision_leaf *leaves;
     size_t leaf_count, leaf_capacity;
     qa_bounds leaf_bounds;
@@ -31,7 +35,6 @@ typedef struct qa_world_body {
     bool leaves_ready;
 } qa_world_body;
 
-qa_world_body *qa_actors_body(const qa_actor_registry *, uint32_t);
 void qa_world_reset_bodies(qa_world *);
 bool qa_world_collision_rows_validate(qa_world *, const qa_spatial_actor *, size_t, qa_error *);
 

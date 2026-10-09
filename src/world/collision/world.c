@@ -275,12 +275,11 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
     qa_world_actor_snapshot candidates;
     if(!qa_world_snapshot_capture(world,(qa_bounds){query->point,query->point},QA_COLLISION_BOTH,&candidates,error)) return false;
     bool ok=true;
-    qa_spatial_actor linked={0};
     for(size_t i=0;i<candidates.count;++i) {
-        linked.body.actor=candidates.actors[i];
-        if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,linked.body.actor)) continue;
+        qa_actor_id id=candidates.actors[i];
+        if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,id)) continue;
         qa_spatial_actor actor; qa_error refresh_error={0};
-        if(!qa_world_refresh(world,&linked,&actor,&refresh_error)) {
+        if(!qa_world_refresh(world,id,&actor,&refresh_error)) {
             if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
             continue;
         }

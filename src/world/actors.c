@@ -1,20 +1,11 @@
 #include "qa/actors.h"
-#include "entity_internal.h"
+#include "actors_internal.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define PAGE_SHIFT 8u
-#define PAGE_SIZE (1u << PAGE_SHIFT)
 #define NO_SAVED_SLOT UINT32_MAX
-
-typedef struct actor_page {
-    qa_actor_record records[PAGE_SIZE];
-    uint64_t generations[PAGE_SIZE];
-    uint32_t saved_slots[PAGE_SIZE];
-    qa_world_body bodies[PAGE_SIZE];
-} actor_page;
 
 typedef struct source_entry {
     qa_actor_owner owner;
@@ -30,27 +21,6 @@ typedef struct restored_slot {
     bool pending_source;
 } restored_slot;
 
-struct qa_actor_registry {
-    actor_page **pages;
-    uint64_t *free_bits;
-    source_entry *sources;
-    restored_slot *history;
-    size_t source_capacity;
-    uint64_t identity;
-    uint64_t revision;
-    uint32_t capacity;
-    uint32_t page_count;
-    uint32_t free_words;
-    uint32_t first_free_word;
-    uint32_t high_water;
-    uint32_t live_count;
-    uint32_t history_count;
-    uint32_t callback_depth;
-    bool clearing;
-    qa_actor_release_fn release;
-    void *context;
-};
-
 static atomic_uint_fast64_t next_identity = 1;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
@@ -61,14 +31,8 @@ static bool fail(qa_error *error, qa_status code, const char *message)
 
 static qa_actor_record *record_at(const qa_actor_registry *registry, uint32_t index)
 {
-    actor_page *page = registry->pages[index >> PAGE_SHIFT];
-    return page == NULL ? NULL : &page->records[index & (PAGE_SIZE - 1u)];
-}
-
-qa_world_body *qa_actors_body(const qa_actor_registry *registry, uint32_t slot)
-{
-    if (registry == NULL || slot >= registry->capacity) return NULL;
-    return &registry->pages[slot >> PAGE_SHIFT]->bodies[slot & (PAGE_SIZE - 1u)];
+    qa_actor_page *page = registry->pages[index >> QA_ACTOR_PAGE_SHIFT];
+    return page == NULL ? NULL : &page->records[index & (QA_ACTOR_PAGE_SIZE - 1u)];
 }
 
 static unsigned first_bit(uint64_t bits)
@@ -83,13 +47,14 @@ static void free_storage(qa_actor_registry *registry)
     if (registry == NULL) return;
     if (registry->pages != NULL) {
         for (uint32_t i = 0; i < registry->page_count; ++i) {
-            actor_page *page = registry->pages[i];
+            qa_actor_page *page = registry->pages[i];
             if (page != NULL)
-                for (size_t slot = 0; slot < PAGE_SIZE; ++slot) free(page->bodies[slot].leaves);
+                for (size_t slot = 0; slot < QA_ACTOR_PAGE_SIZE; ++slot) free(page->bodies[slot].leaves);
             free(page);
         }
     }
     free(registry->pages);
+    free(registry->links);
     free(registry->free_bits);
     free(registry->sources);
     free(registry->history);
@@ -159,16 +124,17 @@ bool qa_actors_create(uint32_t capacity, qa_actor_release_fn release,
     qa_actor_registry *registry = calloc(1, sizeof(*registry));
     if (registry == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor registry");
     registry->capacity = capacity;
-    registry->page_count = (capacity - 1u) / PAGE_SIZE + 1u;
+    registry->page_count = (capacity - 1u) / QA_ACTOR_PAGE_SIZE + 1u;
     registry->free_words = (capacity - 1u) / 64u + 1u;
     registry->pages = calloc(registry->page_count, sizeof(*registry->pages));
     registry->free_bits = calloc(registry->free_words, sizeof(*registry->free_bits));
-    if (registry->pages == NULL || registry->free_bits == NULL) {
+    registry->links = calloc(capacity, sizeof(*registry->links));
+    if (registry->pages == NULL || registry->free_bits == NULL || registry->links == NULL) {
         free_storage(registry);
         return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor slot index");
     }
     for (uint32_t i = 0; i < registry->page_count; ++i) {
-        registry->pages[i] = calloc(1, sizeof(actor_page));
+        registry->pages[i] = calloc(1, sizeof(qa_actor_page));
         if (registry->pages[i] == NULL) {
             free_storage(registry);
             return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor page");
@@ -268,8 +234,8 @@ static bool allocate(qa_actor_registry *registry, qa_actor_owner owner,
     if (word == registry->free_words) return fail(error, QA_ERROR_MEMORY, "Actor registry is full");
     unsigned bit = first_bit(registry->free_bits[word]);
     uint32_t index = word * 64u + bit;
-    actor_page *page = registry->pages[index >> PAGE_SHIFT];
-    uint32_t offset = index & (PAGE_SIZE - 1u);
+    qa_actor_page *page = registry->pages[index >> QA_ACTOR_PAGE_SHIFT];
+    uint32_t offset = index & (QA_ACTOR_PAGE_SIZE - 1u);
     qa_actor_id id = {registry->identity, page->generations[offset], index};
     page->records[offset] = (qa_actor_record){id, owner, definition, source_slot, has_source};
     page->saved_slots[offset] = NO_SAVED_SLOT;
@@ -353,8 +319,8 @@ bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error 
 {
     if (qa_actors_get(registry, actor) == NULL)
         return fail(error, QA_ERROR_NOT_FOUND, "Actor handle is stale or foreign");
-    actor_page *page = registry->pages[actor.slot >> PAGE_SHIFT];
-    uint32_t offset = actor.slot & (PAGE_SIZE - 1u);
+    qa_actor_page *page = registry->pages[actor.slot >> QA_ACTOR_PAGE_SHIFT];
+    uint32_t offset = actor.slot & (QA_ACTOR_PAGE_SIZE - 1u);
     qa_actor_record released = page->records[offset];
     if (released.has_source) {
         source_remove(registry, released.owner, released.source_slot);
@@ -449,9 +415,9 @@ bool qa_actors_checkpoint(const qa_actor_registry *registry,
         if (slots == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate actor checkpoint");
     }
     for (uint32_t i = 0; i < registry->high_water; ++i) {
-        const actor_page *page = registry->pages[i >> PAGE_SHIFT];
+        const qa_actor_page *page = registry->pages[i >> QA_ACTOR_PAGE_SHIFT];
         if (page == NULL) continue;
-        uint32_t offset = i & (PAGE_SIZE - 1u);
+        uint32_t offset = i & (QA_ACTOR_PAGE_SIZE - 1u);
         const qa_actor_record *record = &page->records[offset];
         slots[i] = (qa_actor_slot_checkpoint){page->generations[offset], record->owner,
             record->definition, record->source_slot, record->id.registry != 0, record->has_source};
@@ -491,8 +457,8 @@ bool qa_actors_restore(const qa_actor_checkpoint *checkpoint,
             free_storage(registry);
             return fail(error, QA_ERROR_FORMAT, "Invalid actor checkpoint lifetime");
         }
-        actor_page *page = registry->pages[i >> PAGE_SHIFT];
-        uint32_t offset = i & (PAGE_SIZE - 1u);
+        qa_actor_page *page = registry->pages[i >> QA_ACTOR_PAGE_SHIFT];
+        uint32_t offset = i & (QA_ACTOR_PAGE_SIZE - 1u);
         page->generations[offset] = saved.generation;
         page->saved_slots[offset] = NO_SAVED_SLOT;
         registry->history[i].saved = saved;
@@ -564,8 +530,8 @@ bool qa_actors_reference_saved(const qa_actor_registry *registry,
     } else {
         if (saved.slot >= registry->high_water)
             return fail(error, QA_ERROR_NOT_FOUND, "Actor is outside current history");
-        const actor_page *page = registry->pages[saved.slot >> PAGE_SHIFT];
-        uint32_t offset = saved.slot & (PAGE_SIZE - 1u);
+        const qa_actor_page *page = registry->pages[saved.slot >> QA_ACTOR_PAGE_SHIFT];
+        uint32_t offset = saved.slot & (QA_ACTOR_PAGE_SIZE - 1u);
         if (page == NULL || saved.generation > page->generations[offset]
             || (!page->records[offset].id.registry && saved.generation == page->generations[offset]))
             return fail(error, QA_ERROR_NOT_FOUND, "Invalid current actor history");
@@ -587,8 +553,8 @@ bool qa_actors_rebind_restored_source(qa_actor_registry *registry,
         if (qa_actors_get(registry, history->live) != NULL)
             return fail(error, QA_ERROR_ARGUMENT, "Saved source actor is still live");
         const qa_actor_record *actor = qa_actors_at_source(registry, owner, history->saved.source_slot);
-        if (actor == NULL || registry->pages[actor->id.slot >> PAGE_SHIFT]
-            ->saved_slots[actor->id.slot & (PAGE_SIZE - 1u)] != NO_SAVED_SLOT)
+        if (actor == NULL || registry->pages[actor->id.slot >> QA_ACTOR_PAGE_SHIFT]
+            ->saved_slots[actor->id.slot & (QA_ACTOR_PAGE_SIZE - 1u)] != NO_SAVED_SLOT)
             return fail(error, QA_ERROR_ARGUMENT, "Reconstructed source actor is missing or already bound");
     }
     if (!found) return fail(error, QA_ERROR_NOT_FOUND, "Source has no pending checkpoint reconstruction");
@@ -599,8 +565,8 @@ bool qa_actors_rebind_restored_source(qa_actor_registry *registry,
         history->live = actor->id;
         history->reference = actor->id;
         history->pending_source = false;
-        registry->pages[actor->id.slot >> PAGE_SHIFT]
-            ->saved_slots[actor->id.slot & (PAGE_SIZE - 1u)] = i;
+        registry->pages[actor->id.slot >> QA_ACTOR_PAGE_SHIFT]
+            ->saved_slots[actor->id.slot & (QA_ACTOR_PAGE_SIZE - 1u)] = i;
     }
     return true;
 }

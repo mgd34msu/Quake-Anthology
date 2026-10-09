@@ -26,49 +26,49 @@ bool qa_spatial_initialize(qa_world *world,qa_bounds bounds,qa_error *error)
     uint32_t next=1; build_sector(world,0,bounds,0,&next); return true;
 }
 
-void qa_spatial_remove(qa_world *world,qa_world_body *body)
+void qa_spatial_remove(qa_world *world,uint32_t slot)
 {
-    if(!body->spatial_linked) return;
-    uint32_t slot=body->actor.slot;
-    uint32_t previous=body->spatial_previous,next=body->spatial_next;
-    qa_spatial_sector *sector=&world->sectors[body->spatial_sector];
+    qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
+    if(!link->linked) return;
+    uint32_t previous=link->previous,next=link->next;
+    qa_spatial_sector *sector=&world->sectors[link->sector];
     for(qa_spatial_cursor *cursor=world->cursors;cursor!=NULL;cursor=cursor->outer)
         if(cursor->next==slot) cursor->next=next;
     if(previous==QA_SPATIAL_NONE) sector->head=next;
-    else qa_world_raw_body(world,previous)->spatial_next=next;
+    else qa_actors_link(world->actors->links,previous)->next=next;
     if(next==QA_SPATIAL_NONE) sector->tail=previous;
-    else qa_world_raw_body(world,next)->spatial_previous=previous;
-    body->spatial_linked=false;
-    body->spatial_previous=body->spatial_next=QA_SPATIAL_NONE;
+    else qa_actors_link(world->actors->links,next)->previous=previous;
+    link->linked=false;
+    link->previous=link->next=QA_SPATIAL_NONE;
 }
 
-void qa_spatial_publish(qa_world *world,qa_world_body *body)
+void qa_spatial_publish(qa_world *world,uint32_t slot)
 {
-    qa_spatial_remove(world,body);
+    qa_spatial_remove(world,slot);
+    qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
     uint32_t index=0;
-    qa_bounds bounds=body->link.absolute_bounds;
+    qa_bounds bounds=link->bounds;
     while(world->sectors[index].axis>=0) {
         qa_spatial_sector *sector=&world->sectors[index]; unsigned axis=(unsigned)sector->axis;
         if(qa_vec_component(bounds.mins,axis)>sector->distance) index=sector->front;
         else if(qa_vec_component(bounds.maxs,axis)<sector->distance) index=sector->back;
         else break;
     }
-    qa_spatial_sector *sector=&world->sectors[index]; body->spatial_sector=index;
-    uint32_t slot=body->actor.slot;
-    if(body->spatial_collision.family==QA_COLLISION_Q3) {
-        body->spatial_previous=QA_SPATIAL_NONE;
-        body->spatial_next=sector->head;
-        if(sector->head!=QA_SPATIAL_NONE) qa_world_raw_body(world,sector->head)->spatial_previous=slot;
+    qa_spatial_sector *sector=&world->sectors[index]; link->sector=index;
+    if(qa_actors_body(world->actors->pages,slot)->linked_collision.family==QA_COLLISION_Q3) {
+        link->previous=QA_SPATIAL_NONE;
+        link->next=sector->head;
+        if(sector->head!=QA_SPATIAL_NONE) qa_actors_link(world->actors->links,sector->head)->previous=slot;
         else sector->tail=slot;
         sector->head=slot;
     } else {
-        body->spatial_previous=sector->tail;
-        body->spatial_next=QA_SPATIAL_NONE;
-        if(sector->tail!=QA_SPATIAL_NONE) qa_world_raw_body(world,sector->tail)->spatial_next=slot;
+        link->previous=sector->tail;
+        link->next=QA_SPATIAL_NONE;
+        if(sector->tail!=QA_SPATIAL_NONE) qa_actors_link(world->actors->links,sector->tail)->next=slot;
         else sector->head=slot;
         sector->tail=slot;
     }
-    body->spatial_linked=true;
+    link->linked=true;
 }
 
 void qa_spatial_dispose(qa_world *world)
@@ -76,10 +76,10 @@ void qa_spatial_dispose(qa_world *world)
     for(uint32_t index=0;index<QA_SPATIAL_SECTORS;++index) {
         uint32_t slot=world->sectors[index].head;
         while(slot!=QA_SPATIAL_NONE) {
-            qa_world_body *body=qa_world_raw_body(world,slot);
-            slot=body->spatial_next;
-            body->spatial_linked=false;
-            body->spatial_previous=body->spatial_next=QA_SPATIAL_NONE;
+            qa_spatial_link *link=qa_actors_link(world->actors->links,slot);
+            slot=link->next;
+            link->linked=false;
+            link->previous=link->next=QA_SPATIAL_NONE;
         }
         world->sectors[index].head=world->sectors[index].tail=QA_SPATIAL_NONE;
     }
@@ -90,28 +90,29 @@ void qa_spatial_dispose(qa_world *world)
     }
 }
 
-static bool visit_sector(qa_world *world,uint32_t index,qa_bounds bounds,qa_spatial_raw_fn visit,void *context)
+static bool visit_sector(qa_world *world,uint32_t index,const qa_bounds *bounds,qa_spatial_raw_fn visit,void *context,qa_spatial_cursor *cursor)
 {
+    qa_spatial_link *links=world->actors->links;
     qa_spatial_sector *sector=&world->sectors[index];
-    qa_spatial_cursor cursor={.outer=world->cursors,.next=sector->head};
-    world->cursors=&cursor;
+    uint32_t next=sector->head;
     qa_spatial_visit result=QA_SPATIAL_CONTINUE;
-    while(cursor.next!=QA_SPATIAL_NONE) {
-        qa_world_body *body=qa_world_raw_body(world,cursor.next);
-        cursor.next=body->spatial_next;
-        if(qa_bounds_overlap(body->link.absolute_bounds,bounds)) {
-            qa_spatial_actor actor={body->link,body->spatial_collision};
-            result=visit(context,&actor);
+    while(next!=QA_SPATIAL_NONE) {
+        uint32_t slot=next;
+        qa_spatial_link *link=qa_actors_link(links,slot);
+        next=link->next;
+        if(qa_bounds_overlap(link->bounds,*bounds)) {
+            cursor->next=next;
+            result=visit(context,slot);
+            next=cursor->next;
             if(result!=QA_SPATIAL_CONTINUE) break;
         }
     }
-    world->cursors=cursor.outer;
     if(result==QA_SPATIAL_STOP) return false;
     if(result==QA_SPATIAL_STOP_SECTOR) return true;
     if(sector->axis>=0) {
         unsigned axis=(unsigned)sector->axis;
-        if(qa_vec_component(bounds.maxs,axis)>sector->distance && !visit_sector(world,sector->front,bounds,visit,context)) return false;
-        if(qa_vec_component(bounds.mins,axis)<sector->distance && !visit_sector(world,sector->back,bounds,visit,context)) return false;
+        if(qa_vec_component(bounds->maxs,axis)>sector->distance && !visit_sector(world,sector->front,bounds,visit,context,cursor)) return false;
+        if(qa_vec_component(bounds->mins,axis)<sector->distance && !visit_sector(world,sector->back,bounds,visit,context,cursor)) return false;
     }
     return true;
 }
@@ -120,20 +121,26 @@ bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn vis
 {
     if(world==NULL || visit==NULL || !qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial visit");
     if(world->visit_depth==UINT32_MAX) return fail(error,QA_ERROR_ARGUMENT,"Spatial visit nesting exhausted");
-    ++world->visit_depth; (void)visit_sector(world,0,bounds,visit,context); --world->visit_depth;
+    qa_spatial_cursor cursor={.outer=world->cursors,.next=QA_SPATIAL_NONE};
+    world->cursors=&cursor;
+    ++world->visit_depth; (void)visit_sector(world,0,&bounds,visit,context,&cursor); --world->visit_depth;
+    world->cursors=cursor.outer;
     return true;
 }
 
-bool qa_world_refresh(qa_world *world,const qa_spatial_actor *linked,qa_spatial_actor *out,qa_error *error)
+bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_spatial_actor *out,qa_error *error)
 {
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return false;
+    qa_spatial_actor captured={qa_world_published_body(world,body),body->linked_collision};
     qa_actor_collision collision;
-    if(!qa_world_get_collision(world,linked->body.actor,&collision,error)) return false;
+    if(!qa_world_get_collision(world,captured.body.actor,&collision,error)) return false;
     qa_body_state state;
-    if(!qa_world_body_read(world,linked->body.actor,&state,error)) {
+    if(!qa_world_body_read(world,captured.body.actor,&state,error)) {
         if(error!=NULL && error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Body state callback failed");
         return false;
     }
-    *out=*linked; out->body.state=state; out->collision=collision; return true;
+    *out=captured; out->body.state=state; out->collision=collision; return true;
 }
 
 typedef struct world_visit_context {
@@ -145,11 +152,12 @@ typedef struct world_visit_context {
     bool failed;
 } world_visit_context;
 
-static qa_spatial_visit visit_current(void *opaque,const qa_spatial_actor *linked)
+static qa_spatial_visit visit_current(void *opaque,uint32_t slot)
 {
     world_visit_context *context=opaque;
     qa_spatial_actor actor; qa_error error={0};
-    if(!qa_world_refresh(context->world,linked,&actor,&error)) {
+    qa_actor_id id=qa_actors_body(context->world->actors->pages,slot)->actor;
+    if(!qa_world_refresh(context->world,id,&actor,&error)) {
         if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
         return QA_SPATIAL_CONTINUE;
     }
@@ -186,7 +194,7 @@ bool qa_world_query(qa_world *world,qa_bounds bounds,qa_collision_role role,qa_a
     *count=context.count; *overflow=context.overflow; return true;
 }
 
-static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *actor)
+static qa_spatial_visit snapshot_actor(void *opaque,qa_actor_id actor)
 {
     qa_world_actor_snapshot *snapshot=opaque;
     if(snapshot->count==snapshot->capacity) {
@@ -229,9 +237,18 @@ static qa_spatial_visit snapshot_actor(void *opaque,const qa_spatial_actor *acto
         snapshot->actors=frame->actors;
         snapshot->capacity=frame->capacity;
     }
-    snapshot->actors[snapshot->count++]=actor->body.actor;
+    snapshot->actors[snapshot->count++]=actor;
     return QA_SPATIAL_CONTINUE;
 }
+
+static qa_spatial_visit snapshot_slot(void *opaque,uint32_t slot)
+{
+    qa_world_actor_snapshot *snapshot=opaque;
+    return snapshot_actor(opaque,qa_actors_body(snapshot->world->actors->pages,slot)->actor);
+}
+
+static qa_spatial_visit snapshot_current(void *opaque,const qa_spatial_actor *actor)
+{ return snapshot_actor(opaque,actor->body.actor); }
 
 void qa_world_snapshot_release(qa_world_actor_snapshot *snapshot)
 {
@@ -249,8 +266,8 @@ bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_rol
     out->error=error;
     out->failed=false;
     bool ok=role==QA_COLLISION_BOTH?
-        qa_spatial_visit_raw(world,bounds,snapshot_actor,out,error):
-        qa_world_visit(world,bounds,role,snapshot_actor,out,error);
+        qa_spatial_visit_raw(world,bounds,snapshot_slot,out,error):
+        qa_world_visit(world,bounds,role,snapshot_current,out,error);
     if(!ok || out->failed) {
         qa_world_snapshot_release(out);
         return false;
@@ -291,11 +308,12 @@ static void touch_candidate(trigger_context *context,qa_actor_id candidate)
     --context->world->callback_depth;
 }
 
-static qa_spatial_visit touch_live(void *opaque,const qa_spatial_actor *candidate)
+static qa_spatial_visit touch_live(void *opaque,uint32_t slot)
 {
     trigger_context *context=opaque;
     if(qa_actors_get(context->world->actors,context->actor)==NULL) return QA_SPATIAL_STOP;
-    touch_candidate(context,candidate->body.actor);
+    qa_actor_id candidate=qa_actors_body(context->world->actors->pages,slot)->actor;
+    touch_candidate(context,candidate);
     return !context->failed && qa_actors_get(context->world->actors,context->actor)!=NULL?QA_SPATIAL_CONTINUE:QA_SPATIAL_STOP;
 }
 

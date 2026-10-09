@@ -48,7 +48,7 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
     }
     for (uint32_t sector = 0; sector < QA_SPATIAL_SECTORS; ++sector)
         for (uint32_t slot = world->sectors[sector].head; slot != QA_SPATIAL_NONE;
-             slot = qa_world_raw_body(world, slot)->spatial_next)
+             slot = qa_actors_link(world->actors->links,slot)->next)
             ++value.spatial_count;
     if (value.body_count > SIZE_MAX / sizeof(*value.bodies) ||
         value.spatial_count > SIZE_MAX / sizeof(*value.spatial))
@@ -77,13 +77,13 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
         record->stored_collision = body->collision;
         record->attachment = body->attachment;
         record->link = (qa_body_link_state){body->link_count, body->linked,
-                                         body->link.state, body->link.absolute_bounds};
+            body->linked_state, qa_actors_link(world->actors->links,slot)->bounds};
         ok = qa_actors_save_reference(world->actors, body->actor, &record->actor, error) &&
              qa_world_body_read(world, body->actor, &record->state, error);
         qa_error collision_error = {0};
         if (ok) record->effective_collision = qa_world_get_collision(world, body->actor, &record->collision, &collision_error);
         if (collision_error.code != QA_OK) { if (error) *error = collision_error; ok = false; }
-        if (ok && body->spatial_linked) record->retained_collision = body->spatial_collision;
+        if (ok && qa_actors_link(world->actors->links,body->actor.slot)->linked) record->retained_collision = body->linked_collision;
         if (ok) ok = save_reference(world, record->state.ground, &record->ground, &record->ground_kind,
                         &record->ground_owner, &record->has_ground, error) &&
             save_reference(world, record->stored_state.ground, &record->stored_ground, &record->stored_ground_kind,
@@ -113,7 +113,7 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
     index = 0;
     for (uint32_t sector = 0; ok && sector < QA_SPATIAL_SECTORS; ++sector)
         for (uint32_t slot = world->sectors[sector].head; slot != QA_SPATIAL_NONE;
-             slot = qa_world_raw_body(world, slot)->spatial_next) {
+             slot = qa_actors_link(world->actors->links,slot)->next) {
             if (index == value.spatial_count) { ok = false; break; }
             value.spatial[index].sector = sector;
             ok = qa_actors_save_reference(world->actors, qa_world_raw_body(world, slot)->actor,
@@ -265,7 +265,8 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         body->attachment_order = record->attachment_order;
         body->linked = link.linked;
         body->link_count = link.link_count;
-        body->link = (qa_linked_body){actor->id, link.state, link.absolute_bounds, link.link_count};
+        body->linked_state = link.state;
+        qa_actors_link(world->actors->links,body->actor.slot)->bounds = link.absolute_bounds;
         if (record->effective_collision && !record->external_collision) {
             body->has_collision = true;
             body->collision = collision;
@@ -354,12 +355,13 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         bool empty_link = collision_equal(retained, empty);
         if(!empty_link && !qa_world_collision_validate(world,&retained,error)) { ok=false; break; }
         published[i] = retained;
+        qa_bounds bounds = qa_actors_link(world->actors->links,body->actor.slot)->bounds;
         uint32_t sector = 0;
         while (world->sectors[sector].axis >= 0) {
             const qa_spatial_sector *split = world->sectors + sector;
             unsigned axis = (unsigned)split->axis;
-            if (qa_vec_component(body->link.absolute_bounds.mins, axis) > split->distance) sector = split->front;
-            else if (qa_vec_component(body->link.absolute_bounds.maxs, axis) < split->distance) sector = split->back;
+            if (qa_vec_component(bounds.mins, axis) > split->distance) sector = split->front;
+            else if (qa_vec_component(bounds.maxs, axis) < split->distance) sector = split->back;
             else break;
         }
         if (sector != saved->sector)
@@ -369,7 +371,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         qa_spatial_dispose(world);
         for (uint32_t slot = 0; slot < world->capacity; ++slot) {
             qa_world_body *body = qa_world_raw_body(world, slot);
-            if (body) body->spatial_linked = false;
+            if (body) qa_actors_link(world->actors->links,slot)->linked = false;
         }
         for (size_t i = 0; i < value->spatial_count; ++i) {
             const qa_world_spatial_checkpoint *saved = value->spatial + i;
@@ -377,13 +379,14 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             uint32_t slot = actor->id.slot;
             qa_world_body *body = qa_world_find_body(world, actor->id);
             qa_spatial_sector *sector = world->sectors + saved->sector;
-            body->spatial_previous = sector->tail;
-            body->spatial_next = QA_SPATIAL_NONE;
-            body->spatial_sector = saved->sector;
-            body->spatial_collision = published[i];
-            body->spatial_linked = true;
+            qa_spatial_link *link = qa_actors_link(world->actors->links,slot);
+            link->previous = sector->tail;
+            link->next = QA_SPATIAL_NONE;
+            link->sector = saved->sector;
+            body->linked_collision = published[i];
+            link->linked = true;
             if (sector->tail != QA_SPATIAL_NONE)
-                qa_world_raw_body(world, sector->tail)->spatial_next = slot;
+                qa_actors_link(world->actors->links,sector->tail)->next = slot;
             else sector->head = slot;
             sector->tail = slot;
         }

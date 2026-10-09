@@ -6,13 +6,6 @@
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 
-qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
-{
-    if(world==NULL || slot>=world->capacity) return NULL;
-    qa_world_body *body=qa_actors_body(world->actors,slot);
-    return body->world==NULL || body->world==world?body:NULL;
-}
-
 qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
 {
     qa_world_body *body=qa_world_raw_body(world,actor.slot);
@@ -25,9 +18,10 @@ void qa_world_reset_bodies(qa_world *world)
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *body=qa_world_raw_body(world,slot);
         if(body!=NULL) {
-            qa_spatial_remove(world,body);
+            qa_spatial_remove(world,slot);
             free(body->leaves);
             memset(body,0,sizeof(*body));
+            *qa_actors_link(world->actors->links,slot)=(qa_spatial_link){0};
         }
     }
 }
@@ -151,7 +145,7 @@ bool qa_world_geometry_admission_validate(qa_world_geometry_admission *token,qa_
         return fail(error,QA_ERROR_ARGUMENT,"Geometry publication requires an idle empty world");
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *body=qa_world_raw_body(world,slot);
-        if(body!=NULL && (body->present || body->spatial_linked))
+        if(body!=NULL && (body->present || qa_actors_link(world->actors->links,slot)->linked))
             return fail(error,QA_ERROR_ARGUMENT,"Forward all body releases before geometry publication");
     }
     for(uint32_t i=0;i<QA_SPATIAL_SECTORS;++i)
@@ -217,9 +211,10 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
     qa_world_body *body=qa_world_raw_body(world,released.id.slot);
     if(body!=NULL && body->present && qa_actor_id_equal(body->actor,released.id)) {
         bool linked=body->linked;
-        qa_spatial_remove(world,body);
+        qa_spatial_remove(world,body->actor.slot);
         free(body->leaves);
         memset(body,0,sizeof(*body));
+        *qa_actors_link(world->actors->links,released.id.slot)=(qa_spatial_link){0};
         if(linked) notify_unlink(world,released.id);
     }
     bool success=true;
@@ -464,10 +459,11 @@ typedef enum body_link_policy { BODY_LINK_COMMIT, BODY_LINK_EXPLICIT, BODY_LINK_
 static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,
                          body_link_policy policy,qa_error *error)
 {
+    qa_spatial_link *spatial=qa_actors_link(world->actors->links,body->actor.slot);
     uint64_t serial=body->storage_serial;
     uint64_t previous_count=body->link_count;
     bool previous_linked=body->linked;
-    bool previous_spatial=body->spatial_linked;
+    bool previous_spatial=spatial->linked;
     qa_actor_collision collision;
     qa_error local={0};
     if(!qa_world_get_link_collision(world,linked->actor,&collision,&local)) {
@@ -477,11 +473,11 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     }
     if(qa_world_find_body(world,linked->actor)!=body || body->storage_serial!=serial)
         return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during collision link read");
-    if(body->link_count!=previous_count || body->linked!=previous_linked || body->spatial_linked!=previous_spatial)
+    if(body->link_count!=previous_count || body->linked!=previous_linked || spatial->linked!=previous_spatial)
         return fail(error,QA_ERROR_ARGUMENT,"Body link changed during collision link read");
-    if(policy==BODY_LINK_COMMIT && body->linked && body->spatial_linked && same_state(&body->link.state,&linked->state)
-        && same_bounds(body->link.absolute_bounds,linked->absolute_bounds)
-        && same_collision(&body->spatial_collision,&collision)) return true;
+    if(policy==BODY_LINK_COMMIT && body->linked && spatial->linked && same_state(&body->linked_state,&linked->state)
+        && same_bounds(spatial->bounds,linked->absolute_bounds)
+        && same_collision(&body->linked_collision,&collision)) return true;
     qa_linked_body snapshot=*linked;
     if(policy!=BODY_LINK_RESTORE) {
         if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
@@ -493,9 +489,10 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         if(!qa_world_link_membership(world,linked->actor,&linked->absolute_bounds,
             body->leaf_policy,&membership,error)) return false;
     }
-    body->linked=true; body->link=*linked; body->link_count=linked->link_count;
-    body->spatial_collision=collision;
-    qa_spatial_publish(world,body);
+    body->linked=true; body->linked_state=linked->state;
+    spatial->bounds=linked->absolute_bounds; body->link_count=linked->link_count;
+    body->linked_collision=collision;
+    qa_spatial_publish(world,body->actor.slot);
     qa_linked_body copy=*linked;
     if(body->external && body->binding.linked!=NULL) {
         qa_body_binding binding=body->binding;
@@ -534,7 +531,7 @@ bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds 
     if(!body || !out || (unsigned)policy>QA_WORLD_LEAVES_Q1_TOUCHED ||
         (!explicit_bounds && !body->linked))
         return fail(error,QA_ERROR_ARGUMENT,"Leaf membership requires its actual body and bounds");
-    qa_bounds bounds=explicit_bounds?*explicit_bounds:body->link.absolute_bounds;
+    qa_bounds bounds=explicit_bounds?*explicit_bounds:qa_actors_link(world->actors->links,body->actor.slot)->bounds;
     if(!qa_bounds_valid(bounds) || !world->geometry ||
         (policy==QA_WORLD_LEAVES_Q1_TOUCHED && qa_collision_geometry_family(world->geometry)!=QA_COLLISION_Q1))
         return fail(error,QA_ERROR_ARGUMENT,"Leaf membership lost its actual geometry or Source policy");
@@ -629,7 +626,7 @@ bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)
     if(world==NULL || qa_actors_get(world->actors,actor)==NULL) return fail(error,QA_ERROR_ARGUMENT,"Actor is not live in this world");
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || !body->linked) return true;
-    qa_spatial_remove(world,body); body->linked=false; notify_unlink(world,actor); return true;
+    qa_spatial_remove(world,body->actor.slot); body->linked=false; notify_unlink(world,actor); return true;
 }
 
 bool qa_world_suspend_collision(qa_world *world,qa_actor_id actor,qa_error *error)
@@ -637,7 +634,7 @@ bool qa_world_suspend_collision(qa_world *world,qa_actor_id actor,qa_error *erro
     if(world==NULL || qa_actors_get(world->actors,actor)==NULL)
         return fail(error,QA_ERROR_ARGUMENT,"Actor is not live in this world");
     qa_world_body *body=qa_world_find_body(world,actor);
-    if(body!=NULL) qa_spatial_remove(world,body);
+    if(body!=NULL) qa_spatial_remove(world,body->actor.slot);
     return true;
 }
 
@@ -645,14 +642,14 @@ bool qa_world_linked(const qa_world *world,qa_actor_id actor,qa_linked_body *out
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || !body->linked || out==NULL) return false;
-    *out=body->link; return true;
+    *out=qa_world_published_body(world,body); return true;
 }
 
 bool qa_world_link_state(const qa_world *world,qa_actor_id actor,qa_body_link_state *out)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || out==NULL) return false;
-    *out=(qa_body_link_state){body->link_count,body->linked,body->link.state,body->link.absolute_bounds}; return true;
+    *out=(qa_body_link_state){body->link_count,body->linked,body->linked_state,qa_actors_link(world->actors->links,body->actor.slot)->bounds}; return true;
 }
 
 bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body_link_state *saved,qa_error *error)
@@ -661,7 +658,7 @@ bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body
     if(body==NULL || !valid_link_state(saved))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid saved body link state");
     if(!saved->linked) {
-        qa_spatial_remove(world,body); body->linked=false; body->link_count=saved->link_count;
+        qa_spatial_remove(world,body->actor.slot); body->linked=false; body->link_count=saved->link_count;
         notify_unlink(world,actor); return true;
     }
     qa_linked_body linked={actor,saved->state,saved->absolute_bounds,saved->link_count};
