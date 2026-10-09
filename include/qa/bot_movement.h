@@ -113,6 +113,9 @@ typedef struct qa_bot_moves qa_bot_moves;
 bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *, qa_bot_actions *,
                          const qa_bot_move_services *, qa_bot_moves **, qa_error *);
 void qa_bot_moves_destroy(qa_bot_moves *);
+/* Prepare caller-owned route scratch at graph load/bind, retaining the largest
+ * admitted graph across map/seat selections. Queries do not grow this storage. */
+bool qa_bot_moves_prepare_graph(qa_bot_moves *, size_t edge_count, qa_error *);
 bool qa_bot_moves_shutdown(qa_bot_moves *, qa_error *);
 /* Borrowed actual MEMORY owner/allocation. The 772 bytes use source little
  * endian fields; they are not a native qa_bot_move_state structure overlay. */

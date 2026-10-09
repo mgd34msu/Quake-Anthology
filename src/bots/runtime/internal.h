@@ -22,6 +22,7 @@ struct qa_bot_runtime {
     qa_bot_actions *actions;
     qa_bot_goals *goals;
     qa_bot_moves *moves;
+    size_t route_edge_capacity;
     qa_bot_chat_system *chat_system;
     qa_bot_chat **chats;
     qa_bot_character **characters;

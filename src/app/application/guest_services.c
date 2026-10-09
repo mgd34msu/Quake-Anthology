@@ -123,6 +123,13 @@ static qa_collision_geometry *guest_geometry(void *context)
     return world ? qa_world_geometry(world) : NULL;
 }
 
+static qa_trace_scratch *guest_trace_scratch(void *context,const qa_collision_geometry *geometry)
+{
+    application_provider *provider=context;
+    struct application_q3_guest *engine=q3g_engine(provider);
+    return qa_world_trace_scratch(engine ? engine->world : provider->application->world,geometry);
+}
+
 static qa_actor_id guest_world_actor(void *context)
 {
     application_provider *provider = context;
@@ -193,7 +200,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         .server = {.context = provider, .player_velocity = guest_player_velocity,
             .world_actor = guest_world_actor},
         .collision = {.context = provider, .geometry = guest_geometry,
-            .load_map = guest_load_collision}};
+            .load_map = guest_load_collision, .trace_scratch = guest_trace_scratch}};
     if (role == QA_QVM_GAME) {
         services.cvars = application_guest_q3_console_registry(provider);
         services.console = application_guest_q3_console_owner(provider);

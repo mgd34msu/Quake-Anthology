@@ -75,12 +75,16 @@ static bool reference(const qa_entity_references *table,qa_entity_scalar_field f
 }
 
 bool qa_entity_body_read(const qa_entity_body_fields *fields,qa_entity_pose pose,
+                         qa_entity_body_components components,
                          qa_body_state *out,qa_error *error)
 {
     qa_body_state body={.origin=vector(fields->pose[pose].origin),
-        .angles=vector(fields->pose[pose].angles),.velocity=vector(fields->velocity),
+        .angles=vector(fields->pose[pose].angles),
         .bounds={vector(fields->minimum),vector(fields->maximum)}};
-    if(!reference(fields->references,fields->ground,&body.ground,error)) return false;
+    if(components==QA_ENTITY_BODY_ALL) {
+        body.velocity=vector(fields->velocity);
+        if(!reference(fields->references,fields->ground,&body.ground,error)) return false;
+    }
     *out=body; return true;
 }
 

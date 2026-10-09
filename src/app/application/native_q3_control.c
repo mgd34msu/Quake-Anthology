@@ -152,8 +152,9 @@ static bool contact_actor(qa_application *app, qa_bounds bounds,
             .origin = body.origin, .angles = body.angles}};
     query.policy.contents_mask = UINT32_MAX;
     qa_trace_result trace;
+    qa_collision_geometry *geometry = collision.model_geometry ? collision.model_geometry : qa_world_geometry(app->world);
     bool ok = collision.inline_model
-        ? qa_collision_trace(qa_world_geometry(app->world), &query, &trace, error)
+        ? qa_collision_trace(geometry, qa_world_trace_scratch(app->world,geometry), &query, &trace, error)
         : qa_collision_trace_body(&query, collision.family, collision.shape,
             body.bounds, body.origin, collision.contents, &trace, error);
     if (ok) *contact = trace.start_solid;

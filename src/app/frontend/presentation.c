@@ -276,7 +276,9 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     scene->origin = seat->q1_view_pose.origin; angles = seat->q1_view_pose.angles;
     seat->q1_chase = !qw && view->chase && !camera->cutscene;
     if (seat->q1_chase && !frontend_view_q1_chase(view,
-        qa_world_geometry(qa_application_world(f->application)),scene->origin,input.angles,
+        qa_world_geometry(qa_application_world(f->application)),
+        qa_world_trace_scratch(qa_application_world(f->application),qa_world_geometry(qa_application_world(f->application))),
+        scene->origin,input.angles,
         &scene->origin,&angles,error)) return false;
     frontend_camera_axes(angles, scene->axis);
     int32_t contents;
@@ -481,7 +483,9 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 begin.data.view.clear_color=begin.data.view.clear_depth=begin.data.view.clear_stencil=false;
                 if (!qa_scene_frame_emit(&frontend->frame,&begin,error)) return false;
             }
-            qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
+            qa_scene_world_input world = {.scratch=frontend->world_scratch[i].view,
+                .child_scratch=frontend->world_scratch[i].child,
+                .view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4,
                 .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend};
             frontend_source_companion_legacy *companion=NULL;

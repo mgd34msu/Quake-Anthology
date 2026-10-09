@@ -31,6 +31,51 @@ static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
     return result;
 }
 
+static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
+                                    qa_arena_block *last, qa_error *error)
+{
+    if (arena->sealed) {
+        if (arena->overflow_count != SIZE_MAX) ++arena->overflow_count;
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "sealed arena capacity exhausted");
+        return NULL;
+    }
+    if (capacity > (size_t)PTRDIFF_MAX - sizeof(qa_arena_block)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena block size overflow");
+        return NULL;
+    }
+    qa_arena_block *block = malloc(sizeof(*block) + capacity);
+    if (block == NULL) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate %zu-byte arena block", capacity);
+        return NULL;
+    }
+    block->next = NULL;
+    block->capacity = capacity;
+    block->used = 0;
+    if (last != NULL) last->next = block;
+    else arena->first = block;
+    if (arena->current == NULL) arena->current = block;
+    return block;
+}
+
+bool qa_arena_reserve(qa_arena *arena, size_t capacity, qa_error *error)
+{
+    if (arena == NULL || capacity == 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "arena reservation requires positive capacity");
+        return false;
+    }
+    qa_arena_block *last = NULL;
+    for (qa_arena_block *block = arena->first; block != NULL; block = block->next) {
+        if (block->capacity >= capacity) return true;
+        last = block;
+    }
+    return block_create(arena, capacity, last, error) != NULL;
+}
+
+void qa_arena_seal(qa_arena *arena)
+{
+    if (arena != NULL) arena->sealed = true;
+}
+
 void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *error)
 {
     if (arena == NULL || size == 0 || alignment == 0 ||
@@ -57,23 +102,8 @@ void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *e
     if (capacity < required) {
         capacity = required;
     }
-    if (capacity > (size_t)PTRDIFF_MAX - sizeof(qa_arena_block)) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena block size overflow");
-        return NULL;
-    }
-    qa_arena_block *block = malloc(sizeof(*block) + capacity);
-    if (block == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate %zu-byte arena block", capacity);
-        return NULL;
-    }
-    block->next = NULL;
-    block->capacity = capacity;
-    block->used = 0;
-    if (last != NULL) {
-        last->next = block;
-    } else {
-        arena->first = block;
-    }
+    qa_arena_block *block = block_create(arena, capacity, last, error);
+    if (block == NULL) return NULL;
     arena->current = block;
     return block_alloc(block, size, alignment);
 }

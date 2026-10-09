@@ -66,6 +66,7 @@ bool frontend_unified_media_model(frontend_unified_media *, const char *content,
     frontend_unified_model *, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);
+void frontend_unified_media_world_scratch(const frontend_unified_media *, qa_scene_world_input *);
 bool frontend_unified_media_current(const frontend_unified_media *);
 bool frontend_unified_media_ready(const frontend_unified_media *);
 bool frontend_unified_media_idle(const frontend_unified_media *);

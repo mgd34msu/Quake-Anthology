@@ -43,6 +43,7 @@ struct frontend_remote_q1 {
     struct frontend_remote_q1_sky_policy *sky_policy;
     remote_q1_camera camera;
     qa_collision_geometry *collision;
+    qa_trace_scratch *collision_scratch;
     frontend_q1_motion_refs motion_refs;
     frontend_q1_sky_controls sky_controls;
     frontend_legacy_cvar_handles legacy_cvars;
@@ -61,6 +62,7 @@ struct frontend_remote_q1 {
     qa_material_library *materials;
     qa_scene_world *world;
     qa_audio_bank *sound_bank;
+    frontend_world_scratch world_scratch;
     remote_q1_model *model_cache;
     const qa_scene_image *sky_images[6];
     uint8_t sky_found;

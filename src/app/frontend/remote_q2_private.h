@@ -130,7 +130,9 @@ struct frontend_remote_q2 {
     const qa_font *classic;
     const qa_scene_image *white;
     qa_scene_world *world;
+    frontend_world_scratch world_scratch;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *trace_scratch;
     uint64_t saved_world, saved_classic, saved_white;
     qa_buffer saved_effects;
     bool effects_imported;

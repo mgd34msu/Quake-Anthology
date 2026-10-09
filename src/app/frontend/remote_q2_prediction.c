@@ -54,7 +54,7 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
         pass_number = number;
     }
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
-    if (!qa_collision_trace(row->geometry, &q, out, error)) return false;
+    if (!qa_collision_trace(row->geometry,row->trace_scratch, &q, out, error)) return false;
     for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->solid || (self_number >= 0 && entity->number == (uint32_t)self_number + 1) || entity->number == pass_number) continue;
@@ -69,7 +69,7 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
             if (!brush(row, entity, &model)) continue;
             q.target = (qa_collision_target){.inline_model = true, .model = model,
                 .origin = vector(entity->origin), .angles = vector(entity->angles)};
-            if (!qa_collision_trace(row->geometry, &q, &hit, error)) return false;
+            if (!qa_collision_trace(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
         } else if (!qa_collision_trace_body(&q, QA_COLLISION_Q2, QA_SHAPE_BOX,
             remote_q2_solid_bounds(row, entity->solid), vector(entity->origin),
             extended && entity->number <= clients ? INT32_C(0x40000000) : INT32_C(0x2000000), &hit, error)) return false;
@@ -87,14 +87,14 @@ static bool contents(void *context, const qa_point_query *query, qa_point_conten
 {
     frontend_remote_q2 *row = context;
     qa_point_query q = *query; q.target = (qa_collision_target){0};
-    if (!qa_collision_point_contents(row->geometry, &q, out, error)) return false;
+    if (!qa_collision_point_contents(row->geometry,row->trace_scratch, &q, out, error)) return false;
     for (size_t i = 0; i < row->frame.entity_count; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i; uint32_t model;
         if (!brush(row, entity, &model)) continue;
         q = *query; q.target = (qa_collision_target){.inline_model = true, .model = model,
             .origin = vector(entity->origin), .angles = vector(entity->angles)};
         qa_point_contents hit;
-        if (!qa_collision_point_contents(row->geometry, &q, &hit, error)) return false;
+        if (!qa_collision_point_contents(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
         out->contents |= hit.contents; out->stored |= hit.stored; out->merged |= hit.merged;
     }
     return true;

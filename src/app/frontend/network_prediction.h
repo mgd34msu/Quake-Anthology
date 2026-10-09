@@ -12,6 +12,7 @@ typedef struct frontend_network_prediction_source {
     qa_application_q3_client_context receiver;
     qa_q3_prediction_scene_view scene;
     const qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
     const qa_resource *map;
     qa_actor_id viewer;
 } frontend_network_prediction_source;

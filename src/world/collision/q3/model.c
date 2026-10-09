@@ -138,7 +138,8 @@ static void position_capsule(qa_trace_result *result, qa_vec3 center, const qa_q
 }
 
 static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
-                         qa_vec3 origin, int32_t contents, bool transformed, void *replacement_map,
+                         qa_vec3 origin, int32_t contents, bool transformed, const void *replacement_map,
+                         void *replacement_scratch,
                          qa_trace_result *out, qa_error *error) {
     if (query == NULL || out == NULL || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
         || !qa_vec_finite(origin) || !qa_vec_finite(query->target.angles)
@@ -180,7 +181,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
                 shape.kind = QA_SHAPE_CAPSULE;
                 shape.radius = target.radius;
                 shape.offset = target.offset;
-                if (!qa_q3_trace_capsule_replacement(replacement_map, query,
+                if (!qa_q3_trace_capsule_replacement(replacement_map, replacement_scratch, query,
                         qa_vec_sub(start, target_center), qa_vec_sub(end, target_center),
                         shape, original, stationary, point_trace, &result, error)) return false;
             } else if (stationary) {
@@ -226,15 +227,15 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
 
 bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
                         qa_vec3 origin, int32_t contents, qa_trace_result *out, qa_error *error) {
-    return trace_shape(query, target_kind, target_bounds, origin, contents, true, NULL, out, error);
+    return trace_shape(query, target_kind, target_bounds, origin, contents, true, NULL, NULL, out, error);
 }
 
 bool qa_q3_trace_capsule_source(const qa_trace_query *query, qa_bounds bounds, bool transformed,
-                                void *replacement_map, qa_trace_result *out, qa_error *error) {
+                                const void *replacement_map, void *replacement_scratch, qa_trace_result *out, qa_error *error) {
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
     return trace_shape(&local, QA_SHAPE_CAPSULE, bounds, local.target.origin, 0x02000000,
-                       transformed, replacement_map, out, error);
+                       transformed, replacement_map, replacement_scratch, out, error);
 }
 
 bool qa_q3_trace_box_source(const qa_trace_query *query, qa_bounds bounds, bool transformed,
@@ -242,5 +243,5 @@ bool qa_q3_trace_box_source(const qa_trace_query *query, qa_bounds bounds, bool 
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
     return trace_shape(&local, QA_SHAPE_BOX, bounds, local.target.origin, 0x02000000,
-                       transformed, NULL, out, error);
+                       transformed, NULL, NULL, out, error);
 }

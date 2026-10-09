@@ -600,7 +600,12 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         ok=qa_nav_graph_construct(&construction,&services,&graph->graph,error);
     }
     services.topology_geometry_only=false;
-    return ok && qa_navigation_create(graph->graph,&services,&graph->navigation,error);
+    if (!ok || !qa_navigation_create(graph->graph,&services,&graph->navigation,error)) return false;
+    size_t edges=qa_nav_graph_read(graph->graph)->edge_count;
+    if (bots->runtime && !qa_bot_runtime_prepare_navigation(bots->runtime,edges,error)) return false;
+    for (application_bot_guest *guest=bots->guests;guest;guest=guest->next)
+        if (guest->runtime && !qa_bot_runtime_prepare_navigation(guest->runtime,edges,error)) return false;
+    return true;
 }
 static bool navigation_graph(application_bots *bots,application_provider *movement,
                               const qa_movement_profile *movement_profile,qa_bounds bounds,
@@ -614,7 +619,7 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
         shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
         bool ok=navigation_resource(bots,&shared->asset_resource,&shared->asset_acquisition,error) &&
             application_bot_navigation_rebuild(bots,shared,error);
-        if(!ok) {qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);
+        if(!ok) {qa_navigation_destroy(shared->navigation);qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);
             qa_vfs_acquisition_dispose(&shared->asset_acquisition);free(shared);return false;}
         shared->next=bots->graphs;bots->graphs=shared;
     }

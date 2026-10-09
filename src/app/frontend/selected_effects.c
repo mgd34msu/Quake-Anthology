@@ -102,7 +102,9 @@ static bool trace(void *context, const q3n_frame *frame, qa_vec3 start, qa_vec3 
     qa_trace_query query = {.start = start, .end = end, .shape = {QA_SHAPE_BOX, bounds},
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     query.policy.contents_mask = mask;
-    return active_current(group, frame, error) && qa_collision_trace(group->geometry, &query, out, error) &&
+    return active_current(group, frame, error) && qa_collision_trace(group->geometry,
+        qa_world_trace_scratch(qa_application_world(group->owner->frontend->application),group->geometry),
+        &query, out, error) &&
         active_current(group, frame, error);
 }
 
@@ -114,7 +116,9 @@ static bool contents(void *context, const q3n_frame *frame, qa_vec3 point, int32
     qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     qa_point_contents value;
     if (!out || !active_current(group, frame, error) ||
-        !qa_collision_point_contents(group->geometry, &query, &value, error) || !active_current(group, frame, error)) return false;
+        !qa_collision_point_contents(group->geometry,
+            qa_world_trace_scratch(qa_application_world(group->owner->frontend->application),group->geometry),
+            &query, &value, error) || !active_current(group, frame, error)) return false;
     *out = (uint32_t)value.contents; return true;
 }
 

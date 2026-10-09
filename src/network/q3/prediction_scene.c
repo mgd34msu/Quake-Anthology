@@ -321,7 +321,7 @@ bool qa_q3_prediction_scene_entity_current(const qa_q3_prediction_scene *s,
         retained->published == e->published && retained->current_valid == e->valid;
 }
 bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *s,
-    const qa_q3_prediction_scene_view *v, qa_collision_geometry *geometry,
+    const qa_q3_prediction_scene_view *v, qa_collision_geometry *geometry, qa_trace_scratch *scratch,
     const qa_q3_prediction_scene_entity_view *retained, qa_vec3 origin, qa_bounds bounds,
     bool *out, qa_error *error)
 {
@@ -335,7 +335,7 @@ bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *s,
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     query.policy.contents_mask = UINT32_MAX;
     qa_trace_result trace;
-    if (!qa_collision_trace_q3_model(geometry, &query, (uint32_t)row->modelindex, false, &trace, error)) return false;
+    if (!qa_collision_trace_q3_model(geometry, scratch, &query, (uint32_t)row->modelindex, false, &trace, error)) return false;
     *out = trace.start_solid || trace.all_solid;
     return qa_q3_prediction_scene_entity_current(s, v, retained) ||
         fail(error, QA_ERROR_ARGUMENT, "Q3 trigger changed during overlap query");
@@ -380,7 +380,7 @@ static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_
     q.policy.family = QA_COLLISION_Q3;
     uint32_t skip; bool has_skip;
     if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
-        !qa_collision_trace_q3_model(c->geometry, &q, 0, false, out, error)) return false;
+        !qa_collision_trace_q3_model(c->geometry, c->scratch, &q, 0, false, out, error)) return false;
     out->hit = out->fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
     *number = out->hit == QA_TRACE_HIT_WORLD ? QA_Q3_ENTITY_WORLD : QA_Q3_ENTITY_NONE;
     out->actor = (qa_actor_id){0};
@@ -392,7 +392,7 @@ static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_
         if (row->solid == 0xffffff) {
             if (row->modelindex < 0 || !position(&row->pos, v->physics_time, &q.target.origin, error)) return false;
             q.target.angles = e->angles;
-            if (!qa_collision_trace_q3_model(c->geometry, &q, (uint32_t)row->modelindex, true, &result, error)) return false;
+            if (!qa_collision_trace_q3_model(c->geometry, c->scratch, &q, (uint32_t)row->modelindex, true, &result, error)) return false;
         } else {
             int32_t x = row->solid & 255, zd = (row->solid >> 8) & 255, zu = ((row->solid >> 16) & 255) - 32;
             qa_bounds bounds = {qa_v3(-(float)x, -(float)x, -(float)zd), qa_v3((float)x, (float)x, (float)zu)};
@@ -435,14 +435,14 @@ bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *s, cons
     qa_point_query q = *query; q.target = (qa_collision_target){0};
     uint32_t skip; bool has_skip;
     if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
-        !qa_collision_point_contents(c->geometry, &q, out, error)) return false;
+        !qa_collision_point_contents(c->geometry, c->scratch, &q, out, error)) return false;
     for (size_t i = 0; i < s->solid_count; ++i) {
         const qa_q3_entity *row = &s->entities[s->solids[i]].current;
         if ((has_skip && (uint32_t)row->number == skip) || row->solid != 0xffffff || !row->modelindex) continue;
         if (row->modelindex < 0) return fail(error, QA_ERROR_FORMAT, "Negative Q3 collision inline model");
         q.target = (qa_collision_target){true, (uint32_t)row->modelindex, vector(row->origin), vector(row->angles)};
         qa_point_contents result;
-        if (!qa_collision_point_contents(c->geometry, &q, &result, error)) return false;
+        if (!qa_collision_point_contents(c->geometry, c->scratch, &q, &result, error)) return false;
         out->contents |= result.contents; out->stored |= result.stored; out->merged |= result.merged;
     }
     return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during contents query");

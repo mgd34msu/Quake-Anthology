@@ -18,6 +18,7 @@ void remote_q1_media_clear(frontend_remote_q1 *row)
 {
     if (row->frontend->seats)
         frontend_q1_help_forget_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
+    frontend_world_scratch_destroy(&row->world_scratch);
     qa_scene_world_destroy(row->world); row->world = NULL;
     while (row->model_cache) {
         remote_q1_model *model = row->model_cache; row->model_cache = model->next;
@@ -37,6 +38,9 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
     const qa_product *product=qa_catalog_product(row->content.catalog,row->content.product);
     if (!row->map || !qa_bsp_open(qa_resource_bytes(row->map), &bsp, error) || bsp.family != QA_BSP_Q1 || !qa_bsp_validate(&bsp, error))
         return remote_q1_fail(error, QA_ERROR_FORMAT, "Remote Q1 requires its actually received Quake BSP world");
+    if (!qa_collision_create(&bsp,&row->collision,error) ||
+        !qa_collision_bind_resource(row->collision,row->map,error) ||
+        !qa_trace_scratch_create(row->collision,&row->collision_scratch,error)) return false;
     row->images = qa_scene_resources_create(row->content.mounts, error);
     if (!row->images || !frontend_image_policy_initialize(row->frontend, row->images, error)) return false;
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);
@@ -45,6 +49,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
     if (!row->materials || !qa_material_library_load_scripts(row->materials, row->content.mounts, &options.images, error) ||
         !qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error) ||
         !qa_scene_world_source_resource_bind(row->world, row->map, error) ||
+        !frontend_world_scratch_create(row->world, &row->world_scratch, error) ||
         !qa_audio_bank_create(row->content.mounts, &row->sound_bank, error) ||
         !frontend_q1_hud_prepare(row->content.mounts,row->images,row->materials,
             frontend_q1_hud_variant(product),error)) return false;

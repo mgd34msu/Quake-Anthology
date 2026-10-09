@@ -489,6 +489,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     if (policy.mirror_alpha != 1) depth_range(frame, first, 0, .5f);
     if (mirror) {
         qa_scene_world_input child = input;
+        child.scratch = input.child_scratch;
         child.view = reflected;
         /* R_MarkLeaves retains the parent PVS while the reflected camera is
          * active. Only frustum traversal changes for the mirror scene. */

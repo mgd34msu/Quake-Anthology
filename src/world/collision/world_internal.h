@@ -30,9 +30,16 @@ typedef struct qa_world_actor_snapshot {
     qa_error *error;
     bool failed;
 } qa_world_actor_snapshot;
+typedef struct qa_world_trace_geometry {
+    struct qa_world_trace_geometry *next;
+    qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
+} qa_world_trace_geometry;
 struct qa_world {
     qa_actor_registry *actors;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *trace_scratch;
+    qa_world_trace_geometry *trace_geometries;
     qa_world_hooks hooks;
     uint32_t capacity;
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
@@ -46,7 +53,8 @@ static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *wor
     const qa_actor_collision *collision)
 { return collision->model_geometry ? collision->model_geometry : world->geometry; }
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
-bool qa_world_body_sample(qa_world_body *, qa_entity_pose, qa_body_state *, qa_error *);
+bool qa_world_body_sample(qa_world_body *, qa_entity_pose,
+                          qa_entity_body_components, qa_body_state *, qa_error *);
 bool qa_world_collision_sample(const qa_world_body *, bool, qa_actor_collision *, qa_error *);
 static inline qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
 {
@@ -66,7 +74,8 @@ void qa_spatial_remove(qa_world *, uint32_t);
 void qa_spatial_dispose(qa_world *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, uint32_t);
 bool qa_spatial_visit_raw(qa_world *, qa_bounds, qa_spatial_raw_fn, void *, qa_error *);
-bool qa_world_refresh(qa_world *, qa_actor_id, qa_entity_pose, qa_spatial_actor *, qa_error *);
+bool qa_world_refresh(qa_world *, qa_actor_id, qa_entity_pose,
+                      qa_entity_body_components, qa_spatial_actor *, qa_error *);
 
 /* BOTH captures raw links; filtered roles retain current provider readers. */
 bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,

@@ -5,6 +5,7 @@
 #include "qa/network_q3.h"
 
 typedef struct frontend_remote_unified_prediction frontend_remote_unified_prediction;
+qa_trace_scratch *frontend_remote_unified_prediction_scratch(const frontend_remote_unified_prediction *);
 typedef enum frontend_unified_prediction_status {
     FRONTEND_UNIFIED_PREDICTION_UNCHANGED, FRONTEND_UNIFIED_PREDICTION_ACTIVE,
     FRONTEND_UNIFIED_PREDICTION_DISABLED, FRONTEND_UNIFIED_PREDICTION_EXHAUSTED

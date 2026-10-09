@@ -27,7 +27,9 @@ typedef struct frontend_remote_q3_resources {
     qa_media_library *movies;
     qa_q3_presentation_assets *assets;
     qa_scene_world *world;
+    frontend_world_scratch world_scratch;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *trace_scratch;
     const qa_resource *map;
     frontend_client_registry *registry;
     qa_input_seat *input;
@@ -76,7 +78,7 @@ frontend_remote_q3 *frontend_remote_q3_at(const qa_frontend *,size_t);
 /* Both callback scopes supply the actual physical CLIENT receiver tuple.
  * No source host, local world, or initialized-media inference is involved. */
 bool frontend_remote_q3_geometry_read(const qa_frontend *,const qa_application_q3_client_context *,
-    const qa_resource **,const qa_collision_geometry **,bool *,qa_error *);
+    const qa_resource **,const qa_collision_geometry **,qa_trace_scratch **,bool *,qa_error *);
 bool frontend_remote_q3_content_visit(const qa_frontend *,const qa_application_content_visitor *,qa_error *);
 
 #endif

@@ -71,6 +71,7 @@ typedef struct qa_leaf_list {
     uint32_t last_leaf;
 } qa_leaf_list;
 typedef struct qa_collision_geometry qa_collision_geometry;
+typedef struct qa_trace_scratch qa_trace_scratch;
 struct qa_resource;
 
 /* Source Q2 solid and svflags select the temporary box contents; BSP models
@@ -78,9 +79,13 @@ struct qa_resource;
 int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease);
 
 /* Retains the BSP view and derived collision data; source bytes must outlive it.
- * One geometry serves every gameplay policy. Calls have one thread owner. */
+ * One geometry serves every gameplay policy. Queries only read it. */
 bool qa_collision_create(const qa_bsp_view *, qa_collision_geometry **out, qa_error *);
 void qa_collision_destroy(qa_collision_geometry *);
+/* Each caller creates scratch during map load and uses it with that geometry.
+ * Independent scratch owners can query one geometry concurrently. */
+bool qa_trace_scratch_create(const qa_collision_geometry *, qa_trace_scratch **, qa_error *);
+void qa_trace_scratch_destroy(qa_trace_scratch *);
 bool qa_collision_retain(qa_collision_geometry *, qa_error *);
 /* Production map owners bind their actual immutable source, without lookup. */
 bool qa_collision_bind_resource(qa_collision_geometry *, struct qa_resource *, qa_error *);
@@ -93,7 +98,7 @@ bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa
 /* Q2 .mat sidecar contents: first 15 bytes up to NUL. Invalid ASCII material
  * names clear the previous value and report a format error. */
 bool qa_collision_set_surface_material(qa_collision_geometry *, uint32_t texinfo, qa_bytes, qa_error *);
-bool qa_collision_trace(qa_collision_geometry *, const qa_trace_query *, qa_trace_result *, qa_error *);
+bool qa_collision_trace(const qa_collision_geometry *, qa_trace_scratch *, const qa_trace_query *, qa_trace_result *, qa_error *);
 /* Sweeps against one temporary body without requiring spatial publication.
  * Hosts use this for source APIs that explicitly name an entity to clip. */
 bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family,
@@ -102,24 +107,24 @@ bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_f
 /* Source Q3 capsule handle: target supplies the optional origin/angles. The
  * box-through-capsule swap resolves real Q3 submodel 255 when present. Handle
  * admission, no-node early returns and temporary-box state belong to the host. */
-bool qa_collision_trace_q3_capsule(qa_collision_geometry *, const qa_trace_query *,
+bool qa_collision_trace_q3_capsule(const qa_collision_geometry *, qa_trace_scratch *, const qa_trace_query *,
                                    qa_bounds capsule_bounds, bool transformed,
                                    qa_trace_result *, qa_error *);
 /* Model selection is independent of source TransformedBoxTrace semantics. */
-bool qa_collision_trace_q3_model(qa_collision_geometry *, const qa_trace_query *,
+bool qa_collision_trace_q3_model(const qa_collision_geometry *, qa_trace_scratch *, const qa_trace_query *,
                                  uint32_t model, bool transformed, qa_trace_result *, qa_error *);
 bool qa_collision_trace_q3_box(const qa_trace_query *, qa_bounds, bool transformed,
                                qa_trace_result *, qa_error *);
-bool qa_collision_point_contents(qa_collision_geometry *, const qa_point_query *, qa_point_contents *, qa_error *);
+bool qa_collision_point_contents(const qa_collision_geometry *, qa_trace_scratch *, const qa_point_query *, qa_point_contents *, qa_error *);
 bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_collision_leaf *, qa_error *);
 bool qa_collision_leaf_at(const qa_collision_geometry *, uint32_t, qa_collision_leaf *, qa_error *);
-bool qa_collision_box_leaves(const qa_collision_geometry *, qa_bounds, uint32_t *leaves, size_t capacity, qa_leaf_list *, qa_error *);
+bool qa_collision_box_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, uint32_t *leaves, size_t capacity, qa_leaf_list *, qa_error *);
 bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, int32_t to, bool phs, bool *, qa_error *);
 /* Original Q1 fat-PVS unions source leaf rows within signed plane distance 8.
  * Query the exact output extent first; no other-family visibility is implied.
  * The resulting caller-owned row can serve every entity in one source frame. */
 size_t qa_collision_q1_pvs_bytes(const qa_collision_geometry *);
-bool qa_collision_q1_fat_pvs(const qa_collision_geometry *, qa_vec3 eye,
+bool qa_collision_q1_fat_pvs(const qa_collision_geometry *, qa_trace_scratch *, qa_vec3 eye,
     uint8_t *, size_t capacity, qa_error *);
 bool qa_collision_areas_connected(const qa_collision_geometry *, int32_t, int32_t, bool *, qa_error *);
 /* Overwrites the required output bytes; written reports their count even when

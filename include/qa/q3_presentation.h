@@ -159,6 +159,7 @@ typedef struct qa_q3_presentation_options {
      * cinematic source. Selected application movies retain their own owner. */
     struct qa_q3_cinematic_source *cinematics;
     qa_material_source_scratch *source_scratch;
+    qa_scene_world_scratch *world_scratch, *world_child_scratch;
     qa_material_source_scratch *(*source_state)(void *, qa_error *);
     bool source_scene_membership;
     qa_media_clock clock;

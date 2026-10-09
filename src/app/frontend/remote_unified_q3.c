@@ -157,7 +157,7 @@ static bool trace(void *context, const q3n_frame *f, qa_vec3 start, qa_vec3 end,
     qa_trace_query q = {.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
         .policy={.family=QA_COLLISION_Q3,.contents_mask=mask,.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
-    return g && qa_collision_trace(g,&q,out,e) && effect_current(&b->source);
+    return g && qa_collision_trace(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,out,e) && effect_current(&b->source);
 }
 static bool contents(void *context, const q3n_frame *f, qa_vec3 point, int32_t pass, uint32_t *out, qa_error *e)
 {
@@ -166,7 +166,7 @@ static bool contents(void *context, const q3n_frame *f, qa_vec3 point, int32_t p
     qa_point_contents result; qa_point_query q = {.point=point,
         .policy={.family=QA_COLLISION_Q3,.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
-    if (!g || !qa_collision_point_contents(g,&q,&result,e) || !effect_current(&b->source)) return false;
+    if (!g || !qa_collision_point_contents(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,&result,e) || !effect_current(&b->source)) return false;
     *out=(uint32_t)result.contents; return true;
 }
 static bool fragments(void *context, const q3n_frame *f, const qa_vec3 *points, size_t count,
@@ -279,6 +279,8 @@ static bool backend_read(unified_q3_bank *b, qa_scene_rect viewport, qa_error *e
         .seat=d->physical_seat,.owner=o->audio_owner,.viewport=viewport,.near_clip=4,.far_clip=8192,
         .identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=b,.submit_view=component_submit};
+    qa_scene_world_input world={0}; frontend_unified_media_world_scratch(o->media,&world);
+    options.world_scratch=world.scratch; options.world_child_scratch=world.child_scratch;
     return qa_q3_presentation_create(&options,&b->backend,e);
 }
 static bool sound_output(void *context,const q3n_frame *f,qa_audio_asset *asset,const qa_vec3 *origin,int32_t channel,qa_error *e)

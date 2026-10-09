@@ -2,11 +2,12 @@
 #define QA_COLLISION_INTERNAL_H
 
 #include "qa/collision.h"
+#include "qa/stamp.h"
 #include <string.h>
 
 typedef enum qa_leaf_visit { QA_LEAF_CONTINUE, QA_LEAF_STOP, QA_LEAF_FAILED } qa_leaf_visit;
 typedef qa_leaf_visit (*qa_leaf_visit_fn)(void *, const qa_collision_leaf *, qa_error *);
-bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_bounds, bool q1_touched,
+bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, bool q1_touched,
     qa_leaf_visit_fn, void *, qa_leaf_list *, qa_error *);
 bool qa_collision_q1_membership_visible(qa_bytes, const qa_collision_leaf *, size_t);
 
@@ -14,8 +15,10 @@ typedef struct qa_collision_ops {
     void (*destroy)(void *);
     /* Results use the geometry's native family; the shared layer adapts them.
      * For Q1 policies on Q2/Q3 maps, also classify the reached segment's media. */
-    bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);
-    bool (*point_contents)(void *, const qa_point_query *, qa_point_contents *, qa_error *);
+    bool (*trace)(const void *, void *, const qa_trace_query *, qa_trace_result *, qa_error *);
+    bool (*point_contents)(const void *, void *, const qa_point_query *, qa_point_contents *, qa_error *);
+    void *(*create_scratch)(const void *, qa_error *);
+    void (*destroy_scratch)(void *);
 } qa_collision_ops;
 typedef struct qa_collision_kernel { void *state; const qa_collision_ops *ops; } qa_collision_kernel;
 typedef struct qa_collision_node { uint32_t plane; int32_t children[2]; } qa_collision_node;
@@ -72,11 +75,11 @@ bool qa_q3_collision_create(const qa_bsp_view *, const qa_collision_topology *, 
  * implements boxes and capsules, including capsule-vs-capsule sweeps. */
 bool qa_q1_trace_box(const qa_trace_query *, qa_bounds target, qa_vec3 origin, qa_trace_result *, qa_error *);
 bool qa_q3_trace_shape(const qa_trace_query *, qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin, int32_t contents, qa_trace_result *, qa_error *);
-bool qa_q3_trace_model_source(void *, const qa_trace_query *, uint32_t, bool,
+bool qa_q3_trace_model_source(const void *, void *, const qa_trace_query *, uint32_t, bool,
                                qa_trace_result *, qa_error *);
 bool qa_q3_trace_box_source(const qa_trace_query *, qa_bounds, bool, qa_trace_result *, qa_error *);
 bool qa_q3_trace_capsule_source(const qa_trace_query *, qa_bounds, bool transformed,
-                                void *replacement_map, qa_trace_result *, qa_error *);
+                                const void *replacement_map, void *scratch, qa_trace_result *, qa_error *);
 void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
 void qa_collision_adapt_point(qa_point_contents *, const qa_trace_policy *);
 

@@ -252,7 +252,8 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     if (!qa_bot_goals_reconfigure(r->goals, NULL, 0, 0, e)) return false;
     qa_bot_move_services movement = movement_services(r);
     return qa_bot_moves_create(r->options.observations==QA_BOT_OBSERVATION_MODULE?64:r->options.maximum_states, r->library, r->actions,
-                                 &movement, &r->moves, e);
+                                 &movement, &r->moves, e) &&
+        qa_bot_moves_prepare_graph(r->moves,r->route_edge_capacity,e);
 }
 static bool source_failure(qa_bot_runtime *r, const qa_error *e) {
     if (e->code != QA_ERROR_FORMAT && e->code != QA_ERROR_NOT_FOUND) return false;
@@ -395,6 +396,7 @@ static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
         if (!qa_bot_moves_create(r->options.observations==QA_BOT_OBSERVATION_MODULE?64:r->options.maximum_states, r->library, r->actions,
                                 &movement, &r->moves, e)) return false;
     }
+    if (!qa_bot_moves_prepare_graph(r->moves,r->route_edge_capacity,e)) return false;
     if (!qa_bot_moves_setup(r->moves, e)) return false;
     r->initialized = r->library_initialized = true;
     return true;

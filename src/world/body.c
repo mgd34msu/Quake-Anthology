@@ -40,16 +40,17 @@ static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *
     return body;
 }
 
-static bool valid_state(const qa_body_state *state)
+static bool valid_state(const qa_body_state *state,qa_entity_body_components components)
 {
     return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
-        && qa_vec_finite(state->velocity) && qa_bounds_valid(state->bounds);
+        && (components!=QA_ENTITY_BODY_ALL || qa_vec_finite(state->velocity))
+        && qa_bounds_valid(state->bounds);
 }
 
 static bool valid_link_state(const qa_body_link_state *saved)
 {
     return saved!=NULL && (!saved->linked || (saved->link_count!=0
-        && valid_state(&saved->state) && qa_bounds_valid(saved->absolute_bounds)));
+        && valid_state(&saved->state,QA_ENTITY_BODY_ALL) && qa_bounds_valid(saved->absolute_bounds)));
 }
 
 static bool same_vector(qa_vec3 left,qa_vec3 right)
@@ -87,8 +88,47 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     if(world==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate shared world");
     world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
     if(hooks!=NULL) world->hooks=*hooks;
-    if(!qa_spatial_initialize(world,bounds,error)) { free(world); return false; }
+    if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { free(world); return false; }
+    if(!qa_spatial_initialize(world,bounds,error)) {
+        qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
+    }
     *out=world; return true;
+}
+
+static void dispose_trace_geometries(qa_world *world)
+{
+    qa_world_trace_geometry *entry=world->trace_geometries;
+    while(entry!=NULL) {
+        qa_world_trace_geometry *next=entry->next;
+        qa_trace_scratch_destroy(entry->scratch);
+        qa_collision_destroy(entry->geometry);
+        free(entry);
+        entry=next;
+    }
+    world->trace_geometries=NULL;
+}
+
+qa_trace_scratch *qa_world_trace_scratch(qa_world *world,const qa_collision_geometry *geometry)
+{
+    if(world==NULL || geometry==NULL) return NULL;
+    if(world->geometry==geometry) return world->trace_scratch;
+    for(qa_world_trace_geometry *entry=world->trace_geometries;entry!=NULL;entry=entry->next)
+        if(entry->geometry==geometry) return entry->scratch;
+    return NULL;
+}
+
+bool qa_world_prepare_trace_geometry(qa_world *world,qa_collision_geometry *geometry,qa_error *error)
+{
+    if(world==NULL || geometry==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Trace geometry preparation requires a world and geometry");
+    if(qa_world_trace_scratch(world,geometry)!=NULL) return true;
+    qa_world_trace_geometry *entry=calloc(1,sizeof(*entry));
+    if(entry==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate foreign geometry scratch owner");
+    if(!qa_trace_scratch_create(geometry,&entry->scratch,error)) { free(entry); return false; }
+    if(!qa_collision_retain(geometry,error)) { qa_trace_scratch_destroy(entry->scratch); free(entry); return false; }
+    entry->geometry=geometry; entry->next=world->trace_geometries;
+    world->trace_geometries=entry;
+    return true;
 }
 
 bool qa_world_idle(const qa_world *world)
@@ -105,6 +145,8 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
         return fail(error,QA_ERROR_ARGUMENT,"Abort geometry admission before world destruction");
     qa_world_reset_bodies(world);
     qa_spatial_dispose(world);
+    dispose_trace_geometries(world);
+    qa_trace_scratch_destroy(world->trace_scratch);
     free(world); return true;
 }
 
@@ -114,6 +156,7 @@ qa_collision_geometry *qa_world_geometry(qa_world *world) { return world==NULL?N
 struct qa_world_geometry_admission {
     qa_world *world;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
 };
 
@@ -130,6 +173,8 @@ bool qa_world_prepare_geometry(qa_world *world,qa_collision_geometry *geometry,
     qa_world_geometry_admission *token=malloc(sizeof(*token));
     if(token==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate geometry admission");
     token->world=world; token->geometry=geometry;
+    token->scratch=NULL;
+    if(!qa_trace_scratch_create(geometry,&token->scratch,error)) { free(token); return false; }
     memcpy(token->sectors,candidate.sectors,sizeof(token->sectors));
     world->geometry_admission=token;
     *out=token;
@@ -157,7 +202,11 @@ bool qa_world_geometry_admission_validate(qa_world_geometry_admission *token,qa_
 bool qa_world_geometry_admission_commit(qa_world_geometry_admission *token,qa_error *error)
 {
     if(!qa_world_geometry_admission_validate(token,error)) return false;
+    dispose_trace_geometries(token->world);
+    qa_trace_scratch_destroy(token->world->trace_scratch);
     token->world->geometry=token->geometry;
+    token->world->trace_scratch=token->scratch;
+    token->scratch=NULL;
     memcpy(token->world->sectors,token->sectors,sizeof(token->sectors));
     qa_world_geometry_admission_abort(token);
     return true;
@@ -167,6 +216,7 @@ void qa_world_geometry_admission_abort(qa_world_geometry_admission *token)
 {
     if(token==NULL) return;
     token->world->geometry_admission=NULL;
+    qa_trace_scratch_destroy(token->scratch);
     free(token);
 }
 
@@ -233,7 +283,7 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
 
 bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
 {
-    if(!valid_state(state)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    if(!valid_state(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
     qa_world_body *body=ensure_body(world,actor,error);
     if(body==NULL) return false;
     if(body->present) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body");
@@ -261,13 +311,13 @@ uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
 }
 
 bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
+                          qa_entity_body_components components,
                           qa_body_state *out,qa_error *error)
 {
     qa_body_state state;
     if(body->external) {
-        if(!qa_entity_body_read(body->binding.fields,pose,&state,error)) return false;
-        if(!valid_state(&state)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
-        body->state=state;
+        if(!qa_entity_body_read(body->binding.fields,pose,components,&state,error)) return false;
+        if(!valid_state(&state,components)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
     } else state=body->state;
     *out=state; return true;
 }
@@ -277,7 +327,7 @@ bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose po
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
-    return qa_world_body_sample(body,pose,out,error);
+    return qa_world_body_sample(body,pose,QA_ENTITY_BODY_ALL,out,error);
 }
 
 bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
@@ -285,7 +335,7 @@ bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_
 
 bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
 {
-    if(!valid_state(state)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    if(!valid_state(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return qa_world_body_create(world,actor,state,error);
     if(!body->external) { body->state=*state; return true; }
@@ -324,7 +374,7 @@ bool qa_world_collision_rows_validate(qa_world *world,const qa_spatial_actor *ro
         const qa_spatial_actor *row=rows+i;
         if(qa_actors_get(world->actors,row->body.actor)==NULL)
             return fail(error,QA_ERROR_ARGUMENT,"Body actor is not live in this world");
-        if(!valid_state(&row->body.state))
+        if(!valid_state(&row->body.state,QA_ENTITY_BODY_ALL))
             return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
         if(!valid_collision(world,&row->collision,QA_ERROR_ARGUMENT,error)) return false;
         qa_body_link_state link={.linked=true,.state=row->body.state,
@@ -340,6 +390,8 @@ bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_col
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
     if(!valid_collision(world,collision,QA_ERROR_ARGUMENT,error)) return false;
+    if(collision!=NULL && collision->model_geometry!=NULL &&
+        !qa_world_prepare_trace_geometry(world,collision->model_geometry,error)) return false;
     body->has_collision=collision!=NULL;
     if(collision!=NULL) body->collision=*collision;
     return true;
@@ -349,8 +401,17 @@ bool qa_world_collision_bind(qa_world *world,qa_actor_id actor,const qa_collisio
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
-    if(binding!=NULL && binding->fields==NULL)
+    if(binding!=NULL && (binding->fields==NULL || binding->fields->family<QA_COLLISION_Q1 ||
+        binding->fields->family>QA_COLLISION_Q3))
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding needs fields");
+    if(binding!=NULL && binding->fields->models!=NULL) {
+        const qa_entity_model_fields *models=binding->fields->models;
+        for(uint32_t index=0;index<models->count;++index) {
+            const qa_entity_model_field *model=models->entries+index;
+            if(model->present && model->geometry!=NULL &&
+                !qa_world_prepare_trace_geometry(world,model->geometry,error)) return false;
+        }
+    }
     if(body->collision_serial==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
     ++body->collision_serial;
@@ -395,13 +456,14 @@ bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision
 bool qa_world_get_link_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,true,error); }
 bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
+                      qa_entity_body_components components,
                       qa_spatial_actor *out,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return false;
     qa_spatial_actor current={.body=qa_world_published_body(world,body)};
     if(!qa_world_collision_sample(body,false,&current.collision,error) ||
-       !qa_world_body_sample(body,pose,&current.body.state,error)) return false;
+       !qa_world_body_sample(body,pose,components,&current.body.state,error)) return false;
     *out=current; return true;
 }
 
@@ -532,7 +594,7 @@ bool qa_world_link_membership(qa_world *world,qa_actor_id actor,const qa_bounds 
         body->leaves_ready=false; body->leaf_count=0;
         qa_leaf_list list;
         membership_writer writer={body,policy==QA_WORLD_LEAVES_Q1_TOUCHED?16:SIZE_MAX};
-        if(!qa_collision_walk_leaves(world->geometry,bounds,policy==QA_WORLD_LEAVES_Q1_TOUCHED,
+        if(!qa_collision_walk_leaves(world->geometry,world->trace_scratch,bounds,policy==QA_WORLD_LEAVES_Q1_TOUCHED,
             membership_leaf,&writer,&list,error)) return false;
         body->leaf_bounds=bounds; body->leaf_geometry=world->geometry;
         body->leaf_storage=body->storage_serial; body->leaf_policy=policy;

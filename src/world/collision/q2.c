@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/stamp.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -33,7 +34,6 @@ typedef struct q2_interval {
 typedef struct q2_plane_support {
     float distance, extent;
     float first, last;
-    uint32_t endpoint_stamp;
     bool has_last;
 } q2_plane_support;
 
@@ -48,22 +48,22 @@ typedef struct q2_collision {
     int32_t *headnodes;
     size_t plane_count, node_count, leaf_count, brush_count;
     size_t side_count, surface_count, leaf_brush_count, model_count;
-
-    /* Queries have one owner; retain scratch instead of allocating per sweep. */
-    int32_t *node_stack;
-    qa_collision_trace_frame *trace_stack;
-    uint32_t *brush_stamps;
-    q2_plane_support *expanded_planes;
-    uint32_t *expanded_stamps;
-    uint32_t expanded_generation;
-    qa_shape_kind expanded_kind;
-    qa_bounds expanded_bounds;
-    uint32_t stamp;
-    q2_interval *intervals, *solid_intervals;
 } q2_collision;
 
+typedef struct q2_scratch {
+    int32_t *node_stack;
+    qa_collision_trace_frame *trace_stack;
+    q2_plane_support *expanded_planes;
+    uint32_t *trace_storage, *expanded_storage;
+    qa_stamp_set trace_marks, expanded_marks;
+    qa_shape_kind expanded_kind;
+    qa_bounds expanded_bounds;
+    q2_interval *intervals, *solid_intervals;
+} q2_scratch;
+
 typedef struct q2_work {
-    q2_collision *collision;
+    const q2_collision *collision;
+    q2_scratch *scratch;
     const qa_trace_query *query;
     qa_vec3 start, end, extents;
     qa_bounds bounds;
@@ -83,14 +83,21 @@ static void q2_destroy(void *opaque)
     free(collision->surfaces);
     free(collision->leaf_brushes);
     free(collision->headnodes);
-    free(collision->node_stack);
-    free(collision->trace_stack);
-    free(collision->brush_stamps);
-    free(collision->expanded_planes);
-    free(collision->expanded_stamps);
-    free(collision->intervals);
-    free(collision->solid_intervals);
     free(collision);
+}
+
+static void q2_destroy_scratch(void *opaque)
+{
+    q2_scratch *scratch = opaque;
+    if (scratch == NULL) return;
+    free(scratch->node_stack);
+    free(scratch->trace_stack);
+    free(scratch->expanded_planes);
+    free(scratch->trace_storage);
+    free(scratch->expanded_storage);
+    free(scratch->intervals);
+    free(scratch->solid_intervals);
+    free(scratch);
 }
 
 static void *q2_array(size_t count, size_t width, qa_error *error)
@@ -104,6 +111,36 @@ static void *q2_array(size_t count, size_t width, qa_error *error)
     if (array == NULL)
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Unable to allocate Q2 collision table");
     return array;
+}
+
+static void *q2_create_scratch(const void *opaque, qa_error *error)
+{
+    const q2_collision *collision = opaque;
+    q2_scratch *scratch = calloc(1, sizeof(*scratch));
+    if (scratch == NULL) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Unable to allocate Q2 collision scratch");
+        return NULL;
+    }
+#define Q2_SCRATCH_ALLOC(member, count) do { \
+    scratch->member = q2_array((count), sizeof(*scratch->member), error); \
+    if ((count) != 0 && scratch->member == NULL) goto fail; \
+} while (0)
+    Q2_SCRATCH_ALLOC(node_stack, collision->node_count + 1);
+    Q2_SCRATCH_ALLOC(trace_stack, collision->node_count + 1);
+    Q2_SCRATCH_ALLOC(expanded_planes, collision->plane_count);
+    Q2_SCRATCH_ALLOC(trace_storage, collision->brush_count + collision->plane_count);
+    Q2_SCRATCH_ALLOC(expanded_storage, collision->plane_count);
+    Q2_SCRATCH_ALLOC(intervals, collision->brush_count);
+    Q2_SCRATCH_ALLOC(solid_intervals, collision->brush_count);
+#undef Q2_SCRATCH_ALLOC
+    qa_stamp_set_init(&scratch->trace_marks, scratch->trace_storage,
+        collision->brush_count + collision->plane_count);
+    qa_stamp_set_init(&scratch->expanded_marks, scratch->expanded_storage,
+        collision->plane_count);
+    return scratch;
+fail:
+    q2_destroy_scratch(scratch);
+    return NULL;
 }
 
 static bool q2_bad_reference(qa_error *error, const char *label, size_t index)
@@ -128,18 +165,20 @@ static bool q2_child_valid(const q2_collision *collision, int32_t child)
                      : (size_t)child < collision->node_count;
 }
 
-static bool q2_validate_trees(q2_collision *collision, qa_error *error)
+static bool q2_validate_trees(const q2_collision *collision, qa_error *error)
 {
     if (collision->node_count == 0) return true;
     uint8_t *colors = q2_array(collision->node_count, sizeof(*colors), error);
     if (colors == NULL) return false;
+    int32_t *stack = q2_array(collision->node_count, sizeof(*stack), error);
+    if (stack == NULL) { free(colors); return false; }
     for (size_t model = 0; model < collision->model_count; ++model) {
         int32_t root = collision->headnodes[model];
         if (root < 0 || colors[(size_t)root] == 2) continue;
         size_t depth = 1;
-        collision->node_stack[0] = root;
+        stack[0] = root;
         while (depth != 0) {
-            size_t index = (size_t)collision->node_stack[depth - 1];
+            size_t index = (size_t)stack[depth - 1];
             colors[index] = 1;
             const qa_collision_node *node = &collision->nodes[index];
             bool descended = false;
@@ -149,10 +188,11 @@ static bool q2_validate_trees(q2_collision *collision, qa_error *error)
                 uint8_t color = colors[(size_t)child];
                 if (color == 1) {
                     free(colors);
+                    free(stack);
                     return q2_bad_reference(error, "node cycle", (size_t)child);
                 }
                 if (color == 0) {
-                    collision->node_stack[depth++] = child;
+                    stack[depth++] = child;
                     descended = true;
                     break;
                 }
@@ -164,6 +204,7 @@ static bool q2_validate_trees(q2_collision *collision, qa_error *error)
         }
     }
     free(colors);
+    free(stack);
     return true;
 }
 
@@ -191,9 +232,9 @@ static float q2_expand(const qa_collision_plane *plane, const qa_trace_shape *sh
 
 static q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
 {
-    q2_collision *collision = work->collision;
-    q2_plane_support *expanded = &collision->expanded_planes[index];
-    if (collision->expanded_stamps[index] != collision->expanded_generation) {
+    const q2_collision *collision = work->collision;
+    q2_plane_support *expanded = &work->scratch->expanded_planes[index];
+    if (qa_stamp_set_mark(&work->scratch->expanded_marks, index)) {
         const qa_collision_plane *plane = &collision->planes[index];
         expanded->distance =
             plane->distance + q2_expand(plane, &work->query->shape);
@@ -202,7 +243,6 @@ static q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
             : fabsf(work->extents.x * plane->normal.x)
                 + fabsf(work->extents.y * plane->normal.y)
                 + fabsf(work->extents.z * plane->normal.z);
-        collision->expanded_stamps[index] = collision->expanded_generation;
     }
     return expanded;
 }
@@ -210,38 +250,18 @@ static q2_plane_support *q2_expanded_plane(q2_work *work, uint32_t index)
 static const q2_plane_support *q2_endpoint_distances(q2_work *work, uint32_t index,
                                                    bool need_last)
 {
-    q2_collision *collision = work->collision;
+    const q2_collision *collision = work->collision;
     q2_plane_support *expanded = q2_expanded_plane(work, index);
     const qa_collision_plane *plane = &collision->planes[index];
-    if (expanded->endpoint_stamp != collision->stamp) {
+    if (qa_stamp_set_mark(&work->scratch->trace_marks, collision->brush_count + index)) {
         expanded->first = qa_vec_dot(work->start, plane->normal) - expanded->distance;
         expanded->has_last = false;
-        expanded->endpoint_stamp = collision->stamp;
     }
     if (need_last && !expanded->has_last) {
         expanded->last = qa_vec_dot(work->end, plane->normal) - expanded->distance;
         expanded->has_last = true;
     }
     return expanded;
-}
-
-static void q2_next_stamp(q2_collision *collision)
-{
-    ++collision->stamp;
-    if (collision->stamp == 0) {
-        if (collision->brush_count != 0)
-            memset(collision->brush_stamps, 0, collision->brush_count * sizeof(*collision->brush_stamps));
-        for (size_t i = 0; i < collision->plane_count; ++i)
-            collision->expanded_planes[i].endpoint_stamp = 0;
-        collision->stamp = 1;
-    }
-}
-
-static bool q2_visit_brush(q2_collision *collision, uint32_t index)
-{
-    if (collision->brush_stamps[index] == collision->stamp) return false;
-    collision->brush_stamps[index] = collision->stamp;
-    return true;
 }
 
 static uint32_t q2_target(const qa_collision_target *target, qa_vec3 basis[3])
@@ -257,13 +277,14 @@ static qa_vec3 q2_local(qa_vec3 point, const qa_collision_target *target, const 
         ? qa_collision_to_local(qa_vec_sub(point, target->origin), basis) : point;
 }
 
-static bool q2_point_contents(void *opaque, const qa_point_query *query,
+static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa_point_query *query,
                               qa_point_contents *out, qa_error *error)
 {
-    q2_collision *collision = opaque;
+    const q2_collision *collision = opaque;
     qa_vec3 basis[3];
     uint32_t model = q2_target(&query->target, basis);
     (void)error;
+    (void)opaque_scratch;
     qa_vec3 point = q2_local(query->point, &query->target, basis);
     int32_t child = collision->headnodes[model];
     while (child >= 0) {
@@ -288,8 +309,8 @@ static qa_collision_side_distances q2_brush_distances(void *context, size_t inde
 
 static void q2_trace_brush(q2_work *work, uint32_t index)
 {
-    q2_collision *collision = work->collision;
-    if (!q2_visit_brush(collision, index)) return;
+    const q2_collision *collision = work->collision;
+    if (!qa_stamp_set_mark(&work->scratch->trace_marks, index)) return;
     const qa_bsp_brush *brush = &collision->brushes[index];
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
     qa_collision_brush_contact contact;
@@ -323,7 +344,7 @@ static void q2_trace_leaf(q2_work *work, size_t index)
 }
 
 /* Push back first so the front child is visited first, including exact ties. */
-static void q2_box_children(q2_collision *collision, const qa_collision_node *node,
+static void q2_box_children(const q2_collision *collision, q2_scratch *scratch, const qa_collision_node *node,
                             qa_bounds bounds, size_t *depth)
 {
     const qa_collision_plane *plane = &collision->planes[node->plane];
@@ -335,9 +356,9 @@ static void q2_box_children(q2_collision *collision, const qa_collision_node *no
                                 normal.y < 0 ? bounds.maxs.y : bounds.mins.y,
                                 normal.z < 0 ? bounds.maxs.z : bounds.mins.z);
     if (qa_vec_dot(near_corner, normal) < plane->distance)
-        collision->node_stack[(*depth)++] = node->children[1];
+        scratch->node_stack[(*depth)++] = node->children[1];
     if (qa_vec_dot(far_corner, normal) >= plane->distance)
-        collision->node_stack[(*depth)++] = node->children[0];
+        scratch->node_stack[(*depth)++] = node->children[0];
 }
 
 static qa_bounds q2_envelope(qa_vec3 start, qa_vec3 end, qa_bounds bounds)
@@ -353,18 +374,18 @@ static qa_bounds q2_envelope(qa_vec3 start, qa_vec3 end, qa_bounds bounds)
 
 static void q2_position_test(q2_work *work, int32_t headnode)
 {
-    q2_collision *collision = work->collision;
+    const q2_collision *collision = work->collision;
     qa_bounds bounds = q2_envelope(work->start, work->start, work->bounds);
     size_t depth = 1, leaves = 0;
-    collision->node_stack[0] = headnode;
+    work->scratch->node_stack[0] = headnode;
     while (depth != 0 && leaves < Q2_POSITION_LEAF_LIMIT) {
-        int32_t child = collision->node_stack[--depth];
+        int32_t child = work->scratch->node_stack[--depth];
         if (child < 0) {
             ++leaves;
             q2_trace_leaf(work, q2_leaf_index(child));
             if (work->result.all_solid) return;
         } else {
-            q2_box_children(collision, &collision->nodes[(size_t)child], bounds, &depth);
+            q2_box_children(collision, work->scratch, &collision->nodes[(size_t)child], bounds, &depth);
         }
     }
 }
@@ -384,9 +405,9 @@ static void q2_tree_leaf(void *context, uint32_t leaf)
 
 static void q2_sweep(q2_work *work, int32_t headnode)
 {
-    q2_collision *collision = work->collision;
+    const q2_collision *collision = work->collision;
     const qa_collision_tree_trace trace = {
-        collision->planes, collision->nodes, collision->trace_stack,
+        collision->planes, collision->nodes, work->scratch->trace_stack,
         work->start, work->end, work->rules.tree,
         &work->result, work, q2_tree_extent, q2_tree_leaf};
     qa_collision_trace_tree(&trace, headnode);
@@ -394,8 +415,8 @@ static void q2_sweep(q2_work *work, int32_t headnode)
 
 static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
 {
-    q2_collision *collision = work->collision;
-    if (!q2_visit_brush(collision, index)) return;
+    const q2_collision *collision = work->collision;
+    if (!qa_stamp_set_mark(&work->scratch->trace_marks, index)) return;
     const qa_bsp_brush *brush = &collision->brushes[index];
     int32_t contents = qa_collision_convert_contents(brush->contents, QA_COLLISION_Q2, QA_COLLISION_Q1);
     if (contents == -1 || brush->sides.count == 0) return;
@@ -412,7 +433,7 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
         else end = fminf(end, crossing);
         if (begin > end) return;
     }
-    collision->intervals[(*count)++] = (q2_interval){begin, end, contents == -2};
+    work->scratch->intervals[(*count)++] = (q2_interval){begin, end, contents == -2};
 }
 
 static void q2_interval_sift(q2_interval *intervals, size_t root, size_t count)
@@ -454,74 +475,72 @@ static bool q2_uncovered(float first, float last, const q2_interval *parts, size
 
 static void q2_trace_media(q2_work *work, int32_t headnode)
 {
-    q2_collision *collision = work->collision;
+    const q2_collision *collision = work->collision;
     qa_vec3 reached = qa_vec_lerp(work->start, work->end, work->result.fraction);
     qa_bounds bounds = q2_envelope(work->start, reached, work->bounds);
     size_t depth = 1, leaves = 0, count = 0;
-    collision->node_stack[0] = headnode;
-    q2_next_stamp(collision);
+    work->scratch->node_stack[0] = headnode;
+    qa_stamp_set_begin(&work->scratch->trace_marks);
     while (depth != 0 && leaves < collision->leaf_count) {
-        int32_t child = collision->node_stack[--depth];
+        int32_t child = work->scratch->node_stack[--depth];
         if (child < 0) {
             ++leaves;
             const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
             for (size_t i = 0; i < (size_t)leaf->brushes.count; ++i)
                 q2_brush_medium(work, collision->leaf_brushes[(size_t)leaf->brushes.first + i], &count);
         } else {
-            q2_box_children(collision, &collision->nodes[(size_t)child], bounds, &depth);
+            q2_box_children(collision, work->scratch, &collision->nodes[(size_t)child], bounds, &depth);
         }
     }
-    q2_interval_sort(collision->intervals, count);
-    work->result.in_open = q2_uncovered(0, work->result.fraction, collision->intervals, count);
+    q2_interval_sort(work->scratch->intervals, count);
+    work->result.in_open = q2_uncovered(0, work->result.fraction, work->scratch->intervals, count);
     size_t solid_count = 0;
     for (size_t i = 0; i < count; ++i) {
-        q2_interval interval = collision->intervals[i];
+        q2_interval interval = work->scratch->intervals[i];
         if (!interval.solid) continue;
-        if (solid_count != 0 && interval.first <= collision->solid_intervals[solid_count - 1].last)
-            collision->solid_intervals[solid_count - 1].last = fmaxf(collision->solid_intervals[solid_count - 1].last, interval.last);
-        else collision->solid_intervals[solid_count++] = interval;
+        if (solid_count != 0 && interval.first <= work->scratch->solid_intervals[solid_count - 1].last)
+            work->scratch->solid_intervals[solid_count - 1].last = fmaxf(work->scratch->solid_intervals[solid_count - 1].last, interval.last);
+        else work->scratch->solid_intervals[solid_count++] = interval;
     }
     size_t solid = 0;
     for (size_t i = 0; i < count; ++i) {
-        q2_interval liquid = collision->intervals[i];
+        q2_interval liquid = work->scratch->intervals[i];
         if (liquid.solid) continue;
-        while (solid < solid_count && collision->solid_intervals[solid].last < liquid.first) ++solid;
-        if (solid == solid_count || collision->solid_intervals[solid].first > liquid.first
-            || collision->solid_intervals[solid].last < liquid.last) {
+        while (solid < solid_count && work->scratch->solid_intervals[solid].last < liquid.first) ++solid;
+        if (solid == solid_count || work->scratch->solid_intervals[solid].first > liquid.first
+            || work->scratch->solid_intervals[solid].last < liquid.last) {
             work->result.in_water = true;
             return;
         }
     }
 }
 
-static bool q2_trace(void *opaque, const qa_trace_query *query,
+static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_query *query,
                      qa_trace_result *out, qa_error *error)
 {
-    q2_collision *collision = opaque;
+    const q2_collision *collision = opaque;
+    q2_scratch *scratch = opaque_scratch;
     qa_vec3 basis[3];
     uint32_t model = q2_target(&query->target, basis);
     (void)error;
     q2_work work = {0};
     work.collision = collision;
+    work.scratch = scratch;
     work.query = query;
     work.rules = qa_collision_rules(&query->policy);
     work.start = q2_local(query->start, &query->target, basis);
     work.end = q2_local(query->end, &query->target, basis);
     work.bounds = q2_shape_bounds(&query->shape);
-    if (collision->expanded_generation == 0 || collision->expanded_kind != query->shape.kind ||
-        memcmp(&collision->expanded_bounds.mins.x, &work.bounds.mins.x, sizeof(float)) != 0 ||
-        memcmp(&collision->expanded_bounds.mins.y, &work.bounds.mins.y, sizeof(float)) != 0 ||
-        memcmp(&collision->expanded_bounds.mins.z, &work.bounds.mins.z, sizeof(float)) != 0 ||
-        memcmp(&collision->expanded_bounds.maxs.x, &work.bounds.maxs.x, sizeof(float)) != 0 ||
-        memcmp(&collision->expanded_bounds.maxs.y, &work.bounds.maxs.y, sizeof(float)) != 0 ||
-        memcmp(&collision->expanded_bounds.maxs.z, &work.bounds.maxs.z, sizeof(float)) != 0) {
-        if (++collision->expanded_generation == 0) {
-            memset(collision->expanded_stamps, 0,
-                   collision->plane_count * sizeof(*collision->expanded_stamps));
-            collision->expanded_generation = 1;
-        }
-        collision->expanded_kind = query->shape.kind;
-        collision->expanded_bounds = work.bounds;
+    if (scratch->expanded_kind != query->shape.kind ||
+        memcmp(&scratch->expanded_bounds.mins.x, &work.bounds.mins.x, sizeof(float)) != 0 ||
+        memcmp(&scratch->expanded_bounds.mins.y, &work.bounds.mins.y, sizeof(float)) != 0 ||
+        memcmp(&scratch->expanded_bounds.mins.z, &work.bounds.mins.z, sizeof(float)) != 0 ||
+        memcmp(&scratch->expanded_bounds.maxs.x, &work.bounds.maxs.x, sizeof(float)) != 0 ||
+        memcmp(&scratch->expanded_bounds.maxs.y, &work.bounds.maxs.y, sizeof(float)) != 0 ||
+        memcmp(&scratch->expanded_bounds.maxs.z, &work.bounds.maxs.z, sizeof(float)) != 0) {
+        qa_stamp_set_begin(&scratch->expanded_marks);
+        scratch->expanded_kind = query->shape.kind;
+        scratch->expanded_bounds = work.bounds;
     }
     work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
     work.merged = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents;
@@ -531,7 +550,7 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
                          fmaxf(-work.bounds.mins.z, work.bounds.maxs.z));
     work.result = qa_collision_empty_trace(query, QA_COLLISION_Q2);
     int32_t headnode = collision->headnodes[model];
-    q2_next_stamp(collision);
+    qa_stamp_set_begin(&scratch->trace_marks);
     if (work.stationary) q2_position_test(&work, headnode);
     else q2_sweep(&work, headnode);
     if (query->target.inline_model && work.result.fraction != 1) {
@@ -551,7 +570,9 @@ static bool q2_trace(void *opaque, const qa_trace_query *query,
     return true;
 }
 
-static const qa_collision_ops q2_ops = {q2_destroy, q2_trace, q2_point_contents};
+static const qa_collision_ops q2_ops = {.destroy = q2_destroy, .trace = q2_trace,
+    .point_contents = q2_point_contents, .create_scratch = q2_create_scratch,
+    .destroy_scratch = q2_destroy_scratch};
 
 bool qa_q2_collision_set_material(void *opaque, uint32_t texinfo, qa_bytes bytes, qa_error *error)
 {
@@ -613,13 +634,6 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
     Q2_ALLOC(surfaces, collision->surface_count);
     Q2_ALLOC(leaf_brushes, collision->leaf_brush_count);
     Q2_ALLOC(headnodes, collision->model_count);
-    Q2_ALLOC(node_stack, collision->node_count + 1);
-    Q2_ALLOC(trace_stack, collision->node_count + 1);
-    Q2_ALLOC(brush_stamps, collision->brush_count);
-    Q2_ALLOC(expanded_planes, collision->plane_count);
-    Q2_ALLOC(expanded_stamps, collision->plane_count);
-    Q2_ALLOC(intervals, collision->brush_count);
-    Q2_ALLOC(solid_intervals, collision->brush_count);
 #undef Q2_ALLOC
     for (size_t i = 0; i < collision->node_count; ++i) {
         const qa_collision_node *node = &collision->nodes[i];

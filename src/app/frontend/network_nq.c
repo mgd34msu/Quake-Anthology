@@ -914,7 +914,9 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protoc
     size_t extent = qa_collision_q1_pvs_bytes(geometry); uint8_t *pvs = extent ? malloc(extent) : NULL;
     if (!pvs) return frontend_fail(error, extent ? QA_ERROR_MEMORY : QA_ERROR_FORMAT, "NetQuake frame requires its actual source PVS row");
     qa_vec3 eye; bool ok = qa_application_network_q1_eye(host->frontend->application, actor, &eye, error) &&
-        qa_collision_q1_fat_pvs(geometry, eye, pvs, extent, error);
+        qa_collision_q1_fat_pvs(geometry,
+            qa_world_trace_scratch(qa_application_world(host->frontend->application),geometry),
+            eye, pvs, extent, error);
     uint32_t cursor = 0; bool present;
     while (ok) {
         qa_actor_id entity_actor; qa_q1_entity entity;

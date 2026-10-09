@@ -86,13 +86,14 @@ static bool contact(q3_call *call, bool capsule, int32_t *result, qa_error *erro
     if (!source_slot(call, number, &record, &shared, error)) return false;
     query.target.origin = shared.origin; query.target.angles = shared.angles;
     qa_collision_geometry *geometry = qa_world_geometry(call->host->options.world);
+    qa_trace_scratch *scratch = qa_world_trace_scratch(call->host->options.world, geometry);
     qa_trace_result hit; bool ok;
     if (shared.inline_model) {
         query.target.inline_model = true;
         query.target.model = qa_load_u32le(record.abi.bytes.data + 160);
-        ok = qa_collision_trace(geometry, &query, &hit, error);
+        ok = qa_collision_trace(geometry, scratch, &query, &hit, error);
     } else if (shared.server_flags & 1024)
-        ok = qa_collision_trace_q3_capsule(geometry, &query, shared.local_bounds, true, &hit, error);
+        ok = qa_collision_trace_q3_capsule(geometry, scratch, &query, shared.local_bounds, true, &hit, error);
     else ok = qa_collision_trace_q3_box(&query, shared.local_bounds, true, &hit, error);
     if (ok) *result = hit.start_solid || hit.all_solid;
     return ok;

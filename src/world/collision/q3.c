@@ -1,4 +1,5 @@
 #include "q3/shared.h"
+#include "qa/stamp.h"
 #include <float.h>
 #include <stdlib.h>
 
@@ -7,12 +8,10 @@ typedef struct q3_brush {
     qa_bsp_range sides;
     qa_bounds bounds;
     int32_t contents;
-    uint32_t visited;
 } q3_brush;
 typedef struct q3_patch_record {
     qa_q3_patch *collide;
     int32_t contents, flags;
-    uint32_t visited;
 } q3_patch_record;
 typedef struct q3_leaf { qa_bsp_range brushes, surfaces; } q3_leaf;
 typedef struct q3_model {
@@ -30,13 +29,20 @@ typedef struct q3_map {
     uint32_t *leaf_brushes, *leaf_surfaces;
     q3_model *models;
     size_t plane_count, side_count, brush_count, patch_count, node_count, leaf_count, model_count;
-    uint32_t generation;
+} q3_map;
+typedef struct q3_scratch {
+    qa_stamp_set visited;
     qa_collision_trace_frame *steps;
     int32_t *pending;
     q3_interval *intervals;
-} q3_map;
+} q3_scratch;
+typedef struct q3_model_scratch {
+    qa_stamp_set visited;
+    int32_t *pending;
+} q3_model_scratch;
 typedef struct q3_work {
-    q3_map *map;
+    const q3_map *map;
+    q3_scratch *scratch;
     const qa_trace_query *query;
     qa_trace_result result;
     qa_q3_shape shape;
@@ -69,14 +75,38 @@ static void q3_destroy(void *state) {
         qa_q3_patch_destroy(map->patches[i].collide);
     free(map->sides); free(map->brushes); free(map->patches);
     free(map->leaves); free(map->leaf_brushes); free(map->leaf_surfaces);
-    free(map->models); free(map->steps); free(map->pending); free(map->intervals); free(map);
+    free(map->models); free(map);
 }
 
-static void q3_next_generation(q3_map *map) {
-    if (++map->generation != 0) return;
-    for (size_t i = 0; i < map->brush_count; ++i) map->brushes[i].visited = 0;
-    for (size_t i = 0; i < map->patch_count; ++i) map->patches[i].visited = 0;
-    map->generation = 1;
+static void q3_destroy_scratch(void *state) {
+    q3_scratch *scratch = state;
+    if (scratch == NULL) return;
+    free(scratch->visited.marks); free(scratch->steps);
+    free(scratch->pending); free(scratch->intervals); free(scratch);
+}
+
+static void *q3_create_scratch(const void *state, qa_error *error) {
+    const q3_map *map = state;
+    if (map->brush_count > SIZE_MAX - map->patch_count || map->brush_count > SIZE_MAX / 2
+        || map->node_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q3 collision scratch count overflow");
+        return NULL;
+    }
+    q3_scratch *scratch = q3_alloc(1, sizeof(*scratch), error);
+    if (scratch == NULL) return NULL;
+    size_t count = map->brush_count + map->patch_count;
+    uint32_t *marks = q3_alloc(count, sizeof(*marks), error);
+    qa_stamp_set_init(&scratch->visited, marks, marks != NULL ? count : 0);
+    if (count != 0 && marks == NULL) goto fail;
+    scratch->steps = q3_alloc(map->node_count + 1, sizeof(*scratch->steps), error);
+    scratch->pending = q3_alloc(map->node_count + 1, sizeof(*scratch->pending), error);
+    scratch->intervals = q3_alloc(map->brush_count * 2, sizeof(*scratch->intervals), error);
+    if (scratch->steps == NULL || scratch->pending == NULL
+        || (map->brush_count != 0 && scratch->intervals == NULL)) goto fail;
+    return scratch;
+fail:
+    q3_destroy_scratch(scratch);
+    return NULL;
 }
 
 static unsigned q3_box_side(qa_bounds bounds, qa_collision_plane plane) {
@@ -98,19 +128,19 @@ static unsigned q3_box_side(qa_bounds bounds, qa_collision_plane plane) {
 }
 
 typedef bool (*q3_leaf_visit)(void *, uint32_t);
-static void q3_visit_box(q3_map *map, qa_bounds bounds, q3_leaf_visit visit, void *context) {
+static void q3_visit_box(const q3_map *map, q3_scratch *scratch, qa_bounds bounds, q3_leaf_visit visit, void *context) {
     size_t count = 0;
-    map->pending[count++] = map->node_count != 0 ? 0 : -1;
+    scratch->pending[count++] = map->node_count != 0 ? 0 : -1;
     while (count != 0) {
-        int32_t index = map->pending[--count];
+        int32_t index = scratch->pending[--count];
         if (index < 0) {
             if (!visit(context, (uint32_t)(-1 - index))) return;
             continue;
         }
         const qa_collision_node *node = &map->nodes[index];
         unsigned side = q3_box_side(bounds, map->planes[node->plane]);
-        if (side != 1) map->pending[count++] = node->children[1];
-        if (side != 2) map->pending[count++] = node->children[0];
+        if (side != 1) scratch->pending[count++] = node->children[1];
+        if (side != 2) scratch->pending[count++] = node->children[0];
     }
 }
 
@@ -122,10 +152,9 @@ static qa_collision_side_distances q3_brush_distances(void *context, size_t inde
 }
 
 static void q3_trace_brush(q3_work *work, uint32_t index) {
-    q3_map *map = work->map;
-    q3_brush *brush = &map->brushes[index];
-    if (brush->visited == map->generation) return;
-    brush->visited = map->generation;
+    const q3_map *map = work->map;
+    const q3_brush *brush = &map->brushes[index];
+    if (!qa_stamp_set_mark(&work->scratch->visited, index)) return;
     if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
     if (work->stationary && !qa_bounds_overlap(work->position_bounds, brush->bounds)) return;
     uint32_t skipped = work->stationary && brush->sides.count >= 6 ? 6u : 0u;
@@ -143,9 +172,9 @@ static void q3_trace_brush(q3_work *work, uint32_t index) {
 }
 
 static void q3_trace_patch(q3_work *work, uint32_t index) {
-    q3_patch_record *patch = &work->map->patches[index];
-    if (patch->collide == NULL || patch->visited == work->map->generation) return;
-    patch->visited = work->map->generation;
+    const q3_patch_record *patch = &work->map->patches[index];
+    if (patch->collide == NULL
+        || !qa_stamp_set_mark(&work->scratch->visited, work->map->brush_count + index)) return;
     if (((uint32_t)patch->contents & work->mask) == 0) return;
     qa_q3_shape shape = work->shape;
     if (work->stationary) {
@@ -196,9 +225,9 @@ static void q3_tree_leaf(void *context, uint32_t leaf) {
 }
 
 static void q3_trace_tree(q3_work *work) {
-    q3_map *map = work->map;
+    const q3_map *map = work->map;
     const qa_collision_tree_trace trace = {
-        map->planes, map->nodes, map->steps, work->start, work->end,
+        map->planes, map->nodes, work->scratch->steps, work->start, work->end,
         work->rules.tree, &work->result, work, q3_tree_extent, q3_tree_leaf};
     qa_collision_trace_tree(&trace, map->node_count != 0 ? 0 : -1);
 }
@@ -234,10 +263,9 @@ static bool q3_uncovered(q3_interval interval, const q3_interval *parts, size_t 
 typedef struct q3_media_work { q3_work *trace; size_t solid_count, liquid_count; } q3_media_work;
 static void q3_media_brush(q3_media_work *media, uint32_t index) {
     q3_work *trace = media->trace;
-    q3_map *map = trace->map;
-    q3_brush *brush = &map->brushes[index];
-    if (brush->visited == map->generation) return;
-    brush->visited = map->generation;
+    const q3_map *map = trace->map;
+    const q3_brush *brush = &map->brushes[index];
+    if (!qa_stamp_set_mark(&trace->scratch->visited, index)) return;
     int32_t contents = qa_collision_convert_contents(brush->contents, QA_COLLISION_Q3, QA_COLLISION_Q1);
     if (contents == -1 || brush->sides.count == 0) return;
     q3_interval interval = {0, trace->result.fraction};
@@ -252,13 +280,13 @@ static void q3_media_brush(q3_media_work *media, uint32_t index) {
         else interval.last = fminf(interval.last, crossing);
         if (interval.first > interval.last) return;
     }
-    if (contents == -2) map->intervals[media->solid_count++] = interval;
-    else map->intervals[map->brush_count + media->liquid_count++] = interval;
+    if (contents == -2) trace->scratch->intervals[media->solid_count++] = interval;
+    else trace->scratch->intervals[map->brush_count + media->liquid_count++] = interval;
 }
 
 static bool q3_media_leaf(void *context, uint32_t index) {
     q3_media_work *media = context;
-    q3_map *map = media->trace->map;
+    const q3_map *map = media->trace->map;
     const q3_leaf *leaf = &map->leaves[index];
     for (uint32_t i = 0; i < leaf->brushes.count; ++i)
         q3_media_brush(media, map->leaf_brushes[leaf->brushes.first + i]);
@@ -266,9 +294,10 @@ static bool q3_media_leaf(void *context, uint32_t index) {
 }
 
 static void q3_trace_media(q3_work *work, uint32_t model) {
-    q3_map *map = work->map;
+    const q3_map *map = work->map;
+    q3_scratch *scratch = work->scratch;
     q3_media_work media = {work, 0, 0};
-    q3_next_generation(map);
+    qa_stamp_set_begin(&scratch->visited);
     if (model != 0) {
         const q3_model *members = &map->models[model];
         for (size_t i = 0; i < members->brush_count; ++i) q3_media_brush(&media, members->brushes[i]);
@@ -277,20 +306,20 @@ static void q3_trace_media(q3_work *work, uint32_t model) {
         qa_bounds envelope = qa_bounds_union(q3_shape_bounds(&work->shape, work->start), q3_shape_bounds(&work->shape, reached));
         envelope.mins = qa_vec_sub(envelope.mins, qa_v3(1, 1, 1));
         envelope.maxs = qa_vec_add(envelope.maxs, qa_v3(1, 1, 1));
-        q3_visit_box(map, envelope, q3_media_leaf, &media);
+        q3_visit_box(map, scratch, envelope, q3_media_leaf, &media);
     }
-    if (media.solid_count > 1) qsort(map->intervals, media.solid_count, sizeof(*map->intervals), q3_compare_interval);
+    if (media.solid_count > 1) qsort(scratch->intervals, media.solid_count, sizeof(*scratch->intervals), q3_compare_interval);
     work->result.in_water = false;
     for (size_t i = 0; i < media.liquid_count; ++i)
-        if (q3_uncovered(map->intervals[map->brush_count + i], map->intervals, media.solid_count)) {
+        if (q3_uncovered(scratch->intervals[map->brush_count + i], scratch->intervals, media.solid_count)) {
             work->result.in_water = true; break;
         }
     if (media.liquid_count != 0)
-        memmove(map->intervals + media.solid_count, map->intervals + map->brush_count,
-                media.liquid_count * sizeof(*map->intervals));
+        memmove(scratch->intervals + media.solid_count, scratch->intervals + map->brush_count,
+                media.liquid_count * sizeof(*scratch->intervals));
     size_t count = media.solid_count + media.liquid_count;
-    if (count > 1) qsort(map->intervals, count, sizeof(*map->intervals), q3_compare_interval);
-    work->result.in_open = q3_uncovered((q3_interval){0, work->result.fraction}, map->intervals, count);
+    if (count > 1) qsort(scratch->intervals, count, sizeof(*scratch->intervals), q3_compare_interval);
+    work->result.in_open = q3_uncovered((q3_interval){0, work->result.fraction}, scratch->intervals, count);
 }
 
 static void q3_trace_model(q3_work *work, uint32_t model) {
@@ -301,36 +330,38 @@ static void q3_trace_model(q3_work *work, uint32_t model) {
         q3_trace_patch(work, members->surfaces[i]);
 }
 
-bool qa_q3_trace_capsule_replacement(void *state, const qa_trace_query *query,
+bool qa_q3_trace_capsule_replacement(const void *state, void *scratch_state, const qa_trace_query *query,
                                      qa_vec3 start, qa_vec3 end, qa_q3_shape shape,
                                      qa_bounds position_bounds, bool stationary,
                                      bool point_trace, qa_trace_result *out, qa_error *error) {
-    q3_map *map = state;
+    const q3_map *map = state;
+    q3_scratch *scratch = scratch_state;
     if (map == NULL || map->model_count <= 255) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 255, "Q3 capsule replacement model is absent");
         return false;
     }
-    q3_work work = {.map = map, .query = query,
+    q3_work work = {.map = map, .scratch = scratch, .query = query,
         .rules = qa_collision_rules(&query->policy),
         .result = qa_collision_empty_trace(query, QA_COLLISION_Q3),
         .shape = shape, .start = start, .end = end, .position_bounds = position_bounds,
         .mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3),
         .stationary = stationary, .point_trace = point_trace,
         .curves = query->policy.curves, .player_curves = query->policy.player_curve_clip};
-    q3_next_generation(map);
+    qa_stamp_set_begin(&scratch->visited);
     q3_trace_model(&work, 255);
     *out = work.result;
     return true;
 }
 
-bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t model,
+bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_trace_query *query, uint32_t model,
                                bool transformed, qa_trace_result *out, qa_error *error) {
-    q3_map *map = state;
+    const q3_map *map = state;
+    q3_scratch *scratch = scratch_state;
     if (model >= map->model_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, model, "Q3 collision model index is out of range"); return false;
     }
     q3_work work = {0};
-    work.map = map; work.query = query;
+    work.map = map; work.scratch = scratch; work.query = query;
     work.rules = qa_collision_rules(&query->policy);
     work.result = qa_collision_empty_trace(query, QA_COLLISION_Q3);
     work.result.model = model;
@@ -357,14 +388,14 @@ bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t
     work.mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
     work.curves = query->policy.curves;
     work.player_curves = query->policy.player_curve_clip;
-    q3_next_generation(map);
+    qa_stamp_set_begin(&scratch->visited);
     if (model != 0) {
         q3_trace_model(&work, model);
     } else if (work.stationary) {
         qa_bounds bounds = {qa_vec_sub(qa_vec_add(work.start, work.shape.mins), qa_v3(1, 1, 1)),
                             qa_vec_add(qa_vec_add(work.start, work.shape.extents), qa_v3(1, 1, 1))};
         q3_position_visit visit = {&work, 0};
-        q3_visit_box(map, bounds, q3_position_leaf, &visit);
+        q3_visit_box(map, scratch, bounds, q3_position_leaf, &visit);
     } else q3_trace_tree(&work);
     if (query->policy.family == QA_COLLISION_Q1) q3_trace_media(&work, model);
     if (rotated && work.result.fraction != 1)
@@ -374,8 +405,8 @@ bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t
     return true;
 }
 
-static bool q3_trace(void *state, const qa_trace_query *query, qa_trace_result *out, qa_error *error) {
-    return qa_q3_trace_model_source(state, query,
+static bool q3_trace(const void *state, void *scratch, const qa_trace_query *query, qa_trace_result *out, qa_error *error) {
+    return qa_q3_trace_model_source(state, scratch, query,
         query->target.inline_model ? query->target.model : 0,
         query->target.inline_model, out, error);
 }
@@ -389,7 +420,8 @@ static int32_t q3_brush_point(const q3_map *map, uint32_t index, qa_vec3 point) 
     return brush->contents;
 }
 
-static bool q3_point_contents(void *state, const qa_point_query *query, qa_point_contents *out, qa_error *error) {
+static bool q3_point_contents(const void *state, void *scratch, const qa_point_query *query, qa_point_contents *out, qa_error *error) {
+    (void)scratch;
     const q3_map *map = state;
     uint32_t model = query->target.inline_model ? query->target.model : 0;
     if (model >= map->model_count) {
@@ -434,7 +466,8 @@ static bool q3_load_indices(const qa_bsp_view *bsp, qa_bsp_lump_kind kind, uint3
     return true;
 }
 
-static bool q3_load_model(q3_map *map, const qa_bsp_model *source, q3_model *model, qa_error *error) {
+static bool q3_load_model(const q3_map *map, const qa_bsp_model *source, q3_model *model,
+                          q3_model_scratch *scratch, qa_error *error) {
     if (!source->membership_from_tree) {
         model->brush_count = source->brushes.count; model->surface_count = source->faces.count;
         model->brushes = q3_alloc(model->brush_count, sizeof(*model->brushes), error);
@@ -444,40 +477,39 @@ static bool q3_load_model(q3_map *map, const qa_bsp_model *source, q3_model *mod
         for (size_t i = 0; i < model->surface_count; ++i) model->surfaces[i] = source->faces.first + (uint32_t)i;
         return true;
     }
-    uint8_t *nodes = q3_alloc(map->node_count, 1, error);
-    if (map->node_count != 0 && nodes == NULL) return false;
-    q3_next_generation(map);
+    qa_stamp_set_begin(&scratch->visited);
     size_t count = 0;
-    map->pending[count++] = source->headnodes[0];
+    scratch->pending[count++] = source->headnodes[0];
     while (count != 0) {
-        int32_t index = map->pending[--count];
+        int32_t index = scratch->pending[--count];
         if (index >= 0) {
-            if (nodes[index] != 0) continue;
-            nodes[index] = 1;
-            map->pending[count++] = map->nodes[index].children[1];
-            map->pending[count++] = map->nodes[index].children[0];
+            if (!qa_stamp_set_mark(&scratch->visited, map->brush_count + map->patch_count + (size_t)index)) continue;
+            scratch->pending[count++] = map->nodes[index].children[1];
+            scratch->pending[count++] = map->nodes[index].children[0];
         } else {
             const q3_leaf *leaf = &map->leaves[-1 - index];
             for (uint32_t i = 0; i < leaf->brushes.count; ++i)
-                map->brushes[map->leaf_brushes[leaf->brushes.first + i]].visited = map->generation;
+                (void)qa_stamp_set_mark(&scratch->visited, map->leaf_brushes[leaf->brushes.first + i]);
             for (uint32_t i = 0; i < leaf->surfaces.count; ++i)
-                map->patches[map->leaf_surfaces[leaf->surfaces.first + i]].visited = map->generation;
+                (void)qa_stamp_set_mark(&scratch->visited, map->brush_count + map->leaf_surfaces[leaf->surfaces.first + i]);
         }
     }
-    free(nodes);
-    for (size_t i = 0; i < map->brush_count; ++i) if (map->brushes[i].visited == map->generation) ++model->brush_count;
-    for (size_t i = 0; i < map->patch_count; ++i) if (map->patches[i].visited == map->generation) ++model->surface_count;
+    for (size_t i = 0; i < map->brush_count; ++i) if (qa_stamp_set_test(&scratch->visited, i)) ++model->brush_count;
+    for (size_t i = 0; i < map->patch_count; ++i) if (qa_stamp_set_test(&scratch->visited, map->brush_count + i)) ++model->surface_count;
     model->brushes = q3_alloc(model->brush_count, sizeof(*model->brushes), error);
     model->surfaces = q3_alloc(model->surface_count, sizeof(*model->surfaces), error);
     if ((model->brush_count != 0 && model->brushes == NULL) || (model->surface_count != 0 && model->surfaces == NULL)) return false;
     size_t brush = 0, surface = 0;
-    for (size_t i = 0; i < map->brush_count; ++i) if (map->brushes[i].visited == map->generation) model->brushes[brush++] = (uint32_t)i;
-    for (size_t i = 0; i < map->patch_count; ++i) if (map->patches[i].visited == map->generation) model->surfaces[surface++] = (uint32_t)i;
+    for (size_t i = 0; i < map->brush_count; ++i) if (qa_stamp_set_test(&scratch->visited, i)) model->brushes[brush++] = (uint32_t)i;
+    for (size_t i = 0; i < map->patch_count; ++i) if (qa_stamp_set_test(&scratch->visited, map->brush_count + i)) model->surfaces[surface++] = (uint32_t)i;
     return true;
 }
 
 bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology *topology, qa_collision_kernel *out, qa_error *error) {
-    static const qa_collision_ops ops = {q3_destroy, q3_trace, q3_point_contents};
+    static const qa_collision_ops ops = {
+        .destroy = q3_destroy, .trace = q3_trace, .point_contents = q3_point_contents,
+        .create_scratch = q3_create_scratch, .destroy_scratch = q3_destroy_scratch};
+    q3_model_scratch load = {0};
     q3_map *map = q3_alloc(1, sizeof(*map), error);
     if (map == NULL) return false;
     map->planes = topology->planes;
@@ -496,10 +528,7 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology 
     Q3_ALLOC(sides, map->side_count);
     Q3_ALLOC(brushes, map->brush_count); Q3_ALLOC(patches, map->patch_count);
     Q3_ALLOC(leaves, map->leaf_count);
-    Q3_ALLOC(models, map->model_count); Q3_ALLOC(steps, map->node_count + 1);
-    Q3_ALLOC(pending, map->node_count + 1);
-    if (map->brush_count > SIZE_MAX / 2) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Q3 media interval count overflow"); goto fail; }
-    Q3_ALLOC(intervals, map->brush_count * 2);
+    Q3_ALLOC(models, map->model_count);
 #undef Q3_ALLOC
     if (!q3_load_indices(bsp, QA_BSP_LEAF_BRUSHES, &map->leaf_brushes, error)
         || !q3_load_indices(bsp, QA_BSP_LEAF_FACES, &map->leaf_surfaces, error)) goto fail;
@@ -538,10 +567,24 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology 
         if (!qa_bsp_read_leaf(bsp, i, &leaf, error)) goto fail;
         map->leaves[i] = (q3_leaf){leaf.brushes, leaf.faces};
     }
+    if (bsp->format == QA_BSP_IBSP44) {
+        if (map->brush_count > SIZE_MAX - map->patch_count
+            || map->brush_count + map->patch_count > SIZE_MAX - map->node_count
+            || map->node_count == SIZE_MAX) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Q3 model membership scratch count overflow"); goto fail;
+        }
+        size_t count = map->brush_count + map->patch_count + map->node_count;
+        uint32_t *marks = q3_alloc(count, sizeof(*marks), error);
+        qa_stamp_set_init(&load.visited, marks, marks != NULL ? count : 0);
+        load.pending = q3_alloc(map->node_count + 1, sizeof(*load.pending), error);
+        if ((count != 0 && marks == NULL) || load.pending == NULL) goto fail;
+    }
     for (size_t i = 0; i < map->model_count; ++i) {
         qa_bsp_model model;
-        if (!qa_bsp_read_model(bsp, i, &model, error) || !q3_load_model(map, &model, &map->models[i], error)) goto fail;
+        if (!qa_bsp_read_model(bsp, i, &model, error) || !q3_load_model(map, &model, &map->models[i], &load, error)) goto fail;
     }
+    free(load.visited.marks); free(load.pending);
+    load = (q3_model_scratch){0};
     for (size_t i = 0; i < map->patch_count; ++i) {
         qa_bsp_surface surface;
         if (!qa_bsp_read_surface(bsp, i, &surface, error)) goto fail;
@@ -571,6 +614,7 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology 
     *out = (qa_collision_kernel){map, &ops};
     return true;
 fail:
+    free(load.visited.marks); free(load.pending);
     q3_destroy(map);
     return false;
 }

@@ -2,6 +2,7 @@
 #define QA_SCENE_WORLD_INTERNAL_H
 
 #include "qa/material.h"
+#include "qa/stamp.h"
 
 typedef struct qaw_legacy qaw_legacy;
 typedef struct qaw_patch qaw_patch;
@@ -51,6 +52,20 @@ typedef struct qaw_visibility_cache {
     size_t area_limit, area_capacity;
 } qaw_visibility_cache;
 
+struct qa_scene_world_scratch {
+    qa_stamp_set pvs_nodes, source_vis, surfaces;
+    uint32_t *visible_surfaces, *surface_lights;
+    size_t visible_count;
+    qaw_pending *pending;
+    uint8_t *pvs, *secondary_pvs;
+    size_t pvs_size;
+    int32_t pvs_selector, pvs_secondary, source_view_cluster;
+    bool pvs_cached, pvs_all, pvs_nodes_cached;
+    uint8_t source_area_mask[32];
+    bool source_area_mask_modified;
+    qaw_visibility_cache visible_cache;
+};
+
 struct qa_scene_world {
     const qa_resource *source_resource;
     size_t references;
@@ -77,7 +92,6 @@ struct qa_scene_world {
     qa_vec3 grid_size;
     uint64_t identity, revision;
     void *legacy_data, *q3_data;
-    uint32_t *surface_marks, *visible_surfaces, *surface_lights;
     uint64_t *admitted_surfaces;
     uint64_t admission_generation;
     qaw_admission_change *admission_changes;
@@ -85,20 +99,8 @@ struct qa_scene_world {
     const qa_scene_frame *admission_frame;
     uint64_t admission_sequence;
     size_t admission_view;
-    uint32_t visibility_generation;
-    size_t visible_count;
-    qaw_pending *pending;
-    size_t pending_capacity;
-    uint8_t *pvs, *secondary_pvs;
-    size_t pvs_capacity, pvs_size;
-    int32_t pvs_selector, pvs_secondary;
-    bool pvs_cached, pvs_all;
-    uint32_t *source_leaf_marks;
+    size_t pvs_capacity, visibility_area_limit, visibility_area_capacity;
     uint32_t *source_dlight_masks;
-    uint32_t source_vis_generation;
-    int32_t source_view_cluster;
-    uint8_t source_area_mask[32];
-    bool source_area_mask_modified;
     uint32_t cluster_count;
     bool sky_drawn;
     bool checkpoint_active;
@@ -107,11 +109,6 @@ struct qa_scene_world {
     qa_scene_world_image_policy *image_policy;
     uint32_t *visibility_parent_heads;
     qaw_visibility_parent *visibility_parents;
-    uint32_t *pvs_node_marks, *source_node_marks;
-    uint32_t pvs_node_generation;
-    bool pvs_nodes_cached;
-    /* Borrows this world's current visible arrays and surface marks. */
-    qaw_visibility_cache visible_cache;
 };
 
 struct qa_scene_source_world_view {

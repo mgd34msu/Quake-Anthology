@@ -77,6 +77,7 @@ struct qa_q3_host_collision_scene {
     qa_q3_host *host;
     const q3_collision_binding *binding;
     qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
     unsigned readers;
 };
 
@@ -214,6 +215,8 @@ bool qa_q3_host_collision_hold(qa_q3_host *host, qa_q3_host_collision_scene **ou
     if (!scene) return q3_fail(error, QA_ERROR_MEMORY, 0, "Holding actual CG collision module");
     scene->host = host; scene->binding = host->collision_scene;
     scene->geometry = host->options.collision.geometry(host->options.collision.context);
+    scene->scratch = host->options.collision.trace_scratch ?
+        host->options.collision.trace_scratch(host->options.collision.context,scene->geometry) : NULL;
     if (!qa_collision_retain(scene->geometry, error)) { free(scene); return false; }
     ++host->collision_holds;
     if (!binding_current(scene, error)) {
@@ -386,7 +389,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
     q.target = (qa_collision_target){0};
     q.policy.contents_mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
     q.policy.family = QA_COLLISION_Q3;
-    if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, &q, 0, false, &result, error);
+    if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, scene->scratch, &q, 0, false, &result, error);
     result.hit = result.fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
     result.actor = (qa_actor_id){0};
     for (size_t i = 0; ok && i < cached.view.solid_count; ++i) {
@@ -404,7 +407,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
             ok = qa_trajectory_position(&trajectory, cached.view.physics_time,
                 scene->binding->profile.trajectory_gravity, &q.target.origin, error);
             q.target.angles = row->angles;
-            if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, &q,
+            if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, scene->scratch, &q,
                 (uint32_t)row->state.modelindex, true, &hit, error);
         } else {
             int32_t x = row->state.solid & 255, down = (row->state.solid >> 8) & 255;
@@ -448,7 +451,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
     if (ok && !cached.view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_point_query q = *query;
     q.target = (qa_collision_target){0}; q.policy.family = QA_COLLISION_Q3;
-    if (ok) ok = qa_collision_point_contents(cached.view.geometry, &q, &result, error);
+    if (ok) ok = qa_collision_point_contents(cached.view.geometry, scene->scratch, &q, &result, error);
     for (size_t i = 0; ok && i < cached.view.solid_count; ++i) {
         const collision_row *row = cached.rows + i;
         bool ignored;
@@ -459,7 +462,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
             qa_v3(row->state.origin[0], row->state.origin[1], row->state.origin[2]),
             qa_v3(row->state.angles[0], row->state.angles[1], row->state.angles[2])};
         qa_point_contents hit;
-        ok = qa_collision_point_contents(cached.view.geometry, &q, &hit, error);
+        ok = qa_collision_point_contents(cached.view.geometry, scene->scratch, &q, &hit, error);
         if (ok) { result.contents |= hit.contents; result.stored |= hit.stored; result.merged |= hit.merged; }
     }
     if (ok) ok = unchanged(scene, &cached, error);

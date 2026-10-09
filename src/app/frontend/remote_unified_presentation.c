@@ -1399,6 +1399,11 @@ bool frontend_remote_unified_presentation_trace(const frontend_remote_unified *r
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified trace awaits a returned authoritative prediction scene");
     return frontend_remote_unified_prediction_trace(p->prediction,query,out,error);
 }
+qa_trace_scratch *frontend_remote_unified_presentation_trace_scratch(const frontend_remote_unified *replica)
+{
+    const unified_presentation *p=replica?replica->options.consumers.context:NULL;
+    return p?frontend_remote_unified_prediction_scratch(p->prediction):NULL;
+}
 bool frontend_remote_unified_presentation_body(const frontend_remote_unified *replica,
     qa_actor_id actor,qa_body_state *out,qa_error *error)
 {

@@ -2,6 +2,7 @@
 #define QA_BOT_MOVEMENT_INTERNAL_H
 #include "qa/bot_movement_source.h"
 #include "qa/bots_allocator.h"
+#include "qa/stamp.h"
 #include <setjmp.h>
 #include <limits.h>
 #include <math.h>
@@ -78,9 +79,7 @@ struct qa_bot_moves {
     qa_nav_workspace *workspace;
     qa_vec3 *points;
     size_t point_count, point_capacity;
-    uint32_t *visited;
-    uint32_t visit_generation;
-    size_t visited_capacity;
+    qa_stamp_set visited;
 };
 typedef struct bot_travel {
     qa_bot_moves *moves;

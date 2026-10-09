@@ -16,6 +16,7 @@ typedef struct qa_q3_prediction_scene_collision {
     void *context;
     bool (*actor_at)(void *, uint32_t number, qa_actor_id *, bool *, qa_error *);
     bool (*number_of)(void *, qa_actor_id, uint32_t *, bool *, qa_error *);
+    qa_trace_scratch *scratch;
 } qa_q3_prediction_scene_collision;
 typedef struct qa_q3_prediction_scene_entity_view {
     const qa_q3_entity *entity;
@@ -59,7 +60,7 @@ bool qa_q3_prediction_scene_entity_current(const qa_q3_prediction_scene *, const
 bool qa_q3_prediction_scene_adjust_mover(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     qa_vec3 origin, int32_t mover, int32_t from_time, int32_t to_time, qa_vec3 *, qa_error *);
 bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
-    qa_collision_geometry *, const qa_q3_prediction_scene_entity_view *, qa_vec3 origin, qa_bounds,
+    qa_collision_geometry *, qa_trace_scratch *, const qa_q3_prediction_scene_entity_view *, qa_vec3 origin, qa_bounds,
     bool *, qa_error *);
 bool qa_q3_prediction_scene_item_position(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     const qa_q3_prediction_scene_entity_view *, qa_vec3 *, qa_error *);

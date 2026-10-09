@@ -519,6 +519,7 @@ static void donor_check_client(void)
 
 typedef struct movement_fixture {
     qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
     qa_movement_result *output;
     qa_movement_state *borrowed;
     bool fail_after_contact;
@@ -528,14 +529,14 @@ static bool movement_trace(void *context, const qa_trace_query *query,
     qa_trace_result *result, qa_error *error)
 {
     return qa_collision_trace(((movement_fixture *)context)->geometry,
-        query, result, error);
+        ((movement_fixture *)context)->scratch, query, result, error);
 }
 
 static bool movement_contents(void *context, const qa_point_query *query,
     qa_point_contents *result, qa_error *error)
 {
     return qa_collision_point_contents(((movement_fixture *)context)->geometry,
-        query, result, error);
+        ((movement_fixture *)context)->scratch, query, result, error);
 }
 
 static qa_movement_control movement_phase(void *context, qa_movement_phase phase,
@@ -558,6 +559,7 @@ static void movement_output_owner(void)
     gameplay_map map;
     gameplay_map_create(&map);
     movement_fixture fixture = {.geometry = map.geometry};
+    GAME_CHECK(qa_trace_scratch_create(map.geometry,&fixture.scratch,&error));
     qa_movement_services services = {.context = &fixture,
         .trace = movement_trace, .point_contents = movement_contents,
         .phase = movement_phase};
@@ -599,6 +601,7 @@ static void movement_output_owner(void)
     GAME_CHECK(output.contacts != NULL && output.contact_capacity > 0);
     GAME_CHECK(output.contact_count == 0);
     qa_movement_result_free(&output);
+    qa_trace_scratch_destroy(fixture.scratch);
     qa_collision_destroy(map.geometry);
 }
 
@@ -720,6 +723,7 @@ static void retained_external_brush(void)
     qa_collision_destroy(external.geometry);
     external.geometry = replacement;
     model_entries[1].geometry = replacement;
+    GAME_CHECK(qa_world_prepare_trace_geometry(world,replacement,&error));
     GAME_CHECK(qa_world_checkpoint_restore(world, &checkpoint, NULL, NULL, &error));
     for (qa_collision_family family = QA_COLLISION_Q1; family <= QA_COLLISION_Q3; ++family) {
         qa_trace_query query = {.start = {0, 0, 200}, .end = {0, 0, 160},

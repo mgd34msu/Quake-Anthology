@@ -27,7 +27,7 @@ static bool temp_box(qa_q3_host *host, qa_bounds bounds, bool capsule, qa_error 
     return true;
 }
 
-static bool point(q3_call *call, qa_collision_geometry *geometry, bool nodes,
+static bool point(q3_call *call, qa_collision_geometry *geometry, qa_trace_scratch *scratch, bool nodes,
                      bool transformed, int32_t *result, qa_error *error)
 {
     if (!transformed && !nodes) { *result = 0; return true; }
@@ -54,11 +54,11 @@ static bool point(q3_call *call, qa_collision_geometry *geometry, bool nodes,
     query.target.inline_model = transformed || handle != 0;
     query.target.model = (uint32_t)handle;
     qa_point_contents contents;
-    if (!qa_collision_point_contents(geometry, &query, &contents, error)) return false;
+    if (!qa_collision_point_contents(geometry, scratch, &query, &contents, error)) return false;
     *result = contents.contents; return true;
 }
 
-static bool trace(q3_call *call, qa_collision_geometry *geometry, bool nodes,
+static bool trace(q3_call *call, qa_collision_geometry *geometry, qa_trace_scratch *scratch, bool nodes,
                      bool transformed, bool capsule, qa_error *error)
 {
     q3_record output;
@@ -98,11 +98,11 @@ static bool trace(q3_call *call, qa_collision_geometry *geometry, bool nodes,
             }
             if (!temp_box(call->host, moving, false, error)) return false;
         }
-        if (!qa_collision_trace_q3_capsule(geometry, &query, bounds, transformed, &result, error)) return false;
+        if (!qa_collision_trace_q3_capsule(geometry, scratch, &query, bounds, transformed, &result, error)) return false;
     } else if (temporary) {
         if (!qa_collision_trace_q3_box(&query, call->host->clip_brush,
                                         transformed, &result, error)) return false;
-    } else if (!qa_collision_trace_q3_model(geometry, &query, (uint32_t)handle,
+    } else if (!qa_collision_trace_q3_model(geometry, scratch, &query, (uint32_t)handle,
                                             transformed, &result, error)) return false;
     return qa_q3_abi_write_trace(&output.abi, 0, &result, 0, error);
 }
@@ -138,6 +138,8 @@ q3_service_result q3_client_collision(q3_call *call, int32_t *result, qa_error *
         }
         *result = model; return Q3_COMPLETED;
     }
+    qa_trace_scratch *scratch = services->trace_scratch ?
+        services->trace_scratch(services->context, geometry) : NULL;
     bool ok;
     if (service == 22 || service == 82) {
         qa_bounds bounds;
@@ -146,8 +148,8 @@ q3_service_result q3_client_collision(q3_call *call, int32_t *result, qa_error *
              temp_box(call->host, bounds, service == 82, error);
         *result = service == 82 ? CAPSULE_HANDLE : BOX_HANDLE;
     } else if (service == 23 || service == 24)
-        ok = point(call, geometry, nodes, service == 24, result, error);
-    else ok = trace(call, geometry, nodes, service == 26 || service == 84,
+        ok = point(call, geometry, scratch, nodes, service == 24, result, error);
+    else ok = trace(call, geometry, scratch, nodes, service == 26 || service == 84,
                      service == 83 || service == 84, error);
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

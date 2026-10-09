@@ -8,6 +8,25 @@
 #include "qa/map_sidecars.h"
 #include "source_acoustics.h"
 
+bool frontend_world_scratch_create(const qa_scene_world *world, frontend_world_scratch *out, qa_error *error)
+{
+    frontend_world_scratch next = {0};
+    if (!qa_scene_world_scratch_create(world, &next.view, error) ||
+        !qa_scene_world_scratch_create(world, &next.child, error)) {
+        frontend_world_scratch_destroy(&next);
+        return false;
+    }
+    frontend_world_scratch_destroy(out);
+    *out = next;
+    return true;
+}
+void frontend_world_scratch_destroy(frontend_world_scratch *scratch)
+{
+    qa_scene_world_scratch_destroy(scratch->child);
+    qa_scene_world_scratch_destroy(scratch->view);
+    *scratch = (frontend_world_scratch){0};
+}
+
 struct frontend_root_resources {
     qa_frontend *frontend;
     qa_application *application;
@@ -17,6 +36,7 @@ struct frontend_root_resources {
     qa_media_library *media;
     frontend_material_movies *movies;
     qa_scene_world *world;
+    frontend_world_scratch scratch[4];
     qa_audio_bank *sounds;
     qa_resource *map;
     qa_map_sidecars *sidecars;
@@ -60,11 +80,12 @@ static bool dispose(frontend_root_resources **slot,qa_error *error)
     }
     if (!frontend_material_movies_destroy(&owner->movies,error)) return false;
     qa_media_library_destroy(owner->media); owner->media=NULL;
+    for (unsigned i=0;i<4;++i) frontend_world_scratch_destroy(owner->scratch+i);
     if (owner->installed) {
         if (f->root_resources!=owner || f->mounts!=owner->mounts ||
             f->images!=owner->images || f->materials!=owner->materials)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Root resources lost their actual installed destructor association");
-        qa_scene_world_destroy(f->scene_world); f->scene_world=NULL;
+        qa_scene_world_destroy(f->scene_world); f->scene_world=NULL; f->world_scratch=NULL;
         qa_audio_bank_destroy(f->sounds); f->sounds=NULL;
         qa_resource_release(f->map_resource); f->map_resource=NULL;
         free(f->map_name); f->map_name=NULL;
@@ -104,6 +125,14 @@ bool frontend_root_resources_prepare_restored(qa_frontend *f,qa_error *error)
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining imported root media provider");
     owner->frontend=f; owner->application=f->application; owner->mounts=f->mounts;
     owner->images=f->images; owner->materials=f->materials; owner->installed=true;
+    if (f->scene_world) {
+        for (unsigned i=0;i<f->options.seats;++i)
+            if (!frontend_world_scratch_create(f->scene_world,owner->scratch+i,error)) {
+                for (unsigned j=0;j<i;++j) frontend_world_scratch_destroy(owner->scratch+j);
+                free(owner); return false;
+            }
+        f->world_scratch=owner->scratch;
+    }
     const qa_map_sidecars *sidecars=qa_application_map_sidecars(f->application);
     if (sidecars) {
         owner->sidecars=(qa_map_sidecars *)sidecars; qa_map_sidecars_retain(owner->sidecars);
@@ -170,6 +199,8 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
         !qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&owner->world,error) ||
         !qa_scene_world_source_resource_bind(owner->world,owner->map,error) ||
         (f->audio && !qa_audio_bank_create(owner->mounts,&owner->sounds,error))) goto fail;
+    for (unsigned i=0;i<f->options.seats;++i)
+        if (!frontend_world_scratch_create(owner->world,owner->scratch+i,error)) goto fail;
     size_t length=strlen(map.name);
     owner->name=malloc(length+1);
     if (!owner->name) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining render map identity"); goto fail; }
@@ -184,6 +215,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     qa_material_library_destroy(f->materials); qa_scene_resources_destroy(f->images); qa_vfs_destroy(f->mounts);
     f->mounts=owner->mounts; f->images=owner->images; f->materials=owner->materials;
     f->scene_world=owner->world; f->sounds=owner->sounds; f->map_resource=owner->map; f->map_name=owner->name;
+    f->world_scratch=owner->scratch;
     f->configuration=configuration; f->map_revision=map.revision;
     owner->installed=true; f->root_resources=owner; f->root_resources_pending=NULL;
     return (!f->q1_sky || frontend_q1_sky_map(f->q1_sky,error)) &&

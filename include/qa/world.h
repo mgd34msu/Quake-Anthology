@@ -37,6 +37,9 @@ typedef enum qa_entity_pose {
     QA_ENTITY_CONTROL_POSE, QA_ENTITY_CLIP_POSE, QA_ENTITY_CONTENTS_POSE,
     QA_ENTITY_POSE_COUNT
 } qa_entity_pose;
+typedef enum qa_entity_body_components {
+    QA_ENTITY_BODY_SPATIAL, QA_ENTITY_BODY_ALL
+} qa_entity_body_components;
 typedef enum qa_entity_scalar_encoding {
     QA_ENTITY_NO_FIELD, QA_ENTITY_F32_LE, QA_ENTITY_I32_LE,
     QA_ENTITY_U32_LE, QA_ENTITY_U8, QA_ENTITY_U64_LE
@@ -89,7 +92,7 @@ typedef struct qa_entity_collision_fields {
  * bytes; it never enters a module, resolves names or observes OS mappings. */
 qa_entity_vector_field qa_entity_vector_bytes(const void *);
 bool qa_entity_body_read(const qa_entity_body_fields *, qa_entity_pose,
-                         qa_body_state *, qa_error *);
+                         qa_entity_body_components, qa_body_state *, qa_error *);
 bool qa_entity_collision_read(const qa_entity_collision_fields *, bool linking,
                               qa_actor_collision *, qa_error *);
 typedef struct qa_collision_binding {
@@ -128,8 +131,9 @@ bool qa_world_link_membership(qa_world *, qa_actor_id, const qa_bounds *,
 bool qa_world_q1_visible(qa_world *, qa_actor_id, const qa_bounds *, qa_bytes pvs,
     bool *, qa_error *);
 
-/* The session owns actors and geometry. World borrows both; destruction never
- * clears/releases the registry. Calls and callbacks have one thread owner.
+/* The session owns actors and the map geometry. Foreign model registration
+ * retains its geometry with the world's scratch. Destruction never clears
+ * or releases the registry. Calls and callbacks have one thread owner.
  * Callbacks may mutate actors/links; destroying the world within one is rejected. */
 bool qa_world_create(qa_actor_registry *, qa_collision_geometry *, const qa_world_hooks *, qa_world **, qa_error *);
 /* False for NULL or during a world callback/spatial visit. Geometry admissions
@@ -138,10 +142,14 @@ bool qa_world_idle(const qa_world *);
 bool qa_world_destroy(qa_world *, qa_error *);
 qa_actor_registry *qa_world_actors(qa_world *);
 qa_collision_geometry *qa_world_geometry(qa_world *);
+/* Prepare foreign brush models at load or model registration. Query access is
+ * a plain lookup and never creates scratch. The world owns its scratch. */
+bool qa_world_prepare_trace_geometry(qa_world *, qa_collision_geometry *, qa_error *);
+qa_trace_scratch *qa_world_trace_scratch(qa_world *, const qa_collision_geometry *);
 typedef struct qa_world_geometry_admission qa_world_geometry_admission;
 /* Geometry remains borrowed. Prepare leaves the current world untouched;
  * validate/commit require an empty registry and all body releases forwarded.
- * Commit preserves the world pointer, allocates/calls nothing, and consumes
+ * Commit preserves the world pointer, publishes prepared scratch without allocation, and consumes
  * success. Abort consumes a pending token. Close tokens before the world. */
 bool qa_world_prepare_geometry(qa_world *, qa_collision_geometry *, qa_world_geometry_admission **, qa_error *);
 bool qa_world_geometry_admission_validate(qa_world_geometry_admission *, qa_error *);

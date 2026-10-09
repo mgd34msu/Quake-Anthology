@@ -422,7 +422,7 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
     return true;
 }
 bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collision_geometry *geometry,
-    qa_vec3 eye, qa_vec3 aim_angles, qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
+    qa_trace_scratch *scratch, qa_vec3 eye, qa_vec3 aim_angles, qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
 {
     if (!settings || !geometry || !origin || !angles)
         return fail(error, "Q1 chase requires its actual world hull and view");
@@ -434,7 +434,7 @@ bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collis
         .shape={.kind=QA_SHAPE_POINT},.policy=qa_collision_default_policy(QA_COLLISION_Q1)};
     query.policy.q1_hull=0;
     qa_trace_result hit;
-    if (!qa_collision_trace(geometry, &query, &hit, error)) return false;
+    if (!qa_collision_trace(geometry, scratch, &query, &hit, error)) return false;
     qa_vec3 stop = qa_vec_sub(hit.end, eye);
     float distance = qa_vec_dot(stop, axes[0]);
     if (distance < 1) distance = 1;

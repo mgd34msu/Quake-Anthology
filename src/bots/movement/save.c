@@ -185,8 +185,8 @@ bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
         memcpy(m->slots,slots,(size_t)maximum*sizeof(*slots));
         memcpy(m->variables,variables,sizeof(variables));m->time=time;
         qa_nav_prediction_result_free(&m->prediction);qa_nav_route_free(&m->trajectory);
-        m->point_count=0;m->visit_generation=0;
-        if(m->visited) memset(m->visited,0,m->visited_capacity*sizeof(*m->visited));
+        m->point_count=0;
+        qa_stamp_set_init(&m->visited,m->visited.marks,m->visited.count);
     } else {
         slots_clear(slots,maximum);
         if(!e || e->code==QA_OK)
@@ -288,8 +288,8 @@ void bot_move_history_finish(bot_move_history_restore *plan,bool commit) {
         memcpy(m->slots,plan->state.slots,(size_t)m->maximum*sizeof(*m->slots));
         memcpy(m->variables,plan->state.variables,sizeof(m->variables));m->time=plan->state.time;
         qa_nav_prediction_result_free(&m->prediction);qa_nav_route_free(&m->trajectory);
-        m->point_count=0;m->visit_generation=0;
-        if(m->visited) memset(m->visited,0,m->visited_capacity*sizeof(*m->visited));
+        m->point_count=0;
+        qa_stamp_set_init(&m->visited,m->visited.marks,m->visited.count);
     } else slots_clear(plan->state.slots,plan->state.maximum);
     free(plan->state.slots);free(plan);
 }

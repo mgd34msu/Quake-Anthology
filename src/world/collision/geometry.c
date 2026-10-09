@@ -6,11 +6,13 @@
 #include <stdlib.h>
 
 typedef struct geometry_portal { uint32_t contributions; bool known, primary; } geometry_portal;
-typedef struct geometry_scratch {
+struct qa_trace_scratch {
+    const qa_collision_geometry *geometry;
+    const qa_collision_ops *ops;
+    void *kernel;
     int32_t *nodes;
-    uint32_t *leaf_stamps;
-    uint32_t stamp;
-} geometry_scratch;
+    qa_stamp_set leaves;
+};
 
 struct qa_collision_geometry {
     size_t references;
@@ -24,11 +26,11 @@ struct qa_collision_geometry {
     qa_bounds *model_bounds;
     size_t plane_count, node_count, leaf_count, model_count;
     int32_t root;
-    geometry_scratch *scratch;
 
     uint32_t cluster_count;
     size_t visibility_bytes, visibility_slots;
     uint8_t **pvs, **phs;
+    uint8_t *pvs_rows, *phs_rows;
 
     uint32_t area_count;
     uint32_t *flood, *area_stack, *area_pairs;
@@ -40,6 +42,8 @@ struct qa_collision_geometry {
     bool no_areas;
     uint64_t map_identity;
 };
+
+static bool load_visibility_rows(qa_collision_geometry *, qa_error *);
 
 static bool geometry_fail(qa_error *error, qa_status code, const char *message)
 {
@@ -57,6 +61,39 @@ static void *geometry_array(size_t count, size_t width, qa_error *error)
     void *array = calloc(count, width);
     if (array == NULL) geometry_fail(error, QA_ERROR_MEMORY, "Cannot allocate collision geometry table");
     return array;
+}
+
+bool qa_trace_scratch_create(const qa_collision_geometry *geometry,
+    qa_trace_scratch **out, qa_error *error)
+{
+    if (!geometry || !out)
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Trace scratch requires loaded geometry and output");
+    qa_trace_scratch *scratch = geometry_array(1, sizeof(*scratch), error);
+    if (!scratch) return false;
+    scratch->geometry = geometry;
+    scratch->ops = geometry->kernel.ops;
+    scratch->nodes = geometry_array(geometry->node_count + 1, sizeof(*scratch->nodes), error);
+    if (!scratch->nodes) goto failed;
+    size_t leaves = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count : 0;
+    uint32_t *marks = geometry_array(leaves, sizeof(*marks), error);
+    if (leaves && !marks) goto failed;
+    qa_stamp_set_init(&scratch->leaves, marks, leaves);
+    scratch->kernel = scratch->ops->create_scratch(geometry->kernel.state, error);
+    if (!scratch->kernel) goto failed;
+    *out = scratch;
+    return true;
+failed:
+    qa_trace_scratch_destroy(scratch);
+    return false;
+}
+
+void qa_trace_scratch_destroy(qa_trace_scratch *scratch)
+{
+    if (!scratch) return;
+    if (scratch->kernel) scratch->ops->destroy_scratch(scratch->kernel);
+    free(scratch->nodes);
+    free(scratch->leaves.marks);
+    free(scratch);
 }
 
 static size_t leaf_index(int32_t child)
@@ -119,21 +156,14 @@ void qa_collision_destroy(qa_collision_geometry *geometry)
     if (geometry == NULL) return;
     if (geometry->references > 1) { --geometry->references; return; }
     if (geometry->kernel.ops != NULL) geometry->kernel.ops->destroy(geometry->kernel.state);
-    if (geometry->pvs != NULL)
-        for (size_t i = 0; i < geometry->visibility_slots; ++i) free(geometry->pvs[i]);
-    if (geometry->phs != NULL)
-        for (size_t i = 0; i < geometry->visibility_slots; ++i) free(geometry->phs[i]);
+    free(geometry->pvs_rows);
+    free(geometry->phs_rows);
     free(geometry->pvs);
     free(geometry->phs);
     free(geometry->planes);
     free(geometry->nodes);
     free(geometry->leaves);
     free(geometry->model_bounds);
-    if (geometry->scratch != NULL) {
-        free(geometry->scratch->nodes);
-        free(geometry->scratch->leaf_stamps);
-        free(geometry->scratch);
-    }
     free(geometry->flood);
     free(geometry->area_stack);
     free(geometry->area_pairs);
@@ -184,9 +214,6 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
     GEOMETRY_ALLOC(nodes, geometry->node_count);
     GEOMETRY_ALLOC(leaves, geometry->leaf_count);
     GEOMETRY_ALLOC(model_bounds, geometry->model_count);
-    GEOMETRY_ALLOC(scratch, 1);
-    GEOMETRY_ALLOC(scratch->nodes, geometry->node_count + 1);
-    if (geometry->family == QA_COLLISION_Q1) GEOMETRY_ALLOC(scratch->leaf_stamps, geometry->leaf_count);
 #undef GEOMETRY_ALLOC
     for (size_t i = 0; i < geometry->plane_count; ++i) {
         qa_bsp_plane plane;
@@ -308,7 +335,7 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     bool created = geometry->family == QA_COLLISION_Q1 ? qa_q1_collision_create(bsp, &topology, &geometry->kernel, error)
         : geometry->family == QA_COLLISION_Q2 ? qa_q2_collision_create(bsp, &topology, &geometry->kernel, error)
         : qa_q3_collision_create(bsp, &topology, &geometry->kernel, error);
-    if (!created) goto fail;
+    if (!created || !load_visibility_rows(geometry, error)) goto fail;
     *out = geometry;
     return true;
 fail:
@@ -364,7 +391,7 @@ static bool valid_target(const qa_collision_geometry *geometry, const qa_collisi
         && qa_vec_finite(target->origin) && qa_vec_finite(target->angles));
 }
 
-bool qa_collision_trace(qa_collision_geometry *geometry, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
+bool qa_collision_trace(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
     if (geometry == NULL || query == NULL || out == NULL || !qa_vec_finite(query->start)
         || !qa_vec_finite(query->end) || !valid_policy(&query->policy) || !valid_target(geometry, &query->target)
@@ -376,26 +403,26 @@ bool qa_collision_trace(qa_collision_geometry *geometry, const qa_trace_query *q
         && local.shape.bounds.mins.z == 0 && local.shape.bounds.maxs.x == 0 && local.shape.bounds.maxs.y == 0
         && local.shape.bounds.maxs.z == 0) local.shape.kind = QA_SHAPE_POINT;
     qa_trace_result result;
-    if (!geometry->kernel.ops->trace(geometry->kernel.state, &local, &result, error)) return false;
+    if (!geometry->kernel.ops->trace(geometry->kernel.state, scratch->kernel, &local, &result, error)) return false;
     qa_collision_adapt_trace(&result, &local.policy);
     *out = result;
     return true;
 }
 
-bool qa_collision_point_contents(qa_collision_geometry *geometry, const qa_point_query *query, qa_point_contents *out, qa_error *error)
+bool qa_collision_point_contents(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, const qa_point_query *query, qa_point_contents *out, qa_error *error)
 {
     if (geometry == NULL || query == NULL || out == NULL || !qa_vec_finite(query->point)
         || !valid_policy(&query->policy) || !valid_target(geometry, &query->target))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid geometry point-contents query");
     qa_point_contents result;
-    if (!geometry->kernel.ops->point_contents(geometry->kernel.state, query, &result, error)) return false;
+    if (!geometry->kernel.ops->point_contents(geometry->kernel.state, scratch->kernel, query, &result, error)) return false;
     qa_collision_adapt_point(&result, &query->policy);
     if (result.family == QA_COLLISION_Q2) result.contents = query->policy.q2_merged_contents ? result.merged : result.stored;
     *out = result;
     return true;
 }
 
-bool qa_collision_trace_q3_capsule(qa_collision_geometry *geometry, const qa_trace_query *query,
+bool qa_collision_trace_q3_capsule(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, const qa_trace_query *query,
                                    qa_bounds bounds, bool transformed,
                                    qa_trace_result *out, qa_error *error)
 {
@@ -404,10 +431,10 @@ bool qa_collision_trace_q3_capsule(qa_collision_geometry *geometry, const qa_tra
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 capsule trace query");
     void *replacement = geometry->family == QA_COLLISION_Q3 && geometry->model_count > 255
                             ? geometry->kernel.state : NULL;
-    return qa_q3_trace_capsule_source(query, bounds, transformed, replacement, out, error);
+    return qa_q3_trace_capsule_source(query, bounds, transformed, replacement, scratch->kernel, out, error);
 }
 
-bool qa_collision_trace_q3_model(qa_collision_geometry *geometry, const qa_trace_query *query,
+bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, const qa_trace_query *query,
                                  uint32_t model, bool transformed, qa_trace_result *out, qa_error *error)
 {
     if (geometry == NULL || query == NULL || out == NULL || model >= geometry->model_count
@@ -421,9 +448,9 @@ bool qa_collision_trace_q3_model(qa_collision_geometry *geometry, const qa_trace
     local.target.inline_model = true;
     local.target.model = model;
     if (!transformed) local.target.origin = local.target.angles = qa_v3(0, 0, 0);
-    if (geometry->family != QA_COLLISION_Q3) return qa_collision_trace(geometry, &local, out, error);
+    if (geometry->family != QA_COLLISION_Q3) return qa_collision_trace(geometry, scratch, &local, out, error);
     qa_trace_result result;
-    if (!qa_q3_trace_model_source(geometry->kernel.state, &local, model, transformed, &result, error)) return false;
+    if (!qa_q3_trace_model_source(geometry->kernel.state, scratch->kernel, &local, model, transformed, &result, error)) return false;
     qa_collision_adapt_trace(&result, &local.policy);
     *out = result;
     return true;
@@ -487,14 +514,11 @@ static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds
         | (qa_vec_dot(near_corner, normal) < plane->distance ? 2u : 0u);
 }
 
-bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, bool q1_touched,
+bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_bounds bounds, bool q1_touched,
     qa_leaf_visit_fn visit, void *context, qa_leaf_list *out, qa_error *error)
 {
-    geometry_scratch *scratch = geometry->scratch;
-    if (!q1_touched && geometry->family == QA_COLLISION_Q1 && ++scratch->stamp == 0) {
-        memset(scratch->leaf_stamps, 0, geometry->leaf_count * sizeof(*scratch->leaf_stamps));
-        scratch->stamp = 1;
-    }
+    if (!q1_touched && geometry->family == QA_COLLISION_Q1)
+        qa_stamp_set_begin(&scratch->leaves);
     qa_leaf_list result = {.topnode = -1};
     size_t count = 1;
     scratch->nodes[0] = geometry->root;
@@ -505,8 +529,7 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_bounds b
             if (q1_touched) {
                 if (geometry->leaves[leaf].contents == -2) continue;
             } else if (geometry->family == QA_COLLISION_Q1) {
-                if (leaf == 0 || scratch->leaf_stamps[leaf] == scratch->stamp) continue;
-                scratch->leaf_stamps[leaf] = scratch->stamp;
+                if (leaf == 0 || !qa_stamp_set_mark(&scratch->leaves, leaf)) continue;
             }
             if (geometry->family == QA_COLLISION_Q3 && geometry->leaves[leaf].cluster != -1)
                 result.last_leaf = (uint32_t)leaf;
@@ -541,69 +564,91 @@ static qa_leaf_visit output_leaf(void *context, const qa_collision_leaf *leaf, q
     return QA_LEAF_CONTINUE;
 }
 
-bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bounds, uint32_t *leaves,
+bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_bounds bounds, uint32_t *leaves,
                              size_t capacity, qa_leaf_list *out, qa_error *error)
 {
     if (!geometry || !out || (capacity && !leaves) || !qa_bounds_valid(bounds))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid box-leaf query");
     leaf_output output = {leaves, capacity, 0};
     qa_leaf_list value;
-    if (!qa_collision_walk_leaves(geometry, bounds, false, output_leaf, &output, &value, error)) return false;
+    if (!qa_collision_walk_leaves(geometry, scratch, bounds, false, output_leaf, &output, &value, error)) return false;
     value.count = output.count < capacity ? output.count : capacity;
     value.overflow = output.count > capacity;
     *out = value;
     return true;
 }
 
-static bool visibility_row(const qa_collision_geometry *geometry, size_t index, bool phs, qa_bytes *out, qa_error *error)
+static bool load_visibility_rows(qa_collision_geometry *geometry, qa_error *error)
 {
-    if (geometry->visibility_bytes == 0) { *out = (qa_bytes){0}; return true; }
-    qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-    if (geometry->family == QA_COLLISION_Q3 && !phs) {
-        size_t width = qa_load_u32le(vis.data + 4);
-        *out = (qa_bytes){vis.data + 8 + index * width, width};
-        return true;
-    }
-    uint8_t **cache = phs ? geometry->phs : geometry->pvs;
-    if (cache[index] != NULL) { *out = (qa_bytes){cache[index], geometry->visibility_bytes}; return true; }
-    uint8_t *row = geometry_array(geometry->visibility_bytes, 1, error);
-    if (row == NULL) return false;
-    if (!phs || geometry->family == QA_COLLISION_Q2) {
-        size_t written;
-        if (!qa_bsp_visibility(&geometry->bsp, (int32_t)index, phs, geometry->cluster_count,
-                               row, geometry->visibility_bytes, &written, error)) { free(row); return false; }
-    } else {
-        qa_bytes source;
-        if (!visibility_row(geometry, index, false, &source, error)) { free(row); return false; }
-        memcpy(row, source.data, geometry->visibility_bytes);
-        size_t neighbors = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count - 1 : geometry->cluster_count;
-        for (size_t neighbor = 0; neighbor < neighbors; ++neighbor) {
-            /* Inspect only the original PVS, never the growing PHS union. */
-            if (!bit_test(source, neighbor)) continue;
-            qa_bytes adjacent;
-            size_t adjacent_index = geometry->family == QA_COLLISION_Q1 ? neighbor + 1 : neighbor;
-            if (!visibility_row(geometry, adjacent_index, false, &adjacent, error)) { free(row); return false; }
-            for (size_t byte = 0; byte < geometry->visibility_bytes; ++byte) row[byte] |= adjacent.data[byte];
+    size_t slots = geometry->visibility_slots, width = geometry->visibility_bytes;
+    if (!width || !slots) return true;
+    geometry->phs_rows = geometry_array(slots, width, error);
+    if (!geometry->phs_rows) return false;
+    if (geometry->family != QA_COLLISION_Q3) {
+        geometry->pvs_rows = geometry_array(slots, width, error);
+        if (!geometry->pvs_rows) return false;
+        for (size_t i = 0; i < slots; ++i) {
+            size_t written;
+            geometry->pvs[i] = geometry->pvs_rows + i * width;
+            if (!qa_bsp_visibility(&geometry->bsp, (int32_t)i, false,
+                geometry->cluster_count, geometry->pvs[i], width, &written, error)) return false;
         }
     }
-    cache[index] = row;
-    *out = (qa_bytes){row, geometry->visibility_bytes};
+    for (size_t i = 0; i < slots; ++i) {
+        uint8_t *row = geometry->phs[i] = geometry->phs_rows + i * width;
+        if (geometry->family == QA_COLLISION_Q2) {
+            size_t written;
+            if (!qa_bsp_visibility(&geometry->bsp, (int32_t)i, true,
+                geometry->cluster_count, row, width, &written, error)) return false;
+        } else {
+            qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
+            size_t stride = geometry->family == QA_COLLISION_Q3 ? qa_load_u32le(vis.data + 4) : width;
+            const uint8_t *pvs = geometry->family == QA_COLLISION_Q3 ?
+                vis.data + 8 + i * stride : geometry->pvs[i];
+            memcpy(row, pvs, width);
+            size_t neighbors = geometry->family == QA_COLLISION_Q1 ?
+                geometry->leaf_count - 1 : geometry->cluster_count;
+            for (size_t neighbor = 0; neighbor < neighbors; ++neighbor) {
+                if (!bit_test((qa_bytes){pvs, width}, neighbor)) continue;
+                size_t index = geometry->family == QA_COLLISION_Q1 ? neighbor + 1 : neighbor;
+                const uint8_t *adjacent = geometry->family == QA_COLLISION_Q3 ?
+                    vis.data + 8 + index * stride : geometry->pvs[index];
+                for (size_t byte = 0; byte < width; ++byte) row[byte] |= adjacent[byte];
+            }
+        }
+    }
+    return true;
+}
+
+static bool visibility_row(const qa_collision_geometry *geometry, size_t index,
+    bool phs, qa_bytes *out, qa_error *error)
+{
+    (void)error;
+    if (!geometry->visibility_bytes) { *out = (qa_bytes){0}; return true; }
+    if (geometry->family == QA_COLLISION_Q3 && !phs) {
+        qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
+        size_t width = qa_load_u32le(vis.data + 4);
+        *out = (qa_bytes){vis.data + 8 + index * width, width};
+    } else {
+        uint8_t *const *rows = phs ? geometry->phs : geometry->pvs;
+        *out = (qa_bytes){rows[index], geometry->visibility_bytes};
+    }
     return true;
 }
 
 size_t qa_collision_q1_pvs_bytes(const qa_collision_geometry *geometry)
 { return geometry && geometry->family == QA_COLLISION_Q1 ? geometry->visibility_bytes : 0; }
 
-bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
+bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_vec3 eye,
     uint8_t *bytes, size_t capacity, qa_error *error)
 {
     if (!geometry || geometry->family != QA_COLLISION_Q1 || !qa_vec_finite(eye) ||
         capacity < geometry->visibility_bytes || (geometry->visibility_bytes && !bytes))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 fat-PVS requires its actual geometry and complete row storage");
     if (geometry->visibility_bytes) memset(bytes, 0, geometry->visibility_bytes);
-    size_t count = 1; geometry->scratch->nodes[0] = geometry->root;
+    size_t count = 1; scratch->nodes[0] = geometry->root;
     while (count) {
-        int32_t child = geometry->scratch->nodes[--count];
+        int32_t child = scratch->nodes[--count];
         if (child < 0) {
             size_t leaf = leaf_index(child);
             if (geometry->leaves[leaf].contents == -2) continue;
@@ -615,11 +660,11 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
         const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
         float distance = qa_vec_dot(eye, plane->normal) - plane->distance;
-        if (distance > 8) geometry->scratch->nodes[count++] = node->children[0];
-        else if (distance < -8) geometry->scratch->nodes[count++] = node->children[1];
+        if (distance > 8) scratch->nodes[count++] = node->children[0];
+        else if (distance < -8) scratch->nodes[count++] = node->children[1];
         else {
-            geometry->scratch->nodes[count++] = node->children[1];
-            geometry->scratch->nodes[count++] = node->children[0];
+            scratch->nodes[count++] = node->children[1];
+            scratch->nodes[count++] = node->children[0];
         }
     }
     return true;
