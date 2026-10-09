@@ -100,3 +100,7 @@ void qa_native_module_release(qa_native_module *module) {
 qa_native_module_info qa_native_module_describe(const qa_native_module *module) {
     return module ? module->info : (qa_native_module_info){0};
 }
+
+qa_bytes qa_native_module_bytes(const qa_native_module *module) {
+    return module ? (qa_bytes){module->bytes, module->size} : (qa_bytes){0};
+}

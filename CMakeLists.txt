@@ -1058,6 +1058,7 @@ add_library(qa_qvm STATIC
 target_link_libraries(qa_qvm PUBLIC qa_content)
 
 add_library(qa_native_host STATIC
+    src/platform/native_process.c
     src/compat/native_host/retired.c
     src/compat/native_host/artifact.c
     src/compat/native_host/checkpoint.c
@@ -1389,7 +1390,6 @@ add_library(qa_application STATIC
     src/app/application/unified_events.c
     src/app/application/network_unified.c
     src/app/application/network_unified_server.c
-    src/app/application/native_process_platform.c
     src/app/application/native_q3_client_body.c
     src/app/application/native_q3_client_functions.c
     src/app/application/guest_q3_component.c

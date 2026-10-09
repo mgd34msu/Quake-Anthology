@@ -87,6 +87,7 @@ bool qa_native_module_mutable_range(const qa_native_module *, uint64_t rva, uint
 void qa_native_module_retain(qa_native_module *module);
 void qa_native_module_release(qa_native_module *module);
 qa_native_module_info qa_native_module_describe(const qa_native_module *module);
+qa_bytes qa_native_module_bytes(const qa_native_module *module);
 
 typedef enum qa_native_value_type {
     QA_NATIVE_VOID,
