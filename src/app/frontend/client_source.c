@@ -256,23 +256,23 @@ static bool install_current(void *context, const qa_console *console,
     const qa_command_context *command, qa_error *error)
 {
     frontend_client_source *s = context;
-    if (!linked(s) || !s->constructing || !s->restored_constructor || !s->app_attached ||
-        !s->calls || s->calls == UINT_MAX || !s->frontend->source_restoring ||
+    if (!linked(s) || !s->constructing || !s->app_attached ||
+        !s->calls || s->calls == UINT_MAX ||
         s->frontend->capture || s->frontend->resource_inventory || console != s->console ||
         !physical_current(s, s->application.descriptor, s->console, registry(s), command) ||
         !qa_application_client_associated(s->frontend->application, &s->application) ||
         !qa_application_command_context_active(s->frontend->application, command) ||
         (!qa_application_client_current(s->frontend->application, &s->application) &&
             !qa_application_client_retirement_current(s->frontend->application, &s->application)))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT handler import lost its entered physical constructor");
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT handler install lost its entered physical constructor");
     return true;
 }
-static bool install_restored(void *context, const qa_command_context *command, qa_error *error)
+static bool install_handlers(void *context, const qa_command_context *command, qa_error *error)
 {
     frontend_client_source *s = context;
     (void)command;
-    return s->options.install(s->options.context, &s->application, true, error) &&
-        (!s->frontend->tools || frontend_tools_attach_restored(s->frontend, error));
+    return s->options.install(s->options.context, &s->application, s->restored_constructor, error) &&
+        (!s->restored_constructor || !s->frontend->tools || frontend_tools_attach_restored(s->frontend, error));
 }
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
@@ -355,8 +355,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     }
     if (options->install) {
         ++s->calls;
-        ok = state ? qa_console_cvar_enter(s->console, &s->command, install_current, s,
-            install_restored, s, error) : options->install(options->context, &s->application, false, error);
+        ok = qa_console_cvar_enter(s->console, &s->command, install_current, s,
+            install_handlers, s, error);
         --s->calls;
         if (!ok) goto done;
     }
