@@ -41,14 +41,26 @@
 #include "qa/game_domains.h"
 #include <stdio.h>
 
-static bool pause_flag(qa_cvars *cvars,uint64_t owner,const char *name,bool paused,qa_error *error)
+static bool pause_flag(frontend_pause_cvars *binding,qa_cvars *cvars,uint64_t owner,
+    bool server,bool paused,qa_error *error)
 {
-    const qa_cvar_view *value=qa_cvars_find(cvars,name);
+    if (binding->cvars!=cvars)
+        *binding=(frontend_pause_cvars){.cvars=cvars,
+            .cl_paused=qa_cvars_resolve(cvars,"cl_paused"),
+            .sv_paused=qa_cvars_resolve(cvars,"sv_paused")};
+    qa_cvar_handle *handle=server?&binding->sv_paused:&binding->cl_paused;
+    const char *name=server?"sv_paused":"cl_paused";
+    const qa_cvar_view *value=qa_cvars_read(cvars,*handle);
+    bool declared=value!=NULL,readonly=value && (value->flags&QA_CVAR_READONLY);
     if (!value) {
         if (!qa_cvars_register(cvars,name,"0",QA_CVAR_READONLY,owner,"Q3 pause state",error)) return false;
-    } else if (!(value->flags&QA_CVAR_READONLY) &&
-        !qa_cvars_add_flags(cvars,name,QA_CVAR_READONLY,error)) return false;
-    return qa_cvars_set(cvars,name,paused?"1":"0",true,error);
+        *handle=qa_cvars_resolve(cvars,name);
+    } else if (!readonly && !qa_cvars_add_flags(cvars,name,QA_CVAR_READONLY,error)) return false;
+    value=qa_cvars_read(cvars,*handle);
+    const char *desired=paused?"1":"0";
+    if (declared && readonly && value && value->explicit_value &&
+        !value->latched_value && !strcmp(value->value,desired)) return true;
+    return qa_cvars_set(cvars,name,desired,true,error);
 }
 static bool pause_client_current(qa_frontend *f,const qa_application_q3_client_context *client,bool remote,
     qa_error *error)
@@ -70,6 +82,7 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
     bool q3=present && source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME && !remote &&
         !frontend_network_client_only(f) && qa_application_get_state(f->application)==QA_APPLICATION_RUNNING;
     qa_application_q3_client_context clients[QA_INPUT_LOCAL_SEATS];
+    frontend_pause_cvars *pauses[QA_INPUT_LOCAL_SEATS];
     uint64_t owners[QA_INPUT_LOCAL_SEATS];
     size_t count=0;
     bool requested=menu;
@@ -96,10 +109,12 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
             client.source_cvars!=source.cvars)) || !pause_client_current(f,&client,remote,error))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 pause lost its actual physical CLIENT and primary Source");
         bool opened=qa_ui_menu_opened(f->seats[i].ui,FRONTEND_HOME);
-        if (!pause_flag(client.cvars,configuration.declaration_owner,"cl_paused",opened,error) ||
+        frontend_pause_cvars *pause=&f->seats[i].pause_cvars;
+        if (!pause_flag(pause,client.cvars,configuration.declaration_owner,false,opened,error) ||
             !pause_client_current(f,&client,remote,error)) return false;
-        const qa_cvar_view *value=qa_cvars_find(client.cvars,"cl_paused");
+        const qa_cvar_view *value=qa_cvars_read(client.cvars,pause->cl_paused);
         requested|=value && value->number!=0;
+        pauses[count]=pause;
         clients[count]=client; owners[count++]=configuration.declaration_owner;
     }
     if (q3) {
@@ -108,11 +123,11 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
         size_t humans=0;
         for (size_t i=0;i<64;++i) humans+=slots[i].occupied && !slots[i].bot;
         *out=requested && humans<=1;
-        if (!pause_flag(source.cvars,source.declaration_owner,"sv_paused",*out,error)) return false;
+        if (!pause_flag(&f->pause_cvars,source.cvars,source.declaration_owner,true,*out,error)) return false;
     }
     for (size_t i=0;i<count;++i)
         if (!pause_client_current(f,&clients[i],remote,error) ||
-            !pause_flag(clients[i].cvars,owners[i],"sv_paused",*out,error) ||
+            !pause_flag(pauses[i],clients[i].cvars,owners[i],true,*out,error) ||
             !pause_client_current(f,&clients[i],remote,error)) return false;
     if (q3 || remote || f->options.dedicated ||
         frontend_network_save_authority(f)!=QA_SAVE_OFFLINE) return true;

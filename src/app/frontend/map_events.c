@@ -821,7 +821,8 @@ static bool footsteps_read(frontend_event_resources *resources, const char *mate
 static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
     const qa_builtin_event *event, qa_error *error)
 {
-    const qa_cvar_view *enabled = qa_cvars_find(qa_application_cvars(frontend->application), "cl_footsteps");
+    const qa_cvar_view *enabled = qa_cvars_read(qa_application_cvars(frontend->application),
+        frontend->engine_cvars.legacy.cl_footsteps);
     if (enabled && enabled->number == 0) return true;
     qa_world *world = qa_application_world(frontend->application);
     if (!qa_actors_get(qa_world_actors(world), event->actor)) return true;
@@ -976,7 +977,7 @@ static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *eve
         frontend_source_client_registry client;
         bool found;
         if (!frontend_source_client_registry_read(frontend,seat,&client,&found,error)) return false;
-        const qa_cvar_view *effects=found?qa_cvars_find(client.cvars,"cl_rerelease_effects"):NULL;
+        const qa_cvar_view *effects=found?qa_cvars_read(client.cvars,frontend->engine_cvars.cl_rerelease_effects):NULL;
         bool modern=effects && effects->integer!=0;
         if (found && !frontend_source_client_registry_current(frontend,&client))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 muzzle lost its physical CLIENT controls");

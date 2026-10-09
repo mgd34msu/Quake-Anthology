@@ -105,8 +105,13 @@ typedef struct frontend_q1_view_motion {
 typedef struct frontend_q1_view_pose {
     qa_vec3 origin, angles, gun_origin, gun_angles;
 } frontend_q1_view_pose;
+typedef struct frontend_pause_cvars {
+    qa_cvars *cvars;
+    qa_cvar_handle cl_paused, sv_paused;
+} frontend_pause_cvars;
 typedef struct frontend_seat {
     struct qa_frontend *frontend;
+    frontend_pause_cvars pause_cvars;
     uint32_t id;
     qa_input_seat *input;
     qa_seat_console *console;
@@ -199,6 +204,7 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle timedemo, com_maxfps, r_maxfps;
     qa_cvar_handle cl_avidemo, cl_forceavidemo, timescale;
     qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
+    qa_cvar_handle cl_rerelease_effects;
     qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
     qa_cvar_handle filterban, public_server, dedicated;
     qa_hud_cvar_handles hud;
@@ -311,6 +317,7 @@ struct qa_frontend {
     uint64_t next_audio_id;
     qa_application *application;
     frontend_engine_cvar_handles engine_cvars;
+    frontend_pause_cvars pause_cvars;
     qa_display *display;
     qa_cpu_renderer *cpu;
     qa_gl_renderer *gl;

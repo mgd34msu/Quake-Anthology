@@ -11,6 +11,7 @@ struct frontend_native_q3 {
     struct frontend_material_movies *shader_movies;
     qa_console *console;
     qa_command_context command;
+    qa_cvar_handle no_curves, player_curve_clip;
     frontend_native_q3_commands *commands;
     char *music_intro, *music_loop, *disconnect;
     bool music_looping, service_released, owns_media, owns_services, owns_registry;

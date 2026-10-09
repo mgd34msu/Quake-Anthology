@@ -415,6 +415,7 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .com_maxfps=qa_cvars_resolve(registry,"com_maxfps"),
         .r_maxfps=qa_cvars_resolve(registry,"r_maxfps"),
         .s_volume=qa_cvars_resolve(registry,"s_volume"),
+        .cl_rerelease_effects=qa_cvars_resolve(registry,"cl_rerelease_effects"),
         .scr_centertime=qa_cvars_resolve(registry,"scr_centertime"),
         .s_geometry_acoustics=qa_cvars_resolve(registry,"s_geometryAcoustics"),
         .gl_farclip=qa_cvars_resolve(registry,"gl_farclip"),

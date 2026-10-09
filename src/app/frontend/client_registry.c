@@ -80,6 +80,7 @@ bool frontend_client_registry_create(qa_frontend *f,const qa_launch_instance *so
     owner->frontend=f; owner->launch_seat=seat; owner->references=1; owner->source_live=true;
     owner->view_identity=qa_cvars_view_identity(*owned);
     owner->callback=*callback; owner->cvars=*owned; *owned=NULL;
+    (void)qa_cvars_resolve(owner->cvars,"cl_rerelease_effects");
     frontend_client_registry **link=&f->client_registries;
     if (saved) {
         frontend_client_registry_import *import=f->client_registry_import;

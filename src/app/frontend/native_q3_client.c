@@ -175,6 +175,8 @@ bool frontend_native_q3_service_options(frontend_native_q3 *row,qa_native_q3_cli
 {
     qa_native_q3_wire_basis b;
     if(!out || !frontend_native_q3_current(row) || !qa_native_q3_wire_reader_basis(row->view.reader,&b,e))return false;
+    row->no_curves=qa_cvars_resolve(b.source_cvars,"cm_noCurves");
+    row->player_curve_clip=qa_cvars_resolve(b.source_cvars,"cm_playerCurveClip");
     *out=(qa_native_q3_client_services){.client={.session=b.session,.receiver=b.receiver,.source_owner=b.source_owner,
         .source_actor=b.actor,.seat=b.seat,.source_client=b.physical_client,.service_owner=row->view.service_owner,
         .frontend_lifetime=row,.console=row->console,.cvars=row->view.cvars,.source_cvars=b.source_cvars,
@@ -494,8 +496,8 @@ static bool trace_policy(frontend_native_q3 *row,qa_trace_policy *policy,qa_erro
     qa_native_q3_wire_basis basis;
     if(!qa_native_q3_wire_reader_basis(row->view.reader,&basis,e))return false;
     *policy=qa_collision_default_policy(QA_COLLISION_Q3);
-    const qa_cvar_view *curves=qa_cvars_find(basis.source_cvars,"cm_noCurves");
-    const qa_cvar_view *players=qa_cvars_find(basis.source_cvars,"cm_playerCurveClip");
+    const qa_cvar_view *curves=qa_cvars_read(basis.source_cvars,row->no_curves);
+    const qa_cvar_view *players=qa_cvars_read(basis.source_cvars,row->player_curve_clip);
     if(!curves || !players)return frontend_fail(e,QA_ERROR_FORMAT,"Native trace lacks actual source collision controls");
     policy->curves=curves->integer==0; policy->player_curve_clip=players->integer!=0; return true;
 }
