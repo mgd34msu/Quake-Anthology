@@ -350,7 +350,7 @@ struct qa_application {
     application_provider *pending_close;
     application_provider *live_providers;
     size_t provider_states;
-    application_event_pages *event_pages;
+    qa_event_ring *event_ring;
     struct application_q2_audience_scratch *event_q2_capture;
     application_event_write *event_write;
     uint64_t event_local_cursor, event_peer_cursor;

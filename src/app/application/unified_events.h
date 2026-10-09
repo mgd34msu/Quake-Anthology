@@ -3,7 +3,7 @@
 
 #include "network_unified.h"
 #include "qa/unified_frame_events.h"
-#include "event_pages.h"
+#include "qa/event_ring.h"
 
 typedef struct application_unified_event_record {
     qa_unified_presentation_payload *presentation;
@@ -68,7 +68,7 @@ typedef struct application_persistent_key {
 typedef struct application_unified_persistent_event {
     application_unified_event_record event;
     application_persistent_key key;
-    application_event_lease *lease;
+    qa_event_lease *lease;
 } application_unified_persistent_event;
 
 bool application_unified_persistent_key(qa_application *,

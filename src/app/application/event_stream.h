@@ -3,7 +3,7 @@
 
 #include "qa/application.h"
 #include "qa/application_native_q2_delivery.h"
-#include "event_pages.h"
+#include "qa/event_ring.h"
 #include "unified_events.h"
 
 typedef struct application_event_record {
@@ -42,7 +42,7 @@ typedef struct application_event_envelope {
 } application_event_envelope;
 
 typedef struct application_event_write {
-    application_event_transaction transaction;
+    qa_event_transaction transaction;
     application_event_envelope *envelope;
     uint64_t presentation_before, simulation_before;
 } application_event_write;

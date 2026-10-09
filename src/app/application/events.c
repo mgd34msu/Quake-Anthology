@@ -173,8 +173,8 @@ bool application_event_stream_create(qa_application *app, size_t actors, qa_erro
             sizeof(*app->unified_persistent))
         return application_fail(error, QA_ERROR_MEMORY, "Application event load capacity overflows");
     size_t records = actors * 4;
-    app->event_pages = application_event_pages_create(actors * 4096, 16384, records, error);
-    if (!app->event_pages) return false;
+    app->event_ring = qa_event_ring_create(actors * 4096, 16384, records, error);
+    if (!app->event_ring) return false;
     app->unified_persistent = calloc(records, sizeof(*app->unified_persistent));
     if (!app->unified_persistent)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized persistent event slots");
@@ -189,12 +189,12 @@ bool application_event_stream_begin(qa_application *app, qa_application_event_ki
 {
     *write = (application_event_write){.presentation_before = app->presentation_event_sequence,
         .simulation_before = app->simulation_event_sequence};
-    if (!application_event_pages_begin(app->event_pages, &write->transaction)) return false;
-    write->envelope = application_event_pages_alloc(&write->transaction,
+    if (!qa_event_ring_begin(app->event_ring, &write->transaction)) return false;
+    write->envelope = qa_event_ring_alloc(&write->transaction,
         sizeof(*write->envelope), _Alignof(application_event_envelope), error);
-    if (!write->envelope) { application_event_pages_abort(&write->transaction); return false; }
+    if (!write->envelope) { qa_event_ring_abort(&write->transaction); return false; }
     *write->envelope = (application_event_envelope){
-        .id = application_event_pages_next(app->event_pages), .kind = kind};
+        .id = qa_event_ring_next(app->event_ring), .kind = kind};
     app->event_write = write;
     return true;
 }
@@ -202,7 +202,7 @@ bool application_event_stream_begin(qa_application *app, qa_application_event_ki
 void *application_event_stream_alloc(qa_application *app, size_t bytes, size_t alignment,
     qa_error *error)
 {
-    return application_event_pages_alloc(&app->event_write->transaction, bytes, alignment, error);
+    return qa_event_ring_alloc(&app->event_write->transaction, bytes, alignment, error);
 }
 
 void application_event_stream_abort(qa_application *app, application_event_write *write,
@@ -212,7 +212,7 @@ void application_event_stream_abort(qa_application *app, application_event_write
     app->event_write = NULL;
     app->presentation_event_sequence = write->presentation_before;
     app->simulation_event_sequence = write->simulation_before;
-    application_event_pages_abort(&write->transaction);
+    qa_event_ring_abort(&write->transaction);
     if (blocked && error) *error = (qa_error){0};
 }
 
@@ -224,7 +224,7 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         application_event_stream_abort(app, write, error);
         return false;
     }
-    uint64_t id = application_event_pages_commit(&write->transaction, write->envelope);
+    uint64_t id = qa_event_ring_commit(&write->transaction, write->envelope);
     app->event_write = NULL;
     if (!id) {
         app->presentation_event_sequence = write->presentation_before;
@@ -239,7 +239,7 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
 const application_event_envelope *application_event_stream_at(const qa_application *app,
     uint64_t id)
 {
-    return app && app->event_pages ? application_event_pages_at(app->event_pages, id) : NULL;
+    return app && app->event_ring ? qa_event_ring_at(app->event_ring, id) : NULL;
 }
 
 static bool valid_arguments(const qa_application *application,
@@ -748,18 +748,18 @@ bool application_emit_q2_protocol(application_provider *provider,
 }
 
 uint64_t qa_application_events_first(const qa_application *app)
-{ return app && app->event_pages ? application_event_pages_first(app->event_pages) : 1; }
+{ return app && app->event_ring ? qa_event_ring_first(app->event_ring) : 1; }
 uint64_t qa_application_events_local_first(const qa_application *app)
 { return app ? app->event_local_cursor : 1; }
 uint64_t qa_application_events_next(const qa_application *app)
-{ return app && app->event_pages ? application_event_pages_next(app->event_pages) : 1; }
+{ return app && app->event_ring ? qa_event_ring_next(app->event_ring) : 1; }
 
 bool qa_application_events_admit(const qa_application *app, qa_application_event_headroom *out)
 {
     qa_application_event_headroom headroom = {0};
-    if (app && app->event_pages) {
-        application_event_pages_capacity capacity;
-        application_event_pages_capacity_read(app->event_pages, &capacity);
+    if (app && app->event_ring) {
+        qa_event_capacity capacity;
+        qa_event_capacity_read(app->event_ring, &capacity);
         headroom = (qa_application_event_headroom){.available_bytes = capacity.available_bytes,
             .available_records = capacity.available_records, .reserve_bytes = capacity.total_bytes / 2,
             .reserve_records = capacity.total_records / 2};
@@ -867,7 +867,7 @@ static bool clear_events(qa_application *application, qa_error *error)
     application->event_local_cursor = qa_application_events_next(application);
     uint64_t next = application->event_local_cursor < application->event_peer_cursor ?
         application->event_local_cursor : application->event_peer_cursor;
-    application_event_pages_retire(application->event_pages, next);
+    qa_event_ring_retire(application->event_ring, next);
     application_equipment_events_clear(gear);
     return true;
 }

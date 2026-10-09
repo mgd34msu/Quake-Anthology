@@ -361,7 +361,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->physics);
     application_unified_persistent_dispose(application);
     application_native_q2_delivery_destroy(application);
-    application_event_pages_destroy(&application->event_pages);
+    qa_event_ring_destroy(&application->event_ring);
     free(application->unified_event_owners);
     application_unified_events_resources_dispose(application);
     free(application->unified_world_text);

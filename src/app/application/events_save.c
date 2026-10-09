@@ -15,7 +15,7 @@
 #include <string.h>
 
 typedef struct event_store {
-    application_event_pages *pages;
+    qa_event_ring *pages;
     application_unified_persistent_event *persistent;
     size_t persistent_count, persistent_capacity;
     application_unified_event_owner *owners;
@@ -144,9 +144,9 @@ static event_store borrow_store(qa_application *app)
 static void dispose_store(event_store *store)
 {
     for (size_t i = 0; store->persistent && i < store->persistent_count && i < store->persistent_capacity; ++i)
-        if (store->persistent[i].lease) application_event_lease_release(store->persistent[i].lease);
+        if (store->persistent[i].lease) qa_event_lease_release(store->persistent[i].lease);
     free(store->persistent);
-    application_event_pages_destroy(&store->pages);
+    qa_event_ring_destroy(&store->pages);
     free(store->owners);
     for (size_t i = 0; store->resources && i < store->resource_count; ++i) {
         qa_buffer_free(&store->resources[i].key);
@@ -173,7 +173,7 @@ static bool allocate_store(qa_source_save_io *io, event_store *store)
     qa_application *staging = store->application;
     bool created = application_event_stream_create(staging,
         qa_actors_capacity(qa_session_actors(staging->session)), io->error);
-    store->pages = staging->event_pages;
+    store->pages = staging->event_ring;
     store->persistent = staging->unified_persistent;
     store->persistent_capacity = staging->unified_persistent_capacity;
     if (!created) return false;
@@ -305,7 +305,7 @@ static bool persistent_import(qa_source_save_io *io, event_store *store,
         application_event_stream_abort(staging, &write, io->error);
         return event_fail(io, QA_ERROR_FORMAT, "Saved presentation has no persistent state domain");
     }
-    uint64_t id = application_event_pages_commit(&write.transaction, write.envelope);
+    uint64_t id = qa_event_ring_commit(&write.transaction, write.envelope);
     staging->event_write = NULL;
     if (!id) {
         staging->presentation_event_sequence = write.presentation_before;
@@ -313,7 +313,7 @@ static bool persistent_import(qa_source_save_io *io, event_store *store,
         return event_fail(io, QA_ERROR_MEMORY, "Restored persistent state exceeds its event pages");
     }
     *out = (application_unified_persistent_event){.event = view->event, .key = key,
-        .lease = application_event_pages_retain(staging->event_pages, id)};
+        .lease = qa_event_ring_retain(staging->event_ring, id)};
     return true;
 }
 
@@ -902,15 +902,15 @@ bool application_events_save_content_visit(qa_application *app,
 static void install_store(qa_application *app, event_store *store)
 {
     application_unified_persistent_dispose(app);
-    application_event_pages_destroy(&app->event_pages);
+    qa_event_ring_destroy(&app->event_ring);
     free(app->unified_event_owners);
     application_unified_events_resources_dispose(app);
     free(app->unified_world_text);
-    app->event_pages = store->pages;
+    app->event_ring = store->pages;
     app->event_write = NULL;
-    app->event_local_cursor = application_event_pages_next(store->pages);
+    app->event_local_cursor = qa_event_ring_next(store->pages);
     app->event_peer_cursor = UINT64_MAX;
-    application_event_pages_retire(store->pages, app->event_local_cursor);
+    qa_event_ring_retire(store->pages, app->event_local_cursor);
     ++app->protocol_events_generation;
     app->simulation_event_sequence = store->application->simulation_event_sequence;
     app->presentation_event_sequence = store->application->presentation_event_sequence;
@@ -937,7 +937,7 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     if (!event_wire_normalize(bytes, &normalized, error)) return false;
     if (normalized.data) bytes = (qa_bytes){normalized.data, normalized.size};
     qa_application staging = *app;
-    staging.event_pages = NULL;
+    staging.event_ring = NULL;
     staging.event_write = NULL;
     staging.unified_persistent = NULL;
     staging.unified_persistent_count = staging.unified_persistent_capacity = 0;

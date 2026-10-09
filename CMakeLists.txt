@@ -51,6 +51,7 @@ find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 add_library(qa_core STATIC
     src/core/arena.c
     src/core/pool.c
+    src/core/event_ring.c
     src/core/ruleset.c
     src/core/common_parse.c
     src/core/json_writer.c
@@ -1227,7 +1228,6 @@ add_library(qa_application STATIC
     src/app/application/control_frame.c
     src/app/application/commands.c
     src/app/application/events.c
-    src/app/application/event_pages.c
     src/app/application/events_save.c
     src/app/application/frame_prepare.c
     src/app/application/guest_admission.c

@@ -7,7 +7,7 @@
 
 typedef struct application_q1_signon_record {
     qa_application_protocol_event event;
-    application_event_lease *lease;
+    qa_event_lease *lease;
     uint64_t source_serial;
     uint64_t source_revision;
 } application_q1_signon_record;
@@ -45,7 +45,7 @@ static void owner_free(struct application_q1_signon *owner)
 {
     if (!owner) return;
     for (size_t i = 0; i < owner->count; ++i)
-        application_event_lease_release(owner->records[i].lease);
+        qa_event_lease_release(owner->records[i].lease);
     free(owner->records); free(owner);
 }
 void application_q1_signon_destroy(qa_application *app)
@@ -59,7 +59,7 @@ void application_q1_signon_drop(qa_application *app, qa_actor_owner provider)
     struct application_q1_signon *owner = app ? app->q1_signon : NULL;
     for (size_t i = 0; owner && i < owner->count;) {
         if (owner->records[i].event.provider != provider) { ++i; continue; }
-        application_event_lease_release(owner->records[i].lease);
+        qa_event_lease_release(owner->records[i].lease);
         --owner->count;
         memmove(owner->records + i, owner->records + i + 1, (owner->count - i) * sizeof(*owner->records));
     }
@@ -74,16 +74,16 @@ bool application_q1_signon_retain(application_provider *provider,
         (provider->kind != APPLICATION_PROVIDER_QC && !native_source(provider)) || provider->owner != event->provider ||
         provider->launch->selection.clock.kind != event->dialect)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 signon emission lacks its actual primary source owner");
-    application_event_lease *lease = app->event_pages && event->event_id ?
-        application_event_pages_retain(app->event_pages, event->event_id) : NULL;
+    qa_event_lease *lease = app->event_ring && event->event_id ?
+        qa_event_ring_retain(app->event_ring, event->event_id) : NULL;
     if (!lease)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon lacks its committed Source event");
-    const application_event_envelope *retained = application_event_lease_record(lease);
+    const application_event_envelope *retained = qa_event_lease_record(lease);
     if (retained->kind != QA_APPLICATION_EVENT_PROTOCOL ||
         retained->raw.protocol.event.provider != provider->owner ||
         retained->raw.protocol.event.dialect != provider->launch->selection.clock.kind ||
         !event_valid(&retained->raw.protocol.event, error)) {
-        application_event_lease_release(lease);
+        qa_event_lease_release(lease);
         if (error && error->code == QA_OK)
             application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon differs from its committed Source event");
         return false;
@@ -91,16 +91,16 @@ bool application_q1_signon_retain(application_provider *provider,
     struct application_q1_signon *owner = app->q1_signon;
     if (!owner) {
         owner = calloc(1, sizeof(*owner));
-        if (!owner) { application_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 signon owner"); }
+        if (!owner) { qa_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 signon owner"); }
         app->q1_signon = owner;
     }
     if (owner->count == owner->capacity) {
         size_t capacity = owner->capacity ? owner->capacity * 2 : 16;
         if (capacity < owner->capacity || capacity > SIZE_MAX / sizeof(*owner->records)) {
-            application_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Q1 signon owner extent exhausted");
+            qa_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Q1 signon owner extent exhausted");
         }
         application_q1_signon_record *records = realloc(owner->records, capacity * sizeof(*records));
-        if (!records) { application_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 signon record"); }
+        if (!records) { qa_event_lease_release(lease); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 signon record"); }
         owner->records = records; owner->capacity = capacity;
     }
     application_q1_signon_record record = {.event = retained->raw.protocol.event, .lease = lease,
@@ -137,7 +137,7 @@ bool application_q1_signon_at(const qa_application *app, qa_actor_owner provider
     return application_fail(error, QA_ERROR_NOT_FOUND, "Retained Q1 signon index is absent");
 }
 static bool record_fields(qa_source_save_io *io, application_q1_signon_record *r,
-    application_event_transaction *transaction)
+    qa_event_transaction *transaction)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t dialect = reading ? 0 : (uint32_t)r->event.dialect;
@@ -151,7 +151,7 @@ static bool record_fields(qa_source_save_io *io, application_q1_signon_record *r
     size_t maximum = reading ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &size, maximum)) return false;
     if (reading) {
-        uint8_t *bytes = size ? application_event_pages_alloc(transaction, size, 1, io->error) : NULL;
+        uint8_t *bytes = size ? qa_event_ring_alloc(transaction, size, 1, io->error) : NULL;
         if (size && !bytes) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring retained Q1 signon bytes");
         r->event.payload = (qa_bytes){bytes, size};
     }
@@ -161,7 +161,7 @@ static bool record_fields(qa_source_save_io *io, application_q1_signon_record *r
     if (maximum > SIZE_MAX / sizeof(*r->event.references)) maximum = SIZE_MAX / sizeof(*r->event.references);
     if (!qa_source_save_count(io, &count, maximum)) return false;
     if (reading) {
-        qa_application_protocol_reference *refs = count ? application_event_pages_alloc(transaction,
+        qa_application_protocol_reference *refs = count ? qa_event_ring_alloc(transaction,
             count * sizeof(*refs), _Alignof(qa_application_protocol_reference), io->error) : NULL;
         if (count && !refs) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring retained Q1 signon references");
         r->event.references = refs; r->event.reference_count = count;
@@ -203,7 +203,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
     bool ok = qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QAQS", 4) &&
         qa_source_save_count(&io, &count, maximum);
     struct application_q1_signon *owner = NULL;
-    application_event_pages *pages = NULL;
+    qa_event_ring *pages = NULL;
     if (ok && count) {
         owner = calloc(1, sizeof(*owner));
         if (owner) owner->records = calloc(count, sizeof(*owner->records));
@@ -213,15 +213,15 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
         if (ok && (count > SIZE_MAX / fixed || bytes.size > (SIZE_MAX - count * fixed) / 2))
             ok = application_fail(error, QA_ERROR_MEMORY, "Restored Q1 signon page extent exhausted");
         if (ok) {
-            pages = application_event_pages_create(bytes.size * 2 + count * fixed, 16384, count, error);
+            pages = qa_event_ring_create(bytes.size * 2 + count * fixed, 16384, count, error);
             ok = pages != NULL;
         }
     }
     for (size_t i = 0; ok && i < count; ++i) {
         application_q1_signon_record *record = &owner->records[i];
-        application_event_transaction transaction;
-        ok = application_event_pages_begin(pages, &transaction);
-        application_event_envelope *envelope = ok ? application_event_pages_alloc(&transaction,
+        qa_event_transaction transaction;
+        ok = qa_event_ring_begin(pages, &transaction);
+        application_event_envelope *envelope = ok ? qa_event_ring_alloc(&transaction,
             sizeof(*envelope), _Alignof(application_event_envelope), error) : NULL;
         if (!envelope) ok = application_fail(error, QA_ERROR_MEMORY, "Restoring Q1 signon envelope pages");
         if (ok) {
@@ -239,18 +239,18 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
         }
         if (ok) {
             envelope->raw.protocol.event = record->event;
-            uint64_t id = application_event_pages_commit(&transaction, envelope);
+            uint64_t id = qa_event_ring_commit(&transaction, envelope);
             if (!id) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining restored Q1 signon envelope");
             else {
-                record->lease = application_event_pages_retain(pages, id);
+                record->lease = qa_event_ring_retain(pages, id);
                 ++owner->count;
             }
         }
-        if (!ok) application_event_pages_abort(&transaction);
+        if (!ok) qa_event_ring_abort(&transaction);
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) { app->q1_signon = owner; owner = NULL; }
-    application_event_pages_destroy(&pages);
+    qa_event_ring_destroy(&pages);
     owner_free(owner); qa_source_save_dispose(&io);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid original Q1 signon continuation");
     return ok;

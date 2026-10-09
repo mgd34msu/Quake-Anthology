@@ -548,7 +548,7 @@ void application_unified_events_consume(qa_application *app, uint64_t next)
 {
     app->event_peer_cursor = next;
     uint64_t retired = app->event_local_cursor < next ? app->event_local_cursor : next;
-    application_event_pages_retire(app->event_pages, retired);
+    qa_event_ring_retire(app->event_ring, retired);
 }
 void application_unified_events_clear(qa_application *app)
 {
@@ -574,7 +574,7 @@ bool application_unified_event_append(qa_application *app,
         if (!record->presentation) return false;
         *record->presentation = (qa_unified_presentation_payload){0};
         if (!qa_unified_record_clone_alloc(&qa_unified_presentation_payload_layout,
-            source->presentation, record->presentation, application_event_pages_alloc,
+            source->presentation, record->presentation, qa_event_ring_alloc,
             &write->transaction, error)) return false;
         record->presentation_sequence = app->presentation_event_sequence++;
     } else record->presentation_sequence = 0;
@@ -584,7 +584,7 @@ bool application_unified_event_append(qa_application *app,
         if (!record->simulation) return false;
         *record->simulation = (qa_unified_simulation_payload){0};
         if (!qa_unified_record_clone_alloc(&qa_unified_simulation_payload_layout,
-            source->simulation, record->simulation, application_event_pages_alloc,
+            source->simulation, record->simulation, qa_event_ring_alloc,
             &write->transaction, error)) return false;
         record->simulation_sequence = app->simulation_event_sequence++;
     } else record->simulation_sequence = 0;
@@ -646,7 +646,7 @@ bool application_unified_persistent_key_equal(const application_persistent_key *
 void application_unified_persistent_dispose(qa_application *app)
 {
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
-        application_event_lease_release(app->unified_persistent[i].lease);
+        qa_event_lease_release(app->unified_persistent[i].lease);
     }
     free(app->unified_persistent); app->unified_persistent = NULL;
     app->unified_persistent_count = app->unified_persistent_capacity = 0;
@@ -667,7 +667,7 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     for (size_t i = 0; i < app->unified_persistent_count; ++i) {
         application_unified_persistent_event row = app->unified_persistent[i];
         if (owner ? row.event.provider == owner : qa_actor_id_equal(row.event.recipient, recipient)) {
-            application_event_lease_release(row.lease);
+            qa_event_lease_release(row.lease);
         } else app->unified_persistent[kept++] = row;
     }
     app->unified_persistent_count = kept;
@@ -710,7 +710,7 @@ void application_unified_persistent_publish(qa_application *app,
                 &app->unified_persistent[index].key)) ++index;
         if (view->persistent_remove && index == app->unified_persistent_count) continue;
         if (index < app->unified_persistent_count) {
-            application_event_lease_release(app->unified_persistent[index].lease);
+            qa_event_lease_release(app->unified_persistent[index].lease);
             memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
                 (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
         }
@@ -721,7 +721,7 @@ void application_unified_persistent_publish(qa_application *app,
             record.link_presentation = false;
             app->unified_persistent[app->unified_persistent_count++] =
                 (application_unified_persistent_event){.event = record, .key = view->persistent_key,
-                    .lease = application_event_pages_retain(app->event_pages, envelope->id)};
+                    .lease = qa_event_ring_retain(app->event_ring, envelope->id)};
         }
         ++app->unified_persistent_revision;
     }
