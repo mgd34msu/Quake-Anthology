@@ -3,11 +3,13 @@
 #include "qa/application_q1_composition.h"
 #include <stdio.h>
 
-typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; uint32_t lines; } hud_message;
+typedef struct hud_message { char *text; uint64_t starts, until; bool chat; } hud_message;
 struct qa_hud {
     qa_hud_options options;
-    hud_message *notices, *centers;
-    size_t notice_count, notice_capacity, center_count, center_capacity;
+    hud_message *notices;
+    size_t notice_count, notice_capacity;
+    qa_hud_center_state center;
+    qa_cvar_handle center_time;
     char *pickup;
     const qa_scene_image *pickup_icon;
     uint64_t pickup_until, hit_until;
@@ -42,6 +44,7 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
     qa_hud *hud = calloc(1, sizeof(*hud));
     if (!hud) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating seat HUD"); return false; }
     hud->options = *options;
+    hud->center_time = qa_cvars_resolve(qa_application_cvars(options->application), "cg_centertime");
     *out = hud;
     return true;
 }
@@ -55,15 +58,14 @@ bool qa_hud_clear_notify(qa_hud *hud, qa_error *error) {
 bool qa_hud_clear_center(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
-    for (size_t i = 0; i < hud->center_count; ++i) free(hud->centers[i].text);
-    hud->center_count = 0;
+    hud->center = (qa_hud_center_state){0};
     return true;
 }
 bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
     qa_hud_clear_notify(hud, NULL); qa_hud_clear_center(hud, NULL);
-    free(hud->notices); free(hud->centers); free(hud->pickup); qa_scene_image_release(hud->pickup_icon); free(hud);
+    free(hud->notices); free(hud->pickup); qa_scene_image_release(hud->pickup_icon); free(hud);
     return true;
 }
 bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
@@ -74,29 +76,54 @@ bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
     if (!ui_reserve((void **)&hud->notices, &hud->notice_capacity, hud->notice_count + 1,
                      sizeof(*hud->notices), error)) { free(copy); return false; }
     hud->notices[hud->notice_count++] = (hud_message){.text = copy, .starts = starts,
-        .until = after(starts, duration), .chat = chat, .instant = true};
+        .until = after(starts, duration), .chat = chat};
     return true;
 }
 bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_t duration,
-                          bool instant, uint64_t character_ns, qa_error *error) {
+                          qa_hud_center_policy policy, qa_error *error) {
     if (!hud || hud->drawing) return ui_fail(error, "HUD center callback is active");
-    char *copy = copy_text(text, error);
-    if (!copy) return false;
-    if (!ui_reserve((void **)&hud->centers, &hud->center_capacity, hud->center_count + 1,
-                     sizeof(*hud->centers), error)) { free(copy); return false; }
-    if (instant) qa_hud_clear_center(hud, NULL);
-    else if (hud->center_count && starts < hud->centers[hud->center_count - 1].until)
-        starts = hud->centers[hud->center_count - 1].until;
+    if (!text) return ui_fail(error, "missing HUD text");
+    qa_hud_center_state *center = &hud->center;
+    size_t length = 0;
+    while (length + 1 < sizeof(center->text) && text[length]) ++length;
+    memmove(center->text, text, length); center->text[length] = 0;
     uint32_t lines = 1;
-    for (const char *p = text; *p && lines <= 4; ++p) if (*p == '\n') ++lines;
-    if (!instant) {
-        qa_bytes bytes = {(const uint8_t *)text, strlen(text)};
+    for (const char *p = center->text; *p; ++p) if (*p == '\n') ++lines;
+    if (!policy.instant) {
+        qa_bytes bytes = {(const uint8_t *)center->text, strlen(center->text)};
         size_t cursor = 0; uint32_t scalar;
-        while (qa_utf8_next(bytes, &cursor, &scalar)) duration = after(duration, character_ns);
+        while (qa_utf8_next(bytes, &cursor, &scalar)) duration = after(duration, policy.character_ns);
     }
-    hud->centers[hud->center_count++] = (hud_message){.text = copy, .starts = starts,
-        .until = after(starts, duration), .instant = instant, .character_ns = character_ns, .lines = lines};
+    if (policy.source_layout && !policy.columns) policy.columns = 50;
+    center->starts_ns = starts; center->duration_ns = duration;
+    center->policy = policy; center->lines = lines;
     return true;
+}
+const qa_hud_center_state *qa_hud_center_read(const qa_hud *hud)
+{ return hud && *hud->center.text ? &hud->center : NULL; }
+size_t qa_hud_center_length(const qa_hud_center_state *center, uint64_t now) {
+    if (!center || now < center->starts_ns) return 0;
+    if (center->policy.instant || !center->policy.character_ns) return strlen(center->text);
+    uint64_t characters = (now - center->starts_ns) / center->policy.character_ns;
+    characters = after(characters, center->policy.initial_characters);
+    qa_bytes bytes = {(const uint8_t *)center->text, strlen(center->text)};
+    size_t offset = 0; uint32_t scalar, column = 0;
+    while (characters) {
+        if (!qa_utf8_next(bytes, &offset, &scalar)) break;
+        if (scalar == '\n') { column = 0; continue; }
+        if (center->policy.columns && column++ >= center->policy.columns) continue;
+        --characters;
+    }
+    return offset;
+}
+float qa_hud_center_alpha(const qa_hud_center_state *center, uint64_t now, uint64_t duration) {
+    if (!center || now < center->starts_ns ||
+        (center->policy.source_layout && !center->starts_ns)) return 0;
+    uint64_t elapsed = now - center->starts_ns;
+    if (elapsed >= duration) return 0;
+    uint64_t remaining = duration - elapsed;
+    return center->policy.fade_ns && remaining < center->policy.fade_ns ?
+        (float)remaining / (float)center->policy.fade_ns : 1;
 }
 bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, uint64_t until,
                     qa_error *error) {
@@ -857,6 +884,61 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
     return q1_number(hud, status, frame, place, 248, 0, (int32_t)status->ammo_count,
         3, status->ammo_count <= 10, scene, error);
 }
+static bool center_draw(qa_hud *hud, const qa_hud_frame *frame,
+    qa_scene_frame *scene, qa_scene_rect target, qa_error *error) {
+    const qa_hud_center_state *center = qa_hud_center_read(hud);
+    if (frame->center_owned || !center) return true;
+    uint64_t duration = center->duration_ns;
+    if (center->policy.source_layout) {
+        const qa_cvar_view *configured = qa_cvars_read(qa_application_cvars(hud->options.application), hud->center_time);
+        if (configured) duration = (uint64_t)fmaxf(0, fminf(86400000, (float)configured->number * 1000.0f)) * UINT64_C(1000000);
+    }
+    float alpha = qa_hud_center_alpha(center, frame->time_ns, duration);
+    if (alpha <= 0) return true;
+    qa_ui *ui = hud->options.ui;
+    float x = (float)target.x + (float)target.width * .5f;
+    float y = (float)target.y + (center->lines <= 4 ? (float)target.height * .35f : 48);
+    float scale = ui->scale * ui->text_scale;
+    if (center->policy.source_layout) {
+        float fit = fminf((float)target.width / 640, (float)target.height / 480);
+        y = (float)target.y + ((float)target.height - 480 * fit) * .5f +
+            ((float)center->policy.y - (float)center->lines * 8 * ui->text_scale) * fit;
+        scale = (float)(center->policy.character_width > 0 ? center->policy.character_width : 16) / 8 * fit * ui->text_scale;
+    }
+    char text[sizeof(center->text)]; size_t used = 0, offset = 0;
+    uint32_t scalar, column = 0;
+    qa_bytes input = {(const uint8_t *)center->text, strlen(center->text)};
+    while (offset < input.size) {
+        size_t previous = offset;
+        if (!qa_utf8_next(input, &offset, &scalar)) break;
+        if (scalar == '\n') column = 0;
+        else if (center->policy.columns && column++ >= center->policy.columns) continue;
+        memcpy(text + used, center->text + previous, offset - previous); used += offset - previous;
+    }
+    text[used] = 0;
+    qa_font_layout layout;
+    qa_font_layout_options options = {.text = {(const uint8_t *)text, used}, .scale = scale,
+        .color = {1, 1, 1, alpha}, .color_codes = center->policy.source_layout ? QA_FONT_COLOR_Q3 : QA_FONT_COLOR_LITERAL,
+        .alignment = QA_FONT_ALIGN_LEFT, .force_color = ui->color_mode != QA_UI_COLOR_STANDARD};
+    if (!qa_font_layout_build(&ui->options.fonts, &options, &scene->storage, &layout, error)) return false;
+    qa_font_positioned_glyph *glyphs = (qa_font_positioned_glyph *)layout.glyphs;
+    for (size_t row = 0; row < layout.line_count; ++row) {
+        const qa_font_line *line = layout.lines + row;
+        for (size_t i = 0; i < line->glyph_count; ++i) {
+            qa_scene_rect_f *rect = &glyphs[line->first_glyph + i].rect;
+            rect->x -= line->width * .5f;
+            if (center->policy.source_layout) { rect->y *= 1.5f; rect->height *= 1.5f; }
+        }
+    }
+    if (!center->policy.instant && center->policy.character_ns) {
+        uint64_t characters = after((frame->time_ns - center->starts_ns) / center->policy.character_ns,
+            center->policy.initial_characters);
+        if (characters < layout.glyph_count) layout.glyph_count = (size_t)characters;
+    }
+    qa_font_draw_options draw = {.seat = ui->options.seat, .target = target,
+        .origin = {x - (float)target.x, y - (float)target.y}, .space = QA_FONT_PIXELS, .shadow_offset = 1};
+    return qa_font_draw_layout(scene, &layout, &draw, error);
+}
 static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
     bool content, bool messages, qa_error *error) {
     qa_ui *ui = hud->options.ui;
@@ -996,23 +1078,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
                 notice->chat ? (qa_scene_vec4){.6f, 1, .6f, 1} : (qa_scene_vec4){1, 1, 1, 1},
                 1, QA_FONT_ALIGN_LEFT, error)) return false;
         }
-        if (hud->center_count && hud->centers[0].starts <= frame->time_ns) {
-            const hud_message *center = &hud->centers[0];
-            const char *value = center->text;
-            if (!center->instant && center->character_ns) {
-                uint64_t characters = (frame->time_ns - center->starts) / center->character_ns;
-                qa_bytes bytes = {(const uint8_t *)value, strlen(value)};
-                size_t offset = 0; uint32_t scalar;
-                while (characters && qa_utf8_next(bytes, &offset, &scalar)) --characters;
-                char *shown = qa_arena_alloc(&scene->storage, offset + 1, 1, error);
-                if (!shown) return false;
-                memcpy(shown, value, offset); shown[offset] = 0; value = shown;
-            }
-            float center_x = ((float)target.x + (float)target.width * .5f - ui->bias_x) / ui->scale;
-            float center_y = ((float)target.y + (center->lines <= 4 ? (float)target.height * .35f : 48) - ui->bias_y) / ui->scale;
-            if (!ui_draw_source_text(ui, scene, target, center_x, center_y, value, (qa_scene_vec4){1, 1, 1, 1}, 1,
-                QA_FONT_ALIGN_CENTER, error)) return false;
-        }
+        if (!center_draw(hud, frame, scene, target, error)) return false;
         if (hud->pickup && hud->pickup_until > frame->time_ns &&
             (!icon(hud, scene, target, hud->pickup_icon, (qa_scene_rect_f){304, 328, 32, 32},
                 (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup, (qa_scene_vec4){1, 1, .5f, 1},
@@ -1042,7 +1108,6 @@ static bool draw_frame(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *s
         return ui_fail(error, "invalid or reentrant seat HUD draw");
     if (messages) {
         expire(hud->notices, &hud->notice_count, frame->time_ns);
-        expire(hud->centers, &hud->center_count, frame->time_ns);
     }
     if (!frame->visible) return true;
     qa_ui *ui = hud->options.ui;

@@ -104,13 +104,12 @@ static bool center(void *ctx,const q3n_frame *f,const qa_command_context *c,cons
 {
     frontend_unified_q3_runtime *o=ctx;
     if(!cut(o,f,e))return false;
-    if(o->options.scene_only && !o->options.commands.compiled_center_print)
-        return fail(e,"Supplemental center print requires its actual shared HUD owner");
-    bool okay=o->options.scene_only?
-        o->options.commands.compiled_center_print && o->options.commands.compiled_center_print(
-            o->options.commands.context,f,c,text,y,width,e):
-        q3n_hud_center_print(o->children.hud,f,text,y,width,e);
-    return okay && cut(o,f,e);
+    (void)c;
+    const qa_cvar_view *duration=qa_cvars_find(frontend_unified_q3_client_cvars(o->options.client),"cg_centertime");
+    double seconds=duration?fmax(0,fmin(86400,duration->number)):3;
+    return qa_hud_center_print(o->options.hud.messages,text,
+        (uint64_t)(uint32_t)f->time*UINT64_C(1000000),(uint64_t)(seconds*1e9),
+        (qa_hud_center_policy){.instant=true,.source_layout=true,.y=y,.character_width=width,.fade_ns=UINT64_C(200000000)},e);
 }
 static bool message(void *ctx,const q3n_command_message *m,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; return cut(o,m->frame,e) &&
@@ -359,7 +358,6 @@ bool frontend_unified_q3_runtime_create(const frontend_unified_q3_runtime_option
        !options->player_fx.world_trace || !options->player_fx.world_point_contents ||
        !options->player_fx.body_hidden || !options->player_fx.body_submit || !options->player_fx.player_weapon ||
        !options->commands.compiled_current || !options->commands.compiled_register ||
-       (options->scene_only && !options->commands.compiled_center_print) ||
        !options->commands.compiled_console || !options->commands.message || !options->commands.initialize_stage ||
        !options->commands.memory_remaining || !options->view.print || !options->events.print ||
        !options->events.trace || !options->events.point_contents || !options->events.mark_fragments ||

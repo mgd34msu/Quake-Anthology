@@ -157,7 +157,7 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 seat->q2_help = event->visible;
                 if (!help_line(seat, 0, text, error) || !help_line(seat, 1, qa_strings_cstr(strings, event->resource), error)) return false;
             } else if (event->kind == QA_Q2_MAP_STORY && text &&
-                !qa_hud_center_print(seat->hud, text, frontend->time_ns, UINT64_C(6000000000), false, UINT64_C(50000000), error)) return false;
+                !qa_hud_center_print(seat->hud, text, frontend->time_ns, UINT64_C(6000000000),(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(50000000)}, error)) return false;
         }
     }
     return true;

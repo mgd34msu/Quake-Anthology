@@ -468,9 +468,14 @@ static bool receipt_current(void *context,const q3n_frame *f,const q3n_server_co
 { return receipt && qa_native_q3_wire_receipt_current(&receipt->wire) && recipient_current(context,f,&receipt->recipient); }
 static bool center_print(void *context,const q3n_frame *f,const char *text,int32_t y,int32_t width,qa_error *e)
 {
-    frontend_native_q3 *row=context; q3n_native_owners owners;
-    return frontend_native_q3_cut(row,f,e) && q3n_native_owners_read(row->view.core,&owners,e) &&
-        q3n_hud_center_print(owners.hud,f,text,y,width,e);
+    frontend_native_q3 *row=context;
+    if(!frontend_native_q3_cut(row,f,e))return false;
+    const qa_native_q3_cvar_refs *refs=qa_native_q3_client_cvar_refs(row->view.client);
+    const qa_cvar_view *duration=refs?qa_cvars_read(row->view.cvars,refs->rows[QA_NATIVE_Q3_CVAR_cg_centertime]):NULL;
+    double seconds=duration?fmax(0,fmin(86400,duration->number)):3;
+    return qa_hud_center_print(row->frontend->seats[row->view.seat].hud,text,
+        (uint64_t)(uint32_t)f->time*UINT64_C(1000000),(uint64_t)(seconds*1e9),
+        (qa_hud_center_policy){.instant=true,.source_layout=true,.y=y,.character_width=width,.fade_ns=UINT64_C(200000000)},e);
 }
 static bool command_center(void *context,const q3n_frame *f,const qa_application_q3_client_context *recipient,
     const char *text,int32_t y,int32_t width,qa_error *e)
@@ -735,7 +740,8 @@ bool frontend_native_q3_core_options(frontend_native_q3 *row,q3n_native_options 
             .set_third_person_angle_value=application_native_q3_client_set_orbit_angle,.print=print_client,
             .camera_context=row,.camera_override=camera_override},
         .player_state={.context=row,.print=print_row},
-        .hud={.context=row,.ui=row->frontend->seats[row->view.seat].ui,.presentation_seat=row->view.seat,
+        .hud={.context=row,.ui=row->frontend->seats[row->view.seat].ui,
+            .messages=row->frontend->seats[row->view.seat].hud,.presentation_seat=row->view.seat,
             .milliseconds=milliseconds,.load_deferred=load_deferred,.client_command=hud_command},
         .commands={.reader=row->view.reader,.context=row,.current=recipient_current,.read_command=read_command,
             .receipt_current=receipt_current,.message=message,.center_print=command_center,.client_settings=client_settings,

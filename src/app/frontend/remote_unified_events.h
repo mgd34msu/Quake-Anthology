@@ -37,9 +37,7 @@ void frontend_unified_events_frame_abort(frontend_unified_events *);
 /* Executes only records released by an actually committed frame. Successful
  * records advance their own cursor immediately; refusal retains the remainder. */
 bool frontend_unified_events_enter(frontend_unified_events *, qa_error *);
-bool frontend_unified_events_draw(frontend_unified_events *, qa_scene_rect, qa_scene_frame *, qa_error *);
-bool frontend_unified_events_center_print(frontend_unified_events *, const char *,
-    double source_milliseconds, double duration_milliseconds, qa_error *);
+bool frontend_unified_events_draw(frontend_unified_events *, qa_scene_rect, bool center_owned, qa_scene_frame *, qa_error *);
 bool frontend_unified_events_idle(const frontend_unified_events *);
 bool frontend_unified_events_destroy(frontend_unified_events **, qa_error *);
 bool frontend_unified_events_sound_mirrored(frontend_unified_events *, const qa_unified_presentation_event *, bool *, qa_error *);

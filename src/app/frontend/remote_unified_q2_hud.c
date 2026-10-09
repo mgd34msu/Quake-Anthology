@@ -386,8 +386,7 @@ static bool objective_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_erro
     }
     rr_record *pending=&o->pending_objective;
     if (!o->pending_printed) {
-        if (!qa_hud_center_print(o->prints,pending->localized,nanoseconds(pending->seconds),UINT64_C(5000000000),
-            false,UINT64_C(40000000),e)) return false;
+        if (!qa_hud_center_print(o->prints,pending->localized,nanoseconds(pending->seconds),UINT64_C(5000000000),(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(40000000)},e)) return false;
         o->pending_printed=true;
     }
     if (!o->pending_sound && pending->value.objective.talk) {

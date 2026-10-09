@@ -1,6 +1,7 @@
 #include "native_q3_client_internal.h"
 #include "qa/text.h"
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 
 typedef struct native_dispatch {
@@ -188,10 +189,14 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
     for(size_t i=0;i<QA_NATIVE_COUNT(taunts);++i)if(equal(name,taunts[i]))return append(row,calls[i],e);
     if(equal(name,"spWin") || equal(name,"spLose")) {
         bool win=equal(name,"spWin"); const q3n_media_view *media=q3n_media_read(owners.media);
+        const qa_cvar_view *center_time=qa_cvars_find(row->view.cvars,"cg_centertime");
+        uint64_t duration=(uint64_t)(fmax(0,fmin(86400,center_time?center_time->number:3))*1e9);
         return media && set(row,"cg_cameraOrbit","2",e) && set(row,"cg_cameraOrbitDelay","35",e) &&
             set(row,"cg_thirdPerson","1",e) && set(row,"cg_thirdPersonAngle","0",e) && set(row,"cg_thirdPersonRange","100",e) &&
             q3n_events_buffer(owners.events,media->sounds[win?Q3N_S_WINNER:Q3N_S_LOSER],e) &&
-            q3n_hud_center_print(owners.hud,f,win?"YOU WIN!":"YOU LOSE...",144,0,e);
+            qa_hud_center_print(row->frontend->seats[row->view.seat].hud,win?"YOU WIN!":"YOU LOSE...",
+                (uint64_t)(uint32_t)f->time*UINT64_C(1000000),duration,
+                (qa_hud_center_policy){.instant=true,.source_layout=true,.y=144,.character_width=0,.fade_ns=UINT64_C(200000000)},e);
     }
     return frontend_fail(e,QA_ERROR_FORMAT,"Native registered console command lacks its genuine handler");
 }

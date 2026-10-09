@@ -86,16 +86,6 @@ static bool registered(void *context,const q3n_frame *f,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;
     return cut(o,f,e) && o->options.operations.commands.compiled_register(
         o->options.operations.commands.context,f,e) && cut(o,f,e); }
-static bool center_print(void *context,const q3n_frame *f,const qa_command_context *origin,
-    const char *text,int32_t y,int32_t width,qa_error *e)
-{
-    frontend_unified_q3_runtime_services *o=context;qa_native_q3_client_cvar duration;
-    (void)y;(void)width;
-    if(!text || !cut(o,f,e) || (origin && !compiled_current(o,f,
-        frontend_unified_q3_client_cvars(o->options.client),origin)) || !cvar(o,"cg_centertime",&duration,e))return false;
-    return frontend_unified_events_center_print(o->options.events,text,(double)f->time,
-        (double)duration.number*1000,e) && cut(o,f,e);
-}
 static void print(void *context,const char *text)
 {
     frontend_unified_q3_runtime_services *o=context;
@@ -489,6 +479,7 @@ bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_servi
     v.view.seat=v.player_state.seat=v.hud.seat=v.loading.seat=v.mission.seat=source.basis.seat;
     v.hud.presentation_seat=v.loading.presentation_seat=o->physical_seat;
     v.hud.ui=v.loading.ui=o->options.frontend->seats[o->physical_seat].ui;
+    v.hud.messages=o->options.frontend->seats[o->physical_seat].hud;
     v.view.context=o;v.view.print=print;v.player_state.context=o;v.player_state.print=print;
     v.view.set_view_size=view_size;v.view.set_third_person_angle_value=orbit_angle;
     if(v.player_state.weapon_warning)v.player_state.weapon_warning=weapon_warning;
@@ -503,7 +494,6 @@ bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_servi
     v.commands.compiled_cvar_read=v.mission.compiled_cvar_read=cvar;
     v.commands.compiled_console=v.mission.compiled_console=console;
     v.commands.compiled_register=registered;v.commands.memory_remaining=memory_remaining;
-    v.commands.compiled_center_print=center_print;
     v.commands.message=command_message;v.commands.initialize_stage=initialize_stage;
     v.mission.context=o;v.mission.fonts=o->fonts;v.mission.print=print;v.mission.milliseconds=milliseconds;
     v.mission.key_catcher=key_catcher;

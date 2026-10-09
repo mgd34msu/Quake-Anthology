@@ -5,6 +5,20 @@
 #include "qa/material.h"
 
 typedef struct qa_hud qa_hud;
+typedef struct qa_hud_center_policy {
+    /* Source reveal cadence and terminal fade; zero means no such effect. */
+    uint64_t character_ns, fade_ns;
+    uint32_t initial_characters, columns;
+    /* Explicit 640x480 source placement; otherwise stock viewport placement. */
+    int32_t y, character_width;
+    bool instant, source_layout;
+} qa_hud_center_policy;
+typedef struct qa_hud_center_state {
+    char text[1024];
+    uint64_t starts_ns, duration_ns;
+    uint32_t lines;
+    qa_hud_center_policy policy;
+} qa_hud_center_state;
 typedef struct qa_hud_value {
     const char *label;
     double value, maximum;
@@ -57,6 +71,7 @@ typedef struct qa_hud_frame {
     qa_scene_rect viewport, safe_area; /* World view and full seat UI region. */
     float scale;
     bool show_scores, show_inventory, visible, weapon_only, source_status_native;
+    bool center_owned; /* A source HUD owns centerprint layout and visibility. */
 } qa_hud_frame;
 typedef struct qa_hud_weapon {
     const char *label;
@@ -107,12 +122,15 @@ typedef struct qa_hud_options {
 bool qa_hud_create(const qa_hud_options *, qa_hud **, qa_error *);
 bool qa_hud_idle(const qa_hud *);
 bool qa_hud_destroy(qa_hud *, qa_error *);
-/* Message text is copied. Instant center prints replace the queue; slow prints
- * retain their source reveal interval and queue behind earlier prints. */
+/* One current center record per seat, replaced as SCR_CenterPrint/CG_CenterPrint.
+ * The fixed source-sized text buffer retains no borrowed module memory. */
 bool qa_hud_notify(qa_hud *, const char *, bool chat, uint64_t starts_ns,
                     uint64_t duration_ns, qa_error *);
 bool qa_hud_center_print(qa_hud *, const char *, uint64_t starts_ns, uint64_t duration_ns,
-                          bool instant, uint64_t character_ns, qa_error *);
+                          qa_hud_center_policy, qa_error *);
+const qa_hud_center_state *qa_hud_center_read(const qa_hud *);
+size_t qa_hud_center_length(const qa_hud_center_state *, uint64_t time_ns);
+float qa_hud_center_alpha(const qa_hud_center_state *, uint64_t time_ns, uint64_t duration_ns);
 bool qa_hud_clear_notify(qa_hud *, qa_error *);
 bool qa_hud_clear_center(qa_hud *, qa_error *);
 bool qa_hud_pickup(qa_hud *, const char *, const qa_scene_image *, uint64_t until_ns, qa_error *);

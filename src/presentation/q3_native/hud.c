@@ -67,28 +67,6 @@ bool q3n_hud_weapon_read(q3n_hud *o,const q3n_frame *f,q3n_weapon_hud *out,qa_er
         return q3ne_fail(e,QA_ERROR_FORMAT,"Shared arsenal warning is outside its actual domain");
     *out=result; return true;
 }
-static bool center_current(q3n_hud *o,const q3n_frame *f,qa_error *e)
-{
-    if(f && f->compiled)return o && o->options.compiled_source==f->compiled->source.owner &&
-        o->options.application==f->application && o->options.assets==f->assets && o->options.seat==f->seat &&
-        o->product==q3n_frame_product(f) && f->compiled->source.basis.initialized && q3ne_current(f,e);
-    if(!f || !f->remote)return q3nh_current(o,f,e);
-    qa_native_q3_remote_client_basis actual;
-    return o && o->options.application==f->application && o->options.assets==f->assets &&
-        o->options.seat==f->seat && o->product==q3n_frame_product(f) &&
-        o->options.remote_client==f->remote->client && f->remote->source.basis.client.initialized &&
-        qa_native_q3_remote_client_basis_read(f->remote->client,&actual,e) && actual.client.initialized &&
-        q3n_frame_current(f) && q3ne_current(f,e)?true:
-        q3ne_fail(e,QA_ERROR_ARGUMENT,"Center print requires its actual initialized CLIENT and entered frame");
-}
-bool q3n_hud_center_print(q3n_hud *o,const q3n_frame *f,const char *text,int32_t y,int32_t width,qa_error *e)
-{
-    if(!text || !o || o->busy || !center_current(o,f,e))return false;
-    q3n_hud_state *s=&o->state; snprintf(s->center_print,sizeof(s->center_print),"%s",text);
-    s->center_print_time=f->time; s->center_print_y=y; s->center_print_char_width=width; s->center_print_lines=1;
-    for(const char *p=s->center_print;*p;++p)if(*p=='\n')++s->center_print_lines;
-    return true;
-}
 void q3n_hud_scores(q3n_hud *o,bool show,int32_t time)
 { if(o && !o->busy) { if(o->state.show_scores && !show)o->state.score_fade_time=time; o->state.show_scores=show; } }
 bool q3n_hud_scores_request(q3n_hud *o,const q3n_frame *f,bool *due,qa_error *e)
@@ -114,27 +92,44 @@ void q3n_hud_disconnect_command(q3n_hud *o,int32_t time)
 { if(o && !o->busy) { o->oldest_command_time=time; o->has_oldest_command=true; } }
 static bool center_string(q3n_hud_draw *d)
 {
-    q3n_hud_state *s=&d->owner->state; float color[4];
-    if(!q3nh_fade(d->frame->time,s->center_print_time,q3ne_int((1000 * d->settings->center_time)),color))return true;
+    const qa_hud_center_state *center=qa_hud_center_read(d->owner->options.messages);
+    if(!center)return true;
+    uint64_t time=(uint64_t)(uint32_t)d->frame->time*UINT64_C(1000000);
+    int32_t milliseconds=q3ne_int((1000*d->settings->center_time));
+    uint64_t duration=center->policy.source_layout?
+        (uint64_t)(milliseconds>0?milliseconds:0)*UINT64_C(1000000):center->duration_ns;
+    float alpha=qa_hud_center_alpha(center,time,duration);
+    if(alpha<=0)return true;
+    float color[4]={1,1,1,alpha};
     q3nh_anchor(d,320,240);
-    float y=(float)s->center_print_y-(float)s->center_print_lines*8*d->frame->preferences.text_scale; const char *start=s->center_print;
+    float y=center->policy.source_layout?
+        (float)center->policy.y-(float)center->lines*8*d->frame->preferences.text_scale:
+        center->lines<=4?480*.35f:48;
+    int32_t character_width=center->policy.source_layout?center->policy.character_width:8;
+    const char *start=center->text,*limit=start+qa_hud_center_length(center,time);
     for(;;) {
         const char *end=start; while(*end && *end!='\n')++end;
-        size_t length=(size_t)(end-start); if(length>50)length=50; char line[51]; memcpy(line,start,length); line[length]=0;
+        size_t length=(size_t)(end-start),columns=center->policy.columns?center->policy.columns:50;
+        if(length>columns)length=columns;
+        if(length>=sizeof(center->text))length=sizeof(center->text)-1;
+        char full[sizeof(center->text)],line[sizeof(center->text)];
+        memcpy(full,start,length);full[length]=0;
+        size_t visible=limit>start?(size_t)(limit-start):0;if(visible>length)visible=length;
+        memcpy(line,start,visible);line[visible]=0;
         if(d->owner->product==QA_Q3_TEAM_ARENA) {
             float height;
             if(!d->owner->options.mission_center_line(d->owner->options.context,d->frame,line,y,color,&height,d->error) ||
                !q3nh_current(d->owner,d->frame,d->error))return false;
             y=(y + (height + 6));
         } else {
-            int32_t height=q3ne_int(((float)s->center_print_char_width * 1.5f));
+            int32_t height=q3ne_int(((float)character_width * (center->policy.source_layout?1.5f:1)));
             float width;
-            if(!q3nh_width(d,line,(float)s->center_print_char_width,(float)height,0,&width) ||
+            if(!q3nh_width(d,full,(float)character_width,(float)height,0,&width) ||
                !q3nh_text(d,(640-width)/2,y,line,
-               (float)s->center_print_char_width,(float)height,color,false,true,0))return false;
-            y=(float)q3ne_int((y + (((float)s->center_print_char_width * 1.5f) * d->frame->preferences.text_scale)));
+               (float)character_width,(float)height,color,false,true,0))return false;
+            y=(float)q3ne_int((y + (((float)character_width * (center->policy.source_layout?1.5f:1)) * d->frame->preferences.text_scale)));
         }
-        if(!*end)break;
+        if(end>=limit || !*end)break;
         start=end+1;
     }
     return q3nh_color(d,NULL);

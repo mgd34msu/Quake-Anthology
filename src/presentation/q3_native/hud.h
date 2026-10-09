@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_HUD_H
 #include "view.h"
 #include "server_commands.h"
+#include "qa/hud.h"
 
 typedef struct q3n_hud q3n_hud;
 typedef struct q3n_hud_settings {
@@ -25,6 +26,7 @@ typedef struct q3n_hud_options {
      * differ. UI/fonts borrow this frontend seat until parent retirement. */
     uint32_t presentation_seat;
     qa_ui *ui;
+    qa_hud *messages;
     void *context;
     int32_t (*milliseconds)(void *);
     bool (*load_deferred)(void *, const q3n_frame *, qa_error *);
@@ -47,8 +49,6 @@ typedef struct q3n_hud_options {
         const float color[4], float *height, qa_error *);
 } q3n_hud_options;
 typedef struct q3n_hud_state {
-    char center_print[1024];
-    int32_t center_print_time, center_print_y, center_print_char_width, center_print_lines;
     int32_t crosshair_client, crosshair_client_time, score_fade_time, deferred_player_loading;
     int32_t prox_time, prox_counter, prox_tick;
     int32_t head_start_time, head_end_time;
@@ -63,9 +63,6 @@ void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);
 bool q3n_hud_weapon_read(q3n_hud *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
-/* Scalar text publication needs the actual initialized CLIENT and entered
- * frame; it does not consume a snapshot or predicted player. */
-bool q3n_hud_center_print(q3n_hud *, const q3n_frame *, const char *, int32_t y, int32_t width, qa_error *);
 void q3n_hud_scores(q3n_hud *, bool show, int32_t source_time);
 /* Stamps the shared scoreboard request clock before reliable output. An
  * entered remote console can request scores before its first snapshot. */

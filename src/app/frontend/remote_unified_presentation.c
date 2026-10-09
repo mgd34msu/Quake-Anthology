@@ -1145,11 +1145,13 @@ static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame
         frontend_unified_components_hud(p->components,ui,viewport,frame,error) &&
         frontend_unified_q3_hud_recipient_read(p->q3,frame,&recipient,error) &&
         frontend_unified_components_pictures(p->components,recipient,frame,error))) return false;
+    bool source_center_owned=false;
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         bool rendered=false;
         if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_hud(row->factory,&rendered,error)) return false;
+        source_center_owned|=rendered;
     }
-    return frontend_unified_events_draw(p->events,viewport,frame,error);
+    return frontend_unified_events_draw(p->events,viewport,source_center_owned,frame,error);
 }
 static bool entity_beam(void *context,const char *content,const qa_scene_view *view,
     qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,qa_scene_frame *frame,qa_error *error)

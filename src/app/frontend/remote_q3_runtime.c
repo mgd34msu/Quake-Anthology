@@ -321,7 +321,16 @@ static bool receipt_current(void *context,const q3n_frame *f,const q3n_server_co
 { frontend_remote_q3_runtime *o=context; return receipt && recipient_current(o,f,&receipt->recipient) &&
     q3n_remote_command_current(o->services.source,&receipt->remote); }
 static bool center(void *context,const q3n_frame *f,const char *text,int32_t y,int32_t width,qa_error *e)
-{ frontend_remote_q3_runtime *o=context; return cut(o,f,e) && q3n_hud_center_print(o->children.hud,f,text,y,width,e); }
+{
+    frontend_remote_q3_runtime *o=context;
+    if(!cut(o,f,e))return false;
+    const qa_native_q3_cvar_refs *refs=qa_native_q3_remote_client_cvar_refs(o->services.client);
+    const qa_cvar_view *duration=refs?qa_cvars_read(f->remote->source.basis.client.cvars,refs->rows[QA_NATIVE_Q3_CVAR_cg_centertime]):NULL;
+    double seconds=duration?fmax(0,fmin(86400,duration->number)):3;
+    return qa_hud_center_print(o->frontend->seats[o->services.resources.physical_seat].hud,text,
+        (uint64_t)(uint32_t)f->time*UINT64_C(1000000),(uint64_t)(seconds*1e9),
+        (qa_hud_center_policy){.instant=true,.source_layout=true,.y=y,.character_width=width,.fade_ns=UINT64_C(200000000)},e);
+}
 static bool command_center(void *context,const q3n_frame *f,const qa_application_q3_client_context *recipient,
     const char *text,int32_t y,int32_t width,qa_error *e)
 { return recipient_current(context,f,recipient) && center(context,f,text,y,width,e); }
@@ -844,7 +853,8 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     q3n_player_state_options ps={.application=f->application,.assets=r->assets,.remote_client=services.client,
         .seat=basis.client.seat,.context=o,.print=print};
     q3n_hud_options hud={.application=f->application,.assets=r->assets,.remote_client=services.client,.seat=basis.client.seat,
-        .presentation_seat=r->physical_seat,.ui=f->seats[r->physical_seat].ui,.context=o,.milliseconds=milliseconds,
+        .presentation_seat=r->physical_seat,.ui=f->seats[r->physical_seat].ui,
+        .messages=f->seats[r->physical_seat].hud,.context=o,.milliseconds=milliseconds,
         .load_deferred=load_deferred,.client_command=hud_command,.oldest_command=oldest_command};
     if(basis.product==QA_Q3_TEAM_ARENA) {
         hud.mission_order=mission_order; hud.mission_paint=mission_paint; hud.mission_timed=mission_timed;

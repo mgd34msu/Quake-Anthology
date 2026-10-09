@@ -471,21 +471,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
     }
     o->busy=false; return okay;
 }
-bool frontend_unified_events_center_print(frontend_unified_events *o,const char *text_value,
-    double source_milliseconds,double duration_milliseconds,qa_error *e)
-{
-    if (!o || !text_value || !isfinite(source_milliseconds) || !isfinite(duration_milliseconds))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print requires finite Source clocks and text");
-    if (o->busy || o->prepared || !o->has_frame || !o->hud || !qa_hud_idle(o->hud))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Compiled center print overlaps a CLIENT callback or unpublished frame");
-    if (!execution_current(o,e)) return false;
-    o->busy=true;
-    bool okay=qa_hud_center_print(o->hud,text_value,clock_ns(source_milliseconds/1000),
-        clock_ns(duration_milliseconds/1000),true,0,e);
-    o->busy=false;
-    return okay && qa_hud_idle(o->hud) && execution_current(o,e);
-}
-bool frontend_unified_events_draw(frontend_unified_events *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
+bool frontend_unified_events_draw(frontend_unified_events *o,qa_scene_rect viewport,bool center_owned,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || !frame || o->busy || !o->has_frame || !execution_current(o,e)) return false;
     qa_actor_id player; uint32_t source;
@@ -493,7 +479,8 @@ bool frontend_unified_events_draw(frontend_unified_events *o,qa_scene_rect viewp
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     o->busy=true;
     bool okay=qa_hud_draw_messages(o->hud,&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
-        .time_ns=clock_ns(o->seconds),.viewport=viewport,.safe_area=viewport,.scale=1,.visible=true},frame,e);
+        .time_ns=clock_ns(o->seconds),.viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,
+        .center_owned=center_owned},frame,e);
     o->busy=false; return okay;
 }
 bool frontend_unified_events_checkpoint_ready(const frontend_unified_events *o)

@@ -269,8 +269,8 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
         const qa_cvar_view *duration = qa_cvars_find(row->options.domain.cvars,"scr_centertime");
         double seconds = duration && isfinite(duration->number) ? fmax(0,fmin(86400,duration->number)) : 2;
         return qa_hud_center_print(row->frontend->seats[seat].hud,message->data.text,
-            row->frontend->time_ns,(uint64_t)(seconds * 1e9),message->op == QA_NQ_CENTERPRINT,
-            message->op == QA_NQ_CENTERPRINT ? 0 : UINT64_C(125000000),error);
+            row->frontend->time_ns,message->op == QA_NQ_CENTERPRINT ? (uint64_t)(seconds * 1e9) : UINT64_MAX,
+            (qa_hud_center_policy){.instant=message->op == QA_NQ_CENTERPRINT,.character_ns=UINT64_C(125000000),.initial_characters=1,.columns=40},error);
     }
     default: return true;
     }

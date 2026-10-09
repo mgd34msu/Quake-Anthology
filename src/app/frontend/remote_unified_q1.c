@@ -650,7 +650,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_WEAPON: {qa_unified_presentation_event *doc=NULL;ok=clone_row(row,&doc,e);if(ok) {retained_free(o->weapon);o->weapon=doc;o->weapon_activation=owner;}break;}
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
-        if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),true,0,e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
+        if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
         if(ok && !p.flag) {char *copy=realloc(message.data,message.size+2);if(!copy) ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Emitting Q1 Source print");else {message.data=(uint8_t *)copy;copy[message.size]='\n';copy[message.size+1]=0;
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_console_emit(domain->console,&domain->command_context,copy);}}
         if(ok) *mirrored=true;
@@ -686,7 +686,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         qa_scene_image_options options={.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent=true,.transparent_index=255};
         ok=clone_row(row,&doc,e) && localized(o,g,&p,&text,e) && qa_scene_image_load_exact(g->images,"gfx/finale.lmp",&options,&image,e);
         if(ok && !image)ok=fail(e,"Q1 finale picture is absent from its actual Source content");
-        if(ok)ok=qa_hud_clear_center(o->hud,e) && qa_hud_center_print(o->hud,(char *)text.data,ns(p.seconds),UINT64_MAX,false,UINT64_C(125000000),e);
+        if(ok)ok=qa_hud_clear_center(o->hud,e) && qa_hud_center_print(o->hud,(char *)text.data,ns(p.seconds),UINT64_MAX,(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(125000000),.initial_characters=1,.columns=40},e);
         if(ok){retained_free(o->finale);o->finale=doc;doc=NULL;qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
             o->finale_banner=p.a>=4;o->finale_activation=owner;}
         qa_scene_image_release(image);retained_free(doc);qa_buffer_free(&text);break;

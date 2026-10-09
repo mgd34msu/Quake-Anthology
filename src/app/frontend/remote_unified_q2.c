@@ -1060,7 +1060,7 @@ static bool received_text(frontend_unified_q2 *o,const qa_unified_presentation_e
     const qa_unified_message_arg *args,size_t count,bool center,bool console,bool chat,bool instant,double duration,qa_error *e)
 {
     qa_buffer text={0};if (!localized(o,row,input,args,count,&text,e))return false;
-    bool okay=center?qa_hud_center_print(o->hud,(const char *)text.data,nanoseconds(row->seconds),nanoseconds(duration),instant,UINT64_C(50000000),e):
+    bool okay=center?qa_hud_center_print(o->hud,(const char *)text.data,nanoseconds(row->seconds),nanoseconds(duration),(qa_hud_center_policy){.instant=instant,.character_ns=UINT64_C(50000000)},e):
         qa_hud_notify(o->hud,(const char *)text.data,chat,nanoseconds(row->seconds),UINT64_C(3000000000),e);
     if (okay && console){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         qa_console_emit(domain->console,&domain->command_context,(const char *)text.data);}

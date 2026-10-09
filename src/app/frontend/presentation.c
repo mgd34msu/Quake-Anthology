@@ -453,9 +453,11 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         qa_scene_command begin = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = view};
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         bool remote_rendered=false,remote_listener_present=false,native_rendered=false,common_hud_drawn=false;
+        bool source_center_owned=false;
         qa_audio_listener remote_listener;
         if (!frontend_network_client_draw(frontend,i,0,&remote_rendered,&remote_listener,
             &remote_listener_present,error)) return false;
+        source_center_owned=remote_rendered;
         if (!remote_rendered) {
             if (!frontend_remote_q2_draw(frontend,i,0,&remote_listener,&remote_rendered,error)) return false;
             remote_listener_present=remote_rendered && remote_listener.actor!=QA_AUDIO_NO_ACTOR;
@@ -473,6 +475,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (!frontend_source_frame(frontend, i, rect, error) ||
                 !frontend_native_q2_frame(frontend, i, rect, error)) return false;
             if (native_ready && !frontend_native_q3_frame(frontend,i,rect,&native_rendered,error)) return false;
+            source_center_owned=native_rendered;
         }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && frontend->scene_world) {
             bool changed;
@@ -552,6 +555,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (live && !source_status_native(frontend,i,actor,&component_status,error)) return false;
         if (live && !common_hud_drawn && (!native_rendered || source_weapon_status || qc_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
+            .center_owned=source_center_owned,
             .time_ns = frontend->time_ns, .viewport = view.viewport, .safe_area = rect,
             .scale = preferences.hud_scale, .show_scores = qa_input_seat_action_active(seat->input,QA_INPUT_SCORES) || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen && game_focus}, &frontend->frame, error)) return false;

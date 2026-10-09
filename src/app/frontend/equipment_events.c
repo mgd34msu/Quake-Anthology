@@ -102,7 +102,7 @@ static bool command(frontend_equipment_events *owner, const qa_application_equip
             frontend_seat *seat = &owner->frontend->seats[ordinal];
             if ((center || chat) && !(owner->hud_delivered & bit)) {
                 okay = center ? qa_hud_center_print(seat->hud, text, event->time_ns,
-                    UINT64_C(3000000000), true, 0, error) : qa_hud_notify(seat->hud, text, true,
+                    UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.source_layout=true,.y=143,.character_width=16,.fade_ns=UINT64_C(200000000)}, error) : qa_hud_notify(seat->hud, text, true,
                     event->time_ns, UINT64_C(3000000000), error);
                 if (okay) owner->hud_delivered |= bit;
             }

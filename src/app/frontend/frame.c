@@ -511,7 +511,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
                 char localized[1024]; const char *recipient_text;
                 if (!frontend_ui_source_message(frontend,seat,&event,localized,&recipient_text,error)) return false;
                 bool ok = center ? qa_hud_center_print(frontend->seats[seat].hud,
-                    recipient_text, frontend->time_ns, center_duration, true, 0, error) :
+                    recipient_text, frontend->time_ns, center_duration,(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=event.family==QA_GAME_Q1?40u:0u}, error) :
                     qa_seat_console_print(frontend->seats[seat].console, recipient_text, error);
                 if (!ok) return false;
                 if (!printed) { fputs(recipient_text,stdout); printed=true; }

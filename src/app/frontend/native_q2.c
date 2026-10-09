@@ -442,7 +442,7 @@ static void platform_print_body(void *context, const qa_native_host_print *print
             const qa_cvar_view *time = qa_cvars_read(source->cvars, source->hud_cvars.center_time);
             double seconds = time && isfinite(time->number) ? fmax(0, fmin(time->number, 86400)) : 2.5;
             ok = qa_hud_center_print(frontend->seats[seat].hud, print->text, frontend->time_ns,
-                (uint64_t)(seconds * 1000000000), true, 0, &error);
+                (uint64_t)(seconds * 1000000000),(qa_hud_center_policy){.instant=true,.character_ns=0}, &error);
         } else ok = qa_seat_console_print(frontend->seats[seat].console, print->text, &error);
         if (!ok) fprintf(stderr, "native Q2 print: %s\n", error.message);
     }
