@@ -245,8 +245,9 @@ const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *g,
                ? &g->definitions[weapon]
                : NULL;
 }
-qa_item_id qa_q2_weapon_item(const qa_q2_game *g, qa_q2_weapon weapon) {
-    return qa_q2_weapon_definition_at(g, weapon) ? g->items[weapon] : QA_STRING_NONE;
+qa_item_id qa_q2_weapon_item(const qa_q2_game *g, qa_q2_weapon weapon, bool ammo) {
+    return qa_q2_weapon_definition_at(g, weapon)
+        ? (ammo ? g->ammo[weapon] : g->items[weapon]) : QA_STRING_NONE;
 }
 const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *model) {
     if (model)

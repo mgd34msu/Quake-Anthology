@@ -164,7 +164,15 @@ carry existing IDs. Different namespaces resolve only at admission or external
 serialization. Rendered labels, QC string operations and console parsing still
 need text. Hash-table bucket keys are not content identity.
 
-Confirmed hot identity bypasses remain in `unified_prediction.c:21`,
+Q2 inventory prediction now compares already admitted weapon/ammunition IDs
+through its existing accessor. The hot string conversion/comparison path is
+deleted. Actual definition and inventory components preserve 56 profiles,
+3,317 selections and 1,407 retained rows. Their old path makes 3,317 string
+reads and 82,507 comparisons; the new path makes none and does no interning.
+All three engine builds and seven core checks per configuration pass. This is
+bounded ID-adoption evidence, not a frame-time claim.
+
+Confirmed hot identity bypasses remain in
 `remote_unified_prediction.c:37`, `remote_unified_render.c:257`,
 `remote_unified_media.c:40,116,192,200`, `visuals.c:505,537`,
 `src/render/scene/models.c:814`, `native_q3_remote_character.c:20,57` and

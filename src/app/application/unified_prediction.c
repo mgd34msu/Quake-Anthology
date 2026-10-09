@@ -18,11 +18,10 @@ static bool selected_item(qa_application *app, application_provider *p, qa_item_
         return false;
     }
     if (p->kind == APPLICATION_PROVIDER_Q2) {
-        const char *name = qa_strings_cstr(qa_session_strings(app->session), item);
-        for (int i = 1; name && i < QA_Q2_WEAPON_COUNT; ++i) {
-            const qa_q2_weapon_definition *v = qa_q2_weapon_definition_at(p->state.q2, (qa_q2_weapon)i);
-            if (v && ((v->item && !strcmp(v->item, name)) || (v->ammo && !strcmp(v->ammo, name)))) return true;
-        }
+        if (item == QA_STRING_NONE) return false;
+        for (int i = 1; i < QA_Q2_WEAPON_COUNT; ++i)
+            if (qa_q2_weapon_item(p->state.q2, (qa_q2_weapon)i, false) == item ||
+                qa_q2_weapon_item(p->state.q2, (qa_q2_weapon)i, true) == item) return true;
         return false;
     }
     if (p->kind == APPLICATION_PROVIDER_Q3) {
@@ -102,7 +101,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
             qa_q2_weapon_definition_at(p->state.q2, v.pending) : NULL;
         if (v.pending != QA_Q2_WEAPON_NONE && (!pending || !pending->item))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its actual pending Q2 weapon definition");
-        if (pending) w->pending_weapon=qa_q2_weapon_item(p->state.q2, v.pending);
+        if (pending) w->pending_weapon=qa_q2_weapon_item(p->state.q2, v.pending, false);
         w->machinegun_shots = v.machinegun_shots; w->grenade_seconds = (double)v.grenade_ns / 1e9;
         w->grenade_blew_up = v.grenade_blew_up;
     } else if (p->kind == APPLICATION_PROVIDER_NATIVE && p->state.native.q2_engine) {

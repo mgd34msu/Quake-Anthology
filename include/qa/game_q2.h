@@ -318,7 +318,7 @@ bool qa_q2_begin_map(qa_q2_game *, qa_string_id map_name, qa_string_id spawn_poi
 bool qa_q2_timed_invulnerability(qa_q2_game *, qa_actor_id);
 bool qa_q2_powerups_present(qa_q2_game *, qa_actor_id);
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *, qa_q2_weapon);
-qa_item_id qa_q2_weapon_item(const qa_q2_game *, qa_q2_weapon);
+qa_item_id qa_q2_weapon_item(const qa_q2_game *, qa_q2_weapon, bool ammo);
 /* The original public CLIENT UI matches its gun model against the immutable
  * base source catalog, independently of a selected compiled GAME. */
 const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *);
