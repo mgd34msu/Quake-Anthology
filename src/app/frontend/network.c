@@ -870,7 +870,7 @@ bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa
     uint32_t physical = source->context.physical_seat;
     const frontend_local_client *local = physical < f->options.seats ? n->local_clients + physical : NULL;
     bool local_source = local && (local->service || local->q1 || local->q2) && source->runtime == local->runtime;
-    if (!local_source && (!f->options.network_connect ||
+    if (!local_source && ((!f->options.network_connect && !n->demo_playback) ||
         (source->runtime!=n->runtime && (!n->detached_transport || !f->source_restoring)))) return false;
     frontend_network_q2_client *q2 = physical < f->options.seats ? q2_client_at(n, physical) : NULL;
     if(q2) return frontend_network_q2_client_configuration_primary(q2,source);
