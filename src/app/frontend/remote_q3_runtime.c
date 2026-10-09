@@ -619,7 +619,7 @@ static bool transition_player(void *context,const q3n_remote_frame *r,const qa_q
     frontend_remote_q3_runtime *o=context; q3n_frame f;
     if(!begin(o,r,&f,e))return false;
     const q3n_command_state *state=q3n_server_commands_state(o->children.commands); qa_native_q3_client_cvar miss;
-    bool okay=state && qa_native_q3_remote_client_cvar_read(o->services.client,"cg_showmiss",&miss,e);
+    bool okay=state && qa_native_q3_remote_client_cvar_read(o->services.client,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e);
     q3n_player_state_context settings={0};
     if(okay)settings=(q3n_player_state_context){.warmup=state->warmup,.timelimit=state->timelimit,.fraglimit=state->fraglimit,
         .scores1=state->scores1,.intermission_started=state->intermission_started,.show_miss=miss.integer!=0};
@@ -631,7 +631,7 @@ static bool prediction_completed(void *context,const q3n_remote_frame *r,fronten
     if(!begin(o,r,&f,e))return false;
     qa_native_q3_client_cvar miss;
     bool okay=r->snapshots.stage==Q3N_REMOTE_PREDICTION_CALLBACK &&
-        qa_native_q3_remote_client_cvar_read(o->services.client,"cg_showmiss",&miss,e);
+        qa_native_q3_remote_client_cvar_read(o->services.client,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e);
     if(okay && status==FRONTEND_REMOTE_PREDICTION_PREDICTED)
         okay=q3n_player_state_prediction_finish(o->children.player_state,&f,miss.integer!=0,e);
     return end(o,okay,e);
@@ -1187,13 +1187,13 @@ static bool timescale(frontend_remote_q3_runtime *o,qa_error *e)
 {
     qa_native_q3_client_cvar finish,speed,value;
     qa_native_q3_remote_client_service *client=o->services.client;
-    if(!qa_native_q3_remote_client_cvar_read(client,"cg_timescaleFadeEnd",&finish,e) ||
-       !qa_native_q3_remote_client_cvar_read(client,"cg_timescaleFadeSpeed",&speed,e) ||
-       !qa_native_q3_remote_client_cvar_read(client,"cg_timescale",&value,e))return false;
+    if(!qa_native_q3_remote_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeEnd,&finish,e) ||
+       !qa_native_q3_remote_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeSpeed,&speed,e) ||
+       !qa_native_q3_remote_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescale,&value,e))return false;
     if(value.number==finish.number)return true;
     float delta=product(speed.number,(float)o->frame_milliseconds)/1000;
     float next=value.number<finish.number?fminf(finish.number,sum(value.number,delta)):fmaxf(finish.number,sum(value.number,-delta));
-    return qa_native_q3_remote_client_cvar_number(client,"cg_timescale",next,e) &&
+    return qa_native_q3_remote_client_cvar_number(client,QA_NATIVE_Q3_CVAR_cg_timescale,next,e) &&
         (speed.number==0 || qa_native_q3_remote_client_set_timescale(client,next,e));
 }
 bool frontend_remote_q3_runtime_draw(void *context,const q3n_remote_frame *r,qa_error *e)
@@ -1237,7 +1237,7 @@ bool frontend_remote_q3_runtime_draw(void *context,const q3n_remote_frame *r,qa_
     if(okay)okay=q3n_hud_frame(o->children.hud,&f,&o->settings.hud,o->children.commands,o->children.player_state,viewport,e);
     if(okay && !tournament) {
         qa_native_q3_client_cvar stats;
-        okay=qa_native_q3_remote_client_cvar_read(o->services.client,"cg_stats",&stats,e);
+        okay=qa_native_q3_remote_client_cvar_read(o->services.client,QA_NATIVE_Q3_CVAR_cg_stats,&stats,e);
         if(okay && stats.integer) { char text[64]; snprintf(text,sizeof(text),"cg.clientFrame:%d\n",o->client_frame); print(o,text); }
     }
     if(okay)o->rendered=true;

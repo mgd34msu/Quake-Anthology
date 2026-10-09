@@ -92,7 +92,7 @@ static bool compiled_current(void *ctx,const q3n_frame *f,qa_cvars *vars,const q
 { frontend_unified_q3_runtime *o=ctx; return cut(o,f,NULL) &&
     o->options.commands.compiled_current(o->options.commands.context,f,vars,command); }
 static bool cvar_read(void *ctx,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
-{ frontend_unified_q3_runtime *o=ctx; return frontend_unified_q3_client_cvar_read(o->options.client,name,out,e); }
+{ frontend_unified_q3_runtime *o=ctx; return frontend_unified_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e); }
 static bool register_commands(void *ctx,const q3n_frame *f,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; return cut(o,f,e) &&
     frontend_unified_q3_client_register(o->options.client,e) &&

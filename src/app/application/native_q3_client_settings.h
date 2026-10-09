@@ -9,8 +9,9 @@
  * actual local, received or compiled Source lifetime and current witness. */
 typedef struct application_q3_client_settings_source {
     const void *context;
-    bool (*read)(const void *, const char *, qa_native_q3_client_cvar *, qa_error *);
+    bool (*read)(const void *, qa_native_q3_cvar_id, qa_native_q3_client_cvar *, qa_error *);
     qa_cvars *cvars;
+    const qa_native_q3_cvar_refs *refs;
     qa_q3_product product;
 } application_q3_client_settings_source;
 bool application_q3_client_view_settings(const application_q3_client_settings_source *,

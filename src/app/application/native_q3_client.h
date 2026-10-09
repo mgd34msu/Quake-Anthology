@@ -3,14 +3,17 @@
 #include "qa/application_native_q3_client.h"
 #include "qa/source_save.h"
 #include "qa/source_frame_time.h"
+#include "qa/application_native_q3_cvars.h"
 
 typedef struct native_client_definition {
+    qa_native_q3_cvar_id id;
     const char *symbol, *name, *value;
     uint32_t flags;
     bool missionpack;
 } native_client_definition;
 
-#define QA_NATIVE_CLIENT_CVARS 101
+#define QA_NATIVE_CLIENT_CVARS QA_NATIVE_Q3_CVAR_COUNT
+_Static_assert(QA_NATIVE_CLIENT_CVARS<UINT8_MAX,"CGAME cvar ordinals fit their cold map");
 struct qa_native_q3_client_service {
     qa_application *application;
     qa_native_q3_client_services services;
@@ -21,6 +24,7 @@ struct qa_native_q3_client_service {
     qa_product_id content_product;
     qa_q3_product product;
     qa_native_q3_client_cvar cache[QA_NATIVE_CLIENT_CVARS];
+    qa_native_q3_cvar_refs cvar_refs;
     size_t count;
     uint64_t force_model_count, overlay_count;
     int32_t local_server;
@@ -41,13 +45,18 @@ typedef struct native_client_cache_access {
     uint64_t owner;
     qa_q3_product product;
     qa_native_q3_client_cvar *cache;
+    qa_native_q3_cvar_refs *refs;
     size_t count;
-    const char *oversized_error, *reload_memory_error;
+    const char *oversized_error, *reload_memory_error, *missing_error;
 } native_client_cache_access;
 typedef struct native_client_userinfo_text {
     const char *defaults, *identity, *character, *capacity_error, *memory_error;
 } native_client_userinfo_text;
-size_t native_client_cvar_index(qa_q3_product, size_t, const char *);
+void native_client_cache_bind(const native_client_cache_access *,bool dense);
+bool native_client_cache_copy_row(const native_client_cache_access *,qa_native_q3_cvar_id,bool,qa_error *);
+bool native_client_cache_refresh(const native_client_cache_access *,qa_error *);
+bool native_client_cache_read(const qa_native_q3_cvar_refs *,const qa_native_q3_client_cvar *,size_t,
+    qa_native_q3_cvar_id,qa_native_q3_client_cvar *,qa_error *);
 bool native_client_cache_register(const native_client_cache_access *, const char *,
     int32_t *, uint64_t *, qa_error *);
 bool native_client_cache_userinfo(const native_client_cache_access *,

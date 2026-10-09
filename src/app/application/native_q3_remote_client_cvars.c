@@ -29,7 +29,7 @@ static native_client_cache_access cache_access(qa_native_q3_remote_client_servic
     return (native_client_cache_access){.context = service, .current = current,
         .configstring = configstring, .reload_client_info = reload_client_info,
         .registry = service->services.basis.client.cvars, .owner = service->services.basis.client.service_owner,
-        .product = service->services.basis.product, .cache = service->cache, .count = native_client_definition_count,
+        .product = service->services.basis.product, .cache = service->cache, .refs=&service->cvar_refs, .count = native_client_definition_count,
         .oversized_error = "Remote Cvar_Update exceeds MAX_CVAR_VALUE_STRING",
         .reload_memory_error = "Retaining reached remote player configstring"};
 }

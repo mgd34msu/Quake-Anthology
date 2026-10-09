@@ -137,8 +137,8 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 bool q3nc_cvar(q3n_server_commands *o, const char *symbol,
     qa_native_q3_client_cvar *out, qa_error *e)
 { return o->options.compiled_source?o->options.compiled_cvar_read(o->options.context,symbol,out,e):
-    o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client, symbol, out, e) :
-    qa_native_q3_client_cvar_read(o->options.client, symbol, out, e); }
+    o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client,qa_native_q3_cvar_id_for_symbol(symbol), out, e) :
+    qa_native_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(symbol), out, e); }
 static bool recipient_read(q3n_server_commands *o, qa_application_q3_client_context *out, qa_error *e)
 {
     if (!o->options.remote_client) return qa_native_q3_client_context_read(o->options.client, out, e);

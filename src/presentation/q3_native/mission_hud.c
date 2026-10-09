@@ -62,15 +62,15 @@ bool q3nm_cvar(q3n_mission_hud *o,const char *name,qa_native_q3_client_cvar *out
 {
     if(o->options.compiled_source)return q3nm_current(o,o->frame,e)&&
         o->options.compiled_cvar_read(o->options.context,name,out,e)&&q3nm_current(o,o->frame,e);
-    return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,name,out,e):
-        qa_native_q3_client_cvar_read(o->options.client,name,out,e);
+    return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,qa_native_q3_cvar_id_for_symbol(name),out,e):
+        qa_native_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e);
 }
 bool q3nm_integer_set(q3n_mission_hud *o,const char *name,int32_t value,qa_error *e)
 {
     if(o->options.compiled_source) { char text[32]; snprintf(text,sizeof(text),"%d",value);
         return q3nm_current(o,o->frame,e)&&qa_cvars_set(o->options.compiled_cvars,name,text,true,e)&&q3nm_current(o,o->frame,e); }
-    return o->options.remote_client?qa_native_q3_remote_client_cvar_integer(o->options.remote_client,name,value,e):
-        qa_native_q3_client_cvar_integer(o->options.client,name,value,e);
+    return o->options.remote_client?qa_native_q3_remote_client_cvar_integer(o->options.remote_client,qa_native_q3_cvar_id_for_symbol(name),value,e):
+        qa_native_q3_client_cvar_integer(o->options.client,qa_native_q3_cvar_id_for_symbol(name),value,e);
 }
 bool q3nm_console(q3n_mission_hud *o,const char *text,qa_error *e)
 {

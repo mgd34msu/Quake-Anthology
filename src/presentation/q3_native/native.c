@@ -343,13 +343,13 @@ static bool timescale(q3n_native *o,qa_error *e)
 {
     qa_native_q3_client_cvar end,speed,current;
     qa_native_q3_client_service *client=o->options.client;
-    if(!qa_native_q3_client_cvar_read(client,"cg_timescaleFadeEnd",&end,e) ||
-        !qa_native_q3_client_cvar_read(client,"cg_timescaleFadeSpeed",&speed,e) ||
-        !qa_native_q3_client_cvar_read(client,"cg_timescale",&current,e))return false;
+    if(!qa_native_q3_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeEnd,&end,e) ||
+        !qa_native_q3_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeSpeed,&speed,e) ||
+        !qa_native_q3_client_cvar_read(client,QA_NATIVE_Q3_CVAR_cg_timescale,&current,e))return false;
     if(current.number==end.number)return true;
     float delta=(speed.number * (float)o->frame_milliseconds)/1000;
     float value=current.number<end.number?fminf(end.number,(current.number + delta)):fmaxf(end.number,(current.number + -delta));
-    return qa_native_q3_client_cvar_number(client,"cg_timescale",value,e) &&
+    return qa_native_q3_client_cvar_number(client,QA_NATIVE_Q3_CVAR_cg_timescale,value,e) &&
         (speed.number==0 || qa_native_q3_client_set_timescale(client,value,e));
 }
 static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
@@ -415,7 +415,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     q3n_player_state_context transition={.warmup=commands->warmup,.timelimit=commands->timelimit,
         .fraglimit=commands->fraglimit,.scores1=commands->scores1,.intermission_started=commands->intermission_started};
     qa_native_q3_client_cvar show_miss;
-    if(!qa_native_q3_client_cvar_read(o->options.client,"cg_showmiss",&show_miss,e))return false;
+    if(!qa_native_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_showmiss,&show_miss,e))return false;
     transition.show_miss=show_miss.integer!=0;
     bool in_water;
     if(!q3n_player_state_transition(o->player_state,f,&transition,e) ||
@@ -472,7 +472,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
         !qa_application_native_q3_presentation_current(f->application,&source))return false;
     if(!tournament) {
         qa_native_q3_client_cvar stats;
-        if(!qa_native_q3_client_cvar_read(o->options.client,"cg_stats",&stats,e))return false;
+        if(!qa_native_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_stats,&stats,e))return false;
         if(stats.integer) {
             if(!o->options.events.print)return q3nn_fail(e,QA_ERROR_UNSUPPORTED,"Native cg_stats requires its actual print service");
             char message[64]; snprintf(message,sizeof(message),"cg.clientFrame:%d\n",o->client_frame);

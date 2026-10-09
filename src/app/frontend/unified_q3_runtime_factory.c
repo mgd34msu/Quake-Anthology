@@ -215,14 +215,14 @@ static bool music(void *context,const char *intro,const char *loop,qa_error *e)
 static bool timescale(void *context,int32_t elapsed,qa_error *e)
 {
     frontend_unified_q3_runtime_factory *o=context;qa_native_q3_client_cvar finish,speed,value;
-    if(!frontend_unified_q3_client_cvar_read(o->options.client,"cg_timescaleFadeEnd",&finish,e) ||
-        !frontend_unified_q3_client_cvar_read(o->options.client,"cg_timescaleFadeSpeed",&speed,e) ||
-        !frontend_unified_q3_client_cvar_read(o->options.client,"cg_timescale",&value,e))return false;
+    if(!frontend_unified_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeEnd,&finish,e) ||
+        !frontend_unified_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_timescaleFadeSpeed,&speed,e) ||
+        !frontend_unified_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_timescale,&value,e))return false;
     if(value.number==finish.number)return true;
     float product=speed.number*(float)elapsed,delta=product/1000.0f;
     float sum=value.number<finish.number?value.number+delta:value.number-delta;
     float next=value.number<finish.number?fminf(finish.number,sum):fmaxf(finish.number,sum);
-    if(!frontend_unified_q3_client_cvar_number(o->options.client,"cg_timescale",next,e))return false;
+    if(!frontend_unified_q3_client_cvar_number(o->options.client,QA_NATIVE_Q3_CVAR_cg_timescale,next,e))return false;
     return speed.number==0 || qa_cvars_set_number(qa_application_cvars(o->options.frontend->application),"timescale",next,e);
 }
 static bool initialize_stage(void *context,const q3n_frame *f,q3n_command_init_stage stage,const char *map,int32_t physical,uint32_t *extent,qa_error *e)

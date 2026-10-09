@@ -62,7 +62,7 @@ static bool cut(frontend_unified_q3_runtime_services *o,const q3n_frame *f,qa_er
 static bool cvar(void *context,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;
     return frontend_unified_q3_runtime_services_current(o) &&
-        frontend_unified_q3_client_cvar_read(o->options.client,name,out,e); }
+        frontend_unified_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e); }
 static bool compiled_current(void *context,const q3n_frame *f,qa_cvars *registry,const qa_command_context *origin)
 {
     frontend_unified_q3_runtime_services *o=context;
@@ -363,8 +363,9 @@ static bool ragepro(frontend_unified_q3_runtime_services *o)
 { const qa_gl_capabilities *caps=qa_gl_capabilities_get(o->options.frontend->gl);
     return caps && !renderer_name(caps->renderer,"banshee") && !renderer_name(caps->renderer,"voodoo_graphics") &&
         (renderer_name(caps->renderer,"rage pro") || renderer_name(caps->renderer,"ragepro")); }
-static bool settings_cvar(const void *context,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
-{ return cvar((void *)context,name,out,e); }
+static bool settings_cvar(const void *context,qa_native_q3_cvar_id id,qa_native_q3_client_cvar *out,qa_error *e)
+{ frontend_unified_q3_runtime_services *o=(frontend_unified_q3_runtime_services *)context;
+    return frontend_unified_q3_runtime_services_current(o) && frontend_unified_q3_client_cvar_read(o->options.client,id,out,e); }
 static bool frame_settings(void *context,const q3n_compiled_frame *f,bool loading,uint32_t stereo,
     q3n_native_frame_options *out,qa_error *e)
 {
@@ -375,7 +376,8 @@ static bool frame_settings(void *context,const q3n_compiled_frame *f,bool loadin
     if(!q3n_compiled_source_configstring(o->source,0,&server,&revision,e) ||
         !qa_q3_info_value(server,"dmflags",flags,sizeof(flags),e))return false;
     application_q3_client_settings_source source={.context=o,.read=settings_cvar,
-        .cvars=frontend_unified_q3_client_cvars(o->options.client),.product=o->product};
+        .cvars=frontend_unified_q3_client_cvars(o->options.client),
+        .refs=frontend_unified_q3_client_cvar_refs(o->options.client),.product=o->product};
     q3n_native_frame_options v;
     if(!application_q3_client_frame_settings(&source,q3nc_integer(flags),ragepro(o),
         (size_t)memory_remaining(o),loading,false,stereo,&v,e) ||

@@ -171,7 +171,7 @@ static bool dispatch(frontend_unified_q3_commands *o,const qa_command_invocation
     }
     if(equal(name,"sizeup") || equal(name,"sizedown")) {
         qa_native_q3_client_cvar cached;
-        if(!frontend_unified_q3_client_cvar_read(o->options.client,"cg_viewsize",&cached,e))return false;
+        if(!frontend_unified_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_viewsize,&cached,e))return false;
         snprintf(text,sizeof(text),"%i",sum(cached.integer,equal(name,"sizeup")?10:-10)); return set(o,call,"cg_viewsize",text,e);
     }
     if(equal(name,"+scores"))return scores(o,call,f,&owners,e);
@@ -216,7 +216,7 @@ static bool dispatch(frontend_unified_q3_commands *o,const qa_command_invocation
         char immediate[1024]; snprintf(immediate,sizeof(immediate),"%s",developer?developer->value:"");
         if(!game_atoi(immediate))return true;
         qa_native_q3_client_cvar cached;
-        if(!frontend_unified_q3_client_cvar_read(o->options.client,"cg_cameraOrbit",&cached,e))return false;
+        if(!frontend_unified_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_cameraOrbit,&cached,e))return false;
         if(cached.number!=0)return set(o,call,"cg_cameraOrbit","0",e) && set(o,call,"cg_thirdPerson","0",e);
         return set(o,call,"cg_cameraOrbit","5",e) && set(o,call,"cg_thirdPerson","1",e) &&
             set(o,call,"cg_thirdPersonAngle","0",e) && set(o,call,"cg_thirdPersonRange","100",e);

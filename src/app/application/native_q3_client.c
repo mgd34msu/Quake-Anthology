@@ -141,6 +141,9 @@ bool native_client_allocate_bound(qa_application *app,const qa_native_q3_client_
     service->source_game=source->source_game; service->product=source->product;
     service->content_product=source->content_product; service->count=native_client_definition_count;
     service->overlay_initial=true;
+    native_client_cache_access refs={.registry=service->services.client.cvars,.product=service->product,
+        .refs=&service->cvar_refs};
+    native_client_cache_bind(&refs,false);
     if (!qa_launch_instance_retain_metadata(source->source_launch,&service->source_lease,error) ||
         !qa_native_q3_client_service_current(service)) {
         qa_launch_instance_lease_release(service->source_lease); free(service); return false;

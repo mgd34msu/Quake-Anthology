@@ -12,110 +12,10 @@
 #define R QA_CVAR_READONLY
 #define U QA_CVAR_USERINFO
 #define S QA_CVAR_SERVERINFO
-#define CV(symbol,name,value,flags) {#symbol,name,value,flags,false}
-#define MP(symbol,name,value,flags) {#symbol,name,value,flags,true}
+#define CV(symbol,name,value,flags) {QA_NATIVE_Q3_CVAR_##symbol,#symbol,name,value,flags,false},
+#define MP(symbol,name,value,flags) {QA_NATIVE_Q3_CVAR_##symbol,#symbol,name,value,flags,true},
 const native_client_definition native_client_definitions[] = {
-    CV(cg_ignore,"cg_ignore","0",0),
-    CV(cg_autoswitch,"cg_autoswitch","1",A),
-    CV(cg_drawGun,"cg_drawGun","1",A),
-    CV(cg_zoomFov,"cg_zoomfov","22.5",A),
-    CV(cg_fov,"cg_fov","90",A),
-    CV(cg_viewsize,"cg_viewsize","100",A),
-    CV(cg_stereoSeparation,"cg_stereoSeparation","0.4",A),
-    CV(cg_shadows,"cg_shadows","1",A),
-    CV(cg_gibs,"cg_gibs","1",A),
-    CV(cg_draw2D,"cg_draw2D","1",A),
-    CV(cg_drawStatus,"cg_drawStatus","1",A),
-    CV(cg_drawTimer,"cg_drawTimer","0",A),
-    CV(cg_drawFPS,"cg_drawFPS","0",A),
-    CV(cg_drawSnapshot,"cg_drawSnapshot","0",A),
-    CV(cg_draw3dIcons,"cg_draw3dIcons","1",A),
-    CV(cg_drawIcons,"cg_drawIcons","1",A),
-    CV(cg_drawAmmoWarning,"cg_drawAmmoWarning","1",A),
-    CV(cg_drawAttacker,"cg_drawAttacker","1",A),
-    CV(cg_drawCrosshair,"cg_drawCrosshair","4",A),
-    CV(cg_drawCrosshairNames,"cg_drawCrosshairNames","1",A),
-    CV(cg_drawRewards,"cg_drawRewards","1",A),
-    CV(cg_crosshairSize,"cg_crosshairSize","24",A),
-    CV(cg_crosshairHealth,"cg_crosshairHealth","1",A),
-    CV(cg_crosshairX,"cg_crosshairX","0",A),
-    CV(cg_crosshairY,"cg_crosshairY","0",A),
-    CV(cg_brassTime,"cg_brassTime","2500",A),
-    CV(cg_simpleItems,"cg_simpleItems","0",A),
-    CV(cg_addMarks,"cg_marks","1",A),
-    CV(cg_lagometer,"cg_lagometer","1",A),
-    CV(cg_railTrailTime,"cg_railTrailTime","400",A),
-    CV(cg_gun_x,"cg_gunX","0",C),
-    CV(cg_gun_y,"cg_gunY","0",C),
-    CV(cg_gun_z,"cg_gunZ","0",C),
-    CV(cg_centertime,"cg_centertime","3",C),
-    CV(cg_runpitch,"cg_runpitch","0.002",A),
-    CV(cg_runroll,"cg_runroll","0.005",A),
-    CV(cg_bobup,"cg_bobup","0.005",C),
-    CV(cg_bobpitch,"cg_bobpitch","0.002",A),
-    CV(cg_bobroll,"cg_bobroll","0.002",A),
-    CV(cg_swingSpeed,"cg_swingSpeed","0.3",C),
-    CV(cg_animSpeed,"cg_animspeed","1",C),
-    CV(cg_debugAnim,"cg_debuganim","0",C),
-    CV(cg_debugPosition,"cg_debugposition","0",C),
-    CV(cg_debugEvents,"cg_debugevents","0",C),
-    CV(cg_errorDecay,"cg_errordecay","100",0),
-    CV(cg_nopredict,"cg_nopredict","0",0),
-    CV(cg_noPlayerAnims,"cg_noplayeranims","0",C),
-    CV(cg_showmiss,"cg_showmiss","0",0),
-    CV(cg_footsteps,"cg_footsteps","1",C),
-    CV(cg_tracerChance,"cg_tracerchance","0.4",C),
-    CV(cg_tracerWidth,"cg_tracerwidth","1",C),
-    CV(cg_tracerLength,"cg_tracerlength","100",C),
-    CV(cg_thirdPersonRange,"cg_thirdPersonRange","40",C),
-    CV(cg_thirdPersonAngle,"cg_thirdPersonAngle","0",C),
-    CV(cg_thirdPerson,"cg_thirdPerson","0",0),
-    CV(cg_teamChatTime,"cg_teamChatTime","3000",A),
-    CV(cg_teamChatHeight,"cg_teamChatHeight","0",A),
-    CV(cg_forceModel,"cg_forceModel","0",A),
-    CV(cg_predictItems,"cg_predictItems","1",A),
-    CV(cg_deferPlayers,"cg_deferPlayers","1",A),
-    CV(cg_drawTeamOverlay,"cg_drawTeamOverlay","0",A),
-    CV(cg_teamOverlayUserinfo,"teamoverlay","0",R|U),
-    CV(cg_stats,"cg_stats","0",0),
-    CV(cg_drawFriend,"cg_drawFriend","1",A),
-    CV(cg_teamChatsOnly,"cg_teamChatsOnly","0",A),
-    CV(cg_noVoiceChats,"cg_noVoiceChats","0",A),
-    CV(cg_noVoiceText,"cg_noVoiceText","0",A),
-    CV(cg_buildScript,"com_buildScript","0",0),
-    CV(cg_paused,"cl_paused","0",R),
-    CV(cg_blood,"com_blood","1",A),
-    CV(cg_synchronousClients,"g_synchronousClients","0",0),
-    MP(cg_redTeamName,"g_redteam","Stroggs",A|S|U),
-    MP(cg_blueTeamName,"g_blueteam","Pagans",A|S|U),
-    MP(cg_currentSelectedPlayer,"cg_currentSelectedPlayer","0",A),
-    MP(cg_currentSelectedPlayerName,"cg_currentSelectedPlayerName","",A),
-    MP(cg_singlePlayer,"ui_singlePlayerActive","0",U),
-    MP(cg_enableDust,"g_enableDust","0",S),
-    MP(cg_enableBreath,"g_enableBreath","0",S),
-    MP(cg_singlePlayerActive,"ui_singlePlayerActive","0",U),
-    MP(cg_recordSPDemo,"ui_recordSPDemo","0",A),
-    MP(cg_recordSPDemoName,"ui_recordSPDemoName","",A),
-    MP(cg_obeliskRespawnDelay,"g_obeliskRespawnDelay","10",S),
-    MP(cg_hudFiles,"cg_hudFiles","ui/hud.txt",A),
-    CV(cg_cameraOrbit,"cg_cameraOrbit","0",C),
-    CV(cg_cameraOrbitDelay,"cg_cameraOrbitDelay","50",A),
-    CV(cg_timescaleFadeEnd,"cg_timescaleFadeEnd","1",0),
-    CV(cg_timescaleFadeSpeed,"cg_timescaleFadeSpeed","0",0),
-    CV(cg_timescale,"timescale","1",0),
-    CV(cg_scorePlum,"cg_scorePlums","1",U|A),
-    CV(cg_smoothClients,"cg_smoothClients","0",U|A),
-    CV(cg_cameraMode,"com_cameraMode","0",C),
-    CV(pmove_fixed,"pmove_fixed","0",0),
-    CV(pmove_msec,"pmove_msec","8",0),
-    CV(cg_noTaunt,"cg_noTaunt","0",A),
-    CV(cg_noProjectileTrail,"cg_noProjectileTrail","0",A),
-    CV(cg_smallFont,"ui_smallFont","0.25",A),
-    CV(cg_bigFont,"ui_bigFont","0.4",A),
-    CV(cg_oldRail,"cg_oldRail","1",A),
-    CV(cg_oldRocket,"cg_oldRocket","1",A),
-    CV(cg_oldPlasma,"cg_oldPlasma","1",A),
-    CV(cg_trueLightning,"cg_trueLightning","0.0",A)
+#include "qa/native_q3_client_cvars.def"
 };
 const size_t native_client_definition_count = sizeof(native_client_definitions)/sizeof(*native_client_definitions);
 _Static_assert(sizeof(native_client_definitions)/sizeof(*native_client_definitions)==QA_NATIVE_CLIENT_CVARS,
@@ -162,7 +62,7 @@ bool qa_native_q3_cvar_definition_at(qa_q3_product product,size_t ordinal,qa_nat
         if(ordinal--)continue;
         *out=(qa_native_q3_cvar_definition){definition->symbol,definition->name,
             product==QA_Q3_TEAM_ARENA && !strcmp(definition->symbol,"cg_deferPlayers")?"0":definition->value,
-            definition->flags}; return true;
+            definition->flags,definition->id}; return true;
     }
     return false;
 }
@@ -211,45 +111,81 @@ bool qa_native_q3_client_defaults(const qa_launch_instance *descriptor, qa_cvars
     free(model); return ok;
 }
 
-size_t native_client_cvar_index(qa_q3_product product,size_t count,const char *symbol)
+qa_native_q3_cvar_id qa_native_q3_cvar_id_for_symbol(const char *symbol)
 {
-    if (!symbol) return SIZE_MAX;
-    for (size_t i=0;i<count;++i)
-        if ((!native_client_definitions[i].missionpack || product==QA_Q3_TEAM_ARENA) &&
-            !strcmp(symbol,native_client_definitions[i].symbol)) return i;
-    return SIZE_MAX;
+    if (!symbol) return QA_NATIVE_Q3_CVAR_COUNT;
+    for (size_t i=0;i<native_client_definition_count;++i)
+        if (!strcmp(symbol,native_client_definitions[i].symbol)) return native_client_definitions[i].id;
+    return QA_NATIVE_Q3_CVAR_COUNT;
 }
-bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *service,const char *symbol,
+void native_client_cache_bind(const native_client_cache_access *access,bool dense)
+{
+    size_t ordinal=0;
+    for (size_t i=0;i<native_client_definition_count;++i) {
+        const native_client_definition *definition=&native_client_definitions[i];
+        access->refs->ordinals[i]=UINT8_MAX;
+        access->refs->rows[i]=(qa_cvar_handle){0};
+        if (definition->missionpack && access->product!=QA_Q3_TEAM_ARENA) continue;
+        access->refs->ordinals[i]=(uint8_t)(dense?ordinal++:i);
+        access->refs->rows[i]=qa_cvars_resolve(access->registry,definition->name);
+    }
+    access->refs->model=qa_cvars_resolve(access->registry,"model");
+    access->refs->head_model=qa_cvars_resolve(access->registry,"headmodel");
+}
+bool native_client_cache_copy_row(const native_client_cache_access *access,qa_native_q3_cvar_id id,
+    bool force,qa_error *error)
+{
+    if (force) access->refs->rows[id]=qa_cvars_resolve(access->registry,native_client_definitions[id].name);
+    const qa_cvar_view *value=qa_cvars_read(access->registry,access->refs->rows[id]);
+    if (!value) return access->missing_error ? native_client_fail(error,QA_ERROR_NOT_FOUND,access->missing_error) : !force;
+    return application_q3_client_cache_copy(&access->cache[access->refs->ordinals[id]],value,force,
+        access->oversized_error,error);
+}
+bool native_client_cache_refresh(const native_client_cache_access *access,qa_error *error)
+{
+    for (size_t i=0;i<native_client_definition_count;++i)
+        if (access->refs->ordinals[i]!=UINT8_MAX &&
+            !native_client_cache_copy_row(access,(qa_native_q3_cvar_id)i,false,error)) return false;
+    return true;
+}
+bool native_client_cache_read(const qa_native_q3_cvar_refs *refs,const qa_native_q3_client_cvar *cache,
+    size_t count,qa_native_q3_cvar_id id,qa_native_q3_client_cvar *out,qa_error *error)
+{
+    if ((unsigned)id>=QA_NATIVE_Q3_CVAR_COUNT || refs->ordinals[id]>=count)
+        return native_client_fail(error,QA_ERROR_NOT_FOUND,"Native CGAME cvar symbol is absent for this product");
+    *out=cache[refs->ordinals[id]]; return true;
+}
+bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *service,qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *out,qa_error *error)
 {
     if (!service || !out || !qa_native_q3_client_service_current(service))
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME cvar cache lost its actual seat owner");
-    size_t index=native_client_cvar_index(service->product,service->count,symbol);
-    if (index==SIZE_MAX) return native_client_fail(error,QA_ERROR_NOT_FOUND,"Native CGAME cvar symbol is absent for this product");
-    *out=service->cache[index];
-    if (!strcmp(symbol,"cg_drawStatus") && service->services.status_visible &&
+    if (!native_client_cache_read(&service->cvar_refs,service->cache,service->count,id,out,error)) return false;
+    if (id==QA_NATIVE_Q3_CVAR_cg_drawStatus && service->services.status_visible &&
         !service->services.status_visible(service->services.context)) {
         strcpy(out->value,"0"); out->number=0; out->integer=0;
     }
     return true;
 }
-bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *service,const char *symbol,
+bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *service,qa_native_q3_cvar_id id,
     float number,qa_error *error)
 {
     qa_native_q3_client_cvar value;
-    if (!qa_native_q3_client_cvar_read(service,symbol,&value,error)) return false;
-    service->cache[native_client_cvar_index(service->product,service->count,symbol)].number=number; return true;
+    if (!qa_native_q3_client_cvar_read(service,id,&value,error)) return false;
+    service->cache[service->cvar_refs.ordinals[id]].number=number; return true;
 }
-bool qa_native_q3_client_cvar_integer(qa_native_q3_client_service *service,const char *symbol,
+bool qa_native_q3_client_cvar_integer(qa_native_q3_client_service *service,qa_native_q3_cvar_id id,
     int32_t integer,qa_error *error)
 {
     qa_native_q3_client_cvar value;
-    if (!qa_native_q3_client_cvar_read(service,symbol,&value,error)) return false;
-    service->cache[native_client_cvar_index(service->product,service->count,symbol)].integer=integer; return true;
+    if (!qa_native_q3_client_cvar_read(service,id,&value,error)) return false;
+    service->cache[service->cvar_refs.ordinals[id]].integer=integer; return true;
 }
+
 bool native_client_cache_register(const native_client_cache_access *access,
     const char *description, int32_t *local_server, uint64_t *force_count, qa_error *error)
 {
+    native_client_cache_bind(access,false);
     for (size_t i = 0; i < access->count; ++i) {
         const native_client_definition *definition = &native_client_definitions[i];
         if (definition->missionpack && access->product != QA_Q3_TEAM_ARENA) continue;
@@ -258,18 +194,15 @@ bool native_client_cache_register(const native_client_cache_access *access,
             reset = "0";
         if (!qa_cvars_register(access->registry, definition->name, reset, definition->flags,
             access->owner, description, error) || !access->current(access->context)) return false;
-        const qa_cvar_view *value = qa_cvars_find(access->registry, definition->name);
-        if (!value || !application_q3_client_cache_copy(&access->cache[i], value, true,
-            access->oversized_error, error)) return false;
+        if (!native_client_cache_copy_row(access,definition->id,true,error)) return false;
     }
     const qa_cvar_view *running = qa_cvars_find(access->registry, "sv_running");
     *local_server = running ? running->integer : 0;
-    *force_count = access->cache[native_client_cvar_index(access->product,
-        access->count, "cg_forceModel")].modification_count;
+    *force_count = access->cache[access->refs->ordinals[QA_NATIVE_Q3_CVAR_cg_forceModel]].modification_count;
     /* Actual selected CHARACTER values survive these SDK reset declarations. */
     const char *team_model = access->product == QA_Q3_TEAM_ARENA ? "james" : "sarge";
     const char *team_head = access->product == QA_Q3_TEAM_ARENA ? "*james" : "sarge";
-    return qa_cvars_register(access->registry, "model", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
+    bool ok=qa_cvars_register(access->registry, "model", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
         access->owner, "Q3 body model", error) &&
         qa_cvars_register(access->registry, "headmodel", "sarge", QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
         access->owner, "Q3 head model", error) &&
@@ -277,6 +210,11 @@ bool native_client_cache_register(const native_client_cache_access *access,
         access->owner, "Q3 team model", error) &&
         qa_cvars_register(access->registry, "team_headmodel", team_head, QA_CVAR_USERINFO | QA_CVAR_ARCHIVE,
         access->owner, "Q3 team head", error) && access->current(access->context);
+    if (ok) {
+        access->refs->model=qa_cvars_resolve(access->registry,"model");
+        access->refs->head_model=qa_cvars_resolve(access->registry,"headmodel");
+    }
+    return ok;
 }
 
 bool native_client_cache_userinfo(const native_client_cache_access *access,
@@ -333,15 +271,8 @@ bool native_client_cache_reload(const native_client_cache_access *access, qa_err
 bool native_client_cache_update(const native_client_cache_access *access,
     bool *overlay_initial, uint64_t *overlay_count, uint64_t *force_count, qa_error *error)
 {
-    for (size_t i = 0; i < access->count; ++i) {
-        const native_client_definition *definition = &native_client_definitions[i];
-        if (definition->missionpack && access->product != QA_Q3_TEAM_ARENA) continue;
-        const qa_cvar_view *value = qa_cvars_find(access->registry, definition->name);
-        if (value && !application_q3_client_cache_copy(&access->cache[i], value, false,
-            access->oversized_error, error)) return false;
-    }
-    qa_native_q3_client_cvar *overlay = &access->cache[native_client_cvar_index(
-        access->product, access->count, "cg_drawTeamOverlay")];
+    if (!native_client_cache_refresh(access,error)) return false;
+    qa_native_q3_client_cvar *overlay = &access->cache[access->refs->ordinals[QA_NATIVE_Q3_CVAR_cg_drawTeamOverlay]];
     if (*overlay_initial || *overlay_count != overlay->modification_count) {
         *overlay_initial = false; *overlay_count = overlay->modification_count;
         if (!qa_cvars_set(access->registry, "teamoverlay", overlay->integer > 0 ? "1" : "0", true, error) ||
@@ -349,8 +280,7 @@ bool native_client_cache_update(const native_client_cache_access *access,
             !qa_cvars_set(access->registry, "teamoverlay", "1", true, error) ||
             !access->current(access->context)) return false;
     }
-    qa_native_q3_client_cvar *force = &access->cache[native_client_cvar_index(
-        access->product, access->count, "cg_forceModel")];
+    qa_native_q3_client_cvar *force = &access->cache[access->refs->ordinals[QA_NATIVE_Q3_CVAR_cg_forceModel]];
     if (*force_count != force->modification_count) {
         *force_count = force->modification_count;
         return native_client_cache_reload(access, error);
@@ -376,7 +306,7 @@ static native_client_cache_access cache_access(qa_native_q3_client_service *serv
     return (native_client_cache_access){.context = service, .current = current,
         .configstring = configstring, .reload_client_info = reload_client_info,
         .registry = service->services.client.cvars, .owner = service->services.client.service_owner,
-        .product = service->product, .cache = service->cache, .count = service->count,
+        .product = service->product, .cache = service->cache, .count = service->count, .refs=&service->cvar_refs,
         .oversized_error = "Cvar_Update source exceeds MAX_CVAR_VALUE_STRING",
         .reload_memory_error = "Retaining reached native client-info value"};
 }

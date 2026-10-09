@@ -1,5 +1,6 @@
 #include "unified_q3_client.h"
 #include "../application/native_q3_client_settings.h"
+#include "../application/native_q3_client.h"
 #include "remote_unified_save.h"
 #include "video_guests.h"
 #include "qa/application_native_q3_cvars.h"
@@ -45,6 +46,7 @@ struct frontend_unified_q3_client {
     q3n_compiled_source *source;
     uint64_t revision;
     qa_native_q3_client_cvar *cvar_cache;
+    qa_native_q3_cvar_refs cvar_refs;
     size_t cvar_count;
     int32_t local_server;
     bool busy, registered, initialized;
@@ -619,15 +621,19 @@ bool frontend_unified_q3_client_seal(frontend_unified_q3_client *c, qa_error *e)
     c->history->unsealed_snapshot = false; ++c->revision; return true;
 }
 
-static bool cache_cvar(frontend_unified_q3_client *c, size_t index, bool force, qa_error *e)
+static native_client_cache_access cvar_access(frontend_unified_q3_client *c)
 {
-    qa_native_q3_cvar_definition definition;
-    if (!qa_native_q3_cvar_definition_at(c->constructor.product,index,&definition))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled CG cvar definition has retired");
-    const qa_cvar_view *actual = qa_cvars_find(c->domain->cvars,definition.name);
-    if (!actual) return fail(e,QA_ERROR_NOT_FOUND,"Compiled CG registered cvar is absent from its real registry");
-    return application_q3_client_cache_copy(c->cvar_cache+index,actual,force,
-        "Compiled Cvar_Update exceeds MAX_CVAR_VALUE_STRING",e);
+    return (native_client_cache_access){.registry=c->domain->cvars,.product=c->constructor.product,
+        .cache=c->cvar_cache,.count=c->cvar_count,.refs=&c->cvar_refs,
+        .missing_error="Compiled CG registered cvar is absent from its real registry",
+        .oversized_error="Compiled Cvar_Update exceeds MAX_CVAR_VALUE_STRING"};
+}
+const qa_native_q3_cvar_refs *frontend_unified_q3_client_cvar_refs(const frontend_unified_q3_client *c)
+{ return c?&c->cvar_refs:NULL; }
+static bool cache_cvar(frontend_unified_q3_client *c,qa_native_q3_cvar_id id,bool force,qa_error *e)
+{
+    native_client_cache_access access=cvar_access(c);
+    return native_client_cache_copy_row(&access,id,force,e);
 }
 bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error *e)
 {
@@ -636,12 +642,14 @@ bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error
     c->cvar_count = qa_native_q3_cvar_definition_count(c->constructor.product);
     c->cvar_cache = calloc(c->cvar_count,sizeof(*c->cvar_cache));
     if (!c->cvar_cache) return fail(e,QA_ERROR_MEMORY,"Retaining genuine compiled CG cvar cache");
+    native_client_cache_access refs=cvar_access(c);
+    native_client_cache_bind(&refs,true);
     c->busy = true; bool ok = true;
     for (size_t i = 0; ok && i < c->cvar_count; ++i) {
         qa_native_q3_cvar_definition definition;
         ok = qa_native_q3_cvar_definition_at(c->constructor.product,i,&definition) &&
             qa_cvars_register(c->domain->cvars,definition.name,definition.reset,definition.flags,c->receiver,
-                "Compiled Q3 CLIENT",e) && frontend_unified_q3_client_current(c) && cache_cvar(c,i,true,e);
+                "Compiled Q3 CLIENT",e) && frontend_unified_q3_client_current(c) && cache_cvar(c,definition.id,true,e);
     }
     if (ok) {
         const qa_cvar_view *running = qa_cvars_find(c->domain->cvars,"sv_running");
@@ -659,29 +667,31 @@ bool frontend_unified_q3_client_register(frontend_unified_q3_client *c, qa_error
                 c->receiver,"Compiled Q3 CLIENT",e) && frontend_unified_q3_client_current(c);
     }
     c->busy = false;
-    if (ok) c->registered = true;
+    if (ok) {
+        c->cvar_refs.model=qa_cvars_resolve(c->domain->cvars,"model");
+        c->cvar_refs.head_model=qa_cvars_resolve(c->domain->cvars,"headmodel");
+        c->registered = true;
+    }
     else { free(c->cvar_cache); c->cvar_cache = NULL; c->cvar_count = 0; }
     return ok || (e && e->code ? false : fail(e,QA_ERROR_ARGUMENT,"Compiled CG registration lost its actual source"));
 }
-bool frontend_unified_q3_client_cvars_update(frontend_unified_q3_client *c, qa_error *e)
+bool frontend_unified_q3_client_cvars_update(frontend_unified_q3_client *c,qa_error *e)
 {
     if (!c || !c->registered || c->busy || c->prepared || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG cvar update requires its real returned registry");
-    c->busy = true; bool ok = true;
-    for (size_t i = 0; ok && i < c->cvar_count; ++i) ok = cache_cvar(c,i,false,e) && frontend_unified_q3_client_current(c);
-    c->busy = false; return ok;
+    c->busy=true; bool ok=true;
+    native_client_cache_access access=cvar_access(c);
+    for (size_t i=0;ok && i<native_client_definition_count;++i)
+        if (c->cvar_refs.ordinals[i]!=UINT8_MAX)
+            ok=native_client_cache_copy_row(&access,(qa_native_q3_cvar_id)i,false,e) && frontend_unified_q3_client_current(c);
+    c->busy=false; return ok;
 }
-bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *c, const char *symbol,
-    qa_native_q3_client_cvar *out, qa_error *e)
+bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *c,qa_native_q3_cvar_id id,
+    qa_native_q3_client_cvar *out,qa_error *e)
 {
-    if (!symbol || !out || !c || !c->registered || !frontend_unified_q3_client_current(c))
+    if (!out || !c || !c->registered || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG cvar read requires its actual registered cache");
-    for (size_t i = 0; i < c->cvar_count; ++i) {
-        qa_native_q3_cvar_definition definition;
-        if (!qa_native_q3_cvar_definition_at(c->constructor.product,i,&definition)) return false;
-        if (!strcmp(definition.symbol,symbol)) { *out = c->cvar_cache[i]; return true; }
-    }
-    return fail(e,QA_ERROR_NOT_FOUND,"Compiled CG cvar symbol is absent for its genuine product");
+    return native_client_cache_read(&c->cvar_refs,c->cvar_cache,c->cvar_count,id,out,e);
 }
 bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_client *c, qa_error *e)
 {
@@ -691,16 +701,13 @@ bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_clie
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG Init completion requires its actual returned constructor");
     c->initialized = true; ++c->revision; return true;
 }
-bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *c,const char *symbol,float value,qa_error *e)
+bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *c,qa_native_q3_cvar_id id,float value,qa_error *e)
 {
-    if (!c || !symbol || !c->registered || c->busy || c->prepared || !frontend_unified_q3_client_current(c))
+    if (!c || !c->registered || c->busy || c->prepared || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled VM cvar number requires its actual returned registered cache");
-    for (size_t i = 0; i < c->cvar_count; ++i) {
-        qa_native_q3_cvar_definition definition;
-        if (!qa_native_q3_cvar_definition_at(c->constructor.product,i,&definition)) return false;
-        if (!strcmp(definition.symbol,symbol)) { c->cvar_cache[i].number = value; return true; }
-    }
-    return fail(e,QA_ERROR_NOT_FOUND,"Compiled VM cvar number has no genuine registered symbol");
+    qa_native_q3_client_cvar previous;
+    if (!native_client_cache_read(&c->cvar_refs,c->cvar_cache,c->cvar_count,id,&previous,e)) return false;
+    c->cvar_cache[c->cvar_refs.ordinals[id]].number=value; return true;
 }
 
 bool frontend_unified_q3_client_local_server_read(const frontend_unified_q3_client *c,int32_t *out,qa_error *e)

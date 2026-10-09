@@ -214,6 +214,9 @@ bool native_remote_client_allocate(qa_native_q3_remote_client_services *services
     if (!service) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining remote native CGAME service");
     service->services = *services; service->character = *character; service->overlay_initial = true;
     qa_source_frame_time_bind(services->basis.client.cvars,&service->frame_time);
+    native_client_cache_access refs={.registry=service->services.basis.client.cvars,
+        .product=service->services.basis.product,.refs=&service->cvar_refs};
+    native_client_cache_bind(&refs,false);
     service->provider = receiver(basis->application, basis->client.receiver);
     if (!qa_launch_instance_retain_metadata(basis->descriptor, &service->descriptor, error)) { free(service); return false; }
     service->services.basis.descriptor = qa_launch_instance_lease_view(service->descriptor);
@@ -309,30 +312,28 @@ bool qa_native_q3_remote_client_video_reset(qa_native_q3_remote_client_service *
     free(service->system_info); service->system_info=NULL;
     return qa_native_q3_remote_client_current(service);
 }
-bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *service, const char *symbol,
-    qa_native_q3_client_cvar *out, qa_error *error)
+bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *service,qa_native_q3_cvar_id id,
+    qa_native_q3_client_cvar *out,qa_error *error)
 {
     if (!out || !qa_native_q3_remote_client_current(service))
-        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native cvar cache lost its physical CLIENT");
-    size_t index = native_client_cvar_index(service->services.basis.product, native_client_definition_count, symbol);
-    if (index == SIZE_MAX) return native_client_fail(error, QA_ERROR_NOT_FOUND, "Remote CGAME cvar symbol is absent for its compiled product");
-    *out = service->cache[index];
-    if (!strcmp(symbol, "cg_drawStatus") && service->services.status_visible && !service->services.status_visible(service->services.context)) {
-        strcpy(out->value, "0"); out->number = 0; out->integer = 0;
+        return native_client_fail(error,QA_ERROR_ARGUMENT,"Remote native cvar cache lost its physical CLIENT");
+    if (!native_client_cache_read(&service->cvar_refs,service->cache,native_client_definition_count,id,out,error)) return false;
+    if (id==QA_NATIVE_Q3_CVAR_cg_drawStatus && service->services.status_visible && !service->services.status_visible(service->services.context)) {
+        strcpy(out->value,"0"); out->number=0; out->integer=0;
     }
     return true;
 }
-bool qa_native_q3_remote_client_cvar_number(qa_native_q3_remote_client_service *service, const char *symbol, float value, qa_error *error)
+bool qa_native_q3_remote_client_cvar_number(qa_native_q3_remote_client_service *service,qa_native_q3_cvar_id id,float value,qa_error *error)
 {
     qa_native_q3_client_cvar old;
-    if (!qa_native_q3_remote_client_cvar_read(service, symbol, &old, error) || service->cache_revision == UINT64_MAX) return false;
-    service->cache[native_client_cvar_index(service->services.basis.product, native_client_definition_count, symbol)].number = value; ++service->cache_revision; return true;
+    if (!qa_native_q3_remote_client_cvar_read(service,id,&old,error) || service->cache_revision==UINT64_MAX) return false;
+    service->cache[service->cvar_refs.ordinals[id]].number=value; ++service->cache_revision; return true;
 }
-bool qa_native_q3_remote_client_cvar_integer(qa_native_q3_remote_client_service *service, const char *symbol, int32_t value, qa_error *error)
+bool qa_native_q3_remote_client_cvar_integer(qa_native_q3_remote_client_service *service,qa_native_q3_cvar_id id,int32_t value,qa_error *error)
 {
     qa_native_q3_client_cvar old;
-    if (!qa_native_q3_remote_client_cvar_read(service, symbol, &old, error) || service->cache_revision == UINT64_MAX) return false;
-    service->cache[native_client_cvar_index(service->services.basis.product, native_client_definition_count, symbol)].integer = value; ++service->cache_revision; return true;
+    if (!qa_native_q3_remote_client_cvar_read(service,id,&old,error) || service->cache_revision==UINT64_MAX) return false;
+    service->cache[service->cvar_refs.ordinals[id]].integer=value; ++service->cache_revision; return true;
 }
 bool qa_native_q3_remote_client_cache_read(const qa_native_q3_remote_client_service *service,
     qa_native_q3_remote_client_cache *out, qa_error *error)
@@ -340,7 +341,7 @@ bool qa_native_q3_remote_client_cache_read(const qa_native_q3_remote_client_serv
     if (!out || !service || !service->registered || !qa_native_q3_remote_client_current(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote prediction requires its actual updated CGAME cache");
     qa_native_q3_remote_client_cache value = {.owner = service, .revision = service->cache_revision};
-#define READ(field,symbol,member) value.field = service->cache[native_client_cvar_index(service->services.basis.product,native_client_definition_count,#symbol)].member
+#define READ(field,symbol,member) value.field = service->cache[service->cvar_refs.ordinals[QA_NATIVE_Q3_CVAR_##symbol]].member
     READ(no_predict,cg_nopredict,integer); READ(synchronous_clients,cg_synchronousClients,integer);
     READ(predict_items,cg_predictItems,integer); READ(pmove_fixed,pmove_fixed,integer); READ(pmove_msec,pmove_msec,integer);
     READ(error_decay,cg_errorDecay,number); READ(error_decay_integer,cg_errorDecay,integer); READ(show_miss,cg_showmiss,integer);

@@ -9,7 +9,7 @@ bool application_q3_client_view_settings(const application_q3_client_settings_so
     if (!source || !source->read || !out) return native_client_fail(error,QA_ERROR_ARGUMENT,"Q3 view settings require their cache reader and output");
     q3n_view_settings value={.dm_flags=dm_flags,.ragepro=ragepro};
     qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if (!source->read(source->context,#symbol,&cache,error)) return false; value.field=cache.member; } while (0)
+#define READ(field,symbol,member) do { if (!source->read(source->context,QA_NATIVE_Q3_CVAR_##symbol,&cache,error)) return false; value.field=cache.member; } while (0)
     READ(view_size,cg_viewsize,integer);
     READ(camera_orbit_integer,cg_cameraOrbit,integer);
     READ(camera_orbit_delay,cg_cameraOrbitDelay,integer);
@@ -37,7 +37,7 @@ bool application_q3_client_hud_settings(const application_q3_client_settings_sou
 {
     if (!source || !source->read || !out) return native_client_fail(error,QA_ERROR_ARGUMENT,"Q3 HUD settings require their cache reader and output");
     q3n_hud_settings value={0}; qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if (!source->read(source->context,#symbol,&cache,error)) return false; value.field=cache.member; } while (0)
+#define READ(field,symbol,member) do { if (!source->read(source->context,QA_NATIVE_Q3_CVAR_##symbol,&cache,error)) return false; value.field=cache.member; } while (0)
     READ(draw_2d,cg_draw2D,integer);
     READ(draw_status,cg_drawStatus,integer);
     READ(draw_icons,cg_drawIcons,integer);
@@ -78,18 +78,18 @@ bool application_q3_client_info_settings(const application_q3_client_settings_so
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Q3 client info requires its actual cache reader and registry");
     q3n_client_settings value={.memory_remaining=memory_remaining,.loading=loading};
     qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if (!source->read(source->context,#symbol,&cache,error)) return false; value.field=cache.member; } while (0)
+#define READ(field,symbol,member) do { if (!source->read(source->context,QA_NATIVE_Q3_CVAR_##symbol,&cache,error)) return false; value.field=cache.member; } while (0)
     READ(force_model,cg_forceModel,integer);
     READ(defer_players,cg_deferPlayers,integer);
     READ(build_script,cg_buildScript,integer);
-    const qa_cvar_view *engine=qa_cvars_find(source->cvars,"model");
+    const qa_cvar_view *engine=qa_cvars_read(source->cvars,source->refs->model);
     source_text(value.model,sizeof(value.model),engine?engine->value:"");
-    engine=qa_cvars_find(source->cvars,"headmodel");
+    engine=qa_cvars_read(source->cvars,source->refs->head_model);
     source_text(value.head_model,sizeof(value.head_model),engine?engine->value:"");
     if (source->product==QA_Q3_TEAM_ARENA) {
-        if (!source->read(source->context,"cg_redTeamName",&cache,error)) return false;
+        if (!source->read(source->context,QA_NATIVE_Q3_CVAR_cg_redTeamName,&cache,error)) return false;
         source_text(value.red_team_name,sizeof(value.red_team_name),cache.value);
-        if (!source->read(source->context,"cg_blueTeamName",&cache,error)) return false;
+        if (!source->read(source->context,QA_NATIVE_Q3_CVAR_cg_blueTeamName,&cache,error)) return false;
         source_text(value.blue_team_name,sizeof(value.blue_team_name),cache.value);
     }
 #undef READ
@@ -106,7 +106,7 @@ bool application_q3_client_frame_settings(const application_q3_client_settings_s
         !application_q3_client_hud_settings(source,&value.hud,error) ||
         !application_q3_client_info_settings(source,memory_remaining,loading,&value.clients,error)) return false;
     qa_native_q3_client_cvar cache;
-#define READ(field,symbol,member) do { if (!source->read(source->context,#symbol,&cache,error)) return false; value.field=cache.member; } while (0)
+#define READ(field,symbol,member) do { if (!source->read(source->context,QA_NATIVE_Q3_CVAR_##symbol,&cache,error)) return false; value.field=cache.member; } while (0)
     if (source->product==QA_Q3_TEAM_ARENA) {
         READ(events.single_player_active,cg_singlePlayerActive,integer);
         READ(packet.obelisk_respawn_delay,cg_obeliskRespawnDelay,integer);
@@ -147,7 +147,7 @@ bool application_q3_client_frame_settings(const application_q3_client_settings_s
     READ(no_player_animations,cg_noPlayerAnims,integer);
     READ(stereo_separation,cg_stereoSeparation,number);
 #undef READ
-    if (!source->read(source->context,"cg_animSpeed",&cache,error)) return false;
+    if (!source->read(source->context,QA_NATIVE_Q3_CVAR_cg_animSpeed,&cache,error)) return false;
     value.animations_disabled=cache.number==0;
     value.player_fx.animations_disabled=value.animations_disabled;
     *out=value; return true;
@@ -166,9 +166,9 @@ bool application_q3_client_cache_copy(qa_native_q3_client_cvar *value,
     value->number=engine->number; value->integer=engine->integer; return true;
 }
 
-static bool native_settings_cvar(const void *context,const char *symbol,
+static bool native_settings_cvar(const void *context,qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *out,qa_error *error)
-{ return qa_native_q3_client_cvar_read(context,symbol,out,error); }
+{ return qa_native_q3_client_cvar_read(context,id,out,error); }
 
 bool application_native_q3_client_view_settings(const qa_native_q3_client_service *service,
     int32_t dm_flags,bool ragepro,q3n_view_settings *out,qa_error *error)
@@ -191,7 +191,7 @@ bool application_native_q3_client_frame_settings(const qa_native_q3_client_servi
     if (!out || stereo>2 || !qa_native_q3_client_service_current(service))
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME frame settings lost its actual constructor");
     application_q3_client_settings_source source={.context=service,.read=native_settings_cvar,
-        .cvars=service->services.client.cvars,.product=service->product};
+        .cvars=service->services.client.cvars,.refs=&service->cvar_refs,.product=service->product};
     return application_q3_client_frame_settings(&source,dm_flags,ragepro,memory_remaining,loading,demo,stereo,out,error);
 }
 
@@ -206,4 +206,4 @@ bool application_native_q3_client_set_view_size(void *context,int32_t size,qa_er
     service->updating=false; return ok;
 }
 bool application_native_q3_client_set_orbit_angle(void *context,float angle,qa_error *error)
-{ return qa_native_q3_client_cvar_number(context,"cg_thirdPersonAngle",angle,error); }
+{ return qa_native_q3_client_cvar_number(context,QA_NATIVE_Q3_CVAR_cg_thirdPersonAngle,angle,error); }

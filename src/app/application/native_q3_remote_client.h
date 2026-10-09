@@ -11,6 +11,7 @@ struct qa_native_q3_remote_client_service {
     qa_launch_instance_lease *descriptor;
     application_provider *provider;
     qa_native_q3_client_cvar cache[QA_NATIVE_CLIENT_CVARS];
+    qa_native_q3_cvar_refs cvar_refs;
     uint64_t cache_revision, force_model_count, overlay_count;
     int32_t local_server;
     char *system_info;

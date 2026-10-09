@@ -1,6 +1,8 @@
 #ifndef QA_APPLICATION_NATIVE_Q3_CLIENT_H
 #define QA_APPLICATION_NATIVE_Q3_CLIENT_H
 
+#include "qa/application_native_q3_cvars.h"
+
 #include "qa/application_native_q3_presentation.h"
 #include "qa/application_q3_client.h"
 #include "qa/application_character_selection.h"
@@ -108,11 +110,11 @@ bool qa_native_q3_client_update(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_force_model_change(qa_native_q3_client_service *, qa_error *);
 /* symbol is the donor C global name, e.g. cg_zoomFov or cg_gun_x. Read and
  * direct numeric writes use CGAME private cache, not the engine registry. */
-bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *, const char *symbol,
+bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *, qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *, qa_error *);
-bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *, const char *symbol,
+bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *, qa_native_q3_cvar_id id,
     float, qa_error *);
-bool qa_native_q3_client_cvar_integer(qa_native_q3_client_service *, const char *symbol,
+bool qa_native_q3_client_cvar_integer(qa_native_q3_client_service *, qa_native_q3_cvar_id id,
     int32_t, qa_error *);
 bool qa_native_q3_client_reliable(qa_native_q3_client_service *, const char *, qa_error *);
 bool qa_native_q3_client_console(qa_native_q3_client_service *, const char *, qa_error *);

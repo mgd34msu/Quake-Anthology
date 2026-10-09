@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_NATIVE_Q3_REMOTE_CLIENT_H
 #define QA_APPLICATION_NATIVE_Q3_REMOTE_CLIENT_H
 #include "qa/application_native_q3_client.h"
+#include "qa/application_native_q3_cvars.h"
 #include "qa/application_q3_factory.h"
 #include "qa/network.h"
 #include "qa/q3_host.h"
@@ -107,10 +108,10 @@ bool qa_native_q3_remote_client_prepare(qa_native_q3_remote_client_service *, qa
 bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_system_info(qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_force_model_change(qa_native_q3_remote_client_service *, qa_error *);
-bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *, const char *,
+bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *, qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *, qa_error *);
-bool qa_native_q3_remote_client_cvar_number(qa_native_q3_remote_client_service *, const char *, float, qa_error *);
-bool qa_native_q3_remote_client_cvar_integer(qa_native_q3_remote_client_service *, const char *, int32_t, qa_error *);
+bool qa_native_q3_remote_client_cvar_number(qa_native_q3_remote_client_service *, qa_native_q3_cvar_id id, float, qa_error *);
+bool qa_native_q3_remote_client_cvar_integer(qa_native_q3_remote_client_service *, qa_native_q3_cvar_id id, int32_t, qa_error *);
 bool qa_native_q3_remote_client_cache_read(const qa_native_q3_remote_client_service *,
     qa_native_q3_remote_client_cache *, qa_error *);
 bool qa_native_q3_remote_client_cache_current(const qa_native_q3_remote_client_service *,

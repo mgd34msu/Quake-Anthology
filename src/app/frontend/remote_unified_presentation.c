@@ -788,8 +788,8 @@ static bool q3_factory_prediction_prepare(unified_q3_client_row *row,qa_error *e
         qa_native_q3_client_cvar no_predict,synchronous;
         if (!frontend_unified_q3_runtime_factory_prediction_baseline(row->factory,&baseline,error) ||
             !frontend_remote_unified_prediction_read(p->prediction,&predicted,error) ||
-            !frontend_unified_q3_client_cvar_read(row->client,"cg_nopredict",&no_predict,error) ||
-            !frontend_unified_q3_client_cvar_read(row->client,"cg_synchronousClients",&synchronous,error)) return false;
+            !frontend_unified_q3_client_cvar_read(row->client,QA_NATIVE_Q3_CVAR_cg_nopredict,&no_predict,error) ||
+            !frontend_unified_q3_client_cvar_read(row->client,QA_NATIVE_Q3_CVAR_cg_synchronousClients,&synchronous,error)) return false;
         frontend_unified_q3_prediction_receipt receipt={.baseline_revision=predicted.authoritative_frame,
             .command_receipt=predicted.sequence,.outcome=FRONTEND_UNIFIED_Q3_INTERPOLATED};
         qa_q3_player player=baseline.player;

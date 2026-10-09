@@ -60,13 +60,14 @@ bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **,
 q3n_compiled_source *frontend_unified_q3_client_source(frontend_unified_q3_client *);
 const qa_command_context *frontend_unified_q3_client_context(const frontend_unified_q3_client *);
 qa_cvars *frontend_unified_q3_client_cvars(const frontend_unified_q3_client *);
+const qa_native_q3_cvar_refs *frontend_unified_q3_client_cvar_refs(const frontend_unified_q3_client *);
 const qa_command_context *frontend_unified_q3_client_checkpoint_context(const frontend_unified_q3_client *);
 qa_cvars *frontend_unified_q3_client_checkpoint_cvars(const frontend_unified_q3_client *);
 bool frontend_unified_q3_client_register(frontend_unified_q3_client *, qa_error *);
 bool frontend_unified_q3_client_cvars_update(frontend_unified_q3_client *, qa_error *);
-bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *, const char *,
+bool frontend_unified_q3_client_cvar_read(const frontend_unified_q3_client *, qa_native_q3_cvar_id,
     qa_native_q3_client_cvar *, qa_error *);
-bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *, const char *, float, qa_error *);
+bool frontend_unified_q3_client_cvar_number(frontend_unified_q3_client *, qa_native_q3_cvar_id, float, qa_error *);
 bool frontend_unified_q3_client_local_server_read(const frontend_unified_q3_client *, int32_t *, qa_error *);
 /* Called by the actual CG constructor only after all required child stages. */
 bool frontend_unified_q3_client_initialization_complete(frontend_unified_q3_client *, qa_error *);
