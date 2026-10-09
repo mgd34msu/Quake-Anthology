@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "remote_unified.h"
 #include "qa/strings.h"
+#include "q1_sky.h"
 
 typedef struct frontend_unified_identity {
     struct frontend_unified_identity *next;
@@ -22,6 +23,7 @@ struct frontend_remote_unified {
     frontend_remote_unified *next;
     qa_frontend *frontend;
     frontend_remote_unified_options options;
+    frontend_q1_sky_controls sky_controls;
     qa_unified_session *session;
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
     qa_unified_document *offer, *frame, *prepared_frame;

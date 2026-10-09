@@ -18,6 +18,7 @@ struct frontend_q1_sky {
     qa_application *application;
     qa_resource *map;
     qa_scene_resources *map_bank;
+    frontend_q1_sky_controls controls;
     uint64_t map_revision, next_sequence, fog_modification;
     float fog;
     bool q1_map, map_fog, busy;

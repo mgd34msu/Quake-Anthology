@@ -510,16 +510,9 @@ static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_wo
     qa_scene_q1_sky_environment *out,qa_error *e)
 {
     const qa_cvars *registry=qa_application_cvars(r->frontend->application);
-    const qa_cvar_view *fast=qa_cvars_find(registry,"r_fastsky"),*quality=qa_cvars_find(registry,"r_sky_quality"),
-        *alpha=qa_cvars_find(registry,"r_skyalpha"),*fog=qa_cvars_find(registry,"r_skyfog"),
-        *far_clip=qa_cvars_find(registry,"gl_farclip");
-    if (!fast || !quality || !alpha || !fog || !far_clip || !isfinite(fast->number) ||
-        !isfinite(quality->number) || !isfinite(alpha->number) || !isfinite(fog->number) ||
-        !isfinite(far_clip->number) || far_clip->number<=4)
+    if (!frontend_q1_sky_controls_read(registry,&r->replica->sky_controls,out,NULL) || out->far_clip<=4)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q1 sky lost its actual canonical controls");
-    *out=(qa_scene_q1_sky_environment){.boxed=world->override_sky,.fast=fast->number!=0,
-        .quality=fmaxf(1,truncf(quality->number)),.alpha=fminf(1,fmaxf(0,alpha->number)),
-        .fog=fog->number,.far_clip=far_clip->number};
+    out->boxed=world->override_sky;
     if (out->boxed) memcpy(out->images,world->sky_images,sizeof(out->images));
     return true;
 }

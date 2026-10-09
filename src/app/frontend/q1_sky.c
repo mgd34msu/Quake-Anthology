@@ -7,6 +7,30 @@
 #include <stdio.h>
 
 static const char *const suffixes[6] = {"rt", "lf", "bk", "ft", "up", "dn"};
+void frontend_q1_sky_controls_bind(const qa_cvars *registry, frontend_q1_sky_controls *out)
+{
+    *out = (frontend_q1_sky_controls){
+        .fast = qa_cvars_resolve(registry, "r_fastsky"),
+        .quality = qa_cvars_resolve(registry, "r_sky_quality"),
+        .alpha = qa_cvars_resolve(registry, "r_skyalpha"),
+        .fog = qa_cvars_resolve(registry, "r_skyfog"),
+        .far_clip = qa_cvars_resolve(registry, "gl_farclip")};
+}
+bool frontend_q1_sky_controls_read(const qa_cvars *registry, const frontend_q1_sky_controls *controls,
+    qa_scene_q1_sky_environment *out, uint64_t *fog_modification)
+{
+    const qa_cvar_view *fast = qa_cvars_read(registry, controls->fast),
+        *quality = qa_cvars_read(registry, controls->quality),
+        *alpha = qa_cvars_read(registry, controls->alpha),
+        *fog = qa_cvars_read(registry, controls->fog),
+        *far_clip = qa_cvars_read(registry, controls->far_clip);
+    if (!fast || !quality || !alpha || !fog || !far_clip || !isfinite(fast->number) || !isfinite(quality->number) ||
+        !isfinite(alpha->number) || !isfinite(fog->number) || !isfinite(far_clip->number)) return false;
+    *out = (qa_scene_q1_sky_environment){.fast = fast->number != 0, .quality = fmaxf(1, truncf(quality->number)),
+        .alpha = fminf(1, fmaxf(0, alpha->number)), .fog = fog->number, .far_clip = far_clip->number};
+    if (fog_modification) *fog_modification = fog->modification_count;
+    return true;
+}
 bool frontend_q1_sky_current(const frontend_q1_sky *owner)
 {
     if (!owner || !owner->frontend || owner->frontend->application != owner->application) return false;
@@ -103,7 +127,9 @@ bool frontend_q1_sky_create(qa_frontend *frontend, frontend_q1_sky **out, qa_err
     frontend_q1_sky *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Creating Q1 sky presentation owner");
     owner->frontend = frontend; owner->application = frontend->application; owner->next_sequence = 1;
-    const qa_cvar_view *fog = qa_cvars_find(qa_application_cvars(owner->application), "r_skyfog");
+    const qa_cvars *registry = qa_application_cvars(owner->application);
+    frontend_q1_sky_controls_bind(registry, &owner->controls);
+    const qa_cvar_view *fog = qa_cvars_read(registry, owner->controls.fog);
     if (!fog || !isfinite(fog->number)) { free(owner); return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky lost its actual canonical fog control"); }
     owner->fog = fog->number; owner->fog_modification = fog->modification_count;
     *out = owner; return true;
@@ -128,7 +154,7 @@ bool frontend_q1_sky_map(frontend_q1_sky *owner, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky map lacks its actual global image owner");
     qa_bsp_view bsp; qa_entities entities = {0};
     if (!qa_bsp_open(qa_resource_bytes(frontend->map_resource), &bsp, error)) return false;
-    const qa_cvar_view *control = qa_cvars_find(qa_application_cvars(owner->application), "r_skyfog");
+    const qa_cvar_view *control = qa_cvars_read(qa_application_cvars(owner->application), owner->controls.fog);
     if (!control || !isfinite(control->number)) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 map sky lost its actual fog setting");
     frontend_q1_sky_selection *baseline = selection_create("", frontend->images, error);
     if (!baseline) return false;
@@ -279,21 +305,18 @@ bool frontend_q1_sky_view_read(frontend_q1_sky *owner, qa_actor_id actor,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky view lost its actual map owner");
     prune(owner);
     const qa_cvars *registry = qa_application_cvars(owner->application);
-    const qa_cvar_view *fast = qa_cvars_find(registry, "r_fastsky"), *quality = qa_cvars_find(registry, "r_sky_quality"),
-        *alpha = qa_cvars_find(registry, "r_skyalpha"), *fog = qa_cvars_find(registry, "r_skyfog"),
-        *far_clip = qa_cvars_find(registry, "gl_farclip");
-    if (!fast || !quality || !alpha || !fog || !far_clip || !isfinite(fast->number) || !isfinite(quality->number) ||
-        !isfinite(alpha->number) || !isfinite(fog->number) || !isfinite(far_clip->number) || far_clip->number <= 0)
+    qa_scene_q1_sky_environment controls; uint64_t fog_modification;
+    if (!frontend_q1_sky_controls_read(registry, &owner->controls, &controls, &fog_modification) || controls.far_clip <= 0)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky view lost its canonical controls");
-    if (owner->fog_modification != fog->modification_count) {
-        owner->fog = fog->number; owner->map_fog = false; owner->fog_modification = fog->modification_count;
+    if (owner->fog_modification != fog_modification) {
+        owner->fog = controls.fog; owner->map_fog = false; owner->fog_modification = fog_modification;
     }
     const frontend_q1_sky_selection *row = frontend_q1_sky_selected(owner, actor);
     if (row && !frontend_q1_sky_selection_current(owner, row))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 sky view references a retired provider");
     *out = (frontend_q1_sky_view){.classic_q1 = owner->q1_map, .boxed = row && row->found,
-        .fast = fast->number != 0, .quality = fmaxf(1, truncf(quality->number)),
-        .alpha = fminf(1, fmaxf(0, alpha->number)), .fog = owner->fog, .far_clip = far_clip->number};
+        .fast = controls.fast, .quality = controls.quality,
+        .alpha = controls.alpha, .fog = owner->fog, .far_clip = controls.far_clip};
     if (out->boxed) memcpy(out->images, row->images, sizeof(out->images));
     return true;
 }

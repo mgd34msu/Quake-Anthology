@@ -310,6 +310,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     if (!row) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 presentation");
     row->frontend = f; row->options = *options; row->protocol = d->protocol;
     frontend_view_settings_q1_motion_bind(d->cvars,&row->motion_refs);
+    frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&row->sky_controls);
     row->fraction = 1; row->revision = row->next_event = 1;
     qa_catalog_retain(d->catalog);
     frontend_remote_q1 **tail = &f->remote_q1; while (*tail) tail = &(*tail)->next;

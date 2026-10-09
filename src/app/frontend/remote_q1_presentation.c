@@ -113,16 +113,9 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
 static bool sky_environment(frontend_remote_q1 *row,qa_scene_q1_sky_environment *out,qa_error *error)
 {
     const qa_cvars *registry=qa_application_cvars(row->options.domain.application);
-    const qa_cvar_view *fast=qa_cvars_find(registry,"r_fastsky"),*quality=qa_cvars_find(registry,"r_sky_quality"),
-        *alpha=qa_cvars_find(registry,"r_skyalpha"),*fog=qa_cvars_find(registry,"r_skyfog"),
-        *far_clip=qa_cvars_find(registry,"gl_farclip");
-    if(!fast || !quality || !alpha || !fog || !far_clip || !isfinite(fast->number) ||
-        !isfinite(quality->number) || !isfinite(alpha->number) || !isfinite(fog->number) ||
-        !isfinite(far_clip->number) || far_clip->number<=4)
+    if(!frontend_q1_sky_controls_read(registry,&row->sky_controls,out,NULL) || out->far_clip<=4)
         return remote_q1_fail(error,QA_ERROR_ARGUMENT,"Remote Q1 sky lost its actual canonical render controls");
-    *out=(qa_scene_q1_sky_environment){.boxed=row->sky_found!=0,.fast=fast->number!=0,
-        .quality=fmaxf(1,truncf(quality->number)),.alpha=fminf(1,fmaxf(0,alpha->number)),
-        .fog=fog->number,.far_clip=far_clip->number};
+    out->boxed=row->sky_found!=0;
     if(out->boxed) memcpy(out->images,row->sky_images,sizeof(out->images));
     return true;
 }

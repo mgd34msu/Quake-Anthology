@@ -5,12 +5,18 @@
 
 typedef struct frontend_q1_sky frontend_q1_sky;
 typedef struct frontend_q1_sky_policy frontend_q1_sky_policy;
+typedef struct frontend_q1_sky_controls {
+    qa_cvar_handle fast, quality, alpha, fog, far_clip;
+} frontend_q1_sky_controls;
 typedef struct frontend_q1_sky_view {
     bool classic_q1, boxed, fast;
     float quality, alpha, fog, far_clip;
     const qa_scene_image *images[6];
 } frontend_q1_sky_view;
 
+void frontend_q1_sky_controls_bind(const qa_cvars *, frontend_q1_sky_controls *);
+bool frontend_q1_sky_controls_read(const qa_cvars *, const frontend_q1_sky_controls *,
+    qa_scene_q1_sky_environment *, uint64_t *fog_modification);
 bool frontend_q1_sky_create(qa_frontend *, frontend_q1_sky **, qa_error *);
 bool frontend_q1_sky_destroy(frontend_q1_sky **, qa_error *);
 bool frontend_q1_sky_idle(const frontend_q1_sky *);

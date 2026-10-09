@@ -3,6 +3,7 @@
 #include "remote_q1_client.h"
 #include "model_inventory.h"
 #include "remote_q1_camera.h"
+#include "q1_sky.h"
 
 typedef struct remote_q1_model {
     struct remote_q1_model *next;
@@ -43,6 +44,7 @@ struct frontend_remote_q1 {
     remote_q1_camera camera;
     qa_collision_geometry *collision;
     frontend_q1_motion_refs motion_refs;
+    frontend_q1_sky_controls sky_controls;
     frontend_q1_view_motion view_motion;
     frontend_q1_view_pose view_pose;
     qa_vec3 view_entity_origin, view_entity_angles;
