@@ -1,7 +1,8 @@
 #ifndef QA_FRONTEND_LEGACY_RENDER_POLICY_H
 #define QA_FRONTEND_LEGACY_RENDER_POLICY_H
 
-#include "internal.h"
+#include "qa/frontend.h"
+#include "qa/scene.h"
 
 float frontend_legacy_lightstyle_sample(qa_game_family, const char *pattern, double seconds);
 qa_vec3 frontend_legacy_entity_angles(qa_scene_family, qa_product_edition,
@@ -17,7 +18,17 @@ typedef struct frontend_legacy_render_policy {
 /* Borrow the reached canonical ENGINE values; QACV owns their continuation. */
 bool frontend_legacy_render_policy_read(const qa_frontend *, const qa_product *,
     frontend_legacy_render_policy *, qa_error *);
-bool frontend_legacy_render_policy_read_registry(const qa_cvars *, const qa_product *,
+typedef struct frontend_legacy_cvar_handles {
+    qa_cvar_handle r_shadows, gl_shadows, gl_flashblend, gl_doubleeys;
+    qa_cvar_handle r_mirroralpha, gl_texsort, r_fullbright, r_lightmap, gl_lightmap;
+    qa_cvar_handle r_dynamic, gl_dynamic, gl_polyblend, gl_cull, gl_clear;
+    qa_cvar_handle gl_modulate, gl_monolightmap, gl_saturatelighting, cl_flares;
+    qa_cvar_handle cl_predict, r_drawviewmodel, cl_gun, hand;
+} frontend_legacy_cvar_handles;
+
+void frontend_legacy_cvars_bind(const qa_cvars *, frontend_legacy_cvar_handles *);
+bool frontend_legacy_render_policy_read_controls(const qa_cvars *,
+    const frontend_legacy_cvar_handles *, const qa_product *,
     frontend_legacy_render_policy *, qa_error *);
 bool frontend_legacy_local_policy_read(const qa_frontend *, uint32_t physical_seat,
     const qa_product *, frontend_legacy_render_policy *, qa_error *);

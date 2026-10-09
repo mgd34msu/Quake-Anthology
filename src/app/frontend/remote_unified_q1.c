@@ -940,7 +940,7 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
         frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
         if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_SCENE_Q1?
-                frontend_legacy_render_policy_read_registry(domain->cvars,g->product,&policy,e):
+                frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product,&policy,e):
                 frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
             if(ok && policy.flashblend)ok=qa_scene_legacy_dlights(frame,&world->view,QA_SCENE_Q1,
                 policy.quakeworld,lights,count,&blend,e);}

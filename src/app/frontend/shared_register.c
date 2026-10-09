@@ -416,6 +416,7 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .r_gamma=qa_cvars_resolve(registry,"r_gamma"),
         .con_notifytime=qa_cvars_resolve(registry,"con_notifytime"),
         .r_drawentities=qa_cvars_resolve(registry,"r_drawentities")};
+    frontend_legacy_cvars_bind(registry,&frontend->engine_cvars.legacy);
     frontend_render_cvars_bind(frontend);
     frontend_shared_resource_policy_cvars_bind(frontend);
 }

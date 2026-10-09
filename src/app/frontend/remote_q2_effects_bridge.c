@@ -235,7 +235,7 @@ static bool controls(void *context, frontend_remote_q2_effects_controls *out, qa
     const qa_cvar_view *hacks = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_dlight_hacks);
     const qa_cvar_view *particles = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_particles);
     const qa_cvar_view *explosions = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_explosions);
-    const qa_cvar_view *gun = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gun);
+    const qa_cvar_view *gun = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_gun);
     const qa_cvar_view *gun_fov = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gunfov);
     const qa_cvar_view *rail_type = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_type);
     const qa_cvar_view *rail_width = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railcore_width);
@@ -386,7 +386,7 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
     }
     frontend_remote_q2_effects_pose viewer = {0};
     if (ok && viewer_number >= 0) ok = actor(row, (uint32_t)viewer_number + 1, &viewer, error);
-    const qa_cvar_view *hand = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.hand);
+    const qa_cvar_view *hand = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.hand);
     *sample = (frontend_remote_q2_effects_sample){
         .milliseconds = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms,
         .server_milliseconds = (double)row->frame.server_frame * row->frame_ms,

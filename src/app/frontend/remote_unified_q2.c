@@ -1588,7 +1588,7 @@ bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input
     const qa_recipe_choices *choices=qa_executable_recipe_choices(recipe);
     const qa_product *product=choices?qa_catalog_product(qa_executable_recipe_catalog(recipe),choices->world.presentation):NULL;
     frontend_legacy_render_policy policy;
-    if (!domain || !frontend_legacy_render_policy_read_registry(domain->cvars,product,&policy,e) || !current(o,e)) return false;
+    if (!domain || !frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,product,&policy,e) || !current(o,e)) return false;
     input->legacy_policy=policy.lighting;
     input->legacy_flashblend=policy.flashblend;
     input->legacy_texture_sort=policy.texture_sort;

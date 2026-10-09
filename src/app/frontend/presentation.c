@@ -415,7 +415,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                     bool found;
                     if (!frontend_seat_launch_id_read(frontend,i,&authored) ||
                         !frontend_config_store_primary_legacy_read(frontend->config_store,authored,&input_source,&found,error)) return false;
-                    const qa_cvar_view *predict=found ? qa_cvars_find(input_source.registry,"cl_predict") : NULL;
+                    const qa_cvar_view *predict=found ? qa_cvars_read(input_source.registry,input_source.legacy->cl_predict) : NULL;
                     if ((predict && predict->number==0) || (q2_client_view.movement_flags&64u)) origin=q2_client_view.origin;
                     angles=frontend_q2_lerp_camera_angles(&q2_client_view,camera.angles);
                 } else angles=qa_vec_add(seat->q2_view.health>0 && !seat->q2_view.spectator ?

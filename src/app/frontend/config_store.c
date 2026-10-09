@@ -48,6 +48,7 @@ typedef struct config_seat {
     char *registry_instance;
     qa_cvars *cvars,*mouse;
     frontend_q1_motion_refs q1_motion;
+    frontend_legacy_cvar_handles legacy;
     frontend_client_registry *registry;
     frontend_authored_bindings *authored;
     qa_seat_settings settings;
@@ -1230,10 +1231,10 @@ bool frontend_config_store_primary_legacy_read(const frontend_config_store *mana
     qa_cvars *registry=source->seats[ordinal].cvars;
     qa_command_context command;
     if (source->running || !source->configured || !source->released || !registry ||
-        !current_command(source,&command,error) || !frontend_legacy_source_owns(registry,"r_fullbright") ||
+        !current_command(source,&command,error) ||
         !qa_cvars_observer_idle(registry))
         return fail(error,QA_ERROR_ARGUMENT,"Legacy policy lost its returned physical CLIENT declarations");
-    *out=(frontend_config_legacy_view){source,selected,product,registry,logical,command.generation,&source->seats[ordinal].q1_motion}; *present=true; return true;
+    *out=(frontend_config_legacy_view){source,selected,product,registry,logical,command.generation,&source->seats[ordinal].q1_motion,&source->seats[ordinal].legacy}; *present=true; return true;
 }
 bool frontend_config_store_primary_legacy_current(const frontend_config_store *manager,
     const frontend_config_legacy_view *view)
@@ -2170,7 +2171,10 @@ static bool carry(frontend_config_store *manager,qa_application *application,
             qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
         qa_buffer_free(&settings); seat->found=old_seat->found;
         if (ok) ok=selected_defaults(source,seat,false,error);
-        if (ok) frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
+        if (ok) {
+            frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
+            frontend_legacy_cvars_bind(seat->cvars,&seat->legacy);
+        }
     }
     if (ok && previous->dedicated_bindings)
         ok=frontend_config_bindings_clone(previous->dedicated_bindings,&source->dedicated_bindings,error);
@@ -2418,7 +2422,10 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     else if (ok && product->builtin && product->program_kind==QA_PROGRAM_BUILTIN &&
         product->family==QA_GAME_Q1)
         ok=frontend_legacy_source_register(seat->cvars,command->dialect,source->declaration_owner,error);
-    if (ok) frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
+    if (ok) {
+            frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
+            frontend_legacy_cvars_bind(seat->cvars,&seat->legacy);
+        }
     return ok && frontend_config_store_seed_player_archive(source->manager,seat->cvars,
         seat->logical,&seat->client_archive,error);
 }
@@ -3751,7 +3758,8 @@ bool frontend_config_source_restore_seat_cvars(frontend_config_source *source,ui
     if (seat->cvars && seat->cvars!=cvars)
         return fail(error,QA_ERROR_FORMAT,"Restored client alias replaced its canonical decoded registry");
     seat->cvars=cvars; seat->registry_bound=true;
-    frontend_view_settings_q1_motion_bind(cvars,&seat->q1_motion); return true;
+    frontend_view_settings_q1_motion_bind(cvars,&seat->q1_motion);
+    frontend_legacy_cvars_bind(cvars,&seat->legacy); return true;
 }
 bool frontend_config_source_restore_seat_registry(frontend_config_source *source,uint32_t logical,
     frontend_client_registry *registry,const frontend_keys_cvar_refs *refs,qa_error *error)

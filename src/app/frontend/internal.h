@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_INTERNAL_H
 #define QA_FRONTEND_INTERNAL_H
 #include "qa/frontend.h"
+#include "legacy_render_policy.h"
 #include "qa/audio.h"
 #include "qa/console_draw.h"
 #include "qa/console_io.h"
@@ -212,6 +213,7 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle r_fullbright, r_finish, r_showImages, r_speeds;
     qa_cvar_handle r_measureOverdraw, r_shadows;
     qa_cvar_handle resource_policy[15];
+    frontend_legacy_cvar_handles legacy;
 } frontend_engine_cvar_handles;
 struct qa_frontend {
     qa_frontend_options options;

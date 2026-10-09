@@ -1157,7 +1157,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     bool q2_client_view_ready=false;
     uint8_t left_hand = 0;
     if (weapon.family == QA_GAME_Q1) {
-        const qa_cvar_view *gun = qa_cvars_find(source.registry, "r_drawviewmodel");
+        const qa_cvar_view *gun = qa_cvars_read(source.registry, source.legacy->r_drawviewmodel);
         const qa_cvar_view *entities = qa_cvars_read(qa_application_cvars(frontend->application), frontend->engine_cvars.r_drawentities);
         if (!gun || !entities)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its retained draw settings");
@@ -1176,8 +1176,8 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     } else {
         if (!recipient->q2_view_ready || !qa_actor_id_equal(actor, recipient->q2_actor) ||
             recipient->q2_view.spectator || recipient->q2_view.health <= 0) return true;
-        const qa_cvar_view *gun = qa_cvars_find(source.registry, "cl_gun");
-        const qa_cvar_view *hand = qa_cvars_find(source.registry, "hand");
+        const qa_cvar_view *gun = qa_cvars_read(source.registry, source.legacy->cl_gun);
+        const qa_cvar_view *hand = qa_cvars_read(source.registry, source.legacy->hand);
         if (!gun || !hand)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 view weapon lost its retained CLIENT settings");
         if (gun->number == 0 || hand->number == 2 ||

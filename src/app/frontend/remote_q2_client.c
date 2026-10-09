@@ -183,7 +183,6 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .cl_dlight_hacks=qa_cvars_resolve(registry,"cl_dlight_hacks"),
         .cl_entities=qa_cvars_resolve(registry,"cl_entities"),
         .cl_footsteps=qa_cvars_resolve(registry,"cl_footsteps"),
-        .cl_gun=qa_cvars_resolve(registry,"cl_gun"),
         .cl_gunfov=qa_cvars_resolve(registry,"cl_gunfov"),
         .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
         .cl_lights=qa_cvars_resolve(registry,"cl_lights"),
@@ -199,10 +198,10 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .cl_rerelease_effects=qa_cvars_resolve(registry,"cl_rerelease_effects"),
         .crosshair=qa_cvars_resolve(registry,"crosshair"),
         .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
-        .hand=qa_cvars_resolve(registry,"hand"),
         .paused=qa_cvars_resolve(registry,"paused"),
         .scr_hit_marker_time=qa_cvars_resolve(registry,"scr_hit_marker_time"),
     };
+    frontend_legacy_cvars_bind(registry,&row->cvar_handles.legacy);
 }
 bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options *options,
     frontend_remote_q2 **out, qa_error *error)

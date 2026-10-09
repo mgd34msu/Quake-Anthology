@@ -26,7 +26,7 @@ bool frontend_remote_q1_initial_clear(qa_frontend *frontend, uint32_t seat,
     if (!present) return true;
     const qa_product *product = qa_catalog_product(selected->content.catalog, selected->content.product);
     frontend_legacy_render_policy policy;
-    if (!frontend_legacy_render_policy_read_registry(selected->options.domain.cvars, product, &policy, error) ||
+    if (!frontend_legacy_render_policy_read_controls(selected->options.domain.cvars, &selected->legacy_cvars, product, &policy, error) ||
         !remote_q1_live(selected, error)) return false;
     *active = true; *clear = policy.lighting.clear;
     return true;
@@ -170,7 +170,7 @@ static bool scene_policy(void *context, const qa_product *product,
     remote_scene *scene = context;
     frontend_remote_q1 *row = scene->row;
     if (!scene_current(scene) || product != qa_catalog_product(row->content.catalog, row->content.product) ||
-        !frontend_legacy_render_policy_read_registry(row->options.domain.cvars, product, out, error)) return false;
+        !frontend_legacy_render_policy_read_controls(row->options.domain.cvars, &row->legacy_cvars, product, out, error)) return false;
     if (row->max_clients > 1) out->lighting.fullbright = false;
     return scene_current(scene);
 }

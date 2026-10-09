@@ -55,6 +55,7 @@ typedef struct remote_q2_sent_command {
 } remote_q2_sent_command;
 typedef struct remote_q2_cvar_handles {
     qa_cvars *registry;
+    frontend_legacy_cvar_handles legacy;
     qa_cvar_handle ch_alpha;
     qa_cvar_handle ch_scale;
     qa_cvar_handle ch_x;
@@ -65,7 +66,6 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle cl_dlight_hacks;
     qa_cvar_handle cl_entities;
     qa_cvar_handle cl_footsteps;
-    qa_cvar_handle cl_gun;
     qa_cvar_handle cl_gunfov;
     qa_cvar_handle cl_hit_markers;
     qa_cvar_handle cl_lights;
@@ -81,7 +81,6 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle cl_rerelease_effects;
     qa_cvar_handle crosshair;
     qa_cvar_handle gl_damageblend_frac;
-    qa_cvar_handle hand;
     qa_cvar_handle paused;
     qa_cvar_handle scr_hit_marker_time;
 } remote_q2_cvar_handles;

@@ -89,6 +89,7 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
     frontend_remote_unified *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating unified readonly replica");
     owner->frontend = frontend; owner->options = *options;
+    frontend_legacy_cvars_bind(d->cvars,&owner->legacy_cvars);
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&owner->sky_controls);
     if (!qa_actors_create(options->identity_capacity, NULL, NULL, &owner->actors, error)) { free(owner); return false; }
     if (!qa_strings_create(&owner->strings, error)) { qa_actors_destroy(owner->actors, NULL); free(owner); return false; }

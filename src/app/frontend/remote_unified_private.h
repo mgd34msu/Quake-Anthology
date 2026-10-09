@@ -24,6 +24,7 @@ struct frontend_remote_unified {
     qa_frontend *frontend;
     frontend_remote_unified_options options;
     frontend_q1_sky_controls sky_controls;
+    frontend_legacy_cvar_handles legacy_cvars;
     qa_unified_session *session;
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
     qa_unified_document *offer, *frame, *prepared_frame;
