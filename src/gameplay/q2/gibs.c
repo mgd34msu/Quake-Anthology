@@ -30,7 +30,7 @@ static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_err
     qa_point_contents result;
     if (!qa_world_point_contents(g->services.world, &query, &result, e))
         return false;
-    *contents = result.contents;
+    *contents = qa_collision_point_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token);
     return true;
 }
 bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float damage,
@@ -329,7 +329,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                 .end = qa_vec_sub(owner.origin, rotated),
                                 .pass_actor = a->id,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = 3;
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;

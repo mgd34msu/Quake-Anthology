@@ -35,7 +35,8 @@ enum {
 typedef struct qa_q3_step {
     qa_move_context *context;
     qa_vec3 previous_origin, previous_velocity, forward, right, ground_normal;
-    uint32_t mask, milliseconds;
+    qa_collision_bits mask;
+    uint32_t milliseconds;
     int32_t ground_surface_flags, water_level, water_type;
     float dt, impact_speed, horizontal_speed;
     bool ground_plane, walking;

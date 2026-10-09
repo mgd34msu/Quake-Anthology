@@ -215,7 +215,7 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
     const char *model_name = qa_strings_cstr(qa_session_strings(g->services.session), model);
     a->entity->has_inline = model_name && *model_name == '*';
     a->entity->collision = (qa_actor_collision){.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-        .inline_model = a->entity->has_inline, .contents = 1};
+        .inline_model = a->entity->has_inline, .contents = qa_collision_contents_decode(1, QA_COLLISION_Q2)};
     if (a->entity->has_inline) {
         double index;
         if (!qa_parse_number((qa_bytes){(const uint8_t *)model_name + 1, strlen(model_name + 1)},

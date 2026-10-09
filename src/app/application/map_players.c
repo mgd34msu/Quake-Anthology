@@ -2540,7 +2540,8 @@ bool application_players_native_q1_respawn(qa_application *app,
         ? QA_COLLISION_Q3 : app->controls[actor.slot].state.kind == QA_MOVEMENT_Q2_CLASSIC ||
           app->controls[actor.slot].state.kind == QA_MOVEMENT_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
     qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-        .contents = family == QA_COLLISION_Q1 ? -2 : 0x2000000, .role = QA_COLLISION_SOLID};
+        .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
+        .role = QA_COLLISION_SOLID};
     if (!qa_world_set_collision(app->world, actor, &collision, error) ||
         !qa_world_link(app->world, actor, NULL, error)) return false;
     if (!qa_q1_game_map_coop_spawn_grant(source->state.q1, actor, point, error) ||
@@ -3094,7 +3095,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             : movement_kind == QA_MOVEMENT_Q2_CLASSIC || movement_kind == QA_MOVEMENT_Q2_RERELEASE
                 ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-            .contents = family == QA_COLLISION_Q3 ? 0x2000000 : family == QA_COLLISION_Q2 ? 0x2000000 : -2,
+            .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
             .role = QA_COLLISION_SOLID};
         if (record->source_begin_pending && character->kind == APPLICATION_PROVIDER_QC) found = false;
         if (!qa_world_body_write(application->world, actor, &body, error) ||
@@ -3539,7 +3540,8 @@ bool application_players_advance(qa_application *application, qa_error *error)
             : movement->component.clock.kind == QA_CLOCK_Q2_CLASSIC || movement->component.clock.kind == QA_CLOCK_Q2_RERELEASE
                 ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-            .contents = family == QA_COLLISION_Q1 ? -2 : 0x2000000, .role = QA_COLLISION_SOLID};
+            .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
+            .role = QA_COLLISION_SOLID};
         qa_combat_state traits;
         if (!qa_combat_read_traits(application->combat, actor, &traits, error)) return false;
         if (source->kind == APPLICATION_PROVIDER_Q1) {

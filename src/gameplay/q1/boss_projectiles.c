@@ -125,7 +125,7 @@ bool q1_boss_sphere_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_erro
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents == -6)
+    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, e, error);
     return (!q1_damageable(g, other) ||
             q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 18, QA_Q1_WEAPON_COUNT, error)) &&

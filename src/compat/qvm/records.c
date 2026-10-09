@@ -351,8 +351,8 @@ bool qa_q3_abi_write_trace(qa_q3_abi_record *record, size_t pointer, const qa_tr
     return record_write(record,address + 40,(qa_bytes){&type,1},error)
         && record_write(record,address + 41,(qa_bytes){&trace->plane.signbits,1},error)
         && record_write(record,address + 42,(qa_bytes){zero,2},error)
-        && store(record,address + 44,(uint32_t)trace->surface_flags,error)
-        && store(record,address + 48,(uint32_t)trace->contents,error)
+        && store(record,address + 44,(uint32_t)qa_collision_surface_export(trace->surface_flags,QA_COLLISION_Q3),error)
+        && store(record,address + 48,(uint32_t)qa_collision_contents_export(trace->contents,QA_COLLISION_Q3,trace->q1_opaque_token),error)
         && store(record,address + 52,(uint32_t)entity_number,error);
 }
 

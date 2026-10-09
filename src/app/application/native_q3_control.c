@@ -150,7 +150,7 @@ static bool contact_actor(qa_application *app, qa_bounds bounds,
         .policy = qa_collision_default_policy(QA_COLLISION_Q3),
         .target = {.inline_model = collision.inline_model, .model = collision.model,
             .origin = body.origin, .angles = body.angles}};
-    query.policy.contents_mask = UINT32_MAX;
+    query.policy.contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_COLLISION_Q3);
     qa_trace_result trace;
     qa_collision_geometry *geometry = collision.model_geometry ? collision.model_geometry : qa_world_geometry(app->world);
     bool ok = collision.inline_model
@@ -226,7 +226,7 @@ static bool touch_triggers(application_provider *provider, qa_actor_id actor, qa
             qa_q3_wire_visibility visibility;
             if (!qa_q3_source_actor_slot(game, candidate, &source_slot, error) ||
                 !qa_q3_wire_entity_read(game, source_slot, &entity, &visibility, error)) return false;
-            if (!(collision.contents & INT32_C(0x40000000))) continue;
+            if (!qa_collision_bits_overlap(collision.contents, qa_collision_bit(QA_CONTENT_TRIGGER))) continue;
         } else if (collision.role != QA_COLLISION_TRIGGER && collision.role != QA_COLLISION_BOTH) continue;
         qa_q3_client_session session;
         if (!qa_q3_client_session_read(game, actor, &session, error)) return false;

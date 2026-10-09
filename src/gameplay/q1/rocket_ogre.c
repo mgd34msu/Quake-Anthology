@@ -76,7 +76,7 @@ bool q1_rocket_ogre_touch(qa_q1_game *g, q1_actor *missile, qa_actor_id other, q
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents == -6)
+    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, missile, error);
     if (missile->state.projectile.expires > g->time) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, body.origin, 18, 1, error) ||

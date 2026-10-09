@@ -26,7 +26,8 @@ typedef struct qa_actor_collision {
     /* Borrowed from the model owner; NULL selects the shared map geometry.
      * This derived handle is rebound from installed content on restore. */
     qa_collision_geometry *model_geometry;
-    int32_t contents;
+    qa_collision_bits contents;
+    int32_t q1_opaque_token;
     qa_actor_reference owner;
     qa_collision_role role;
     bool monster, dead_monster, q1_corpse;
@@ -94,6 +95,8 @@ typedef enum qa_entity_collision_components {
 /* Cold adapters resolve addresses and ABI rules. Sampling only reads those
  * bytes; it never enters a module, resolves names or observes OS mappings. */
 qa_entity_vector_field qa_entity_vector_bytes(const void *);
+/* SPATIAL writes only origin, angles and bounds; ALL writes the complete state
+ * transactionally, so a failed reference read leaves the output unchanged. */
 bool qa_entity_body_read(const qa_entity_body_fields *, qa_entity_pose,
                          qa_entity_body_components, qa_body_state *, qa_error *);
 /* ROLE writes only role; ALL writes the complete collision record. */
@@ -278,6 +281,6 @@ typedef bool (*qa_world_is_trigger_fn)(void *, qa_actor_id);
 /* Q1 traverses live sector links; Q2/Q3 snapshot candidate IDs before callbacks.
  * All families recheck generations and current overlap after nested mutation. */
 bool qa_world_touch_triggers(qa_world *, qa_actor_id, qa_collision_family, qa_world_is_trigger_fn, qa_world_touch_fn, void *, qa_error *);
-int32_t qa_world_actor_contents(const qa_actor_collision *, qa_collision_family);
+qa_collision_bits qa_world_actor_contents(const qa_actor_collision *);
 
 #endif

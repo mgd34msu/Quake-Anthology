@@ -15,7 +15,7 @@ static bool contents_at(qa_q2_game *g, qa_vec3 point, uint32_t *out, qa_error *e
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, e))
         return false;
-    *out = (uint32_t)contents.contents;
+    *out = (uint32_t)qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token);
     return true;
 }
 static bool visible(qa_q2_game *g, qa_actor_id from, qa_vec3 start, qa_actor_id target, qa_error *e,
@@ -30,7 +30,7 @@ static bool visible(qa_q2_game *g, qa_actor_id from, qa_vec3 start, qa_actor_id 
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, traits.view_height)),
                             .pass_actor = from,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = 25;
+    query.policy.contents_mask = qa_collision_contents_mask(25, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -343,7 +343,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
                                 .pass_actor = id,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
         query.policy.contents_mask =
-            g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
+            qa_collision_contents_mask(g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
@@ -751,7 +751,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     }
     if (p->kind != Q2_PROX || p->phase != MINE_FLIGHT)
         return true;
-    if (contact->has_surface && (contact->surface.flags & 4) != 0)
+    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4) != 0)
         return qa_session_release(g->services.session, a->id, e);
     if (contact->has_plane) {
         if (!contents_at(g, qa_vec_add(body.origin, qa_vec_scale(contact->plane.normal, -10)),

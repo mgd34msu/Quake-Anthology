@@ -10,9 +10,9 @@ void q2_chainfist_spec(const qa_q2_game *g, q2_shot_spec *out) {
 }
 
 static bool sky(const qa_trace_result *t) {
-    return (t->surface_flags & 4) != 0 ||
+    return (qa_collision_surface_export(t->surface_flags, QA_COLLISION_Q2) & 4) != 0 ||
            (t->has_surface &&
-            ((t->surface.flags & 4) != 0 || strncmp(t->surface.name, "sky", 3) == 0));
+            ((qa_collision_surface_export(t->surface.flags, QA_COLLISION_Q2) & 4) != 0 || strncmp(t->surface.name, "sky", 3) == 0));
 }
 static bool damageable(qa_q2_game *g, qa_actor_id id, qa_combat_state *out) {
     qa_error ignored;
@@ -126,7 +126,7 @@ static bool contents(q2_weapon_call *c, qa_vec3 origin, int32_t *out, qa_error *
     qa_point_contents result;
     if (!qa_world_point_contents(c->game->services.world, &query, &result, e))
         return false;
-    *out = result.contents;
+    *out = qa_collision_point_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token);
     return true;
 }
 static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float damage, float kick,
@@ -155,7 +155,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
     for (;;) {
         if (!q2_actor_live(c->game, c->actor->id))
             return true;
-        query.policy.contents_mask = initial && !c->rerelease ? shot : mask;
+        query.policy.contents_mask = qa_collision_contents_mask(initial && !c->rerelease ? shot : mask, QA_COLLISION_Q2);
         if (!qa_world_trace_excluding(c->game->services.world, &query, excluded, count, &trace, e))
             return false;
         if (trace.fraction == 1 && initial) {
@@ -167,17 +167,17 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
         }
         if (trace.fraction == 1)
             break;
-        if (((uint32_t)trace.contents & Q2_WATER_MASK & mask) != 0) {
+        if (((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & Q2_WATER_MASK & mask) != 0) {
             wet = true;
             water_start = trace.end;
             if (qa_vec_length(qa_vec_sub(start, trace.end)) != 0) {
                 int color =
-                    ((uint32_t)trace.contents & 32u) != 0
+                    ((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & 32u) != 0
                         ? (trace.has_surface && strcmp(trace.surface.name,
                                                        c->rerelease ? "brwater" : "*brwater") == 0
                                ? 3
                                : 2)
-                    : ((uint32_t)trace.contents & 16u) != 0 ? 4
+                    : ((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & 16u) != 0 ? 4
                                                             : 5;
                 qa_builtin_event event = {.kind = QA_BUILTIN_IMPACT,
                                           .family = QA_GAME_Q2,
@@ -215,7 +215,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 return false;
             }
             if (c->rerelease &&
-                (((uint32_t)trace.contents & UINT32_C(0x04000000)) != 0 || (monster && dead))) {
+                (((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & UINT32_C(0x04000000)) != 0 || (monster && dead))) {
                 bool duplicate = false;
                 for (size_t i = 0; i < count; ++i)
                     duplicate |= qa_actor_id_equal(excluded[i], target);
@@ -244,7 +244,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
             query.start = pos;
             query.end = water_start;
             query.pass_actor = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};
-            query.policy.contents_mask = Q2_WATER_MASK;
+            query.policy.contents_mask = qa_collision_contents_mask(Q2_WATER_MASK, QA_COLLISION_Q2);
             if (!qa_world_trace(c->game->services.world, &query, &trace, e))
                 return false;
             water_end = trace.end;
@@ -268,10 +268,10 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
     query.policy.contents_mask =
-        (c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
+        qa_collision_contents_mask((c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                   : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                       : Q2_SHOT_MASK) |
-        24u;
+        24u, QA_COLLISION_Q2);
     qa_trace_result trace = {0};
     size_t count = 0, limit = c->rerelease ? 16 : c->game->capacity;
     bool water = false;
@@ -283,8 +283,10 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
             return false;
         if (trace.fraction == 1)
             break;
-        if (((uint32_t)trace.contents & query.policy.contents_mask & 24u) != 0) {
-            query.policy.contents_mask &= ~24u;
+        if (qa_collision_bits_overlap(trace.contents, qa_collision_bits_intersection(
+                query.policy.contents_mask, qa_collision_contents_mask(24u, QA_COLLISION_Q2)))) {
+            query.policy.contents_mask = qa_collision_bits_difference(
+                query.policy.contents_mask, qa_collision_contents_mask(24u, QA_COLLISION_Q2));
             water = true;
         } else {
             if (trace.hit != QA_TRACE_HIT_ACTOR)
@@ -385,11 +387,11 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                         ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                     : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                         : Q2_SHOT_MASK;
-    query.policy.contents_mask = mask | (underwater ? 0 : Q2_WATER_MASK);
+    query.policy.contents_mask = qa_collision_contents_mask(mask | (underwater ? 0 : Q2_WATER_MASK), QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(c->game->services.world, &query, &trace, e))
         return false;
-    if (((uint32_t)trace.contents & Q2_WATER_MASK) != 0) {
+    if (((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & Q2_WATER_MASK) != 0) {
         water = true;
         water_start = trace.end;
         if (qa_vec_length(qa_vec_sub(start, water_start)) != 0 &&
@@ -397,7 +399,7 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 water_start, trace.contact_plane.normal, e))
             return false;
         query.start = water_start;
-        query.policy.contents_mask = mask;
+        query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2);
         if (!qa_world_trace(c->game->services.world, &query, &trace, e))
             return false;
     }
@@ -425,7 +427,7 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
             query.start = pos;
             query.end = water_start;
             query.pass_actor = target;
-            query.policy.contents_mask = Q2_WATER_MASK;
+            query.policy.contents_mask = qa_collision_contents_mask(Q2_WATER_MASK, QA_COLLISION_Q2);
             if (!qa_world_trace(c->game->services.world, &query, &trace, e))
                 return false;
             water_end = trace.end;
@@ -464,7 +466,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
                                 .end = qa_vec_add(start, qa_vec_scale(dir, spec.range)),
                                 .pass_actor = c->actor->id,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = Q2_SHOT_MASK;
+        query.policy.contents_mask = qa_collision_contents_mask(Q2_SHOT_MASK, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(c->game->services.world, &query, &trace, e))
             return false;
@@ -532,7 +534,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
             break;
         bool visible;
         qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q2);
-        policy.contents_mask = 1;
+        policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
         if (!qa_builtin_can_damage(&c->game->services, source ? body.origin : own.origin,
                                    source ? c->actor->id : target, source ? target : c->actor->id,
                                    policy, false, &visible, e))

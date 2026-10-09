@@ -732,12 +732,19 @@ static const qa_unified_field qa_spatial_actor_fields[] = {
 };
 static const qa_unified_record_layout qa_spatial_actor_layout = QA_UNIFIED_LAYOUT(qa_spatial_actor, qa_spatial_actor_fields);
 
+static const qa_unified_field qa_collision_bits_fields[] = {
+    QA_UNIFIED_FIELD(qa_collision_bits, lo, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_collision_bits, hi, QA_UNIFIED_FIELD_U64),
+};
+static const qa_unified_record_layout qa_collision_bits_layout = QA_UNIFIED_LAYOUT(qa_collision_bits, qa_collision_bits_fields);
+
 static const qa_unified_field qa_actor_collision_fields[] = {
     QA_UNIFIED_FIELD(qa_actor_collision, family, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_actor_collision, shape, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_actor_collision, inline_model, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_actor_collision, model, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_actor_collision, contents, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_actor_collision, contents, qa_collision_bits_layout),
+    QA_UNIFIED_FIELD(qa_actor_collision, q1_opaque_token, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_RECORD(qa_actor_collision, owner, reference_layout),
     QA_UNIFIED_FIELD(qa_actor_collision, role, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_actor_collision, monster, QA_UNIFIED_FIELD_BOOL),

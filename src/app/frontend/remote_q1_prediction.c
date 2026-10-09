@@ -79,7 +79,8 @@ static bool trace(void *context,const qa_trace_query *query,qa_trace_result *out
                 (row->qw_players[entity->number-1].flags&QA_QW_PF_DEAD)) continue;
             q=*query;
             if(!qa_collision_trace_body(&q,QA_COLLISION_Q1,QA_SHAPE_BOX,
-                (qa_bounds){qa_v3(-16,-16,-24),qa_v3(16,16,32)},vector(entity->origin),-2,&hit,error)) return false;
+                (qa_bounds){qa_v3(-16,-16,-24),qa_v3(16,16,32)},vector(entity->origin),
+                qa_collision_bit(QA_CONTENT_SOLID),&hit,error)) return false;
         }
         if(hit.fraction<1 || hit.start_solid) {
             if(!remote_q1_actor_read(row,entity->number,&hit.actor,error)) return false;

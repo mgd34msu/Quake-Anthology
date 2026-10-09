@@ -154,6 +154,9 @@ static bool nearby(qa_q1_spawn_selector *selector, qa_actor_id point, float radi
     return true;
 }
 static bool visible(qa_q1_spawn_selector *selector, qa_actor_id point, bool *out, qa_error *error) {
+    qa_trace_policy policy = {.family = QA_COLLISION_Q1,
+                              .contents_mask = qa_collision_contents_mask(0, QA_COLLISION_Q1),
+                              .q1_move = QA_Q1_MOVE_NO_MONSTERS, .q1_hull = -1};
     qa_body_state spawn;
     if (!qa_world_body_read(selector->options.services.world, point, &spawn, error))
         return false;
@@ -169,9 +172,7 @@ static bool visible(qa_q1_spawn_selector *selector, qa_actor_id point, bool *out
                                 .end = qa_vec_add(body.origin, qa_v3(0, 0, 22)),
                                 .shape.kind = QA_SHAPE_POINT,
                                 .pass_actor = point,
-                                .policy = {.family = QA_COLLISION_Q1,
-                                           .q1_move = QA_Q1_MOVE_NO_MONSTERS,
-                                           .q1_hull = -1}};
+                                .policy = policy};
         qa_trace_result trace;
         if (!qa_world_trace(selector->options.services.world, &query, &trace, error))
             return false;

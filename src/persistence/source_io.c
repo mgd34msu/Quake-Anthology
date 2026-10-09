@@ -151,7 +151,8 @@ bool qa_persistence_collision(qa_source_save_io *io, qa_actor_collision *value)
         value->role = (qa_collision_role)role;
     }
     return qa_source_save_bool(io, &value->inline_model) && qa_source_save_u32(io, &value->model) &&
-        qa_source_save_i32(io, &value->contents) && qa_source_save_actor_reference(io, &value->owner) &&
+        qa_source_save_u64(io, &value->contents.lo) && qa_source_save_u64(io, &value->contents.hi) &&
+        qa_source_save_i32(io, &value->q1_opaque_token) && qa_source_save_actor_reference(io, &value->owner) &&
         qa_source_save_bool(io, &value->monster) && qa_source_save_bool(io, &value->dead_monster) &&
         qa_source_save_bool(io, &value->q1_corpse) && qa_source_save_bool(io, &value->has_q3_owner) &&
         qa_source_save_i32(io, &value->q3_entity_number) && qa_source_save_i32(io, &value->q3_owner_number);

@@ -103,7 +103,7 @@ static bool sight(qa_q2_game *g, q2_actor *a, qa_actor_id target, bool *visible,
                             .shape = {.kind = QA_SHAPE_POINT},
                             .pass_actor = a->id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = 25;
+    query.policy.contents_mask = qa_collision_contents_mask(25, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -538,7 +538,7 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     if (c->kind == Q2_SPHERE_HUNTER &&
         qa_actor_id_equal(contact->other, g->services.physics->world_actor))
         return true;
-    if (contact->has_surface && (contact->surface.flags & 4))
+    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4))
         return qa_session_release(g->services.session, a->id, e);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))

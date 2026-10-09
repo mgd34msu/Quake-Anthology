@@ -3,6 +3,7 @@
 
 #include "qa/arena.h"
 #include "qa/math.h"
+#include "qa/collision_bits.h"
 
 /* Derived cells use doubles: their winding tolerances are much smaller than
  * one float ULP at ordinary map coordinates. Simulation hulls remain floats. */
@@ -15,7 +16,7 @@ typedef struct q1work { qa_arena *arena; qa_error *error; bool failed; } q1work;
 typedef struct q1cells { q1cell **items; size_t count, capacity; } q1cells;
 typedef struct q1planes { q1p *items; size_t count, capacity; } q1planes;
 typedef struct q1shape { bool capsule; q1v axes[3], extents; double radius, half_segment; } q1shape;
-typedef struct q1interval { double enter, exit, contact; q1p plane; int32_t contents; size_t order; } q1interval;
+typedef struct q1interval { double enter, exit, contact; q1p plane; qa_collision_terminal contents; size_t order; } q1interval;
 
 static inline q1v qv(double x, double y, double z) { return (q1v){x,y,z}; }
 static inline q1v qadd(q1v a,q1v b) { return qv(a.x+b.x,a.y+b.y,a.z+b.z); }

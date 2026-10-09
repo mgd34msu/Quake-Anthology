@@ -62,7 +62,8 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
             (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
                 row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
         unsigned long clients = strtoul(frontend_remote_q2_config(row, row->layout.max_clients), NULL, 10);
-        if (extended && entity->number <= clients && !(query->policy.contents_mask & (UINT32_C(1) << 30))) continue;
+        if (extended && entity->number <= clients &&
+            !qa_collision_bits_overlap(query->policy.contents_mask, qa_collision_bit(QA_CONTENT_PLAYER))) continue;
         uint32_t model = 0; qa_trace_result hit;
         q = *query;
         if (entity->solid == 31) {
@@ -72,7 +73,7 @@ bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result
             if (!qa_collision_trace(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
         } else if (!qa_collision_trace_body(&q, QA_COLLISION_Q2, QA_SHAPE_BOX,
             remote_q2_solid_bounds(row, entity->solid), vector(entity->origin),
-            extended && entity->number <= clients ? INT32_C(0x40000000) : INT32_C(0x2000000), &hit, error)) return false;
+            qa_collision_bit(extended && entity->number <= clients ? QA_CONTENT_PLAYER : QA_CONTENT_MONSTER), &hit, error)) return false;
         bool start_solid = out->start_solid || hit.start_solid;
         if (hit.all_solid || hit.fraction < out->fraction) {
             if (!row->options.entity_actor(row->options.context, &row->options.domain, entity->number, &hit.actor, error) ||
@@ -95,7 +96,9 @@ static bool contents(void *context, const qa_point_query *query, qa_point_conten
             .origin = vector(entity->origin), .angles = vector(entity->angles)};
         qa_point_contents hit;
         if (!qa_collision_point_contents(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
-        out->contents |= hit.contents; out->stored |= hit.stored; out->merged |= hit.merged;
+        out->contents = qa_collision_bits_union(out->contents, hit.contents);
+        out->stored = qa_collision_bits_union(out->stored, hit.stored);
+        out->merged = qa_collision_bits_union(out->merged, hit.merged);
     }
     return true;
 }

@@ -198,8 +198,9 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     }
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents =
+                                    .contents = qa_collision_contents_decode(
                                         INT32_C(0x04000000) | (source ? Q3_CONTENTS_TRIGGER : 0),
+                                        QA_COLLISION_Q3),
                                     .role = source ? QA_COLLISION_BOTH : QA_COLLISION_SOLID};
     qa_combat_state combat = {.health = 200, .mass = 200, .can_take_damage = true};
     body.origin = qa_physics_q3_snap(player_origin);

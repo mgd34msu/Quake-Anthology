@@ -150,7 +150,7 @@ static bool plane(qa_source_save_io *io, qa_collision_plane *value)
 static bool surface(qa_source_save_io *io, qa_collision_surface *value)
 {
     if (!qa_source_save_bytes(io, value->name, sizeof(value->name))) return false;
-    I(value->flags); I(value->value);
+    FIELD(u64, value->flags.lo); FIELD(u64, value->flags.hi); I(value->value);
     return qa_source_save_bytes(io, value->material, sizeof(value->material));
 }
 
@@ -163,7 +163,9 @@ static bool trace(qa_source_save_io *io, qa_trace_result *value)
     F(value->fraction); V(value->end); B(value->start_solid); B(value->all_solid); B(value->in_open); B(value->in_water); B(value->contact);
     if (!plane(io, &value->plane) || !plane(io, &value->contact_plane) || !qa_source_save_u32(io, &hit) || hit > QA_TRACE_HIT_ACTOR)
         return fail(io, "Invalid movement contact hit");
-    value->hit = (qa_trace_hit)hit; U(value->model); A(value->actor); I(value->contents); I(value->surface_flags);
+    value->hit = (qa_trace_hit)hit; U(value->model); A(value->actor);
+    FIELD(u64, value->contents.lo); FIELD(u64, value->contents.hi); I(value->q1_opaque_token);
+    FIELD(u64, value->surface_flags.lo); FIELD(u64, value->surface_flags.hi);
     B(value->has_surface); B(value->has_secondary);
     if (value->has_surface && !surface(io, &value->surface)) return false;
     if (value->has_secondary) {

@@ -2207,7 +2207,7 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
         .policy = qa_collision_default_policy(QA_COLLISION_Q2),
         .pass_actor = shot_actor->id,
     };
-    query.policy.contents_mask = shot_actor->physics.clip_mask;
+    query.policy.contents_mask = qa_collision_contents_mask(shot_actor->physics.clip_mask, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;

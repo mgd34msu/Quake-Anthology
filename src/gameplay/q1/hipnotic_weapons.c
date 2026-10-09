@@ -182,7 +182,7 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents == -6)
+    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, entity, error);
     qa_vec3 old_direction = qa_vec_normalize(p->movedir);
     qa_trace_result trace;

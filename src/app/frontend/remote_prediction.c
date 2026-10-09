@@ -751,7 +751,7 @@ static bool touch_triggers(frontend_remote_prediction *owner, const frontend_rem
 }
 static bool step(frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
     prediction_player *player, prediction_command *entry, const prediction_command *selected,
-    bool first, qa_vec3 *pml, uint32_t trace_mask, int32_t captured_pmove_msec, qa_error *error)
+    bool first, qa_vec3 *pml, qa_collision_bits trace_mask, int32_t captured_pmove_msec, qa_error *error)
 {
     qa_movement_input input = source->configuration.input;
     input.state = player->view.movement;
@@ -1114,9 +1114,10 @@ static bool replay(frontend_remote_prediction *owner,
         return true;
     }
     prediction_player old = next.predicted;
-    uint32_t trace_mask = UINT32_C(1) | UINT32_C(0x10000) | UINT32_C(0x2000000);
+    uint32_t source_trace_mask = UINT32_C(1) | UINT32_C(0x10000) | UINT32_C(0x2000000);
     if (old.view.player.pmType == 3 || current->player.persistant[3] == 3)
-        trace_mask &= ~UINT32_C(0x2000000);
+        source_trace_mask &= ~UINT32_C(0x2000000);
+    qa_collision_bits trace_mask = qa_collision_contents_mask(source_trace_mask, QA_COLLISION_Q3);
     bool ok = seed(owner, &source, &base, &next.baseline, error);
     if (ok) {
         set_receipt(&next, &source);
@@ -1361,7 +1362,8 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_vec3(io, &in->view_offset) || !qa_source_save_bool(io, &in->has_source_punch_angles) ||
         !qa_source_save_vec3(io, &in->source_punch_angles) || !qa_source_save_u32(io, &solid) ||
         solid > QA_Q1_SOLID_CORPSE || !qa_source_save_u32(io, &family) || family < QA_COLLISION_Q1 ||
-        family > QA_COLLISION_Q3 || !qa_source_save_u32(io, &in->trace_policy.contents_mask) ||
+        family > QA_COLLISION_Q3 || !qa_source_save_u64(io, &in->trace_policy.contents_mask.lo) ||
+        !qa_source_save_u64(io, &in->trace_policy.contents_mask.hi) ||
         !qa_source_save_u32(io, &move) || move > QA_Q1_MOVE_MISSILE ||
         !qa_source_save_i32(io, &in->trace_policy.q1_hull) ||
         !qa_source_save_bool(io, &in->trace_policy.q2_merged_contents) ||

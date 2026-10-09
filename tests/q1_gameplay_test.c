@@ -739,7 +739,7 @@ static void retained_external_brush(void)
             qa_point_query point = {.point = {0, 0, 180}, .policy = query.policy};
             qa_point_contents contents;
             GAME_CHECK(qa_world_point_contents(world, &point, &contents, &error));
-            GAME_CHECK((contents.contents & 1) != 0);
+            GAME_CHECK(qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_SOLID)));
         }
     }
     qa_world_checkpoint_free(&checkpoint);

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/collision_bits.h"
 #include "qa/stamp.h"
 
 #include <limits.h>
@@ -6,20 +7,25 @@
 
 #define Q2_POSITION_LEAF_LIMIT 1024u
 
-int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease)
+qa_collision_bits qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease)
 {
-    if (solid == 3) return 1;
-    if (!solid || (solid == 1 && !rerelease)) return 0;
-    if (svflags & 2u) return INT32_C(0x04000000);
-    if (rerelease && (svflags & 8u)) return INT32_C(0x40000000);
-    if (rerelease && (svflags & 128u)) return INT32_MIN;
-    return INT32_C(0x02000000);
+    if (solid == 3) return qa_collision_bit(QA_CONTENT_SOLID);
+    if (!solid || (solid == 1 && !rerelease)) return (qa_collision_bits){0};
+    if (svflags & 2u) return qa_collision_bit(QA_CONTENT_CORPSE);
+    if (rerelease && (svflags & 8u)) return qa_collision_bit(QA_CONTENT_PLAYER);
+    if (rerelease && (svflags & 128u)) return qa_collision_bit(QA_CONTENT_PROJECTILE);
+    return qa_collision_bit(QA_CONTENT_MONSTER);
 }
 
 typedef struct q2_leaf {
-    int32_t stored, merged;
+    qa_collision_bits stored, merged;
     qa_bsp_range brushes;
 } q2_leaf;
+
+typedef struct q2_brush {
+    qa_bsp_range sides;
+    qa_collision_bits contents;
+} q2_brush;
 
 typedef struct q2_side {
     uint32_t plane;
@@ -41,7 +47,7 @@ typedef struct q2_collision {
     const qa_collision_plane *planes;
     const qa_collision_node *nodes;
     q2_leaf *leaves;
-    qa_bsp_brush *brushes;
+    q2_brush *brushes;
     q2_side *sides;
     qa_collision_surface *surfaces;
     uint32_t *leaf_brushes;
@@ -69,7 +75,7 @@ typedef struct q2_work {
     qa_bounds bounds;
     qa_collision_trace_rules rules;
     bool stationary, merged;
-    uint32_t mask;
+    qa_collision_bits mask;
     qa_trace_result result;
 } q2_work;
 
@@ -293,9 +299,9 @@ static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa
         child = node->children[distance < 0 ? 1 : 0];
     }
     const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
-    *out = (qa_point_contents){QA_COLLISION_Q2,
-        query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents ? leaf->merged : leaf->stored,
-        leaf->stored, leaf->merged};
+    *out = (qa_point_contents){.family = QA_COLLISION_Q2,
+        .contents = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents ? leaf->merged : leaf->stored,
+        .stored = leaf->stored, .merged = leaf->merged};
     return true;
 }
 
@@ -311,8 +317,8 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
 {
     const q2_collision *collision = work->collision;
     if (!qa_stamp_set_mark(&work->scratch->trace_marks, index)) return;
-    const qa_bsp_brush *brush = &collision->brushes[index];
-    if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
+    const q2_brush *brush = &collision->brushes[index];
+    if (!qa_collision_bits_overlap(brush->contents, work->mask) || brush->sides.count == 0) return;
     qa_collision_brush_contact contact;
     if (!qa_collision_trace_brush(work, q2_brush_distances,
             brush->sides.first, brush->sides.count, work->stationary,
@@ -335,8 +341,8 @@ static void q2_trace_brush(q2_work *work, uint32_t index)
 static void q2_trace_leaf(q2_work *work, size_t index)
 {
     const q2_leaf *leaf = &work->collision->leaves[index];
-    int32_t contents = work->merged ? leaf->merged : leaf->stored;
-    if (((uint32_t)contents & work->mask) == 0) return;
+    qa_collision_bits contents = work->merged ? leaf->merged : leaf->stored;
+    if (!qa_collision_bits_overlap(contents, work->mask)) return;
     for (size_t i = 0; i < (size_t)leaf->brushes.count; ++i) {
         q2_trace_brush(work, work->collision->leaf_brushes[(size_t)leaf->brushes.first + i]);
         if (work->result.fraction == 0) return;
@@ -417,9 +423,9 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
 {
     const q2_collision *collision = work->collision;
     if (!qa_stamp_set_mark(&work->scratch->trace_marks, index)) return;
-    const qa_bsp_brush *brush = &collision->brushes[index];
-    int32_t contents = qa_collision_convert_contents(brush->contents, QA_COLLISION_Q2, QA_COLLISION_Q1);
-    if (contents == -1 || brush->sides.count == 0) return;
+    const q2_brush *brush = &collision->brushes[index];
+    int32_t medium = qa_collision_q1_medium_class(brush->contents);
+    if (medium == -1 || brush->sides.count == 0) return;
     float begin = 0, end = work->result.fraction;
     for (size_t i = 0; i < (size_t)brush->sides.count; ++i) {
         const q2_side *side = &collision->sides[(size_t)brush->sides.first + i];
@@ -433,7 +439,7 @@ static void q2_brush_medium(q2_work *work, uint32_t index, size_t *count)
         else end = fminf(end, crossing);
         if (begin > end) return;
     }
-    work->scratch->intervals[(*count)++] = (q2_interval){begin, end, contents == -2};
+    work->scratch->intervals[(*count)++] = (q2_interval){begin, end, medium == -2};
 }
 
 static void q2_interval_sift(q2_interval *intervals, size_t root, size_t count)
@@ -544,7 +550,7 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
     }
     work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
     work.merged = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents;
-    work.mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q2);
+    work.mask = query->policy.contents_mask;
     work.extents = qa_v3(fmaxf(-work.bounds.mins.x, work.bounds.maxs.x),
                          fmaxf(-work.bounds.mins.y, work.bounds.maxs.y),
                          fmaxf(-work.bounds.mins.z, work.bounds.maxs.z));
@@ -651,7 +657,7 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
         if (length >= sizeof(surface->name)) length = sizeof(surface->name) - 1;
         if (length != 0) memcpy(surface->name, texture.name.data, length);
         surface->name[length] = '\0';
-        surface->flags = texture.flags;
+        surface->flags = qa_collision_surface_decode(texture.flags, QA_COLLISION_Q2);
         surface->value = texture.value;
     }
     for (size_t i = 0; i < collision->side_count; ++i) {
@@ -665,11 +671,14 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
         collision->sides[i] = (q2_side){side.plane, side.texinfo};
     }
     for (size_t i = 0; i < collision->brush_count; ++i) {
-        if (!qa_bsp_read_brush(map, i, &collision->brushes[i], error)) goto fail;
-        if (!q2_range_valid(collision->brushes[i].sides, collision->side_count)) {
+        qa_bsp_brush brush;
+        if (!qa_bsp_read_brush(map, i, &brush, error)) goto fail;
+        if (!q2_range_valid(brush.sides, collision->side_count)) {
             q2_bad_reference(error, "brush", i);
             goto fail;
         }
+        collision->brushes[i] = (q2_brush){brush.sides,
+            qa_collision_contents_decode(brush.contents, QA_COLLISION_Q2)};
     }
     for (size_t i = 0; i < collision->leaf_brush_count; ++i) {
         int64_t index;
@@ -687,15 +696,16 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
             q2_bad_reference(error, "leaf", i);
             goto fail;
         }
-        int32_t merged = leaf.contents;
+        qa_collision_bits stored = qa_collision_contents_decode(leaf.contents, QA_COLLISION_Q2);
+        qa_collision_bits merged = stored;
         /* Q2 rerelease merges brush flags into every leaf except solid leaf 0. */
         if (i != 0) {
             for (size_t j = 0; j < (size_t)leaf.brushes.count; ++j) {
                 uint32_t brush = collision->leaf_brushes[(size_t)leaf.brushes.first + j];
-                merged |= collision->brushes[brush].contents;
+                merged = qa_collision_bits_union(merged, collision->brushes[brush].contents);
             }
         }
-        collision->leaves[i] = (q2_leaf){leaf.contents, merged, leaf.brushes};
+        collision->leaves[i] = (q2_leaf){stored, merged, leaf.brushes};
     }
     for (size_t i = 0; i < collision->model_count; ++i) {
         qa_bsp_model model;

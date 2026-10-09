@@ -2,6 +2,7 @@
 #define QA_Q3_COLLISION_SHARED_H
 
 #include "patch.h"
+#include "qa/collision_bits.h"
 
 /* The source swap carries original box extents/position bounds independently
  * of the substituted capsule's radius and offset. */

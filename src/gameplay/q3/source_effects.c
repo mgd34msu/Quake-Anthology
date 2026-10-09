@@ -186,7 +186,7 @@ static bool move_intermission(qa_q3_game *game, qa_actor_id actor, qa_vec3 origi
     source->authored_angles = angles;
     qa_actor_collision collision;
     if (!qa_world_get_collision(game->options.services.world, actor, &collision, error)) return false;
-    collision.contents = 0;
+    collision.contents = (qa_collision_bits){0};
     if (!qa_world_set_collision(game->options.services.world, actor, &collision, error)) return false;
     uint32_t slot;
     if (!qa_q3_native_client_slot(game, actor, &slot, error)) return false;

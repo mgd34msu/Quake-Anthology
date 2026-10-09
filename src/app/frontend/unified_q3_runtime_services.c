@@ -248,7 +248,7 @@ static bool trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_
         if(!q3n_compiled_frame_entity(f->compiled,(uint32_t)skip,&row,e))return false;
         if(row.published)pass=row.actor;}
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_COLLISION_Q3,.contents_mask=mask,.curves=true},.pass_actor=pass};
+        .policy={.family=QA_COLLISION_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3),.curves=true},.pass_actor=pass};
     return frontend_remote_unified_presentation_trace(o->options.replica,&query,out,e) && cut(o,f,e);
 }
 static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_bounds bounds,
@@ -256,7 +256,7 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 e
 {
     frontend_unified_q3_runtime_services *o=context;if(!cut(o,f,e))return false;
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_COLLISION_Q3,.contents_mask=mask,.curves=true}};
+        .policy={.family=QA_COLLISION_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3),.curves=true}};
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
     return geometry && qa_collision_trace(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,out,e) && cut(o,f,e);
 }
@@ -269,7 +269,7 @@ static bool contents(void *context,const q3n_frame *f,qa_vec3 point,int32_t pass
         if(row.published)query.pass_actor=row.actor;}
     qa_point_contents result;
     if(!frontend_remote_unified_presentation_point_contents(o->options.replica,&query,&result,e) || !cut(o,f,e))return false;
-    *out=(uint32_t)result.contents;return true;
+    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token);return true;
 }
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
 {
@@ -278,7 +278,7 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
     qa_point_contents result;
     if(!geometry || !qa_collision_point_contents(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,&result,e) || !cut(o,f,e))return false;
-    *out=(uint32_t)result.contents;return true;
+    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token);return true;
 }
 static bool fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,
     qa_vec3 projection,qa_vec3 *vertices,size_t capacity,q3n_mark_fragment *out,size_t fragment_capacity,

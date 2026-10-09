@@ -4,8 +4,10 @@
 #include <stdalign.h>
 #include <stdlib.h>
 
-#define Q1_EMPTY (-1)
-#define Q1_SOLID (-2)
+/* Negative children index this table, rather than retaining native tokens. */
+#define Q1_EMPTY_REFERENCE (-1)
+#define Q1_SOLID_REFERENCE (-2)
+#define Q1_NAMED_TERMINALS 19u
 #define Q1_CACHE_ENTRIES 128u
 #define Q1_CACHE_CELLS 1024u
 #define Q1_CACHE_FACES 4096u
@@ -15,15 +17,18 @@ static const qa_bounds hull_bounds[3]={
     {{0,0,0},{0,0,0}},{{-16,-16,-24},{16,16,32}},{{-32,-32,-24},{32,32,64}}
 };
 static const q1v cell_axes[3]={{1,0,0},{0,1,0},{0,0,1}};
+static const qa_collision_bits sky_surface_flags={UINT64_C(1)<<QA_SURFACE_SKY_NOIMPACT,
+    UINT64_C(1)<<(QA_SURFACE_Q1_EXTENSION_2-64)};
 typedef struct q1node { uint32_t plane; int32_t children[2]; } q1node;
 typedef struct q1hull {
     const q1node *nodes; size_t count;
     const qa_collision_plane *planes; size_t plane_count;
+    const qa_collision_terminal *terminals;
     int32_t root;
 } q1hull;
 typedef struct q1contactface { qa_bsp_face face; qa_collision_plane plane; size_t next; } q1contactface;
 typedef struct q1model {
-    qa_bsp_model source; int32_t drawing_root; size_t brush_model;
+    qa_bsp_model source; int32_t drawing_root,clip_roots[2]; size_t brush_model;
     q1contactface *contact_faces; size_t *face_buckets; size_t bucket_count;
 } q1model;
 typedef struct q1clip_cache {
@@ -37,7 +42,8 @@ typedef struct q1state {
     qa_arena retained;
     const qa_collision_plane *planes; size_t plane_count;
     q1node *drawing,*clip; size_t drawing_count,clip_count;
-    int32_t *leaf_contents; size_t leaf_count;
+    int32_t *leaf_references; size_t leaf_count;
+    qa_collision_terminal *terminals,*brush_contents; size_t terminal_count;
     q1model *models; size_t model_count;
     qa_bsp_brush_list brushes;
     q1cell **brush_cells;
@@ -45,11 +51,14 @@ typedef struct q1state {
 typedef struct native_trace {
     float fraction; qa_vec3 end;
     bool start_solid,all_solid,in_open,in_water;
-    qa_collision_plane plane; int32_t contents;
+    qa_collision_plane plane; qa_collision_terminal contents;
 } native_trace;
 
-static bool blocks(int32_t contents,const qa_trace_policy *policy) {
-    return policy==NULL?contents==Q1_SOLID:qa_collision_contents_block(contents,QA_COLLISION_Q1,policy);
+static bool blocks(qa_collision_bits contents,const qa_trace_policy *policy) {
+    return qa_collision_bits_overlap(contents,policy==NULL?qa_collision_bit(QA_CONTENT_SOLID):policy->contents_mask);
+}
+static qa_collision_terminal hull_terminal(const q1hull *hull,int32_t reference) {
+    return hull->terminals[(size_t)(-1-(int64_t)reference)];
 }
 static bool hull_node(const q1hull *hull,int32_t index,const q1node **out,qa_error *error) {
     if(index<hull->root || index<0 || (size_t)index>=hull->count) {
@@ -63,7 +72,7 @@ static float plane_distance(qa_collision_plane plane,qa_vec3 p) {
     if(plane.type>=0 && plane.type<3) return qa_vec_component(p,(unsigned)plane.type)-plane.distance;
     return qa_vec_dot(p,plane.normal)-plane.distance;
 }
-static bool hull_contents(const q1hull *hull,qa_vec3 point,int32_t index,int32_t *out,qa_error *error) {
+static bool hull_contents(const q1hull *hull,qa_vec3 point,int32_t index,qa_collision_terminal *out,qa_error *error) {
     size_t visits=0;
     while(index>=0) {
         if(visits++>=hull->count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Cycle in Quake collision hull"); return false; }
@@ -71,7 +80,7 @@ static bool hull_contents(const q1hull *hull,qa_vec3 point,int32_t index,int32_t
         if(!hull_node(hull,index,&node,error)) return false;
         index=node->children[plane_distance(hull->planes[node->plane],point)<0?1:0];
     }
-    *out=index; return true;
+    *out=hull_terminal(hull,index); return true;
 }
 typedef struct hull_frame {
     int32_t node,far_node; size_t depth;
@@ -90,7 +99,7 @@ typedef struct q1scratch {
 /* An explicit continuation stack preserves RecursiveHullCheck's ordering and
  * backs out by the source 0.1 fraction, without trusting BSP depth to C's stack. */
 static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec3 end,const qa_trace_policy *policy,native_trace *out,qa_error *error) {
-    native_trace trace={1,end,false,true,false,false,{{0,0,0},0,0,0},Q1_EMPTY};
+    native_trace trace={1,end,false,true,false,false,{{0,0,0},0,0,0},{{0},0}};
     float epsilon=qa_collision_rules(policy).brush.epsilon;
     if(hull->count==SIZE_MAX) { qa_error_set(error,QA_ERROR_MEMORY,0,"Quake hull depth overflow"); return false; }
     size_t count=1;
@@ -100,8 +109,9 @@ static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec
         if(!frame->awaiting_near) {
             if(frame->depth>hull->count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Cycle in Quake trace hull"); return false; }
             if(frame->node<0) {
-                if(blocks(frame->node,policy)) { trace.start_solid=true; trace.contents=frame->node; }
-                else { trace.all_solid=false; if(frame->node==Q1_EMPTY) trace.in_open=true; else trace.in_water=true; }
+                qa_collision_terminal terminal=hull_terminal(hull,frame->node);
+                if(blocks(terminal.bits,policy)) { trace.start_solid=true; trace.contents=terminal; }
+                else { trace.all_solid=false; if(qa_collision_bits_equal(terminal.bits,(qa_collision_bits){0})) trace.in_open=true; else trace.in_water=true; }
                 count--; continue;
             }
             const q1node *node;
@@ -121,9 +131,9 @@ static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec
                 .p1f=frame->p1f,.p2f=frame->midf,.p1=frame->p1,.p2=frame->mid};
             continue;
         }
-        int32_t far_contents;
+        qa_collision_terminal far_contents;
         if(!hull_contents(hull,frame->mid,frame->far_node,&far_contents,error)) return false;
-        if(!blocks(far_contents,policy)) {
+        if(!blocks(far_contents.bits,policy)) {
             frame->node=frame->far_node; frame->p1f=frame->midf; frame->p1=frame->mid;
             frame->depth++; frame->awaiting_near=false; continue;
         }
@@ -135,9 +145,9 @@ static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec
         }
         trace.contents=far_contents;
         for(;;) {
-            int32_t at;
+            qa_collision_terminal at;
             if(!hull_contents(hull,frame->mid,hull->root,&at,error)) return false;
-            if(!blocks(at,policy)) break;
+            if(!blocks(at.bits,policy)) break;
             frame->fraction-=0.1f;
             if(frame->fraction<0) { trace.fraction=frame->midf; trace.end=frame->mid; *out=trace; return true; }
             frame->midf=frame->p1f+(frame->p2f-frame->p1f)*frame->fraction;
@@ -149,7 +159,7 @@ static bool trace_hull(hull_frame *stack,const q1hull *hull,qa_vec3 start,qa_vec
 }
 static q1hull model_hull(const q1state *state,size_t model,unsigned index) {
     return (q1hull){index==0?state->drawing:state->clip,index==0?state->drawing_count:state->clip_count,
-        state->planes,state->plane_count,index==0?state->models[model].drawing_root:state->models[model].source.headnodes[index]};
+        state->planes,state->plane_count,state->terminals,index==0?state->models[model].drawing_root:state->models[model].clip_roots[index-1]};
 }
 static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; }
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
@@ -161,7 +171,7 @@ static void native_result(const qa_trace_query *query,const native_trace *trace,
     result.plane=qa_collision_make_plane(qa_collision_from_local(trace->plane.normal,basis),trace->plane.distance,trace->plane.type);
     result.contact_plane=result.plane;
     result.contact_plane.distance+=qa_vec_dot(result.contact_plane.normal,origin);
-    result.contents=trace->contents; result.contact=trace->fraction<1;
+    result.contents=trace->contents.bits; result.q1_opaque_token=trace->contents.opaque_token; result.contact=trace->fraction<1;
     result.hit=trace->fraction<1||trace->start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
     if(trace->all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) {
@@ -180,7 +190,7 @@ static q1p derived_plane(qa_collision_plane p) { return (q1p){qfrom(p.normal),p.
 /* These stacks retain one entry per BSP depth. Repeated solid leaf references
  * are distinct cells, because their enclosing plane paths differ. */
 typedef struct cell_frame { int32_t node; q1cell *cell; size_t depth; } cell_frame;
-typedef bool (*cell_consumer)(q1work *,q1cell *,int32_t,void *);
+typedef bool (*cell_consumer)(q1work *,q1cell *,qa_collision_terminal,void *);
 static bool hull_cells(q1work *w,const q1hull *hull,q1bounds envelope,bool free_only,const qa_trace_policy *policy,cell_consumer consume,void *context) {
     if(hull->count==SIZE_MAX) { qa_error_set(w->error,QA_ERROR_MEMORY,0,"Quake cell depth overflow"); return false; }
     cell_frame *stack=q1_alloc(w,hull->count+1,sizeof(*stack),alignof(cell_frame));
@@ -190,10 +200,11 @@ static bool hull_cells(q1work *w,const q1hull *hull,q1bounds envelope,bool free_
     while(count>0) {
         cell_frame frame=stack[--count];
         if(frame.node<0) {
-            bool include=free_only?frame.node!=Q1_SOLID:blocks(frame.node,policy);
+            qa_collision_terminal terminal=hull_terminal(hull,frame.node);
+            bool include=free_only?!qa_collision_bits_overlap(terminal.bits,qa_collision_bit(QA_CONTENT_SOLID)):blocks(terminal.bits,policy);
             /* A consumer can finish early without an error, for example once
              * subtraction has proved that no clip-only solid remains. */
-            if(include && !consume(w,frame.cell,frame.node,context)) return !w->failed;
+            if(include && !consume(w,frame.cell,terminal,context)) return !w->failed;
             continue;
         }
         if(frame.depth>hull->count) { qa_error_set(w->error,QA_ERROR_FORMAT,0,"Cycle in Quake solid-space BSP"); return false; }
@@ -214,7 +225,7 @@ static bool hull_cells(q1work *w,const q1hull *hull,q1bounds envelope,bool free_
     return true;
 }
 typedef struct clip_context { q1cells solids; qa_bounds hull_bounds; } clip_context;
-static bool subtract_free(q1work *w,q1cell *free_cell,int32_t contents,void *context) {
+static bool subtract_free(q1work *w,q1cell *free_cell,qa_collision_terminal contents,void *context) {
     (void)contents;
     clip_context *clip=context; q1planes planes={0};
     if(!q1_separating_planes(w,free_cell,cell_axes,&planes)) return false;
@@ -244,7 +255,7 @@ static bool derive_clip(q1work *w,const q1state *state,size_t model,q1bounds env
     bool used=false;
     for(unsigned i=1;i<3;i++) {
         q1hull hull=model_hull(state,model,i);
-        if(hull.root<0 && hull.root!=Q1_SOLID) continue;
+        if(hull.root<0 && !qa_collision_bits_overlap(hull_terminal(&hull,hull.root).bits,qa_collision_bit(QA_CONTENT_SOLID))) continue;
         used=true; context.hull_bounds=hull_bounds[i];
         q1v one=qv(1,1,1);
         q1bounds free_envelope={qsub(envelope.min,qadd(qfrom(hull_bounds[i].maxs),one)),
@@ -259,7 +270,7 @@ typedef struct sweep_context {
     double epsilon;
     q1interval *intervals; size_t count,capacity;
 } sweep_context;
-static bool sweep_cell(q1work *w,q1cell *cell,int32_t contents,void *context) {
+static bool sweep_cell(q1work *w,q1cell *cell,qa_collision_terminal contents,void *context) {
     sweep_context *sweep=context; q1interval interval;
     bool hit=q1_sweep_cell(w,cell,sweep->start,sweep->end,&sweep->shape,sweep->epsilon,&interval);
     if(w->failed) return false;
@@ -387,7 +398,7 @@ static bool collect_clip(q1work *w,const q1state *state,q1scratch *scratch,size_
     *starts_solid=false;
     for(size_t i=0;i<clip.count;i++) {
         size_t before=sweep->count;
-        if(!sweep_cell(w,clip.items[i],Q1_SOLID,sweep)) return false;
+        if(!sweep_cell(w,clip.items[i],(qa_collision_terminal){qa_collision_bit(QA_CONTENT_SOLID),0},sweep)) return false;
         if(sweep->count>before && sweep->intervals[before].enter<=0) *starts_solid=true;
     }
     return true;
@@ -410,15 +421,15 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     if(authored!=SIZE_MAX) {
         qa_bsp_range range=state->brushes.models[authored].brushes;
         for(size_t i=range.first;i<(size_t)range.first+range.count;i++) {
-            if(!blocks(state->brushes.brushes[i].contents,&query->policy)||state->brush_cells[i]==NULL) continue;
+            if(!blocks(state->brush_contents[i].bits,&query->policy)||state->brush_cells[i]==NULL) continue;
             q1bounds b=state->brush_cells[i]->bounds;
             if(b.min.x>envelope.max.x||b.max.x<envelope.min.x||b.min.y>envelope.max.y||b.max.y<envelope.min.y||b.min.z>envelope.max.z||b.max.z<envelope.min.z) continue;
-            if(!sweep_cell(w,state->brush_cells[i],state->brushes.brushes[i].contents,&sweep)) return false;
+            if(!sweep_cell(w,state->brush_cells[i],state->brush_contents[i],&sweep)) return false;
         }
     } else {
         q1hull drawing=model_hull(state,model,0);
         if(!hull_cells(w,&drawing,envelope,false,&query->policy,sweep_cell,&sweep)) return false;
-        if(blocks(Q1_SOLID,&query->policy)) {
+        if(blocks(qa_collision_bit(QA_CONTENT_SOLID),&query->policy)) {
             size_t drawing_count=sweep.count; double first=1;
             for(size_t i=0;i<sweep.count;i++) first=fmin(first,sweep.intervals[i].enter);
             bool prefix=first>0 && first<1,starts_solid;
@@ -428,7 +439,7 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
         }
     }
     if(sweep.count>1) qsort(sweep.intervals,sweep.count,sizeof(*sweep.intervals),interval_compare);
-    bool start_solid=false; double covered=-INFINITY,fraction=1; q1p plane={{0,0,0},0}; int32_t contents=Q1_EMPTY;
+    bool start_solid=false; double covered=-INFINITY,fraction=1; q1p plane={{0,0,0},0}; qa_collision_terminal contents={0};
     for(size_t i=0;i<sweep.count;i++) {
         q1interval interval=sweep.intervals[i];
         if(interval.enter<=0) { start_solid=true; contents=interval.contents; covered=fmax(covered,interval.exit); continue; }
@@ -450,7 +461,7 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     result.contact_plane=result.plane; result.contact_plane.distance+=qa_vec_dot(result.plane.normal,origin);
     result.contact=fraction<1 && (query->policy.family==QA_COLLISION_Q1 || !all_solid);
     result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
-    result.contents=contents; *out=result; return true;
+    result.contents=contents.bits; result.q1_opaque_token=contents.opaque_token; *out=result; return true;
 }
 
 static uint32_t plane_hash(qa_collision_plane plane) {
@@ -500,7 +511,7 @@ static bool surface_at_contact(const q1state *state,size_t model,qa_vec3 point,q
         qa_bsp_texture texture;
         if(!qa_bsp_read_texture(&state->bsp,(size_t)info.texture,&texture,error)) return false;
         if(texture.storage==QA_BSP_TEXTURE_MISSING) return true;
-        result->surface_flags=texture.name.size>=3 && memcmp(texture.name.data,"sky",3)==0?4:0;
+        result->surface_flags=texture.name.size>=3 && memcmp(texture.name.data,"sky",3)==0?sky_surface_flags:(qa_collision_bits){0};
         /* A Quake surface reports the authored texture even when its pixels
          * are externally supplied. This also retains sky flags for adapters. */
         result->has_surface=true; result->surface.flags=result->surface_flags;
@@ -543,9 +554,10 @@ static bool q1_point_contents(const void *opaque,void *workspace,const qa_point_
     const q1state *state=opaque; (void)workspace;
     size_t model; qa_vec3 origin,basis[3];
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
-    q1hull hull=model_hull(state,model,0); int32_t contents;
+    q1hull hull=model_hull(state,model,0); qa_collision_terminal contents;
     if(!hull_contents(&hull,qa_collision_to_local(qa_vec_sub(query->point,origin),basis),hull.root,&contents,error)) return false;
-    *out=(qa_point_contents){QA_COLLISION_Q1,contents,contents,contents}; return true;
+    *out=(qa_point_contents){.family=QA_COLLISION_Q1,.contents=contents.bits,.stored=contents.bits,.merged=contents.bits,
+        .q1_opaque_token=contents.opaque_token}; return true;
 }
 static void q1_destroy(void *opaque) {
     q1state *state=opaque;
@@ -630,6 +642,7 @@ static bool load_brushes(q1work *work,q1state *state) {
         return false;
     }
     state->brush_cells=q1_alloc(work,state->brushes.brush_count,sizeof(*state->brush_cells),alignof(q1cell *));
+    state->brush_contents=q1_alloc(work,state->brushes.brush_count,sizeof(*state->brush_contents),alignof(qa_collision_terminal));
     if(work->failed) return false;
     for(size_t i=0;i<state->brushes.model_count;i++) {
         qa_bsp_brush_model model=state->brushes.models[i];
@@ -638,6 +651,7 @@ static bool load_brushes(q1work *work,q1state *state) {
     }
     for(size_t i=0;i<state->brushes.brush_count;i++) {
         qa_bsp_extra_brush brush=state->brushes.brushes[i];
+        state->brush_contents[i]=qa_collision_q1_terminal(brush.contents);
         q1cell *cell=q1_box(work,qbounds(qa_bsp_to_bounds(brush.bounds)));
         for(size_t j=0;j<brush.planes.count && cell!=NULL;j++) {
             qa_bsp_plane p=state->brushes.planes[(size_t)brush.planes.first+j];
@@ -647,6 +661,13 @@ static bool load_brushes(q1work *work,q1state *state) {
         state->brush_cells[i]=cell;
     }
     return true;
+}
+static int32_t terminal_reference(q1state *state,int32_t token) {
+    if(token>=-19 && token<=-1) return token;
+    size_t index=Q1_NAMED_TERMINALS;
+    for(;index<state->terminal_count;index++) if(state->terminals[index].opaque_token==token) break;
+    if(index==state->terminal_count) state->terminals[state->terminal_count++]=qa_collision_q1_terminal(token);
+    return -(int32_t)(index+1);
 }
 bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *topology,qa_collision_kernel *out,qa_error *error) {
     if(bsp==NULL || out==NULL || bsp->family!=QA_BSP_Q1) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Quake collision requires a Q1 BSP"); return false; }
@@ -662,15 +683,23 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
     if(state->model_count==0) { qa_error_set(error,QA_ERROR_FORMAT,0,"Quake BSP has no world model"); goto fail; }
     state->drawing=q1_alloc(&work,state->drawing_count,sizeof(*state->drawing),alignof(q1node));
     state->clip=q1_alloc(&work,state->clip_count,sizeof(*state->clip),alignof(q1node));
-    state->leaf_contents=q1_alloc(&work,state->leaf_count,sizeof(*state->leaf_contents),alignof(int32_t));
+    state->leaf_references=q1_alloc(&work,state->leaf_count,sizeof(*state->leaf_references),alignof(int32_t));
+    if(state->leaf_count>INT32_MAX-Q1_NAMED_TERMINALS || state->clip_count>(INT32_MAX-Q1_NAMED_TERMINALS-state->leaf_count)/2
+        || state->model_count>(INT32_MAX-Q1_NAMED_TERMINALS-state->leaf_count-2*state->clip_count)/2) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Quake terminal table size overflow"); goto fail;
+    }
+    size_t terminal_capacity=Q1_NAMED_TERMINALS+state->leaf_count+2*state->clip_count+2*state->model_count;
+    state->terminals=q1_alloc(&work,terminal_capacity,sizeof(*state->terminals),alignof(qa_collision_terminal));
+    state->terminal_count=Q1_NAMED_TERMINALS;
     state->models=q1_alloc(&work,state->model_count,sizeof(*state->models),alignof(q1model));
     if(work.failed) goto fail;
+    for(size_t i=0;i<Q1_NAMED_TERMINALS;i++) state->terminals[i]=qa_collision_q1_terminal(-(int32_t)(i+1));
     memset(state->models,0,state->model_count*sizeof(*state->models));
     for(size_t i=0;i<state->leaf_count;i++) {
         qa_bsp_leaf leaf;
         if(!qa_bsp_read_leaf(bsp,i,&leaf,error)) goto fail;
         if(leaf.contents>=0) { qa_error_set(error,QA_ERROR_FORMAT,0,"Quake leaf has nonnegative contents"); goto fail; }
-        state->leaf_contents[i]=leaf.contents;
+        state->leaf_references[i]=terminal_reference(state,leaf.contents);
     }
     for(size_t i=0;i<state->drawing_count;i++) {
         qa_bsp_node node;
@@ -679,7 +708,7 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
         for(unsigned j=0;j<2;j++) if(node.children[j]<0) {
             size_t leaf=(size_t)(-1-(int64_t)node.children[j]);
             if(leaf>=state->leaf_count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid Quake drawing hull leaf"); goto fail; }
-            state->drawing[i].children[j]=state->leaf_contents[leaf];
+            state->drawing[i].children[j]=state->leaf_references[leaf];
         }
     }
     for(size_t i=0;i<state->clip_count;i++) {
@@ -687,6 +716,7 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
         if(!qa_bsp_read_clipnode(bsp,i,&node,error)) goto fail;
         if(node.plane<0) { qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid Quake clipnode plane"); goto fail; }
         state->clip[i]=(q1node){(uint32_t)node.plane,{node.children[0],node.children[1]}};
+        for(unsigned j=0;j<2;j++) if(node.children[j]<0) state->clip[i].children[j]=terminal_reference(state,node.children[j]);
     }
     for(size_t i=0;i<state->model_count;i++) {
         q1model *model=&state->models[i];
@@ -695,8 +725,10 @@ bool qa_q1_collision_create(const qa_bsp_view *bsp,const qa_collision_topology *
         if(model->drawing_root<0) {
             size_t leaf=(size_t)(-1-(int64_t)model->drawing_root);
             if(leaf>=state->leaf_count) { qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid Quake drawing hull root leaf"); goto fail; }
-            model->drawing_root=state->leaf_contents[leaf];
+            model->drawing_root=state->leaf_references[leaf];
         }
+        for(unsigned j=0;j<2;j++) model->clip_roots[j]=model->source.headnodes[j+1]<0
+            ?terminal_reference(state,model->source.headnodes[j+1]):model->source.headnodes[j+1];
         if(!build_contact_faces(&work,state,model)) goto fail;
     }
     if(!load_brushes(&work,state)) goto fail;
@@ -720,10 +752,11 @@ bool qa_q1_trace_box(const qa_trace_query *query,qa_bounds target,qa_vec3 origin
         unsigned axis=i/2;
         qa_vec3 normal=qa_v3(0,0,0); qa_vec_set_component(&normal,axis,1);
         planes[i]=qa_collision_make_plane(normal,qa_vec_component(i%2==0?expanded.maxs:expanded.mins,axis),(int32_t)axis);
-        int32_t next=i==5?Q1_SOLID:(int32_t)i+1;
-        nodes[i]=(q1node){i,{i%2==0?Q1_EMPTY:next,i%2==0?next:Q1_EMPTY}};
+        int32_t next=i==5?Q1_SOLID_REFERENCE:(int32_t)i+1;
+        nodes[i]=(q1node){i,{i%2==0?Q1_EMPTY_REFERENCE:next,i%2==0?next:Q1_EMPTY_REFERENCE}};
     }
-    q1hull hull={nodes,6,planes,6,0}; hull_frame frames[7];
+    const qa_collision_terminal terminals[2]={{{0},0},{qa_collision_bit(QA_CONTENT_SOLID),0}};
+    q1hull hull={nodes,6,planes,6,terminals,0}; hull_frame frames[7];
     native_trace trace;
     bool ok=trace_hull(frames,&hull,qa_vec_sub(query->start,origin),qa_vec_sub(query->end,origin),NULL,&trace,error);
     if(ok) {

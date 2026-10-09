@@ -17,7 +17,6 @@
 #define Q3_MASK_SHOT UINT32_C(0x06000001)
 #define Q3_CONTENTS_BODY INT32_C(0x02000000)
 #define Q3_CONTENTS_TRIGGER INT32_C(0x40000000)
-#define Q3_SURF_NOIMPACT 16
 #define Q3_PI 3.14159265358979323846f
 
 static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {

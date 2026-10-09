@@ -99,7 +99,7 @@ static bool bridge_source_trace(movement_bridge *bridge, const qa_trace_query *q
         .fraction = load_f32(bytes, 8), .end = load_vec3(bytes, 12),
         .plane = {.normal = load_vec3(bytes, 24), .distance = load_f32(bytes, 36),
                   .type = bytes[40], .signbits = bytes[41]},
-        .contents = qa_load_i32le(bytes + host->classic->trace.contents)};
+        .contents = qa_collision_contents_decode(qa_load_i32le(bytes + host->classic->trace.contents), QA_COLLISION_Q2)};
     if (!isfinite(trace.fraction) || trace.fraction < 0 || trace.fraction > 1 ||
         !qa_vec_finite(trace.end) || !qa_vec_finite(trace.plane.normal) ||
         !isfinite(trace.plane.distance))
@@ -117,7 +117,7 @@ static bool bridge_source_trace(movement_bridge *bridge, const qa_trace_query *q
         uint8_t record[24];
         if (!native_host_read(host, surface, record, sizeof(record), error)) return false;
         memcpy(trace.surface.name, record, 16); trace.surface.name[16] = 0;
-        trace.surface.flags = trace.surface_flags = qa_load_i32le(record + 16);
+        trace.surface.flags = trace.surface_flags = qa_collision_surface_decode(qa_load_i32le(record + 16), QA_COLLISION_Q2);
         trace.surface.value = qa_load_i32le(record + 20); trace.has_surface = true;
     }
     *out = trace;
@@ -153,8 +153,9 @@ static bool bridge_contents(void *context, const qa_point_query *query,
                                   &argument, 1, &value, error);
         --bridge->host->callback_depth;
         if (!ok) return false;
+        qa_collision_bits contents = qa_collision_contents_decode(value.as.i32, QA_COLLISION_Q2);
         *result = (qa_point_contents){.family = QA_COLLISION_Q2,
-            .contents = value.as.i32, .stored = value.as.i32, .merged = value.as.i32};
+            .contents = contents, .stored = contents, .merged = contents};
         return true;
     }
     if (bridge->source.point_contents)

@@ -31,7 +31,7 @@ static bool raw_surface(control_client *client,qa_native_address address,qa_coll
     uint8_t bytes[64];
     if(!qa_native_read(client->native,address,bytes,sizeof(bytes),error)) return false;
     memset(out,0,sizeof(*out)); memcpy(out->name,bytes,32); out->name[32]=0;
-    out->flags=qa_load_i32le(bytes+32); out->value=qa_load_i32le(bytes+36);
+    out->flags=qa_collision_surface_decode(qa_load_i32le(bytes+32),QA_COLLISION_Q2); out->value=qa_load_i32le(bytes+36);
     memcpy(out->material,bytes+44,sizeof(out->material)); return true;
 }
 static qa_collision_plane raw_plane(const uint8_t *bytes)
@@ -40,7 +40,7 @@ static bool raw_trace(control_client *client,const uint8_t *bytes,qa_trace_resul
 {
     qa_trace_result trace={.family=QA_COLLISION_Q2,.all_solid=bytes[0]!=0,.start_solid=bytes[1]!=0,
         .fraction=qa_load_f32le(bytes+4),.end=load_vector(bytes+8),.plane=raw_plane(bytes+20),
-        .contents=qa_load_i32le(bytes+48)};
+        .contents=qa_collision_contents_decode(qa_load_i32le(bytes+48),QA_COLLISION_Q2)};
     trace.contact=trace.fraction<1||trace.start_solid||trace.all_solid; trace.contact_plane=trace.plane;
     qa_native_address entity=qa_load_u64le(bytes+56),surface=qa_load_u64le(bytes+40),secondary=qa_load_u64le(bytes+88),world;
     if(!qa_native_entity_address(client->native,0,&world,error)) return false;

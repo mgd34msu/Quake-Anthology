@@ -2149,9 +2149,10 @@ static bool prepare_input(application_move_call *move,
         input->profile.data.q3.no_footsteps = !spectator && ((uint32_t)dmflags & 32u);
         input->has_trace_policy = true;
         input->trace_policy = qa_collision_default_policy(QA_COLLISION_Q3);
-        input->trace_policy.contents_mask = input->state.data.q3.movement_type == 2 ||
+        uint32_t native_mask = input->state.data.q3.movement_type == 2 ||
             input->state.data.q3.movement_type == 3 ? UINT32_C(0x10001) :
             flags & 8u ? UINT32_C(0x6010001) : UINT32_C(0x2010001);
+        input->trace_policy.contents_mask = qa_collision_contents_mask(native_mask, QA_COLLISION_Q3);
     }
     application_client_outputs outputs;
     if (!application_control_outputs(application, record->actor, &outputs, error) ||
@@ -2549,7 +2550,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
             (uint64_t)applied.milliseconds * UINT64_C(1000000), &operation, error)) return false;
         qa_q1_input input = {.view_angles = physical.view_angles, .attack = attack,
             .water_level = (uint8_t)(physical.water_level < 0 ? 0 : physical.water_level > 3 ? 3 : physical.water_level),
-            .water_type = contents.contents};
+            .water_type = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token)};
         okay = qa_q1_player_input(arsenal->state.q1, actor, &input, error) &&
             (!live(app, actor) || qa_q1_player_postthink(arsenal->state.q1, actor, error));
         if (okay && !qa_q1_game_operation_live(&operation))

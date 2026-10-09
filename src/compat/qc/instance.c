@@ -1409,8 +1409,7 @@ static bool pointcontents(qa_qc_instance *instance, qa_error *error)
         .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(instance->options.host.world, &query, &contents, error)) return false;
-    int32_t value = contents.family == QA_COLLISION_Q1 ? contents.contents
-        : qa_collision_convert_contents(contents.contents, contents.family, QA_COLLISION_Q1);
+    int32_t value = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
     return qa_qc_return_float(instance, (float)value, error);
 }
 
