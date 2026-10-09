@@ -43,3 +43,20 @@ Requested post-e6bb3bbf historical ABBA medians were classic 9.581 / 11.011 / 10
 ## Evidence and limits
 
 The frozen build source was d14fa80f. Evidence packets: `/tmp/qa-the2873-canonical-final-20261009`, `/tmp/qa-the2873-public-canonical-20261009`, `/tmp/qa-the2873-selective-decode-20261009`, and the codec/ABI component packets referenced by their reports. These are bounded engine/API checks with real retail map content and actual SDK modules, not full campaign or installed gameplay acceptance. The installed qa-c has not changed in this slice.
+
+## Follow-up: captured candidate row access
+
+The callback-free trace clip loop now reads the already captured slot directly. Membership retirement removes/clears the row before an external unlink callback. Public getters and callback-driven visitors retain their lifetime checks. The source fields remain live. This matches the direct linked-entity access in WinQuake/world.c:821-827 and quake-2/server/sv_world.c:525-537.
+
+Exact production/ASan builds and both seven core checks passed. Six native SDK roles, role/order/capacity, full reads and unrelinked mutation checks passed again; all gameplay/query bytes remained identical.
+
+Pinned medians / p99 microseconds per 48-query batch:
+
+| Comparison and edition | A1 | B1 | B2 | A2 |
+| --- | ---: | ---: | ---: | ---: |
+| historical / classic | 9.600 / 16.260 | 10.331 / 10.490 | 9.711 / 10.211 | 9.691 / 9.990 |
+| historical / rr | 10.171 / 10.350 | 9.540 / 12.910 | 9.541 / 18.381 | 9.610 / 13.720 |
+| immediate-live / classic | 10.150 / 12.330 | 9.910 / 10.131 | 9.870 / 13.790 | 9.950 / 10.110 |
+| immediate-live / rr | 10.075 / 13.540 | 9.660 / 12.980 | 9.500 / 12.870 | 10.200 / 10.340 |
+
+The 9.6 us target remains open: classic candidate phases are 9.711-10.331 us; rerelease phases are 9.500-9.660 us. The immediate-live comparison is lower, but the historical classic comparison does not establish recovered performance. No consistent whole-workload speedup is claimed. Evidence: `/tmp/qa-the2873-candidate-row-20261009` and `/tmp/qa-the2873-candidate-row-final-20261009`. One retained comparison executable initially lacked execute permission (exit 126); it ran no module, was corrected, and the complete immediate-live ABBA restarted with the failed attempt preserved outside valid results.

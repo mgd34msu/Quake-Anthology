@@ -221,7 +221,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     bool ok=true;
     for(size_t i=0;i<candidates.count;++i) {
         qa_actor_id id=candidates.actors[i];
-        qa_world_body *body=qa_world_find_body(world,id);
+        qa_world_body *body=qa_world_raw_body(world,id.slot);
         if(body==NULL) continue;
         qa_actor_collision collision;
         if(!qa_world_collision_sample(body,false,QA_ENTITY_COLLISION_ALL,&collision,&local)) {
