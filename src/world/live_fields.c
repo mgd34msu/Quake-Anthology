@@ -12,11 +12,30 @@ qa_entity_vector_field qa_entity_vector_bytes(const void *bytes)
     return p?(qa_entity_vector_field){{p,p+4,p+8}}:(qa_entity_vector_field){0};
 }
 
+void qa_entity_body_fields_prepare(qa_entity_body_fields *fields)
+{
+    bool complete=true;
+    for(unsigned axis=0;axis<3;++axis) {
+        complete=complete && fields->minimum.word[axis] && fields->maximum.word[axis];
+        for(unsigned pose=0;pose<QA_ENTITY_POSE_COUNT;++pose)
+            complete=complete && fields->pose[pose].origin.word[axis] &&
+                fields->pose[pose].angles.word[axis];
+    }
+    fields->spatial_complete=complete;
+}
+
+static qa_vec3 vector_load(qa_entity_vector_field field)
+{
+    return qa_v3(qa_load_f32le(field.word[0]),qa_load_f32le(field.word[1]),
+                 qa_load_f32le(field.word[2]));
+}
+
 static qa_vec3 vector(qa_entity_vector_field field)
 {
-    return qa_v3(field.word[0]?qa_load_f32le(field.word[0]):0,
-                 field.word[1]?qa_load_f32le(field.word[1]):0,
-                 field.word[2]?qa_load_f32le(field.word[2]):0);
+    static const uint8_t zero[4]={0};
+    for(unsigned axis=0;axis<3;++axis)
+        if(!field.word[axis]) field.word[axis]=zero;
+    return vector_load(field);
 }
 
 static uint64_t word(qa_entity_scalar_field field)
@@ -80,9 +99,15 @@ bool qa_entity_body_read(const qa_entity_body_fields *fields,qa_entity_pose pose
 {
     qa_body_state body;
     qa_body_state *selected=components==QA_ENTITY_BODY_ALL?&body:out;
-    selected->origin=vector(fields->pose[pose].origin);
-    selected->angles=vector(fields->pose[pose].angles);
-    selected->bounds=(qa_bounds){vector(fields->minimum),vector(fields->maximum)};
+    if(fields->spatial_complete) {
+        selected->origin=vector_load(fields->pose[pose].origin);
+        selected->angles=vector_load(fields->pose[pose].angles);
+        selected->bounds=(qa_bounds){vector_load(fields->minimum),vector_load(fields->maximum)};
+    } else {
+        selected->origin=vector(fields->pose[pose].origin);
+        selected->angles=vector(fields->pose[pose].angles);
+        selected->bounds=(qa_bounds){vector(fields->minimum),vector(fields->maximum)};
+    }
     if(components==QA_ENTITY_BODY_ALL) {
         selected->velocity=vector(fields->velocity);
         if(!reference(fields->references,fields->ground,&selected->ground,error)) return false;

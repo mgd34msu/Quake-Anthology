@@ -1046,6 +1046,7 @@ bool qa_qc_entity_body_fields(qa_qc_instance *instance, uint32_t slot,
         fields.pose[i].origin = qa_entity_vector_bytes(origin);
         fields.pose[i].angles = qa_entity_vector_bytes(angles);
     }
+    qa_entity_body_fields_prepare(&fields);
     instance->bodies[slot].fields = fields;
     *out = &instance->bodies[slot].fields;
     return true;

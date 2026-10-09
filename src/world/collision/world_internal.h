@@ -1,6 +1,7 @@
 #ifndef QA_WORLD_INTERNAL_H
 #define QA_WORLD_INTERNAL_H
 #include "qa/world.h"
+#include "qa/arena.h"
 #include "internal.h"
 #include "../actors_internal.h"
 
@@ -48,6 +49,9 @@ struct qa_world {
     uint64_t attachment_order, body_serial;
     qa_world_geometry_admission *geometry_admission;
     qa_world_snapshot_frame *snapshot_frames;
+    qa_world_snapshot_frame *free_snapshot_frames;
+    qa_arena snapshot_storage;
+    size_t snapshot_frame_capacity, snapshot_active, snapshot_peak;
 };
 static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
     const qa_actor_collision *collision)
@@ -72,7 +76,9 @@ static inline qa_linked_body qa_world_published_body(const qa_world *world, cons
 bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);
 void qa_spatial_publish(qa_world *, uint32_t);
 void qa_spatial_remove(qa_world *, uint32_t);
+void qa_spatial_clear(qa_world *);
 void qa_spatial_dispose(qa_world *);
+bool qa_spatial_prepare_snapshots(qa_world *, size_t, qa_error *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, uint32_t);
 bool qa_spatial_visit_raw(qa_world *, qa_bounds, qa_spatial_raw_fn, void *, qa_error *);
 bool qa_world_refresh(qa_world *, qa_actor_id, qa_entity_pose,

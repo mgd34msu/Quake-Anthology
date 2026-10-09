@@ -119,7 +119,7 @@ static bool create(frontend_remote_unified *replica,bool importing,
         free(p->pending_rows); free(p->pending_used); free(p);
         return fail(e,QA_ERROR_MEMORY,"Allocating private prediction collision rows");
     }
-    if(!qa_world_create(registry,geometry,NULL,&p->scene,e)) {
+    if(!qa_world_create(registry,geometry,NULL,1,&p->scene,e)) {
         free(p->pending_rows); free(p->pending_used); free(p); return false;
     }
     *out=p; return true;

@@ -213,6 +213,7 @@ bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *erro
         !fields_scalar(host, address + host->edict->owner, host->pointer_bytes,
             host->pointer_bytes == 4 ? QA_ENTITY_U32_LE : QA_ENTITY_U64_LE,
             &collision.owner, error)) return false;
+    qa_entity_body_fields_prepare(&body);
     row->host = host; row->slot = slot; row->body = body; row->collision = collision;
     if (binding.kind == QA_NATIVE_SLOT_BORROWED) return true;
     if (!row->write || row->write == fields_write) {

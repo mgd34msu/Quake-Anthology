@@ -689,7 +689,7 @@ static bool prepare_world(qa_application *application,
     if (application->world == NULL) {
         qa_world_hooks hooks = application_world_hooks(application);
         if (!qa_world_create(qa_session_actor_registry(application->session),
-                             publication->geometry, &hooks,
+                             publication->geometry, &hooks, QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,
                              &publication->initial_world, error))
             return false;
         qa_physics_services services = application_physics_services(application);

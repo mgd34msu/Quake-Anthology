@@ -79,7 +79,8 @@ static bool same_collision(const qa_actor_collision *left,const qa_actor_collisi
 }
 
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
-                     const qa_world_hooks *hooks, qa_world **out, qa_error *error)
+                     const qa_world_hooks *hooks,size_t snapshot_frame_capacity,
+                     qa_world **out, qa_error *error)
 {
     if(actors==NULL || geometry==NULL || out==NULL)
         return fail(error,QA_ERROR_ARGUMENT,"World needs actors, geometry and output");
@@ -90,7 +91,10 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
     if(hooks!=NULL) world->hooks=*hooks;
     if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { free(world); return false; }
-    if(!qa_spatial_initialize(world,bounds,error)) {
+    if(!qa_spatial_initialize(world,bounds,error)
+        || !qa_spatial_prepare_snapshots(world,snapshot_frame_capacity!=0?
+            snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,error)) {
+        qa_arena_destroy(&world->snapshot_storage);
         qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
     }
     *out=world; return true;

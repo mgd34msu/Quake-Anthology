@@ -127,7 +127,7 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
         .component_capacity = 1, .actor_released = released, .release_context = fixture},
         &fixture->session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture->session),
-        fixture->map.geometry, NULL, &fixture->world, &error));
+        fixture->map.geometry, NULL, 0, &fixture->world, &error));
     GAME_CHECK(qa_combat_create(qa_session_actor_registry(fixture->session),
         &(qa_combat_hooks){.context = fixture, .reaction = reacted, .effect = damage_effect},
         &fixture->combat, &error));
@@ -614,7 +614,7 @@ static void exiting_body_over_world_hit(void)
     qa_world *world;
     qa_actor_id actor;
     GAME_CHECK(qa_actors_create(8, NULL, NULL, &actors, &error));
-    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, &world, &error));
+    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, 0, &world, &error));
     GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
     qa_body_state body = {.origin = {0, 0, 24}, .bounds = {{-16, -16, -8}, {16, 16, 8}}};
     GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
@@ -678,7 +678,7 @@ static void retained_external_brush(void)
     qa_world *world;
     qa_actor_id actor;
     GAME_CHECK(qa_actors_create(8, NULL, NULL, &actors, &error));
-    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, &world, &error));
+    GAME_CHECK(qa_world_create(actors, map.geometry, NULL, 0, &world, &error));
     GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
     qa_body_state body = {.origin = {0, 0, 128}, .bounds = {{-16, -16, -64}, {16, 16, 64}}};
     GAME_CHECK(qa_world_body_create(world, actor, &body, &error));

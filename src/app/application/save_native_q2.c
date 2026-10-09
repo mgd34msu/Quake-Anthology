@@ -97,7 +97,8 @@ bool application_source_baseline_prepare(application_provider *target,
         qa_collision_create(&map, &app->geometry, error) &&
         qa_collision_bind_resource(app->geometry, app->map_resource, error) &&
         qa_map_sidecars_apply_materials(app->map_sidecars, app->geometry, error) &&
-        qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks, &world, error);
+        qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks,
+            QA_WORLD_SNAPSHOT_DEFAULT_FRAMES, &world, error);
     if (!ok) return false;
     qa_physics_services physics = application_physics_services(app);
     if (!qa_physics_init(app->physics, world, (qa_actor_id){0}, &physics, error) ||

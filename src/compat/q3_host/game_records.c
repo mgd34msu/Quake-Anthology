@@ -323,6 +323,7 @@ static bool slot_fields(q3_entity_slot *slot, qa_error *error)
             !live_vector(host, player + 32, &body.velocity, error)) return false;
         if (slot->input_motion) body.pose[QA_ENTITY_CONTROL_POSE].origin = player_origin;
     } else if (!live_vector(host, entity + 36, &body.velocity, error)) return false;
+    qa_entity_body_fields_prepare(&body);
     slot->body_fields = body; slot->collision_fields = collision;
     slot->player_origin = player_origin;
     return true;

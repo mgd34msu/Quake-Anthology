@@ -643,7 +643,7 @@ void test_guest(void)
         .component_capacity = 1, .actor_released = guest_released, .release_context = &fixture},
         &fixture.session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture.session),
-        fixture.map.geometry, NULL, &fixture.world, &error));
+        fixture.map.geometry, NULL, 0, &fixture.world, &error));
     fixture.program = guest_program(QA_QC_API_NETQUAKE);
     qa_actor_owner owner;
     GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),

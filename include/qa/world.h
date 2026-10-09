@@ -71,6 +71,7 @@ typedef struct qa_entity_body_fields {
     qa_entity_vector_field velocity, minimum, maximum;
     qa_entity_scalar_field ground;
     const qa_entity_references *references;
+    bool spatial_complete;
 } qa_entity_body_fields;
 typedef struct qa_entity_model_field {
     uint32_t model;
@@ -95,6 +96,9 @@ typedef enum qa_entity_collision_components {
 /* Cold adapters resolve addresses and ABI rules. Sampling only reads those
  * bytes; it never enters a module, resolves names or observes OS mappings. */
 qa_entity_vector_field qa_entity_vector_bytes(const void *);
+/* Derive layout metadata after cold address binding; zeroed or sparse fields
+ * retain the nullable sampler. Values are always read from the live words. */
+void qa_entity_body_fields_prepare(qa_entity_body_fields *);
 /* SPATIAL writes only origin, angles and bounds; ALL writes the complete state
  * transactionally, so a failed reference read leaves the output unchanged. */
 bool qa_entity_body_read(const qa_entity_body_fields *, qa_entity_pose,
@@ -142,7 +146,15 @@ bool qa_world_q1_visible(qa_world *, qa_actor_id, const qa_bounds *, qa_bytes pv
  * retains its geometry with the world's scratch. Destruction never clears
  * or releases the registry. Calls and callbacks have one thread owner.
  * Callbacks may mutate actors/links; destroying the world within one is rejected. */
-bool qa_world_create(qa_actor_registry *, qa_collision_geometry *, const qa_world_hooks *, qa_world **, qa_error *);
+enum { QA_WORLD_SNAPSHOT_DEFAULT_FRAMES = 32 };
+/* A zero frame capacity selects the default bounded nesting budget. Snapshot
+ * storage is sized to actor capacity at load and never grows during queries. */
+bool qa_world_create(qa_actor_registry *, qa_collision_geometry *, const qa_world_hooks *,
+                     size_t snapshot_frame_capacity, qa_world **, qa_error *);
+typedef struct qa_world_snapshot_usage {
+    size_t capacity, active, peak, overflow;
+} qa_world_snapshot_usage;
+qa_world_snapshot_usage qa_world_snapshot_statistics(const qa_world *);
 /* False for NULL or during a world callback/spatial visit. Geometry admissions
  * have separate ownership and must still be aborted before world destruction. */
 bool qa_world_idle(const qa_world *);

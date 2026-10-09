@@ -368,7 +368,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial sector differs from restored geometry");
     }
     if (ok) {
-        qa_spatial_dispose(world);
+        qa_spatial_clear(world);
         for (uint32_t slot = 0; slot < world->capacity; ++slot) {
             qa_world_body *body = qa_world_raw_body(world, slot);
             if (body) qa_actors_link(world->actors->links,slot)->linked = false;
