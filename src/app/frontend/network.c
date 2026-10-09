@@ -605,7 +605,7 @@ static bool local_clients_prepare(qa_frontend_network *n, qa_error *error)
 {
     qa_frontend *f = n->frontend;
     qa_application_map_view map;
-    if (!n->loopback || n->detached_transport || f->options.network_connect || f->options.dedicated ||
+    if (!n->loopback || n->detached_transport || n->demo_playback || f->options.network_connect || f->options.dedicated ||
         qa_application_get_state(f->application) != QA_APPLICATION_RUNNING ||
         !qa_application_map_read(f->application, &map)) return true;
     if (!local_server_prepare(n, error)) return false;
@@ -8325,6 +8325,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
     if(format==FRONTEND_DEMO_Q3&&(protocol!=68||!n->q3_clients[0].q3_client_requested||!n->q3_clients[0].q3_cgame_owner))
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q3 demo playback requires protocol 68 and an installed real Q3 CLIENT");
     if(n->demo_q1_owner||n->demo_q3_sink.append)return frontend_fail(error,QA_ERROR_ARGUMENT,"Recording sink must detach before demo playback");
+    if(format!=FRONTEND_DEMO_Q3&&!frontend_network_local_groups_retire(f,error))return false;
     if(n->q1_client_owner&&!frontend_network_q1_client_disconnect(n->q1_client_owner,"demo playback",error))return false;
     if(!frontend_network_q1_client_destroy(&n->q1_client_owner,error)||
         !frontend_network_q2_client_destroy(&n->q2_client_owner,error))return false;

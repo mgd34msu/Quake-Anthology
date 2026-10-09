@@ -193,6 +193,7 @@ static bool shutdown_inputs(qa_frontend *f,qa_error *error)
     }
     if(owner->phase==SHUTDOWN_CLIENTS) {
         if(!shutdown_client_releases_ready(f,error)) return false;
+        if(!frontend_demo_dispatch_stop(f->demos,error)) return false;
         qa_error fault={0};
         if(!frontend_network_retire_clients(f,&fault)) {
             if(fault.code!=QA_OK) { if(error) *error=fault; return false; }

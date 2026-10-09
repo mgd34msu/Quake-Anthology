@@ -57,6 +57,7 @@ struct frontend_neutral_config {
     bool write_registered,dump_registered;
     bool configuration_done,variables_seeded,archive_seeded,release_before,startup_owned,continuation;
     bool retirement_started,recipient_returned,retirement_release_saved,restore_discarded;
+    bool settings_retained_logged,bindings_retained_logged;
     qa_error failure;
 };
 struct frontend_neutral_configs {
@@ -218,6 +219,21 @@ static void print(void *context,const qa_command_context *command,const char *te
 }
 static void binding_print(void *context,const char *text)
 { frontend_neutral_config *row=context; print(row,&row->command,text); }
+static void retain_bindings(frontend_neutral_config *row)
+{
+    if (row->bindings_retained_logged) return;
+    row->bindings_retained_logged=true;
+    print(row,&row->command,"Keeping installed bindings while CLIENT settings finish.\n");
+}
+static void settings_source(frontend_neutral_config *row,qa_application_client_source *out)
+{
+    if (physical_read(row,out,false)) return;
+    *out=row->source;
+    out->descriptor=descriptor(row);
+    if (row->settings_retained_logged) return;
+    row->settings_retained_logged=true;
+    print(row,&row->command,"Keeping completed CLIENT settings during connection transition.\n");
+}
 static qa_cvars *route(void *context,const qa_command_context *command,const char *name)
 {
     frontend_neutral_config *row=context;
@@ -1019,13 +1035,13 @@ bool frontend_neutral_config_read(const frontend_neutral_configs *owner,const qa
     frontend_neutral_config_view *out,qa_error *e)
 {
     if (!owner || !view || !out) return fail(e,QA_ERROR_ARGUMENT,"Neutral read needs its actual CLIENT cvar view");
-    for (const frontend_neutral_config *row=owner->rows;row;row=row->next) {
+    for (frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->attached || row->source.context.cvars!=view) continue;
         if (row->retiring || row->retirement_started || row->imported || row->running || !row->ready || !row->published || row->phase || row->input ||
             !qa_cvars_observer_idle(row->client) || !qa_cvars_observer_idle(row->mouse) || !qa_cvars_observer_idle(row->movement))
             return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT settings have not completed their actual programme");
         qa_application_client_source actual;
-        if (!physical_read(row,&actual,false)) return fail(e,QA_ERROR_ARGUMENT,"Neutral settings lost their actual installed CLIENT tuple");
+        settings_source(row,&actual);
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,
             .mouse=row->mouse,.movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
             .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true};
@@ -1041,7 +1057,7 @@ bool frontend_neutral_config_current(const frontend_neutral_config_view *view)
         actual.movement==view->movement && actual.kind==view->kind && actual.physical_seat==view->physical_seat &&
         actual.namespace_revision==view->namespace_revision &&
         actual.ready==view->ready && actual.published==view->published &&
-        qa_application_client_associated(view->owner->owner->frontend->application,&view->source);
+        actual.source.context.lifetime==view->source.context.lifetime;
 }
 bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *owner,
     const qa_input_seat *input,const qa_input_release *release,qa_error *e)
@@ -1147,10 +1163,6 @@ static bool published_binding_seat(frontend_neutral_configs *owner,uint32_t logi
         qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
         if (!qa_input_seat_recipient_read(input,&console,&cvars,&command) ||
             console!=row->source.context.console || cvars!=row->client || !same_context(&command,&row->command)) continue;
-        frontend_neutral_config_view view;
-        if (!frontend_neutral_config_read(owner,cvars,&view,e) ||
-            !frontend_neutral_config_current(&view) || !frontend_authored_bindings_completed(row->authored))
-            return fail(e,QA_ERROR_ARGUMENT,"Bindings lost their completed physical CLIENT metadata");
         if (*out) return fail(e,QA_ERROR_ARGUMENT,"Bindings have multiple actual physical CLIENT recipients");
         *out=row;
     }
@@ -1164,6 +1176,9 @@ bool frontend_neutral_config_reset_bindings(frontend_neutral_configs *owner,uint
     if (!published_binding_seat(owner,logical,&row,e)) return false;
     if (!row) return true;
     *present=true;
+    if (!row->ready || !row->published || !frontend_authored_bindings_completed(row->authored)) {
+        retain_bindings(row); return true;
+    }
     return frontend_authored_bindings_reset(row->authored,owner->frontend->seats[row->physical_seat].input,
         controller<0?0:controller,e);
 }
@@ -1175,6 +1190,9 @@ bool frontend_neutral_config_select_bindings(frontend_neutral_configs *owner,uin
     if (!published_binding_seat(owner,logical,&row,e)) return false;
     if (!row) return true;
     *present=true;
+    if (!row->ready || !row->published || !frontend_authored_bindings_completed(row->authored)) {
+        retain_bindings(row); return true;
+    }
     return frontend_authored_bindings_select(row->authored,owner->frontend->seats[row->physical_seat].input,
         qa_movement_console_dialect(row->kind),strings,items,count,controller<0?0:controller,e);
 }
