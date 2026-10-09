@@ -411,7 +411,7 @@ static void closed(void *context, qa_net_client_id client)
 
 qa_unified_session_hooks application_unified_server_hooks(application_unified_server *owner)
 {
-    return (qa_unified_session_hooks){.context = owner, .player = player, .source_ready=source_custody_ready, .control = control,
+    return (qa_unified_session_hooks){.strings=qa_session_strings(owner->application->session),.context = owner, .player = player, .source_ready=source_custody_ready, .control = control,
         .input = input, .restart = restart, .closed = closed};
 }
 

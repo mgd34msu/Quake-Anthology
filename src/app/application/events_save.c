@@ -210,7 +210,7 @@ static bool payload_field(qa_source_save_io *io, void **owned, const qa_unified_
         saved_payload_context context = {.io = io, .checkpoint = checkpoint};
         ok = copy && qa_unified_record_clone(layout, *owned, copy, io->error) &&
             qa_unified_record_actor_remap(layout, copy, save_payload_actor, &context, io->error) &&
-            qa_unified_record_delta_encode(layout, copy, NULL, 16u * 1024u * 1024u, &encoded, io->error);
+            qa_unified_record_delta_encode(layout, copy, NULL, 16u * 1024u * 1024u, &encoded, qa_session_strings(io->session), io->error);
         if (!ok && (!io->error || io->error->code == QA_OK)) event_fail(io, QA_ERROR_MEMORY, "Capturing actual typed Source event");
     }
     size_t size = encoded.size;
@@ -220,7 +220,7 @@ static bool payload_field(qa_source_save_io *io, void **owned, const qa_unified_
         ok = qa_source_save_span(io, size, &bytes);
         if (ok) {
             *owned = calloc(1, layout->size);
-            ok = *owned && qa_unified_record_delta_decode(layout, bytes, NULL, *owned, NULL, io->error);
+            ok = *owned && qa_unified_record_delta_decode(layout, bytes, NULL, *owned, NULL, qa_session_strings(io->session), NULL, io->error);
             if (!ok && (!io->error || io->error->code == QA_OK)) event_fail(io, QA_ERROR_MEMORY, "Restoring actual typed Source event");
         }
     } else if (ok && io->direction == QA_SOURCE_SAVE_WRITE) ok = qa_source_save_bytes(io, encoded.data, encoded.size);

@@ -5,7 +5,7 @@
 #include "qa/movement.h"
 
 typedef struct qa_unified_movement_numeric {
-    char *id;
+    qa_string_id id;
     uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
     int32_t evaluation_method, rounding;
     bool native_c, qw_origin_binary64;
@@ -18,7 +18,7 @@ typedef struct qa_unified_weapon_state {
     qa_unified_weapon_kind kind;
     double frame, attack_finished_seconds, source_weapon;
     int32_t gun_frame, state, machinegun_shots, time_ms;
-    char *pending_weapon;
+    qa_string_id pending_weapon;
     bool grenade_milliseconds, grenade_blew_up;
     double grenade_seconds;
     int64_t grenade_time_ms;
@@ -34,12 +34,13 @@ struct qa_unified_frame_prediction {
     qa_actor_id actor;
     int64_t sequence;
     double command_time_ms;
-    char *profile_id;
+    qa_string_id profile_id;
     qa_clock_config clock;
     qa_unified_movement_numeric numeric;
     qa_movement_profile profile;
     qa_movement_state state;
-    char *arsenal_provider, *active_weapon, *character_provider;
+    char *arsenal_provider, *character_provider;
+    qa_string_id active_weapon;
     qa_unified_weapon_state weapon;
     qa_unified_inventory_entry *ammo;
     size_t ammo_count;

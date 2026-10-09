@@ -11,6 +11,8 @@ typedef struct qa_strings qa_strings;
  * at the domain boundary before interning. IDs belong to this table lifetime;
  * persist the string, never the process-local ID. */
 bool qa_strings_create(qa_strings **out, qa_error *error);
+/* Retained snapshots share this table; destruction releases one reference. */
+void qa_strings_retain(qa_strings *strings);
 void qa_strings_destroy(qa_strings *strings);
 bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error);
 bool qa_strings_intern_cstr(qa_strings *strings, const char *text, qa_string_id *out, qa_error *error);

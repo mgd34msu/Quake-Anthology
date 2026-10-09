@@ -257,6 +257,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     s->frame_pool=qa_unified_frame_pool_create(0,e);
     if (!s->frame_pool) { qa_unified_session_release(s); return false; }
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
+    s->strings=hooks->strings; qa_strings_retain(s->strings);
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
     char magic[4]; bool ok = qa_net_read_data(&r, magic, 4);
     if (ok && memcmp(magic, "QAUS", 4)) ok = qa_net_reader_fail(&r, "Unknown production session continuation");
@@ -277,7 +278,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         ok = qa_net_reader_fail(&r, "Production input continuation changes its retained epoch presence");
     if (ok && inputs.size) {
         qa_unified_document *document = NULL;
-        ok = qa_unified_document_decode(QA_UNIFIED_INPUT_DOCUMENT, inputs, &document, e) &&
+        ok = qa_unified_document_decode(QA_UNIFIED_INPUT_DOCUMENT, inputs, s->strings, &document, e) &&
             qa_unified_inputs_read(document, &s->inputs, e);
         if (ok && s->inputs.epoch != s->epoch)
             ok = qa_net_reader_fail(&r, "Production input continuation changes its retained epoch");
@@ -289,7 +290,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         uint32_t sequence = qa_net_read_u32(&r);
         qa_bytes wire = {0}; qa_unified_document *frame = NULL;
         ok = sequence != 0 && blob(&r, &wire) &&
-            qa_unified_frame_decode(wire,NULL,0,s->frame_pool,&frame,e);
+            qa_unified_frame_decode(wire,NULL,0,s->frame_pool,s->strings,&frame,e);
         qa_unified_frame_receipt *slot = s->frames + sequence % QA_UNIFIED_FRAME_BACKUP;
         size_t size = frame ? qa_unified_document_memory(frame) : 0;
         if (ok && (slot->document || size > QA_UNIFIED_FRAME_HISTORY_BYTES - s->frame_bytes))
@@ -324,8 +325,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
             bool missing = false;
             ok = decoded ? (kind == QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
                 (qa_bytes){held->wire.data, held->wire.size}, &held->document, &missing, e) && !missing :
-                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, &held->document, e)) : s->server;
-            if (ok) ok = qa_unified_session_continuation_read(&r, held);
+                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, &held->document, e)) : s->server;
+            if (ok) ok = qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }
     bool timeout = false;
@@ -345,8 +346,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         if (ok) {
             held->wire.size = held->bytes = wire.size;
             if (wire.size) memcpy(held->wire.data, wire.data, wire.size);
-            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, &held->document, e) &&
-                qa_unified_session_continuation_read(&r, held);
+            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, s->strings, &held->document, e) &&
+                qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }
     ok = ok && qa_net_reader_finish(&r) && qa_unified_session_qualified(s, client, e);

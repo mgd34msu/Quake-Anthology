@@ -2,6 +2,7 @@
 #define QA_NETWORK_UNIFIED_SESSION_H
 
 #include "qa/network_runtime.h"
+#include "qa/strings.h"
 
 typedef struct qa_unified_input {
     uint64_t sequence;
@@ -44,6 +45,7 @@ typedef struct qa_unified_session_commit {
  * documents. The lower owner retains them until the entire reliable response
  * batch is queued and the delivery's phase transition completes. */
 typedef struct qa_unified_session_hooks {
+    qa_strings *strings;
     void *context;
     bool (*player)(void *, qa_net_client_id, qa_unified_session_player *, qa_error *);
     bool (*control)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,

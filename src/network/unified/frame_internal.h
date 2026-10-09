@@ -12,7 +12,7 @@ typedef enum qa_unified_field_kind {
     QA_UNIFIED_FIELD_U32, QA_UNIFIED_FIELD_I32,
     QA_UNIFIED_FIELD_U64, QA_UNIFIED_FIELD_I64, QA_UNIFIED_FIELD_SIZE,
     QA_UNIFIED_FIELD_F32, QA_UNIFIED_FIELD_F64,
-    QA_UNIFIED_FIELD_STRING, QA_UNIFIED_FIELD_BYTES,
+    QA_UNIFIED_FIELD_STRING, QA_UNIFIED_FIELD_NAME, QA_UNIFIED_FIELD_BYTES,
     QA_UNIFIED_FIELD_RECORD, QA_UNIFIED_FIELD_ARRAY,
     QA_UNIFIED_FIELD_POINTER, QA_UNIFIED_FIELD_FIXED, QA_UNIFIED_FIELD_RAW,
     QA_UNIFIED_FIELD_VARIANT, QA_UNIFIED_FIELD_VARIANT_BOOL, QA_UNIFIED_FIELD_INLINE_ARRAY
@@ -93,7 +93,8 @@ bool qa_unified_record_actor_remap(const qa_unified_record_layout *, void *,
     qa_unified_actor_remap_fn, void *, qa_error *);
 
 void qa_unified_record_dispose(const qa_unified_record_layout *, void *);
-bool qa_unified_record_equal(const qa_unified_record_layout *, const void *, const void *);
+bool qa_unified_record_equal(const qa_unified_record_layout *, const void *, const void *,
+    const qa_strings *, const qa_strings *);
 bool qa_unified_record_clone(const qa_unified_record_layout *, const void *, void *, qa_error *);
 typedef void *(*qa_unified_clone_alloc_fn)(void *, size_t, size_t, qa_error *);
 /* Caller supplies zeroed output. The callback returns aligned storage, which this
@@ -102,11 +103,11 @@ typedef void *(*qa_unified_clone_alloc_fn)(void *, size_t, size_t, qa_error *);
 bool qa_unified_record_clone_alloc(const qa_unified_record_layout *, const void *,
     void *zeroed_output, qa_unified_clone_alloc_fn, void *, qa_error *);
 bool qa_unified_record_delta_encode(const qa_unified_record_layout *, const void *,
-    const void *baseline, size_t maximum, qa_buffer *, qa_error *);
+    const void *baseline, size_t maximum, qa_buffer *, const qa_strings *, qa_error *);
 bool qa_unified_record_delta_write(const qa_unified_record_layout *, const void *,
     const void *baseline, qa_unified_builder *, qa_error *);
 bool qa_unified_record_delta_decode(const qa_unified_record_layout *, qa_bytes,
-    const void *baseline, void *zeroed_output, qa_unified_frame_lease *, qa_error *);
+    const void *baseline, void *zeroed_output, qa_unified_frame_lease *, qa_strings *, const qa_strings *, qa_error *);
 bool qa_unified_record_measure(const qa_unified_record_layout *, const void *, size_t *, qa_error *);
 bool qa_unified_world_frame_clock_check(const qa_unified_world_frame *,qa_error *);
 bool qa_unified_frame_check(const qa_unified_frame *, size_t *, qa_error *);

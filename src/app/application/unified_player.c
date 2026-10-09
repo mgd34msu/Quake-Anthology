@@ -322,11 +322,11 @@ static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error
             const application_q3_catalog_weapon *w = o->q3_weapons + i;
             qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
             row->count = count(o, w->item); row->capacity = 1;
-            if (!item(&row->item, o, w->item, e)) return false;
+            row->item=w->item;
             if (w->ammo) {
                 row = out->inventory + out->inventory_count++;
                 row->count = count(o, w->ammo); row->capacity = 200;
-                if (!item(&row->item, o, w->ammo, e)) return false;
+                row->item=w->ammo;
             }
         }
         return true;
@@ -335,7 +335,7 @@ static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error
         const qa_inventory_entry *v = o->inventory + i;
         qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
         row->count = v->count; row->capacity = v->capacity; row->policy = v->policy;
-        if (!item(&row->item, o, v->item, e)) return false;
+        row->item=v->item;
     }
     return true;
 }

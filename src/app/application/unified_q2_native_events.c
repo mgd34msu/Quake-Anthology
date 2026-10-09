@@ -82,7 +82,7 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         if (!r->inventory) ok = false;
         for (size_t i = 0; ok && i < v->count; ++i) {
             const qa_inventory_entry *a = v->inventory + i;
-            r->inventory[i] = (qa_unified_inventory_entry){.item = alias(p->application, a->item),
+            r->inventory[i] = (qa_unified_inventory_entry){.item = a->item,
                 .count = a->count, .capacity = a->capacity, .policy = a->policy};
         }
     }

@@ -47,7 +47,7 @@ bool application_unified_save_document(qa_source_save_io *io, qa_unified_documen
         qa_unified_document_encode(*doc, &bytes, io->error));
     if (okay) okay = application_unified_save_blob(io, &bytes) && bytes.size;
     if (okay && !writing) okay = qa_unified_document_decode(kind,
-        (qa_bytes){bytes.data, bytes.size}, doc, io->error);
+        (qa_bytes){bytes.data, bytes.size}, qa_session_strings(io->session), doc, io->error);
     qa_buffer_free(&bytes);
     return okay;
 }

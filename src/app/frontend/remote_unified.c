@@ -93,7 +93,7 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
     frontend_remote_q2_effects_cvars_bind(d->cvars,&owner->q2_effect_cvars);
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&owner->sky_controls);
     if (!qa_actors_create(options->identity_capacity, NULL, NULL, &owner->actors, error)) { free(owner); return false; }
-    if (!qa_strings_create(&owner->strings, error)) { qa_actors_destroy(owner->actors, NULL); free(owner); return false; }
+    owner->strings=qa_session_strings(qa_application_session(d->application)); qa_strings_retain(owner->strings);
     qa_catalog_retain(d->catalog);
     owner->next = frontend->remote_unified; frontend->remote_unified = owner; *out = owner; return true;
 }
@@ -266,9 +266,8 @@ static bool stage_metadata(frontend_remote_unified *owner, qa_error *error)
         return frontend_unified_fail(error, QA_ERROR_MEMORY, "Staging received actor metadata"); }
     for (size_t i = 0; i < count; ++i) {
         const qa_unified_actor_state *row = frame->world->actors + i;
-        bool okay = frontend_remote_unified_source_actor(owner, frame, row->actor, false, &metadata[i].actor, error) &&
-            qa_strings_intern_cstr(owner->strings, row->owner, &metadata[i].owner, error) &&
-            qa_strings_intern_cstr(owner->strings, row->definition, &metadata[i].definition, error);
+        bool okay = frontend_remote_unified_source_actor(owner, frame, row->actor, false, &metadata[i].actor, error);
+        metadata[i].owner=row->owner; metadata[i].definition=row->definition;
         if (!okay) { if (lease) qa_unified_frame_lease_release(lease); else free(metadata); return false; }
     }
     owner->metadata = metadata; owner->metadata_count = count; owner->metadata_lease=lease; return true;
@@ -560,7 +559,7 @@ static bool transport_player(void *context, qa_net_client_id client,
     return true;
 }
 qa_unified_session_hooks frontend_remote_unified_hooks(frontend_remote_unified *owner)
-{ return (qa_unified_session_hooks){.context = owner, .player = transport_player,
+{ return (qa_unified_session_hooks){.strings=owner->strings,.context = owner, .player = transport_player,
     .prepare = prepare, .control = control, .frame = frame, .closed = closed}; }
 
 bool frontend_remote_unified_submit(frontend_remote_unified *owner, const qa_unified_input *input,

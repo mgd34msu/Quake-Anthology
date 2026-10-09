@@ -15,14 +15,14 @@ typedef struct qa_unified_provider_state {
 } qa_unified_provider_state;
 typedef struct qa_unified_actor_state {
     qa_actor_id actor;
-    char *owner, *definition;
+    qa_string_id owner, definition;
 } qa_unified_actor_state;
 typedef struct qa_unified_body_state {
     qa_actor_id actor;
     qa_body_state body;
 } qa_unified_body_state;
 typedef struct qa_unified_inventory_entry {
-    char *item;
+    qa_string_id item;
     double count;
     double capacity;
     qa_inventory_count_policy policy;
@@ -61,6 +61,7 @@ typedef struct qa_unified_resource_state {
  * Source frame. Inventories and private presentation stay in their frame. */
 typedef struct qa_unified_world_frame {
     qa_unified_frame_lease *lease;
+    qa_strings *strings;
     size_t references;
     qa_source_frame source;
     double presentation_seconds;
@@ -82,6 +83,7 @@ typedef struct qa_unified_frame_components qa_unified_frame_components;
 
 typedef struct qa_unified_frame {
     qa_unified_frame_lease *lease;
+    qa_strings *strings;
     uint32_t epoch;
     int64_t acknowledged_input;
     qa_unified_world_frame *world;
@@ -95,10 +97,10 @@ typedef struct qa_unified_frame {
 } qa_unified_frame;
 
 int64_t qa_unified_world_frame_milliseconds(const qa_unified_world_frame *);
-qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *, qa_error *);
+qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *, qa_strings *, qa_error *);
 bool qa_unified_world_frame_retain(qa_unified_world_frame *, qa_error *);
 void qa_unified_world_frame_destroy(qa_unified_world_frame *);
-qa_unified_frame *qa_unified_frame_create(qa_unified_frame_pool *, qa_error *);
+qa_unified_frame *qa_unified_frame_create(qa_unified_frame_pool *, qa_strings *, qa_error *);
 void qa_unified_frame_destroy(qa_unified_frame *);
 bool qa_unified_frame_equal(const qa_unified_frame *, const qa_unified_frame *);
 /* Transfer succeeds only after typed boundary validation. Failure preserves

@@ -28,7 +28,7 @@ struct qa_unified_document {
 };
 
 static bool typed_encode(const qa_unified_document *, qa_buffer *, qa_error *);
-static bool typed_decode(qa_unified_document_kind, qa_bytes, qa_unified_document **, qa_error *);
+static bool typed_decode(qa_unified_document_kind, qa_bytes, qa_strings *, qa_unified_document **, qa_error *);
 
 static bool bad(qa_error *error, const char *message) {
     qa_error_set(error,QA_ERROR_FORMAT,0,"%s",message); return false;
@@ -130,15 +130,15 @@ bool qa_unified_document_create(qa_unified_document_kind kind, qa_bytes bytes,
     return create_document(kind,source,out,error);
 }
 
-bool qa_unified_document_decode(qa_unified_document_kind kind, qa_bytes bytes,
+bool qa_unified_document_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_strings *strings,
                                  qa_unified_document **out, qa_error *error) {
     size_t maximum=wire_limit(kind);
     if (!out || !maximum || !bytes.data || !bytes.size || bytes.size>maximum)
         return bad(error,"invalid unified document kind or byte extent");
-    if (kind==QA_UNIFIED_FRAME_DOCUMENT) return qa_unified_frame_decode(bytes,NULL,0,NULL,out,error);
+    if (kind==QA_UNIFIED_FRAME_DOCUMENT) return qa_unified_frame_decode(bytes,NULL,0,NULL,strings,out,error);
     if (kind==QA_UNIFIED_HANDSHAKE_DOCUMENT || kind==QA_UNIFIED_INPUT_DOCUMENT || (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 &&
         (!memcmp(bytes.data,"QUEV",4) || !memcmp(bytes.data,"QUMD",4) || !memcmp(bytes.data,"QUCT",4))))
-        return typed_decode(kind,bytes,out,error);
+        return typed_decode(kind,bytes,strings,out,error);
     return qa_unified_document_create(kind,bytes,out,error);
 }
 
@@ -338,11 +338,11 @@ bool qa_unified_document_equal(const qa_unified_document *a, const qa_unified_do
     if (a==b) return true;
     if (!a || !b || a->kind!=b->kind) return false;
     if (a->frame || b->frame) return a->frame && b->frame && qa_unified_frame_equal(a->frame,b->frame);
-    if (a->inputs || b->inputs) return a->inputs && b->inputs && qa_unified_record_equal(&qa_unified_inputs_layout,a->inputs,b->inputs);
-    if (a->events || b->events) return a->events && b->events && qa_unified_record_equal(&qa_unified_events_layout,a->events,b->events);
-    if (a->metadata || b->metadata) return a->metadata && b->metadata && qa_unified_record_equal(&qa_unified_metadata_layout,a->metadata,b->metadata);
-    if (a->control || b->control) return a->control && b->control && qa_unified_record_equal(&qa_unified_control_layout,a->control,b->control);
-    if (a->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) return qa_unified_record_equal(&qa_unified_handshake_layout,&a->handshake,&b->handshake);
+    if (a->inputs || b->inputs) return a->inputs && b->inputs && qa_unified_record_equal(&qa_unified_inputs_layout,a->inputs,b->inputs, NULL, NULL);
+    if (a->events || b->events) return a->events && b->events && qa_unified_record_equal(&qa_unified_events_layout,a->events,b->events, a->events->strings, b->events->strings);
+    if (a->metadata || b->metadata) return a->metadata && b->metadata && qa_unified_record_equal(&qa_unified_metadata_layout,a->metadata,b->metadata, NULL, NULL);
+    if (a->control || b->control) return a->control && b->control && qa_unified_record_equal(&qa_unified_control_layout,a->control,b->control, NULL, NULL);
+    if (a->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) return qa_unified_record_equal(&qa_unified_handshake_layout,&a->handshake,&b->handshake, NULL, NULL);
     return a->source.size==b->source.size && (!a->source.size || !memcmp(a->source.data,b->source.data,a->source.size));
 }
 static qa_unified_document *typed_document(qa_unified_document_kind kind, size_t bytes,
@@ -457,18 +457,18 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
             next->roster_revision==old->roster_revision) {
             qa_unified_frame_metadata compared=same;
             compared.configurations=next->configurations; compared.configuration_count=next->configuration_count;
-            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared, NULL, NULL))
                 return bad(error,"Unified configuration changed without its actual Source revision");
         }
         if (next->replace_styles && next->style_revision==old->style_revision) {
             qa_unified_frame_metadata compared=same;
             compared.styles=next->styles; compared.style_count=next->style_count;
-            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared, NULL, NULL))
                 return bad(error,"Unified lightstyle changed without its actual Source revision");
         }
         if (next->replace_q1 && next->q1_revision==old->q1_revision) {
             qa_unified_frame_metadata compared=same; compared.q1=next->q1;
-            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared))
+            if (!qa_unified_record_equal(&qa_unified_metadata_layout,&same,&compared, NULL, NULL))
                 return bad(error,"Unified Q1 world changed without its actual Source revision");
         }
         if (next->replace_q3) {
@@ -480,7 +480,7 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
                         strcmp(prior->content,row->content) || prior->publication!=row->publication || prior->map_revision!=row->map_revision) continue;
                     if (row->configuration_revision<prior->configuration_revision ||
                         (row->configuration_revision==prior->configuration_revision &&
-                            !qa_unified_record_equal(&qa_unified_q3_configuration_layout,prior,row)))
+                            !qa_unified_record_equal(&qa_unified_q3_configuration_layout,prior,row, NULL, NULL)))
                         return bad(error,"Unified Q3 configuration changed without its actual Source revision");
                 }
             }
@@ -496,11 +496,11 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
 }
 static bool record_encode(const char magic[4], const qa_unified_record_layout *layout,
     const void *record, const void *baseline, bool frame, uint32_t sequence, size_t maximum,
-    qa_buffer *out, qa_error *error)
+    qa_buffer *out, const qa_strings *strings, qa_error *error)
 {
     size_t header_size=frame?8:4;
     if (!out || maximum<=header_size) return bad(error,"Typed Unified record lacks its bounded output");
-    qa_unified_builder builder={.maximum=maximum};
+    qa_unified_builder builder={.maximum=maximum,.strings=strings,.baseline_strings=strings};
     uint8_t header[8]; memcpy(header,magic,4); if (frame) qa_store_u32le(header+4,sequence);
     bool okay=qa_unified_append(&builder,header,header_size,error) &&
         qa_unified_record_delta_write(layout,record,baseline,&builder,error);
@@ -510,16 +510,16 @@ static bool record_encode(const char magic[4], const qa_unified_record_layout *l
 static bool typed_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error)
 {
     if (d->control)
-        return record_encode("QUCT",&qa_unified_control_layout,d->control,NULL,false,0,FRAME_LIMIT,out,error);
+        return record_encode("QUCT",&qa_unified_control_layout,d->control,NULL,false,0,FRAME_LIMIT,out,NULL,error);
     if (d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT)
-        return record_encode("QUHS",&qa_unified_handshake_layout,&d->handshake,NULL,false,0,512,out,error);
+        return record_encode("QUHS",&qa_unified_handshake_layout,&d->handshake,NULL,false,0,512,out,NULL,error);
     if (d->inputs) {
         qa_unified_builder builder={0};
         if (!qa_unified_inputs_write(d->inputs,65536,&builder,error)) { free(builder.data); return false; }
         *out=(qa_buffer){builder.data,builder.size}; return true;
     }
-    return d->metadata ? record_encode("QUMD",&qa_unified_metadata_layout,d->metadata,NULL,false,0,FRAME_LIMIT,out,error) :
-        record_encode("QUEV",&qa_unified_events_layout,d->events,NULL,false,0,FRAME_LIMIT,out,error);
+    return d->metadata ? record_encode("QUMD",&qa_unified_metadata_layout,d->metadata,NULL,false,0,FRAME_LIMIT,out,NULL,error) :
+        record_encode("QUEV",&qa_unified_events_layout,d->events,NULL,false,0,FRAME_LIMIT,out,d->events->strings,error);
 }
 bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum,
     qa_unified_builder *out, qa_error *error)
@@ -530,20 +530,20 @@ bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum
     return qa_unified_append(out,"QUIN",4,error) &&
         qa_unified_record_delta_write(&qa_unified_inputs_layout,batch,NULL,out,error);
 }
-static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_unified_document **out, qa_error *error)
+static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_strings *strings, qa_unified_document **out, qa_error *error)
 {
     if (kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) {
         if (bytes.size<5 || memcmp(bytes.data,"QUHS",4)) return bad(error,"Unified handshake has the wrong external envelope");
         qa_unified_handshake value={0};
         return qa_unified_record_delta_decode(&qa_unified_handshake_layout,
-            (qa_bytes){bytes.data+4,bytes.size-4},NULL,&value,NULL,error) &&
+            (qa_bytes){bytes.data+4,bytes.size-4},NULL,&value,NULL, NULL, NULL,error) &&
             qa_unified_document_create_handshake(&value,out,error);
     }
     if (kind==QA_UNIFIED_CONTROL_DOCUMENT && bytes.size>=4 && !memcmp(bytes.data,"QUCT",4)) {
         qa_unified_control *record=calloc(1,sizeof(*record));
         if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Receiving actual Unified control"); return false; }
         bool okay=qa_unified_record_delta_decode(&qa_unified_control_layout,
-            (qa_bytes){bytes.data+4,bytes.size-4},NULL,record,NULL,error) && control_document_owned(&record,out,error);
+            (qa_bytes){bytes.data+4,bytes.size-4},NULL,record,NULL, NULL, NULL,error) && control_document_owned(&record,out,error);
         if (record) { qa_unified_record_dispose(&qa_unified_control_layout,record); free(record); }
         return okay;
     }
@@ -554,7 +554,7 @@ static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_unifi
     if (input) {
         qa_unified_input_batch *record=calloc(1,sizeof(*record));
         if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified input batch"); return false; }
-        bool okay=qa_unified_record_delta_decode(&qa_unified_inputs_layout,body,NULL,record,NULL,error) &&
+        bool okay=qa_unified_record_delta_decode(&qa_unified_inputs_layout,body,NULL,record,NULL, NULL, NULL,error) &&
             qa_unified_document_create_inputs(&record,out,error);
         if (record) { qa_unified_inputs_free(record); free(record); }
         return okay;
@@ -562,14 +562,17 @@ static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_unifi
     if (metadata) {
         qa_unified_frame_metadata *record=calloc(1,sizeof(*record));
         if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified metadata"); return false; }
-        bool okay=qa_unified_record_delta_decode(&qa_unified_metadata_layout,body,NULL,record,NULL,error) &&
+        bool okay=qa_unified_record_delta_decode(&qa_unified_metadata_layout,body,NULL,record,NULL, NULL, NULL,error) &&
             qa_unified_document_create_metadata(&record,out,error);
         qa_unified_frame_metadata_destroy(record); return okay;
     }
     qa_unified_frame_events *record=calloc(1,sizeof(*record));
     if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual Unified events"); return false; }
     size_t measured;
-    bool okay=qa_unified_record_delta_decode(&qa_unified_events_layout,body,NULL,record,NULL,error) &&
+    record->strings=strings; qa_strings_retain(strings);
+    bool okay=qa_unified_record_delta_decode(&qa_unified_events_layout,body,NULL,record,NULL, strings, NULL,error);
+    record->strings=strings;
+    okay=okay &&
         qa_unified_events_check(record,&measured,error);
     if (okay) okay=qa_unified_document_create_events(&record,out,error);
     qa_unified_frame_events_destroy(record); return okay;
@@ -581,6 +584,7 @@ bool qa_unified_frame_write(const qa_unified_document *document, const qa_unifie
         return bad(error,"Unified delta encoding requires its actual acknowledged frame");
     if (!out || maximum<9) return bad(error,"Unified FRAME lacks its actual bounded wire buffer");
     out->size=0; out->maximum=maximum<VALUE_LIMIT?maximum:VALUE_LIMIT;
+    out->strings=document->frame->strings; out->baseline_strings=baseline?baseline->frame->strings:NULL;
     uint8_t header[8]; memcpy(header,"QUFR",4); qa_store_u32le(header+4,sequence);
     return qa_unified_append(out,header,sizeof(header),error) &&
         qa_unified_record_delta_write(&qa_unified_frame_layout,document->frame,baseline?baseline->frame:NULL,out,error);
@@ -592,21 +596,21 @@ bool qa_unified_frame_baseline(qa_bytes bytes, uint32_t *out, qa_error *error)
     *out=qa_load_u32le(bytes.data+4); return true;
 }
 bool qa_unified_frame_decode(qa_bytes bytes, const qa_unified_document *baseline, uint32_t sequence,
-    qa_unified_frame_pool *pool, qa_unified_document **out, qa_error *error)
+    qa_unified_frame_pool *pool, qa_strings *strings, qa_unified_document **out, qa_error *error)
 {
     uint32_t required;
     if (!out || !qa_unified_frame_baseline(bytes,&required,error)) return false;
     if (required!=sequence || ((required!=0)!=(baseline!=NULL)) || (baseline && !baseline->frame))
         return bad(error,"Unified delta decoding lacks its exact acknowledged frame");
-    qa_unified_frame *record=qa_unified_frame_create(pool,error);
+    qa_unified_frame *record=qa_unified_frame_create(pool,strings,error);
     if (!record) return false;
     qa_unified_frame_lease *lease=record->lease;
     bool okay=qa_unified_record_delta_decode(&qa_unified_frame_layout,(qa_bytes){bytes.data+8,bytes.size-8},
-        baseline?baseline->frame:NULL,record,lease,error);
-    record->lease=lease;
+        baseline?baseline->frame:NULL,record,lease, strings, baseline?baseline->frame->strings:NULL,error);
+    record->lease=lease; record->strings=strings;
     if (okay && record->world) {
-        record->world->references=1;
         if (lease) { okay=qa_unified_frame_lease_retain(lease,error); if (okay) record->world->lease=lease; else record->world=NULL; }
+        if (okay) { record->world->references=1; record->world->strings=strings; qa_strings_retain(strings); }
     }
     size_t measured;
     if (okay) okay=qa_unified_frame_check(record,&measured,error) && qa_unified_document_create_frame(&record,out,error);

@@ -374,7 +374,7 @@ bool application_unified_output_world(qa_application *app, const application_uni
     const qa_actor_registry *registry = qa_session_actors(source->session);
     uint64_t revision = qa_actors_revision(registry);
     size_t count = qa_actors_count(registry);
-    qa_unified_world_frame *v = qa_unified_world_frame_create(pool, error);
+    qa_unified_world_frame *v = qa_unified_world_frame_create(pool, qa_session_strings(source->session), error);
     if (!v) return false;
     v->source = source->frame;
     qa_application_selected_effects clock;
@@ -398,7 +398,6 @@ bool application_unified_output_world(qa_application *app, const application_uni
     bool ok = (!count || (v->actors && v->bodies && v->collisions)) && v->world;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source world rows");
     uint32_t cursor = 0; const qa_actor_record *record;
-    qa_strings *strings = qa_session_strings(source->session);
     while (ok && qa_actors_next(registry, &cursor, &record)) {
         if (qa_actors_revision(registry) != revision) {
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified world actor roster changed during observation");
@@ -407,8 +406,7 @@ bool application_unified_output_world(qa_application *app, const application_uni
         qa_actor_id id = record->id;
         qa_unified_actor_state *a = v->actors + v->actor_count++;
         a->actor = id;
-        ok = application_unified_frame_string(v->lease, &a->owner, qa_strings_cstr(strings, record->owner), error) &&
-            application_unified_frame_string(v->lease, &a->definition, qa_strings_cstr(strings, record->definition), error);
+        a->owner=record->owner; a->definition=record->definition;
         if (ok && qa_world_body_storage_serial(source->world, id)) {
             qa_unified_body_state *b = v->bodies + v->body_count++;
             b->actor = id; ok = qa_world_body_read(source->world, id, &b->body, error);
@@ -464,8 +462,7 @@ bool application_unified_output_inventory(qa_application *app, qa_actor_id actor
     for (size_t i = 0; ok && i < count; ++i) {
         qa_unified_inventory_entry *row = out->inventories->entries + out->inventories->entry_count++;
         row->count = entries[i].count; row->capacity = entries[i].capacity; row->policy = entries[i].policy;
-        ok = application_unified_frame_string(out->lease, &row->item,
-            qa_strings_cstr(qa_session_strings(app->session), entries[i].item), error);
+        row->item=entries[i].item;
     }
     if (ok) { *raw = entries; *raw_count = count; }
     return ok;

@@ -93,7 +93,7 @@ bool qa_unified_session_frame_decode(const qa_unified_session *s, qa_bytes bytes
     if (!qa_unified_frame_baseline(bytes, &sequence, e)) return false;
     const qa_unified_document *baseline = qa_unified_session_frame_find(s, sequence);
     if (sequence && !baseline) { *missing = true; return true; }
-    return qa_unified_frame_decode(bytes, baseline, sequence, s->frame_pool, out, e);
+    return qa_unified_frame_decode(bytes, baseline, sequence, s->frame_pool, s->strings, out, e);
 }
 
 void qa_unified_session_release(qa_unified_session *s)
@@ -109,7 +109,7 @@ void qa_unified_session_release(qa_unified_session *s)
     qa_unified_channel_destroy(s->channel);
     free(s->frame_wire.data);
     qa_unified_frame_pool_destroy(&s->frame_pool);
-    free(s);
+    qa_strings_destroy(s->strings); free(s);
 }
 
 static void close_peer(void *state)
@@ -143,7 +143,7 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     if (!s->server) {
         bool missing=false;
         bool okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
-            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload,&document,e);
+            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload, s->strings,&document,e);
         if (!okay || missing) {
             if (missing) {
                 s->frame_applied=delivery->sequence;
@@ -298,10 +298,11 @@ bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect
     qa_unified_session *s = calloc(1, sizeof(*s));
     if (!s) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Allocating production session");
     s->runtime = runtime; s->server = server; s->hooks = *hooks; s->token = token;
+    s->strings=hooks->strings; qa_strings_retain(s->strings);
     s->seat = request->seats[0].seat; s->acknowledged = -1; s->now_ns = now;
     s->limits = limits ? *limits : qa_unified_limits_default();
     if (s->limits.queued_reliable_bytes > SIZE_MAX - s->limits.message_bytes) {
-        free(s); return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production holding capacity exceeds storage");
+        qa_strings_destroy(s->strings); free(s); return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production holding capacity exceeds storage");
     }
     s->frame_pool=qa_unified_frame_pool_create(0,e);
     if (!s->frame_pool || !qa_unified_channel_create(token, &s->limits, &s->channel, e)) {

@@ -91,7 +91,7 @@ static bool retained_valid(const frontend_remote_unified *owner, const qa_net_cl
                 const char *definition=qa_strings_cstr(owner->strings,pending->definition);
                 if(!frontend_remote_unified_source_actor((frontend_remote_unified *)owner,frame,row->actor,true,&actual,e)||
                     !qa_actor_id_equal(actual,pending->actor)||!source||!definition||
-                    strcmp(row->owner,source)||strcmp(row->definition,definition))return false;
+                    row->owner!=pending->owner||row->definition!=pending->definition)return false;
             }
         }
     }

@@ -33,6 +33,7 @@ struct qa_unified_session {
     qa_unified_limits limits;
     qa_unified_channel *channel;
     qa_unified_frame_pool *frame_pool;
+    qa_strings *strings;
     qa_unified_builder frame_wire;
     qa_unified_session_hooks hooks;
     qa_unified_held *held, *tail;
@@ -69,7 +70,7 @@ bool qa_unified_session_reply_valid(const qa_unified_session *, const qa_unified
 bool qa_unified_session_continuation_valid(const qa_unified_session *, const qa_unified_held *, qa_error *);
 bool qa_unified_session_continuation_extent(const qa_unified_held *, size_t *, qa_error *);
 bool qa_unified_session_continuation_write(qa_net_writer *, const qa_unified_held *);
-bool qa_unified_session_continuation_read(qa_net_reader *, qa_unified_held *);
+bool qa_unified_session_continuation_read(qa_net_reader *, qa_unified_held *, qa_strings *);
 qa_network_peer_ops qa_unified_session_operations(void);
 struct qa_network_peer;
 bool qa_unified_session_peer(const struct qa_network_peer *);

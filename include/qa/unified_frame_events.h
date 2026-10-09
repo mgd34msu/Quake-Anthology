@@ -313,6 +313,7 @@ typedef struct qa_unified_simulation_event {
     qa_unified_simulation_payload payload;
 } qa_unified_simulation_event;
 typedef struct qa_unified_frame_events {
+    qa_strings *strings;
     uint32_t epoch;
     uint64_t frame;
     qa_unified_presentation_event *presentation;
@@ -330,8 +331,6 @@ bool qa_unified_simulation_payload_clone(const qa_unified_simulation_payload *, 
 void qa_unified_frame_events_destroy(qa_unified_frame_events *);
 void qa_unified_presentation_event_dispose(qa_unified_presentation_event *);
 bool qa_unified_presentation_event_clone(const qa_unified_presentation_event *, qa_unified_presentation_event *, qa_error *);
-bool qa_unified_presentation_event_encode(const qa_unified_presentation_event *, qa_buffer *, qa_error *);
-bool qa_unified_presentation_event_decode(qa_bytes, qa_unified_presentation_event *, qa_error *);
 bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_unified_document **out, qa_error *);
 const qa_unified_frame_events *qa_unified_document_events(const qa_unified_document *);
 

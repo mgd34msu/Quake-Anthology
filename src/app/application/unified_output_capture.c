@@ -57,7 +57,7 @@ bool application_unified_output_acquire(qa_application *app, const application_u
         return application_fail(e, QA_ERROR_ARGUMENT, "Unified capture requires its actual Source children and recipient");
     if (external && !external->current(external->context, app, source, recipient, player))
         return application_fail(e, QA_ERROR_ARGUMENT, "Unified capture external Source child has retired");
-    qa_unified_frame *frame = qa_unified_frame_create(pool, e);
+    qa_unified_frame *frame = qa_unified_frame_create(pool, qa_session_strings(source->session), e);
     if (!frame) return false;
     application_unified_output_capture *v = application_unified_frame_alloc(frame->lease, 1, sizeof(*v), e);
     if (!v) { qa_unified_frame_destroy(frame); return false; }

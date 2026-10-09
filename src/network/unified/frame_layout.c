@@ -650,7 +650,7 @@ static const qa_unified_field qa_unified_powerup_state_fields[] = {
 static const qa_unified_record_layout qa_unified_powerup_state_layout = QA_UNIFIED_LAYOUT(qa_unified_powerup_state, qa_unified_powerup_state_fields);
 
 static const qa_unified_field qa_unified_inventory_entry_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_inventory_entry, item, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_inventory_entry, item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_inventory_entry, count, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_unified_inventory_entry, capacity, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_unified_inventory_entry, policy, QA_UNIFIED_FIELD_I32),
@@ -696,13 +696,13 @@ static const qa_unified_field qa_unified_frame_prediction_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, actor, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, sequence, QA_UNIFIED_FIELD_I64),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, command_time_ms, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_frame_prediction, profile_id, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_frame_prediction, profile_id, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, clock, qa_clock_config_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, numeric, qa_unified_movement_numeric_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, profile, qa_movement_profile_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, state, qa_movement_state_layout),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, arsenal_provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_frame_prediction, active_weapon, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_frame_prediction, active_weapon, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, character_provider, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, weapon, qa_unified_weapon_state_layout),
     QA_UNIFIED_ARRAY(qa_unified_frame_prediction, ammo, ammo_count, qa_unified_inventory_entry_layout, 65536),
@@ -844,7 +844,7 @@ static const qa_unified_field qa_unified_weapon_state_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_weapon_state, state, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_weapon_state, machinegun_shots, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_weapon_state, time_ms, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_weapon_state, pending_weapon, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_weapon_state, pending_weapon, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_weapon_state, grenade_milliseconds, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_weapon_state, grenade_blew_up, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_weapon_state, grenade_seconds, QA_UNIFIED_FIELD_F64),
@@ -853,7 +853,7 @@ static const qa_unified_field qa_unified_weapon_state_fields[] = {
 static const qa_unified_record_layout qa_unified_weapon_state_layout = QA_UNIFIED_LAYOUT(qa_unified_weapon_state, qa_unified_weapon_state_fields);
 
 static const qa_unified_field qa_unified_movement_numeric_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, id, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_movement_numeric, id, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_movement_numeric, radix, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_movement_numeric, scalar_mantissa_bits, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_movement_numeric, double_mantissa_bits, QA_UNIFIED_FIELD_U32),
@@ -930,8 +930,8 @@ static const qa_unified_record_layout qa_unified_body_state_layout = QA_UNIFIED_
 
 static const qa_unified_field qa_unified_actor_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_actor_state, actor, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_actor_state, owner, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_actor_state, definition, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_actor_state, owner, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_actor_state, definition, QA_UNIFIED_FIELD_NAME),
 };
 static const qa_unified_record_layout qa_unified_actor_state_layout = QA_UNIFIED_ACTOR_LAYOUT(qa_unified_actor_state, qa_unified_actor_state_fields, actor);
 
@@ -1148,7 +1148,7 @@ int64_t qa_unified_world_frame_milliseconds(const qa_unified_world_frame *world)
     return world->source.kind==QA_RULESET_Q3 ? llround(milliseconds) : (int64_t)milliseconds;
 }
 
-qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *pool, qa_error *error)
+qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *pool, qa_strings *strings, qa_error *error)
 {
     qa_unified_frame_lease *lease = pool ? qa_unified_frame_lease_acquire(pool, error) : NULL;
     if (pool && !lease) return NULL;
@@ -1159,7 +1159,7 @@ qa_unified_world_frame *qa_unified_world_frame_create(qa_unified_frame_pool *poo
         if (!lease) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating actual Unified world frame");
         return NULL;
     }
-    world->lease = lease; world->references = 1; return world;
+    world->lease = lease; world->references = 1; world->strings = strings; qa_strings_retain(strings); return world;
 }
 bool qa_unified_world_frame_retain(qa_unified_world_frame *world, qa_error *error)
 {
@@ -1171,10 +1171,11 @@ bool qa_unified_world_frame_retain(qa_unified_world_frame *world, qa_error *erro
 void qa_unified_world_frame_destroy(qa_unified_world_frame *world)
 {
     if (!world || (world->references && --world->references)) return;
+    qa_strings_destroy(world->strings);
     if (world->lease) qa_unified_frame_lease_release(world->lease);
     else { qa_unified_record_dispose(&qa_unified_world_frame_layout, world); free(world); }
 }
-qa_unified_frame *qa_unified_frame_create(qa_unified_frame_pool *pool, qa_error *error)
+qa_unified_frame *qa_unified_frame_create(qa_unified_frame_pool *pool, qa_strings *strings, qa_error *error)
 {
     qa_unified_frame_lease *lease = pool ? qa_unified_frame_lease_acquire(pool, error) : NULL;
     if (pool && !lease) return NULL;
@@ -1184,19 +1185,20 @@ qa_unified_frame *qa_unified_frame_create(qa_unified_frame_pool *pool, qa_error 
         if (!lease) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating actual Unified frame");
         return NULL;
     }
-    frame->lease = lease; return frame;
+    frame->lease = lease; frame->strings = strings; qa_strings_retain(strings); return frame;
 }
 void qa_unified_frame_destroy(qa_unified_frame *frame)
 {
     if (!frame) return;
     qa_unified_world_frame *world = frame->world; frame->world = NULL;
     qa_unified_frame_lease *lease = frame->lease;
+    qa_strings_destroy(frame->strings);
     if (!lease) qa_unified_record_dispose(&qa_unified_frame_layout, frame);
     qa_unified_world_frame_destroy(world);
     if (lease) qa_unified_frame_lease_release(lease); else free(frame);
 }
 bool qa_unified_frame_equal(const qa_unified_frame *a, const qa_unified_frame *b)
-{ return qa_unified_record_equal(&qa_unified_frame_layout, a, b); }
+{ return qa_unified_record_equal(&qa_unified_frame_layout, a, b, a ? a->strings : NULL, b ? b->strings : NULL); }
 
 static const qa_unified_record_layout qa_unified_presentation_owner_layout;
 const qa_unified_record_layout qa_unified_presentation_event_layout;
@@ -1751,21 +1753,10 @@ void qa_unified_presentation_event_dispose(qa_unified_presentation_event *value)
 bool qa_unified_presentation_event_clone(const qa_unified_presentation_event *from,
     qa_unified_presentation_event *out, qa_error *error)
 { return qa_unified_record_clone(&qa_unified_presentation_event_layout, from, out, error); }
-bool qa_unified_presentation_event_encode(const qa_unified_presentation_event *value,
-    qa_buffer *out, qa_error *error)
-{ return qa_unified_record_delta_encode(&qa_unified_presentation_event_layout, value, NULL, 32u * 1024u * 1024u, out, error); }
-static bool presentation_check(const qa_unified_presentation_event *, qa_error *);
-bool qa_unified_presentation_event_decode(qa_bytes bytes,
-    qa_unified_presentation_event *out, qa_error *error)
-{
-    size_t measured;
-    bool okay=qa_unified_record_delta_decode(&qa_unified_presentation_event_layout,bytes,NULL,out,NULL,error) &&
-        qa_unified_record_measure(&qa_unified_presentation_event_layout,out,&measured,error) && presentation_check(out,error);
-    if (!okay) { qa_unified_presentation_event_dispose(out); memset(out,0,sizeof(*out)); }
-    return okay;
-}
 void qa_unified_frame_events_destroy(qa_unified_frame_events *value)
-{ qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
+{ if (!value) return;
+    qa_strings_destroy(value->strings);
+    qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
 
 static const qa_unified_field unified_vec_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_vec3, x, QA_UNIFIED_FIELD_F64),
@@ -2251,14 +2242,14 @@ bool qa_unified_component_identity_clone(const qa_unified_component_identity *so
     qa_unified_component_identity *out, qa_error *error)
 { return source && out && qa_unified_record_clone(&component_identity_layout,source,out,error); }
 bool qa_unified_component_identity_equal(const qa_unified_component_identity *a,const qa_unified_component_identity *b)
-{ return a && b && qa_unified_record_equal(&component_identity_layout,a,b); }
+{ return a && b && qa_unified_record_equal(&component_identity_layout,a,b, NULL, NULL); }
 void qa_unified_component_identity_dispose(qa_unified_component_identity *value)
 { if (value) { qa_unified_record_dispose(&component_identity_layout,value); memset(value,0,sizeof(*value)); } }
 bool qa_unified_component_identity_write(const qa_unified_component_identity *value,qa_buffer *out,qa_error *error)
 { return value && out && !out->data && !out->size &&
-    qa_unified_record_delta_encode(&component_identity_layout,value,NULL,32u * 1024u * 1024u,out,error); }
+    qa_unified_record_delta_encode(&component_identity_layout,value,NULL,32u * 1024u * 1024u,out, NULL,error); }
 bool qa_unified_component_identity_read(qa_bytes bytes,qa_unified_component_identity *out,qa_error *error)
-{ return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL,error); }
+{ return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL, NULL, NULL,error); }
 
 static const qa_unified_field control_ready_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_ready_control, composition, QA_UNIFIED_FIELD_U64),

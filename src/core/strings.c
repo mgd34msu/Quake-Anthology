@@ -9,7 +9,7 @@ struct qa_strings {
     qa_arena arena;
     string_entry *entries;
     qa_string_id *buckets;
-    size_t count, capacity, bucket_count;
+    size_t count, capacity, bucket_count, references;
 };
 
 static uint64_t string_hash(qa_bytes text) {
@@ -23,10 +23,14 @@ bool qa_strings_create(qa_strings **out, qa_error *error) {
     qa_strings *strings=calloc(1,sizeof(*strings));
     if (!strings) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating shared string table"); return false; }
     qa_arena_init(&strings->arena,16384);
+    strings->references=1;
     *out=strings; return true;
 }
+void qa_strings_retain(qa_strings *strings) {
+    if (strings) ++strings->references;
+}
 void qa_strings_destroy(qa_strings *strings) {
-    if (!strings) return;
+    if (!strings || --strings->references) return;
     qa_arena_destroy(&strings->arena);
     free(strings->entries); free(strings->buckets); free(strings);
 }

@@ -34,7 +34,7 @@ static bool profile_read(const frontend_remote_unified_prediction *p,const qa_un
 {
     const qa_recipe_provider *provider=p->importing ? frontend_remote_unified_provider_published(p->replica,QA_ROLE_MOVEMENT,"") :
         frontend_remote_unified_provider(p->replica,QA_ROLE_MOVEMENT,"");
-    if (!provider || !received->profile_id || strcmp(received->profile_id,provider->selection.instance))
+    if (!provider || !received->profile_id || strcmp(qa_strings_cstr(p->replica->strings, received->profile_id),provider->selection.instance))
         return fail(e,QA_ERROR_FORMAT,"Prediction profile differs from its actual received player movement provider");
     const qa_clock_config *clock=&provider->selection.clock,*actual=&received->clock;
     if (actual->kind!=clock->kind || actual->interval_ns!=clock->interval_ns ||

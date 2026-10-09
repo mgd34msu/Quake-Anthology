@@ -1102,9 +1102,10 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         q2_inventory_row *items=event->inventory_count?calloc(event->inventory_count,sizeof(*items)):NULL;size_t used=0;
         bool okay=!event->inventory_count || items;
         for (size_t i=0;okay && i<event->inventory_count;++i){const qa_unified_inventory_entry *from=event->inventory+i;if (from->count<=0)continue;
-            q2_inventory_row *v=items+used++;v->item=text_copy(from->item);v->count=from->count;
-            v->selected=event->selected_item && !strcmp(from->item,event->selected_item);
-            const char *label=!strncmp(from->item,"q2:",3)?from->item+3:from->item;
+            q2_inventory_row *v=items+used++;const char *item_name=qa_strings_cstr(o->replica->strings,from->item);
+            v->item=text_copy(item_name);v->count=from->count;
+            v->selected=event->selected_item && !strcmp(item_name,event->selected_item);
+            const char *label=!strncmp(item_name,"q2:",3)?item_name+3:item_name;
             v->label=text_copy(label);okay=v->item && v->label;
             if (v->label)for (char *t=v->label;*t;++t)if (*t=='_')*t=' ';
         }

@@ -61,8 +61,7 @@ static bool inventory(qa_application *app, application_provider *p,
         if (!selected_item(app, p, v->item, original_q3, original_q3_count)) continue;
         qa_unified_inventory_entry *row = out->ammo + out->ammo_count++;
         row->count = v->count; row->capacity = v->capacity; row->policy = v->policy;
-        ok = application_unified_frame_string(lease, &row->item,
-            qa_strings_cstr(qa_session_strings(app->session), v->item), e);
+        row->item=v->item;
     }
     return ok;
 }
@@ -73,9 +72,8 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
 {
     qa_item_id active;
     if (!p->launch || !qa_application_weapon_read(app, id, &active, e) ||
-        !application_unified_frame_string(lease, &out->arsenal_provider, p->launch->selection.instance, e) ||
-        !application_unified_frame_string(lease, &out->active_weapon,
-            active ? qa_strings_cstr(qa_session_strings(app->session), active) : NULL, e)) return false;
+        !application_unified_frame_string(lease, &out->arsenal_provider, p->launch->selection.instance, e)) return false;
+    out->active_weapon=active;
     qa_unified_weapon_state *w = &out->weapon;
     if (p->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view v;
@@ -104,7 +102,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
             qa_q2_weapon_definition_at(p->state.q2, v.pending) : NULL;
         if (v.pending != QA_Q2_WEAPON_NONE && (!pending || !pending->item))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its actual pending Q2 weapon definition");
-        if (pending && !application_unified_frame_string(lease, &w->pending_weapon, pending->item, e)) return false;
+        if (pending) w->pending_weapon=qa_q2_weapon_item(p->state.q2, v.pending);
         w->machinegun_shots = v.machinegun_shots; w->grenade_seconds = (double)v.grenade_ns / 1e9;
         w->grenade_blew_up = v.grenade_blew_up;
     } else if (p->kind == APPLICATION_PROVIDER_NATIVE && p->state.native.q2_engine) {
@@ -112,8 +110,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
         if (!qa_application_native_q2_prediction_read(app, id, QA_ROLE_ARSENAL, &v, &found, e)) return false;
         if (!found) return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its original Q2 arsenal");
         w->kind = QA_UNIFIED_WEAPON_Q2; w->gun_frame = v.gun_frame; w->state = v.weapon_state;
-        if (!application_unified_frame_string(lease, &w->pending_weapon,
-            v.pending_weapon ? qa_strings_cstr(qa_session_strings(app->session), v.pending_weapon) : NULL, e)) return false;
+        w->pending_weapon=v.pending_weapon;
         w->machinegun_shots = v.machinegun_shots; w->grenade_blew_up = v.grenade_blew_up;
         if (v.grenade_time_kind == QA_NATIVE_Q2_PREDICTION_SECONDS) w->grenade_seconds = v.grenade_time.seconds;
         else if (v.grenade_time_kind == QA_NATIVE_Q2_PREDICTION_MILLISECONDS) {
@@ -233,11 +230,8 @@ bool application_unified_prediction_build(qa_application *app,
     out->water_type = configuration.water_type;
     out->has_rerelease_origin = input->state.kind == QA_RULESET_Q2_RERELEASE;
     if (out->has_rerelease_origin) out->rerelease_origin = configuration.q2r_pml_origin;
-    bool ok = application_unified_frame_string(lease, &out->profile_id,
-        qa_strings_cstr(qa_session_strings(app->session), configuration.profile_id), e) &&
-        application_unified_frame_string(lease, &out->numeric.id,
-        qa_strings_cstr(qa_session_strings(app->session), numeric->id), e) &&
-        weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
+    out->profile_id=configuration.profile_id; out->numeric.id=numeric->id;
+    bool ok = weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
         animation(app, c, player->actor, out, lease, e);
     if (ok) {
         ok = application_unified_source_current(app, source) && application_unified_player_current(app, client, player) &&

@@ -14,6 +14,8 @@ typedef struct record_reader {
     size_t at, allocated;
     qa_error *error;
     qa_unified_frame_lease *lease;
+    qa_strings *strings;
+    const qa_strings *baseline_strings;
     qa_unified_clone_alloc_fn clone_allocate;
     void *clone_context;
 } record_reader;
@@ -201,7 +203,7 @@ static bool scalar_read(record_reader *r, qa_unified_field_kind kind, void *out)
     return fail(r->error, "Typed Unified scalar exceeds its storage domain");
 }
 
-static bool field_equal(const qa_unified_field *, const void *, const void *);
+static bool field_equal(const qa_unified_field *, const void *, const void *, const qa_strings *, const qa_strings *);
 static const qa_unified_record_layout *variant_layout(const qa_unified_field *field, const void *value)
 {
     if (!value) return NULL;
@@ -211,21 +213,32 @@ static const qa_unified_record_layout *variant_layout(const qa_unified_field *fi
     else memcpy(&selected, tag, sizeof(selected));
     return selected >= 0 && (size_t)selected < field->maximum ? field->variants[(size_t)selected] : NULL;
 }
-bool qa_unified_record_equal(const qa_unified_record_layout *layout, const void *a, const void *b)
+bool qa_unified_record_equal(const qa_unified_record_layout *layout, const void *a, const void *b,
+    const qa_strings *strings, const qa_strings *baseline_strings)
 {
     if (a == b) return true;
-    if (!a) { const void *swap = a; a = b; b = swap; }
+    if (!a) { const void *swap = a; a = b; b = swap;
+        const qa_strings *table = strings; strings = baseline_strings; baseline_strings = table; }
     for (size_t i = 0; i < layout->field_count; ++i)
-        if (!field_equal(layout->fields + i, a, b)) return false;
+        if (!field_equal(layout->fields + i, a, b, strings, baseline_strings)) return false;
     return true;
 }
-static bool field_equal(const qa_unified_field *f, const void *a, const void *b)
+static bool field_equal(const qa_unified_field *f, const void *a, const void *b,
+    const qa_strings *strings, const qa_strings *baseline_strings)
 {
     const void *x = field_read(a, f), *y = field_read(b, f);
     size_t scalar = scalar_size(f->kind);
     uint64_t zero = 0;
     if (scalar) return !memcmp(x, y ? y : &zero, scalar);
     switch (f->kind) {
+    case QA_UNIFIED_FIELD_NAME: {
+        qa_string_id p = *(const qa_string_id *)x, q = y ? *(const qa_string_id *)y : QA_STRING_NONE;
+        if (strings == baseline_strings) return p == q;
+        if (!p || !q) return p == q;
+        qa_bytes left = qa_strings_text(strings, p), right = qa_strings_text(baseline_strings, q);
+        return left.data && right.data && left.size == right.size &&
+            (!left.size || !memcmp(left.data, right.data, left.size));
+    }
     case QA_UNIFIED_FIELD_STRING: {
         const char *p = *(char *const *)x, *q = y ? *(char *const *)y : NULL;
         return p == q || (p && q && !strcmp(p, q));
@@ -238,14 +251,14 @@ static bool field_equal(const qa_unified_field *f, const void *a, const void *b)
         if (y) return !memcmp(x, y, f->maximum);
         for (size_t i = 0; i < f->maximum; ++i) if (((const uint8_t *)x)[i]) return false;
         return true;
-    case QA_UNIFIED_FIELD_RECORD: return qa_unified_record_equal(f->record, x, y);
+    case QA_UNIFIED_FIELD_RECORD: return qa_unified_record_equal(f->record, x, y, strings, baseline_strings);
     case QA_UNIFIED_FIELD_POINTER: {
         const void *next = pointer_read(x), *prior = y ? pointer_read(y) : NULL;
-        return (!next && !prior) || (next && prior && qa_unified_record_equal(f->record, next, prior));
+        return (!next && !prior) || (next && prior && qa_unified_record_equal(f->record, next, prior, strings, baseline_strings));
     }
     case QA_UNIFIED_FIELD_VARIANT: case QA_UNIFIED_FIELD_VARIANT_BOOL: {
         const qa_unified_record_layout *layout = variant_layout(f, a);
-        return layout && (!b || layout == variant_layout(f, b)) && qa_unified_record_equal(layout, x, y);
+        return layout && (!b || layout == variant_layout(f, b)) && qa_unified_record_equal(layout, x, y, strings, baseline_strings);
     }
     case QA_UNIFIED_FIELD_ARRAY: case QA_UNIFIED_FIELD_INLINE_ARRAY: case QA_UNIFIED_FIELD_FIXED: {
         size_t count = f->kind != QA_UNIFIED_FIELD_FIXED ? *(const size_t *)((const uint8_t *)a + f->count_offset) : f->maximum;
@@ -254,7 +267,7 @@ static bool field_equal(const qa_unified_field *f, const void *a, const void *b)
         if (f->kind == QA_UNIFIED_FIELD_ARRAY) { x = pointer_read(x); y = y ? pointer_read(y) : NULL; }
         for (size_t i = 0; i < count; ++i)
             if (!qa_unified_record_equal(f->record, (const uint8_t *)x + i * f->record->size,
-                y ? (const uint8_t *)y + i * f->record->size : NULL)) return false;
+                y ? (const uint8_t *)y + i * f->record->size : NULL, strings, baseline_strings)) return false;
         return true;
     }
     default: return false;
@@ -335,8 +348,9 @@ static bool field_encode(qa_unified_builder *b, const qa_unified_field *f, const
     if (scalar_size(f->kind)) return scalar_write(b, f->kind, p, e);
     switch (f->kind) {
     case QA_UNIFIED_FIELD_RAW: return append(b, p, f->maximum, e);
-    case QA_UNIFIED_FIELD_STRING: {
-        const char *text = *(char *const *)p;
+    case QA_UNIFIED_FIELD_NAME: case QA_UNIFIED_FIELD_STRING: {
+        const char *text = f->kind == QA_UNIFIED_FIELD_NAME ?
+            qa_strings_cstr(b->strings, *(const qa_string_id *)p) : *(char *const *)p;
         size_t length = text ? strlen(text) : 0, maximum = f->maximum ? f->maximum : RECORD_BYTES;
         if (length > maximum || (text && !qa_utf8_valid((qa_bytes){(const uint8_t *)text, length})))
             return fail(e, "Typed Unified text exceeds its UTF-8 boundary");
@@ -388,7 +402,7 @@ static bool record_write(qa_unified_builder *b, const qa_unified_record_layout *
     uint8_t mask[RECORD_FIELDS / 8] = {0};
     size_t bytes = (layout->field_count + 7) / 8;
     for (size_t i = 0; i < layout->field_count; ++i)
-        if (!field_equal(layout->fields + i, value, baseline)) mask[i / 8] |= (uint8_t)(1u << (i % 8));
+        if (!field_equal(layout->fields + i, value, baseline, b->strings, b->baseline_strings)) mask[i / 8] |= (uint8_t)(1u << (i % 8));
     if (!append(b, mask, bytes, e)) return false;
     for (size_t i = 0; i < layout->field_count; ++i)
         if ((mask[i / 8] & (1u << (i % 8))) && !field_encode(b, layout->fields + i, value, baseline, depth, e)) return false;
@@ -400,7 +414,7 @@ static bool field_decode(record_reader *r, const qa_unified_field *f, const void
     if (scalar_size(f->kind)) return scalar_read(r, f->kind, p);
     switch (f->kind) {
     case QA_UNIFIED_FIELD_RAW: return read_bytes(r, p, f->maximum);
-    case QA_UNIFIED_FIELD_STRING: {
+    case QA_UNIFIED_FIELD_NAME: case QA_UNIFIED_FIELD_STRING: {
         uint64_t extent;
         if (!unsigned_read(r, &extent)) return false;
         if (!extent) return true;
@@ -408,6 +422,10 @@ static bool field_decode(record_reader *r, const qa_unified_field *f, const void
         if (extent - 1 > maximum || extent - 1 > r->bytes.size - r->at) return fail(r->error, "Typed Unified text exceeds its byte boundary");
         size_t length = (size_t)extent - 1; qa_bytes bytes = {r->bytes.data + r->at, length};
         if (memchr(bytes.data, 0, length) || !qa_utf8_valid(bytes)) return fail(r->error, "Typed Unified text is not NUL-free UTF-8");
+        if (f->kind == QA_UNIFIED_FIELD_NAME) {
+            if (!qa_strings_intern(r->strings, bytes, p, r->error)) return false;
+            r->at += length; return true;
+        }
         char *text = allocate(r, (size_t)extent, 1);
         if (!text) return false;
         *(char **)p = text; return read_bytes(r, text, length);
@@ -483,6 +501,11 @@ static bool field_clone(record_reader *r, const qa_unified_field *f, const void 
     size_t scalar = scalar_size(f->kind);
     if (scalar || f->kind == QA_UNIFIED_FIELD_RAW) { memcpy(out, p, scalar ? scalar : f->maximum); return true; }
     switch (f->kind) {
+    case QA_UNIFIED_FIELD_NAME: {
+        qa_string_id id = *(const qa_string_id *)p;
+        if (!id || r->strings == r->baseline_strings) { *(qa_string_id *)out = id; return true; }
+        return qa_strings_intern(r->strings, qa_strings_text(r->baseline_strings, id), out, r->error);
+    }
     case QA_UNIFIED_FIELD_STRING: {
         const char *text = *(char *const *)p;
         if (!text) return true;
@@ -592,10 +615,10 @@ static bool record_read(record_reader *r, const qa_unified_record_layout *layout
     return true;
 }
 bool qa_unified_record_delta_encode(const qa_unified_record_layout *layout, const void *value,
-    const void *baseline, size_t maximum, qa_buffer *out, qa_error *error)
+    const void *baseline, size_t maximum, qa_buffer *out, const qa_strings *strings, qa_error *error)
 {
     if (!out || !maximum) return fail(error, "Typed Unified encoding requires its bounded output");
-    qa_unified_builder builder = {.maximum = maximum};
+    qa_unified_builder builder = {.maximum = maximum, .strings = strings, .baseline_strings = strings};
     if (!qa_unified_record_delta_write(layout,value,baseline,&builder,error)) { free(builder.data); return false; }
     *out = (qa_buffer){builder.data, builder.size}; return true;
 }
@@ -607,10 +630,12 @@ bool qa_unified_record_delta_write(const qa_unified_record_layout *layout, const
     return record_write(out,layout,value,baseline,0,error);
 }
 bool qa_unified_record_delta_decode(const qa_unified_record_layout *layout, qa_bytes bytes,
-    const void *baseline, void *out, qa_unified_frame_lease *lease, qa_error *error)
+    const void *baseline, void *out, qa_unified_frame_lease *lease, qa_strings *strings,
+    const qa_strings *baseline_strings, qa_error *error)
 {
     if (!out || !bytes.data || !bytes.size) return fail(error, "Typed Unified decoding requires its fixed record output");
-    record_reader reader = {.bytes = bytes, .error = error, .lease = lease};
+    record_reader reader = {.bytes = bytes, .error = error, .lease = lease,
+        .strings = strings, .baseline_strings = baseline_strings};
     bool okay = record_read(&reader, layout, baseline, out, 0) && reader.at == bytes.size;
     if (!okay) {
         if (!lease) qa_unified_record_dispose(layout, out);
@@ -638,6 +663,7 @@ static bool record_measure(const qa_unified_record_layout *layout, const void *v
     for (size_t i = 0; i < layout->field_count; ++i) {
         const qa_unified_field *f = layout->fields + i; const void *p = field_read(value, f);
         switch (f->kind) {
+        case QA_UNIFIED_FIELD_NAME: break;
         case QA_UNIFIED_FIELD_STRING: {
             const char *text = *(char *const *)p;
             if (text) {

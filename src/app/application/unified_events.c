@@ -1099,6 +1099,7 @@ static bool events_project(qa_application *app, const application_unified_source
         *out = result; return true;
     }
     qa_unified_frame_events *events = calloc(1, sizeof(*events));
+    if (events) { events->strings=qa_session_strings(app->session); qa_strings_retain(events->strings); }
     if (!events) return application_fail(e, QA_ERROR_MEMORY, "Projecting actual typed Source events");
     events->epoch = epoch; events->frame = initial ? 0 : source->frame.number;
     if (presentation_count) events->presentation = calloc(presentation_count, sizeof(*events->presentation));
