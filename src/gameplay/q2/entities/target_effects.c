@@ -27,7 +27,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         .shape = {.kind = QA_SHAPE_POINT},
         .pass_actor = a->id,
         .policy = {.family = QA_COLLISION_Q2,
-                   .contents_mask = 0x6000001,
+                   .contents_mask = qa_collision_contents_mask(0x6000001, QA_COLLISION_Q2),
                    .q2_merged_contents = g->options.edition == QA_Q2_RERELEASE}};
     qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
     if (!frame)

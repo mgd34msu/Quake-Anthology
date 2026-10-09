@@ -107,12 +107,12 @@ static bool observation(qa_bots *b,int32_t client,qa_bot_entity_info *out,qa_err
     bool found;
     return qa_bot_runtime_entity(b->runtime,client,out,&found,e);
 }
-static bool contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_error *e) {
+bool bot_ai_source_point_contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_error *e) {
     qa_point_query query={.point=point,.pass_actor=pass,.q3_server_entities=true,
         .policy={.family=QA_COLLISION_Q3,.q1_hull=-1}};
     qa_point_contents result;
     if(!qa_world_point_contents(b->services.shared.world,&query,&result,e)) return false;
-    *out=result.contents;return true;
+    *out=qa_collision_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token);return true;
 }
 
 bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
@@ -127,7 +127,7 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
         bot_ai_angles(qa_vec_sub(middle,bot_ai_eye(s))))) return true;
     qa_bot_navigation *nav=navigation(b,s);
     int32_t point_contents;
-    SOURCE_CALL(contents(b,bot_ai_eye(s),(qa_actor_id){0},&point_contents,e));
+    SOURCE_CALL(bot_ai_source_point_contents(b,bot_ai_eye(s),(qa_actor_id){0},&point_contents,e));
     bool in_fog=(point_contents&SOURCE_FOG)!=0,in_water=(point_contents&SOURCE_LIQUID)!=0;
     qa_actor_id target=b->services.entity_actor(b->services.context,entity);
     qa_actor_id viewer=b->services.entity_actor(b->services.context,viewer_number);
@@ -135,7 +135,7 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
         uint32_t mask=1|0x10000;
         qa_vec3 start=bot_ai_eye(s),end=middle;
         qa_actor_id pass=viewer,hit=target;
-        SOURCE_CALL(contents(b,middle,(qa_actor_id){0},&point_contents,e));
+        SOURCE_CALL(bot_ai_source_point_contents(b,middle,(qa_actor_id){0},&point_contents,e));
         if(point_contents&SOURCE_LIQUID) mask|=SOURCE_LIQUID;
         if(in_water) {
             if(!(mask&SOURCE_LIQUID)) {pass=target;hit=viewer;start=middle;end=bot_ai_eye(s);}
@@ -145,7 +145,7 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
         SOURCE_CALL(qa_bot_navigation_trace(nav,start,end,NULL,pass,mask,&trace,e));
         /* BotAITrace clears contents in its bsp_trace_t result. */
         if(trace.fraction>=1 || (hit.registry && qa_actor_id_equal(trace.actor,hit))) {
-            SOURCE_CALL(contents(b,middle,(qa_actor_id){0},&point_contents,e));
+            SOURCE_CALL(bot_ai_source_point_contents(b,middle,(qa_actor_id){0},&point_contents,e));
             bool other_fog=(point_contents&SOURCE_FOG)!=0;
             float fog_distance=0;
             if(in_fog && other_fog) {
@@ -209,7 +209,7 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
             if(!trace.start_solid && !trace.all_solid) {
                 qa_vec3 point=trace.end;point.z+=1.0f;int32_t point_contents;
                 SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
-                SOURCE_CALL(contents(b,point,b->services.entity_actor(b->services.context,entity),&point_contents,e));
+                SOURCE_CALL(bot_ai_source_point_contents(b,point,b->services.entity_actor(b->services.context,entity),&point_contents,e));
                 if(!(point_contents&(8|16))) {*out=best;return true;}
             }
         }
@@ -436,7 +436,7 @@ static bool camp(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_erro
     if(in_water) bot_ai_attack_crouch_time_set(s,b->time-1.0f);
     int32_t point_contents,entity;
     SOURCE_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
-    SOURCE_CALL(contents(b,bot_ai_eye(s),bot_ai_source_actor(b,entity),&point_contents,e));
+    SOURCE_CALL(bot_ai_source_point_contents(b,bot_ai_eye(s),bot_ai_source_actor(b,entity),&point_contents,e));
     if(point_contents&SOURCE_LIQUID) {
         if(bot_ai_long_term_goal(s)==BOT_LTG_CAMP_ORDER) {
             SOURCE_CALL(chat(b,s,"camp_stop",NULL,bot_ai_decisionmaker(s),QA_BOT_CHAT_TELL,e));

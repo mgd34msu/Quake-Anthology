@@ -962,11 +962,12 @@ static bool shotgun_pattern(const q3n_frame *f,qa_vec3 muzzle,qa_vec3 direction,
             qa_trace_result water;
             if (!q3n_events_trace(f,muzzle,end,bounds,-1,32,&water,e) || !q3n_effect_bubbles(f,trace.end,water.end,32,e)) return false;
         }
-        if (trace.surface_flags&16) continue;
+        uint32_t surface_flags=(uint32_t)qa_collision_surface_export(trace.surface_flags,QA_COLLISION_Q3);
+        if (surface_flags&16) continue;
         if (f->unified_effects) {
             if (trace.hit==QA_TRACE_HIT_ACTOR) q3n_effect_bleed(f,trace.end,-1);
             else if (!q3n_weapons_impact(f,3,-1,trace.end,trace.contact?trace.contact_plane.normal:qa_v3(0,0,0),
-                (trace.surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
+                (surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
             continue;
         }
         int32_t target;
@@ -979,7 +980,7 @@ static bool shotgun_pattern(const q3n_frame *f,qa_vec3 muzzle,qa_vec3 direction,
             player=row.eType==1;
         }
         if (player) { if (!missile_player(f,3,trace.end,normal,target,e)) return false; }
-        else if (!q3n_weapons_impact(f,3,0,trace.end,normal,(trace.surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
+        else if (!q3n_weapons_impact(f,3,0,trace.end,normal,(surface_flags&4096)?Q3N_IMPACT_METAL:Q3N_IMPACT_DEFAULT,e)) return false;
     }
     return true;
 }

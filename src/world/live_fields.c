@@ -78,14 +78,17 @@ bool qa_entity_body_read(const qa_entity_body_fields *fields,qa_entity_pose pose
                          qa_entity_body_components components,
                          qa_body_state *out,qa_error *error)
 {
-    qa_body_state body={.origin=vector(fields->pose[pose].origin),
-        .angles=vector(fields->pose[pose].angles),
-        .bounds={vector(fields->minimum),vector(fields->maximum)}};
+    qa_body_state body;
+    qa_body_state *selected=components==QA_ENTITY_BODY_ALL?&body:out;
+    selected->origin=vector(fields->pose[pose].origin);
+    selected->angles=vector(fields->pose[pose].angles);
+    selected->bounds=(qa_bounds){vector(fields->minimum),vector(fields->maximum)};
     if(components==QA_ENTITY_BODY_ALL) {
-        body.velocity=vector(fields->velocity);
-        if(!reference(fields->references,fields->ground,&body.ground,error)) return false;
+        selected->velocity=vector(fields->velocity);
+        if(!reference(fields->references,fields->ground,&selected->ground,error)) return false;
+        *out=*selected;
     }
-    *out=body; return true;
+    return true;
 }
 
 static bool flags(qa_entity_scalar_field field,uint32_t *out,qa_error *error)
@@ -102,52 +105,55 @@ bool qa_entity_collision_read(const qa_entity_collision_fields *fields,bool link
                               qa_entity_collision_components components,
                               qa_actor_collision *out,qa_error *error)
 {
-    float q1_solid=0;
-    uint32_t q2_solid=0;
-    qa_collision_role role=QA_COLLISION_SOLID;
-    switch(fields->family) {
-    case QA_COLLISION_Q1:
-        q1_solid=fields->solid.encoding==QA_ENTITY_F32_LE?
-            qa_load_f32le(fields->solid.bytes):(float)(int32_t)word(fields->solid);
-        if(!isfinite(q1_solid)) return fail(error,"Nonfinite entity solid");
-        if(q1_solid==1) role=QA_COLLISION_TRIGGER;
-        break;
-    case QA_COLLISION_Q2:
-        q2_solid=(uint32_t)word(fields->solid);
-        if(q2_solid>3) return fail(error,"Invalid entity solid");
-        if(q2_solid==1) role=QA_COLLISION_TRIGGER;
-        break;
-    case QA_COLLISION_Q3: break;
-    }
-    if(components==QA_ENTITY_COLLISION_ROLE) { out->role=role; return true; }
     uint32_t bits=0;
-    if(!flags(fields->flags,&bits,error)) return false;
-    qa_actor_collision value={.family=fields->family,.shape=QA_SHAPE_BOX,.role=role};
-    uint32_t index=(uint32_t)word(fields->model);
+    qa_actor_collision value;
+    if(components==QA_ENTITY_COLLISION_ALL)
+        value=(qa_actor_collision){.family=fields->family,.shape=QA_SHAPE_BOX,.role=QA_COLLISION_SOLID};
+    uint32_t index=0;
     bool pending=false;
     switch(fields->family) {
     case QA_COLLISION_Q1: {
-        value.contents=q1_solid==0 || q1_solid==1?0:-2;
+        float q1_solid=fields->solid.encoding==QA_ENTITY_F32_LE?
+            qa_load_f32le(fields->solid.bytes):(float)(int32_t)word(fields->solid);
+        if(!isfinite(q1_solid)) return fail(error,"Nonfinite entity solid");
+        qa_collision_role role=q1_solid==1?QA_COLLISION_TRIGGER:QA_COLLISION_SOLID;
+        if(components==QA_ENTITY_COLLISION_ROLE) { out->role=role; return true; }
+        if(!flags(fields->flags,&bits,error)) return false;
+        value.role=role;
+        value.contents=q1_solid==0 || q1_solid==1?(qa_collision_bits){0}:qa_collision_bit(QA_CONTENT_SOLID);
         value.monster=(bits&32u)!=0;
         value.q1_corpse=q1_solid==5 && fields->rerelease;
         value.inline_model=q1_solid==4;
-        float model=fields->model.encoding==QA_ENTITY_F32_LE?
-            qa_load_f32le(fields->model.bytes):(float)(int32_t)index;
-        if(value.inline_model && !isfinite(model))
-            return fail(error,"Nonfinite entity brush model");
-        pending=value.inline_model && model==0 && linking;
+        if(value.inline_model) {
+            index=(uint32_t)word(fields->model);
+            float model=fields->model.encoding==QA_ENTITY_F32_LE?
+                qa_load_f32le(fields->model.bytes):(float)(int32_t)index;
+            if(!isfinite(model)) return fail(error,"Nonfinite entity brush model");
+            pending=model==0 && linking;
+        }
         break;
     }
-    case QA_COLLISION_Q2:
+    case QA_COLLISION_Q2: {
+        uint32_t q2_solid=(uint32_t)word(fields->solid);
+        if(q2_solid>3) return fail(error,"Invalid entity solid");
+        qa_collision_role role=q2_solid==1?QA_COLLISION_TRIGGER:QA_COLLISION_SOLID;
+        if(components==QA_ENTITY_COLLISION_ROLE) { out->role=role; return true; }
+        if(!flags(fields->flags,&bits,error)) return false;
+        value.role=role;
         value.contents=qa_collision_q2_source_contents(q2_solid,bits,fields->rerelease);
         value.monster=(bits&4u)!=0; value.dead_monster=(bits&2u)!=0;
         value.inline_model=q2_solid==3;
+        if(value.inline_model) index=(uint32_t)word(fields->model);
         break;
+    }
     case QA_COLLISION_Q3:
+        if(components==QA_ENTITY_COLLISION_ROLE) { out->role=QA_COLLISION_SOLID; return true; }
+        if(!flags(fields->flags,&bits,error)) return false;
+        index=(uint32_t)word(fields->model);
         value.model=index;
         value.shape=(bits&1024u)?QA_SHAPE_CAPSULE:QA_SHAPE_BOX;
         value.inline_model=word(fields->brush_model)!=0;
-        value.contents=(int32_t)word(fields->contents);
+        value.contents=qa_collision_contents_decode((int32_t)word(fields->contents),QA_COLLISION_Q3);
         value.has_q3_owner=true;
         value.q3_entity_number=fields->entity_number;
         value.q3_owner_number=(int32_t)word(fields->owner);

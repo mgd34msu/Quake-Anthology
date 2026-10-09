@@ -7,7 +7,7 @@ bool q2_player_trace(qa_q2_game *g, qa_actor_id pass, qa_vec3 start, qa_vec3 end
                         .pass_actor = pass,
                         .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
                         .policy = {.family = QA_COLLISION_Q2,
-                                   .contents_mask = mask,
+                                   .contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2),
                                    .q2_merged_contents = g->options.edition == QA_Q2_RERELEASE}};
     if (bounds)
         q.shape.bounds = *bounds;
@@ -347,7 +347,7 @@ static bool coop_trace(qa_q2_game *g, qa_actor_id player, qa_vec3 origin, qa_bou
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
                             .policy = {.family = QA_COLLISION_Q2,
                                        .q2_merged_contents = true,
-                                       .contents_mask = excluded ? 0x2010003 : 0x42010003}};
+                                       .contents_mask = qa_collision_contents_mask(excluded ? 0x2010003 : 0x42010003, QA_COLLISION_Q2)}};
     return excluded ? qa_world_trace_excluding(g->services.world, &query, excluded->ids,
                                                excluded->count, hit, e)
                     : qa_world_trace(g->services.world, &query, hit, e);
@@ -370,11 +370,11 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
         if (!qa_world_point_contents(g->services.world,
                                      &(qa_point_query){.point = center,
                                                        .policy = {.family = QA_COLLISION_Q2,
-                                                                  .contents_mask = UINT32_MAX,
+                                                                  .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_COLLISION_Q2),
                                                                   .q2_merged_contents = true}},
                                      &contents, e))
             return false;
-        if (contents.merged & 56)
+        if (qa_collision_contents_export(contents.merged, QA_COLLISION_Q2, contents.q1_opaque_token) & 56)
             top = fmaxf(top, body.origin.z + body.bounds.maxs.z);
     }
     if (top == -99999)

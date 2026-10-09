@@ -333,7 +333,6 @@ bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *s,
     if (row->modelindex < 0) return fail(error, QA_ERROR_FORMAT, "Negative Q3 trigger inline model");
     qa_trace_query query = {.start = origin, .end = origin, .shape = {QA_SHAPE_BOX, bounds},
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = UINT32_MAX;
     qa_trace_result trace;
     if (!qa_collision_trace_q3_model(geometry, scratch, &query, (uint32_t)row->modelindex, false, &trace, error)) return false;
     *out = trace.start_solid || trace.all_solid;
@@ -361,22 +360,12 @@ static bool pass_number(const qa_q3_prediction_scene_collision *c, qa_actor_id a
     *present = false; *number = QA_Q3_ENTITY_NONE;
     return !actor.registry || c->number_of(c->context, actor, number, present, error);
 }
-static void adapt_trace(qa_trace_result *result, qa_collision_family family)
-{
-    if (family == QA_COLLISION_Q3) return;
-    result->contents = qa_collision_convert_contents(result->contents, QA_COLLISION_Q3, family);
-    result->surface_flags = qa_collision_convert_surface_flags(result->surface_flags, QA_COLLISION_Q3, family);
-    result->surface.flags = qa_collision_convert_surface_flags(result->surface.flags, QA_COLLISION_Q3, family);
-    result->secondary_surface.flags = qa_collision_convert_surface_flags(result->secondary_surface.flags, QA_COLLISION_Q3, family);
-    result->family = family;
-}
 static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
     const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out,
     int32_t *number, qa_error *error)
 {
     if (!query || !out || !collision_valid(s, v, c, error)) return false;
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
-    q.policy.contents_mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
     q.policy.family = QA_COLLISION_Q3;
     uint32_t skip; bool has_skip;
     if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
@@ -412,7 +401,7 @@ static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_
         } else if (result.start_solid) out->start_solid = true;
         if (out->all_solid) break;
     }
-    adapt_trace(out, query->policy.family);
+    qa_collision_adapt_trace(out, &query->policy);
     return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during trace");
 }
 bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
@@ -443,7 +432,9 @@ bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *s, cons
         q.target = (qa_collision_target){true, (uint32_t)row->modelindex, vector(row->origin), vector(row->angles)};
         qa_point_contents result;
         if (!qa_collision_point_contents(c->geometry, c->scratch, &q, &result, error)) return false;
-        out->contents |= result.contents; out->stored |= result.stored; out->merged |= result.merged;
+        out->contents = qa_collision_bits_union(out->contents, result.contents);
+        out->stored = qa_collision_bits_union(out->stored, result.stored);
+        out->merged = qa_collision_bits_union(out->merged, result.merged);
     }
     return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during contents query");
 }

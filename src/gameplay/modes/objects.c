@@ -220,7 +220,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         body.bounds = spec->bounds;
     qa_actor_collision collision = {.family = family(v),
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = 1,
+                                    .contents = qa_collision_contents_decode(1, family(v)),
                                     .role = spec->kind == QA_MODE_OBJECT_BALL ||
                                                     (spec->kind == QA_MODE_OBJECT_OBELISK &&
                                                      v->value.rules.kind == QA_MODE_OVERLOAD)
@@ -384,7 +384,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         qa_trace_query trace = {.start = body.origin,
                                 .end = body.origin,
                                 .shape = {QA_SHAPE_BOX, body.bounds},
-                                .policy = {.family = family(v), .contents_mask = 3, .q1_hull = -1},
+                                .policy = {.family = family(v), .contents_mask = qa_collision_contents_mask(3, family(v)), .q1_hull = -1},
                                 .pass_actor = actor};
         trace.start.z += family(v) == QA_COLLISION_Q1 ? 6 : 1;
         trace.end = trace.start;
@@ -679,7 +679,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     qa_trace_query query = {.start = player.origin,
                             .end = origin,
                             .shape = {QA_SHAPE_BOX, body.bounds},
-                            .policy = {.family = family(v), .contents_mask = 3, .q1_hull = -1},
+                            .policy = {.family = family(v), .contents_mask = qa_collision_contents_mask(3, family(v)), .q1_hull = -1},
                             .pass_actor = actor};
     qa_trace_result trace;
     if (!qa_world_trace(m->options.services.world, &query, &trace, e))
@@ -899,7 +899,8 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
             if (!qa_world_point_contents(m->options.services.world, &query, &contents, e))
                 return false;
             o->next_ns = 0;
-            o->expire_ns = v->value.time_ns + ((contents.contents & 24) ? 3 : 30) * MODE_SECOND;
+            o->expire_ns = v->value.time_ns + (qa_collision_bits_overlap(contents.contents, qa_collision_bits_union(
+                qa_collision_bit(QA_CONTENT_LAVA), qa_collision_bit(QA_CONTENT_SLIME))) ? 3 : 30) * MODE_SECOND;
         }
         if (o->value.phase == QA_OBJECTIVE_CARRIED) {
             if (!mode_live(m, o->value.carrier)) {

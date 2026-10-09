@@ -175,7 +175,7 @@ double q1_shape_support(const q1shape *shape,q1v n) {
 static bool sweep_box(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape *shape,double epsilon,q1interval *out) {
     q1planes planes={0};
     if(!q1_separating_planes(w,cell,shape->axes,&planes)) return false;
-    q1interval interval={-INFINITY,INFINITY,-INFINITY,{{0,0,0},0},0,0};
+    q1interval interval={.enter=-INFINITY,.exit=INFINITY,.contact=-INFINITY};
     for(size_t i=0;i<planes.count;i++) {
         q1p p=planes.items[i]; double distance=p.distance+q1_shape_support(shape,p.normal);
         double a=qdot(start,p.normal)-distance,b=qdot(end,p.normal)-distance;
@@ -272,5 +272,5 @@ bool q1_sweep_cell(q1work *w,const q1cell *cell,q1v start,q1v end,const q1shape 
     if(w->failed) return false;
     bool contact_hit=capsule_entrance(w,cell,start,end,shape,epsilon,&contact,&unused);
     if(w->failed) return false;
-    *out=(q1interval){entrance,reverse_hit?1-reverse:entrance,contact_hit?contact:entrance,plane,0,0}; return true;
+    *out=(q1interval){.enter=entrance,.exit=reverse_hit?1-reverse:entrance,.contact=contact_hit?contact:entrance,.plane=plane}; return true;
 }

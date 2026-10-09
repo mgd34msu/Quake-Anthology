@@ -251,7 +251,7 @@ static bool think(qa_q2_game *game, q2_actor *tip, qa_error *error) {
         body.origin = qa_vec_add(target.origin, p->movedir);
         qa_trace_query query = {.start = from, .end = body.origin,
                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = 3;
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(game->services.world, &query, &trace, error))
             return false;
@@ -403,7 +403,7 @@ static bool fire(q2m_context *context, qa_error *error) {
     qa_trace_query query = {.start = from,
         .end = qa_vec_add(from, qa_vec_scale(direction, 1250 * (float)((double)game->frame_ns / Q2_NS))),
         .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = tip->physics.clip_mask;
+    query.policy.contents_mask = qa_collision_contents_mask(tip->physics.clip_mask, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
         return false;

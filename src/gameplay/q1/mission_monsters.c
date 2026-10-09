@@ -31,7 +31,7 @@ static bool eel_pitch(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents != -3)
+    if (qa_collision_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) != -3)
         return q1_monster_drop_floor(g, entity, error) &&
                q1_damage(g, entity->id, entity->id, (qa_actor_id){0}, 6, QA_Q1_WEAPON_COUNT, error);
     if (g->time < entity->delay)

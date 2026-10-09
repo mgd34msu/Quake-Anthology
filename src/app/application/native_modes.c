@@ -900,7 +900,8 @@ bool application_native_mode_visible(void *opaque, qa_actor_id from, qa_actor_id
     for (size_t i = 0; i < 8; ++i) {
         qa_trace_query query = {.start = a.origin, .end = points[i], .pass_actor = from,
             .shape = {.kind = QA_SHAPE_POINT},
-            .policy = {.family = QA_COLLISION_Q2, .contents_mask = 3, .q1_hull = -1}};
+            .policy = {.family = QA_COLLISION_Q2,
+                .contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2), .q1_hull = -1}};
         qa_trace_result trace;
         if (qa_world_trace(app->world, &query, &trace, NULL) && trace.fraction == 1) return true;
     }

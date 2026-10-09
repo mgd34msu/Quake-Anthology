@@ -834,18 +834,20 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
     else if (!enabled || enabled->number < 2) {
         qa_vec3 start = body.origin; start.z += 1;
         qa_vec3 end = start; end.z -= 9;
-        bool box = !collision.inline_model && collision.role != QA_COLLISION_TRIGGER && collision.contents;
+        bool box = !collision.inline_model && collision.role != QA_COLLISION_TRIGGER &&
+            qa_collision_bits_any(collision.contents);
         end.z += box ? body.bounds.mins.z : -66;
         qa_trace_query query = {.start = start, .end = end,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = {qa_v3(box ? body.bounds.mins.x : 0, box ? body.bounds.mins.y : 0, 0),
                 qa_v3(box ? body.bounds.maxs.x : 0, box ? body.bounds.maxs.y : 0, 0)}},
             .policy = qa_collision_default_policy(QA_COLLISION_Q2), .pass_actor = event->actor};
-        query.policy.contents_mask = 1;
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
         qa_trace_result hit;
         if (!qa_world_trace(world, &query, &hit, error)) return false;
         if (hit.fraction < 1 && hit.has_surface) {
             memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0;
-            query.end = hit.end; query.end.z += 1; query.policy.contents_mask = 1 | 8 | 16 | 32;
+            query.end = hit.end; query.end.z += 1;
+            query.policy.contents_mask = qa_collision_contents_mask(1 | 8 | 16 | 32, QA_COLLISION_Q2);
             if (!qa_world_trace(world, &query, &hit, error)) return false;
             if (hit.has_surface) { memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0; }
         }

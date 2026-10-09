@@ -650,7 +650,7 @@ bool q1_orb_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents == -6)
+    if (qa_collision_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, e, error);
     if (q1_damageable(g, other)) {
         if (!q1_effect(g, QA_BUILTIN_IMPACT, other, value.origin, 18, 1, error) ||

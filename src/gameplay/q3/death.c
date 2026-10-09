@@ -350,7 +350,7 @@ static bool player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
-    if (!q3_drop_player_items(game, actor, (contents.contents & INT32_MIN) != 0, error))
+    if (!q3_drop_player_items(game, actor, qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP)), error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -447,7 +447,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
-    if (contents.contents & INT32_MIN)
+    if (qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP)))
         return true;
     uint32_t queue = game->body_queue_index;
     qa_actor_id corpse = game->body_queue[queue];
@@ -469,7 +469,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     const qa_actor_record *owner_record = qa_actors_get(qa_session_actors(game->options.services.session), actor);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = INT32_C(0x04000000),
+                                    .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_COLLISION_Q3),
                                     .role = QA_COLLISION_SOLID,
                                     .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
                                         qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(actor)};
@@ -573,7 +573,7 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                                 .pass_actor = actor,
                                 .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-        query.policy.contents_mask = 0x10001u;
+        query.policy.contents_mask = qa_collision_contents_mask(0x10001u, QA_COLLISION_Q3);
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return false;
         entry = q3_actor_get(game, actor);
@@ -606,7 +606,7 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error))
         return false;
-    if (contents.contents & INT32_MIN)
+    if (qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP)))
         return qa_world_unlink(game->options.services.world, actor, error);
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_CORPSE)

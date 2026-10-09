@@ -1,17 +1,18 @@
 #include "q3/shared.h"
 #include "qa/stamp.h"
+#include "qa/collision_bits.h"
 #include <float.h>
 #include <stdlib.h>
 
-typedef struct q3_side { uint32_t plane; int32_t flags, contents; } q3_side;
+typedef struct q3_side { uint32_t plane; qa_collision_bits flags, contents; } q3_side;
 typedef struct q3_brush {
     qa_bsp_range sides;
     qa_bounds bounds;
-    int32_t contents;
+    qa_collision_bits contents;
 } q3_brush;
 typedef struct q3_patch_record {
     qa_q3_patch *collide;
-    int32_t contents, flags;
+    qa_collision_bits contents, flags;
 } q3_patch_record;
 typedef struct q3_leaf { qa_bsp_range brushes, surfaces; } q3_leaf;
 typedef struct q3_model {
@@ -49,7 +50,7 @@ typedef struct q3_work {
     qa_collision_trace_rules rules;
     qa_vec3 start, end;
     qa_bounds position_bounds;
-    uint32_t mask;
+    qa_collision_bits mask;
     bool stationary, point_trace, curves, player_curves;
 } q3_work;
 
@@ -155,7 +156,7 @@ static void q3_trace_brush(q3_work *work, uint32_t index) {
     const q3_map *map = work->map;
     const q3_brush *brush = &map->brushes[index];
     if (!qa_stamp_set_mark(&work->scratch->visited, index)) return;
-    if (((uint32_t)brush->contents & work->mask) == 0 || brush->sides.count == 0) return;
+    if (!qa_collision_bits_overlap(brush->contents, work->mask) || brush->sides.count == 0) return;
     if (work->stationary && !qa_bounds_overlap(work->position_bounds, brush->bounds)) return;
     uint32_t skipped = work->stationary && brush->sides.count >= 6 ? 6u : 0u;
     qa_collision_brush_contact contact;
@@ -175,7 +176,7 @@ static void q3_trace_patch(q3_work *work, uint32_t index) {
     const q3_patch_record *patch = &work->map->patches[index];
     if (patch->collide == NULL
         || !qa_stamp_set_mark(&work->scratch->visited, work->map->brush_count + index)) return;
-    if (((uint32_t)patch->contents & work->mask) == 0) return;
+    if (!qa_collision_bits_overlap(patch->contents, work->mask)) return;
     qa_q3_shape shape = work->shape;
     if (work->stationary) {
         if (shape.kind == QA_SHAPE_POINT) shape.kind = QA_SHAPE_BOX;
@@ -266,8 +267,9 @@ static void q3_media_brush(q3_media_work *media, uint32_t index) {
     const q3_map *map = trace->map;
     const q3_brush *brush = &map->brushes[index];
     if (!qa_stamp_set_mark(&trace->scratch->visited, index)) return;
-    int32_t contents = qa_collision_convert_contents(brush->contents, QA_COLLISION_Q3, QA_COLLISION_Q1);
-    if (contents == -1 || brush->sides.count == 0) return;
+    int32_t medium = qa_collision_q1_medium_class(brush->contents);
+    bool solid = medium == -2;
+    if ((medium == -1) || brush->sides.count == 0) return;
     q3_interval interval = {0, trace->result.fraction};
     for (uint32_t i = 0; i < brush->sides.count; ++i) {
         qa_collision_plane plane = map->planes[map->sides[brush->sides.first + i].plane];
@@ -280,7 +282,7 @@ static void q3_media_brush(q3_media_work *media, uint32_t index) {
         else interval.last = fminf(interval.last, crossing);
         if (interval.first > interval.last) return;
     }
-    if (contents == -2) trace->scratch->intervals[media->solid_count++] = interval;
+    if (solid) trace->scratch->intervals[media->solid_count++] = interval;
     else trace->scratch->intervals[map->brush_count + media->liquid_count++] = interval;
 }
 
@@ -344,7 +346,7 @@ bool qa_q3_trace_capsule_replacement(const void *state, void *scratch_state, con
         .rules = qa_collision_rules(&query->policy),
         .result = qa_collision_empty_trace(query, QA_COLLISION_Q3),
         .shape = shape, .start = start, .end = end, .position_bounds = position_bounds,
-        .mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3),
+        .mask = query->policy.contents_mask,
         .stationary = stationary, .point_trace = point_trace,
         .curves = query->policy.curves, .player_curves = query->policy.player_curve_clip};
     qa_stamp_set_begin(&scratch->visited);
@@ -385,7 +387,7 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
     }
     work.point_trace = !work.stationary && q3_same_point(work.shape.mins, qa_v3(0, 0, 0));
     work.position_bounds = q3_shape_bounds(&work.shape, work.start);
-    work.mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
+    work.mask = query->policy.contents_mask;
     work.curves = query->policy.curves;
     work.player_curves = query->policy.player_curve_clip;
     qa_stamp_set_begin(&scratch->visited);
@@ -411,11 +413,11 @@ static bool q3_trace(const void *state, void *scratch, const qa_trace_query *que
         query->target.inline_model, out, error);
 }
 
-static int32_t q3_brush_point(const q3_map *map, uint32_t index, qa_vec3 point) {
+static qa_collision_bits q3_brush_point(const q3_map *map, uint32_t index, qa_vec3 point) {
     const q3_brush *brush = &map->brushes[index];
     for (uint32_t i = 0; i < brush->sides.count; ++i) {
         qa_collision_plane plane = map->planes[map->sides[brush->sides.first + i].plane];
-        if (qa_vec_dot(point, plane.normal) > plane.distance) return 0;
+        if (qa_vec_dot(point, plane.normal) > plane.distance) return (qa_collision_bits){0};
     }
     return brush->contents;
 }
@@ -435,10 +437,10 @@ static bool q3_point_contents(const void *state, void *scratch, const qa_point_q
             point = qa_collision_to_local(point, basis);
         }
     }
-    int32_t contents = 0;
+    qa_collision_bits contents = {0};
     if (model != 0) {
         const q3_model *members = &map->models[model];
-        for (size_t i = 0; i < members->brush_count; ++i) contents |= q3_brush_point(map, members->brushes[i], point);
+        for (size_t i = 0; i < members->brush_count; ++i) contents = qa_collision_bits_union(contents, q3_brush_point(map, members->brushes[i], point));
     } else {
         int32_t index = map->node_count != 0 ? 0 : -1;
         while (index >= 0) {
@@ -447,9 +449,10 @@ static bool q3_point_contents(const void *state, void *scratch, const qa_point_q
         }
         const q3_leaf *leaf = &map->leaves[-1 - index];
         for (uint32_t i = 0; i < leaf->brushes.count; ++i)
-            contents |= q3_brush_point(map, map->leaf_brushes[leaf->brushes.first + i], point);
+            contents = qa_collision_bits_union(contents, q3_brush_point(map, map->leaf_brushes[leaf->brushes.first + i], point));
     }
-    *out = (qa_point_contents){QA_COLLISION_Q3, contents, contents, contents};
+    *out = (qa_point_contents){.family = QA_COLLISION_Q3, .contents = contents,
+        .stored = contents, .merged = contents};
     return true;
 }
 
@@ -541,18 +544,21 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology 
             if (!qa_bsp_read_shader(bsp, (size_t)side.shader, &shader, error)) goto fail;
             flags = shader.surface_flags;
         }
-        map->sides[i] = (q3_side){side.plane, flags, 0};
+        map->sides[i] = (q3_side){.plane = side.plane,
+            .flags = qa_collision_surface_decode(flags, QA_COLLISION_Q3)};
     }
     for (size_t i = 0; i < map->brush_count; ++i) {
         qa_bsp_brush source;
         if (!qa_bsp_read_brush(bsp, i, &source, error)) goto fail;
         q3_brush *brush = &map->brushes[i];
-        brush->sides = source.sides; brush->contents = source.contents;
+        brush->sides = source.sides;
+        int32_t contents = source.contents;
         if (bsp->format != QA_BSP_IBSP44) {
             qa_bsp_shader shader;
             if (!qa_bsp_read_shader(bsp, (size_t)source.shader, &shader, error)) goto fail;
-            brush->contents = shader.content_flags;
+            contents = shader.content_flags;
         }
+        brush->contents = qa_collision_contents_decode(contents, QA_COLLISION_Q3);
         for (uint32_t side = 0; side < source.sides.count; ++side)
             map->sides[source.sides.first + side].contents = brush->contents;
         brush->bounds = (qa_bounds){qa_v3(-FLT_MAX, -FLT_MAX, -FLT_MAX), qa_v3(FLT_MAX, FLT_MAX, FLT_MAX)};
@@ -598,7 +604,8 @@ bool qa_q3_collision_create(const qa_bsp_view *bsp, const qa_collision_topology 
         } else {
             qa_bsp_shader shader;
             if (!qa_bsp_read_shader(bsp, (size_t)surface.shader, &shader, error)) goto fail;
-            patch->flags = shader.surface_flags; patch->contents = shader.content_flags;
+            patch->flags = qa_collision_surface_decode(shader.surface_flags, QA_COLLISION_Q3);
+            patch->contents = qa_collision_contents_decode(shader.content_flags, QA_COLLISION_Q3);
         }
         qa_vec3 *points = q3_alloc(surface.vertices.count, sizeof(*points), error);
         if (points == NULL) goto fail;

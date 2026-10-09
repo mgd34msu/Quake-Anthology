@@ -196,7 +196,7 @@ static bool item_availability(qa_q3_game *game, qa_actor_id actor, bool availabl
     entry->state.item.expire_at = expire;
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = Q3_CONTENTS_TRIGGER,
+                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3),
                                     .role = QA_COLLISION_TRIGGER};
     if (!qa_world_set_collision(game->options.services.world, actor,
                                 available ? &collision : NULL, error))
@@ -347,7 +347,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
     body.ground = (qa_actor_reference){0};
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = Q3_CONTENTS_TRIGGER,
+                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3),
                                     .role = QA_COLLISION_TRIGGER};
     int32_t ground_entity_number = 0;
     bool on_ground = false;
@@ -357,7 +357,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
                                 .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                                 .pass_actor = actor,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-        query.policy.contents_mask = 1;
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q3);
         qa_trace_result trace;
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return false;
@@ -1213,7 +1213,7 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                             .policy = qa_collision_default_policy(QA_COLLISION_Q3),
                             .pass_actor = owner};
-    query.policy.contents_mask = 0x10001u;
+    query.policy.contents_mask = qa_collision_contents_mask(0x10001u, QA_COLLISION_Q3);
     qa_trace_result trace;
     if (!qa_world_trace(game->options.services.world, &query, &trace, error))
         return false;
@@ -1248,7 +1248,7 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return true;
     item = &entry->state.item;
-    if (contents.contents & INT32_MIN) {
+    if (qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP))) {
         uint32_t index = item->spawn.item_index;
         if (items[index].kind == QA_Q3_ITEM_TEAM) {
             if (!game->options.hooks.objective_nodrop)

@@ -148,10 +148,10 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
                 &(qa_point_query){
                     .point = qa_vec_add(
                         b.origin, qa_vec_scale(qa_vec_add(b.bounds.mins, b.bounds.maxs), .5f)),
-                    .policy = {.family = QA_COLLISION_Q2, .contents_mask = UINT32_MAX}},
+                    .policy = {.family = QA_COLLISION_Q2, .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_COLLISION_Q2)}},
                 &contents, e))
             return false;
-        if (contents.contents & 56) {
+        if (qa_collision_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token) & 56) {
             s->message = 0;
             s->touchable = false;
             s->enemy = activator;

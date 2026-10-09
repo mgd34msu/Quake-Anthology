@@ -1,7 +1,18 @@
 #include "internal.h"
 
 static bool collision(q2_save_io *io, qa_actor_collision *s) {
-    Q2U(family); Q2U(shape); Q2B(inline_model); Q2U(model); Q2I(contents); Q2U(role);
+    Q2U(family); Q2U(shape); Q2B(inline_model); Q2U(model);
+    int32_t native_contents = io->reading ? 0 :
+        qa_collision_contents_export(s->contents, s->family, s->q1_opaque_token);
+    if (!q2_save_i32(io, &native_contents)) return false;
+    if (io->reading) {
+        qa_collision_terminal terminal = s->family == QA_COLLISION_Q1
+            ? qa_collision_q1_terminal(native_contents)
+            : (qa_collision_terminal){qa_collision_contents_decode(native_contents, s->family), 0};
+        s->contents = terminal.bits;
+        s->q1_opaque_token = terminal.opaque_token;
+    }
+    Q2U(role);
     Q2B(monster); Q2B(dead_monster); Q2B(q1_corpse); Q2B(has_q3_owner);
     Q2I(q3_entity_number); Q2I(q3_owner_number);
     return q2_save_actor_pointer(io, &s->owner);

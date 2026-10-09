@@ -36,9 +36,9 @@ static bool trace(q2m_context *c, qa_vec3 start, qa_vec3 end, const qa_bounds *b
                    uint32_t mask, qa_trace_result *out, qa_error *error) {
     qa_trace_query query = {.start = start, .end = end, .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = mask;
+    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2);
     if (c->game->options.edition == QA_Q2_RERELEASE)
-        query.policy.contents_mask |= UINT32_C(0x40000000);
+        query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_COLLISION_Q2));
     if (bounds)
         query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = *bounds};
     return qa_world_trace(c->game->services.world, &query, out, error);
@@ -49,7 +49,7 @@ static bool contents(q2m_context *c, qa_vec3 point, uint32_t *out, qa_error *err
     qa_point_contents result;
     if (!qa_world_point_contents(c->game->services.world, &query, &result, error))
         return false;
-    *out = (uint32_t)result.contents;
+    *out = (uint32_t)qa_collision_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token);
     return true;
 }
 static bool transition(q2m_context *c, bool *allowed, qa_error *error) {
@@ -63,7 +63,7 @@ static bool transition(q2m_context *c, bool *allowed, qa_error *error) {
         return false;
     if (!q2m_alive(c))
         return true;
-    if (result.fraction == 1 || !(result.contents & 1) || !world_hit(c, &result)) {
+    if (result.fraction == 1 || !(qa_collision_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token) & 1) || !world_hit(c, &result)) {
         float normal = result.contact ? result.contact_plane.normal.z : 0;
         if (ceiling ? normal < .9f : normal > -.9f)
             return true;
@@ -81,7 +81,7 @@ static bool transition(q2m_context *c, bool *allowed, qa_error *error) {
         end.z = height;
         if (!trace(c, start, end, NULL, Q2M_MONSTER_MASK, &result, error))
             return false;
-        if (!q2m_alive(c) || result.fraction == 1 || !(result.contents & 1) ||
+        if (!q2m_alive(c) || result.fraction == 1 || !(qa_collision_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token) & 1) ||
             !world_hit(c, &result) || fabsf(truncf(height - result.end.z)) > 8)
             return true;
     }
@@ -223,7 +223,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
                     qa_trace_query query = {.start = origin,
                         .end = qa_vec_add(origin, qa_vec_scale(velocity, .1f)),
                         .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-                    query.policy.contents_mask = UINT32_C(0x46000003);
+                    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000003), QA_COLLISION_Q2);
                     qa_trace_result result;
                     if (!qa_world_trace(c->game->services.world, &query, &result, error))
                         return false;
@@ -232,7 +232,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
                     origin = result.end;
                     if (result.fraction >= 1)
                         continue;
-                    if (result.has_surface && (result.surface_flags & 4))
+                    if (result.has_surface && (qa_collision_surface_export(result.surface_flags, QA_COLLISION_Q2) & 4))
                         break;
                     qa_vec3 normal = result.contact ? result.contact_plane.normal : qa_v3(0, 0, 0);
                     origin = qa_vec_add(origin, normal);
@@ -395,7 +395,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
         return false;
     if (!q2m_alive(c) || result.fraction == 1 || result.all_solid || result.start_solid)
         return true;
-    if (rerelease && position < 0 && (result.contents & 32)) {
+    if (rerelease && position < 0 && (qa_collision_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token) & 32)) {
         qa_trace_result deep;
         if (!trace(c, result.end, end, NULL, Q2M_MONSTER_MASK, &deep, error))
             return false;
@@ -424,7 +424,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
             }
         }
     }
-    if (!((uint32_t)result.contents & (rerelease ? 35u : 3u)))
+    if (!((uint32_t)qa_collision_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token) & (rerelease ? 35u : 3u)))
         return true;
     if (position < 0) {
         if (self_min - result.end.z < 24 || enemy_min - result.end.z > 32 ||

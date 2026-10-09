@@ -91,7 +91,7 @@ static bool escape_lava(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents != -5 || !ending_actor(g, id))
+    if (qa_collision_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) != -5 || !ending_actor(g, id))
         return true;
     qa_actor_id point;
     if (!first_target(g, "point1", &point, error))

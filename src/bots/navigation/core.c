@@ -175,7 +175,7 @@ bool qa_bot_navigation_trace(qa_bot_navigation *n, qa_vec3 start, qa_vec3 end,
     if (!n) return bot_nav_fail(e, "missing bot trace owner");
     qa_trace_query query = {.start = start, .end = end,
         .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
-        .policy = {.family = QA_COLLISION_Q3, .contents_mask = mask, .q1_hull = -1,
+        .policy = {.family = QA_COLLISION_Q3, .contents_mask = qa_collision_contents_mask(mask,QA_COLLISION_Q3), .q1_hull = -1,
                    .curves = true, .player_curve_clip = true}, .pass_actor = pass};
     if (bounds) query.shape.bounds = *bounds;
     return qa_world_trace(n->world, &query, out, e);
@@ -185,7 +185,7 @@ bool qa_bot_navigation_contents(qa_bot_navigation *n, qa_vec3 point, int32_t *ou
     qa_point_query q = {.point = point, .policy = {.family = QA_COLLISION_Q3, .q1_hull = -1}};
     qa_point_contents contents;
     if (!qa_world_point_contents(n->world, &q, &contents, e)) return false;
-    *out = contents.contents;
+    *out = qa_collision_contents_export(contents.contents,QA_COLLISION_Q3,contents.q1_opaque_token);
     return true;
 }
 bool qa_bot_navigation_swimming(qa_bot_navigation *n, qa_vec3 point, bool *out, qa_error *e) {

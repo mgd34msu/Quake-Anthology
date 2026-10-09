@@ -29,7 +29,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
             .pass_actor = owner,
             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = 1;
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;

@@ -168,7 +168,7 @@ bool qa_move_same_ground(qa_movement_ground a, qa_movement_ground b) {
     return a.hit==b.hit && (a.hit==QA_TRACE_HIT_NONE ||
         (a.hit==QA_TRACE_HIT_WORLD?a.model==b.model:qa_actor_id_equal(a.actor,b.actor)));
 }
-static qa_trace_policy policy(qa_move_context *c, uint32_t mask) {
+static qa_trace_policy policy(qa_move_context *c, qa_collision_bits mask) {
     qa_collision_family f=family(c->state->kind);
     qa_trace_policy p=c->input->has_trace_policy?c->input->trace_policy:qa_collision_default_policy(f);
     p.family=f; p.contents_mask=mask;
@@ -182,7 +182,7 @@ static bool trace_query(qa_move_context *c, const qa_trace_query *q, qa_trace_re
         return fail(c,"Movement trace returned an invalid family, fraction or position");
     return true;
 }
-bool qa_move_trace(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_bounds bounds, uint32_t mask, bool world_only, qa_trace_result *out) {
+bool qa_move_trace(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_bounds bounds, qa_collision_bits mask, bool world_only, qa_trace_result *out) {
     qa_trace_query q={.start=start,.end=end,.shape={c->input->shape.kind,bounds},
         .policy=policy(c,mask),.pass_actor=c->input->actor};
     if (c->input->environment.fixed_pose) q.shape.kind=QA_SHAPE_BOX;
@@ -190,17 +190,21 @@ bool qa_move_trace(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_bounds bou
     return trace_query(c,&q,out);
 }
 bool qa_move_trace_q1(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_trace_shape shape, qa_q1_move_kind move, qa_trace_result *out) {
-    qa_trace_query q={.start=start,.end=end,.shape=shape,.policy=policy(c,UINT32_MAX),.pass_actor=c->input->actor};
+    qa_trace_query q={.start=start,.end=end,.shape=shape,
+        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,QA_COLLISION_Q1)),.pass_actor=c->input->actor};
     q.policy.q1_move=move; q.policy.q1_hull=-1;
     return trace_query(c,&q,out);
 }
 bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
     if (c->failed||c->removed) return false;
-    qa_point_query q={.point=point,.policy=policy(c,UINT32_MAX),.pass_actor=c->input->actor};
+    qa_point_query q={.point=point,
+        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,family(c->state->kind))),.pass_actor=c->input->actor};
     qa_point_contents result;
     if (!c->services->point_contents(c->services->context,&q,&result,c->error)) { c->failed=true; return false; }
     if (result.family!=q.policy.family) return fail(c,"Movement contents returned another collision family");
-    *out=result.family==QA_COLLISION_Q2?(q.policy.q2_merged_contents?result.merged:result.stored):result.contents;
+    qa_collision_bits selected=result.family==QA_COLLISION_Q2?
+        (q.policy.q2_merged_contents?result.merged:result.stored):result.contents;
+    *out=qa_collision_contents_export(selected,result.family,result.q1_opaque_token);
     if (result.family==QA_COLLISION_Q1 && *out<=-9 && *out>=-14) *out=-3;
     return true;
 }
@@ -282,7 +286,7 @@ bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touc
     if (c->state->kind==QA_MOVEMENT_Q3) return qa_move_emit(c,(qa_movement_effect){.kind=QA_MOVE_EFFECT_TOUCH,.trace=trace});
     return true;
 }
-bool qa_move_bounds(qa_move_context *c, qa_bounds requested, uint32_t mask, qa_bounds *out) {
+bool qa_move_bounds(qa_move_context *c, qa_bounds requested, qa_collision_bits mask, qa_bounds *out) {
     qa_bounds previous=c->result->bounds;
     bool expands=requested.mins.x<previous.mins.x||requested.mins.y<previous.mins.y||requested.mins.z<previous.mins.z||
         requested.maxs.x>previous.maxs.x||requested.maxs.y>previous.maxs.y||requested.maxs.z>previous.maxs.z;

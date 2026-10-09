@@ -236,7 +236,11 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
             cluster = i == 0 ? -1 : (int64_t)i - 1;
             area = 0;
         } else if (geometry->family == QA_COLLISION_Q2 && vis.size == 0 && cluster != -1) cluster = 0;
-        geometry->leaves[i] = (qa_collision_leaf){(uint32_t)i, cluster, area, leaf.contents};
+        qa_collision_terminal terminal = geometry->family == QA_COLLISION_Q1 ?
+            qa_collision_q1_terminal(leaf.contents) : (qa_collision_terminal){
+                qa_collision_contents_decode(leaf.contents, geometry->family), 0};
+        geometry->leaves[i] = (qa_collision_leaf){(uint32_t)i, cluster, area,
+            terminal.bits, terminal.opaque_token};
         if (cluster >= 0 && (uint64_t)cluster + 1u > geometry->cluster_count) {
             if ((uint64_t)cluster >= UINT32_MAX)
                 return geometry_fail(error, QA_ERROR_FORMAT, "BSP cluster count exceeds the collision range");
@@ -527,7 +531,7 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_sc
         if (child < 0) {
             size_t leaf = leaf_index(child);
             if (q1_touched) {
-                if (geometry->leaves[leaf].contents == -2) continue;
+                if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
             } else if (geometry->family == QA_COLLISION_Q1) {
                 if (leaf == 0 || !qa_stamp_set_mark(&scratch->leaves, leaf)) continue;
             }
@@ -653,7 +657,7 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_trace_scr
         int32_t child = scratch->nodes[--count];
         if (child < 0) {
             size_t leaf = leaf_index(child);
-            if (geometry->leaves[leaf].contents == -2) continue;
+            if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
             qa_bytes row;
             if (!visibility_row(geometry, leaf, false, &row, error)) return false;
             for (size_t i = 0; i < geometry->visibility_bytes; ++i) bytes[i] |= row.data[i];

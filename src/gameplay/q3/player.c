@@ -584,7 +584,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                         .shape = QA_SHAPE_BOX,
-                                        .contents = Q3_CONTENTS_BODY,
+                                        .contents = qa_collision_contents_decode(Q3_CONTENTS_BODY, QA_COLLISION_Q3),
                                         .role = QA_COLLISION_SOLID};
         if (!qa_world_set_collision(game->options.services.world, actor, &collision, error))
             return false;
@@ -1147,7 +1147,7 @@ static bool gib(qa_q3_game *game, qa_actor_id actor, int32_t killer, qa_error *e
         source->type = 10;
         qa_actor_collision collision;
         if (!qa_world_get_collision(game->options.services.world, actor, &collision, error)) return false;
-        collision.contents = 0;
+        collision.contents = (qa_collision_bits){0};
         return qa_combat_set_traits(game->options.services.combat, actor, &state, error) &&
             qa_world_set_collision(game->options.services.world, actor, &collision, error);
     }
@@ -1277,7 +1277,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
             qa_actor_collision collision;
             if (!qa_world_get_collision(game->options.services.world, corpse, &collision, error))
                 return false;
-            collision.contents = 0;
+            collision.contents = (qa_collision_bits){0};
             return qa_combat_set_traits(game->options.services.combat, corpse, &combat, error) &&
                 qa_world_set_collision(game->options.services.world, corpse, &collision, error);
         }
@@ -1338,7 +1338,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     body.bounds.maxs.z = -8;
     qa_actor_collision corpse_collision = {.family = QA_COLLISION_Q3,
                                            .shape = QA_SHAPE_BOX,
-                                           .contents = INT32_C(0x04000000),
+                                           .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_COLLISION_Q3),
                                            .role = QA_COLLISION_SOLID};
     if (!native_client && !q3_death_rewards(game, actor, &outcome->request, error))
         return false;
@@ -1383,7 +1383,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
     player = &entry->state.player;
     bool suicide = outcome->request.attack.cause.kind == QA_CAUSE_Q3 &&
                    outcome->request.attack.cause.source.q3.means_of_death == 20;
-    if ((combat.health <= -40 && !(contents.contents & INT32_MIN) && game->options.rules.blood) ||
+    if ((combat.health <= -40 && !qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP)) && game->options.rules.blood) ||
         suicide)
         return gib(game, actor, killer, error);
     if (combat.health <= -40 &&

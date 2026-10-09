@@ -9,7 +9,8 @@ bool bot_against_ladder(bot_travel *t, bool *out, qa_error *e) {
         qa_point_contents contents;
         if (!qa_bot_navigation_selected_contents(t->navigation, bot_move_vector(t->state,BM_ORIGIN), &contents, e))
             return false;
-        *out = contents.family == QA_COLLISION_Q2 && (contents.merged & 0x20000000);
+        *out = contents.family == QA_COLLISION_Q2 &&
+            qa_collision_bits_overlap(contents.merged,qa_collision_bit(QA_CONTENT_LADDER));
         return true;
     }
     static const qa_vec3 offsets[] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {-1, 1, 0}, {-1, -1, 0}};

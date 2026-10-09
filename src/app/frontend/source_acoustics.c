@@ -56,7 +56,8 @@ static bool trace(void *context,const qa_audio_listener *listener,qa_vec3 start,
     if (!found) return frontend_fail(error,QA_ERROR_ARGUMENT,"Acoustic listener has no actual full actor identity");
     if (owner->private_scenes[listener->seat]) {
         qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_POINT},
-            .policy={.family=QA_COLLISION_Q3,.contents_mask=3,.curves=true},.pass_actor=pass};
+            .policy={.family=QA_COLLISION_Q3,.contents_mask=qa_collision_contents_mask(3,QA_COLLISION_Q3),
+                .curves=true},.pass_actor=pass};
         qa_trace_result result;
         if (!qa_q3_host_collision_trace(owner->private_scenes[listener->seat],&query,&result,error)) return false;
         *out=(qa_audio_trace_hit){.fraction=result.fraction,.start_solid=result.start_solid,

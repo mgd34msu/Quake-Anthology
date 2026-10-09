@@ -90,7 +90,7 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         qa_trace_query query = {.start = start, .end = body.origin,
             .pass_actor = context->actor->id,
             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = Q2M_ATTACK_MASK;
+        query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(context->game->services.world, &query, &trace, error))
             return false;
@@ -136,7 +136,7 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         if (!q2m_alive(context))
             return true;
         qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q2);
-        policy.contents_mask = 1u;
+        policy.contents_mask = qa_collision_contents_mask(1u, QA_COLLISION_Q2);
         bool visible;
         if (!qa_builtin_can_damage(&context->game->services, context->body.origin,
                                     monster->enemy, context->actor->id, policy, true,

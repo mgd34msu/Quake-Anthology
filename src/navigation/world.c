@@ -71,14 +71,16 @@ bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_a
             return false;
     } else if (!qa_world_point_contents(s->world, &q, &sample, e))
         return false;
+    int32_t contents=qa_collision_contents_export(
+        sample.family==QA_COLLISION_Q2?sample.merged:sample.contents,
+        sample.family,sample.q1_opaque_token);
     if (sample.family == QA_COLLISION_Q1) {
-        *out = sample.contents == -3   ? QA_NAV_WATER
-               : sample.contents == -4 ? QA_NAV_SLIME
-               : sample.contents == -5 ? QA_NAV_LAVA
+        *out = contents == -3   ? QA_NAV_WATER
+               : contents == -4 ? QA_NAV_SLIME
+               : contents == -5 ? QA_NAV_LAVA
                                        : 0;
     } else {
-        uint32_t value =
-            (uint32_t)(sample.family == QA_COLLISION_Q2 ? sample.merged : sample.contents);
+        uint32_t value = (uint32_t)contents;
         *out = ((value & 32) != 0 ? QA_NAV_WATER : 0) | ((value & 16) != 0 ? QA_NAV_SLIME : 0) |
                ((value & 8) != 0 ? QA_NAV_LAVA : 0) |
                (sample.family == QA_COLLISION_Q2 && (value & UINT32_C(0x20000000)) != 0

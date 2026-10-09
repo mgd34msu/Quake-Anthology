@@ -12,7 +12,7 @@ static bool wet(q2m_context *c, bool *result, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(c->game->services.world, &query, &contents, error))
         return false;
-    *result = ((uint32_t)contents.contents & Q2M_WATER_MASK) != 0;
+    *result = ((uint32_t)qa_collision_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token) & Q2M_WATER_MASK) != 0;
     return true;
 }
 
@@ -132,7 +132,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
                                                      .maxs = {32, 32, -8}}},
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
         query.end = query.start;
-        query.policy.contents_mask = 3;
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(c->game->services.world, &query, &trace, error))
             return false;

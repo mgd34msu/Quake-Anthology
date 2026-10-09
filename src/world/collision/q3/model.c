@@ -23,9 +23,9 @@ static qa_collision_side_distances q3_box_distances(void *context,size_t side,bo
 }
 
 static void trace_box(qa_trace_result *result, qa_bounds target, qa_vec3 start, qa_vec3 end,
-                      const qa_q3_shape *shape, bool stationary, uint32_t mask, int32_t contents,
+                      const qa_q3_shape *shape, bool stationary, qa_collision_bits mask, qa_collision_bits contents,
                       const qa_collision_brush_rules *rules) {
-    if (((uint32_t)contents & mask) == 0) return;
+    if (!qa_collision_bits_overlap(contents, mask)) return;
     if (stationary) {
         if (qa_bounds_overlap(q3_shape_bounds(shape, start), target)) {
             result->start_solid = result->all_solid = true;
@@ -42,7 +42,7 @@ static void trace_box(qa_trace_result *result, qa_bounds target, qa_vec3 start, 
             result->has_secondary=true;
             result->secondary_plane=box_plane(target,(unsigned)contact.secondary);
         }
-        result->surface_flags = 0;
+        result->surface_flags = (qa_collision_bits){0};
     }
 }
 
@@ -76,7 +76,7 @@ static float line_distance_squared(qa_vec3 point, qa_vec3 start, qa_vec3 end, qa
 
 static void trace_rounded(qa_trace_result *result, qa_vec3 origin, float radius,
                           bool cylinder, float halfheight, qa_vec3 start, qa_vec3 end,
-                          qa_vec3 model_origin, int32_t contents,float epsilon) {
+                          qa_vec3 model_origin, qa_collision_bits contents,float epsilon) {
     qa_vec3 first = start, last = end, center = origin;
     if (cylinder) { first.z = 0; last.z = 0; center.z = 0; }
     qa_vec3 delta = qa_vec_sub(first, center), end_delta = qa_vec_sub(last, center);
@@ -138,7 +138,7 @@ static void position_capsule(qa_trace_result *result, qa_vec3 center, const qa_q
 }
 
 static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
-                         qa_vec3 origin, int32_t contents, bool transformed, const void *replacement_map,
+                         qa_vec3 origin, qa_collision_bits contents, bool transformed, const void *replacement_map,
                          void *replacement_scratch,
                          qa_trace_result *out, qa_error *error) {
     if (query == NULL || out == NULL || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
@@ -168,7 +168,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         shape.mins = qa_vec_sub(shape.mins, center); shape.extents = qa_vec_sub(shape.extents, center);
         start = qa_vec_add(start, center); end = qa_vec_add(end, center);
     }
-    uint32_t mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
+    qa_collision_bits mask = query->policy.contents_mask;
     const qa_collision_brush_rules rules=qa_collision_rules(&query->policy).brush;
     if (target_kind == QA_SHAPE_BOX) trace_box(&result, target_bounds, start, end, &shape, stationary, mask, contents,&rules);
     else {
@@ -189,7 +189,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
                  * them against the original moving box, then skips six sides. */
                 qa_bounds original = {qa_vec_add(start, shape.mins), qa_vec_add(start, shape.extents)};
                 qa_bounds box = {shape.mins, shape.extents};
-                if (((uint32_t)contents & mask) != 0 && qa_bounds_overlap(original, box)) {
+                if (qa_collision_bits_overlap(contents, mask) && qa_bounds_overlap(original, box)) {
                     result.fraction = 0; result.all_solid = result.start_solid = true; result.contents = contents;
                 }
             } else {
@@ -226,7 +226,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
 }
 
 bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
-                        qa_vec3 origin, int32_t contents, qa_trace_result *out, qa_error *error) {
+                        qa_vec3 origin, qa_collision_bits contents, qa_trace_result *out, qa_error *error) {
     return trace_shape(query, target_kind, target_bounds, origin, contents, true, NULL, NULL, out, error);
 }
 
@@ -234,7 +234,7 @@ bool qa_q3_trace_capsule_source(const qa_trace_query *query, qa_bounds bounds, b
                                 const void *replacement_map, void *replacement_scratch, qa_trace_result *out, qa_error *error) {
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
-    return trace_shape(&local, QA_SHAPE_CAPSULE, bounds, local.target.origin, 0x02000000,
+    return trace_shape(&local, QA_SHAPE_CAPSULE, bounds, local.target.origin, qa_collision_bit(QA_CONTENT_BODY),
                        transformed, replacement_map, replacement_scratch, out, error);
 }
 
@@ -242,6 +242,6 @@ bool qa_q3_trace_box_source(const qa_trace_query *query, qa_bounds bounds, bool 
                             qa_trace_result *out, qa_error *error) {
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
-    return trace_shape(&local, QA_SHAPE_BOX, bounds, local.target.origin, 0x02000000,
+    return trace_shape(&local, QA_SHAPE_BOX, bounds, local.target.origin, qa_collision_bit(QA_CONTENT_BODY),
                        transformed, NULL, NULL, out, error);
 }

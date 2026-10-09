@@ -525,7 +525,7 @@ static bool trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 finish,
     qa_trace_query query={.start=start,.end=finish,.shape={QA_SHAPE_BOX,bounds}}; int32_t number;
     if(!out || o->entered!=f->remote || !policy(o,f,&query.policy,e) || !skip_actor(o,skip,&query.pass_actor,e) ||
        !frontend_remote_q3_frame_network_source(o->frames,f->remote,&source,e))return false;
-    query.policy.contents_mask=mask;
+    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3);
     return frontend_network_prediction_trace_with_number(o->frontend,&source,&query,out,&number,e) &&
         cut(o,f,e) && retain_trace(o,out,number,e);
 }
@@ -544,14 +544,14 @@ static bool point_contents(void *context,const q3n_frame *f,qa_vec3 point,int32_
     if(!out || !policy(o,f,&query.policy,e) || !skip_actor(o,pass,&query.pass_actor,e) ||
        !frontend_remote_q3_frame_network_source(o->frames,f->remote,&source,e) ||
        !frontend_network_prediction_point_contents(o->frontend,&source,&query,&result,e) || !cut(o,f,e))return false;
-    *out=(uint32_t)result.contents; return true;
+    *out=(uint32_t)qa_collision_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token); return true;
 }
 static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 finish,qa_bounds bounds,
     uint32_t mask,qa_trace_result *out,qa_error *e)
 {
     frontend_remote_q3_runtime *o=context; qa_trace_query query={.start=start,.end=finish,.shape={QA_SHAPE_BOX,bounds}};
     if(!policy(o,f,&query.policy,e))return false;
-    query.policy.contents_mask=mask;
+    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3);
     return qa_collision_trace(o->services.resources.geometry,o->services.resources.trace_scratch,&query,out,e) && cut(o,f,e);
 }
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
@@ -559,7 +559,7 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
     frontend_remote_q3_runtime *o=context; qa_point_query query={.point=point}; qa_point_contents result;
     if(!out || !policy(o,f,&query.policy,e) || !qa_collision_point_contents(o->services.resources.geometry,o->services.resources.trace_scratch,&query,&result,e) ||
        !cut(o,f,e))return false;
-    *out=(uint32_t)result.contents; return true;
+    *out=(uint32_t)qa_collision_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token); return true;
 }
 static bool mark_fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,qa_vec3 projection,
     qa_vec3 *output,size_t point_capacity,q3n_mark_fragment *fragments,size_t fragment_capacity,size_t *returned,qa_error *e)

@@ -384,7 +384,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                               .policy = {.family = QA_COLLISION_Q2, .q2_merged_contents = rr}},
             &contents, e))
         return false;
-    int mask = rr ? contents.merged : contents.contents;
+    int mask = rr ? qa_collision_contents_export(contents.merged, QA_COLLISION_Q2, contents.q1_opaque_token) : qa_collision_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token);
     if (mask & 9)
         view.blend = blend_add(view.blend, qa_v3(1, .3f, 0), .6f);
     else if (mask & 16)

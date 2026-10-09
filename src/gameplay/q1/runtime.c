@@ -941,7 +941,7 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     qa_actor_collision collision = {.family = QA_COLLISION_Q1,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = -2,
+                                    .contents = qa_collision_contents_decode(-2, QA_COLLISION_Q1),
                                     .owner = entity->owner,
                                     .monster = (entity->physics.flags & QA_PHYSICS_MONSTER) != 0,
                                     .q1_corpse = entity->physics.solid == QA_PHYSICS_CORPSE,
@@ -1861,7 +1861,8 @@ bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *err
         return true;
     /* The native Q1 host exposes its six material names, unlike QC's raw
      * contents interface. Unknown source values become empty here. */
-    int32_t value = contents.contents <= -2 && contents.contents >= -6 ? contents.contents : -1;
+    int32_t value = qa_collision_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
+    if (value > -2 || value < -6) value = -1;
     qa_q1_water_transition_result transition =
         qa_q1_water_transition(entity->physics.water_type, value);
     if (transition.splash && !q1_sound(g, actor, "misc/h2ohit1.wav", 0, 1, error))

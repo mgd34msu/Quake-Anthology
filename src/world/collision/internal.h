@@ -13,7 +13,7 @@ bool qa_collision_q1_membership_visible(qa_bytes, const qa_collision_leaf *, siz
 
 typedef struct qa_collision_ops {
     void (*destroy)(void *);
-    /* Results use the geometry's native family; the shared layer adapts them.
+    /* Results retain canonical contents and surface flags; the shared layer adapts contact metadata.
      * For Q1 policies on Q2/Q3 maps, also classify the reached segment's media. */
     bool (*trace)(const void *, void *, const qa_trace_query *, qa_trace_result *, qa_error *);
     bool (*point_contents)(const void *, void *, const qa_point_query *, qa_point_contents *, qa_error *);
@@ -38,7 +38,7 @@ typedef struct qa_collision_brush_contact { size_t side, secondary; } qa_collisi
 /* Format readers supply shape distances; one clipper keeps native contact rules. */
 bool qa_collision_trace_brush(void *, qa_collision_side_distances_fn,
     size_t first_side, size_t side_count, bool stationary,
-    const qa_collision_brush_rules *, int32_t contents,
+    const qa_collision_brush_rules *, qa_collision_bits contents,
     qa_trace_result *, qa_collision_brush_contact *);
 
 typedef struct qa_collision_trace_frame {
@@ -74,13 +74,12 @@ bool qa_q3_collision_create(const qa_bsp_view *, const qa_collision_topology *, 
 /* Temporary actor geometry. Q1 preserves recursive box-hull behavior; Q3
  * implements boxes and capsules, including capsule-vs-capsule sweeps. */
 bool qa_q1_trace_box(const qa_trace_query *, qa_bounds target, qa_vec3 origin, qa_trace_result *, qa_error *);
-bool qa_q3_trace_shape(const qa_trace_query *, qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin, int32_t contents, qa_trace_result *, qa_error *);
+bool qa_q3_trace_shape(const qa_trace_query *, qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin, qa_collision_bits contents, qa_trace_result *, qa_error *);
 bool qa_q3_trace_model_source(const void *, void *, const qa_trace_query *, uint32_t, bool,
                                qa_trace_result *, qa_error *);
 bool qa_q3_trace_box_source(const qa_trace_query *, qa_bounds, bool, qa_trace_result *, qa_error *);
 bool qa_q3_trace_capsule_source(const qa_trace_query *, qa_bounds, bool transformed,
                                 const void *replacement_map, void *scratch, qa_trace_result *, qa_error *);
-void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
 void qa_collision_adapt_point(qa_point_contents *, const qa_trace_policy *);
 
 static inline qa_vec3 qa_bsp_to_vec(qa_bsp_vec3 v) { return qa_v3(v.x,v.y,v.z); }
@@ -91,7 +90,7 @@ static inline qa_collision_plane qa_collision_make_plane(qa_vec3 n, float distan
 static inline qa_collision_plane qa_collision_bsp_plane(qa_bsp_plane p) { return qa_collision_make_plane(qa_bsp_to_vec(p.normal),p.distance,p.type); }
 static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, qa_collision_family family) {
     qa_trace_result result={0}; result.family=family; result.fraction=1.0f; result.end=q->end;
-    result.contents=family==QA_COLLISION_Q1?-1:0; result.model=q->target.inline_model?q->target.model:0; return result;
+    result.contents=(qa_collision_bits){0}; result.model=q->target.inline_model?q->target.model:0; return result;
 }
 static inline float qa_vec_component(qa_vec3 v, unsigned axis) { return axis==0?v.x:axis==1?v.y:v.z; }
 static inline float qa_collision_plane_distance(qa_vec3 point, const qa_collision_plane *plane) {
