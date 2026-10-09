@@ -25,7 +25,7 @@ typedef struct qa_bot_catalog_services {
     qa_vfs *files;
     qa_bot_source_memory memory;
     bool (*print)(void *,const char *,qa_error *);
-    bool (*cvar)(void *,const char *,qa_cvar_view *,bool *,qa_error *);
+    qa_cvars *cvars;
     bool (*register_cvar)(void *,const char *,const char *,uint32_t,qa_error *);
     bool (*set_cvar)(void *,const char *,const char *,qa_error *);
     bool (*server_info)(void *,char *,size_t,qa_error *);

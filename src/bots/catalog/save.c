@@ -62,6 +62,6 @@ bool qa_bot_catalog_restore(qa_bot_catalog *c,qa_bytes bytes,qa_error *e) {
     scratch->services=c->services;qa_source_save_io io={0};++c->calls;
     bool okay=qa_source_save_reader(&io,c->services.session,bytes,e) && signature(&io) && fields(&io,scratch) && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);--c->calls;
-    if(okay) *c=*scratch;
+    if(okay) {bot_catalog_bind_controls(scratch);*c=*scratch;}
     free(scratch);return okay;
 }

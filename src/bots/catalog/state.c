@@ -3,7 +3,7 @@
 
 bool qa_bot_catalog_create(const qa_bot_catalog_services *s,qa_bot_catalog **out,qa_error *e) {
     if(!s || !out || *out || !s->files || !s->memory.allocate || !s->memory.read || !s->memory.write ||
-       !s->print || !s->cvar || !s->register_cvar || !s->set_cvar || !s->server_info || !s->clock ||
+       !s->print || !s->cvars || !s->register_cvar || !s->set_cvar || !s->server_info || !s->clock ||
        !s->client || !s->allocate_client || !s->choose_team || !s->activate || !s->userinfo ||
        !s->set_userinfo || !s->connect || !s->begin || !s->reset_podium || !s->insert_command ||
        !s->append_command || !s->server_command || !s->random)
@@ -21,27 +21,28 @@ bool qa_bot_catalog_destroy(qa_bot_catalog *c,qa_error *e) {
 uint32_t qa_bot_catalog_bot_count(const qa_bot_catalog *c) {return c?c->bots.count:0;}
 uint32_t qa_bot_catalog_arena_count(const qa_bot_catalog *c) {return c?c->arenas.count:0;}
 bool bot_catalog_cvar(qa_bot_catalog *c,const char *name,char *out,size_t capacity,int32_t *integer,qa_error *e) {
-    qa_cvar_view actual={0};bool found;
-    if(!c->services.cvar(c->services.context,name,&actual,&found,e)) return false;
-    if(integer) *integer=found?actual.integer:0;
+    const qa_cvar_view *actual=qa_cvars_find(c->services.cvars,name);
+    if(integer) *integer=actual?actual->integer:0;
     if(out) {
         if(!capacity) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"source catalogue cvar output has no capacity");
-        const char *text=found?actual.value:"";
+        const char *text=actual?actual->value:"";
         if(!text) return bot_catalog_fail(e,QA_ERROR_FORMAT,"source catalogue cvar has no actual text");
         size_t length=strlen(text);if(length>=capacity) length=capacity-1;
         memcpy(out,text,length);out[length]=0;
     }
     return true;
 }
+void bot_catalog_bind_controls(qa_bot_catalog *c) {
+    c->minimum_handle=qa_cvars_resolve(c->services.cvars,"bot_minplayers");
+}
 bool bot_catalog_minimum_update(qa_bot_catalog *c,qa_error *e) {
-    qa_cvar_view actual={0};bool found;
-    if(!c->services.cvar(c->services.context,"bot_minplayers",&actual,&found,e)) return false;
-    if(!found || (c->minimum_registered && c->minimum_modification==actual.modification_count)) return true;
-    if(!actual.value || strlen(actual.value)>255)
+    const qa_cvar_view *actual=qa_cvars_read(c->services.cvars,c->minimum_handle);
+    if(!actual || (c->minimum_registered && c->minimum_modification==actual->modification_count)) return true;
+    if(!actual->value || strlen(actual->value)>255)
         return bot_catalog_fail(e,QA_ERROR_FORMAT,"Bot cvar value exceeds source storage");
-    strcpy(c->minimum_value,actual.value);c->minimum_numeric=actual.number;
-    c->minimum_length=strlen(actual.value);
-    c->minimum_integer=actual.integer;c->minimum_modification=actual.modification_count;
+    strcpy(c->minimum_value,actual->value);c->minimum_numeric=actual->number;
+    c->minimum_length=strlen(actual->value);
+    c->minimum_integer=actual->integer;c->minimum_modification=actual->modification_count;
     c->minimum_registered=true;return true;
 }
 static bool parse_infos(qa_bot_catalog *c,qa_common_cursor *cursor,bot_catalog_infos *destination,qa_error *e) {
@@ -105,12 +106,11 @@ static bool load_catalog(qa_bot_catalog *c,bool bots,qa_error *e) {
     destination->count=0;
     const char *variable=bots?"g_botsFile":"g_arenasFile",*kind=bots?"bots":"arenas";
     if(!c->services.register_cvar(c->services.context,variable,"",QA_CVAR_INIT|QA_CVAR_READONLY,e)) return false;
-    qa_cvar_view value={0};bool found;
-    if(!c->services.cvar(c->services.context,variable,&value,&found,e)) return false;
-    if(found && (!value.value || strlen(value.value)>255))
+    const qa_cvar_view *value=qa_cvars_find(c->services.cvars,variable);
+    if(value && (!value->value || strlen(value->value)>255))
         return bot_catalog_fail(e,QA_ERROR_FORMAT,"Bot cvar value exceeds source storage");
     char filename[256];
-    if(found && *value.value) strcpy(filename,value.value);
+    if(value && *value->value) strcpy(filename,value->value);
     else snprintf(filename,sizeof(filename),"scripts/%s.txt",kind);
     if(!load_file(c,filename,destination,e)) return false;
     qa_vfs_listing listing={0};
@@ -163,6 +163,7 @@ bool qa_bot_catalog_initialize(qa_bot_catalog *c,bool restart,qa_error *e) {
     }
     if(okay) okay=c->services.register_cvar(c->services.context,"bot_minplayers","0",QA_CVAR_SERVERINFO,e);
     if(okay) {
+        bot_catalog_bind_controls(c);
         c->minimum_registered=true;c->minimum_modification=UINT64_MAX;
         c->minimum_value[0]=0;c->minimum_length=0;c->minimum_numeric=0;c->minimum_integer=0;
         okay=bot_catalog_minimum_update(c,e);

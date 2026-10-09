@@ -28,14 +28,6 @@ static bool print(void *context,const char *text,qa_error *error) {
     application_bots *bots=context;qa_bot_services ai=application_bots_services(bots);
     return ai.print(ai.context,text,error);
 }
-static bool cvar(void *context,const char *name,qa_cvar_view *out,bool *found,qa_error *error) {
-    application_bots *bots=context;application_provider *actual;
-    if(!source(bots,&actual,error)) return false;
-    qa_cvars *owner=registry(bots,name);
-    if(!owner) return application_fail(error,QA_ERROR_NOT_FOUND,"bot catalogue cvar owner is absent");
-    const qa_cvar_view *value=qa_cvars_find(owner,name);*found=value!=NULL;
-    *out=value?*value:(qa_cvar_view){0};return true;
-}
 static bool register_cvar(void *context,const char *name,const char *value,uint32_t flags,qa_error *error) {
     application_bots *bots=context;qa_bot_services ai=application_bots_services(bots);
     return ai.register_cvar(ai.context,name,value,flags,error);
@@ -169,7 +161,7 @@ bool application_bots_catalog_create(application_bots *bots,qa_error *error) {
     if(!bots || bots->catalogue || !source(bots,&actual,error)) return false;
     qa_bot_services ai=application_bots_services(bots);
     qa_bot_catalog_services services={.context=bots,.session=bots->application->session,.files=bots->files,
-        .memory=ai.memory,.print=print,.cvar=cvar,.register_cvar=register_cvar,.set_cvar=set_cvar,
+        .memory=ai.memory,.print=print,.cvars=registry(bots,NULL),.register_cvar=register_cvar,.set_cvar=set_cvar,
         .server_info=server_info,.clock=clock_read,.client=client_read,.allocate_client=allocate_client,
         .choose_team=choose_team,.activate=activate,.userinfo=userinfo,.set_userinfo=set_userinfo,
         .connect=connect_client,.begin=begin_client,.reset_podium=reset_podium,.insert_command=insert_command,

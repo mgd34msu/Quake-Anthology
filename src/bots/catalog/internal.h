@@ -18,6 +18,7 @@ struct qa_bot_catalog {
     bot_catalog_infos bots,arenas;
     struct {int32_t client;double time;} queue[BOT_CATALOG_QUEUE];
     qa_common_parser parser;
+    qa_cvar_handle minimum_handle;
     char minimum_value[256];
     size_t minimum_length;
     double minimum_numeric,check_minimum_time;
@@ -35,6 +36,7 @@ bool bot_catalog_text(qa_bot_catalog *,qa_bot_source_record,qa_buffer *,qa_error
 bool bot_catalog_write(qa_bot_catalog *,qa_bot_source_record,const char *,qa_error *);
 bool bot_catalog_lookup(qa_bot_catalog *,bot_catalog_infos *,const char *,const char *,qa_buffer *,bool *,qa_error *);
 bool bot_catalog_cvar(qa_bot_catalog *,const char *,char *,size_t,int32_t *,qa_error *);
+void bot_catalog_bind_controls(qa_bot_catalog *);
 bool bot_catalog_minimum_update(qa_bot_catalog *,qa_error *);
 bool bot_catalog_spawn_list(qa_bot_catalog *,const char *,int32_t,qa_error *);
 bool bot_catalog_minimum_check(qa_bot_catalog *,qa_error *);
