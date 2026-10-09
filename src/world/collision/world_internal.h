@@ -5,17 +5,17 @@
 #include "../entity_internal.h"
 
 #define QA_SPATIAL_SECTORS 31u
+#define QA_SPATIAL_NONE UINT32_MAX
 typedef struct qa_spatial_sector {
     int axis;
     float distance;
     uint32_t front, back;
-    qa_spatial_member *head, *tail;
+    uint32_t head, tail;
 } qa_spatial_sector;
-struct qa_spatial_member {
-    qa_spatial_actor actor;
-    uint32_t sector;
-    qa_spatial_member *previous, *next, *retired_next;
-};
+typedef struct qa_spatial_cursor {
+    struct qa_spatial_cursor *outer;
+    uint32_t next;
+} qa_spatial_cursor;
 typedef struct qa_world_snapshot_frame {
     struct qa_world_snapshot_frame *next;
     qa_actor_id *actors;
@@ -36,7 +36,7 @@ struct qa_world {
     qa_world_hooks hooks;
     uint32_t capacity;
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
-    qa_spatial_member *retired, *spare_members;
+    qa_spatial_cursor *cursors;
     uint32_t visit_depth, callback_depth;
     uint64_t attachment_order, body_serial;
     qa_actor_id collision_link_actor;
@@ -49,8 +49,7 @@ static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *wor
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
 qa_world_body *qa_world_raw_body(const qa_world *, uint32_t);
 bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);
-qa_spatial_member *qa_spatial_prepare(qa_world *, const qa_linked_body *, const qa_actor_collision *, qa_error *);
-void qa_spatial_publish(qa_world *, qa_world_body *, qa_spatial_member *);
+void qa_spatial_publish(qa_world *, qa_world_body *);
 void qa_spatial_remove(qa_world *, qa_world_body *);
 void qa_spatial_dispose(qa_world *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, const qa_spatial_actor *);

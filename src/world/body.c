@@ -147,15 +147,15 @@ bool qa_world_geometry_admission_validate(qa_world_geometry_admission *token,qa_
     if(token==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing geometry admission");
     qa_world *world=token->world;
     if(world->geometry_admission!=token || world->callback_depth!=0 || world->visit_depth!=0
-        || qa_actors_count(world->actors)!=0 || world->retired!=NULL)
+        || qa_actors_count(world->actors)!=0)
         return fail(error,QA_ERROR_ARGUMENT,"Geometry publication requires an idle empty world");
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *body=qa_world_raw_body(world,slot);
-        if(body!=NULL && (body->present || body->member!=NULL))
+        if(body!=NULL && (body->present || body->spatial_linked))
             return fail(error,QA_ERROR_ARGUMENT,"Forward all body releases before geometry publication");
     }
     for(uint32_t i=0;i<QA_SPATIAL_SECTORS;++i)
-        if(world->sectors[i].head!=NULL || world->sectors[i].tail!=NULL)
+        if(world->sectors[i].head!=QA_SPATIAL_NONE || world->sectors[i].tail!=QA_SPATIAL_NONE)
             return fail(error,QA_ERROR_ARGUMENT,"Geometry publication found retained spatial links");
     return true;
 }
@@ -467,7 +467,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     uint64_t serial=body->storage_serial;
     uint64_t previous_count=body->link_count;
     bool previous_linked=body->linked;
-    qa_spatial_member *previous_member=body->member;
+    bool previous_spatial=body->spatial_linked;
     qa_actor_collision collision;
     qa_error local={0};
     if(!qa_world_get_link_collision(world,linked->actor,&collision,&local)) {
@@ -477,11 +477,11 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     }
     if(qa_world_find_body(world,linked->actor)!=body || body->storage_serial!=serial)
         return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during collision link read");
-    if(body->link_count!=previous_count || body->linked!=previous_linked || body->member!=previous_member)
+    if(body->link_count!=previous_count || body->linked!=previous_linked || body->spatial_linked!=previous_spatial)
         return fail(error,QA_ERROR_ARGUMENT,"Body link changed during collision link read");
-    if(policy==BODY_LINK_COMMIT && body->linked && body->member && same_state(&body->link.state,&linked->state)
+    if(policy==BODY_LINK_COMMIT && body->linked && body->spatial_linked && same_state(&body->link.state,&linked->state)
         && same_bounds(body->link.absolute_bounds,linked->absolute_bounds)
-        && same_collision(&body->member->actor.collision,&collision)) return true;
+        && same_collision(&body->spatial_collision,&collision)) return true;
     qa_linked_body snapshot=*linked;
     if(policy!=BODY_LINK_RESTORE) {
         if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
@@ -493,10 +493,9 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         if(!qa_world_link_membership(world,linked->actor,&linked->absolute_bounds,
             body->leaf_policy,&membership,error)) return false;
     }
-    qa_spatial_member *member=qa_spatial_prepare(world,linked,&collision,error);
-    if(member==NULL) return false;
     body->linked=true; body->link=*linked; body->link_count=linked->link_count;
-    qa_spatial_publish(world,body,member);
+    body->spatial_collision=collision;
+    qa_spatial_publish(world,body);
     qa_linked_body copy=*linked;
     if(body->external && body->binding.linked!=NULL) {
         qa_body_binding binding=body->binding;

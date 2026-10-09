@@ -3,7 +3,6 @@
 
 #include "qa/world.h"
 
-typedef struct qa_spatial_member qa_spatial_member;
 typedef struct qa_world_body {
     qa_world *world;
     qa_actor_id actor;
@@ -18,7 +17,9 @@ typedef struct qa_world_body {
     uint64_t attachment_order;
     qa_linked_body link;
     uint64_t link_count;
-    qa_spatial_member *member;
+    qa_actor_collision spatial_collision;
+    uint32_t spatial_previous, spatial_next, spatial_sector;
+    bool spatial_linked;
     qa_collision_leaf *leaves;
     size_t leaf_count, leaf_capacity;
     qa_bounds leaf_bounds;

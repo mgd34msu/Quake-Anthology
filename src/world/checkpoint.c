@@ -47,7 +47,8 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
         if (body && body->present) ++value.body_count;
     }
     for (uint32_t sector = 0; sector < QA_SPATIAL_SECTORS; ++sector)
-        for (qa_spatial_member *member = world->sectors[sector].head; member; member = member->next)
+        for (uint32_t slot = world->sectors[sector].head; slot != QA_SPATIAL_NONE;
+             slot = qa_world_raw_body(world, slot)->spatial_next)
             ++value.spatial_count;
     if (value.body_count > SIZE_MAX / sizeof(*value.bodies) ||
         value.spatial_count > SIZE_MAX / sizeof(*value.spatial))
@@ -82,7 +83,7 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
         qa_error collision_error = {0};
         if (ok) record->effective_collision = qa_world_get_collision(world, body->actor, &record->collision, &collision_error);
         if (collision_error.code != QA_OK) { if (error) *error = collision_error; ok = false; }
-        if (ok && body->member) record->retained_collision = body->member->actor.collision;
+        if (ok && body->spatial_linked) record->retained_collision = body->spatial_collision;
         if (ok) ok = save_reference(world, record->state.ground, &record->ground, &record->ground_kind,
                         &record->ground_owner, &record->has_ground, error) &&
             save_reference(world, record->stored_state.ground, &record->stored_ground, &record->stored_ground_kind,
@@ -111,10 +112,12 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
     }
     index = 0;
     for (uint32_t sector = 0; ok && sector < QA_SPATIAL_SECTORS; ++sector)
-        for (qa_spatial_member *member = world->sectors[sector].head; member; member = member->next) {
+        for (uint32_t slot = world->sectors[sector].head; slot != QA_SPATIAL_NONE;
+             slot = qa_world_raw_body(world, slot)->spatial_next) {
             if (index == value.spatial_count) { ok = false; break; }
             value.spatial[index].sector = sector;
-            ok = qa_actors_save_reference(world->actors, member->actor.body.actor, &value.spatial[index].actor, error);
+            ok = qa_actors_save_reference(world->actors, qa_world_raw_body(world, slot)->actor,
+                                         &value.spatial[index].actor, error);
             ++index;
             if (!ok) break;
         }
@@ -180,10 +183,10 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         (value->body_count && !value->bodies) || (value->spatial_count && !value->spatial) ||
         value->body_count > world->capacity || value->spatial_count > value->body_count)
         return checkpoint_fail(error, QA_ERROR_ARGUMENT, "Invalid candidate world checkpoint");
-    qa_spatial_member **members = value->spatial_count ? calloc(value->spatial_count, sizeof(*members)) : NULL;
+    qa_actor_collision *published = value->spatial_count ? calloc(value->spatial_count, sizeof(*published)) : NULL;
     checkpoint_slot *slots = calloc(world->capacity, sizeof(*slots));
-    if (!slots || (value->spatial_count && !members)) {
-        free(slots); free(members);
+    if (!slots || (value->spatial_count && !published)) {
+        free(slots); free(published);
         return checkpoint_fail(error, QA_ERROR_MEMORY, "Allocating candidate spatial checkpoint");
     }
     bool ok = true;
@@ -350,10 +353,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         qa_actor_collision empty = {.family = qa_collision_geometry_family(world->geometry)};
         bool empty_link = collision_equal(retained, empty);
         if(!empty_link && !qa_world_collision_validate(world,&retained,error)) { ok=false; break; }
-        members[i] = calloc(1, sizeof(*members[i]));
-        if (!members[i]) { ok = checkpoint_fail(error, QA_ERROR_MEMORY, "Allocating restored spatial member"); break; }
-        members[i]->actor = (qa_spatial_actor){body->link, retained};
-        members[i]->sector = saved->sector;
+        published[i] = retained;
         uint32_t sector = 0;
         while (world->sectors[sector].axis >= 0) {
             const qa_spatial_sector *split = world->sectors + sector;
@@ -369,21 +369,27 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         qa_spatial_dispose(world);
         for (uint32_t slot = 0; slot < world->capacity; ++slot) {
             qa_world_body *body = qa_world_raw_body(world, slot);
-            if (body) body->member = NULL;
+            if (body) body->spatial_linked = false;
         }
         for (size_t i = 0; i < value->spatial_count; ++i) {
-            qa_spatial_member *member = members[i];
-            qa_spatial_sector *sector = world->sectors + member->sector;
-            member->previous = sector->tail;
-            if (sector->tail) sector->tail->next = member; else sector->head = member;
-            sector->tail = member;
-            qa_world_find_body(world, member->actor.body.actor)->member = member;
-            members[i] = NULL;
+            const qa_world_spatial_checkpoint *saved = value->spatial + i;
+            const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, saved->actor);
+            uint32_t slot = actor->id.slot;
+            qa_world_body *body = qa_world_find_body(world, actor->id);
+            qa_spatial_sector *sector = world->sectors + saved->sector;
+            body->spatial_previous = sector->tail;
+            body->spatial_next = QA_SPATIAL_NONE;
+            body->spatial_sector = saved->sector;
+            body->spatial_collision = published[i];
+            body->spatial_linked = true;
+            if (sector->tail != QA_SPATIAL_NONE)
+                qa_world_raw_body(world, sector->tail)->spatial_next = slot;
+            else sector->head = slot;
+            sector->tail = slot;
         }
         world->attachment_order = value->attachment_order;
         world->body_serial = value->body_serial;
     }
-    for (size_t i = 0; i < value->spatial_count; ++i) free(members ? members[i] : NULL);
-    free(members); free(slots);
+    free(published); free(slots);
     return ok;
 }

@@ -8,6 +8,7 @@ static bool fail(qa_error *error,qa_status code,const char *message)
 static void build_sector(qa_world *world,uint32_t index,qa_bounds bounds,unsigned depth,uint32_t *next)
 {
     qa_spatial_sector *sector=&world->sectors[index];
+    sector->head=sector->tail=QA_SPATIAL_NONE;
     sector->axis=-1;
     if(depth==4) return;
     unsigned axis=(bounds.maxs.x-bounds.mins.x)>(bounds.maxs.y-bounds.mins.y)?0u:1u;
@@ -25,95 +26,88 @@ bool qa_spatial_initialize(qa_world *world,qa_bounds bounds,qa_error *error)
     uint32_t next=1; build_sector(world,0,bounds,0,&next); return true;
 }
 
-qa_spatial_member *qa_spatial_prepare(qa_world *world,const qa_linked_body *body,const qa_actor_collision *collision,qa_error *error)
-{
-    qa_spatial_member *member=world->spare_members;
-    if(member!=NULL) world->spare_members=member->retired_next;
-    else member=malloc(sizeof(*member));
-    if(member==NULL) { fail(error,QA_ERROR_MEMORY,"Cannot allocate spatial link"); return NULL; }
-    *member=(qa_spatial_member){.actor={*body,*collision}}; return member;
-}
-
 void qa_spatial_remove(qa_world *world,qa_world_body *body)
 {
-    qa_spatial_member *member=body->member;
-    if(member==NULL) return;
-    qa_spatial_sector *sector=&world->sectors[member->sector];
-    if(member->previous==NULL) sector->head=member->next;
-    else member->previous->next=member->next;
-    if(member->next==NULL) sector->tail=member->previous;
-    else member->next->previous=member->previous;
-    body->member=NULL;
-    /* A live visitor may already have captured this generation's next link.
-     * Keep its pointers intact until the outermost visit returns. */
-    if(world->visit_depth!=0) { member->retired_next=world->retired; world->retired=member; }
-    else { member->retired_next=world->spare_members; world->spare_members=member; }
+    if(!body->spatial_linked) return;
+    uint32_t slot=body->actor.slot;
+    uint32_t previous=body->spatial_previous,next=body->spatial_next;
+    qa_spatial_sector *sector=&world->sectors[body->spatial_sector];
+    for(qa_spatial_cursor *cursor=world->cursors;cursor!=NULL;cursor=cursor->outer)
+        if(cursor->next==slot) cursor->next=next;
+    if(previous==QA_SPATIAL_NONE) sector->head=next;
+    else qa_world_raw_body(world,previous)->spatial_next=next;
+    if(next==QA_SPATIAL_NONE) sector->tail=previous;
+    else qa_world_raw_body(world,next)->spatial_previous=previous;
+    body->spatial_linked=false;
+    body->spatial_previous=body->spatial_next=QA_SPATIAL_NONE;
 }
 
-void qa_spatial_publish(qa_world *world,qa_world_body *body,qa_spatial_member *member)
+void qa_spatial_publish(qa_world *world,qa_world_body *body)
 {
     qa_spatial_remove(world,body);
     uint32_t index=0;
-    qa_bounds bounds=member->actor.body.absolute_bounds;
+    qa_bounds bounds=body->link.absolute_bounds;
     while(world->sectors[index].axis>=0) {
         qa_spatial_sector *sector=&world->sectors[index]; unsigned axis=(unsigned)sector->axis;
         if(qa_vec_component(bounds.mins,axis)>sector->distance) index=sector->front;
         else if(qa_vec_component(bounds.maxs,axis)<sector->distance) index=sector->back;
         else break;
     }
-    qa_spatial_sector *sector=&world->sectors[index]; member->sector=index;
-    if(member->actor.collision.family==QA_COLLISION_Q3) {
-        member->next=sector->head;
-        if(sector->head!=NULL) sector->head->previous=member; else sector->tail=member;
-        sector->head=member;
+    qa_spatial_sector *sector=&world->sectors[index]; body->spatial_sector=index;
+    uint32_t slot=body->actor.slot;
+    if(body->spatial_collision.family==QA_COLLISION_Q3) {
+        body->spatial_previous=QA_SPATIAL_NONE;
+        body->spatial_next=sector->head;
+        if(sector->head!=QA_SPATIAL_NONE) qa_world_raw_body(world,sector->head)->spatial_previous=slot;
+        else sector->tail=slot;
+        sector->head=slot;
     } else {
-        member->previous=sector->tail;
-        if(sector->tail!=NULL) sector->tail->next=member; else sector->head=member;
-        sector->tail=member;
+        body->spatial_previous=sector->tail;
+        body->spatial_next=QA_SPATIAL_NONE;
+        if(sector->tail!=QA_SPATIAL_NONE) qa_world_raw_body(world,sector->tail)->spatial_next=slot;
+        else sector->head=slot;
+        sector->tail=slot;
     }
-    body->member=member;
-}
-
-static void recycle_retired(qa_world *world)
-{
-    while(world->retired!=NULL) {
-        qa_spatial_member *member=world->retired;
-        world->retired=member->retired_next;
-        member->retired_next=world->spare_members; world->spare_members=member;
-    }
+    body->spatial_linked=true;
 }
 
 void qa_spatial_dispose(qa_world *world)
 {
     for(uint32_t index=0;index<QA_SPATIAL_SECTORS;++index) {
-        qa_spatial_member *member=world->sectors[index].head;
-        while(member!=NULL) { qa_spatial_member *next=member->next; free(member); member=next; }
-        world->sectors[index].head=NULL; world->sectors[index].tail=NULL;
+        uint32_t slot=world->sectors[index].head;
+        while(slot!=QA_SPATIAL_NONE) {
+            qa_world_body *body=qa_world_raw_body(world,slot);
+            slot=body->spatial_next;
+            body->spatial_linked=false;
+            body->spatial_previous=body->spatial_next=QA_SPATIAL_NONE;
+        }
+        world->sectors[index].head=world->sectors[index].tail=QA_SPATIAL_NONE;
     }
-    recycle_retired(world);
     while(world->snapshot_frames!=NULL) {
         qa_world_snapshot_frame *frame=world->snapshot_frames;
         world->snapshot_frames=frame->next;
         free(frame->actors); free(frame);
-    }
-    while(world->spare_members!=NULL) {
-        qa_spatial_member *member=world->spare_members;
-        world->spare_members=member->retired_next; free(member);
     }
 }
 
 static bool visit_sector(qa_world *world,uint32_t index,qa_bounds bounds,qa_spatial_raw_fn visit,void *context)
 {
     qa_spatial_sector *sector=&world->sectors[index];
-    for(qa_spatial_member *member=sector->head;member!=NULL;) {
-        qa_spatial_member *next=member->next;
-        if(qa_bounds_overlap(member->actor.body.absolute_bounds,bounds)) {
-            qa_spatial_visit result=visit(context,&member->actor);
-            if(result==QA_SPATIAL_STOP) return false;
-            if(result==QA_SPATIAL_STOP_SECTOR) return true;
+    qa_spatial_cursor cursor={.outer=world->cursors,.next=sector->head};
+    world->cursors=&cursor;
+    qa_spatial_visit result=QA_SPATIAL_CONTINUE;
+    while(cursor.next!=QA_SPATIAL_NONE) {
+        qa_world_body *body=qa_world_raw_body(world,cursor.next);
+        cursor.next=body->spatial_next;
+        if(qa_bounds_overlap(body->link.absolute_bounds,bounds)) {
+            qa_spatial_actor actor={body->link,body->spatial_collision};
+            result=visit(context,&actor);
+            if(result!=QA_SPATIAL_CONTINUE) break;
         }
-        member=next;
     }
+    world->cursors=cursor.outer;
+    if(result==QA_SPATIAL_STOP) return false;
+    if(result==QA_SPATIAL_STOP_SECTOR) return true;
     if(sector->axis>=0) {
         unsigned axis=(unsigned)sector->axis;
         if(qa_vec_component(bounds.maxs,axis)>sector->distance && !visit_sector(world,sector->front,bounds,visit,context)) return false;
@@ -127,7 +121,6 @@ bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn vis
     if(world==NULL || visit==NULL || !qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial visit");
     if(world->visit_depth==UINT32_MAX) return fail(error,QA_ERROR_ARGUMENT,"Spatial visit nesting exhausted");
     ++world->visit_depth; (void)visit_sector(world,0,bounds,visit,context); --world->visit_depth;
-    if(world->visit_depth==0) recycle_retired(world);
     return true;
 }
 
