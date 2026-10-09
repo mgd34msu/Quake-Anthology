@@ -78,7 +78,6 @@ capacity exhaustion. Every edition still fails the allocation target.
 | `src/app/frontend/remote_unified_render.c:69,319,361` | Reuse retained presentation records and interned identity fields; stop cloning text and UI arrays for each frame. |
 | `src/app/frontend/remote_unified_q2.c:194,206` | Retain immutable changed configuration and reuse player records, preserving original status layouts. |
 | `src/app/frontend/unified_q3_client.c:192,204` | Retain bounded history and reliable command storage; stop deep-copying 64 command token records on every frame. |
-| `src/app/application/native_q3_client_time.c:41` | Refresh actual SystemInfo only when its reliable revision changes; invalidate on existing lifecycle reset boundaries. |
 | `src/render/scene/models/images.c:8`, `src/render/material/library.c:204` | Keep admitted image/material handles through model submission rather than creating copied names. |
 
 The census is diagnostic attribution, not a timing comparison. The gate must
@@ -92,6 +91,15 @@ Across 600 unchanged publications, its 600 catalog allocations and frees
 become zero. GCC/Clang plain and sanitizer pairs, all three engine builds and
 seven core checks per build pass. This removes one attributed caller; the
 whole-frame requirement remains open.
+
+Native Q3 SystemInfo now retains its reliable configstring revision. Unchanged
+frames do no text copying, parsing or cvar writes. Existing video reset and
+retained-round admission invalidate it; restored services begin invalid without
+adding a save field. Component comparisons cover changed revisions, manual
+timescale edits, retry after failure and the actual service save codec. Over
+600 unchanged frames, 1,200 allocation/free pairs and 1,200 cvar writes become
+zero. Three engine builds and seven core checks per build pass. A changed
+revision still copies its text; other frame allocation callers remain open.
 
 ## Jobs: THE-2871
 

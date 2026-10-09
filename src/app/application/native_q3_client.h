@@ -30,7 +30,8 @@ struct qa_native_q3_client_service {
     int32_t local_server;
     size_t action_busy;
     char *system_info;
-    bool registered, updating, overlay_initial;
+    uint64_t system_info_revision;
+    bool registered, updating, overlay_initial, has_system_info_revision;
 };
 extern const native_client_definition native_client_definitions[];
 extern const size_t native_client_definition_count;

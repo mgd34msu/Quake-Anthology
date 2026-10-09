@@ -42,6 +42,7 @@ static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *e
 {
     const char *borrowed; uint64_t revision;
     if (!qa_native_q3_wire_reader_configstring(service->services.wire_reader,1,&borrowed,&revision,error)) return false;
+    if (service->has_system_info_revision && service->system_info_revision==revision) return true;
     char *retained=retain_text(borrowed),*working=retain_text(borrowed);
     if (!retained || !working) { free(retained); free(working); return native_client_fail(error,QA_ERROR_MEMORY,"Retaining actual native SystemInfo"); }
     bool same=service->system_info && !strcmp(retained,service->system_info),ok=true;
@@ -59,7 +60,10 @@ static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *e
         if (!skip) ok=qa_cvars_set(service->services.client.cvars,name,value,true,error);
     }
     free(working);
-    if (ok) { free(service->system_info); service->system_info=retained; }
+    if (ok) {
+        free(service->system_info); service->system_info=retained;
+        service->system_info_revision=revision; service->has_system_info_revision=true;
+    }
     else free(retained);
     return ok;
 }

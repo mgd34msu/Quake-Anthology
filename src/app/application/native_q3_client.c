@@ -199,6 +199,7 @@ bool qa_native_q3_client_service_admit(qa_native_q3_client_service *service,
         return native_client_fail(error, QA_ERROR_ARGUMENT,
             "Native round admission requires its retained client and fresh physical actor");
     service->services.client.source_actor = admitted;
+    service->has_system_info_revision=false;
     return true;
 }
 
@@ -246,6 +247,7 @@ bool qa_native_q3_client_video_reset(qa_native_q3_client_service *service,qa_err
     service->local_server=0; service->registered=false; service->overlay_initial=true;
     service->services.client.initialized=false;
     free(service->system_info); service->system_info=NULL;
+    service->has_system_info_revision=false;
     return qa_native_q3_client_service_current(service);
 }
 bool qa_native_q3_client_context_read(qa_native_q3_client_service *service,
