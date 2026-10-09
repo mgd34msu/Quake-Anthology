@@ -357,7 +357,7 @@ bool application_qc_items_source_stored(struct application_qc_state *engine,qa_q
 bool application_qc_items_saved_group(application_provider *provider,qa_actor_id actor,uint64_t serial,const qa_inventory_source_group *group,qa_inventory_items *out,qa_error *e)
 {
     struct application_qc_state *engine=provider->state.qc.engine;const struct application_qc_items *p=engine?engine->items:NULL;
-    if(!engine||!p||!serial||group->owner!=provider->owner||group->definitions_only||group->count!=p->definition_count)return application_fail(e,QA_ERROR_FORMAT,"Saved QC item group differs from its actual declaration");
+    if(!engine||!p||!serial||group->owner!=provider->owner||group->definitions_only)return application_fail(e,QA_ERROR_FORMAT,"Saved QC item group differs from its actual declaration");
     struct application_qc_item_actor *a=actor_find(engine,actor);
     if(a&&a->lease.serial!=serial)return application_fail(e,QA_ERROR_FORMAT,"Saved QC inventory duplicates full actor ownership");
     if(!a){a=actor_create(engine,actor,e);if(!a)return false;a->lease=(qa_inventory_lease){actor,serial};}

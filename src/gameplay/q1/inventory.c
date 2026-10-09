@@ -258,19 +258,7 @@ bool qa_q1_game_inventory_group(qa_q1_game *game, qa_actor_id actor, uint64_t se
         !qa_actor_id_equal(player->weapon_definitions.actor, actor) ||
         player->weapon_definitions.serial != serial || player->inventory_game != game)
         return fail(error, actor, "Q1 saved weapon definitions have no captured source lease");
-    qa_item_definition items[QA_Q1_WEAPON_COUNT];
-    size_t count = definitions(game, items);
-    if (saved->count != count)
-        return fail(error, actor, "Q1 saved weapon definition count differs from its source");
-    for (size_t i = 0; i < count; ++i) {
-        const qa_item_definition *actual = items + i, *value = &saved->items[i].definition;
-        if (saved->items[i].replace_primary || actual->item != value->item ||
-            actual->ammo != value->ammo || actual->owner != value->owner ||
-            actual->weapon != value->weapon || actual->actions != value->actions ||
-            !value->label || strcmp(actual->label, value->label))
-            return fail(error, actor, "Q1 saved weapon definitions differ from their source");
-    }
     *out = (qa_inventory_items){.owner = game->options.provider,
-        .items = saved->items, .count = count, .action_context = player, .invoke = invoke};
+        .items = saved->items, .count = saved->count, .action_context = player, .invoke = invoke};
     return true;
 }

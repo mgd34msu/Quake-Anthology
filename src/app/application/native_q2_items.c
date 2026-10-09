@@ -566,15 +566,9 @@ bool application_native_q2_items_release(application_native_q2_items *o,qa_actor
 bool application_native_q2_items_inventory_group(application_native_q2_items *o,qa_actor_id actor,uint64_t serial,
     const qa_inventory_source_group *saved,qa_inventory_items *out,qa_error *e)
 {
-    if(!o||!saved||!out||saved->definitions_only||saved->owner!=o->options.owner||saved->count!=o->count||
+    if(!o||!saved||!out||saved->definitions_only||saved->owner!=o->options.owner||
         !saved->items||!serial||!application_native_q2_records_restoring(application_native_q2_callbacks_records(o->options.callbacks)))
         return fail(e,"Saved native item group has no actual restoring Source owner");
-    for(size_t i=0;i<o->count;++i) {
-        const qa_item_admission *x=saved->items+i,*y=o->admissions+i;
-        if(x->replace_primary!=y->replace_primary||x->definition.item!=y->definition.item||x->definition.ammo!=y->definition.ammo||
-            x->definition.owner!=y->definition.owner||x->definition.weapon!=y->definition.weapon||x->definition.actions!=y->definition.actions||
-            !x->definition.label||strcmp(x->definition.label,y->definition.label)) return fail(e,"Saved native item definitions differ from the acquired declaration");
-    }
     item_actor *a=actor_find(o,actor);
     if(a) return fail(e,"Saved native item group repeats an actual actor binding");
     if(!actor_prepare(o,actor,&a,e)) return false;

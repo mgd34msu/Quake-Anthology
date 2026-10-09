@@ -120,14 +120,8 @@ bool application_q3_mod_items_inventory_group(application_q3_mod_items *o,qa_act
 {
     item_actor *a=q3items_actor(o,actor);
     if(!o||!o->mod->restoring||!a||a->lease.serial!=serial||!saved||!out||
-        saved->definitions_only||saved->owner!=o->mod->owner||saved->count!=o->profile->definition_count||
+        saved->definitions_only||saved->owner!=o->mod->owner||
         !saved->items||!q3items_binding(a,out,e))return false;
-    for(size_t i=0;i<saved->count;++i){const qa_item_admission *x=saved->items+i,*y=out->items+i;
-        if(x->replace_primary!=y->replace_primary||x->definition.item!=y->definition.item||
-            x->definition.ammo!=y->definition.ammo||x->definition.owner!=y->definition.owner||
-            x->definition.weapon!=y->definition.weapon||x->definition.actions!=y->definition.actions||
-            !x->definition.label||strcmp(x->definition.label,y->definition.label))return false;
-    }
     a->restore_inventory=true;
     return true;
 }

@@ -61,23 +61,11 @@ bool qa_q2_game_inventory_group(qa_q2_game *g, qa_actor_id id, uint64_t saved_se
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
     if (!out || !a || !a->powers || !saved || !saved_serial ||
         saved->owner != g->options.owner || !saved->definitions_only ||
-        saved->count != g->item_runtime->action_count || (saved->count && !saved->items) ||
+        (saved->count && !saved->items) ||
         !qa_actor_id_equal(a->powers->definitions.actor, id) ||
         a->powers->definitions.serial != saved_serial) {
         qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 inventory source declaration has no owner");
         return false;
-    }
-    for (size_t i = 0; i < saved->count; ++i) {
-        const qa_item_admission *native = &g->item_runtime->admissions[i];
-        const qa_item_admission *entry = &saved->items[i];
-        const qa_item_definition *definition = &native->definition, *b = &entry->definition;
-        if (native->replace_primary != entry->replace_primary || definition->item != b->item ||
-            definition->ammo != b->ammo || definition->owner != b->owner || definition->weapon != b->weapon ||
-            definition->actions != b->actions || (!!definition->label != !!b->label) ||
-            (definition->label && strcmp(definition->label, b->label))) {
-            qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 saved inventory catalog differs from source");
-            return false;
-        }
     }
     a->powers->definitions = (qa_inventory_lease){.actor = id, .serial = saved_serial};
     *out = (qa_inventory_items){.owner = saved->owner,

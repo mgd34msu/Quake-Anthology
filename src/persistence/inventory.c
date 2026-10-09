@@ -19,9 +19,6 @@ static bool entry_fields(qa_source_save_io *io, qa_inventory_entry *entry)
         normalized.count == entry->count && normalized.capacity == entry->capacity;
 }
 
-static bool entry_equal(qa_inventory_entry a, qa_inventory_entry b)
-{ return a.item == b.item && a.count == b.count && a.capacity == b.capacity && a.policy == b.policy; }
-
 static uint32_t mask(const qa_inventory_binding *binding)
 {
     return (binding->count ? 1u : 0u) | (binding->at ? 2u : 0u) |
@@ -45,29 +42,22 @@ static bool binding_fields(qa_source_save_io *io, qa_inventory_binding *binding)
         if ((callbacks & 7u) != 7u) return fail(io->error, "Incomplete source inventory binding");
         if (!binding_count(binding, &count, io->error)) return false;
     }
-    if (!qa_source_save_u32(io, &callbacks) || mask(binding) != callbacks || (callbacks & 7u) != 7u ||
-        !qa_source_save_count(io, &count, SIZE_MAX / sizeof(qa_inventory_entry)))
-        return fail(io->error, "Restored source inventory callbacks differ");
-    if (reading) {
-        size_t actual;
-        if (!binding_count(binding, &actual, io->error)) return false;
-        if (actual != count) return fail(io->error, "Restored source inventory extent differs");
-    }
+    if (!qa_source_save_u32(io, &callbacks) ||
+        !qa_source_save_count(io, &count, SIZE_MAX / sizeof(qa_inventory_entry))) return false;
+    if (reading && !binding->write)
+        return fail(io->error, "Restored source inventory has no value writer");
     qa_inventory_entry *seen = count ? calloc(count, sizeof(*seen)) : NULL;
     if (count && !seen) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating inventory validation entries"); return false; }
     bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
-        qa_inventory_entry observed = {0};
-        ok = binding->at(binding->context, i, &observed, io->error);
-        if (ok) seen[i] = observed;
+        if (!reading) ok = binding->at(binding->context, i, seen + i, io->error);
         if (ok) ok = entry_fields(io, seen + i);
-        if (ok && reading && !entry_equal(observed, seen[i]))
-            ok = fail(io->error, "Restored source inventory value differs from saved authority");
         for (size_t j = 0; ok && j < i; ++j) if (seen[j].item == seen[i].item)
             ok = fail(io->error, "Duplicate source inventory item");
-        bool mutable_capacity = binding->mutable_capacity && binding->mutable_capacity(binding->context, seen[i].item);
-        bool expected = mutable_capacity;
-        if (ok) ok = qa_source_save_bool(io, &expected) && expected == mutable_capacity;
+        bool mutable_capacity = !reading && binding->mutable_capacity &&
+            binding->mutable_capacity(binding->context, seen[i].item);
+        if (ok) ok = qa_source_save_bool(io, &mutable_capacity);
+        if (ok && reading) ok = binding->write(binding->context, seen + i, io->error);
     }
     free(seen);
     return ok;
@@ -99,14 +89,6 @@ static bool definition_fields(qa_source_save_io *io, qa_item_admission *item, bo
         qa_source_save_bool(io, &item->replace_primary) && !(definitions_only && item->replace_primary);
 }
 
-static bool definition_equal(const qa_item_admission *a, const qa_item_admission *b)
-{
-    return a->definition.item == b->definition.item && a->definition.ammo == b->definition.ammo &&
-        a->definition.owner == b->definition.owner && a->definition.weapon == b->definition.weapon &&
-        a->definition.actions == b->definition.actions && a->replace_primary == b->replace_primary &&
-        a->definition.label && b->definition.label && !strcmp(a->definition.label, b->definition.label);
-}
-
 static bool group_fields(qa_source_save_io *io, qa_actor_id actor, item_group *group,
                           const qa_persistence_gameplay_resolvers *resolve)
 {
@@ -136,14 +118,43 @@ static bool group_fields(qa_source_save_io *io, qa_actor_id actor, item_group *g
     }
     if (reading) {
         qa_inventory_source_group saved = {group->owner, group->items, group->count, group->definitions_only};
-        if (!resolve || !resolve->inventory_group ||
-            !resolve->inventory_group(resolve->context, actor, group->serial, &saved, &source, io->error) ||
-            source.owner != group->owner || source.count != group->count || !source.items ||
-            (source.invoke != NULL) != invoke)
+        if (!resolve || !resolve->inventory_group)
+            return fail(io->error, "Saved inventory group has no restored source owner");
+        if (!resolve->inventory_group(resolve->context, actor, group->serial, &saved, &source, io->error))
+            return false;
+        if (source.owner != group->owner || !source.items)
             return fail(io->error, "Saved inventory group has no matching restored source owner");
-        for (size_t i = 0; i < group->count; ++i)
-            if (!definition_equal(group->items + i, source.items + i))
-                return fail(io->error, "Restored inventory item declaration differs");
+        for (size_t i = 0; i < group->count; ++i) {
+            size_t j = 0;
+            while (j < source.count &&
+                source.items[j].definition.item != group->items[i].definition.item) ++j;
+            if (j == source.count)
+                return fail(io->error, "Saved inventory item is unavailable in the restored source");
+        }
+        if (source.items != group->items) {
+            qa_item_admission *items = calloc(source.count, sizeof(*items));
+            if (source.count && !items) {
+                qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored inventory declarations");
+                return false;
+            }
+            for (size_t i = 0; i < group->count; ++i)
+                free((void *)group->items[i].definition.label);
+            free(group->items);
+            group->items = items;
+            group->count = source.count;
+            for (size_t i = 0; i < source.count; ++i) {
+                const char *label = source.items[i].definition.label;
+                size_t length = label ? strlen(label) : 0;
+                char *copy = label ? malloc(length + 1) : NULL;
+                if (label && !copy) {
+                    qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating restored inventory item label");
+                    return false;
+                }
+                if (label) memcpy(copy, label, length + 1);
+                items[i] = source.items[i];
+                items[i].definition.label = copy;
+            }
+        }
         group->binding = source.state; group->action_context = source.action_context; group->invoke = source.invoke;
     }
     return group->definitions_only || binding_fields(io, &group->binding);

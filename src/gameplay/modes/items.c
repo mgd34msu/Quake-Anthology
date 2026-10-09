@@ -101,7 +101,7 @@ static bool item_action(void *context, qa_item_id item, qa_item_action action, q
     }
     return mode_fail(e, "unknown mode inventory handle");
 }
-static bool collect_items(qa_modes *m, qa_actor_id actor, bool create,
+static bool collect_items(qa_modes *m, qa_actor_id actor,
                            qa_item_definition *added, size_t *out, qa_error *e) {
     size_t count = 0;
     static const char *runes[] = {"Resistance Rune", "Strength Rune", "Haste Rune",
@@ -114,13 +114,7 @@ static bool collect_items(qa_modes *m, qa_actor_id actor, bool create,
         if (v->value.rules.source == QA_MODE_ROGUE && o->spec.kind == QA_MODE_OBJECT_RELIC)
             continue;
         qa_item_id item = 0;
-        if (create) {
-            if (!mode_inventory_item(m, v, o->spec.item, &item, e)) return false;
-        } else {
-            for (size_t j = 0; j < v->item_count; ++j)
-                if (v->items[j].source == o->spec.item) item = v->items[j].inventory;
-            if (!item) return mode_fail(e, "restored objective has no scoped inventory handle");
-        }
+        if (!mode_inventory_item(m, v, o->spec.item, &item, e)) return false;
         bool duplicate = false;
         for (size_t j = 0; j < count; ++j)
             if (added[j].item == item)
@@ -154,7 +148,7 @@ bool qa_modes_publish_items(qa_modes *m, qa_actor_id actor, qa_error *e) {
         return false;
     }
     size_t count;
-    bool ok = collect_items(m, actor, true, added, &count, e) &&
+    bool ok = collect_items(m, actor, added, &count, e) &&
         qa_inventory_replace_definitions(m->options.services.inventory, actor,
             m->options.owner, added, count, item_action, player, player->items, &player->items, e);
     free(added);
@@ -166,42 +160,17 @@ bool qa_modes_inventory_group(qa_modes *m, qa_actor_id actor, uint64_t serial,
     if (!player || !saved || !out || !serial || saved->owner != m->options.owner ||
         !saved->definitions_only || (saved->count && !saved->items) || saved->count > m->actor_capacity)
         return mode_fail(e, "invalid saved mode inventory group");
-    qa_item_definition *expected = calloc(m->actor_capacity, sizeof(*expected));
-    if (!expected) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "validating mode inventory declarations");
-        return false;
-    }
-    size_t count = 0;
-    bool okay = collect_items(m, actor, false, expected, &count, e);
-    if (okay && count != saved->count) okay = mode_fail(e, "saved mode catalog count differs");
-    for (size_t i = 0; okay && i < count; ++i) {
-        const qa_item_definition *a = &expected[i], *b = &saved->items[i].definition;
-        if (saved->items[i].replace_primary || a->item != b->item || a->ammo != b->ammo ||
-            a->owner != b->owner || a->weapon != b->weapon || a->actions != b->actions ||
-            !a->label || !b->label || strcmp(a->label, b->label))
-            okay = mode_fail(e, "saved mode catalog differs from source objectives");
-    }
-    free(expected);
-    if (!okay) return false;
     if (player->items.serial && player->items.serial != serial)
         return mode_fail(e, "duplicate saved mode catalog");
     player->items = (qa_inventory_lease){.actor = actor, .serial = serial};
     *out = (qa_inventory_items){.owner = m->options.owner, .items = saved->items,
-        .count = count, .action_context = player, .invoke = item_action};
+        .count = saved->count, .action_context = player, .invoke = item_action};
     return true;
 }
 bool mode_items_reconnect(qa_modes *m, qa_actor_id actor, qa_error *e) {
     mode_player *player = mode_player_get(m, actor);
     if (!player) return mode_fail(e, "mode reconnect has no player item owner");
-    qa_item_definition *expected = calloc(m->actor_capacity, sizeof(*expected));
-    if (!expected) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "validating restored mode inventory");
-        return false;
-    }
-    size_t count = 0;
-    bool okay = collect_items(m, actor, false, expected, &count, e);
-    free(expected);
-    return okay && ((!count && !player->items.serial) ||
+    return !player->items.serial ||
         qa_inventory_lease_current(m->options.services.inventory, player->items) ||
-        mode_fail(e, "saved mode catalog lease was not restored"));
+        mode_fail(e, "saved mode catalog lease was not restored");
 }
