@@ -409,6 +409,7 @@ bool qa_input_seat_recipient_retired_consume(qa_input_seat *,const qa_console *,
 void qa_input_seat_recipient_publish(qa_input_seat *,qa_console *,qa_cvars *,const qa_command_context *);
 qa_input_focus qa_input_seat_focus(const qa_input_seat *);
 bool qa_input_seat_focused(const qa_input_seat *);
+bool qa_input_seat_action_active(const qa_input_seat *, qa_input_action);
 bool qa_input_seat_has_held(const qa_input_seat *);
 bool qa_input_seat_key_down(const qa_input_seat *, qa_physical_input);
 enum qa_input_catcher_mask {
@@ -502,7 +503,6 @@ typedef struct qa_input_console_options {
     void *user;
     qa_input_seat *(*seat)(void *, const qa_command_context *);
     void (*print)(void *, const char *);
-    bool (*scores)(void *, const qa_command_invocation *);
     void (*wheel)(void *, qa_input_seat *, bool powerups, bool down);
     void (*center)(void *, qa_input_seat *);
     /* Exact Source constructor. An uncaptured ENGINE adapter may use the

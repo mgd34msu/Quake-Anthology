@@ -533,9 +533,11 @@ static bool q1_hud_lump_prepare(qa_vfs *files, qa_scene_resources *images,
     qa_material_library *materials, const char *lump, qa_error *error)
 {
     char key[64], declaration[128];
-    if (!frontend_equipment_icon_key("gfx.wad", lump, key, sizeof(key), error)) return false;
-    if (qa_material_find(materials, key)) return true;
-    snprintf(declaration, sizeof(declaration),
+    bool file=strchr(lump,'/')!=NULL;
+    if (!file && !frontend_equipment_icon_key("gfx.wad", lump, key, sizeof(key), error)) return false;
+    if (qa_material_find(materials, file?lump:key)) return true;
+    if(file)snprintf(declaration,sizeof(declaration),"{\"kind\":\"image\",\"path\":\"%s\"}",lump);
+    else snprintf(declaration, sizeof(declaration),
         "{\"kind\":\"wad-picture\",\"path\":\"gfx.wad\",\"lump\":\"%s\"}", lump);
     const qa_material *material = NULL; qa_resource *resource = NULL;
     bool okay = frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration, strlen(declaration)},
@@ -547,7 +549,7 @@ bool frontend_q1_hud_prepare(qa_vfs *files, qa_scene_resources *images,
 {
     static const char *const common[] = {"face1", "face_p1", "face2", "face_p2", "face3", "face_p3",
         "face4", "face_p4", "face5", "face_p5", "face_invis", "face_invul2", "face_inv2", "face_quad",
-        "sbar", "ibar", "scorebar", "backtile", "disc", "num_minus", "anum_minus", "num_colon", "num_slash",
+        "sbar", "ibar", "scorebar", "backtile", "disc", "gfx/complete.lmp", "gfx/inter.lmp", "num_minus", "anum_minus", "num_colon", "num_slash",
         "sb_shells", "sb_nails", "sb_rocket", "sb_cells", "sb_armor1", "sb_armor2", "sb_armor3",
         "sb_key1", "sb_key2", "sb_invis", "sb_invuln", "sb_suit", "sb_quad",
         "sb_sigil1", "sb_sigil2", "sb_sigil3", "sb_sigil4"};
@@ -609,8 +611,9 @@ bool frontend_q1_face_read(const qa_material_library *materials, const char *lum
     const qa_scene_image **out, qa_error *error)
 {
     char key[64];
-    if (!frontend_equipment_icon_key("gfx.wad",lump,key,sizeof(key),error)) return false;
-    const qa_material *material=qa_material_find(materials,key);
+    bool file=strchr(lump,'/')!=NULL;
+    if (!file && !frontend_equipment_icon_key("gfx.wad",lump,key,sizeof(key),error)) return false;
+    const qa_material *material=qa_material_find(materials,file?lump:key);
     if (!material || !material->stage_count || !material->stages[0].image_count ||
         !material->stages[0].images[0])
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 face has not completed its actual media preparation");

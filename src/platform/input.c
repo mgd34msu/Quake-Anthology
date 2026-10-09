@@ -1639,7 +1639,8 @@ bool input_platform_modes_apply(SDL_Window *window, bool relative,
         SDL_SetWindowGrab(window, grab ? SDL_TRUE : SDL_FALSE);
     if (text && !SDL_IsTextInputActive()) SDL_StartTextInput();
     else if (!text && SDL_IsTextInputActive()) SDL_StopTextInput();
-    int cursor = grab ? SDL_DISABLE : SDL_ENABLE;
+    bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    int cursor = relative || grab || focused ? SDL_DISABLE : SDL_ENABLE;
     if (SDL_ShowCursor(SDL_QUERY) != cursor) SDL_ShowCursor(cursor);
     return success;
 }

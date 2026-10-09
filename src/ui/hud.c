@@ -612,31 +612,31 @@ static bool q1_character(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_place
         glyph.uv, (qa_scene_vec4){1, 1, 1, 1}, error);
 }
 static bool q1_number(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_frame *frame,
-    qa_hud_q1_placement place, float x, int32_t value, bool alternate, qa_scene_frame *scene, qa_error *error)
+    qa_hud_q1_placement place, float x, float y, int32_t value, unsigned digits_count, bool alternate, qa_scene_frame *scene, qa_error *error)
 {
     char number[16]; snprintf(number, sizeof(number), "%ld", (long)value);
-    size_t length = strlen(number); const char *digits = number + (length > 3 ? length - 3 : 0);
-    length = strlen(digits); x += (float)(3 - length) * 24;
+    size_t length = strlen(number); const char *digits = number + (length > digits_count ? length - digits_count : 0);
+    length = strlen(digits); x += (float)(digits_count - length) * 24;
     qa_ui *ui = hud->options.ui;
-    if (ui->options.fonts.primary || ui->text_scale != 1 || ui->high_contrast || ui->color_mode != QA_UI_COLOR_STANDARD) {
+    if (ui->text_scale != 1 || ui->high_contrast || ui->color_mode != QA_UI_COLOR_STANDARD) {
         qa_scene_vec4 color = alternate ? ui->color_mode == QA_UI_COLOR_BLUE_YELLOW ?
             (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
         if (ui->color_mode == QA_UI_COLOR_MONOCHROME) color = (qa_scene_vec4){1, 1, 1, 1};
         float left = place.x + x * place.scale, width = (float)length * 24 * place.scale;
         if (ui->high_contrast && !qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area,
-            (qa_scene_rect_f){left, place.y, width, 24 * place.scale}, (qa_scene_vec4){0, 0, 1, 1},
+            (qa_scene_rect_f){left, place.y + y * place.scale, width, 24 * place.scale}, (qa_scene_vec4){0, 0, 1, 1},
             (qa_scene_vec4){0, 0, 0, 1}, error)) return false;
         qa_font_layout layout;
         if (!weapon_layout(hud, scene, digits, 3 * place.scale * ui->text_scale, width, color, &layout, error)) return false;
         return qa_font_draw_layout(scene, &layout, &(qa_font_draw_options){.seat = frame->seat,
             .target = frame->safe_area, .space = QA_FONT_PIXELS,
-            .origin = {left - (float)frame->safe_area.x, place.y - (float)frame->safe_area.y}, .shadow_offset = place.scale}, error);
+            .origin = {left - (float)frame->safe_area.x, place.y + y * place.scale - (float)frame->safe_area.y}, .shadow_offset = place.scale}, error);
     }
     for (const char *digit = digits; *digit; ++digit, x += 24) {
         char name[32];
         if (*digit == '-') snprintf(name, sizeof(name), "%s_minus", alternate ? "anum" : "num");
         else snprintf(name, sizeof(name), "%s_%c", alternate ? "anum" : "num", *digit);
-        if (!q1_picture(status, frame, place, name, x, 0, scene, error)) return false;
+        if (!q1_picture(status, frame, place, name, x, y, scene, error)) return false;
     }
     return true;
 }
@@ -743,16 +743,6 @@ static bool q1_inventory(qa_hud *hud, const qa_hud_q1_status *status, const qa_h
 static bool q1_string(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_placement place,
     const char *value, float x, float y, qa_scene_frame *scene, qa_error *error)
 {
-    qa_ui *ui = hud->options.ui;
-    if (ui->options.fonts.primary || ui->text_scale != 1) {
-        qa_font_layout layout;
-        if (!weapon_layout(hud, scene, value, place.scale * ui->text_scale, 320 * place.scale,
-            (qa_scene_vec4){1, 1, 1, 1}, &layout, error)) return false;
-        return qa_font_draw_layout(scene, &layout, &(qa_font_draw_options){.seat = frame->seat,
-            .target = frame->safe_area, .space = QA_FONT_PIXELS,
-            .origin = {place.x + x * place.scale - (float)frame->safe_area.x,
-                place.y + y * place.scale - (float)frame->safe_area.y}, .shadow_offset = place.scale}, error);
-    }
     for (const unsigned char *c = (const unsigned char *)value; *c; ++c, x += 8)
         if (!q1_character(hud, frame, place, *c, x - 4, y, scene, error)) return false;
     return true;
@@ -796,15 +786,36 @@ static bool q1_backtile(const qa_hud_q1_status *status, const qa_hud_frame *fram
     }
     return true;
 }
+static bool q1_intermission(qa_hud *hud,const qa_hud_q1_status *status,const qa_hud_frame *frame,
+    qa_scene_frame *scene,qa_error *error)
+{
+    if(status->deathmatch)return true;
+    qa_hud_q1_placement place=qa_hud_q1_place(frame->safe_area,frame->scale,120,false,true,false);
+    place.y=(float)frame->safe_area.y;
+    int32_t seconds=(int32_t)fmax(0,fmin(INT32_MAX,status->seconds));
+    return q1_picture(status,frame,place,"gfx/complete.lmp",64,24,scene,error) &&
+        q1_picture(status,frame,place,"gfx/inter.lmp",0,56,scene,error) &&
+        q1_number(hud,status,frame,place,160,64,seconds/60,3,false,scene,error) &&
+        q1_picture(status,frame,place,"num_colon",234,64,scene,error) &&
+        q1_number(hud,status,frame,place,246,64,seconds%60/10,1,false,scene,error) &&
+        q1_number(hud,status,frame,place,266,64,seconds%10,1,false,scene,error) &&
+        q1_number(hud,status,frame,place,160,104,status->found_secrets,3,false,scene,error) &&
+        q1_picture(status,frame,place,"num_slash",232,104,scene,error) &&
+        q1_number(hud,status,frame,place,240,104,status->total_secrets,3,false,scene,error) &&
+        q1_number(hud,status,frame,place,160,144,status->killed_monsters,3,false,scene,error) &&
+        q1_picture(status,frame,place,"num_slash",232,144,scene,error) &&
+        q1_number(hud,status,frame,place,240,144,status->total_monsters,3,false,scene,error);
+}
 static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_data *data,
     qa_scene_frame *scene, qa_error *error)
 {
     const qa_hud_q1_status *status = &data->q1;
     if (!status->picture || !isfinite(status->view_size) || !isfinite(status->seconds) ||
         (unsigned)status->variant > QA_HUD_Q1_ROGUE) return ui_fail(error, "Q1 HUD lost its actual Source status and prepared pictures");
+    if(status->intermission)return q1_intermission(hud,status,frame,scene,error);
     qa_hud_q1_placement place = qa_hud_q1_place(frame->safe_area, frame->scale, status->view_size,
         status->overlay_status, status->intermission, status->deathmatch || status->quakeworld);
-    if (!place.lines) return true;
+    if (!place.lines && !frame->show_scores && status->health>0) return true;
     if (!q1_backtile(status, frame, place, scene, error)) return false;
     if (place.lines > 24 && !q1_inventory(hud, status, frame, place, scene, error)) return false;
     if (frame->show_scores || status->health <= 0)
@@ -816,8 +827,8 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
         if ((status->items & 262144u) && !q1_picture(status, frame, place, "sb_key2", 209, 12, scene, error)) return false;
     }
     bool invulnerable = (status->items & 1048576u) != 0;
-    if (!q1_number(hud, status, frame, place, 24, invulnerable ? 666 : (int32_t)status->armor,
-        invulnerable || status->armor <= 25, scene, error)) return false;
+    if (!q1_number(hud, status, frame, place, 24, 0, invulnerable ? 666 : (int32_t)status->armor,
+        3, invulnerable || status->armor <= 25, scene, error)) return false;
     if (invulnerable) {
         if (!q1_picture(status, frame, place, "disc", 0, 0, scene, error)) return false;
     } else {
@@ -833,7 +844,7 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
         if (!team_face_draw(hud, frame, &data->health_team_face, face, scene, error)) return false;
     } else if (status->face && !qa_scene_frame_picture_f(scene, status->face, frame->safe_area, face,
         (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
-    if (!q1_number(hud, status, frame, place, 136, status->health, status->health <= 25, scene, error)) return false;
+    if (!q1_number(hud, status, frame, place, 136, 0, status->health, 3, status->health <= 25, scene, error)) return false;
     static const char *const ammunition[] = {"sb_shells", "sb_nails", "sb_rocket", "sb_cells",
         "r_ammolava", "r_ammoplasma", "r_ammomulti"};
     unsigned first = status->variant == QA_HUD_Q1_ROGUE ? 7u : 8u;
@@ -843,8 +854,8 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
         if (!q1_picture(status, frame, place, ammunition[i], 224, 0, scene, error)) return false;
         break;
     }
-    return q1_number(hud, status, frame, place, 248, (int32_t)status->ammo_count,
-        status->ammo_count <= 10, scene, error);
+    return q1_number(hud, status, frame, place, 248, 0, (int32_t)status->ammo_count,
+        3, status->ammo_count <= 10, scene, error);
 }
 static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
     bool content, bool messages, qa_error *error) {

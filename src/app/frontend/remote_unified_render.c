@@ -534,6 +534,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     bool source_status=false;
     if (children && children->status_replacement &&
         !children->status_replacement(children->context,&source_status,e)) return false;
+    if (children && children->q1_status) children->q1_status(children->context,&r->q1);
     if (r->q1.present && !source_status) {
         qa_hud_q1_placement status=qa_hud_q1_place(view.viewport,r->preferences.hud_scale,r->q1.view_size,
             r->q1.overlay_status,r->q1.intermission,r->q1.deathmatch);
@@ -667,7 +668,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     if (okay) okay=qa_hud_draw_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
         .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
         .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
-        .source_status_native=source_status},&r->frontend->frame,e);
+        .source_status_native=source_status,.show_scores=qa_input_seat_action_active(r->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},&r->frontend->frame,e);
     if (okay && children && children->hud)
         okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};

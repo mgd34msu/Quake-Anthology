@@ -47,9 +47,6 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
     if (!cmd->argc)
         return true;
     const char *name = cmd->argv[0];
-    if ((*name == '+' || *name == '-') && c->options.scores &&
-        qa_input_ascii_equal(name + 1, "scores") && c->options.scores(c->options.user, cmd))
-        return true;
     if (!s)
         return true;
     if (*name == '+' || *name == '-') {

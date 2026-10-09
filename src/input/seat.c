@@ -268,6 +268,9 @@ bool qa_input_seat_recipient_retired_consume(qa_input_seat *s,const qa_console *
 }
 qa_input_focus qa_input_seat_focus(const qa_input_seat *s) { return s->focus; }
 bool qa_input_seat_focused(const qa_input_seat *s) { return s->focused; }
+bool qa_input_seat_action_active(const qa_input_seat *s, qa_input_action action) {
+    return s && (unsigned)action < QA_INPUT_ACTION_COUNT && s->buttons[action].count != 0;
+}
 bool qa_input_seat_has_held(const qa_input_seat *s) {
     if (s->held_count)
         return true;

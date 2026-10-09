@@ -32,6 +32,7 @@ typedef struct frontend_unified_render_children {
     void *context;
     bool (*camera)(void *,qa_scene_view *,float *source_fov,bool *owned,qa_error *);
     bool (*status_replacement)(void *,bool *,qa_error *);
+    void (*q1_status)(void *,qa_hud_q1_status *);
     bool (*source_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool *owned,qa_error *);
     bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool slot,bool *owned,qa_error *);
     bool (*selected_weapon)(void *,const qa_unified_model_state *,const qa_scene_world_input *,

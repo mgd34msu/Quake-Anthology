@@ -11,6 +11,7 @@
 #include "qa/q1_save.h"
 #include "qa/scene.h"
 #include "qa/tools.h"
+#include "qa/input.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -570,12 +571,98 @@ static void test_shared_cvar_archive(void)
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 
+static qa_input_seat *shared_input_seat(void *user, const qa_command_context *context)
+{
+    return context->seat == 0 ? *(qa_input_seat **)user : NULL;
+}
+
+static bool shared_input_menu(void *user, qa_input_seat *seat, qa_input_focus focus,
+    const qa_input_event *event)
+{
+    (void)user; (void)seat; (void)focus; (void)event;
+    return false;
+}
+
+static void test_shared_input_menu_defaults(void)
+{
+    qa_error error = {0};
+    qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_CONSOLE_Q3,
+        .side = QA_CVAR_SIDE_CLIENT}, &error);
+    CHECK(cvars);
+    for (qa_console_dialect dialect = QA_CONSOLE_Q1; dialect <= QA_CONSOLE_Q3; ++dialect) {
+        CHECK(qa_cvars_select_dialect(cvars, dialect, &error));
+        CHECK(qa_cvars_find(cvars, "in_nograb")->integer == 0);
+        CHECK(!qa_cvars_find(cvars, "in_nograb")->explicit_value);
+        CHECK(qa_cvars_find(cvars, "in_mouse")->integer == 1);
+        qa_command_context context = {.dialect = dialect, .origin = QA_COMMAND_SEAT,
+            .direct = true, .cvar_view = qa_cvars_view_identity(cvars)};
+        qa_console *console = qa_console_create(&(qa_console_options){.context = context,
+            .cvars = cvars, .disable_builtins = true}, &error);
+        CHECK(console);
+        qa_input_seat *seat = qa_input_seat_create(&(qa_input_seat_options){.context = context,
+            .console = console, .cvars = cvars, .gamepad = qa_gamepad_defaults()}, &error);
+        CHECK(seat);
+        qa_input_console *commands = qa_input_console_create(&(qa_input_console_options){
+            .console = console, .owner = 1, .user = &seat, .seat = shared_input_seat}, &error);
+        CHECK(commands);
+        const char *aliases[] = {"+scores", "+showscores"};
+        double time = 0;
+        for (size_t alias = 0; alias < sizeof(aliases) / sizeof(*aliases); ++alias) {
+            CHECK(qa_input_seat_bind(seat, &(qa_input_binding){.input = {.kind = QA_PHYSICAL_KEY,
+                .code = QA_KEY_TAB}, .kind = QA_BIND_COMMAND, .command = aliases[alias]}, &error));
+            qa_input_event key = {.kind = QA_INPUT_EVENT_KEY, .time_ms = time += 10, .down = true,
+                .input = {.kind = QA_PHYSICAL_KEY, .code = QA_KEY_TAB}};
+            size_t drained = 0;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+            key.repeat = true; key.time_ms = time += 10;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+            key.down = false; key.repeat = false; key.time_ms = time += 10;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(!qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+            for (unsigned transition = 0; transition < 2; ++transition) {
+                key.down = true; key.time_ms = time += 10;
+                CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+                CHECK(qa_console_drain(console, 4096, &drained, &error));
+                CHECK(qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+                qa_input_ui_token token = 0;
+                time += 10;
+                CHECK(qa_input_seat_ui_push(seat, shared_input_menu, NULL, time, &token, &error));
+                CHECK(qa_input_seat_set_focus(seat, QA_INPUT_UI, time, &error));
+                CHECK(qa_console_drain(console, 4096, &drained, &error));
+                CHECK(qa_input_seat_focus(seat) == QA_INPUT_UI);
+                CHECK(!qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+                key.down = false; key.time_ms = time += 10;
+                CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+                CHECK(qa_input_seat_ui_remove(seat, token, time += 10, &error));
+                CHECK(qa_input_seat_focus(seat) == QA_INPUT_GAME);
+                CHECK(!qa_input_seat_action_active(seat, QA_INPUT_SCORES));
+            }
+        }
+        qa_input_console_destroy(commands);
+        qa_input_seat_destroy(seat);
+        qa_console_destroy(console);
+    }
+    CHECK(qa_cvars_set(cvars, "in_nograb", "1", true, &error));
+    for (qa_console_dialect dialect = QA_CONSOLE_Q1; dialect <= QA_CONSOLE_Q3; ++dialect) {
+        CHECK(qa_cvars_select_dialect(cvars, dialect, &error));
+        CHECK(qa_cvars_find(cvars, "in_nograb")->integer == 1);
+        CHECK(qa_cvars_find(cvars, "in_nograb")->explicit_value);
+    }
+    qa_cvars_destroy(cvars);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_shared_cvar_archive();
+    test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();
     test_binary();

@@ -177,14 +177,6 @@ static qa_input_seat *input_seat(void *context, const qa_command_context *comman
     uint32_t ordinal;
     return frontend_command_seat_read(frontend,command,&ordinal)?frontend->seats[ordinal].input:NULL;
 }
-static bool scores(void *context, const qa_command_invocation *command)
-{
-    qa_frontend *frontend = context;
-    uint32_t ordinal;
-    if (!frontend_command_seat_read(frontend,&command->context,&ordinal)) return false;
-    frontend->seats[ordinal].scores = command->argv[0][0] == '+';
-    return true;
-}
 static void center(void *context, qa_input_seat *input)
 {
     qa_frontend *frontend = context;
@@ -263,7 +255,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
             QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;
     if (frontend->options.dedicated) return true;
     qa_input_console_options input = {.console = console, .owner = QA_FRONTEND_COMMAND_OWNER,
-        .user = frontend, .seat = input_seat, .print = frontend_print, .scores = scores, .center = center, .wheel = frontend_wheel_command};
+        .user = frontend, .seat = input_seat, .print = frontend_print, .center = center, .wheel = frontend_wheel_command};
     frontend->input_commands = qa_input_console_create(&input, error);
     return frontend->input_commands != NULL;
 }

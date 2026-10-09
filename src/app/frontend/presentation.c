@@ -162,7 +162,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     if (!qa_hud_draw(physical->hud,&(qa_hud_frame){.seat=seat,.actor=player.actor,
         .source_status_native=component_status,
         .time_ns=f->time_ns,.viewport=view.viewport,.safe_area=fallback->viewport,
-        .scale=preferences->hud_scale,.show_scores=physical->scores,.visible=visible},&f->frame,error)) return false;
+        .scale=preferences->hud_scale,.show_scores=qa_input_seat_action_active(physical->input,QA_INPUT_SCORES),.visible=visible},&f->frame,error)) return false;
     *hud_drawn=true; return true;
 }
 bool frontend_display_ready(qa_frontend *frontend, bool *ready, qa_error *error)
@@ -553,7 +553,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (live && !common_hud_drawn && (!native_rendered || source_weapon_status || qc_status) && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .weapon_only=native_rendered && !qc_status,.source_status_native=component_status,
             .time_ns = frontend->time_ns, .viewport = view.viewport, .safe_area = rect,
-            .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
+            .scale = preferences.hud_scale, .show_scores = qa_input_seat_action_active(seat->input,QA_INPUT_SCORES) || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen && game_focus}, &frontend->frame, error)) return false;
         if (live && !ui.fullscreen && game_focus && !qa_hud_wheel_draw(seat->wheel,
             &(qa_hud_wheel_draw_options){.viewport = rect, .fonts = seat->fonts,

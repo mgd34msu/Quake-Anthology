@@ -198,7 +198,7 @@ typedef struct frontend_seat {
     char *q2_score_names;
     size_t q2_score_count;
     bool q2_view_ready, q2_help, q2_inventory;
-    bool scores, chat_team;
+    bool chat_team;
 } frontend_seat;
 typedef struct frontend_engine_cvar_handles {
     uint64_t view_identity;

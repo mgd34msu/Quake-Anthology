@@ -1829,7 +1829,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
                 o->items[i].selected?(qa_scene_vec4){1,.8f,.3f,1}:(qa_scene_vec4){1,1,1,1},e); free(row);
         }
     }
-    if (okay && (o->score_visible || o->frontend->seats[d->physical_seat].scores))
+    if (okay && (o->score_visible || qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)))
         for (size_t i=0;okay && i<o->score_count;++i)
             okay=overlay_text(ui,viewport,frame,o->score_rows[i],64,110+(float)i*20,(qa_scene_vec4){1,1,1,1},e);
     if (okay) okay=story_draw(o,ui,viewport,frame,e);

@@ -124,9 +124,10 @@ struct frontend_unified_q1 {
     q1_activation *power_activations[Q1_POWERS];
     qa_unified_presentation_event *weapon,*prompt,*finale;
     qa_scene_image *finale_image;
-    q1_activation *fog_activation,*finale_activation;
+    q1_activation *fog_activation,*finale_activation,*intermission_activation;
     struct {qa_vec3 previous,target;double previous_density,target_density,start,duration,sky_factor;bool active;} fog;
-    bool finale_banner;
+    bool finale_banner,intermission;
+    double completed_seconds;
     q1_activation *pause_activation;
     bool music_retiring;
     double monsters,total_monsters,secrets,total_secrets;
@@ -456,9 +457,13 @@ static bool hud_read(void *context,const qa_hud_frame *frame,qa_hud_data *out,qa
     size_t count=0;for(size_t i=0;i<Q1_POWERS;++i) if(o->powers[i]>o->seconds) o->timers[count++]=(qa_hud_timer){.label=powers[i],.until_ns=ns(o->powers[i])};
     size_t bars=0;if(o->ctf_present){memcpy(o->display_bars,o->ctf,sizeof(o->ctf));bars=4;}
     const qa_unified_q1_world_state *world=frontend_unified_q1_world_read(o->replica);
-    if(world || o->monsters_present)o->display_bars[bars++]=(qa_hud_value){.label="Monsters",
+    const qa_recipe_provider *hud=frontend_remote_unified_provider(o->replica,QA_ROLE_HUD,"");
+    const qa_product *product=hud?qa_catalog_product(qa_executable_recipe_catalog(
+        frontend_remote_unified_recipe(o->replica)),hud->selection.product):NULL;
+    bool stock=product && product->family==QA_GAME_Q1;
+    if(!stock && (world || o->monsters_present))o->display_bars[bars++]=(qa_hud_value){.label="Monsters",
         .value=world?world->killed_monsters:o->monsters,.maximum=world?world->total_monsters:o->total_monsters};
-    if(world || o->secrets_present)o->display_bars[bars++]=(qa_hud_value){.label="Secrets",
+    if(!stock && (world || o->secrets_present))o->display_bars[bars++]=(qa_hud_value){.label="Secrets",
         .value=world?world->found_secrets:o->secrets,.maximum=world?world->total_secrets:o->total_secrets};
     *out=(qa_hud_data){.source_vitals=true,.bars=o->display_bars,.bar_count=bars,.timers=o->timers,.timer_count=count,.scores=o->scores,.score_count=o->score_count,
         .help_title=o->prompt_title,.help_lines=(const char *const *)o->prompt_lines,.help_count=o->prompt_count};return true;
@@ -547,6 +552,7 @@ bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_pr
     for(size_t i=0;i<Q1_POWERS;++i)if(o->power_activations[i]==owner){o->powers[i]=0;o->power_activations[i]=NULL;}
     if(o->ctf_activation==owner){o->ctf_present=false;o->capture_until=0;o->ctf_activation=NULL;}
     if(o->fog_activation==owner){o->fog.active=false;o->fog_activation=NULL;}
+    if(o->intermission_activation==owner){o->intermission=false;o->intermission_activation=NULL;}
     if(o->finale_activation==owner){retained_free(o->finale);o->finale=NULL;
         qa_scene_image_release(o->finale_image);o->finale_image=NULL;o->finale_activation=NULL;qa_hud_clear_center(o->hud,NULL);}
     owner->retired=true;return mutable(o,e);
@@ -596,7 +602,12 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     q1_event p={0};q1_group *g=NULL;q1_activation *owner=NULL;
     bool ok=parse(o,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
     if(owner && owner->retired){event_free(&p);return true;}
-    if(p.kind==Q1_COMPLETED){ok=progress_record(o,&p,e);event_free(&p);return ok && mutable(o,e);}
+    if(p.kind==Q1_COMPLETED){
+        ok=progress_record(o,&p,e);
+        if(ok){if(!o->intermission)o->completed_seconds=p.seconds;
+            o->intermission=true;o->intermission_activation=owner;}
+        event_free(&p);return ok && mutable(o,e);
+    }
     if(p.kind==Q1_SELL_SCREEN){const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
         ok=group(o,(char *)p.content.data,owner,&g,e);
         if(ok){frontend_q1_help_bind_source(o->frontend->seats+d->physical_seat,g->images);
@@ -669,6 +680,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_FOG:o->fog.previous=p.origin;o->fog.target=p.end;o->fog.previous_density=p.a;o->fog.target_density=p.b;
         o->fog.start=p.c;o->fog.duration=p.d;o->fog.sky_factor=p.sky_factor;o->fog.active=true;o->fog_activation=owner;break;
     case Q1_FINALE: {
+        o->intermission=false;o->intermission_activation=NULL;
         if(p.a>4)break;
         qa_unified_presentation_event *doc=NULL;qa_scene_image *image=NULL;qa_buffer text={0};
         qa_scene_image_options options={.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent=true,.transparent_index=255};
@@ -968,6 +980,11 @@ bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world
     }
     o->busy=false;return ok && mutable(o,e);
 }
+void frontend_unified_q1_hud_status(const frontend_unified_q1 *o,qa_hud_q1_status *status)
+{
+    status->intermission=o->intermission;
+    if(o->intermission)status->seconds=o->completed_seconds;
+}
 bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     const frontend_remote_unified_domain *d=o?frontend_remote_unified_domain_read(o->replica):NULL;qa_actor_id player;uint32_t source;
@@ -1001,7 +1018,7 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
         ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},e);}
     if(ok)ok=qa_hud_draw_content(o->hud,&(qa_hud_options){.ui=ui,.application=d->application,
         .seat=d->physical_seat,.context=o,.read=hud_read},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
-        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=o->frontend->seats[d->physical_seat].scores},frame,e);
+        .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},frame,e);
     o->busy=false;return ok && mutable(o,e);
 }
 bool frontend_unified_q1_checkpoint_ready(const frontend_unified_q1 *o)

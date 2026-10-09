@@ -8,8 +8,8 @@
     "conversions": 235,
     "operands": 42,
     "maps": 67,
-    "pool_bytes": 487569,
-    "issues": 1397
+    "pool_bytes": 487297,
+    "issues": 1396
   },
   "policy_issues": [
     {
@@ -130,13 +130,6 @@
       "field": "flags_Q1",
       "reason": "conditional/owner flag alternatives; bits are only the mentioned union",
       "bits": 4
-    },
-    {
-      "row": 48,
-      "name": "in_nograb",
-      "field": "default_QW",
-      "reason": "conditional, owner-dependent or symbolic default",
-      "bits": 2
     },
     {
       "row": 68,
