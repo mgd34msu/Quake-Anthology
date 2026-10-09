@@ -2587,18 +2587,22 @@ typedef struct input_frame_sample {
 enum { INPUT_FRAME_INITIALIZE, INPUT_FRAME_SAMPLE };
 
 void qa_input_platform_collect(qa_input_platform *p, qa_platform_events *events, uint64_t now_ns) {
-    if (p && p->native_startup != INPUT_NATIVE_READY)
-        qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME,
-        now_ns, INPUT_FRAME_INITIALIZE, 0, (qa_bytes){0});
+    if (p && p->native_startup != INPUT_NATIVE_READY &&
+        !qa_platform_events_pending(events, QA_PLATFORM_EVENT_INPUT_FRAME, INPUT_FRAME_INITIALIZE))
+        (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME,
+        now_ns, INPUT_FRAME_INITIALIZE, 0, (qa_bytes){0}, (qa_bytes){0});
     double now = (double)now_ns / 1000000.0;
     bool subframe = p && integer(p, INPUT_CVAR_SUBFRAME, 1) != 0;
     SDL_Event event;
-    while (SDL_PollEvent(&event)) {
+    SDL_PumpEvents();
+    if (SDL_HasEvent(SDL_QUIT)) qa_platform_events_latch_quit(events);
+    while (qa_platform_events_admit(events, QA_PLATFORM_EVENT_INPUT_FRAME, sizeof(event)) == QA_PLATFORM_EVENT_ACCEPTED &&
+        SDL_PollEvent(&event)) {
         qa_platform_event_kind kind;
         int32_t value = 0, value2 = 0;
         switch (event.type) {
         case SDL_QUIT:
-            qa_platform_events_push(events, QA_PLATFORM_EVENT_QUIT, now_ns, 0, 0, (qa_bytes){0});
+            (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_QUIT, now_ns, 0, 0, (qa_bytes){0}, (qa_bytes){0});
             return;
         case SDL_KEYDOWN:
         case SDL_KEYUP:
@@ -2654,8 +2658,8 @@ void qa_input_platform_collect(qa_input_platform *p, qa_platform_events *events,
             continue;
         }
         double time = qa_input_event_time(event.common.timestamp, SDL_GetTicks(), now, subframe);
-        qa_platform_events_push(events, kind, (uint64_t)(time * 1000000.0), value, value2,
-            (qa_bytes){(const uint8_t *)&event, sizeof(event)});
+        (void)qa_platform_events_push(events, kind, (uint64_t)(time * 1000000.0), value, value2,
+            (qa_bytes){(const uint8_t *)&event, sizeof(event)}, (qa_bytes){0});
     }
 }
 
@@ -2666,6 +2670,8 @@ bool qa_input_platform_sample(qa_input_platform *p, qa_platform_events *events,
         input_frame_sample state;
         uint8_t midi[16 * 4096];
     } sampled;
+    if (qa_platform_events_admit(events, QA_PLATFORM_EVENT_INPUT_FRAME, sizeof(sampled)) != QA_PLATFORM_EVENT_ACCEPTED)
+        return true;
     sampled.state = (input_frame_sample){0};
     input_frame_sample *sample = &sampled.state;
     SDL_Window *window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
@@ -2719,8 +2725,8 @@ bool qa_input_platform_sample(qa_input_platform *p, qa_platform_events *events,
         }
         sample->midi_bytes += (uint32_t)count;
     }
-    qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME, now_ns, INPUT_FRAME_SAMPLE, 0,
-        (qa_bytes){(const uint8_t *)&sampled, sizeof(*sample) + sample->midi_bytes});
+    (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME, now_ns, INPUT_FRAME_SAMPLE, 0,
+        (qa_bytes){(const uint8_t *)&sampled, sizeof(*sample) + sample->midi_bytes}, (qa_bytes){0});
     return true;
 }
 
@@ -2944,19 +2950,6 @@ static struct device *required_device(qa_input_platform *p, int32_t instance, qa
         return NULL;
     }
     return d;
-}
-bool qa_input_platform_snapshot(qa_input_platform *p, int32_t instance, qa_controller_snapshot *out,
-                                qa_error *error) {
-    struct device *d = required_device(p, instance, error);
-    if (!d || !out)
-        return false;
-    qa_controller_snapshot state = {0};
-    for (unsigned i = 0; i < QA_AXIS_COUNT; ++i)
-        state.axes[i] = SDL_GameControllerGetAxis(d->handle, (SDL_GameControllerAxis)i);
-    for (unsigned i = 0; i < 21; ++i)
-        state.buttons[i] = SDL_GameControllerGetButton(d->handle, (SDL_GameControllerButton)i) != 0;
-    *out = state;
-    return true;
 }
 static bool amplitudes(float low, float high, qa_error *error) {
     if (isfinite(low) && isfinite(high) && low >= 0 && low <= 1 && high >= 0 && high <= 1)

@@ -6176,13 +6176,14 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
     if(!n) return true;
     ++n->busy;
     qa_net_transport *transport=qa_network_transport(n->runtime);
-    qa_network_event_source source={.id=n->input_serial, .context=transport, .collect=transport_collect};
+    qa_network_event_source source={.id=n->input_serial, .context=transport, .collect=transport_collect, .datagram_bytes=qa_net_transport_limit(transport)};
     bool ok=qa_net_transport_maintenance(transport,now,error) &&
         (!n->kex_browser || frontend_kex_browser_maintenance(n->kex_browser,now,error));
     if(ok && qa_network_receive_ready(n->runtime))
         ok=qa_network_events_collect(&source,events,now,256,error);
     if(ok && n->kex_browser) {
         source.destination=1; source.context=n->kex_browser; source.collect=browser_collect;
+        source.datagram_bytes=QA_KEX_MDNS_DATAGRAM_BYTES;
         ok=qa_network_events_collect(&source,events,now,256,error);
     }
     if (ok) for (uint32_t i = 0; i < f->options.seats; ++i) {
@@ -6190,7 +6191,7 @@ bool frontend_network_intake(qa_frontend *f,qa_platform_events *events,uint64_t 
         if (!local->runtime) continue;
         qa_net_transport *endpoint = qa_network_transport(local->runtime);
         source = (qa_network_event_source){.id = n->input_serial, .destination = (int32_t)i + 2,
-            .context = endpoint, .collect = transport_collect};
+            .context = endpoint, .collect = transport_collect, .datagram_bytes=qa_net_transport_limit(endpoint)};
         if (!qa_net_transport_maintenance(endpoint, now, error) ||
             (qa_network_receive_ready(local->runtime) &&
                 !qa_network_events_collect(&source, events, now, 256, error))) { ok = false; break; }

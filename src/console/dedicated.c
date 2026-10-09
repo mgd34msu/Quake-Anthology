@@ -7,7 +7,9 @@
 #include <string.h>
 struct qa_dedicated_console {
     qac_text pending, line;
-    size_t consumed;
+    size_t consumed, prepared;
+    uint64_t oversized;
+    bool discarding;
     bool ended;
 };
 qa_dedicated_console *qa_dedicated_console_create(qa_error *error) {
@@ -16,7 +18,8 @@ qa_dedicated_console *qa_dedicated_console_create(qa_error *error) {
         qac_fail(error, QA_ERROR_MEMORY, "allocating dedicated console");
         return NULL;
     }
-    console->pending.capacity = console->line.capacity = QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u;
+    console->pending.capacity = QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u;
+    console->line.capacity = 3u * QA_PLATFORM_EVENT_BYTE_CAPACITY + 2u;
     console->pending.data = malloc(console->pending.capacity);
     console->line.data = malloc(console->line.capacity);
     if (!console->pending.data || !console->line.data) {
@@ -44,20 +47,54 @@ bool qa_dedicated_console_feed(qa_dedicated_console *console, qa_bytes bytes, bo
                 console->pending.size + 1);
         console->consumed = 0;
     }
-    if (!qac_text_add(&console->pending, (const char *)bytes.data, bytes.size, error))
-        return false;
+    console->prepared = console->line.size = 0;
+    for (size_t i = 0; i < bytes.size; ++i) {
+        uint8_t byte = bytes.data[i];
+        if (console->discarding) {
+            if (byte == '\n') console->discarding = false;
+            continue;
+        }
+        if (console->pending.size >= QA_PLATFORM_EVENT_BYTE_CAPACITY) {
+            console->pending.size = 0;
+            console->discarding = byte != '\n';
+            if (console->oversized != UINT64_MAX) ++console->oversized;
+            continue;
+        }
+        console->pending.data[console->pending.size++] = (char)byte;
+    }
+    console->pending.data[console->pending.size] = 0;
     console->ended = ended;
     return true;
 }
+size_t qa_dedicated_console_read_room(const qa_dedicated_console *console)
+{
+    size_t retained = console->pending.size - console->consumed;
+    size_t room = retained < QA_PLATFORM_EVENT_BYTE_CAPACITY ? QA_PLATFORM_EVENT_BYTE_CAPACITY - retained : 0;
+    return room ? room : 1;
+}
+size_t qa_dedicated_console_line_bound(const qa_dedicated_console *console, size_t incoming)
+{
+    size_t size = console->pending.size - console->consumed;
+    size_t bound = 3u * (size + incoming) + 2u;
+    return bound < QA_PLATFORM_EVENT_BYTE_CAPACITY ? bound : QA_PLATFORM_EVENT_BYTE_CAPACITY;
+}
+uint64_t qa_dedicated_console_oversized(const qa_dedicated_console *console)
+{ return console->oversized; }
 bool qa_dedicated_console_eof(const qa_dedicated_console *console) {
     return console->ended && console->consumed == console->pending.size;
 }
 bool qa_dedicated_console_ended(const qa_dedicated_console *console) { return console->ended; }
-bool qa_dedicated_console_line_next(qa_dedicated_console *console, qa_bytes *line,
+bool qa_dedicated_console_line_peek(qa_dedicated_console *console, qa_bytes *line,
     bool *present, qa_error *error) {
     *line = (qa_bytes){0};
     *present = false;
     if (console->consumed == console->pending.size) return true;
+    if (console->prepared) {
+        *line = console->line.size ? (qa_bytes){(const uint8_t *)console->line.data, console->line.size + 1} :
+            (qa_bytes){(const uint8_t *)console->pending.data + console->consumed, QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u};
+        *present = true;
+        return true;
+    }
     const char *start = console->pending.data + console->consumed;
     size_t size = console->pending.size - console->consumed;
     const char *newline = memchr(start, '\n', size);
@@ -65,6 +102,12 @@ bool qa_dedicated_console_line_next(qa_dedicated_console *console, qa_bytes *lin
     size_t length = newline ? (size_t)(newline - start) : size;
     size_t consumed = length + (newline ? 1u : 0u);
     if (newline && length && start[length - 1] == '\r') --length;
+    if (length > QA_PLATFORM_EVENT_BYTE_CAPACITY) {
+        console->prepared = consumed;
+        *line = (qa_bytes){(const uint8_t *)start, QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u};
+        *present = true;
+        return true;
+    }
     console->line.size = 0;
     size_t cursor = 0;
     uint32_t scalar;
@@ -74,15 +117,19 @@ bool qa_dedicated_console_line_next(qa_dedicated_console *console, qa_bytes *lin
         if (!qac_text_add(&console->line, encoded, count, error)) return false;
     }
     if (!qac_text_string(&console->line, "\n", error)) return false;
-    console->consumed += consumed;
-    if (console->consumed == console->pending.size) {
-        console->consumed = console->pending.size = 0;
-        if (console->pending.data)
-            console->pending.data[0] = 0;
-    }
+    console->prepared = consumed;
     *line = (qa_bytes){(const uint8_t *)console->line.data, console->line.size + 1};
     *present = true;
     return true;
+}
+void qa_dedicated_console_line_commit(qa_dedicated_console *console)
+{
+    console->consumed += console->prepared;
+    console->prepared = console->line.size = 0;
+    if (console->consumed == console->pending.size) {
+        console->consumed = console->pending.size = 0;
+        console->pending.data[0] = 0;
+    }
 }
 static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *console)
 {
@@ -94,6 +141,7 @@ static bool dedicated_fields(qa_source_save_io *io, qa_dedicated_console *consol
         !qa_source_save_count(io,&capacity,SIZE_MAX) || !qa_source_save_count(io,&consumed,size) || consumed>size ||
         (capacity?size>=capacity:size!=0) || !qa_source_save_bool(io,&console->ended)) return false;
     if (reading) {
+        if (capacity < QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u) capacity = QA_PLATFORM_EVENT_BYTE_CAPACITY + 1u;
         if (size>io->input.size-io->offset) return false;
         if (capacity) {
             console->pending.data=malloc(capacity);

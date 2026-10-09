@@ -5,13 +5,17 @@
 #include <unistd.h>
 
 static bool publish_lines(qa_dedicated_console *console, qa_platform_events *events,
-    uint64_t time_ns, qa_error *error) {
+    uint64_t time_ns, bool *deferred, qa_error *error) {
+    *deferred = false;
     for (;;) {
         qa_bytes line;
         bool present;
-        if (!qa_dedicated_console_line_next(console, &line, &present, error)) return false;
+        if (!qa_dedicated_console_line_peek(console, &line, &present, error)) return false;
         if (!present) return true;
-        qa_platform_events_push(events, QA_PLATFORM_EVENT_CONSOLE_LINE, time_ns, 0, 0, line);
+        qa_platform_event_result result = qa_platform_events_push(events,
+            QA_PLATFORM_EVENT_CONSOLE_LINE, time_ns, 0, 0, line, (qa_bytes){0});
+        if (result == QA_PLATFORM_EVENT_FULL) { *deferred = true; return true; }
+        qa_dedicated_console_line_commit(console);
     }
 }
 
@@ -21,7 +25,9 @@ bool qa_platform_console_pump(qa_dedicated_console *console, qa_platform_events 
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid dedicated input descriptor");
         return false;
     }
-    if (!publish_lines(console, events, time_ns, error)) return false;
+    bool deferred;
+    if (!publish_lines(console, events, time_ns, &deferred, error)) return false;
+    if (deferred) return true;
     if (qa_dedicated_console_ended(console))
         return true;
     if (!budget)
@@ -40,6 +46,10 @@ bool qa_platform_console_pump(qa_dedicated_console *console, qa_platform_events 
             return true;
         uint8_t bytes[4096];
         size_t size = budget < sizeof(bytes) ? budget : sizeof(bytes);
+        size_t room = qa_dedicated_console_read_room(console);
+        if (size > room) size = room;
+        if (qa_platform_events_admit(events, QA_PLATFORM_EVENT_CONSOLE_LINE,
+            qa_dedicated_console_line_bound(console, size)) != QA_PLATFORM_EVENT_ACCEPTED) return true;
         ssize_t read_count = read(descriptor, bytes, size);
         if (read_count < 0) {
             if (errno == EINTR)
@@ -50,9 +60,9 @@ bool qa_platform_console_pump(qa_dedicated_console *console, qa_platform_events 
             return false;
         }
         if (!qa_dedicated_console_feed(console, (qa_bytes){bytes, (size_t)read_count}, !read_count,
-                                       error) || !publish_lines(console, events, time_ns, error))
+                                       error) || !publish_lines(console, events, time_ns, &deferred, error))
             return false;
-        if (!read_count)
+        if (!read_count || deferred)
             return true;
         budget -= (size_t)read_count;
     }

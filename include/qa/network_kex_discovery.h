@@ -3,6 +3,8 @@
 
 #include "qa/network_q2_kex.h"
 
+enum { QA_KEX_MDNS_DATAGRAM_BYTES = 9000 };
+
 typedef struct qa_kex_mdns_owner qa_kex_mdns_owner;
 typedef struct qa_kex_mdns_hooks {
     void *context;

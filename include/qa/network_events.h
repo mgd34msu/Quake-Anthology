@@ -7,6 +7,7 @@
 typedef struct qa_network_event_source {
     uint64_t id;
     int32_t destination;
+    size_t datagram_bytes;
     void *context;
     bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
 } qa_network_event_source;

@@ -482,7 +482,7 @@ static bool recovery_console(qa_frontend *f,const recovery_command *saved,qa_con
 static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
 {
     recovery_candidate *candidate=context;frontend_replay_timing frame={0};bool frame_pending=false;
-    bool ok=true;
+    bool ok=true,queue_pending=false;
     for (size_t i=0;ok && i<candidate->count;++i) {
         const qa_demo_record *record=candidate->records+i;
         if (frame_pending && record->kind!=QA_DEMO_ADVANCE) {
@@ -493,10 +493,15 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
             qa_recovery_input input;
             ok=qa_recovery_input_decode(record->payload,&input,error);
             if (ok) {
-                qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_USERCMD,
+                qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_USERCMD,
                     f->wall_time_ns,(int32_t)input.seat,0,
-                    (qa_bytes){(const uint8_t *)&input.command,sizeof(input.command)});
-                ok=frontend_platform_drain(f,error);
+                    (qa_bytes){(const uint8_t *)&input.command,sizeof(input.command)}, (qa_bytes){0});
+                queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
+                ok=!queue_pending && frontend_platform_drain(f,error);
+                if (ok) {
+                    queue_pending=qa_platform_events_statistics(f->platform_events).records!=0;
+                    ok=!queue_pending;
+                }
             }
         } else if (record->kind==QA_DEMO_JOURNAL) {
             qa_source_save_io io={0};uint32_t kind=UINT32_MAX;recovery_command command={0};
@@ -510,15 +515,21 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 if (ok) ok=recovery_console(f,&command,&console,&actual,error);
                 if (ok) {
                     frontend_replay_command queued={.console=console,
-                        .context=actual,.text=command.text,
+                        .context=actual,
                         .wall_ns=command.wall_ns,.time_ns=command.time_ns,.frame_number=command.frame_number};
-                    qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_CONSOLE_COMMAND,
-                        command.wall_ns,0,0,(qa_bytes){(const uint8_t *)&queued,sizeof(queued)});
-                    ok=frontend_platform_drain(f,error);
+                    qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_CONSOLE_COMMAND,
+                        command.wall_ns,0,0,(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
+                        (qa_bytes){(const uint8_t *)command.text,strlen(command.text)+1});
+                    queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
+                    ok=!queue_pending && frontend_platform_drain(f,error);
+                    if (ok) {
+                        queue_pending=qa_platform_events_statistics(f->platform_events).records!=0;
+                        ok=!queue_pending;
+                    }
                 }
             } else if (ok) ok=frontend_fail(error,QA_ERROR_FORMAT,"Unknown recovery journal operation");
             free(command.instance);free(command.text);qa_source_save_dispose(&io);
-            if (!ok && error && error->code==QA_OK)
+            if (!ok && !queue_pending && error && error->code==QA_OK)
                 frontend_fail(error,QA_ERROR_FORMAT,"Invalid recovery journal fields");
         } else if (record->kind==QA_DEMO_ADVANCE) {
             if (!frame_pending) {

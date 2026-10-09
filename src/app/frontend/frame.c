@@ -450,7 +450,8 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             frontend->wall_time_ns=command.wall_ns;
             frontend->time_ns=command.time_ns;
             frontend->frame_number=command.frame_number;
-            ok=qa_console_execute_now(command.console,&command.context,command.text,error);
+            ok=qa_console_execute_now(command.console,&command.context,
+                (const char *)payload.data + sizeof(command),error);
             break;
         }
         default:
@@ -781,7 +782,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
         frontend->time_ns=replay->time_ns;
         frontend->frame_number=replay->frame_before;
     } else frontend->wall_time_ns+=elapsed_ns;
-    qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
+    (void)qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
     bool ok=true,ready=false;
     if(replay) ok=frontend_platform_drain(frontend,error);
     else {

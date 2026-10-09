@@ -209,12 +209,6 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *);
 bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket *, qa_error *);
 size_t qa_input_platform_device_count(const qa_input_platform *);
 bool qa_input_platform_device(const qa_input_platform *, size_t, qa_controller_info *);
-typedef struct qa_controller_snapshot {
-    int16_t axes[QA_AXIS_COUNT];
-    bool buttons[21];
-} qa_controller_snapshot;
-bool qa_input_platform_snapshot(qa_input_platform *, int32_t instance, qa_controller_snapshot *,
-                                qa_error *);
 int32_t qa_input_platform_controller(const qa_input_platform *, unsigned slot);
 /* Actual configured selection, independent of the currently assigned device.
  * The serial is borrowed until route replacement or owner destruction. */

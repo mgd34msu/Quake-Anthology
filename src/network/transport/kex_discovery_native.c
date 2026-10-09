@@ -13,7 +13,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-struct qa_kex_mdns_socket { SOCKET descriptor; uint8_t bytes[9000]; };
+struct qa_kex_mdns_socket { SOCKET descriptor; uint8_t bytes[QA_KEX_MDNS_DATAGRAM_BYTES]; };
 static bool socket_error(qa_error *e, const char *operation)
 {
     qa_error_set(e, QA_ERROR_IO, 0, "KEX mDNS %s failed: Winsock %d", operation, WSAGetLastError());
@@ -26,7 +26,7 @@ static bool socket_error(qa_error *e, const char *operation)
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
-struct qa_kex_mdns_socket { int descriptor; uint8_t bytes[9000]; };
+struct qa_kex_mdns_socket { int descriptor; uint8_t bytes[QA_KEX_MDNS_DATAGRAM_BYTES]; };
 static bool socket_error(qa_error *e, const char *operation)
 {
     qa_error_set(e, QA_ERROR_IO, 0, "KEX mDNS %s failed: %s", operation, strerror(errno));
