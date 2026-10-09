@@ -33,7 +33,7 @@ typedef struct qaw_model {
 
 typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pending;
 typedef struct qaw_visibility_parent { uint32_t node, next; } qaw_visibility_parent;
-typedef struct qaw_admission_change { uint32_t surface; uint64_t previous; } qaw_admission_change;
+typedef struct qaw_admission_change { uint32_t surface, previous; } qaw_admission_change;
 
 typedef struct qaw_visibility_light { qa_vec3 origin; float radius; } qaw_visibility_light;
 typedef struct qaw_visibility_cache {
@@ -92,8 +92,8 @@ struct qa_scene_world {
     qa_vec3 grid_size;
     uint64_t identity, revision;
     void *legacy_data, *q3_data;
-    uint64_t *admitted_surfaces;
-    uint64_t admission_generation;
+    qa_stamp_set admission;
+    uint32_t *admission_wrap_marks;
     qaw_admission_change *admission_changes;
     size_t admission_change_count, admission_change_capacity, transaction_depth;
     const qa_scene_frame *admission_frame;

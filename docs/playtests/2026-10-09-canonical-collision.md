@@ -104,8 +104,15 @@ not a latency claim. Evidence: `qa-the2873-q1-cold-20261009` and
 `qa-the2873-cold-public-20261009/results.json`.
 
 Shared-world mutation and concurrent portal updates are outside the const
-geometry proof. The renderer's separate submission admission-stamp journal
-remains a primitive/allocation bypass and is being migrated to `qa_stamp_set`.
+geometry proof. The renderer's separate submission admission-stamp journal is
+also migrated to `qa_stamp_set`. Sparse undo records and a wrap backup are sized
+at topology load; runtime `realloc` is deleted. Six retail BSP fixtures match
+visibility, admission and frame receipts, including same-view nesting,
+abort/retry and forced epoch-wrap rollback. Watched query/transaction heap calls
+are zero. Full production/ASan builds and core suites pass. Evidence:
+`qa-the2873-admission-20261009`. Unsupported reentrant callbacks switching views
+remain bounded by the fixed journal and fail the individual submission before
+its next mutation; this is not concurrent scene proof.
 
 ## Dropped experiment: direct spatial clipping
 

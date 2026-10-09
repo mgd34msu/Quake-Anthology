@@ -562,9 +562,12 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
     WORLD_ALLOC(models, world->model_count);
     WORLD_ALLOC(surfaces, world->surface_count);
     if (world->bsp.family == QA_BSP_Q3) WORLD_ALLOC(source_dlight_masks, world->surface_count);
-    WORLD_ALLOC(admitted_surfaces, world->surface_count);
-    WORLD_ALLOC(admission_changes, world->surface_count);
-    world->admission_change_capacity = world->surface_count;
+    WORLD_ALLOC(admission.marks, world->surface_count);
+    qa_stamp_set_init(&world->admission, world->admission.marks, world->surface_count);
+    WORLD_ALLOC(admission_wrap_marks, world->surface_count);
+    /* Each supported submission admits a surface at most once, plus a wrap marker. */
+    WORLD_ALLOC(admission_changes, world->surface_count + 1);
+    world->admission_change_capacity = world->surface_count + 1;
 #undef WORLD_ALLOC
     for (size_t i = 0; i < world->plane_count; ++i)
         if (!qa_bsp_read_plane(&world->bsp, i, &world->planes[i], error)) return false;
@@ -749,7 +752,8 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->planes); free(world->nodes); free(world->leaves); free(world->leaf_surfaces);
     free(world->source_dlight_masks);
     free(world->models); free(world->surfaces);
-    free(world->admitted_surfaces);
+    free(world->admission.marks);
+    free(world->admission_wrap_marks);
     free(world->admission_changes);
     free(world->visibility_parent_heads); free(world->visibility_parents);
     free(world->sky_name);
@@ -1229,33 +1233,31 @@ static bool begin_admission(qa_scene_world *world, qa_scene_frame *frame, qa_err
     size_t view = frame->command_count;
     while (view != 0 && frame->commands[view - 1].kind != QA_SCENE_COMMAND_VIEW) --view;
     if (world->admission_frame == frame && world->admission_sequence == frame->sequence
-        && world->admission_view == view && world->admission_generation != 0) return true;
-    if (world->admission_generation == UINT64_MAX)
-        return world_error(error, QA_ERROR_MEMORY, "world view admission identity space exhausted");
+        && world->admission_view == view) return true;
+    if (world->admission.epoch == UINT32_MAX) {
+        if (world->admission_change_count == world->admission_change_capacity)
+            return world_error(error, QA_ERROR_MEMORY, "surface admission rollback storage exhausted");
+        uint32_t epoch = qa_stamp_set_snapshot(&world->admission, world->admission_wrap_marks);
+        world->admission_changes[world->admission_change_count++] =
+            (qaw_admission_change){UINT32_MAX, epoch};
+    }
     world->admission_frame = frame;
     world->admission_sequence = frame->sequence;
     world->admission_view = view;
-    ++world->admission_generation;
+    qa_stamp_set_begin(&world->admission);
     return true;
 }
 
 static bool admit_surface(qa_scene_world *world, uint32_t index, bool *admitted, qa_error *error)
 {
     *admitted = false;
-    if (world->admitted_surfaces[index] == world->admission_generation) return true;
-    if (world->admission_change_count == world->admission_change_capacity) {
-        size_t capacity = world->admission_change_capacity;
-        if (capacity > SIZE_MAX / 2 / sizeof(*world->admission_changes))
-            return world_error(error, QA_ERROR_MEMORY, "surface admission journal exceeds address space");
-        capacity = capacity == 0 ? 1 : capacity * 2;
-        qaw_admission_change *replacement = realloc(world->admission_changes, capacity * sizeof(*replacement));
-        if (replacement == NULL) return world_error(error, QA_ERROR_MEMORY, "cannot grow surface admission journal");
-        world->admission_changes = replacement;
-        world->admission_change_capacity = capacity;
-    }
-    world->admission_changes[world->admission_change_count++] = (qaw_admission_change){index, world->admitted_surfaces[index]};
-    world->admitted_surfaces[index] = world->admission_generation;
-    *admitted = true;
+    if (qa_stamp_set_test(&world->admission, index)) return true;
+    /* Reentrant callbacks changing views are bounded; never grow during a draw. */
+    if (world->admission_change_count == world->admission_change_capacity)
+        return world_error(error, QA_ERROR_MEMORY, "surface admission rollback storage exhausted");
+    world->admission_changes[world->admission_change_count++] =
+        (qaw_admission_change){index, qa_stamp_set_value(&world->admission, index)};
+    *admitted = qa_stamp_set_mark(&world->admission, index);
     return true;
 }
 
@@ -1887,7 +1889,8 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
 typedef struct world_transaction {
     size_t commands, groups, changes, view;
     const qa_scene_frame *admission_frame;
-    uint64_t sequence, generation;
+    uint64_t sequence;
+    uint32_t epoch;
     bool sky_drawn;
 } world_transaction;
 
@@ -1896,7 +1899,7 @@ static world_transaction transaction_begin(qa_scene_world *world, const qa_scene
     ++world->transaction_depth;
     return (world_transaction){frame->command_count, frame->group_count, world->admission_change_count,
         world->admission_view, world->admission_frame, world->admission_sequence,
-        world->admission_generation, world->sky_drawn};
+        world->admission.epoch, world->sky_drawn};
 }
 
 static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
@@ -1908,12 +1911,14 @@ static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
         frame->group_count = start->groups;
         while (world->admission_change_count > start->changes) {
             qaw_admission_change change = world->admission_changes[--world->admission_change_count];
-            world->admitted_surfaces[change.surface] = change.previous;
+            if (change.surface == UINT32_MAX)
+                qa_stamp_set_restore(&world->admission, world->admission_wrap_marks, change.previous);
+            else qa_stamp_set_restore_mark(&world->admission, change.surface, change.previous);
         }
         world->admission_view = start->view;
         world->admission_frame = start->admission_frame;
         world->admission_sequence = start->sequence;
-        world->admission_generation = start->generation;
+        qa_stamp_set_restore(&world->admission, NULL, start->epoch);
         world->sky_drawn = start->sky_drawn;
     }
     if (--world->transaction_depth == 0) world->admission_change_count = 0;

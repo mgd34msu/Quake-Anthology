@@ -39,4 +39,27 @@ static inline bool qa_stamp_set_mark(qa_stamp_set *set, size_t index)
     return true;
 }
 
+static inline uint32_t qa_stamp_set_value(const qa_stamp_set *set, size_t index)
+{
+    return set->marks[index];
+}
+
+static inline void qa_stamp_set_restore_mark(qa_stamp_set *set, size_t index, uint32_t value)
+{
+    set->marks[index] = value;
+}
+
+static inline uint32_t qa_stamp_set_snapshot(const qa_stamp_set *set, uint32_t *marks)
+{
+    if (set->count) memcpy(marks, set->marks, set->count * sizeof(*marks));
+    return set->epoch;
+}
+
+/* NULL marks restore only the epoch after sparse rollback. */
+static inline void qa_stamp_set_restore(qa_stamp_set *set, const uint32_t *marks, uint32_t epoch)
+{
+    if (marks && set->count) memcpy(set->marks, marks, set->count * sizeof(*marks));
+    set->epoch = epoch;
+}
+
 #endif
