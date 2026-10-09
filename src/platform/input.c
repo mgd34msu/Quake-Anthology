@@ -397,6 +397,17 @@ static bool haptic_device(struct seat_route *r, qa_error *error) {
     r->haptic_instance = instance;
     return ok;
 }
+typedef struct input_pointer_modes {
+    bool relative, grab, text;
+} input_pointer_modes;
+static input_pointer_modes pointer_modes(Uint32 flags, qa_input_focus focus,
+    bool mouse_available, bool no_grab) {
+    bool focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+    bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+    bool grab = focused && mouse_available && (fullscreen || (focus == QA_INPUT_GAME && !no_grab));
+    return (input_pointer_modes){.relative = grab && focus == QA_INPUT_GAME, .grab = grab,
+        .text = focused && (focus == QA_INPUT_CONSOLE || focus == QA_INPUT_CHAT || focus == QA_INPUT_UI)};
+}
 bool qa_input_platform_sync_focus(qa_input_platform *p, qa_error *error) {
     if (!p->window)
         return true;
@@ -404,22 +415,10 @@ bool qa_input_platform_sync_focus(qa_input_platform *p, qa_error *error) {
     if (!window)
         return true;
     qa_input_seat *s = p->keyboard >= 0 ? p->seats[p->keyboard].seat : NULL;
-    bool focused = s && qa_input_seat_focused(s);
-    bool game = focused && qa_input_seat_focus(s) == QA_INPUT_GAME;
-    bool desired = game && p->mouse_available && integer(p, "in_nograb", 0) == 0;
-    if (desired != p->capture) {
-        if (SDL_SetRelativeMouseMode(desired ? SDL_TRUE : SDL_FALSE) < 0)
-            return failed(error, "Changing relative mouse capture");
-        SDL_SetWindowGrab(window, desired ? SDL_TRUE : SDL_FALSE);
-        p->capture = desired;
-    }
-    bool text = focused && s && qa_input_seat_focused(s) &&
-                (qa_input_seat_focus(s) == QA_INPUT_CONSOLE ||
-                 qa_input_seat_focus(s) == QA_INPUT_CHAT || qa_input_seat_focus(s) == QA_INPUT_UI);
-    if (text && !SDL_IsTextInputActive())
-        SDL_StartTextInput();
-    else if (!text && SDL_IsTextInputActive())
-        SDL_StopTextInput();
+    input_pointer_modes modes = pointer_modes(SDL_GetWindowFlags(window), s ? qa_input_seat_focus(s) : QA_INPUT_GAME,
+        s && p->mouse_available, integer(p, "in_nograb", 0) != 0);
+    if (!input_platform_modes_apply(window, modes.relative, modes.grab, modes.text, error)) return false;
+    p->capture = modes.relative;
     return true;
 }
 static qa_input_platform *allocate_owner(const qa_input_platform_options *o, qa_error *error) {
@@ -782,6 +781,7 @@ bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, d
             SDL_SetWindowGrab(old, p->old_grab ? SDL_TRUE : SDL_FALSE);
         if (SDL_SetRelativeMouseMode(p->old_relative ? SDL_TRUE : SDL_FALSE) < 0)
             ok = failed(error, "Restoring relative mouse mode");
+        SDL_ShowCursor(p->old_cursor);
         if (p->old_text)
             SDL_StartTextInput();
         else
@@ -794,6 +794,7 @@ bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, d
         p->old_grab = SDL_GetWindowGrab(window) == SDL_TRUE;
         p->old_relative = SDL_GetRelativeMouseMode() == SDL_TRUE;
         p->old_text = SDL_IsTextInputActive() == SDL_TRUE;
+        p->old_cursor = SDL_ShowCursor(SDL_QUERY);
         p->capture = p->old_relative;
         for (unsigned i = 0; i < 4; ++i)
             if (p->seats[i].seat) {
@@ -1335,7 +1336,8 @@ struct qa_input_platform_settings_ticket {
     input_motor_output source_rumble;
     bool source_motor_attempted;
     bool owns_joystick, owns_midi, owns_midi_devices;
-    bool previous_relative, previous_grab, previous_text, relative, text;
+    bool previous_relative, previous_grab, previous_text, relative, grab, text;
+    int previous_cursor;
     bool capture_attempted, prepared, aborting, retiring, terminal, published;
     bool midi_deferred, enter_complete, endpoint_entered;
     uint64_t revision, ready_revision;
@@ -1615,14 +1617,12 @@ bool input_platform_modes_apply(SDL_Window *window, bool relative,
     if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) &&
         SDL_SetRelativeMouseMode(relative ? SDL_TRUE : SDL_FALSE) < 0)
         success = failed(error, "Preparing input relative mouse capture");
-    if (window) SDL_SetWindowGrab(window, grab ? SDL_TRUE : SDL_FALSE);
-    if (text) SDL_StartTextInput(); else SDL_StopTextInput();
-    if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) ||
-        (window && SDL_GetWindowGrab(window) != (grab ? SDL_TRUE : SDL_FALSE)) ||
-        SDL_IsTextInputActive() != (text ? SDL_TRUE : SDL_FALSE)) {
-        if (success) qa_error_set(error, QA_ERROR_IO, 0, "Native input capture did not reach the prepared mode");
-        success = false;
-    }
+    if (window && SDL_GetWindowGrab(window) != (grab ? SDL_TRUE : SDL_FALSE))
+        SDL_SetWindowGrab(window, grab ? SDL_TRUE : SDL_FALSE);
+    if (text && !SDL_IsTextInputActive()) SDL_StartTextInput();
+    else if (!text && SDL_IsTextInputActive()) SDL_StopTextInput();
+    int cursor = grab ? SDL_DISABLE : SDL_ENABLE;
+    if (SDL_ShowCursor(SDL_QUERY) != cursor) SDL_ShowCursor(cursor);
     return success;
 }
 static bool settings_open_midi(qa_input_platform_settings_ticket *t, bool enumerate, qa_error *error) {
@@ -1744,6 +1744,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     t->previous_relative = SDL_GetRelativeMouseMode() == SDL_TRUE;
     t->previous_grab = t->window && SDL_GetWindowGrab(t->window) == SDL_TRUE;
     t->previous_text = SDL_IsTextInputActive() == SDL_TRUE;
+    t->previous_cursor = SDL_ShowCursor(SDL_QUERY);
     p->settings_ticket = t; *out = t;
     if (t->window_id && !t->window) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost the retained native window");
@@ -1816,12 +1817,13 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     }
     if (r->source_changed && source >= 0) t->calibration_routes |= 1u << source;
     if (!settings_outputs_prepare(t, error)) return false;
-    t->relative = t->focused && t->focus == QA_INPUT_GAME && desired->mouse_available && !desired->no_grab;
-    t->text = t->focused && (t->focus == QA_INPUT_CONSOLE || t->focus == QA_INPUT_CHAT || t->focus == QA_INPUT_UI);
     if (t->window) {
+        input_pointer_modes modes = pointer_modes(SDL_GetWindowFlags(t->window), t->focus,
+            keyboard && desired->mouse_available, desired->no_grab);
+        t->relative = modes.relative; t->grab = modes.grab; t->text = modes.text;
         t->capture_attempted = true;
-        if (!input_platform_modes_apply(t->window, t->relative, t->relative, t->text, error)) return false;
-    } else { t->relative = t->previous_relative; t->text = t->previous_text; }
+        if (!input_platform_modes_apply(t->window, t->relative, t->grab, t->text, error)) return false;
+    } else { t->relative = t->previous_relative; t->grab = t->previous_grab; t->text = t->previous_text; }
     t->prepared = true; return settings_current(t, error);
 }
 bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
@@ -2078,24 +2080,13 @@ static bool settings_devices_ready(const qa_input_platform_settings_ticket *t, q
 static bool settings_requested_grab(SDL_Window *window) {
     return (SDL_GetWindowFlags(window) & (SDL_WINDOW_MOUSE_GRABBED | SDL_WINDOW_KEYBOARD_GRABBED)) != 0;
 }
-static bool settings_grab_matches(SDL_Window *window, bool requested) {
-    bool effective = requested && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    return settings_requested_grab(window) == requested &&
-        SDL_GetWindowGrab(window) == (effective ? SDL_TRUE : SDL_FALSE);
-}
 static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
     if (t->surface && (!t->window_prepared || !qa_display_surface_ready(t->surface, error))) {
         if (!error || error->code == QA_OK)
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input candidate window has not completed native preparation");
         return false;
     }
-    if (!settings_devices_ready(t, error)) return false;
-    SDL_Window *window = t->surface ? t->candidate_window : t->window;
-    return !window || (SDL_GetRelativeMouseMode() == (t->relative ? SDL_TRUE : SDL_FALSE) &&
-        SDL_GetWindowGrab(window) == (t->relative ? SDL_TRUE : SDL_FALSE) &&
-        (!t->surface || settings_grab_matches(t->window, t->platform->old_grab)) &&
-        SDL_IsTextInputActive() == (t->text ? SDL_TRUE : SDL_FALSE)) ||
-        failed(error, "Prepared input capture changed before publication");
+    return settings_devices_ready(t, error);
 }
 bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *t,
     const qa_display_surface_ticket *surface, const qa_input_release *const release[4], qa_error *error) {
@@ -2146,9 +2137,10 @@ bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *
      * no effective grab. SDL focus determines the candidate's effective grab. */
     t->capture_attempted = true;
     SDL_SetWindowGrab(t->window, t->platform->old_grab ? SDL_TRUE : SDL_FALSE);
-    t->relative = t->relative && next.focused;
-    t->text = t->text && next.focused;
-    if (!input_platform_modes_apply(window, t->relative, t->relative, t->text, error)) return false;
+    input_pointer_modes modes = pointer_modes(SDL_GetWindowFlags(window), t->focus,
+        t->keyboard >= 0 && t->routes[t->keyboard].seat && t->desired.mouse_available, t->desired.no_grab);
+    t->relative = modes.relative; t->grab = modes.grab; t->text = modes.text;
+    if (!input_platform_modes_apply(window, t->relative, t->grab, t->text, error)) return false;
     t->window_prepared = true;
     return settings_current(t, error) && settings_endpoints_ready(t, error);
 }
@@ -2291,13 +2283,7 @@ static bool settings_dispose(qa_input_platform_settings_ticket *t, qa_error *err
         if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) &&
             SDL_SetRelativeMouseMode(t->previous_relative ? SDL_TRUE : SDL_FALSE) < 0)
             success = failed(error, "Restoring input relative mouse capture");
-        if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) ||
-            (t->window && SDL_GetWindowGrab(t->window) != (t->previous_grab ? SDL_TRUE : SDL_FALSE)) ||
-            (t->surface && !settings_grab_matches(t->candidate_window, t->candidate_grab)) ||
-            SDL_IsTextInputActive() != (t->previous_text ? SDL_TRUE : SDL_FALSE)) {
-            if (success) qa_error_set(error, QA_ERROR_IO, 0, "Input capture cleanup did not restore the retained native modes");
-            success = false;
-        }
+        SDL_ShowCursor(t->previous_cursor);
         if (!success) return false;
         t->capture_attempted = false;
     }
@@ -2560,7 +2546,6 @@ static bool initialize_native(qa_input_platform *p, double time, qa_error *error
         }
     if (success) {
         success = qa_input_platform_sync_focus(p, error);
-        if (success && window) SDL_SetWindowGrab(window, p->capture ? SDL_TRUE : SDL_FALSE);
     }
     p->native_initializing = false;
     if (success) p->native_startup = INPUT_NATIVE_READY;

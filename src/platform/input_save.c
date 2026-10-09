@@ -453,6 +453,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
         candidate->old_relative = active->old_relative;
         candidate->old_text = active->old_text;
         candidate->old_grab = active->old_grab;
+        candidate->old_cursor = active->old_cursor;
         candidate->old_controller_events = active->old_controller_events;
         candidate->old_joystick_events = active->old_joystick_events;
         candidate->capture = SDL_GetRelativeMouseMode() == SDL_TRUE;
@@ -485,6 +486,7 @@ bool qa_input_platform_restore(qa_input_platform *p, const qa_input_platform *ac
         envelope(&io, candidate, active, refs, &guard->native_cut, &haptic, guard) && qa_source_save_finish(&io, NULL) &&
         native_modes_read(active, &guard->native_cut, &candidate->window,
             &guard->active_cut, &guard->desired, &guard->previous, &guard->native_window_offset, error);
+    if (success) candidate->old_cursor = active->old_cursor;
     if ((!candidate || !guard) && error && error->code == QA_OK) fail(error, QA_ERROR_MEMORY, "allocating platform candidate");
     qa_haptic_player *players[4];
     if (success) {

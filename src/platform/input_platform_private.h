@@ -43,6 +43,7 @@ struct qa_input_platform {
     int32_t keys[SDL_NUM_SCANCODES];
     uint32_t window;
     bool old_relative, old_text, old_grab, capture;
+    int old_cursor;
     int old_controller_events, old_joystick_events;
     qa_haptic_cache *haptics;
     SDL_Joystick *joystick;
