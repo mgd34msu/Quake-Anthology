@@ -3,6 +3,7 @@
 #include "qa/text.h"
 #include "remote_unified_save.h"
 #include "qa/unified_frame_prediction.h"
+#include "../../world/entity_internal.h"
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
@@ -45,22 +46,44 @@ static bool profile_read(const frontend_remote_unified_prediction *p,const qa_un
     if (numeric->rounding!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
     *rounding=numeric->rounding; return true;
 }
-static bool scene_read(const frontend_remote_unified_prediction *p,const qa_unified_frame *frame,
-    qa_world *scene,qa_error *e)
+static bool scene_prepare(frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_error *e)
 {
+    for(size_t i=0;i<p->pending_count;++i) p->pending_used[p->pending_rows[i].body.actor.slot]=false;
+    p->pending_count=0;
     const qa_unified_world_frame *received=frame->world;
+    if(received->collision_count>qa_actors_capacity(p->registry))
+        return fail(e,QA_ERROR_FORMAT,"Prediction collision rows exceed the actor capacity");
     for (size_t i=0;i<received->collision_count;++i) {
         const qa_spatial_actor *row=received->collisions+i;
         qa_actor_id id; qa_body_state state=row->body.state; qa_actor_collision collision=row->collision;
-        qa_body_link_state link={.linked=true,.absolute_bounds=row->body.absolute_bounds,.link_count=row->body.link_count};
         if (!actor_read(p,frame,row->body.actor,&id,e) || !id.registry ||
             !(p->importing ? frontend_remote_unified_actor_published(p->replica,row->body.actor.slot,row->body.actor.generation) :
                 frontend_remote_unified_actor_present(p->replica,row->body.actor.slot,row->body.actor.generation)) ||
             !(state.ground.kind != QA_ACTOR_REFERENCE_LIFETIME || actor_read(p,frame,state.ground.value.actor,&state.ground.value.actor,e)) ||
             !(collision.owner.kind != QA_ACTOR_REFERENCE_LIFETIME || actor_read(p,frame,collision.owner.value.actor,&collision.owner.value.actor,e))) return false;
-        link.state=state;
-        if (!qa_world_body_create(scene,id,&state,e) || !qa_world_set_collision(scene,id,&collision,e) ||
-            !qa_world_restore_link_state(scene,id,&link,e)) return false;
+        if(p->pending_used[id.slot]) return fail(e,QA_ERROR_ARGUMENT,"Actor already has a body");
+        p->pending_used[id.slot]=true;
+        p->pending_rows[p->pending_count++]=(qa_spatial_actor){
+            .body={id,state,row->body.absolute_bounds,row->body.link_count},.collision=collision};
+    }
+    return qa_world_collision_rows_validate(p->scene,p->pending_rows,p->pending_count,e);
+}
+static bool scene_publish(frontend_remote_unified_prediction *p,qa_error *e)
+{
+    qa_world_reset_bodies(p->scene);
+    for(size_t i=0;i<p->pending_count;++i) {
+        const qa_spatial_actor *row=p->pending_rows+i;
+        qa_body_link_state link={.linked=true,.state=row->body.state,
+            .absolute_bounds=row->body.absolute_bounds,.link_count=row->body.link_count};
+        if(!qa_world_body_create(p->scene,row->body.actor,&row->body.state,e)
+            || !qa_world_set_collision(p->scene,row->body.actor,&row->collision,e)
+            || !qa_world_restore_link_state(p->scene,row->body.actor,&link,e)) {
+            qa_world_reset_bodies(p->scene);
+            qa_unified_document_destroy(p->snapshot_document);
+            p->snapshot_document=NULL;
+            p->received=false;
+            return false;
+        }
     }
     return true;
 }
@@ -87,6 +110,16 @@ static bool create(frontend_remote_unified *replica,bool importing,
     if(!p) return fail(e,QA_ERROR_MEMORY,"Allocating private unified prediction owner");
     p->replica=replica; p->recipe=recipe; p->registry=registry; p->geometry=geometry;
     p->epoch=frontend_remote_unified_epoch(replica); p->discarded=-1;p->importing=importing;
+    uint32_t capacity=qa_actors_capacity(registry);
+    p->pending_rows=calloc(capacity,sizeof(*p->pending_rows));
+    p->pending_used=calloc(capacity,sizeof(*p->pending_used));
+    if(!p->pending_rows || !p->pending_used) {
+        free(p->pending_rows); free(p->pending_used); free(p);
+        return fail(e,QA_ERROR_MEMORY,"Allocating private prediction collision rows");
+    }
+    if(!qa_world_create(registry,geometry,NULL,&p->scene,e)) {
+        free(p->pending_rows); free(p->pending_used); free(p); return false;
+    }
     *out=p; return true;
 }
 bool frontend_remote_unified_prediction_create(frontend_remote_unified *replica,
@@ -110,29 +143,28 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
     s.input.standing=received->standing; s.input.crouched=received->crouched; s.input.dead=received->dead;
     s.input.invulnerability_bounds=received->invulnerability_bounds; s.input.current_bounds=received->bounds;
     qa_actor_id admitted; uint32_t source_entity; int rounding=0;
-    qa_world *scene=NULL; qa_unified_document *copy=NULL;
+    qa_unified_document *copy=NULL;
     uint64_t authoritative_frame=frame->world->source.number;
     bool ok=frontend_remote_unified_player(p->replica,&admitted,&source_entity) && actor_read(p,frame,received->actor,&s.input.actor,e) &&
         qa_actor_id_equal(admitted,s.input.actor) && s.input.profile.kind==s.input.state.kind &&
         profile_read(p,received,&rounding,e) && state_actors_read(p,frame,&s.input.state,e) && ground_read(p,frame,&s.ground,e) &&
-        qa_world_create(p->registry,p->geometry,NULL,&scene,e) && scene_read(p,frame,scene,e) &&
+        scene_prepare(p,frame,e) &&
         qa_unified_document_retain(document,&copy,e) && current(p,e);
     if(ok && p->received && (s.sequence<p->snapshot.sequence || s.input.state.kind!=p->snapshot.input.state.kind))
         ok=fail(e,QA_ERROR_FORMAT,"Prediction snapshot rewinds its acknowledgement or changes movement family");
-    if(ok && p->scene) ok=qa_world_destroy(p->scene,e);
+    if(ok) ok=scene_publish(p,e);
     if(ok) {
         qa_unified_document_destroy(p->snapshot_document);
         s.input.command.kind=s.input.state.kind; s.input.prediction=true; s.input.has_current_bounds=true;
         s.input.shape=(qa_trace_shape){QA_SHAPE_BOX,s.input.standing.bounds}; s.input.q1_solid=QA_Q1_SOLID_SLIDEBOX;
         s.input.view_offset=s.offset;
-        p->scene=scene; scene=NULL; p->snapshot_document=copy; copy=NULL; p->snapshot=s; p->received=true; p->rounding=rounding;
+        p->snapshot_document=copy; copy=NULL; p->snapshot=s; p->received=true; p->rounding=rounding;
         p->authoritative_frame=authoritative_frame;
         size_t retired=0;
         while(retired<p->command_count && (int64_t)p->commands[retired].sequence<=s.sequence) ++retired;
         memmove(p->commands,p->commands+retired,(p->command_count-retired)*sizeof(*p->commands)); p->command_count-=retired;
     }
     qa_unified_document_destroy(copy);
-    if(scene) (void)qa_world_destroy(scene,NULL);
     p->busy=false;
     if (!ok && (!e || e->code==QA_OK))
         fail(e,QA_ERROR_FORMAT,"Unified prediction does not match its actual admitted player snapshot");
@@ -436,5 +468,6 @@ bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_predicti
     if(!frontend_remote_unified_prediction_idle(p)) return fail(e,QA_ERROR_ARGUMENT,"Private prediction is entered during teardown");
     if(p->scene && !qa_world_destroy(p->scene,e)) return false;
     qa_unified_document_destroy(p->snapshot_document);
+    free(p->pending_rows); free(p->pending_used);
     free(p); *owned=NULL; return true;
 }

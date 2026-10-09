@@ -21,6 +21,9 @@ struct frontend_remote_unified_prediction {
     qa_actor_registry *registry;
     qa_collision_geometry *geometry;
     qa_world *scene;
+    qa_spatial_actor *pending_rows;
+    bool *pending_used;
+    size_t pending_count;
     qa_unified_document *snapshot_document;
     prediction_snapshot snapshot;
     prediction_command commands[64];

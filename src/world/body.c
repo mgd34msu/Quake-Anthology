@@ -9,8 +9,8 @@ static bool fail(qa_error *error, qa_status code, const char *message)
 qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
 {
     if(world==NULL || slot>=world->capacity) return NULL;
-    qa_world_body *page=world->pages[slot>>QA_BODY_PAGE_SHIFT];
-    return page==NULL?NULL:&page[slot&(QA_BODY_PAGE_SIZE-1u)];
+    qa_world_body *body=qa_actors_body(world->actors,slot);
+    return body->world==NULL || body->world==world?body:NULL;
 }
 
 qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
@@ -20,20 +20,29 @@ qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
         && qa_actors_get(world->actors,actor)!=NULL?body:NULL;
 }
 
+void qa_world_reset_bodies(qa_world *world)
+{
+    for(uint32_t slot=0;slot<world->capacity;++slot) {
+        qa_world_body *body=qa_world_raw_body(world,slot);
+        if(body!=NULL) {
+            qa_spatial_remove(world,body);
+            free(body->leaves);
+            memset(body,0,sizeof(*body));
+        }
+    }
+}
+
 static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *error)
 {
     if(world==NULL || qa_actors_get(world->actors,actor)==NULL) {
         fail(error,QA_ERROR_ARGUMENT,"Body actor is not live in this world"); return NULL;
     }
-    uint32_t page=actor.slot>>QA_BODY_PAGE_SHIFT;
-    if(world->pages[page]==NULL) {
-        world->pages[page]=calloc(QA_BODY_PAGE_SIZE,sizeof(qa_world_body));
-        if(world->pages[page]==NULL) { fail(error,QA_ERROR_MEMORY,"Cannot allocate body page"); return NULL; }
-    }
     qa_world_body *body=qa_world_raw_body(world,actor.slot);
+    if(body==NULL) return NULL;
     if(body->present && !qa_actor_id_equal(body->actor,actor)) {
         fail(error,QA_ERROR_ARGUMENT,"Session did not forward the previous actor release"); return NULL;
     }
+    body->world=world;
     return body;
 }
 
@@ -41,6 +50,12 @@ static bool valid_state(const qa_body_state *state)
 {
     return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
         && qa_vec_finite(state->velocity) && qa_bounds_valid(state->bounds);
+}
+
+static bool valid_link_state(const qa_body_link_state *saved)
+{
+    return saved!=NULL && (!saved->linked || (saved->link_count!=0
+        && valid_state(&saved->state) && qa_bounds_valid(saved->absolute_bounds)));
 }
 
 static bool same_vector(qa_vec3 left,qa_vec3 right)
@@ -77,11 +92,8 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     qa_world *world=calloc(1,sizeof(*world));
     if(world==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate shared world");
     world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
-    world->page_count=(world->capacity-1u)/QA_BODY_PAGE_SIZE+1u;
-    world->pages=calloc(world->page_count,sizeof(*world->pages));
-    if(world->pages==NULL) { free(world); return fail(error,QA_ERROR_MEMORY,"Cannot allocate body page index"); }
     if(hooks!=NULL) world->hooks=*hooks;
-    if(!qa_spatial_initialize(world,bounds,error)) { free(world->pages); free(world); return false; }
+    if(!qa_spatial_initialize(world,bounds,error)) { free(world); return false; }
     *out=world; return true;
 }
 
@@ -97,13 +109,9 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
         return fail(error,QA_ERROR_ARGUMENT,"Cannot destroy world during a callback or spatial visit");
     if(world->geometry_admission!=NULL)
         return fail(error,QA_ERROR_ARGUMENT,"Abort geometry admission before world destruction");
+    qa_world_reset_bodies(world);
     qa_spatial_dispose(world);
-    for(uint32_t page=0;page<world->page_count;++page) {
-        if(world->pages[page])
-            for(size_t slot=0;slot<QA_BODY_PAGE_SIZE;++slot) free(world->pages[page][slot].leaves);
-        free(world->pages[page]);
-    }
-    free(world->pages); free(world); return true;
+    free(world); return true;
 }
 
 qa_actor_registry *qa_world_actors(qa_world *world) { return world==NULL?NULL:world->actors; }
@@ -310,6 +318,23 @@ bool qa_world_collision_validate(qa_world *world,const qa_actor_collision *colli
 {
     if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Collision validation requires a world");
     return valid_collision(world,collision,QA_ERROR_FORMAT,error);
+}
+
+bool qa_world_collision_rows_validate(qa_world *world,const qa_spatial_actor *rows,size_t count,qa_error *error)
+{
+    for(size_t i=0;i<count;++i) {
+        const qa_spatial_actor *row=rows+i;
+        if(qa_actors_get(world->actors,row->body.actor)==NULL)
+            return fail(error,QA_ERROR_ARGUMENT,"Body actor is not live in this world");
+        if(!valid_state(&row->body.state))
+            return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+        if(!valid_collision(world,&row->collision,QA_ERROR_ARGUMENT,error)) return false;
+        qa_body_link_state link={.linked=true,.state=row->body.state,
+            .absolute_bounds=row->body.absolute_bounds,.link_count=row->body.link_count};
+        if(!valid_link_state(&link))
+            return fail(error,QA_ERROR_ARGUMENT,"Invalid saved body link state");
+    }
+    return true;
 }
 
 bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_collision *collision,qa_error *error)
@@ -634,8 +659,7 @@ bool qa_world_link_state(const qa_world *world,qa_actor_id actor,qa_body_link_st
 bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body_link_state *saved,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
-    if(body==NULL || saved==NULL || (saved->linked && (saved->link_count==0 || !valid_state(&saved->state)
-        || !qa_bounds_valid(saved->absolute_bounds))))
+    if(body==NULL || !valid_link_state(saved))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid saved body link state");
     if(!saved->linked) {
         qa_spatial_remove(world,body); body->linked=false; body->link_count=saved->link_count;

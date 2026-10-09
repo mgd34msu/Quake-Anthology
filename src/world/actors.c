@@ -1,4 +1,5 @@
 #include "qa/actors.h"
+#include "entity_internal.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@ typedef struct actor_page {
     qa_actor_record records[PAGE_SIZE];
     uint64_t generations[PAGE_SIZE];
     uint32_t saved_slots[PAGE_SIZE];
+    qa_world_body bodies[PAGE_SIZE];
 } actor_page;
 
 typedef struct source_entry {
@@ -63,6 +65,12 @@ static qa_actor_record *record_at(const qa_actor_registry *registry, uint32_t in
     return page == NULL ? NULL : &page->records[index & (PAGE_SIZE - 1u)];
 }
 
+qa_world_body *qa_actors_body(const qa_actor_registry *registry, uint32_t slot)
+{
+    if (registry == NULL || slot >= registry->capacity) return NULL;
+    return &registry->pages[slot >> PAGE_SHIFT]->bodies[slot & (PAGE_SIZE - 1u)];
+}
+
 static unsigned first_bit(uint64_t bits)
 {
     unsigned bit = 0;
@@ -74,7 +82,12 @@ static void free_storage(qa_actor_registry *registry)
 {
     if (registry == NULL) return;
     if (registry->pages != NULL) {
-        for (uint32_t i = 0; i < registry->page_count; ++i) free(registry->pages[i]);
+        for (uint32_t i = 0; i < registry->page_count; ++i) {
+            actor_page *page = registry->pages[i];
+            if (page != NULL)
+                for (size_t slot = 0; slot < PAGE_SIZE; ++slot) free(page->bodies[slot].leaves);
+            free(page);
+        }
     }
     free(registry->pages);
     free(registry->free_bits);
