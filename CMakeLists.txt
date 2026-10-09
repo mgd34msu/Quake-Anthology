@@ -60,6 +60,9 @@ target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 add_library(qa_platform_events STATIC src/platform/events.c)
 target_link_libraries(qa_platform_events PUBLIC qa_core)
 
+add_library(qa_jobs STATIC src/platform/jobs.c)
+target_link_libraries(qa_jobs PUBLIC qa_core PRIVATE SDL2::SDL2)
+
 add_library(qa_script STATIC
     src/core/script/checkpoint.c
     src/core/script/codec.c
@@ -855,7 +858,7 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/particles.c
     src/render/cpu/fragment.c
     src/render/cpu/fog.c)
-target_link_libraries(qa_render_cpu PUBLIC qa_scene PRIVATE SDL2::SDL2)
+target_link_libraries(qa_render_cpu PUBLIC qa_scene PRIVATE SDL2::SDL2 qa_jobs)
 
 add_library(qa_display STATIC src/platform/display.c)
 target_link_libraries(qa_display PUBLIC qa_core PRIVATE SDL2::SDL2)
