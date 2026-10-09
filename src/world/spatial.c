@@ -5,10 +5,13 @@
 static bool fail(qa_error *error,qa_status code,const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 
-static void build_sector(qa_world *world,uint32_t index,qa_bounds bounds,unsigned depth,uint32_t *next)
+static void build_sector(qa_world *world,uint32_t index,uint32_t parent,
+                         qa_bounds bounds,unsigned depth,uint32_t *next)
 {
     qa_spatial_sector *sector=&world->sectors[index];
     sector->head=sector->tail=QA_SPATIAL_NONE;
+    sector->parent=parent;
+    sector->subtree_links=0;
     sector->axis=-1;
     if(depth==4) return;
     unsigned axis=(bounds.maxs.x-bounds.mins.x)>(bounds.maxs.y-bounds.mins.y)?0u:1u;
@@ -16,14 +19,24 @@ static void build_sector(qa_world *world,uint32_t index,qa_bounds bounds,unsigne
     sector->axis=(int)axis; sector->distance=distance;
     qa_bounds front=bounds,back=bounds;
     qa_vec_set_component(&front.mins,axis,distance); qa_vec_set_component(&back.maxs,axis,distance);
-    sector->front=(*next)++; build_sector(world,sector->front,front,depth+1,next);
-    sector->back=(*next)++; build_sector(world,sector->back,back,depth+1,next);
+    sector->front=(*next)++; build_sector(world,sector->front,index,front,depth+1,next);
+    sector->back=(*next)++; build_sector(world,sector->back,index,back,depth+1,next);
 }
 
 bool qa_spatial_initialize(qa_world *world,qa_bounds bounds,qa_error *error)
 {
     if(!qa_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial world bounds");
-    uint32_t next=1; build_sector(world,0,bounds,0,&next); return true;
+    uint32_t next=1; build_sector(world,0,QA_SPATIAL_NONE,bounds,0,&next); return true;
+}
+
+static void adjust_occupancy(qa_world *world,uint32_t index,bool add)
+{
+    do {
+        qa_spatial_sector *sector=&world->sectors[index];
+        if(add) ++sector->subtree_links;
+        else --sector->subtree_links;
+        index=sector->parent;
+    } while(index!=QA_SPATIAL_NONE);
 }
 
 void qa_spatial_remove(qa_world *world,uint32_t slot)
@@ -38,6 +51,7 @@ void qa_spatial_remove(qa_world *world,uint32_t slot)
     else qa_actors_link(world->actors->links,previous)->next=next;
     if(next==QA_SPATIAL_NONE) sector->tail=previous;
     else qa_actors_link(world->actors->links,next)->previous=previous;
+    adjust_occupancy(world,link->sector,false);
     link->linked=false;
     link->previous=link->next=QA_SPATIAL_NONE;
 }
@@ -69,6 +83,7 @@ void qa_spatial_publish(qa_world *world,uint32_t slot)
         sector->tail=slot;
     }
     link->linked=true;
+    adjust_occupancy(world,index,true);
 }
 
 void qa_spatial_clear(qa_world *world)
@@ -82,7 +97,18 @@ void qa_spatial_clear(qa_world *world)
             link->previous=link->next=QA_SPATIAL_NONE;
         }
         world->sectors[index].head=world->sectors[index].tail=QA_SPATIAL_NONE;
+        world->sectors[index].subtree_links=0;
     }
+}
+
+void qa_spatial_rebuild_occupancy(qa_world *world)
+{
+    for(uint32_t index=0;index<QA_SPATIAL_SECTORS;++index)
+        world->sectors[index].subtree_links=0;
+    for(uint32_t index=0;index<QA_SPATIAL_SECTORS;++index)
+        for(uint32_t slot=world->sectors[index].head;slot!=QA_SPATIAL_NONE;
+            slot=qa_actors_link(world->actors->links,slot)->next)
+            adjust_occupancy(world,index,true);
 }
 
 void qa_spatial_dispose(qa_world *world)
@@ -123,6 +149,7 @@ static bool visit_sector(qa_world *world,uint32_t index,const qa_bounds *bounds,
 {
     qa_spatial_link *links=world->actors->links;
     qa_spatial_sector *sector=&world->sectors[index];
+    if(sector->subtree_links==0) return true;
     uint32_t next=sector->head;
     qa_spatial_visit result=QA_SPATIAL_CONTINUE;
     while(next!=QA_SPATIAL_NONE) {

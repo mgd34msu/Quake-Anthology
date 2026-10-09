@@ -390,6 +390,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
             else sector->head = slot;
             sector->tail = slot;
         }
+        qa_spatial_rebuild_occupancy(world);
         world->attachment_order = value->attachment_order;
         world->body_serial = value->body_serial;
     }

@@ -12,6 +12,7 @@ typedef struct qa_spatial_sector {
     float distance;
     uint32_t front, back;
     uint32_t head, tail;
+    uint32_t parent, subtree_links;
 } qa_spatial_sector;
 typedef struct qa_spatial_cursor {
     struct qa_spatial_cursor *outer;
@@ -73,6 +74,7 @@ bool qa_spatial_initialize(qa_world *, qa_bounds, qa_error *);
 void qa_spatial_publish(qa_world *, uint32_t);
 void qa_spatial_remove(qa_world *, uint32_t);
 void qa_spatial_clear(qa_world *);
+void qa_spatial_rebuild_occupancy(qa_world *);
 void qa_spatial_dispose(qa_world *);
 bool qa_spatial_prepare_snapshots(qa_world *, size_t, qa_error *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, uint32_t);

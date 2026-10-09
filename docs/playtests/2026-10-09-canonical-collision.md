@@ -126,3 +126,18 @@ Three versions were measured: embedded result storage, borrowed result pointers,
 | rerelease | 9.680 / 9.990 | 9.680 / 10.191 | 9.820 / 9.970 | 9.580 / 13.450 |
 
 All 16 historical and immediate-live phases preserved exact results and zero warm native-read, borrow and controller heap counts. The new-build medians did not all meet 9.6 us. The source experiment was dropped; retained evidence is under `/tmp/qa-the2873-one-pass-20261009`, `/tmp/qa-the2873-one-pass-pointer-20261009` and `/tmp/qa-the2873-one-pass-error-20261009`. This does not close THE-2861. The serial-versus-concurrent map comparison remains the public two-scratch proof above; it is not a module/controller concurrency claim.
+
+## Live spatial occupancy
+
+The shared area tree now retains a parent index and subtree link count, updated at the existing publish/remove commits. Queries skip empty subtrees while continuing to read live actor fields. This adds 248 bytes to the 31-sector index; it introduces no body cache, serialized field, query allocation or failure return. Clear resets the counts and checkpoint restore derives them from the restored ordered lists once.
+
+The unchanged 48-query workload previously entered 576 sectors, of which 528 had wholly empty subtrees. GCC, Clang and ASan/UBSan comparisons preserve all 384 result bytes for Q1/Q2/Q3 ordering, callback removal and later-subtree spawn, nested queries, relinking, checkpoint restore and clear/readmission. Actual owned classic and rerelease modules preserve trace/touch and live mutation results. All eight timing phases match the retained 256-byte query stream with zero controller heap, native read or borrow calls in the measured batch. Full production and ASan builds and all seven configured core checks pass for frozen source `094f861e`.
+
+Pinned ABBA median / p99 microseconds per unchanged 48-query batch, with 120 warm-up and 600 measured batches, affinity `0-7,12-19`, no profiler or debugger:
+
+| Edition | A1 | B1 | B2 | A2 |
+| --- | ---: | ---: | ---: | ---: |
+| classic | 10.570 / 14.570 | 9.480 / 13.350 | 8.850 / 9.051 | 10.050 / 10.271 |
+| rerelease | 10.150 / 13.480 | 8.830 / 13.300 | 8.650 / 9.041 | 10.210 / 14.530 |
+
+Both candidate medians meet the historical 9.6 us target. This is a live module-query result, not a whole-frame or campaign claim. Serial/concurrent immutable-map equality remains the separate two-scratch proof above; these mutable-world lifecycle checks do not claim concurrent native-controller ownership. Evidence: `/tmp/qa-the2861-occupancy-20261009`, `/tmp/qa-the2861-occupancy-isolated-build-20261009` and `/tmp/qa-the2861-occupancy-timing-20261009`. All recorded process groups were absent after normal shutdown. No installation was made.
