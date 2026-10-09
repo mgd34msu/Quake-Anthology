@@ -1,25 +1,18 @@
 #include "internal.h"
-#include <stdlib.h>
 
-enum { Q3_MOVER_LIMIT = 1024 };
+enum { Q3_MOVER_LIMIT = QA_PHYSICS_SOURCE_PUSH_LIMIT };
 
 typedef struct q3_mover_record {
     qa_body_state body;
     qa_physics_properties properties;
     qa_q3_mover_state source;
 } q3_mover_record;
-typedef struct q3_pushed_actor {
-    qa_actor_id actor;
-    qa_q3_mover_actor_kind kind;
-    qa_vec3 origin, body_origin, angles;
-    float yaw;
-    bool has_client;
-} q3_pushed_actor;
 typedef struct q3_mover_transaction {
     qa_physics *physics;
     const qa_q3_mover_services *services;
     int32_t now, previous;
-    q3_pushed_actor *pushed;
+    ph_pushed *pushed;
+    struct qa_physics_push_frame *frame;
     size_t count, capacity;
     qa_physics_result *result;
     qa_error *error;
@@ -125,32 +118,29 @@ static qa_vec3 q3_rotation(qa_vec3 origin, qa_vec3 pusher_origin, qa_vec3 angula
     return qa_vec_sub(rotated, relative);
 }
 static bool q3_save(q3_mover_transaction *transaction, qa_actor_id actor,
-                     const q3_mover_record *record, q3_pushed_actor *saved) {
+                     const q3_mover_record *record, ph_pushed *saved) {
     if (transaction->count == Q3_MOVER_LIMIT) {
+        if (transaction->physics->push_stats.rollback_overflows != SIZE_MAX)
+            ++transaction->physics->push_stats.rollback_overflows;
         qa_error_set(transaction->error, QA_ERROR_ARGUMENT, 0, "Q3 pushed stack exceeds MAX_GENTITIES");
         return false;
     }
-    if (transaction->count == transaction->capacity) {
-        size_t capacity = transaction->capacity ? transaction->capacity * 2 : 32;
-        q3_pushed_actor *entries = realloc(transaction->pushed, capacity * sizeof(*entries));
-        if (!entries) {
-            qa_error_set(transaction->error, QA_ERROR_MEMORY, 0, "Allocating Q3 mover rollback records");
-            return false;
-        }
-        transaction->pushed = entries;
-        transaction->capacity = capacity;
-    }
-    *saved = (q3_pushed_actor){.actor = actor, .kind = record->source.kind,
+    if (transaction->count == transaction->capacity)
+        return ph_push_overflow(&transaction->physics->push_stats.rollback_overflows, transaction->error,
+            "Reserved pusher rollback capacity exhausted");
+    *saved = (ph_pushed){.actor = actor, .kind = record->source.kind,
         .origin = q3_test_origin(record), .body_origin = record->body.origin,
-        .angles = record->source.angular.base, .yaw = (float)record->source.delta_yaw_word,
+        .angles = record->source.angular.base, .delta_yaw = (float)record->source.delta_yaw_word,
         .has_client = record->source.has_client};
     transaction->pushed[transaction->count++] = *saved;
+    if (transaction->count > transaction->physics->push_stats.peak_rollback)
+        transaction->physics->push_stats.peak_rollback = transaction->count;
     return true;
 }
 
 static bool q3_restore(q3_mover_transaction *transaction) {
     for (size_t i = transaction->count; i > 0; --i) {
-        const q3_pushed_actor *saved = &transaction->pushed[i - 1];
+        const ph_pushed *saved = &transaction->pushed[i - 1];
         q3_mover_record current;
         int read = q3_read(transaction, saved->actor, &current);
         if (read < 0) return false;
@@ -165,7 +155,7 @@ static bool q3_restore(q3_mover_transaction *transaction) {
             current.source.angular.base = saved->angles;
             if (current.source.has_client) {
                 current.source.client_origin = saved->origin;
-                current.source.delta_yaw_word = q3_integer(saved->yaw);
+                current.source.delta_yaw_word = q3_integer(saved->delta_yaw);
                 current.source.write_client_motion = true;
             }
             if (!q3_source_write(transaction, saved->actor, &current.source)) return false;
@@ -193,7 +183,7 @@ static bool q3_try_push(q3_mover_transaction *transaction, qa_actor_id actor,
         *pushed = false;
         return true;
     }
-    q3_pushed_actor saved;
+    ph_pushed saved;
     if (!q3_save(transaction, actor, &check, &saved)) return false;
     qa_vec3 rotation = q3_rotation(saved.origin, support.body.origin, angular);
     qa_vec3 destination = qa_vec_add(qa_vec_add(saved.origin, move), rotation);
@@ -324,14 +314,21 @@ static bool q3_query(q3_mover_transaction *transaction, qa_bounds bounds, qa_act
         if (!transaction->services->query(transaction->services->context, bounds, actors,
                                            Q3_MOVER_LIMIT, count, transaction->error)) return false;
         if (*count > Q3_MOVER_LIMIT) {
+            if (transaction->physics->push_stats.candidate_overflows != SIZE_MAX)
+                ++transaction->physics->push_stats.candidate_overflows;
             qa_error_set(transaction->error, QA_ERROR_ARGUMENT, 0, "Q3 mover query exceeded its result capacity");
             return false;
         }
+        if (*count > transaction->physics->push_stats.peak_candidates)
+            transaction->physics->push_stats.peak_candidates = *count;
         return true;
     }
     bool overflow;
-    return qa_world_query(transaction->physics->world, bounds, QA_COLLISION_BOTH,
+    bool ok = qa_world_query(transaction->physics->world, bounds, QA_COLLISION_BOTH,
                           actors, Q3_MOVER_LIMIT, count, &overflow, transaction->error);
+    if (ok && *count > transaction->physics->push_stats.peak_candidates)
+        transaction->physics->push_stats.peak_candidates = *count;
+    return ok;
 }
 
 static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
@@ -342,11 +339,7 @@ static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
     if (read <= 0) return read == 0;
     qa_bounds destination, total;
     q3_push_bounds(transaction, pusher, &support.body, move, angular, &destination, &total);
-    qa_actor_id *actors = malloc(Q3_MOVER_LIMIT * sizeof(*actors));
-    if (!actors) {
-        qa_error_set(transaction->error, QA_ERROR_MEMORY, 0, "Allocating Q3 mover candidates");
-        return false;
-    }
+    qa_actor_id *actors = transaction->frame->candidates;
     qa_body_link_state old_link;
     bool linked = qa_world_link_state(transaction->physics->world, pusher, &old_link);
     bool ok = qa_world_unlink(transaction->physics->world, pusher, transaction->error);
@@ -357,11 +350,10 @@ static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
             qa_error ignored;
             (void)qa_world_restore_link_state(transaction->physics->world, pusher, &old_link, &ignored);
         }
-        free(actors);
         return false;
     }
     read = q3_read(transaction, pusher, &support);
-    if (read <= 0) { free(actors); return read == 0; }
+    if (read <= 0) return read == 0;
     support.body.origin = qa_vec_add(support.body.origin, move);
     support.body.angles = qa_vec_add(support.body.angles, angular);
     ok = ph_write(transaction->physics, pusher, &support.body, transaction->error) &&
@@ -402,7 +394,6 @@ static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
         *obstacle = actor;
         break;
     }
-    free(actors);
     return ok;
 }
 
@@ -514,12 +505,21 @@ static bool q3_mover_call(qa_physics *physics, const qa_q3_mover_services *servi
         result->status = QA_PHYSICS_SLAVE;
         return true;
     }
+    transaction.frame = ph_push_frame(physics, error);
+    if (!transaction.frame) return false;
+    if (transaction.frame->candidate_capacity < Q3_MOVER_LIMIT) {
+        ph_push_frame_release(physics, transaction.frame);
+        return ph_push_overflow(&physics->push_stats.candidate_overflows, error,
+            "Reserved Q3 mover candidate capacity exhausted");
+    }
+    transaction.pushed = transaction.frame->pushed.entries;
+    transaction.capacity = transaction.frame->pushed.capacity;
     bool move = !run_think || record.source.position.type != QA_TRAJECTORY_STATIONARY ||
                                 record.source.angular.type != QA_TRAJECTORY_STATIONARY;
     bool ok = !move || q3_run_team(&transaction, leader);
     if (ok && run_think) ok = q3_action(&transaction, QA_Q3_MOVER_THINK, leader, ph_none());
     if (!ph_live(physics, leader)) result->status = QA_PHYSICS_REMOVED;
-    free(transaction.pushed);
+    ph_push_frame_release(physics, transaction.frame);
     return ok;
 }
 

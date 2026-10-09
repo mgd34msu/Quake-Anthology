@@ -3,6 +3,7 @@
 
 #include "qa/world.h"
 #include "qa/scheduler.h"
+#include "qa/pool.h"
 
 typedef enum qa_physics_motion {
     QA_PHYSICS_STATIONARY, QA_PHYSICS_NOCLIP, QA_PHYSICS_PUSH, QA_PHYSICS_STOP,
@@ -81,6 +82,12 @@ typedef struct qa_physics_services {
                                 bool *handled, qa_error *);
     qa_actor_id (*resolve_reference)(void *, qa_actor_reference);
 } qa_physics_services;
+enum { QA_PHYSICS_DEFAULT_PUSH_FRAMES = 32, QA_PHYSICS_SOURCE_PUSH_LIMIT = 1024 };
+typedef struct qa_physics_push_stats {
+    size_t candidate_capacity, rollback_capacity;
+    size_t peak_candidates, peak_rollback;
+    size_t candidate_overflows, rollback_overflows;
+} qa_physics_push_stats;
 typedef struct qa_physics {
     qa_world *world;
     qa_actor_id world_actor;
@@ -95,7 +102,9 @@ typedef struct qa_physics {
      * destruction require this to be NULL. Owned by the active call. */
     struct qa_physics_transaction *push_transaction;
     /* Retained candidate/rollback frames, borrowed by synchronous calls. */
-    struct qa_physics_push_frame *push_frames;
+    qa_pool push_frames;
+    qa_arena push_storage;
+    qa_physics_push_stats push_stats;
 } qa_physics;
 qa_actor_id qa_physics_actor_reference(const qa_physics *, qa_actor_reference);
 typedef enum qa_physics_status {
@@ -112,6 +121,11 @@ qa_physics_properties qa_physics_properties_default(qa_collision_family);
 /* Initialize fresh storage; dispose retained scratch before reinitializing. */
 bool qa_physics_init(qa_physics *, qa_world *, qa_actor_id world_actor,
                      const qa_physics_services *, qa_error *);
+/* Cold reservation. Default initialization admits 32 nested calls and at least
+ * 1024 candidates/records. Rollback entries count saves, including repeated
+ * actors across team parts; owners may supply a larger measured entry budget. */
+bool qa_physics_prepare_push_frames(qa_physics *, size_t frames, size_t candidates,
+                                    size_t rollback_entries, qa_error *);
 /* Frees retained scratch at an idle point; leaves the world/services intact. */
 bool qa_physics_dispose(qa_physics *, qa_error *);
 /* One kinematic step. The caller runs source prethink/think/postthink and

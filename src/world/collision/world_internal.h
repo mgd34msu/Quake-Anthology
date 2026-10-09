@@ -1,7 +1,7 @@
 #ifndef QA_WORLD_INTERNAL_H
 #define QA_WORLD_INTERNAL_H
 #include "qa/world.h"
-#include "qa/arena.h"
+#include "qa/pool.h"
 #include "internal.h"
 #include "../actors_internal.h"
 
@@ -18,10 +18,8 @@ typedef struct qa_spatial_cursor {
     uint32_t next;
 } qa_spatial_cursor;
 typedef struct qa_world_snapshot_frame {
-    struct qa_world_snapshot_frame *next;
     qa_actor_id *actors;
-    size_t capacity;
-    bool active;
+    size_t capacity, slot;
 } qa_world_snapshot_frame;
 typedef struct qa_world_actor_snapshot {
     qa_actor_id local[8], *actors;
@@ -48,10 +46,8 @@ struct qa_world {
     uint32_t visit_depth, callback_depth;
     uint64_t attachment_order, body_serial;
     qa_world_geometry_admission *geometry_admission;
-    qa_world_snapshot_frame *snapshot_frames;
-    qa_world_snapshot_frame *free_snapshot_frames;
     qa_arena snapshot_storage;
-    size_t snapshot_frame_capacity, snapshot_active, snapshot_peak;
+    qa_pool snapshot_pool;
 };
 static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
     const qa_actor_collision *collision)

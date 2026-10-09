@@ -276,6 +276,10 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
                                  .max_velocity = 2000,
                                  .stop_speed = 100,
                                  .services = {.context = game, .read = physics_read}};
+    size_t push_capacity = game->capacity < QA_PHYSICS_SOURCE_PUSH_LIMIT
+        ? QA_PHYSICS_SOURCE_PUSH_LIMIT : game->capacity;
+    if (!qa_physics_prepare_push_frames(&game->physics, QA_PHYSICS_DEFAULT_PUSH_FRAMES,
+                                        push_capacity, push_capacity, error)) goto fail;
     for (int i = 1; i < QA_Q3_WEAPON_COUNT; ++i) {
         char name[64];
         snprintf(name, sizeof(name), "q3:weapon/%s", qa_q3_weapon_identity_name((qa_q3_weapon)i));
@@ -292,6 +296,7 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     *out = game;
     return true;
 fail:
+    (void)qa_physics_dispose(&game->physics, NULL);
     q3_wire_destroy(game);
     free(game->source_numbers);
     free(game->kamikaze_cooldowns);
@@ -305,7 +310,8 @@ fail:
 bool qa_q3_destroy_ready(const qa_q3_game *game) {
     if (!game)
         return true;
-    if (game->observation_depth || game->player_binding_count || !q3_source_origins_idle(game) ||
+    if (game->observation_depth || game->player_binding_count || game->physics.push_transaction ||
+        game->physics.push_frames.active || !q3_source_origins_idle(game) ||
         !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
         !qa_combat_idle(game->options.services.combat))
@@ -326,6 +332,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
             !qa_inventory_close_items(game->options.services.inventory, owner->holdables, error))
             return false;
     }
+    if (!qa_physics_dispose(&game->physics, error)) return false;
     q3_map_destroy(game);
     q3_configstrings_clear(game);
     q3_wire_destroy(game);

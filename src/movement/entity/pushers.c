@@ -1,5 +1,6 @@
 #include "internal.h"
 #include <float.h>
+#include <stdalign.h>
 
 static bool q1_store(double value, float *out, qa_error *error) {
     if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
@@ -9,37 +10,26 @@ static bool q1_store(double value, float *out, qa_error *error) {
     *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
     return true;
 }
-#include <stdlib.h>
 
-typedef struct ph_pushed {
-    qa_actor_id actor;
-    qa_vec3 origin, angles;
-    float delta_yaw;
-} ph_pushed;
-struct qa_physics_transaction {
-    ph_pushed *entries;
-    size_t count, capacity;
-};
-struct qa_physics_push_frame {
-    struct qa_physics_push_frame *next;
-    qa_actor_id *candidates;
-    size_t candidate_capacity;
-    struct qa_physics_transaction pushed;
-    bool active;
-};
+bool ph_push_overflow(size_t *counter, qa_error *error, const char *message) {
+    if (*counter != SIZE_MAX) ++*counter;
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "%s", message);
+    return false;
+}
 
-static struct qa_physics_push_frame *push_frame(qa_physics *p, qa_error *error) {
-    struct qa_physics_push_frame **slot = &p->push_frames;
-    while (*slot && (*slot)->active) slot = &(*slot)->next;
-    struct qa_physics_push_frame *frame = *slot;
+struct qa_physics_push_frame *ph_push_frame(qa_physics *p, qa_error *error) {
+    size_t slot;
+    struct qa_physics_push_frame *frame = qa_pool_take(&p->push_frames, &slot);
     if (!frame) {
-        frame = calloc(1, sizeof(*frame));
-        if (!frame) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher frame allocation failed"); return NULL; }
-        *slot = frame;
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Reserved pusher nesting capacity exhausted");
+        return NULL;
     }
-    frame->active = true;
     frame->pushed.count = 0;
     return frame;
+}
+
+void ph_push_frame_release(qa_physics *p, struct qa_physics_push_frame *frame) {
+    qa_pool_release(&p->push_frames, frame->slot);
 }
 
 bool qa_physics_dispose(qa_physics *p, qa_error *error) {
@@ -47,17 +37,57 @@ bool qa_physics_dispose(qa_physics *p, qa_error *error) {
     if (p->push_transaction) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Physics disposal requires an idle pusher transaction"); return false;
     }
-    for (struct qa_physics_push_frame *frame = p->push_frames; frame; frame = frame->next)
-        if (frame->active) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Physics disposal requires idle pusher frames"); return false;
-        }
-    while (p->push_frames) {
-        struct qa_physics_push_frame *frame = p->push_frames;
-        p->push_frames = frame->next;
-        free(frame->candidates);
-        free(frame->pushed.entries);
-        free(frame);
+    if (p->push_frames.active) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Physics disposal requires idle pusher frames"); return false;
     }
+    qa_arena_destroy(&p->push_storage);
+    p->push_frames = (qa_pool){0};
+    p->push_stats = (qa_physics_push_stats){0};
+    return true;
+}
+
+bool qa_physics_prepare_push_frames(qa_physics *p, size_t count, size_t candidates,
+                                    size_t rollback, qa_error *error) {
+    size_t padding = alignof(struct qa_physics_push_frame)-1 +
+        alignof(size_t)-1 + alignof(qa_actor_id)-1 + alignof(ph_pushed)-1;
+    if (!p || !count || !candidates || !rollback ||
+        candidates > SIZE_MAX/(2*sizeof(qa_actor_id)) || rollback > SIZE_MAX/sizeof(ph_pushed) ||
+        count > SIZE_MAX/sizeof(struct qa_physics_push_frame)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher reservation exceeds addressable storage"); return false;
+    }
+    size_t candidate_bytes = 2*candidates*sizeof(qa_actor_id);
+    size_t rollback_bytes = rollback*sizeof(ph_pushed);
+    size_t frame_bytes = sizeof(struct qa_physics_push_frame)+sizeof(size_t);
+    if (candidate_bytes > SIZE_MAX-rollback_bytes ||
+        candidate_bytes+rollback_bytes > SIZE_MAX-frame_bytes ||
+        count > (SIZE_MAX-padding)/(candidate_bytes+rollback_bytes+frame_bytes)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher reservation exceeds addressable storage"); return false;
+    }
+    size_t bytes = count*(candidate_bytes+rollback_bytes+frame_bytes)+padding;
+    qa_arena storage = {0};
+    if (!qa_arena_reserve(&storage, bytes, error)) return false;
+    qa_pool frames = {0};
+    if (!qa_pool_prepare(&frames, &storage, count, sizeof(struct qa_physics_push_frame),
+                        alignof(struct qa_physics_push_frame), error)) {
+        qa_arena_destroy(&storage);
+        return false;
+    }
+    qa_actor_id *ids = qa_arena_alloc(&storage, count*candidate_bytes, alignof(qa_actor_id), error);
+    ph_pushed *entries = qa_arena_alloc(&storage, count*rollback_bytes, alignof(ph_pushed), error);
+    if (!ids || !entries || !qa_physics_dispose(p, error)) {
+        qa_arena_destroy(&storage);
+        return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        struct qa_physics_push_frame *frame = qa_pool_at(&frames, i);
+        *frame = (struct qa_physics_push_frame){.slot=i,
+            .candidates=ids+2*i*candidates, .candidate_capacity=candidates,
+            .pushed={.entries=entries+i*rollback, .capacity=rollback, .owner=p}};
+    }
+    qa_arena_seal(&storage);
+    p->push_storage = storage;
+    p->push_frames = frames;
+    p->push_stats = (qa_physics_push_stats){.candidate_capacity=candidates, .rollback_capacity=rollback};
     return true;
 }
 
@@ -78,22 +108,10 @@ static bool candidates(qa_physics *p, struct qa_physics_push_frame *frame,
     *count = 0;
     *out = NULL;
     if (!capacity) return true;
-    size_t limit = SIZE_MAX/(2*sizeof(qa_actor_id));
-    if (capacity > limit) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidate count overflow"); return false;
-    }
-    if (capacity > frame->candidate_capacity) {
-        size_t grown = frame->candidate_capacity ? frame->candidate_capacity : 32;
-        while (grown < capacity) {
-            if (grown > limit/2) { grown = capacity; break; }
-            grown *= 2;
-        }
-        if (grown > limit) grown = capacity;
-        qa_actor_id *list = realloc(frame->candidates, grown*2*sizeof(*list));
-        if (!list) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidates allocation failed"); return false; }
-        frame->candidates = list;
-        frame->candidate_capacity = grown;
-    }
+    if (capacity > frame->candidate_capacity)
+        return ph_push_overflow(&p->push_stats.candidate_overflows, error,
+            "Reserved pusher candidate capacity exhausted");
+    if (capacity > p->push_stats.peak_candidates) p->push_stats.peak_candidates = capacity;
     qa_actor_id *list = frame->candidates;
     const qa_actor_record *record;
     uint32_t cursor = 0;
@@ -121,18 +139,13 @@ static bool candidates(qa_physics *p, struct qa_physics_push_frame *frame,
 static bool save_push(struct qa_physics_transaction *transaction, qa_actor_id actor,
                        const qa_body_state *body, const qa_physics_properties *props,
                        qa_error *error) {
-    if (transaction->count == transaction->capacity) {
-        size_t capacity = transaction->capacity ? transaction->capacity*2 : 32;
-        if (capacity < transaction->capacity || capacity > SIZE_MAX/sizeof(*transaction->entries)) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher rollback count overflow"); return false;
-        }
-        ph_pushed *entries = realloc(transaction->entries, capacity*sizeof(*entries));
-        if (!entries) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher rollback allocation failed"); return false; }
-        transaction->entries = entries;
-        transaction->capacity = capacity;
-    }
+    if (transaction->count == transaction->capacity)
+        return ph_push_overflow(&transaction->owner->push_stats.rollback_overflows, error,
+            "Reserved pusher rollback capacity exhausted");
     transaction->entries[transaction->count++] = (ph_pushed){.actor = actor,
         .origin = body->origin, .angles = body->angles, .delta_yaw = props->delta_yaw};
+    if (transaction->count > transaction->owner->push_stats.peak_rollback)
+        transaction->owner->push_stats.peak_rollback = transaction->count;
     return true;
 }
 
@@ -378,7 +391,7 @@ bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
     qa_physics_properties props;
     int read = ph_read(p, input->actor, &body, &props, error);
     if (read <= 0) { result->status = ph_live(p, input->actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return read == 0; }
-    struct qa_physics_push_frame *frame = push_frame(p, error);
+    struct qa_physics_push_frame *frame = ph_push_frame(p, error);
     if (!frame) return false;
     bool ok;
     if (props.family == QA_COLLISION_Q1) ok = q1_push(p, input, frame, result, error);
@@ -386,7 +399,7 @@ bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
         struct qa_physics_transaction *saved = p->push_transaction ? p->push_transaction : &frame->pushed;
         ok = q2_push(p, input, frame, saved, !p->push_transaction, result, error);
     }
-    frame->active = false;
+    ph_push_frame_release(p, frame);
     return ok;
 }
 
@@ -402,7 +415,7 @@ bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t co
         }
     *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
     if (!count) return true;
-    struct qa_physics_push_frame *frame = push_frame(p, error);
+    struct qa_physics_push_frame *frame = ph_push_frame(p, error);
     if (!frame) return false;
     struct qa_physics_transaction *saved = &frame->pushed;
     p->push_transaction = saved;
@@ -417,7 +430,7 @@ bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t co
     if (ok && result->status != QA_PHYSICS_BLOCKED)
         for (size_t i = saved->count; i > 0; --i)
             if (!qa_physics_touch_triggers(p, saved->entries[i-1].actor, error)) { ok = false; break; }
-    frame->active = false;
+    ph_push_frame_release(p, frame);
     return ok;
 }
 

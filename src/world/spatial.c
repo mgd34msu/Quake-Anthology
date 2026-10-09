@@ -89,31 +89,25 @@ void qa_spatial_dispose(qa_world *world)
 {
     qa_spatial_clear(world);
     qa_arena_destroy(&world->snapshot_storage);
-    world->snapshot_frames=world->free_snapshot_frames=NULL;
+    world->snapshot_pool=(qa_pool){0};
 }
 
 bool qa_spatial_prepare_snapshots(qa_world *world,size_t capacity,qa_error *error)
 {
     size_t actors=world->capacity;
-    if(actors>SIZE_MAX/sizeof(qa_actor_id))
+    size_t offset=(sizeof(qa_world_snapshot_frame)+alignof(qa_actor_id)-1)
+        & ~(alignof(qa_actor_id)-1);
+    if(actors>(SIZE_MAX-offset)/sizeof(qa_actor_id))
         return fail(error,QA_ERROR_MEMORY,"Spatial snapshot actor capacity is too large");
-    size_t actor_bytes=actors*sizeof(qa_actor_id);
-    size_t alignment=alignof(qa_world_snapshot_frame)-1+alignof(qa_actor_id)-1;
-    if(actor_bytes>SIZE_MAX-sizeof(qa_world_snapshot_frame)
-        || capacity>(SIZE_MAX-alignment)/(sizeof(qa_world_snapshot_frame)+actor_bytes))
-        return fail(error,QA_ERROR_MEMORY,"Spatial snapshot reservation is too large");
-    size_t bytes=capacity*(sizeof(qa_world_snapshot_frame)+actor_bytes)+alignment;
-    if(!qa_arena_reserve(&world->snapshot_storage,bytes,error)) return false;
-    qa_world_snapshot_frame *frames=qa_arena_alloc(&world->snapshot_storage,
-        capacity*sizeof(*frames),alignof(qa_world_snapshot_frame),error);
-    qa_actor_id *ids=qa_arena_alloc(&world->snapshot_storage,
-        capacity*actor_bytes,alignof(qa_actor_id),error);
-    if(frames==NULL || ids==NULL) return false;
-    for(size_t i=0;i<capacity;++i)
-        frames[i]=(qa_world_snapshot_frame){.next=i+1<capacity?frames+i+1:NULL,
-            .actors=ids+i*actors,.capacity=actors};
-    world->snapshot_frames=world->free_snapshot_frames=frames;
-    world->snapshot_frame_capacity=capacity;
+    size_t alignment=alignof(qa_world_snapshot_frame)>alignof(qa_actor_id)?
+        alignof(qa_world_snapshot_frame):alignof(qa_actor_id);
+    if(!qa_pool_prepare(&world->snapshot_pool,&world->snapshot_storage,capacity,
+        offset+actors*sizeof(qa_actor_id),alignment,error)) return false;
+    for(size_t i=0;i<capacity;++i) {
+        qa_world_snapshot_frame *frame=qa_pool_at(&world->snapshot_pool,i);
+        *frame=(qa_world_snapshot_frame){.actors=(qa_actor_id *)((uint8_t *)frame+offset),
+            .capacity=actors,.slot=i};
+    }
     qa_arena_seal(&world->snapshot_storage);
     return true;
 }
@@ -121,8 +115,8 @@ bool qa_spatial_prepare_snapshots(qa_world *world,size_t capacity,qa_error *erro
 qa_world_snapshot_usage qa_world_snapshot_statistics(const qa_world *world)
 {
     return world==NULL?(qa_world_snapshot_usage){0}:(qa_world_snapshot_usage){
-        world->snapshot_frame_capacity,world->snapshot_active,world->snapshot_peak,
-        world->snapshot_storage.overflow_count};
+        world->snapshot_pool.capacity,world->snapshot_pool.active,world->snapshot_pool.peak,
+        world->snapshot_pool.overflow};
 }
 
 static bool visit_sector(qa_world *world,uint32_t index,const qa_bounds *bounds,qa_spatial_raw_fn visit,void *context,qa_spatial_cursor *cursor)
@@ -239,19 +233,14 @@ static qa_spatial_visit snapshot_actor(void *opaque,qa_actor_id actor)
     qa_world_actor_snapshot *snapshot=opaque;
     if(snapshot->count==snapshot->capacity) {
         qa_world *world=snapshot->world;
-        qa_world_snapshot_frame *frame=world->free_snapshot_frames;
-        if(snapshot->frame!=NULL || frame==NULL || frame->capacity<=snapshot->count) {
-            if(world->snapshot_storage.overflow_count!=SIZE_MAX)
-                ++world->snapshot_storage.overflow_count;
+        size_t slot;
+        qa_world_snapshot_frame *frame=qa_pool_take(&world->snapshot_pool,&slot);
+        if(frame==NULL) {
             snapshot->failed=true;
             (void)fail(snapshot->error,QA_ERROR_MEMORY,"Spatial snapshot capacity exhausted");
             return QA_SPATIAL_STOP;
         }
-        world->free_snapshot_frames=frame->next;
-        frame->active=true;
         snapshot->frame=frame;
-        ++world->snapshot_active;
-        if(world->snapshot_peak<world->snapshot_active) world->snapshot_peak=world->snapshot_active;
         memcpy(frame->actors,snapshot->local,snapshot->count*sizeof(*snapshot->actors));
         snapshot->actors=frame->actors;
         snapshot->capacity=frame->capacity;
@@ -272,11 +261,7 @@ static qa_spatial_visit snapshot_current(void *opaque,const qa_spatial_actor *ac
 void qa_world_snapshot_release(qa_world_actor_snapshot *snapshot)
 {
     if(snapshot->frame!=NULL) {
-        qa_world_snapshot_frame *frame=snapshot->frame;
-        frame->active=false;
-        frame->next=snapshot->world->free_snapshot_frames;
-        snapshot->world->free_snapshot_frames=frame;
-        --snapshot->world->snapshot_active;
+        qa_pool_release(&snapshot->world->snapshot_pool,snapshot->frame->slot);
         snapshot->frame=NULL;
     }
 }

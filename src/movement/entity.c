@@ -29,7 +29,10 @@ bool qa_physics_init(qa_physics *p, qa_world *world, qa_actor_id world_actor,
     *p = (qa_physics){.world = world, .world_actor = world_actor,
                      .services = *services, .gravity = 800,
                      .max_velocity = 2000, .stop_speed = 100};
-    return true;
+    size_t capacity = qa_actors_capacity(qa_world_actors(world));
+    if (capacity < QA_PHYSICS_SOURCE_PUSH_LIMIT) capacity = QA_PHYSICS_SOURCE_PUSH_LIMIT;
+    return qa_physics_prepare_push_frames(p, QA_PHYSICS_DEFAULT_PUSH_FRAMES,
+        capacity, capacity, error);
 }
 
 bool ph_live(const qa_physics *p, qa_actor_id actor) {

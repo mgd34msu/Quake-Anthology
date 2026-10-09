@@ -7,6 +7,29 @@
 
 #define PH_MONSTER_MASK UINT32_C(0x02020003)
 
+typedef struct ph_pushed {
+    qa_actor_id actor;
+    qa_vec3 origin, angles;
+    float delta_yaw;
+    qa_vec3 body_origin;
+    qa_q3_mover_actor_kind kind;
+    bool has_client;
+} ph_pushed;
+struct qa_physics_transaction {
+    ph_pushed *entries;
+    size_t count, capacity;
+    qa_physics *owner;
+};
+struct qa_physics_push_frame {
+    size_t slot;
+    qa_actor_id *candidates;
+    size_t candidate_capacity;
+    struct qa_physics_transaction pushed;
+};
+struct qa_physics_push_frame *ph_push_frame(qa_physics *, qa_error *);
+void ph_push_frame_release(qa_physics *, struct qa_physics_push_frame *);
+bool ph_push_overflow(size_t *, qa_error *, const char *);
+
 bool ph_live(const qa_physics *, qa_actor_id);
 int ph_read(qa_physics *, qa_actor_id, qa_body_state *, qa_physics_properties *, qa_error *);
 bool ph_write(qa_physics *, qa_actor_id, const qa_body_state *, qa_error *);
