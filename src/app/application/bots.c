@@ -805,8 +805,8 @@ bool application_bots_destroy(qa_application *application,qa_error *error) {
 }
 bool application_bots_shutdown(qa_application *application,bool restart,qa_error *error) {
     application_bots *bots=application?application->bots:NULL;
-    if(!bots || !bots->population) return true;
-    if(bots->restoring || bots->producing || bots->calls || !application_bots_can_destroy(application) ||
+    if(!bots || !bots->population || bots->restoring) return true;
+    if(bots->producing || bots->calls || !application_bots_can_destroy(application) ||
        bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot source shutdown requires the admitted idle application roster");
     ++bots->calls;bool ok=qa_bots_shutdown(bots->population,restart,error);--bots->calls;

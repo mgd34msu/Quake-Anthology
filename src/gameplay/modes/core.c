@@ -517,7 +517,7 @@ bool qa_modes_q1_rogue_initialize(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     return rogue_current(m, id, actor, p, e);
 }
 bool qa_modes_idle(const qa_modes *m) {
-    if (!m || m->callback_depth || m->source_restored)
+    if (!m || m->callback_depth)
         return false;
     for (uint32_t i = 0; i < m->objective_capacity; ++i)
         if (m->objectives[i].reserved)
