@@ -188,6 +188,25 @@ def windows(t):
             out += windows(node)
     return out
 
+def candidate_overlays(s, build, content):
+    runtime = content / 'native-runtime/linux-x86_64'
+    candidate = s.root / 'runtime-candidate'
+    candidate.mkdir()
+    overlays = [(candidate, runtime)]
+    for entry in runtime.iterdir():
+        target = candidate / entry.name
+        if entry.is_dir():
+            target.mkdir()
+        else:
+            target.touch()
+        overlays.append((entry, runtime / entry.name))
+    for source, target in installation.FILES.items():
+        destination = content / target
+        if destination.parent == runtime:
+            (candidate / destination.name).touch(exist_ok=True)
+        overlays.append((build / source, destination))
+    return overlays
+
 def matrix_case(build, content, profile, names, product, renderer, port, owner_defaults=False, gameplay_seconds=20):
     from PIL import Image, ImageStat
     s = Session()
@@ -199,7 +218,7 @@ def matrix_case(build, content, profile, names, product, renderer, port, owner_d
         result['copied_owner_settings'] = names
         artifact = build / 'quake-anthology'
         if owner_defaults:
-            s.overlays = [(build / source, content / target) for source, target in installation.FILES.items()]
+            s.overlays = candidate_overlays(s, build, content)
             artifact = content / 'qa-c'
             argv = [artifact, '--user-content-root', s.root / 'user/content', '--frames', '180']
             if renderer != 'default':
