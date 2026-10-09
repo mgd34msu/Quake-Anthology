@@ -68,7 +68,7 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
     bool same_team = g->options.cooperative;
     if (!same_team) {
         float teamplay;
-        if (!qa_q2_source_value(g, "teamplay", 0, &teamplay, e))
+        if (!qa_q2_source_value(g, QA_Q2_SOURCE_TEAMPLAY, 0, &teamplay, e))
             return false;
         if (g->arsenal_rules != QA_Q2_WEAPON_RULES_CTF && truncf(teamplay) == 0)
             return true;

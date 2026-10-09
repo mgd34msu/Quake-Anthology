@@ -369,7 +369,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,
             &bots->source_orders,error);
     if(ok) ok=bot_ai_source_orders_rebase(&scratch.source_orders,&scratch.source_orders,&bots->source_orders,error);
-    if (ok) { qa_bots old = *bots; *bots = scratch; clear(&old); }
+    if (ok) { bot_ai_source_match_bind(&scratch); qa_bots old = *bots; *bots = scratch; clear(&old); }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot population continuation");
     qa_source_save_dispose(&io); return ok;

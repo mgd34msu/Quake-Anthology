@@ -111,7 +111,7 @@ bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, boo
     }
     if (!allow_empty) {
         float selected;
-        if (!qa_q2_source_value(g, "g_select_empty", 0, &selected, e)) return false;
+        if (!qa_q2_source_value(g, QA_Q2_SOURCE_SELECT_EMPTY, 0, &selected, e)) return false;
         if (!q2_actor_live(g, id)) { *out = QA_Q2_NOT_OWNED; return true; }
         allow_empty = selected != 0;
     }

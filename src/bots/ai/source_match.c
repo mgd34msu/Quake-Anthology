@@ -74,11 +74,20 @@ bool bot_ai_source_match_register(qa_bots *bots, const char *name, qa_error *err
     return true;
 }
 
+void bot_ai_source_match_bind(qa_bots *bots)
+{
+    qa_cvars *registry = bots->services.configuration
+        ? bots->services.configuration(bots->services.context) : NULL;
+    for (size_t index = 0; index < BOT_SOURCE_MATCH_CVARS; ++index)
+        bots->source_match_handles[index] = qa_cvars_resolve(registry, cvar_names[index]);
+}
+
 bool bot_ai_source_match_setup(qa_bots *bots, qa_error *error)
 {
     for (size_t index = 0; index < BOT_SOURCE_MATCH_CVARS; ++index)
         if (!bots->source_match.cvars[index].registered)
             return bot_ai_fail(error, "source bot match has no registered cached cvar");
+    bot_ai_source_match_bind(bots);
     frame_controls(bots);
     return true;
 }
@@ -90,7 +99,7 @@ static bool cvar_update(qa_bots *bots, size_t index, qa_error *error)
         return bot_ai_fail(error, "source bot match reads an unregistered cached cvar");
     qa_cvars *registry = configuration(bots, error);
     if (!registry) return false;
-    const qa_cvar_view *source = qa_cvars_find(registry, cvar_names[index]);
+    const qa_cvar_view *source = qa_cvars_read(registry, bots->source_match_handles[index]);
     if (!source || source->modification_count == cell->modification_count) return true;
     return cvar_copy(cell, source, error);
 }

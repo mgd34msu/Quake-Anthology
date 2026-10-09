@@ -32,6 +32,7 @@ struct qa_bots;
 struct bot_ai_state;
 void bot_ai_source_match_init(bot_source_match_globals *);
 bool bot_ai_source_match_register(struct qa_bots *, const char *, qa_error *);
+void bot_ai_source_match_bind(struct qa_bots *);
 bool bot_ai_source_match_setup(struct qa_bots *, qa_error *);
 bool bot_ai_source_frame_cvars(struct qa_bots *, qa_error *);
 bool bot_ai_source_frame_requests(struct qa_bots *, qa_error *);

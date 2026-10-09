@@ -104,17 +104,23 @@ struct application_native_q2_console {
     struct {
         qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
     } weapon_cvars;
+    qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
     size_t observer_count;
 };
 
-static void weapon_cvars_bind(struct application_native_q2_console *owner) {
+static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
     owner->weapon_cvars.no_stack_double = qa_cvars_resolve(owner->cvars, "g_dm_no_stack_double");
+    static const char *const combat_names[APPLICATION_Q2_COMBAT_SETTING_COUNT] = {
+        "g_instagib", "teamplay", "g_damage_scale", "ai_damage_scale", "g_teamplay_armor_protect"
+    };
+    for (size_t i = 0; i < APPLICATION_Q2_COMBAT_SETTING_COUNT; ++i)
+        owner->combat_cvars[i] = qa_cvars_resolve(owner->cvars, combat_names[i]);
 }
 
 static qa_console_dialect dialect(const application_provider *provider) {
@@ -375,7 +381,7 @@ bool application_native_q2_console_create_restored(application_provider *provide
         application_native_q2_console_destroy(provider, NULL);
         return false;
     }
-    weapon_cvars_bind(owner);
+    source_cvars_bind(owner);
     return true;
 }
 static bool observe_name(struct application_native_q2_console *owner, const char *name, qa_error *error) {
@@ -542,7 +548,7 @@ bool application_native_q2_console_restore(application_provider *provider, qa_by
     if (!okay) qa_cvars_save_abort(ticket);
     if (okay) {
         qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
-        weapon_cvars_bind(provider->native_q2_console);
+        source_cvars_bind(provider->native_q2_console);
     }
     return okay && observe(provider->native_q2_console, error);
 }
@@ -581,8 +587,11 @@ bool application_native_q2_rotation_changed(void *context, const qa_string_id *m
 }
 bool application_native_q2_console_refresh(application_provider *provider, qa_error *error) {
     qa_cvars *cvars = application_native_q2_console_registry(provider);
-    return cvars && provider->state.q2 ? qa_q2_source_apply(provider->state.q2, cvars, false, error) :
-        application_fail(error, QA_ERROR_ARGUMENT, "Q2 settings have no constructed source owner");
+    if (!cvars || !provider->state.q2)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 settings have no constructed source owner");
+    if (!qa_q2_source_apply(provider->state.q2, cvars, false, error)) return false;
+    qa_q2_source_bind(provider->state.q2, cvars);
+    return true;
 }
 bool application_native_q2_source_player_rules(application_provider *provider, qa_q2_player_rules *rules,
                                                qa_error *error) {
@@ -651,14 +660,25 @@ bool application_native_q2_source_number(const application_provider *provider, c
     *out = value->number;
     return true;
 }
-bool application_native_q2_source_integer(const application_provider *provider, const char *name,
-                                          int32_t *out, qa_error *error) {
-    qa_cvars *cvars = application_native_q2_console_registry(provider);
-    const qa_cvar_view *value = cvars && name ? qa_cvars_find(cvars, name) : NULL;
+static bool source_integer(const qa_cvar_view *value, int32_t *out, qa_error *error) {
     if (!value || !out)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 setting has no source integer");
     *out = value->integer;
     return true;
+}
+bool application_native_q2_source_integer(const application_provider *provider, const char *name,
+                                          int32_t *out, qa_error *error) {
+    qa_cvars *cvars = application_native_q2_console_registry(provider);
+    const qa_cvar_view *value = cvars && name ? qa_cvars_find(cvars, name) : NULL;
+    return source_integer(value, out, error);
+}
+bool application_native_q2_combat_integer(const application_provider *provider,
+                                         application_q2_combat_setting setting,
+                                         int32_t *out, qa_error *error) {
+    qa_cvars *cvars = application_native_q2_console_registry(provider);
+    const qa_cvar_view *value = cvars ?
+        qa_cvars_read(cvars, provider->native_q2_console->combat_cvars[setting]) : NULL;
+    return source_integer(value, out, error);
 }
 bool application_native_q2_cvar(void *opaque, qa_string_id name, float *out, qa_error *error) {
     application_provider *provider = opaque;

@@ -244,8 +244,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
     p->phase = MINE_ACTIVE;
     qa_actor_id id = a->id;
     float strong;
-    if (!qa_q2_source_value(g, g->options.edition == QA_Q2_RERELEASE ?
-            "g_dm_strong_mines" : "strong_mines", 0, &strong, e)) return false;
+    if (!qa_q2_source_value(g, QA_Q2_SOURCE_STRONG_MINES, 0, &strong, e)) return false;
     if (!q2_actor_live(g, id)) return true;
     p->expire_ns = q2_deadline(g->now_ns, strong != 0 ? 45 * Q2_NS : mine_life(p->damage / 90));
     p->next_ns = q2_deadline(g->now_ns, 200 * Q2_MS);

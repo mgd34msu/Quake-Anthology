@@ -65,7 +65,7 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
     if (s->phase == QA_Q2_ACTIVATING) {
         if (lmctf) {
             float fastswitch;
-            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+            if (!qa_q2_source_value(c->game, QA_Q2_SOURCE_FAST_SWITCH, 0, &fastswitch, e))
                 return false;
             if (!q2_actor_live(c->game, c->actor->id))
                 return true;
@@ -84,7 +84,7 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
         s->phase = QA_Q2_DROPPING;
         if (lmctf && s->pending != QA_Q2_WEAPON_NONE) {
             float fastswitch;
-            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+            if (!qa_q2_source_value(c->game, QA_Q2_SOURCE_FAST_SWITCH, 0, &fastswitch, e))
                 return false;
             if (!q2_actor_live(c->game, c->actor->id))
                 return true;
@@ -128,7 +128,7 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
             return true;
         if (lmctf && s->pending != QA_Q2_WEAPON_NONE) {
             float fastswitch;
-            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+            if (!qa_q2_source_value(c->game, QA_Q2_SOURCE_FAST_SWITCH, 0, &fastswitch, e))
                 return false;
             if (!q2_actor_live(c->game, c->actor->id))
                 return true;

@@ -605,7 +605,7 @@ bool qa_q2_wire_movement_prepare(qa_q2_game *g, qa_actor_id id,
             rr && a->grapples[QA_Q2_CTF_GRAPPLE].hook.registry &&
                 a->grapples[QA_Q2_CTF_GRAPPLE].phase >= QA_Q2_GRAPPLE_PULL ? 1 : 0;
         float gravity = g->services.physics->gravity;
-        if (!rr && !qa_q2_source_value(g, "sv_gravity", 800, &gravity, error)) return false;
+        if (!rr && !qa_q2_source_value(g, QA_Q2_SOURCE_GRAVITY, 800, &gravity, error)) return false;
         if (rr) gravity *= a->physics_bound ? a->physics.gravity_scale : 1;
         if (!isfinite(gravity)) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 ClientThink Source gravity is not finite");

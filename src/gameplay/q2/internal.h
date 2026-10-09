@@ -2,6 +2,7 @@
 #define QA_Q2_INTERNAL_H
 #include "qa/game_q2.h"
 #include "qa/game_q2_wire.h"
+#include "qa/game_q2_source.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -145,6 +146,8 @@ typedef struct q2_push_frame {
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
+    const qa_cvars *source_cvars;
+    qa_cvar_handle source_settings[QA_Q2_SOURCE_SETTING_COUNT];
     qa_q2_options options;
     qa_q2_hooks hooks;
     qa_q2_grapple_options grapple_options;

@@ -70,7 +70,7 @@ static bool drop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (g->options.edition == QA_Q2_RERELEASE) {
         qa_actor_id id = a->id;
         float no_drop;
-        if (!qa_q2_source_value(g, "g_dm_no_quadfire_drop", 0, &no_drop, e)) return false;
+        if (!qa_q2_source_value(g, QA_Q2_SOURCE_NO_QUADFIRE_DROP, 0, &no_drop, e)) return false;
         if (!q2_actor_live(g, id)) return true;
         if (no_drop != 0) quadfire = false;
     }

@@ -143,8 +143,8 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
         if (g->options.edition == QA_Q2_CLASSIC &&
             g->arsenal_rules == QA_Q2_WEAPON_RULES_LMCTF) {
             float source_flags, disabled;
-            if (!qa_q2_source_value(g, "ctfflags", 0, &source_flags, e) ||
-                !qa_q2_source_value(g, "disabled_weps", 0, &disabled, e))
+            if (!qa_q2_source_value(g, QA_Q2_SOURCE_CTF_FLAGS, 0, &source_flags, e) ||
+                !qa_q2_source_value(g, QA_Q2_SOURCE_DISABLED_WEAPONS, 0, &disabled, e))
                 return false;
             if (!isfinite(source_flags) || !isfinite(disabled) ||
                 (double)source_flags < INT32_MIN || (double)source_flags > INT32_MAX ||

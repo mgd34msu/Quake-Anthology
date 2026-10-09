@@ -146,7 +146,7 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
     if (!target.player || !attacker.player) return true;
     if (rules.edition == QA_Q2_RERELEASE) {
         int32_t instagib;
-        if (!application_native_q2_source_integer(policy, "g_instagib", &instagib, error)) return false;
+        if (!application_native_q2_combat_integer(policy, APPLICATION_Q2_COMBAT_INSTAGIB, &instagib, error)) return false;
         if (instagib) request->amount = 9999;
     }
     if (qa_actor_id_equal(request->target, request->attack.attacker) ||
@@ -156,7 +156,7 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
     if (!mode_teams(app, &ctf, &lmctf, &railgun, error)) return false;
     int32_t teamplay = 0;
     if (rules.edition == QA_Q2_RERELEASE &&
-        !application_native_q2_source_integer(policy, "teamplay", &teamplay, error)) return false;
+        !application_native_q2_combat_integer(policy, APPLICATION_Q2_COMBAT_TEAMPLAY, &teamplay, error)) return false;
     bool classic_team = (rules.deathmatch || rules.cooperative) &&
         (rules.deathmatch_flags & (64u | 128u)) != 0;
     bool same = rules.edition == QA_Q2_RERELEASE && rules.cooperative;
@@ -228,10 +228,10 @@ static bool describe(void *opaque, const qa_damage_request *request,
         (rules.deathmatch || rules.cooperative) && (rules.deathmatch_flags & (64u | 128u));
     int32_t damage_scale = 1, teamplay = 0, armor_protect = 0;
     if (rules.edition == QA_Q2_RERELEASE &&
-        (!application_native_q2_source_integer(provider,
-            target.monster ? "ai_damage_scale" : "g_damage_scale", &damage_scale, error) ||
-         !application_native_q2_source_integer(provider, "teamplay", &teamplay, error) ||
-         !application_native_q2_source_integer(provider, "g_teamplay_armor_protect", &armor_protect, error)))
+        (!application_native_q2_combat_integer(provider,
+            target.monster ? APPLICATION_Q2_COMBAT_AI_DAMAGE_SCALE : APPLICATION_Q2_COMBAT_DAMAGE_SCALE, &damage_scale, error) ||
+         !application_native_q2_combat_integer(provider, APPLICATION_Q2_COMBAT_TEAMPLAY, &teamplay, error) ||
+         !application_native_q2_combat_integer(provider, APPLICATION_Q2_COMBAT_ARMOR_PROTECT, &armor_protect, error)))
         return false;
     *out = (qa_combat_context){
         .armor = {.q2_profile = target_state->armor.regular.kind == QA_ARMOR_Q2 ||

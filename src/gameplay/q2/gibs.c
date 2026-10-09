@@ -118,7 +118,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
     uint64_t lifetime;
     if (rr) {
         float instagib;
-        if (!qa_q2_source_value(g, "g_instagib", 0, &instagib, e)) return false;
+        if (!qa_q2_source_value(g, QA_Q2_SOURCE_INSTAGIB, 0, &instagib, e)) return false;
         bool instant = qa_source_float_to_i32(instagib) != 0;
         lifetime = (uint64_t)((instant ? 1000u : 10000u) +
             q2_random_bounded(g, instant ? 4001u : 10001u)) * Q2_MS;

@@ -1,16 +1,50 @@
 #include "player/internal.h"
 #include "qa/game_q2_source.h"
 
-bool qa_q2_source_value(qa_q2_game *game, const char *name, float default_value,
+static const char *setting_name(const qa_q2_game *game, qa_q2_source_setting setting) {
+    static const char *const names[QA_Q2_SOURCE_SETTING_COUNT] = {
+        [QA_Q2_SOURCE_GRAVITY] = "sv_gravity",
+        [QA_Q2_SOURCE_SELECT_EMPTY] = "g_select_empty",
+        [QA_Q2_SOURCE_FAST_SWITCH] = "fastswitch",
+        [QA_Q2_SOURCE_STRONG_MINES] = "strong_mines",
+        [QA_Q2_SOURCE_TEAMPLAY] = "teamplay",
+        [QA_Q2_SOURCE_INSTAGIB] = "g_instagib",
+        [QA_Q2_SOURCE_CTF_FLAGS] = "ctfflags",
+        [QA_Q2_SOURCE_DISABLED_WEAPONS] = "disabled_weps",
+        [QA_Q2_SOURCE_NO_QUADFIRE_DROP] = "g_dm_no_quadfire_drop",
+    };
+    return setting == QA_Q2_SOURCE_STRONG_MINES && game->options.edition == QA_Q2_RERELEASE ?
+        "g_dm_strong_mines" : names[setting];
+}
+
+void qa_q2_source_bind(qa_q2_game *game, const qa_cvars *cvars) {
+    if (game->source_cvars != cvars) {
+        for (unsigned i = 0; i < QA_Q2_SOURCE_SETTING_COUNT; ++i)
+            game->source_settings[i] = qa_cvars_resolve(cvars,
+                setting_name(game, (qa_q2_source_setting)i));
+        game->source_cvars = cvars;
+    }
+}
+
+bool qa_q2_source_value(qa_q2_game *game, qa_q2_source_setting setting, float default_value,
                         float *out, qa_error *error) {
-    if (!game || !name || !out) {
+    if (!game || (unsigned)setting >= QA_Q2_SOURCE_SETTING_COUNT || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 source value requires its GAME owner");
         return false;
     }
     *out = default_value;
     if (!game->services.cvar) return true;
+    if (game->source_cvars) {
+        const qa_cvar_view *value = qa_cvars_read(game->source_cvars, game->source_settings[setting]);
+        if (value && value->owner && value->owner != game->options.owner) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 cvar belongs to another source");
+            return false;
+        }
+        *out = value ? value->number : 0;
+        return true;
+    }
     qa_string_id id;
-    return qa_builtin_resource(&game->services, name, &id, error) &&
+    return qa_builtin_resource(&game->services, setting_name(game, setting), &id, error) &&
         game->services.cvar(game->services.cvar_context ? game->services.cvar_context :
             game->services.context, id, out, error);
 }

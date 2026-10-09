@@ -40,6 +40,16 @@ bool application_native_q2_source_mode_rules(application_provider *, qa_mode_rul
 bool application_native_q2_source_modes_refresh(application_provider *, qa_error *);
 bool application_native_q2_source_number(const application_provider *, const char *, float *, qa_error *);
 bool application_native_q2_source_integer(const application_provider *, const char *, int32_t *, qa_error *);
+typedef enum application_q2_combat_setting {
+    APPLICATION_Q2_COMBAT_INSTAGIB,
+    APPLICATION_Q2_COMBAT_TEAMPLAY,
+    APPLICATION_Q2_COMBAT_DAMAGE_SCALE,
+    APPLICATION_Q2_COMBAT_AI_DAMAGE_SCALE,
+    APPLICATION_Q2_COMBAT_ARMOR_PROTECT,
+    APPLICATION_Q2_COMBAT_SETTING_COUNT
+} application_q2_combat_setting;
+bool application_native_q2_combat_integer(const application_provider *, application_q2_combat_setting,
+    int32_t *, qa_error *);
 bool application_native_q2_source_weapon_input(application_provider *, qa_q2_weapon_input *, qa_error *);
 bool application_native_q2_cvar(void *, qa_string_id, float *, qa_error *);
 #endif
