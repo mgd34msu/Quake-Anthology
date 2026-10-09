@@ -1,4 +1,5 @@
 #include "qa/pool.h"
+#include "qa/allocation_gate.h"
 
 bool qa_pool_prepare(qa_pool *pool, qa_arena *arena, size_t count, size_t stride,
     size_t alignment, qa_error *error)
@@ -46,6 +47,7 @@ void *qa_pool_take(qa_pool *pool, size_t *slot)
     *slot = pool->head;
     if (*slot == SIZE_MAX) {
         if (pool->overflow != SIZE_MAX) ++pool->overflow;
+        qa_allocation_gate_capacity_exhausted();
         return NULL;
     }
     pool->head = pool->next[*slot];

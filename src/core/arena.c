@@ -1,4 +1,5 @@
 #include "qa/arena.h"
+#include "qa/allocation_gate.h"
 
 #include <stdlib.h>
 
@@ -36,6 +37,7 @@ static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
 {
     if (arena->sealed) {
         if (arena->overflow_count != SIZE_MAX) ++arena->overflow_count;
+        qa_allocation_gate_capacity_exhausted();
         qa_error_set(error, QA_ERROR_MEMORY, 0, "sealed arena capacity exhausted");
         return NULL;
     }

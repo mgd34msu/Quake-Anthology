@@ -14,6 +14,7 @@ typedef enum qa_allocation_gate_counter {
     QA_ALLOCATION_GATE_BYTES,
     QA_ALLOCATION_GATE_NULL_RESULTS,
     QA_ALLOCATION_GATE_SIZE_OVERFLOWS,
+    QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS,
     QA_ALLOCATION_GATE_COUNTERS
 } qa_allocation_gate_counter;
 typedef struct qa_allocation_gate_counts {
@@ -37,5 +38,13 @@ qa_allocation_gate_counts qa_allocation_gate_end(bool playing, bool succeeded);
 const qa_allocation_gate_summary *qa_allocation_gate_read(void);
 const qa_allocation_gate_record *qa_allocation_gate_records(void);
 void qa_allocation_gate_report(void);
+
+#ifdef QA_ALLOCATION_GATE
+/* Exhausting reserved arena/pool storage fails the diagnostic gate even when
+ * no OS allocation was attempted. Normal builds have no observer call. */
+void qa_allocation_gate_capacity_exhausted(void);
+#else
+static inline void qa_allocation_gate_capacity_exhausted(void) {}
+#endif
 
 #endif

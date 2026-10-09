@@ -41,6 +41,13 @@ static bool enter(void)
 static void leave(void)
 { atomic_fetch_sub_explicit(&in_flight, 1, memory_order_release); }
 
+void qa_allocation_gate_capacity_exhausted(void)
+{
+    if (!enter()) return;
+    count(QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS, 1);
+    leave();
+}
+
 void *__wrap_malloc(size_t size)
 {
     bool watched = enter();
@@ -133,14 +140,15 @@ const qa_allocation_gate_record *qa_allocation_gate_records(void)
 
 static void print_counts(const qa_allocation_gate_counts *counts)
 {
-    (void)fprintf(stderr, " malloc=%llu calloc=%llu realloc=%llu frees=%llu requested_bytes=%llu null_results=%llu size_overflows=%llu",
+    (void)fprintf(stderr, " malloc=%llu calloc=%llu realloc=%llu frees=%llu requested_bytes=%llu null_results=%llu size_overflows=%llu capacity_exhaustions=%llu",
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_MALLOC],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_CALLOC],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_REALLOC],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_FREE],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_BYTES],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_NULL_RESULTS],
-        (unsigned long long)counts->values[QA_ALLOCATION_GATE_SIZE_OVERFLOWS]);
+        (unsigned long long)counts->values[QA_ALLOCATION_GATE_SIZE_OVERFLOWS],
+        (unsigned long long)counts->values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS]);
 }
 
 void qa_allocation_gate_report(void)
@@ -153,7 +161,12 @@ void qa_allocation_gate_report(void)
         print_counts(&records[i].counts);
         (void)fputc('\n', stderr);
     }
-    (void)fprintf(stderr, "allocation_gate summary playing_frames=%llu measured_frames=%llu recorded_frames=%llu discarded_records=%llu",
+    bool failed = summary.total.values[QA_ALLOCATION_GATE_MALLOC] ||
+        summary.total.values[QA_ALLOCATION_GATE_CALLOC] ||
+        summary.total.values[QA_ALLOCATION_GATE_REALLOC] ||
+        summary.total.values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS];
+    (void)fprintf(stderr, "allocation_gate summary status=%s playing_frames=%llu measured_frames=%llu recorded_frames=%llu discarded_records=%llu",
+        failed ? "fail" : "pass",
         (unsigned long long)summary.playing_frames, (unsigned long long)summary.measured_frames,
         (unsigned long long)summary.recorded_frames, (unsigned long long)summary.discarded_records);
     print_counts(&summary.total);
