@@ -88,13 +88,17 @@ typedef struct qa_entity_collision_fields {
     const qa_entity_references *references;
     const qa_entity_model_fields *models;
 } qa_entity_collision_fields;
+typedef enum qa_entity_collision_components {
+    QA_ENTITY_COLLISION_ROLE, QA_ENTITY_COLLISION_ALL
+} qa_entity_collision_components;
 /* Cold adapters resolve addresses and ABI rules. Sampling only reads those
  * bytes; it never enters a module, resolves names or observes OS mappings. */
 qa_entity_vector_field qa_entity_vector_bytes(const void *);
 bool qa_entity_body_read(const qa_entity_body_fields *, qa_entity_pose,
                          qa_entity_body_components, qa_body_state *, qa_error *);
+/* ROLE writes only role; ALL writes the complete collision record. */
 bool qa_entity_collision_read(const qa_entity_collision_fields *, bool linking,
-                              qa_actor_collision *, qa_error *);
+                              qa_entity_collision_components, qa_actor_collision *, qa_error *);
 typedef struct qa_collision_binding {
     void *context;
     const qa_entity_collision_fields *fields;

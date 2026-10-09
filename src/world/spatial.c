@@ -174,17 +174,16 @@ typedef struct query_context {
 static qa_spatial_visit collect_actor(void *opaque,uint32_t slot)
 {
     query_context *context=opaque;
-    qa_actor_id actor=qa_actors_body(context->world->actors->pages,slot)->actor;
-    qa_world_body *body=qa_world_find_body(context->world,actor);
+    qa_world_body *body=qa_world_raw_body(context->world,slot);
     if(body==NULL) return QA_SPATIAL_CONTINUE;
     qa_actor_collision collision; qa_error error={0};
-    if(!qa_world_collision_sample(body,false,&collision,&error)) {
+    if(!qa_world_collision_sample(body,false,QA_ENTITY_COLLISION_ROLE,&collision,&error)) {
         if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
         return QA_SPATIAL_CONTINUE;
     }
     if(context->role!=QA_COLLISION_BOTH && collision.role!=context->role
         && collision.role!=QA_COLLISION_BOTH) return QA_SPATIAL_CONTINUE;
-    if(context->count<context->capacity) context->actors[context->count++]=actor;
+    if(context->count<context->capacity) context->actors[context->count++]=body->actor;
     else context->overflow=true;
     return QA_SPATIAL_CONTINUE;
 }

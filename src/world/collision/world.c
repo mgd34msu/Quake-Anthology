@@ -224,7 +224,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
         qa_world_body *body=qa_world_find_body(world,id);
         if(body==NULL) continue;
         qa_actor_collision collision;
-        if(!qa_world_collision_sample(body,false,&collision,&local)) {
+        if(!qa_world_collision_sample(body,false,QA_ENTITY_COLLISION_ALL,&collision,&local)) {
             if(local.code!=QA_OK) { if(error!=NULL) *error=local; ok=false; break; }
             continue;
         }

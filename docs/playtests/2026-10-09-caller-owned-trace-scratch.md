@@ -33,6 +33,21 @@ This correctness slice does **not** claim a speedup. THE-2861's 9.6 µs target r
 
 Raw samples and commands are in the integrated fixture folder. Every phase exits normally and its query-result bytes match A.
 
+### ID-only role projection
+
+The next THE-2861 step requests only collision roles from the same live decoder and resolves each raw area-query row once. Full getters retain their original records. In the identical 48-query batch, instrumented ID queries read solid 32 times; flags, model and owner reads each fall from 32 to zero. The instrumentation is excluded from timing runs.
+
+Production/ASan builds and seven core checks each pass. All six SDK roles, full getter behavior, role/order/count/capacity and Source changes without re-linking pass. Source tree: `68389bd8c6f6787861ee43506b99967747376665`; packet: `/tmp/qa-the2873-role-fields-20261009`.
+
+| ABBA comparison | Edition | A1 / A2 median µs | B1 / B2 median µs | A1 / A2 p99 µs | B1 / B2 p99 µs |
+| --- | --- | --- | --- | --- | --- |
+| Historical / role projection | Classic | 9.510 / 9.460 | 10.350 / 9.970 | 15.550 / 9.690 | 15.510 / 13.831 |
+| Historical / role projection | Rerelease | 9.510 / 9.520 | 10.530 / 10.110 | 16.240 / 12.861 | 13.720 / 10.541 |
+| Live scratch / role projection | Classic | 10.850 / 10.480 | 10.250 / 9.720 | 14.501 / 18.160 | 10.401 / 9.930 |
+| Live scratch / role projection | Rerelease | 10.390 / 10.490 | 10.165 / 10.060 | 14.530 / 15.050 | 18.190 / 13.641 |
+
+This reduces the measured live-query cost, but the 9.6 µs acceptance target remains unmet. Raw samples are in `abba-results.json` and `live-abba-results.json`; all 16 phases exit normally with equal query-result bytes and zero sampled native read/borrow/controller heap calls.
+
 ## Bounds and remaining work
 
 Upfront PVS/PHS preparation costs load time and retained memory. Single cold-load observations, rather than latency medians, show Q1 start 3.924→30.099 ms, classic e1m1 3.618→28.347 ms, rerelease e1m1 4.405→54.275 ms, and Q3 q3dm1 7.807→14.705 ms. One pre-reserved Q1 caller retains about 10–11 MB of allocator storage; the historical load measurement excludes its later lazy query arenas, so this is not a net-increase claim.
