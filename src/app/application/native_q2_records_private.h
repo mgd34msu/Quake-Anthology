@@ -10,14 +10,14 @@
 #include <string.h>
 
 typedef enum nqr_kind { NQR_HEALTH,NQR_COUNT,NQR_CAPACITY,NQR_TEAM,NQR_SCORE,
-    NQR_ORIGIN,NQR_VELOCITY,NQR_ANGLES,NQR_MIN,NQR_MAX,NQR_LINK,NQR_ADDRESS,
+    NQR_BODY,NQR_LINK,NQR_ADDRESS,
     NQR_CONSTANT,NQR_VECTOR,NQR_PRIVATE } nqr_kind;
 typedef struct nqr_team { double value; qa_string_id team; } nqr_team;
 typedef struct nqr_field {
     nqr_kind kind;
     qa_native_value_type encoding;
     uint32_t offset,length;
-    qa_item_id item;
+    union { qa_item_id item; qa_body_vector_kind body; };
     size_t target;
     qa_json_id address;
     uint8_t initial[12];

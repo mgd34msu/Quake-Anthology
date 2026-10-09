@@ -332,11 +332,12 @@ bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id
         if (profile->fields[i].kind == QC_FIELD_CONSTANT &&
             !project_value(engine->provider->state.qc.instance, reference, profile->fields[i].definition,
                 profile->fields[i].constant.constant, error)) return false;
-        if (client && (profile->fields[i].kind == QC_FIELD_MIN || profile->fields[i].kind == QC_FIELD_MAX)) {
+        if (client && profile->fields[i].kind == QC_FIELD_BODY &&
+            (profile->fields[i].body == QA_BODY_MINIMUM || profile->fields[i].body == QA_BODY_MAXIMUM)) {
             qa_body_state body;
             if (!qa_world_body_read(engine->world, actor, &body, error) ||
                 !qa_qc_project_entity_vector(engine->provider->state.qc.instance, reference, profile->fields[i].definition->offset,
-                    profile->fields[i].kind == QC_FIELD_MIN ? body.bounds.mins : body.bounds.maxs, error)) return false;
+                    *qa_body_vector(&body, profile->fields[i].body), error)) return false;
         }
     }
     return true;
@@ -459,12 +460,11 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
             bool client = engine->services.player_info && engine->services.player_info(engine->services.context, access->binding.actor, &player) && player.connected;
             value.kind = QA_QC_GAME_VECTOR; value.value.vector = qa_v3(0, 0, client ? player.view_height : 0); break;
         }
-        case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+        case QC_FIELD_BODY:
             if (application_qc_output_field_owned(engine, access->binding.actor, field)) continue;
             ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
             value.kind = QA_QC_GAME_VECTOR;
-            if (ok) value.value.vector = field->kind == QC_FIELD_ORIGIN ? body.origin : field->kind == QC_FIELD_VELOCITY ? body.velocity :
-                field->kind == QC_FIELD_ANGLES ? body.angles : field->kind == QC_FIELD_MIN ? body.bounds.mins : body.bounds.maxs;
+            if (ok) value.value.vector = *qa_body_vector(&body, field->body);
             break;
         }
         if (ok) ok = actor_current(engine, vm, access->reference, access->binding.actor, error) &&
@@ -547,15 +547,11 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
             }
             break;
         }
-        case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+        case QC_FIELD_BODY:
             if (application_qc_output_field_owned(engine, actor, field)) break;
             ok = qa_world_body_read(engine->world, actor, &body, error) && qa_qc_entity_vector(vm, event->entity_reference, def->offset, &vector, error);
             if (ok) {
-                if (field->kind == QC_FIELD_ORIGIN) body.origin = vector;
-                else if (field->kind == QC_FIELD_VELOCITY) body.velocity = vector;
-                else if (field->kind == QC_FIELD_ANGLES) body.angles = vector;
-                else if (field->kind == QC_FIELD_MIN) body.bounds.mins = vector;
-                else body.bounds.maxs = vector;
+                *qa_body_vector(&body, field->body) = vector;
                 ok = qa_world_body_write(engine->world, actor, &body, error);
             }
             break;

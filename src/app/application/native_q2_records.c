@@ -58,11 +58,11 @@ bool nqr_seed(application_native_q2_records *o,nqr_actor *actor,bool constants,q
                 if(ok&&pointer_bytes==4&&pointer>UINT32_MAX) ok=nqr_fail(e,QA_ERROR_FORMAT,"Native record link exceeds its real pointer width");
                 if(pointer_bytes==4) qa_store_u32le(raw,(uint32_t)pointer); else qa_store_u64le(raw,pointer);
                 bytes=raw;
-            } else if(constants&&(f->kind==NQR_MIN||f->kind==NQR_MAX)) {
+            } else if(constants&&f->kind==NQR_BODY&&(f->body==QA_BODY_MINIMUM||f->body==QA_BODY_MAXIMUM)) {
                 if(!qa_world_body_storage_serial(o->options.world,actor->actor)) continue;
                 qa_body_state body; ok=qa_world_body_read(o->options.world,actor->actor,&body,e);
                 if(ok) {
-                    qa_vec3 v=f->kind==NQR_MIN?body.bounds.mins:body.bounds.maxs;
+                    qa_vec3 v=*qa_body_vector(&body,f->body);
                     ok=nqr_scalar_encode(v.x,QA_NATIVE_F32,raw,e)&&nqr_scalar_encode(v.y,QA_NATIVE_F32,raw+4,e)&&nqr_scalar_encode(v.z,QA_NATIVE_F32,raw+8,e);
                 }
                 bytes=raw;

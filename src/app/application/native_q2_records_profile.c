@@ -78,14 +78,22 @@ static bool fields(application_native_q2_records *o,nqr_record *r,qa_json_id lis
     r->field_count=qa_json_size(d,list);
     r->fields=r->field_count?calloc(r->field_count,sizeof(*r->fields)):NULL;
     if(r->field_count&&!r->fields) return nqr_fail(e,QA_ERROR_MEMORY,"Owning native record fields");
-    const char *names[]={"health","inventory","inventory-capacity","team","score","origin","velocity","angles","bounds-min","bounds-max","record","address","constant","constant-vector","private"};
+    static const struct { const char *name; nqr_kind kind; qa_body_vector_kind body; } bindings[]={
+        {"health",NQR_HEALTH,0},{"inventory",NQR_COUNT,0},{"inventory-capacity",NQR_CAPACITY,0},
+        {"team",NQR_TEAM,0},{"score",NQR_SCORE,0},
+        {"origin",NQR_BODY,QA_BODY_ORIGIN},{"velocity",NQR_BODY,QA_BODY_VELOCITY},
+        {"angles",NQR_BODY,QA_BODY_ANGLES},{"bounds-min",NQR_BODY,QA_BODY_MINIMUM},
+        {"bounds-max",NQR_BODY,QA_BODY_MAXIMUM},{"record",NQR_LINK,0},{"address",NQR_ADDRESS,0},
+        {"constant",NQR_CONSTANT,0},{"constant-vector",NQR_VECTOR,0},{"private",NQR_PRIVATE,0}
+    };
     uint8_t pointer_bytes=qa_native_module_describe(qa_native_get_module(o->options.instance)).image.target.pointer_bytes;
     for(size_t i=0;i<r->field_count;++i) {
         nqr_field *f=r->fields+i; qa_json_id row=qa_json_at(d,list,i),binding=qa_json_get(d,row,"binding");
-        size_t k=0; for(;k<sizeof(names)/sizeof(*names);++k) if(qa_json_string_equal(d,binding,names[k])) break;
-        if(k==sizeof(names)/sizeof(*names)||!word(d,row,"offset",&f->offset,e)) return nqr_fail(e,QA_ERROR_FORMAT,"Unknown native record field binding");
-        f->kind=(nqr_kind)k; f->writable=k<=NQR_MAX;
-        f->length=(k>=NQR_ORIGIN&&k<=NQR_MAX)||k==NQR_VECTOR?12:pointer_bytes;
+        size_t at=0; for(;at<sizeof(bindings)/sizeof(*bindings);++at) if(qa_json_string_equal(d,binding,bindings[at].name)) break;
+        if(at==sizeof(bindings)/sizeof(*bindings)||!word(d,row,"offset",&f->offset,e)) return nqr_fail(e,QA_ERROR_FORMAT,"Unknown native record field binding");
+        nqr_kind k=f->kind=bindings[at].kind; f->writable=k<=NQR_BODY;
+        if(k==NQR_BODY) f->body=bindings[at].body;
+        f->length=k==NQR_BODY||k==NQR_VECTOR?12:pointer_bytes;
         if(k<=NQR_SCORE||k==NQR_CONSTANT) { f->encoding=scalar(d,qa_json_get(d,row,"encoding")); f->length=(uint32_t)nqr_scalar_size(f->encoding); }
         if(k==NQR_PRIVATE&&!word(d,row,"byteLength",&f->length,e)) return false;
         if(!f->length||f->offset>r->stride||f->length>r->stride-f->offset) return nqr_fail(e,QA_ERROR_FORMAT,"Native field exceeds its actual declared record");
@@ -120,7 +128,7 @@ static bool pose_field(application_native_q2_records *o,qa_json_id value,nqr_pos
     if(!length||(!r->client&&out->record!=o->entity_record)||out->offset>r->stride||length>r->stride-out->offset)
         return nqr_fail(e,QA_ERROR_FORMAT,"Native pose has no exclusive declared client storage");
     for(size_t i=0;i<r->field_count;++i) { nqr_field *f=r->fields+i;
-        if(f->kind<=NQR_MAX&&out->offset<f->offset+f->length&&f->offset<out->offset+length)
+        if(f->kind<=NQR_BODY&&out->offset<f->offset+f->length&&f->offset<out->offset+length)
             return nqr_fail(e,QA_ERROR_FORMAT,"Native pose overlaps a canonical shared field");
     }
     return true;
@@ -163,10 +171,10 @@ bool nqr_profile(application_native_q2_records *o,qa_error *e)
             (qa_json_string_equal(d,qa_json_get(d,base,"kind"),"clients")&&(!r->client||r->first||r->capacity!=o->client_maximum)))
             return nqr_fail(e,QA_ERROR_FORMAT,"Native declared client capacity differs from its private storage");
         if(!fields(o,r,qa_json_get(d,row,"fields"),e)) return false;
-        for(size_t j=0;j<r->field_count;++j) { nqr_field *f=r->fields+j; if(f->kind>NQR_MAX) continue;
+        for(size_t j=0;j<r->field_count;++j) { nqr_field *f=r->fields+j; if(f->kind>NQR_BODY) continue;
             for(size_t n=0;n<=i;++n) for(size_t m=0;m<o->records[n].field_count;++m) { nqr_field *p=o->records[n].fields+m;
                 if(p==f) break;
-                if(p->kind==f->kind&&((f->kind!=NQR_COUNT&&f->kind!=NQR_CAPACITY)||p->item==f->item)) return nqr_fail(e,QA_ERROR_FORMAT,"Native canonical field has multiple private authorities");
+                if(p->kind==f->kind&&(f->kind!=NQR_BODY||p->body==f->body)&&((f->kind!=NQR_COUNT&&f->kind!=NQR_CAPACITY)||p->item==f->item)) return nqr_fail(e,QA_ERROR_FORMAT,"Native canonical field has multiple private authorities");
             }
         }
     }
@@ -177,7 +185,7 @@ bool nqr_profile(application_native_q2_records *o,qa_error *e)
         for(size_t j=0;j<2;++j) { qa_json_id endpoint=qa_json_get(d,output,ends[j]); size_t at; uint32_t offset;
             if(!find_record(o,qa_json_get(d,endpoint,"record"),&at,e)||!word(d,endpoint,"offset",&offset,e)) return false;
             bool found=false; nqr_record *r=o->records+at;
-            for(size_t k=0;k<r->field_count;++k) if(r->fields[k].offset==offset&&r->fields[k].kind==(j?NQR_MAX:NQR_MIN)) { r->fields[k].body_output=true; found=true; }
+            for(size_t k=0;k<r->field_count;++k) if(r->fields[k].offset==offset&&r->fields[k].kind==NQR_BODY&&r->fields[k].body==(j?QA_BODY_MAXIMUM:QA_BODY_MINIMUM)) { r->fields[k].body_output=true; found=true; }
             if(!found) return nqr_fail(e,QA_ERROR_FORMAT,"Native client body output has no authored bounds field");
         }
     }

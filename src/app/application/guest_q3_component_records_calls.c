@@ -3,7 +3,7 @@
 static bool projected(application_q3_component_records *r,qa_actor_id actor)
 { component_actor *row=q3records_actor(r,actor); return row&&row->projected&&!row->retired&&!row->owned&&q3records_live(r,actor); }
 static bool applies(const component_actor *actor,const component_record *record,const component_field *f)
-{ return actor->projected&&!actor->retired&&!actor->owned&&(!record->client||actor->client)&&f->kind<=COMPONENT_MAX&&!(actor->admitted&&f->body_output); }
+{ return actor->projected&&!actor->retired&&!actor->owned&&(!record->client||actor->client)&&f->kind<=COMPONENT_BODY&&!(actor->admitted&&f->body_output); }
 static bool observations(application_q3_component_records *r,component_observation **out,size_t *count,qa_error *e)
 {
     component_observation *rows=NULL; size_t used=0;
@@ -42,8 +42,6 @@ static bool scalar_read(application_q3_component_records *r,qa_actor_id actor,co
     for(size_t i=0;i<f->team_count;++i) if(f->teams[i].team==team) { *value=f->teams[i].value; return true; }
     return q3records_fail(e,QA_ERROR_FORMAT,"Actual shared team has no component source alias");
 }
-static qa_vec3 body_vector(const qa_body_state *body,component_field_kind kind)
-{ return kind==COMPONENT_ORIGIN?body->origin:kind==COMPONENT_VELOCITY?body->velocity:kind==COMPONENT_ANGLES?body->angles:kind==COMPONENT_MIN?body->bounds.mins:body->bounds.maxs; }
 bool application_q3_component_records_refresh(application_q3_component_records *r,qa_error *e)
 {
     if(!r||!r->options.storage_current(r->options.context,e)) return false;
@@ -58,7 +56,7 @@ bool application_q3_component_records_refresh(application_q3_component_records *
                 if(f->kind<=COMPONENT_SCORE) { double value; ok=scalar_read(r,actor.actor,f,&value,e)&&q3records_scalar(value,f->floating,bytes,e); }
                 else {
                     qa_body_state body; ok=qa_world_body_read(r->options.world,actor.actor,&body,e);
-                    if(ok) { qa_vec3 v=body_vector(&body,f->kind); double values[]={v.x,v.y,v.z}; for(size_t n=0;ok&&n<3;++n) ok=q3records_scalar(values[n],true,bytes+4*n,e); }
+                    if(ok) { qa_vec3 v=*qa_body_vector(&body,f->body); double values[]={v.x,v.y,v.z}; for(size_t n=0;ok&&n<3;++n) ok=q3records_scalar(values[n],true,bytes+4*n,e); }
                 }
                 if(ok&&!projected(r,actor.actor)) ok=q3records_fail(e,QA_ERROR_NOT_FOUND,"Component canonical actor changed during projection read");
                 if(ok) ok=q3records_raw(r,record->address+actor.slot*record->stride+f->offset,(qa_bytes){bytes,f->length},e);
@@ -122,11 +120,7 @@ static bool commit(application_q3_component_records *r,const component_observati
     if(!isfinite(v.x)||!isfinite(v.y)||!isfinite(v.z)) return q3records_fail(e,QA_ERROR_FORMAT,"Component body vector is not finite");
     qa_body_state body;
     if(!qa_world_body_read(r->options.world,row->actor,&body,e)||!projected(r,row->actor)) return false;
-    if(f->kind==COMPONENT_ORIGIN) body.origin=v;
-    else if(f->kind==COMPONENT_VELOCITY) body.velocity=v;
-    else if(f->kind==COMPONENT_ANGLES) body.angles=v;
-    else if(f->kind==COMPONENT_MIN) body.bounds.mins=v;
-    else body.bounds.maxs=v;
+    *qa_body_vector(&body,f->body)=v;
     return qa_world_body_write(r->options.world,row->actor,&body,e);
 }
 bool application_q3_component_records_prepare(void *context,qa_error *e)

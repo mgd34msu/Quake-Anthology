@@ -9,7 +9,7 @@
 
 typedef enum component_field_kind {
     COMPONENT_HEALTH,COMPONENT_INVENTORY,COMPONENT_TEAM,COMPONENT_SCORE,
-    COMPONENT_ORIGIN,COMPONENT_VELOCITY,COMPONENT_ANGLES,COMPONENT_MIN,COMPONENT_MAX,
+    COMPONENT_BODY,
     COMPONENT_RECORD,COMPONENT_CONSTANT,COMPONENT_VECTOR,COMPONENT_PRIVATE
 } component_field_kind;
 typedef struct component_team { double value; qa_string_id team; } component_team;
@@ -17,7 +17,7 @@ typedef struct component_field {
     component_field_kind kind;
     uint32_t offset,length;
     bool floating,writable,body_output;
-    qa_item_id item;
+    union { qa_item_id item; qa_body_vector_kind body; };
     size_t target;
     uint8_t initial[12];
     component_team *teams;

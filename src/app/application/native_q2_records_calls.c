@@ -4,7 +4,7 @@
 bool nqr_applies(application_native_q2_records *o,const nqr_actor *actor,const nqr_record *record,const nqr_field *field)
 {
     (void)o;
-    return !actor->retired&&(!record->client||actor->client)&&field->kind<=NQR_MAX&&
+    return !actor->retired&&(!record->client||actor->client)&&field->kind<=NQR_BODY&&
         !(actor->client&&field->body_output);
 }
 static bool observations(application_native_q2_records *o,nqr_observation **out,size_t *count,qa_error *e)
@@ -79,8 +79,6 @@ static bool scalar_read(application_native_q2_records *o,qa_actor_id actor,const
     for(size_t i=0;i<field->team_count;++i) if(field->teams[i].team==team) { *value=field->teams[i].value; return true; }
     return nqr_fail(e,QA_ERROR_FORMAT,"Canonical team has no declared native source alias");
 }
-static qa_vec3 body_vector(const qa_body_state *body,nqr_kind kind)
-{ return kind==NQR_ORIGIN?body->origin:kind==NQR_VELOCITY?body->velocity:kind==NQR_ANGLES?body->angles:kind==NQR_MIN?body->bounds.mins:body->bounds.maxs; }
 static bool pose(application_native_q2_records *o,nqr_actor *actor,qa_error *e)
 {
     if(!o->has_pose||!actor->client||!o->options.client_admitted(o->options.context,actor->actor)) return true;
@@ -139,7 +137,7 @@ bool application_native_q2_records_refresh(application_native_q2_records *o,qa_e
                     qa_vec3 vector={0};
                     if(qa_world_body_storage_serial(o->options.world,actor->actor)) {
                         qa_body_state body; ok=qa_world_body_read(o->options.world,actor->actor,&body,e);
-                        if(ok) vector=body_vector(&body,field->kind);
+                        if(ok) vector=*qa_body_vector(&body,field->body);
                     }
                     if(ok) ok=nqr_scalar_encode(vector.x,QA_NATIVE_F32,raw,e)&&nqr_scalar_encode(vector.y,QA_NATIVE_F32,raw+4,e)&&nqr_scalar_encode(vector.z,QA_NATIVE_F32,raw+8,e);
                 }
@@ -304,11 +302,7 @@ static bool commit(application_native_q2_records *o,const nqr_observation *row,
     if(!qa_vec_finite(vector)) return nqr_fail(e,QA_ERROR_FORMAT,"Native source wrote a nonfinite body vector");
     qa_body_state body;
     if(!qa_world_body_read(o->options.world,row->actor,&body,e)||!nqr_live(o,row->actor)||actor->retired) return false;
-    if(f->kind==NQR_ORIGIN) body.origin=vector;
-    else if(f->kind==NQR_VELOCITY) body.velocity=vector;
-    else if(f->kind==NQR_ANGLES) body.angles=vector;
-    else if(f->kind==NQR_MIN) body.bounds.mins=vector;
-    else body.bounds.maxs=vector;
+    *qa_body_vector(&body,f->body)=vector;
     return qa_world_body_write(o->options.world,row->actor,&body,e);
 }
 bool application_native_q2_records_commit(application_native_q2_records *o,qa_error *e)

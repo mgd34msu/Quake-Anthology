@@ -31,14 +31,23 @@ static bool fields(application_q3_component_records *r,component_record *record,
     record->field_count=qa_json_size(d,rows);
     record->fields=record->field_count?calloc(record->field_count,sizeof(*record->fields)):NULL;
     if(record->field_count&&!record->fields) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining component actor fields");
-    const char *names[]={"health","inventory","team","score","origin","velocity","angles","bounds-min","bounds-max","record","constant","constant-vector","private"};
+    static const struct { const char *name; component_field_kind kind; qa_body_vector_kind body; } bindings[]={
+        {"health",COMPONENT_HEALTH,0},{"inventory",COMPONENT_INVENTORY,0},
+        {"team",COMPONENT_TEAM,0},{"score",COMPONENT_SCORE,0},
+        {"origin",COMPONENT_BODY,QA_BODY_ORIGIN},{"velocity",COMPONENT_BODY,QA_BODY_VELOCITY},
+        {"angles",COMPONENT_BODY,QA_BODY_ANGLES},{"bounds-min",COMPONENT_BODY,QA_BODY_MINIMUM},
+        {"bounds-max",COMPONENT_BODY,QA_BODY_MAXIMUM},{"record",COMPONENT_RECORD,0},
+        {"constant",COMPONENT_CONSTANT,0},{"constant-vector",COMPONENT_VECTOR,0},
+        {"private",COMPONENT_PRIVATE,0}
+    };
     for(size_t i=0;i<record->field_count;++i) {
         component_field *f=record->fields+i; qa_json_id row=qa_json_at(d,rows,i),binding=qa_json_get(d,row,"binding");
-        size_t kind=0; for(;kind<sizeof(names)/sizeof(*names);++kind) if(qa_json_string_equal(d,binding,names[kind])) break;
-        if(kind==sizeof(names)/sizeof(*names)||!word(d,qa_json_get(d,row,"offset"),&f->offset,e)) return q3records_fail(e,QA_ERROR_FORMAT,"Unknown component field binding");
-        f->kind=(component_field_kind)kind;
-        f->length=(kind>=COMPONENT_ORIGIN&&kind<=COMPONENT_MAX)||kind==COMPONENT_VECTOR?12:4;
-        f->writable=kind<=COMPONENT_MAX&&!qa_json_string_equal(d,qa_json_get(d,row,"access"),"read-only");
+        size_t at=0; for(;at<sizeof(bindings)/sizeof(*bindings);++at) if(qa_json_string_equal(d,binding,bindings[at].name)) break;
+        if(at==sizeof(bindings)/sizeof(*bindings)||!word(d,qa_json_get(d,row,"offset"),&f->offset,e)) return q3records_fail(e,QA_ERROR_FORMAT,"Unknown component field binding");
+        component_field_kind kind=f->kind=bindings[at].kind;
+        if(kind==COMPONENT_BODY) f->body=bindings[at].body;
+        f->length=kind==COMPONENT_BODY||kind==COMPONENT_VECTOR?12:4;
+        f->writable=kind<=COMPONENT_BODY&&!qa_json_string_equal(d,qa_json_get(d,row,"access"),"read-only");
         if(kind<=COMPONENT_SCORE||kind==COMPONENT_CONSTANT) {
             qa_json_id encoding=qa_json_get(d,row,"encoding"); f->floating=qa_json_string_equal(d,encoding,"float32");
             if(!f->floating&&!qa_json_string_equal(d,encoding,"int32")) return q3records_fail(e,QA_ERROR_FORMAT,"Component field requires its declared scalar encoding");

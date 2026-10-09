@@ -224,19 +224,27 @@ static bool fields(const qa_json_document *doc, qa_json_id node, application_pro
     profile->field_count = qa_json_size(doc, node);
     profile->fields = profile->field_count ? calloc(profile->field_count, sizeof(*profile->fields)) : NULL;
     if (profile->field_count && !profile->fields) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC declared fields");
-    static const char *names[] = {"private", "constant", "health", "origin", "velocity", "angles", "bounds-min", "bounds-max",
-        "think", "nextthink", "classname", "view-offset", "client-flags", "client-input", "inventory", "userinfo"};
+    static const struct { const char *name; application_qc_field_kind kind; qa_body_vector_kind body; } bindings[] = {
+        {"private",QC_FIELD_PRIVATE,0},{"constant",QC_FIELD_CONSTANT,0},{"health",QC_FIELD_HEALTH,0},
+        {"origin",QC_FIELD_BODY,QA_BODY_ORIGIN},{"velocity",QC_FIELD_BODY,QA_BODY_VELOCITY},
+        {"angles",QC_FIELD_BODY,QA_BODY_ANGLES},{"bounds-min",QC_FIELD_BODY,QA_BODY_MINIMUM},
+        {"bounds-max",QC_FIELD_BODY,QA_BODY_MAXIMUM},{"think",QC_FIELD_THINK,0},
+        {"nextthink",QC_FIELD_NEXTTHINK,0},{"classname",QC_FIELD_CLASSNAME,0},
+        {"view-offset",QC_FIELD_VIEW,0},{"client-flags",QC_FIELD_CLIENT_FLAGS,0},
+        {"client-input",QC_FIELD_INPUT,0},{"inventory",QC_FIELD_INVENTORY,0},{"userinfo",QC_FIELD_USERINFO,0}
+    };
     unsigned thinkers = 0, deadlines = 0;
     for (size_t i = 0; i < profile->field_count; ++i) {
         qa_json_id row = qa_json_at(doc, node, i);
         application_qc_bound_field *field = &profile->fields[i]; field->scale = 1;
         char *name = application_qc_declaration_string(doc, qa_json_get(doc, row, "field"), error);
         field->definition = name ? qa_qc_program_find_field(provider->state.qc.program, name) : NULL; free(name);
-        size_t kind = 0;
-        while (kind < sizeof(names) / sizeof(names[0]) && !qa_json_string_equal(doc, qa_json_get(doc, row, "binding"), names[kind])) ++kind;
-        if (!field->definition || kind == sizeof(names) / sizeof(names[0]))
+        size_t at = 0;
+        while (at < sizeof(bindings) / sizeof(bindings[0]) && !qa_json_string_equal(doc, qa_json_get(doc, row, "binding"), bindings[at].name)) ++at;
+        if (!field->definition || at == sizeof(bindings) / sizeof(bindings[0]))
             return application_fail(error, QA_ERROR_UNSUPPORTED, "QC actor field binding is missing or not implemented");
-        field->kind = (application_qc_field_kind)kind;
+        field->kind = bindings[at].kind;
+        if (field->kind == QC_FIELD_BODY) field->body = bindings[at].body;
         qa_qc_value_type type = field->definition->type;
         if (field->kind == QC_FIELD_CONSTANT) {
             if (!value(doc, qa_json_get(doc, row, "value"), 0, false, &field->constant, error)) return false;
@@ -431,7 +439,7 @@ static const application_qc_bound_field *client_output_field(const qa_json_docum
     free(name);
     if (!found || found->definition->type != (vector ? QA_QC_VECTOR : QA_QC_FLOAT) ||
         (found->kind != QC_FIELD_PRIVATE &&
-            !(vector && (found->kind == QC_FIELD_VIEW || found->kind == QC_FIELD_MIN || found->kind == QC_FIELD_MAX)) &&
+            !(vector && (found->kind == QC_FIELD_VIEW || (found->kind == QC_FIELD_BODY && (found->body == QA_BODY_MINIMUM || found->body == QA_BODY_MAXIMUM)))) &&
             !(!vector && found->kind == QC_FIELD_CLIENT_FLAGS))) {
         application_fail(error, QA_ERROR_FORMAT, "QC client output requires its declared original field authority");
         return NULL;
@@ -461,7 +469,8 @@ static bool client_outputs(const qa_json_document *doc, qa_json_id node,
             output->field = client_output_field(doc, qa_json_get(doc, row, "min"), profile, true, error);
             output->maximum = client_output_field(doc, qa_json_get(doc, row, "max"), profile, true, error);
             if (!output->field || !output->maximum) return false;
-            if (output->field->kind != QC_FIELD_MIN || output->maximum->kind != QC_FIELD_MAX)
+            if (output->field->kind != QC_FIELD_BODY || output->field->body != QA_BODY_MINIMUM ||
+                output->maximum->kind != QC_FIELD_BODY || output->maximum->body != QA_BODY_MAXIMUM)
                 return application_fail(error, QA_ERROR_FORMAT, "QC body shape requires original declared mins and maxs");
             continue;
         }

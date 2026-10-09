@@ -9,6 +9,16 @@ typedef struct qa_body_state {
     qa_bounds bounds;
     qa_actor_reference ground;
 } qa_body_state;
+typedef enum qa_body_vector_kind {
+    QA_BODY_ORIGIN = offsetof(qa_body_state, origin),
+    QA_BODY_VELOCITY = offsetof(qa_body_state, velocity),
+    QA_BODY_ANGLES = offsetof(qa_body_state, angles),
+    QA_BODY_MINIMUM = offsetof(qa_body_state, bounds.mins),
+    QA_BODY_MAXIMUM = offsetof(qa_body_state, bounds.maxs)
+} qa_body_vector_kind;
+/* Module bindings select the field at load; encodings remain at the boundary. */
+static inline qa_vec3 *qa_body_vector(qa_body_state *body, qa_body_vector_kind kind)
+{ return (qa_vec3 *)((uint8_t *)body + kind); }
 typedef struct qa_linked_body {
     qa_actor_id actor;
     qa_body_state state;
