@@ -172,7 +172,7 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
     row->hit_marker_set = true; row->hit_marker_frame = row->frame.server_frame;
     row->hit_marker_ns = client->received_ns > row->sample_ns ? client->received_ns : row->sample_ns;
     if (row->hit_marker_count < UINT32_MAX) ++row->hit_marker_count;
-    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_hit_markers");
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_hit_markers);
     if (setting && setting->number > 1) {
         qa_vec3 position = qa_v3(0, 0, 0); uint32_t index;
         if (!frontend_remote_q2_wire_seat(row, &index, error)) return false;
@@ -187,9 +187,9 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
     }
     return true;
 }
-static bool rail_color(frontend_remote_q2 *row, const char *name, uint32_t *out, qa_error *error)
+static bool rail_color(frontend_remote_q2 *row, qa_cvar_handle handle, const char *name, uint32_t *out, qa_error *error)
 {
-    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, name);
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, handle);
     if (!setting) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color lost its actual CLIENT declaration");
     if (frontend_remote_q2_effects_color(setting->value, out)) return true;
     size_t value_length = strlen(setting->value), name_length = strlen(name);
@@ -203,7 +203,7 @@ static bool rail_color(frontend_remote_q2 *row, const char *name, uint32_t *out,
     free(warning);
     if (!remote_q2_live(row, error) || !qa_cvars_reset(row->options.domain.cvars, name, true, error) ||
         !remote_q2_live(row, error)) return false;
-    setting = qa_cvars_find(row->options.domain.cvars, name);
+    setting = qa_cvars_read(row->options.domain.cvars, handle);
     return (setting && frontend_remote_q2_effects_color(setting->value, out)) ||
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
 }
@@ -214,32 +214,32 @@ static bool controls(void *context, frontend_remote_q2_effects_controls *out, qa
     if (!qa_cvars_observer_idle(row->options.domain.cvars))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effects controls require their returned CLIENT registry");
     uint32_t core, spiral;
-    if (!rail_color(row, "cl_railcore_color", &core, error) ||
-        !rail_color(row, "cl_railspiral_color", &spiral, error)) return false;
-    const qa_cvar_view *rail_time = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_time");
+    if (!rail_color(row, row->cvar_handles.cl_railcore_color, "cl_railcore_color", &core, error) ||
+        !rail_color(row, row->cvar_handles.cl_railspiral_color, "cl_railspiral_color", &spiral, error)) return false;
+    const qa_cvar_view *rail_time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_time);
     if (!rail_time || !isfinite(rail_time->number))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail time has no actual finite CLIENT row");
     float duration = rail_time->number;
     if ((duration < 0 || duration > 2073600) &&
         (!qa_cvars_set_number(row->options.domain.cvars, "cl_railtrail_time", duration < 0 ? 0 : 2073600, error) ||
             !remote_q2_live(row, error))) return false;
-    rail_time = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_time");
-    const qa_cvar_view *core_row = qa_cvars_find(row->options.domain.cvars, "cl_railcore_color");
-    const qa_cvar_view *spiral_row = qa_cvars_find(row->options.domain.cvars, "cl_railspiral_color");
+    rail_time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_time);
+    const qa_cvar_view *core_row = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railcore_color);
+    const qa_cvar_view *spiral_row = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railspiral_color);
     if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value, &core) ||
         !frontend_remote_q2_effects_color(spiral_row->value, &spiral))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
-    const qa_cvar_view *time = qa_cvars_find(row->options.domain.cvars, "cl_muzzlelight_time");
-    const qa_cvar_view *effects = qa_cvars_find(row->options.domain.cvars, "cl_rerelease_effects");
-    const qa_cvar_view *flashes = qa_cvars_find(row->options.domain.cvars, "cl_muzzleflashes");
-    const qa_cvar_view *hacks = qa_cvars_find(row->options.domain.cvars, "cl_dlight_hacks");
-    const qa_cvar_view *particles = qa_cvars_find(row->options.domain.cvars, "cl_disable_particles");
-    const qa_cvar_view *explosions = qa_cvars_find(row->options.domain.cvars, "cl_disable_explosions");
-    const qa_cvar_view *gun = qa_cvars_find(row->options.domain.cvars, "cl_gun");
-    const qa_cvar_view *gun_fov = qa_cvars_find(row->options.domain.cvars, "cl_gunfov");
-    const qa_cvar_view *rail_type = qa_cvars_find(row->options.domain.cvars, "cl_railtrail_type");
-    const qa_cvar_view *rail_width = qa_cvars_find(row->options.domain.cvars, "cl_railcore_width");
-    const qa_cvar_view *rail_radius = qa_cvars_find(row->options.domain.cvars, "cl_railspiral_radius");
+    const qa_cvar_view *time = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_muzzlelight_time);
+    const qa_cvar_view *effects = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_rerelease_effects);
+    const qa_cvar_view *flashes = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_muzzleflashes);
+    const qa_cvar_view *hacks = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_dlight_hacks);
+    const qa_cvar_view *particles = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_particles);
+    const qa_cvar_view *explosions = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_disable_explosions);
+    const qa_cvar_view *gun = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gun);
+    const qa_cvar_view *gun_fov = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gunfov);
+    const qa_cvar_view *rail_type = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railtrail_type);
+    const qa_cvar_view *rail_width = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railcore_width);
+    const qa_cvar_view *rail_radius = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_railspiral_radius);
     if (!time || !effects || !flashes || !hacks || !particles || !explosions || !gun || !gun_fov ||
         !rail_time || !rail_type || !rail_width || !rail_radius || !isfinite(rail_time->number) ||
         rail_time->number < 0 || rail_time->number > 2073600 || !isfinite(rail_radius->number) ||
@@ -273,7 +273,7 @@ bool remote_q2_hit_marker_sample(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !remote_q2_live(row, error)) return false;
     if (!remote_q2_rerelease_presentation(row) || !row->media_ready || !row->frame.valid) return true;
-    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_hit_markers");
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_hit_markers);
     if (!setting || !setting->integer) return true;
     uint32_t seat;
     if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;
@@ -352,7 +352,7 @@ bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
     frontend_remote_q2_effects_pose *poses=row->effect_poses;
     bool ok = true;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) ok = actor(row, row->frame.entities[i].number, poses + i, error);
-    const qa_cvar_view *footsteps = qa_cvars_find(row->options.domain.cvars, "cl_footsteps");
+    const qa_cvar_view *footsteps = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_footsteps);
     frontend_remote_q2_effects_sample sample = {
         .milliseconds = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms,
         .server_milliseconds = (double)row->frame.server_frame * row->frame_ms,
@@ -386,7 +386,7 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
     }
     frontend_remote_q2_effects_pose viewer = {0};
     if (ok && viewer_number >= 0) ok = actor(row, (uint32_t)viewer_number + 1, &viewer, error);
-    const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
+    const qa_cvar_view *hand = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.hand);
     *sample = (frontend_remote_q2_effects_sample){
         .milliseconds = ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms,
         .server_milliseconds = (double)row->frame.server_frame * row->frame_ms,

@@ -163,7 +163,7 @@ static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
     qa_scene_vec4 color, qa_error *error)
 {
     if (color.w <= 0) return true;
-    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "gl_damageblend_frac");
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.gl_damageblend_frac);
     if (!setting || !isfinite(setting->number))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 damage blend has no actual CLIENT fraction control");
     float fraction = (float)fmin(.5, fmax(0, setting->number));
@@ -242,9 +242,9 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect viewport, qa_error *error)
 {
     if (!row->hit_marker_count) return true;
-    const qa_cvar_view *crosshair = qa_cvars_find(row->options.domain.cvars, "crosshair");
+    const qa_cvar_view *crosshair = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.crosshair);
     if (!crosshair || crosshair->number == 0 || (player->stats[13] & (4 | 32))) return true;
-    const qa_cvar_view *duration = qa_cvars_find(row->options.domain.cvars, "scr_hit_marker_time");
+    const qa_cvar_view *duration = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.scr_hit_marker_time);
     const qa_scene_image *image = NULL;
     for (remote_q2_picture *picture = row->pictures; picture; picture = picture->next)
         if (!strcmp(picture->name, "marker")) { image = picture->image; break; }
@@ -252,12 +252,12 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     double limit = duration && isfinite(duration->number) ? trunc(duration->number) : 0;
     if (!image || limit <= 0 || elapsed > limit) { row->hit_marker_count = 0; return true; }
     float fraction = (float)(elapsed / limit), scale = fmaxf(1, 1.5f * (1 - fraction));
-    const qa_cvar_view *size = qa_cvars_find(row->options.domain.cvars, "ch_scale");
+    const qa_cvar_view *size = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_scale);
     if (size && isfinite(size->number)) scale *= (float)fmax(.1, fmin(9, size->number));
-    const qa_cvar_view *alpha = qa_cvars_find(row->options.domain.cvars, "ch_alpha");
+    const qa_cvar_view *alpha = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_alpha);
     float opacity = alpha && isfinite(alpha->number) ? (float)fmax(0, fmin(1, alpha->number)) : 1;
-    const qa_cvar_view *x = qa_cvars_find(row->options.domain.cvars, "ch_x");
-    const qa_cvar_view *y = qa_cvars_find(row->options.domain.cvars, "ch_y");
+    const qa_cvar_view *x = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_x);
+    const qa_cvar_view *y = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_y);
     float dx = x && isfinite(x->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(x->number))) : 0;
     float dy = y && isfinite(y->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(y->number))) : 0;
     float width = truncf((float)image->logical_width * scale), height = truncf((float)image->logical_height * scale);
@@ -321,7 +321,7 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
 static bool loops(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row->frontend->audio || !row->media_ready || !row->frame.valid) return true;
-    const qa_cvar_view *paused = qa_cvars_find(row->options.domain.cvars, "paused");
+    const qa_cvar_view *paused = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.paused);
     if (paused && paused->number != 0) return true;
     for (size_t i = 0; i < row->frame.entity_count; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
@@ -460,7 +460,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         .material_library = model_options && model_options->family == QA_SCENE_Q3 ? row->materials : NULL,
         .custom_material = skin, .source_path = path,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend};
-    const qa_cvar_view *hand = qa_cvars_find(row->options.domain.cvars, "hand");
+    const qa_cvar_view *hand = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.hand);
     if (view_model && hand && isfinite(hand->number) && hand->number >= 0 && hand->number <= 2)
         input.left_hand = (uint8_t)hand->number;
     if (remote_q2_rerelease_presentation(row)) {
@@ -612,8 +612,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok) ok = remote_q2_effects_sample_prepare(row, &view, fov, viewer_origin, vector(frame->player.gunoffset), player_number,
         &effects_sample, &world.lights, &world.light_count, error);
     effects_sample.world_input = &world;
-    const qa_cvar_view *light_setting = qa_cvars_find(row->options.domain.cvars, "cl_lights");
-    const qa_cvar_view *entities_setting = qa_cvars_find(row->options.domain.cvars, "cl_entities");
+    const qa_cvar_view *light_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_lights);
+    const qa_cvar_view *entities_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_entities);
     bool entities_enabled = !entities_setting || entities_setting->number != 0;
     if (light_setting && light_setting->number == 0) world.light_count = 0;
     if (ok) ok = qa_scene_world_boxed_sky_begin(row->world, &world, &f->frame, &world.boxed_sky, error);
@@ -721,7 +721,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 prior ? &attachment_old : NULL, false, position, direction, error);
         }
     }
-    const qa_cvar_view *gun_setting = qa_cvars_find(row->options.domain.cvars, "cl_gun");
+    const qa_cvar_view *gun_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_gun);
     if (ok && entities_enabled && (!gun_setting || gun_setting->number != 0) &&
         (remote_q2_rerelease_presentation(row) || frame->player.fov <= 90) &&
         frame->player.gunindex && frame->player.gunindex < row->layout.max_models) {
@@ -736,7 +736,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         ok = submit_model(row, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + frame->player.gunindex)), NULL,
             &view, &world, &gun, &old, true, qa_vec_add(origin, gun_offset), qa_vec_add(angles, gun_angles), error);
     }
-    const qa_cvar_view *particles_setting = qa_cvars_find(row->options.domain.cvars, "cl_particles");
+    const qa_cvar_view *particles_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_particles);
     if (ok) ok = frontend_remote_q2_effects_draw(row->effects, &effects_sample,
         !particles_setting || particles_setting->number != 0, entities_enabled,
         &f->frame, error);
@@ -748,7 +748,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     }
     world.fog.sky_drawn = !world.no_world && qa_scene_world_sky_drawn(row->world);
     if (ok) ok = qa_scene_frame_finish(&f->frame, &view, &world.fog, error);
-    const qa_cvar_view *blend_setting = qa_cvars_find(row->options.domain.cvars, "cl_blend");
+    const qa_cvar_view *blend_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_blend);
     if (ok && policy.lighting.polyblend && (!blend_setting || blend_setting->number != 0)) {
         bool extended = remote_q2_rerelease_presentation(row) || (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
             row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));

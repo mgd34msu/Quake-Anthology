@@ -167,6 +167,42 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     }
     return true;
 }
+void remote_q2_cvars_bind(frontend_remote_q2 *row)
+{
+    qa_cvars *registry=row->options.domain.cvars;
+    if (row->cvar_handles.registry==registry) return;
+    row->cvar_handles=(remote_q2_cvar_handles){.registry=registry,
+        .ch_alpha=qa_cvars_resolve(registry,"ch_alpha"),
+        .ch_scale=qa_cvars_resolve(registry,"ch_scale"),
+        .ch_x=qa_cvars_resolve(registry,"ch_x"),
+        .ch_y=qa_cvars_resolve(registry,"ch_y"),
+        .cl_blend=qa_cvars_resolve(registry,"cl_blend"),
+        .cl_disable_explosions=qa_cvars_resolve(registry,"cl_disable_explosions"),
+        .cl_disable_particles=qa_cvars_resolve(registry,"cl_disable_particles"),
+        .cl_dlight_hacks=qa_cvars_resolve(registry,"cl_dlight_hacks"),
+        .cl_entities=qa_cvars_resolve(registry,"cl_entities"),
+        .cl_footsteps=qa_cvars_resolve(registry,"cl_footsteps"),
+        .cl_gun=qa_cvars_resolve(registry,"cl_gun"),
+        .cl_gunfov=qa_cvars_resolve(registry,"cl_gunfov"),
+        .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
+        .cl_lights=qa_cvars_resolve(registry,"cl_lights"),
+        .cl_muzzleflashes=qa_cvars_resolve(registry,"cl_muzzleflashes"),
+        .cl_muzzlelight_time=qa_cvars_resolve(registry,"cl_muzzlelight_time"),
+        .cl_particles=qa_cvars_resolve(registry,"cl_particles"),
+        .cl_railcore_color=qa_cvars_resolve(registry,"cl_railcore_color"),
+        .cl_railcore_width=qa_cvars_resolve(registry,"cl_railcore_width"),
+        .cl_railspiral_color=qa_cvars_resolve(registry,"cl_railspiral_color"),
+        .cl_railspiral_radius=qa_cvars_resolve(registry,"cl_railspiral_radius"),
+        .cl_railtrail_time=qa_cvars_resolve(registry,"cl_railtrail_time"),
+        .cl_railtrail_type=qa_cvars_resolve(registry,"cl_railtrail_type"),
+        .cl_rerelease_effects=qa_cvars_resolve(registry,"cl_rerelease_effects"),
+        .crosshair=qa_cvars_resolve(registry,"crosshair"),
+        .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
+        .hand=qa_cvars_resolve(registry,"hand"),
+        .paused=qa_cvars_resolve(registry,"paused"),
+        .scr_hit_marker_time=qa_cvars_resolve(registry,"scr_hit_marker_time"),
+    };
+}
 bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options *options,
     frontend_remote_q2 **out, qa_error *error)
 {
@@ -182,6 +218,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     frontend_remote_q2 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 CLIENT");
     row->frontend = f; row->options = *options; row->layout = remote_q2_layout_read(d->protocol);
+    remote_q2_cvars_bind(row);
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
     if (!row->configs || !frontend_source_identity_allocate(f, &row->identity, error)) {
         free(row->configs); free(row); return false;
@@ -199,7 +236,7 @@ bool frontend_remote_q2_bind(frontend_remote_q2 *row, const frontend_remote_q2_d
     if (!remote_q2_domain_equal(&expected, actual) ||
         qa_network_epoch(actual->runtime, actual->client) != actual->epoch ||
         !row->options.current(row->options.context, actual, error)) return false;
-    row->options.domain = *actual; row->bound = true; return true;
+    row->options.domain = *actual; remote_q2_cvars_bind(row); row->bound = true; return true;
 }
 static bool hook_current(void *context, qa_net_client_id id, qa_error *error)
 {
@@ -704,7 +741,7 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *row, qa_frontend 
     return options->current(options->context, &options->domain, error);
 }
 void frontend_remote_q2_rebind(frontend_remote_q2 *row, qa_frontend *f, const frontend_remote_q2_options *options)
-{ if (row && f && options) { row->frontend = f; row->options = *options; } }
+{ if (row && f && options) { row->frontend = f; row->options = *options; remote_q2_cvars_bind(row); } }
 
 static bool demo_append(qa_net_writer *writer, const frontend_demo_sink *sink, qa_error *error)
 {
