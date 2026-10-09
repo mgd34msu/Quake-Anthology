@@ -60,3 +60,16 @@ Pinned medians / p99 microseconds per 48-query batch:
 | immediate-live / rr | 10.075 / 13.540 | 9.660 / 12.980 | 9.500 / 12.870 | 10.200 / 10.340 |
 
 The 9.6 us target remains open: classic candidate phases are 9.711-10.331 us; rerelease phases are 9.500-9.660 us. The immediate-live comparison is lower, but the historical classic comparison does not establish recovered performance. No consistent whole-workload speedup is claimed. Evidence: `/tmp/qa-the2873-candidate-row-20261009` and `/tmp/qa-the2873-candidate-row-final-20261009`. One retained comparison executable initially lacked execute permission (exit 126); it ran no module, was corrected, and the complete immediate-live ABBA restarted with the failed attempt preserved outside valid results.
+
+## Dropped experiment: owner-only projection
+
+Tree 50db2af7 decoded only the passing actor's owner tuple. Production/ASan builds, both core suites and actual SDK behavior checks passed; 24 gameplay records and 40 owner-transition records matched. Diagnostic solid reads fell from 96 to 80 and flag reads from 64 to 48, but timing did not improve.
+
+Historical ABBA median / p99 microseconds:
+
+| Edition | A1 | B1 | B2 | A2 |
+| --- | ---: | ---: | ---: | ---: |
+| classic | 10.090 / 14.340 | 10.510 / 14.050 | 10.230 / 10.410 | 9.640 / 9.810 |
+| rerelease | 9.580 / 13.570 | 9.940 / 10.100 | 9.730 / 9.881 | 9.840 / 14.090 |
+
+The immediate-live comparison also showed no gain. All candidate medians exceeded 9.6 us. The three source changes were dropped; the experiment is retained only as evidence under `/tmp/qa-the2873-owner-projection-20261009` and `/tmp/qa-the2873-owner-projection-final-20261009`.
