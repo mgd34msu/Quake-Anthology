@@ -106,7 +106,7 @@ bool application_q3_mod_items_entry_begin(application_q3_mod_items *o,const qa_q
     entry->previous=o->entries;o->entries=entry;*out=entry;
     if(!q3items_current(a,e))return cancel(entry,call,e);
     if(request){if(!q3items_tests(a,s->accepted,s->accepted_count,&entry->accepted,e)||!qa_qvm_call_argument(call,s->request_argument,&entry->requested,e))return false;
-        if(!entry->accepted&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){int32_t value;bool present;
+        if(!entry->accepted&&a->request.id&&a->status==QA_WEAPON_REQUEST_PENDING){int32_t value;bool present;
             if(!application_q3_mod_items_requested(o,a->actor,&value,&present,e))return false;
             if(present&&value==entry->requested)a->attempted=true;}
     }
@@ -138,8 +138,8 @@ bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **in,bool
     }
     if(ok&&succeeded&&!cancelled&&a&&q3items_current(a,NULL)){
         if(entry->request&&!entry->accepted){bool accepted;ok=q3items_tests(a,s->accepted,s->accepted_count,&accepted,e);
-            if(ok&&accepted&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){int32_t value;bool present;ok=application_q3_mod_items_requested(o,a->actor,&value,&present,e);if(ok&&present&&value==entry->requested)a->status=Q3_ITEM_REQUEST_ACCEPTED;}}
-        if(ok&&entry->dispatcher&&a->request.id&&a->status==Q3_ITEM_REQUEST_PENDING){qa_item_id active;ok=q3items_active(a,&active,e);if(ok){if(active==a->request.item)a->status=Q3_ITEM_REQUEST_ACCEPTED;else if(a->attempted)a->status=Q3_ITEM_REQUEST_REFUSED;}}
+            if(ok&&accepted&&a->request.id&&a->status==QA_WEAPON_REQUEST_PENDING){int32_t value;bool present;ok=application_q3_mod_items_requested(o,a->actor,&value,&present,e);if(ok&&present&&value==entry->requested)a->status=QA_WEAPON_REQUEST_ACCEPTED;}}
+        if(ok&&entry->dispatcher&&a->request.id&&a->status==QA_WEAPON_REQUEST_PENDING){qa_item_id active;ok=q3items_active(a,&active,e);if(ok){if(active==a->request.item)a->status=QA_WEAPON_REQUEST_ACCEPTED;else if(a->attempted)a->status=QA_WEAPON_REQUEST_REFUSED;}}
         if(ok&&entry->continuation&&entry->continued){qa_bounds bounds;double height;int32_t ground, view_height;
             ok=o->services.posture(o->services.context,a->actor,&bounds,&height,&ground,e)&&isfinite(height)&&q3items_current(a,e)&&
                 q3mod_scalar_word(height,MOD_INT32,&view_height,e)&&
@@ -167,7 +167,7 @@ bool application_q3_mod_items_weapon_read(application_q3_mod_items *o,qa_actor_i
 {
     item_actor *a=q3items_actor(o,actor);if(!out||!a||!o->profile->stage||!q3items_current(a,e))return false;
     qa_item_id active;bool settled;if(!q3items_active(a,&active,e)||!q3items_tests(a,o->profile->stage->settled,o->profile->stage->settled_count,&settled,e))return false;
-    qa_item_id pending=a->request.id&&a->status!=Q3_ITEM_REQUEST_REFUSED&&a->request.item!=active?a->request.item:0;
+    qa_item_id pending=a->request.id&&a->status!=QA_WEAPON_REQUEST_REFUSED&&a->request.item!=active?a->request.item:0;
     *out=(application_q3_items_weapon_view){actor,o->mod->owner,active,pending,settled};return true;
 }
 static bool value_for(application_q3_mod_items *o,qa_item_id item,int32_t *out)
@@ -210,15 +210,15 @@ bool application_q3_mod_items_request(application_q3_mod_items *o,qa_actor_id ac
     bool accepted=false;int32_t value;
     if(item){double count;if(value_for(o,item,&value)){if(!qa_inventory_count_read(o->inventory,actor,item,&count,e))return false;accepted=count>0;}}
     else {qa_item_id active;bool settled;if(!q3items_active(a,&active,e)||!q3items_tests(a,o->profile->stage->settled,o->profile->stage->settled_count,&settled,e))return false;accepted=active&&settled;}
-    a->request=(application_q3_item_request){actor,++o->next_request,item};a->status=accepted?(item?Q3_ITEM_REQUEST_PENDING:Q3_ITEM_REQUEST_ACCEPTED):Q3_ITEM_REQUEST_REFUSED;
+    a->request=(application_q3_item_request){actor,++o->next_request,item};a->status=accepted?(item?QA_WEAPON_REQUEST_PENDING:QA_WEAPON_REQUEST_ACCEPTED):QA_WEAPON_REQUEST_REFUSED;
     a->attempted=false;*out=a->request;return true;
 }
-bool application_q3_mod_items_request_status(application_q3_mod_items *o,const application_q3_item_request *r,application_q3_item_request_status *out,qa_error *e)
-{if(!o||!r||!out)return false;item_actor *a=q3items_actor(o,r->actor);*out=a&&q3items_current(a,e)&&a->request.id==r->id&&a->request.item==r->item?a->status:Q3_ITEM_REQUEST_REFUSED;return true;}
+bool application_q3_mod_items_request_status(application_q3_mod_items *o,const application_q3_item_request *r,qa_weapon_request_status *out,qa_error *e)
+{if(!o||!r||!out)return false;item_actor *a=q3items_actor(o,r->actor);*out=a&&q3items_current(a,e)&&a->request.id==r->id&&a->request.item==r->item?a->status:QA_WEAPON_REQUEST_REFUSED;return true;}
 bool application_q3_mod_items_request_cancel(application_q3_mod_items *o,const application_q3_item_request *r,qa_error *e)
-{if(!o||!r)return false;item_actor *a=q3items_actor(o,r->actor);if(a&&q3items_current(a,e)&&a->request.id==r->id&&a->request.item==r->item&&a->status==Q3_ITEM_REQUEST_PENDING){a->status=Q3_ITEM_REQUEST_REFUSED;a->request=(application_q3_item_request){0};}return true;}
+{if(!o||!r)return false;item_actor *a=q3items_actor(o,r->actor);if(a&&q3items_current(a,e)&&a->request.id==r->id&&a->request.item==r->item&&a->status==QA_WEAPON_REQUEST_PENDING){a->status=QA_WEAPON_REQUEST_REFUSED;a->request=(application_q3_item_request){0};}return true;}
 bool application_q3_mod_items_requested(application_q3_mod_items *o,qa_actor_id actor,int32_t *out,bool *present,qa_error *e)
-{if(!o||!out||!present)return false;item_actor *a=q3items_actor(o,actor);*present=a&&q3items_current(a,e)&&a->request.id&&a->status!=Q3_ITEM_REQUEST_REFUSED&&value_for(o,a->request.item,out);return true;}
+{if(!o||!out||!present)return false;item_actor *a=q3items_actor(o,actor);*present=a&&q3items_current(a,e)&&a->request.id&&a->status!=QA_WEAPON_REQUEST_REFUSED&&value_for(o,a->request.item,out);return true;}
 size_t application_q3_mod_items_definition_count(const application_q3_mod_items_profile *p){return p?p->definition_count:0;}
 bool application_q3_mod_items_definition(const application_q3_mod_items_profile *p,size_t i,qa_item_admission *out,qa_bytes *icon,qa_bytes *held,qa_error *e)
 {if(!p||!out||!icon||!held||i>=p->definition_count)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Item metadata index leaves actual declaration");const item_definition *d=p->definitions+i;*out=d->admission;*icon=(qa_bytes){d->icon.data,d->icon.size};*held=(qa_bytes){d->held.data,d->held.size};return true;}

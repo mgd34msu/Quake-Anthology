@@ -2,15 +2,13 @@
 #define QA_APPLICATION_GUEST_Q3_MOD_ITEMS_H
 #include "guest_q3_mod.h"
 #include "qa/inventory.h"
+#include "qa/equipment_weapon_slot.h"
 #include "qa/qvm_save.h"
 
 typedef struct application_q3_mod_items_profile application_q3_mod_items_profile;
 typedef struct application_q3_mod_items application_q3_mod_items;
 typedef struct application_q3_mod_items_application application_q3_mod_items_application;
 typedef struct application_q3_mod_items_entry application_q3_mod_items_entry;
-typedef enum application_q3_item_request_status {
-    Q3_ITEM_REQUEST_PENDING, Q3_ITEM_REQUEST_ACCEPTED, Q3_ITEM_REQUEST_REFUSED
-} application_q3_item_request_status;
 typedef struct application_q3_item_request {
     qa_actor_id actor;
     uint64_t id;
@@ -59,7 +57,7 @@ bool application_q3_mod_items_request_restore(application_q3_mod_items *,qa_acto
 bool application_q3_mod_items_request(application_q3_mod_items *,qa_actor_id,qa_item_id,
     application_q3_item_request *,qa_error *);
 bool application_q3_mod_items_request_status(application_q3_mod_items *,const application_q3_item_request *,
-    application_q3_item_request_status *,qa_error *);
+    qa_weapon_request_status *,qa_error *);
 bool application_q3_mod_items_request_cancel(application_q3_mod_items *,const application_q3_item_request *,qa_error *);
 bool application_q3_mod_items_requested(application_q3_mod_items *,qa_actor_id,int32_t *,bool *,qa_error *);
 bool application_q3_mod_items_open(application_q3_mod_items *,qa_actor_id,

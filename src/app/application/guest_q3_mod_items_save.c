@@ -13,7 +13,7 @@ static bool request_valid(application_q3_mod_items *o,const item_actor *a)
 {
     if(!a->request.id)return !a->request.item;
     if(!o->profile->stage||a->request.id>o->next_request||
-        !qa_actor_id_equal(a->request.actor,a->actor)||(unsigned)a->status>Q3_ITEM_REQUEST_REFUSED)return false;
+        !qa_actor_id_equal(a->request.actor,a->actor)||(unsigned)a->status>QA_WEAPON_REQUEST_REFUSED)return false;
     if(!a->request.item)return true;
     for(size_t i=0;i<o->profile->stage->value_count;++i)
         if(o->profile->stage->values[i].item==a->request.item)return true;
@@ -28,10 +28,10 @@ static bool fields(application_q3_mod_items *o,item_actor *a,qa_source_save_io *
     if(!qa_source_save_actor(io,&a->actor)||!qa_source_save_u64(io,&a->lease.serial)||!a->lease.serial||
         !qa_source_save_u64(io,&watch)||watch<=1||!qa_source_save_bool(io,&bound)||
         !qa_source_save_u64(io,&a->request.id)||!qa_source_save_string(io,&a->request.item)||
-        !qa_source_save_u32(io,&status)||status>Q3_ITEM_REQUEST_REFUSED||
+        !qa_source_save_u32(io,&status)||status>QA_WEAPON_REQUEST_REFUSED||
         !qa_source_save_count(io,&a->address_count,o->profile->source->record_count)||
         a->address_count!=record_count(o->profile))return false;
-    if(reading){a->saved_watch=watch;a->restore_weapon_bound=bound;a->lease.actor=a->actor;a->status=(application_q3_item_request_status)status;
+    if(reading){a->saved_watch=watch;a->restore_weapon_bound=bound;a->lease.actor=a->actor;a->status=(qa_weapon_request_status)status;
         if(a->request.id)a->request.actor=a->actor;
         a->addresses=calloc(a->address_count,sizeof(*a->addresses));
         if(a->address_count&&!a->addresses)return q3mod_fail(io->error,QA_ERROR_MEMORY,"Retaining restored item source addresses");

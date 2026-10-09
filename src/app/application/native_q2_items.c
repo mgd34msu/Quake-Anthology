@@ -7,7 +7,6 @@
 #include <string.h>
 
 typedef enum item_capacity_kind { ITEM_CONSTANT,ITEM_FIELD,ITEM_SOURCE } item_capacity_kind;
-typedef struct item_bit { qa_item_id item; uint32_t mask; } item_bit;
 typedef struct item_storage {
     application_native_q2_field field,capacity_field;
     qa_item_id item;
@@ -15,7 +14,7 @@ typedef struct item_storage {
     double capacity;
     qa_json_id source;
     qa_native_value_type source_encoding;
-    item_bit *bits;
+    qa_item_bit *bits;
     size_t bit_count;
     uint32_t private_mask;
 } item_storage;

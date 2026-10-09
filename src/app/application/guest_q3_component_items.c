@@ -65,10 +65,10 @@ static bool declares(void *context,qa_actor_id actor,qa_item_id item,bool *out,q
 { return application_q3_mod_items_weapon_declares(context,actor,item,out,e); }
 static bool request(void *context,qa_actor_id actor,qa_item_id item,bool *out,uint64_t *id,qa_error *e)
 {
-    application_q3_item_request receipt; application_q3_item_request_status state;
+    application_q3_item_request receipt; qa_weapon_request_status state;
     if(!application_q3_mod_items_request(context,actor,item,&receipt,e)||
         !application_q3_mod_items_request_status(context,&receipt,&state,e)) return false;
-    *out=state!=Q3_ITEM_REQUEST_REFUSED; *id=receipt.id; return true;
+    *out=state!=QA_WEAPON_REQUEST_REFUSED; *id=receipt.id; return true;
 }
 static bool select_weapon(void *context,qa_actor_id actor,qa_item_id item,bool *out,qa_error *e)
 {
@@ -83,11 +83,8 @@ static bool holstered(void *context,qa_actor_id actor,bool *out,qa_error *e)
 { return application_q3_mod_items_weapon_holstered(context,actor,out,e); }
 static bool status(void *context,qa_actor_id actor,uint64_t id,qa_item_id item,qa_weapon_request_status *out,qa_error *e)
 {
-    application_q3_item_request receipt={actor,id,item}; application_q3_item_request_status state;
-    if(!application_q3_mod_items_request_status(context,&receipt,&state,e)) return false;
-    *out=state==Q3_ITEM_REQUEST_PENDING?QA_WEAPON_REQUEST_PENDING:
-        state==Q3_ITEM_REQUEST_ACCEPTED?QA_WEAPON_REQUEST_ACCEPTED:QA_WEAPON_REQUEST_REFUSED;
-    return true;
+    application_q3_item_request receipt={actor,id,item};
+    return application_q3_mod_items_request_status(context,&receipt,out,e);
 }
 static bool cancel(void *context,qa_actor_id actor,uint64_t id,qa_item_id item,qa_error *e)
 { application_q3_item_request receipt={actor,id,item}; return application_q3_mod_items_request_cancel(context,&receipt,e); }

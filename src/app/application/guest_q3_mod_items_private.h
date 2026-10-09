@@ -11,10 +11,9 @@ typedef struct item_capacity {
     uint32_t instruction;
     item_override *overrides; size_t count;
 } item_capacity;
-typedef struct item_bit { qa_item_id item; uint32_t mask; } item_bit;
 typedef struct item_storage {
     bool bits; item_field field; qa_item_id item; item_capacity capacity;
-    uint32_t private_mask; item_bit *items; size_t count;
+    uint32_t private_mask; qa_item_bit *items; size_t count;
 } item_storage;
 typedef struct item_definition {
     qa_item_admission admission;
@@ -60,7 +59,7 @@ typedef struct item_actor {
     qa_item_admission *definitions;
     item_pending *pending;
     application_q3_item_request request;
-    application_q3_item_request_status status;
+    qa_weapon_request_status status;
     unsigned references;
     bool attempted,weapon_bound,restore_weapon_bound,restore_inventory,releasing,admitting;
 } item_actor;

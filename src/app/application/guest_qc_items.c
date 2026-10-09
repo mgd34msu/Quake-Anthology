@@ -83,7 +83,7 @@ bool application_qc_items_qualify(application_provider *provider,const qa_json_d
             if(!mask(d,qa_json_get(d,row,"privateMask"),&s->private_mask,e)||
                 !list(d,bits,sizeof(*s->items),(void **)&s->items,&s->count,e)||!s->count)return false;
             uint32_t occupied=s->private_mask;
-            for(size_t j=0;j<s->count;++j){qa_json_id bit=qa_json_at(d,bits,j);application_qc_item_bit *b=s->items+j;
+            for(size_t j=0;j<s->count;++j){qa_json_id bit=qa_json_at(d,bits,j);qa_item_bit *b=s->items+j;
                 if(!application_mod_item_identity(d,qa_json_get(d,bit,"item"),qa_session_strings(provider->application->session),&b->item,e)||
                     !mask(d,qa_json_get(d,bit,"mask"),&b->mask,e)||!b->mask||(b->mask&(b->mask-1))||(occupied&b->mask))return false;
                 occupied|=b->mask;
@@ -181,7 +181,7 @@ bool application_qc_items_initialize(struct application_qc_state *engine,qa_erro
         if(!qa_q1_weapon_source(program,mask,&weapon)||!qa_q1_weapon_profile_identity(program,weapon,&profile))continue;
         qa_item_id item;
         if(!original_item(engine,p,profile.item,profile.label,profile.ammo,true,&item,e))return false;
-        p->storage[0].items[p->storage[0].count++]=(application_qc_item_bit){item,mask};
+        p->storage[0].items[p->storage[0].count++]=(qa_item_bit){item,mask};
     }
     return true;
 }

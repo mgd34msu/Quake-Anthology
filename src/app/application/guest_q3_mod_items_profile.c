@@ -100,7 +100,7 @@ static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,
             ok=word(d,qa_json_get(d,at,"privateMask"),&v->private_mask,e)&&list(d,bits,sizeof(*v->items),(void **)&v->items,&v->count,e)&&v->count;
             uint32_t mask=v->private_mask;
             for(size_t j=0;ok&&j<v->count;++j) {
-                qa_json_id bit=qa_json_at(d,bits,j); item_bit *b=v->items+j;
+                qa_json_id bit=qa_json_at(d,bits,j); qa_item_bit *b=v->items+j;
                 ok=application_mod_item_identity(d,qa_json_get(d,bit,"item"),strings,&b->item,e)&&word(d,qa_json_get(d,bit,"mask"),&b->mask,e)&&
                     b->mask&&b->mask<=UINT32_C(0x80000000)&&!(b->mask&(b->mask-1))&&!(mask&b->mask);
                 mask|=b->mask;

@@ -6,14 +6,13 @@ typedef struct application_qc_item_definition {
     application_qc_call actions[2];
     qa_buffer icon, held;
 } application_qc_item_definition;
-typedef struct application_qc_item_bit { qa_item_id item; uint32_t mask; } application_qc_item_bit;
 typedef struct application_qc_item_storage {
     const qa_qc_definition *field, *capacity;
     qa_item_id item;
     float constant_capacity;
     bool bits;
     uint32_t private_mask;
-    application_qc_item_bit *items;
+    qa_item_bit *items;
     size_t count;
 } application_qc_item_storage;
 struct application_qc_items {
