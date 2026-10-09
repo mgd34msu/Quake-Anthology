@@ -47,9 +47,9 @@ static bool outgoing_write(qa_net_writer *w, const outgoing *m, bool reliable)
     bool ok = qa_net_write_u32(w, m->sequence) && qa_net_write_u32(w, m->required) &&
         qa_net_write_u32(w, m->next_fragment) && qa_net_write_u32(w, m->acknowledged) &&
         qa_net_write_u16(w, m->fragments) && qa_net_write_u32(w, (uint32_t)m->payload.size) &&
-        qa_net_write_data(w, m->payload.data, m->payload.size);
+        qa_unified_payload_write(w, &m->payload);
     for (uint32_t i = 0; ok && reliable && i < m->fragments; ++i)
-        ok = qa_net_write_u64(w, m->sent[i].at) && qa_net_write_u32(w, m->sent[i].attempts) && qa_net_write_u8(w, m->sent[i].acknowledged);
+        ok = qa_net_write_u64(w, qa_unified_sent_fragment(m,i)->at) && qa_net_write_u32(w, qa_unified_sent_fragment(m,i)->attempts) && qa_net_write_u8(w, qa_unified_sent_fragment(m,i)->acknowledged);
     return ok;
 }
 
@@ -59,7 +59,7 @@ static bool assembly_write(qa_net_writer *w, const assembly *a, bool reliable)
     return qa_net_write_u64(w, a->started) && qa_net_write_u32(w, a->sequence) && qa_net_write_u32(w, a->required) &&
         qa_net_write_u32(w, a->fragment_bytes) && qa_net_write_u32(w, a->received_count) &&
         qa_net_write_u16(w, a->fragments) && qa_net_write_u32(w, (uint32_t)a->payload.size) &&
-        qa_net_write_data(w, a->payload.data, a->payload.size) && qa_net_write_data(w, a->received, a->fragments) &&
+        qa_unified_payload_write(w, &a->payload) && qa_net_write_data(w, a->received, a->fragments) &&
         (!reliable || qa_net_write_data(w, a->pending_ack, a->fragments));
 }
 
@@ -112,23 +112,26 @@ static bool outgoing_read(qa_net_reader *r, qa_unified_channel *c, bool reliable
 {
     bool present;
     if (!flag(r, &present) || !present) return !r->failed;
-    outgoing *m = calloc(1, sizeof(*m));
-    if (!m) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring unified outgoing record"); return false; }
-    *out = m;
-    m->sequence = qa_net_read_u32(r); m->required = qa_net_read_u32(r);
-    m->next_fragment = qa_net_read_u32(r); m->acknowledged = qa_net_read_u32(r);
-    m->fragments = qa_net_read_u16(r);
+    uint32_t sequence = qa_net_read_u32(r), required = qa_net_read_u32(r);
+    uint32_t next_fragment = qa_net_read_u32(r), acknowledged = qa_net_read_u32(r);
+    uint16_t fragments = qa_net_read_u16(r);
     uint32_t size = qa_net_read_u32(r);
+    size_t page_bytes = c->limits.datagram_bytes - QA_UNIFIED_HEADER_BYTES;
+    size_t expected_fragments = size ? ((size_t)size - 1) / page_bytes + 1 : 1;
     if (r->failed || size > c->limits.message_bytes || size > qa_net_reader_remaining(r) ||
-        !m->fragments || m->fragments > c->limits.fragments || (reliable && size > c->limits.queued_reliable_bytes - *budget))
+        fragments != expected_fragments || fragments > c->limits.fragments ||
+        (reliable && size > c->limits.queued_reliable_bytes - *budget))
         return qa_net_reader_fail(r, "Invalid unified outgoing extent");
-    m->payload.data = malloc(size ? size : 1); m->payload.size = size;
-    if (reliable) m->sent = calloc(m->fragments, sizeof(*m->sent));
-    if (!m->payload.data || (reliable && !m->sent)) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring unified outgoing payload"); return false; }
-    if (!qa_net_read_data(r, m->payload.data, size)) return false;
+    outgoing *m = qa_unified_outgoing_acquire(c,size,fragments,reliable,r->error);
+    if (!m) return qa_net_reader_fail(r, "Invalid unified outgoing extent");
+    *out = m;
+    m->sequence = sequence; m->required = required;
+    m->next_fragment = next_fragment; m->acknowledged = acknowledged;
+    if (!qa_unified_payload_read(r,&m->payload)) return false;
     for (uint32_t i = 0; reliable && i < m->fragments; ++i) {
-        m->sent[i].at = qa_net_read_u64(r); m->sent[i].attempts = qa_net_read_u32(r);
-        if (!flag(r, &m->sent[i].acknowledged)) return false;
+        sent_fragment *sent = qa_unified_sent_fragment(m,i);
+        sent->at = qa_net_read_u64(r); sent->attempts = qa_net_read_u32(r);
+        if (!flag(r, &sent->acknowledged)) return false;
     }
     if (reliable) *budget += size;
     return !r->failed;
@@ -138,23 +141,21 @@ static bool assembly_read(qa_net_reader *r, qa_unified_channel *c, bool reliable
 {
     bool present;
     if (!flag(r, &present) || !present) return !r->failed;
-    assembly *a = calloc(1, sizeof(*a));
-    if (!a) { qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring unified assembly"); return false; }
-    *out = a;
-    a->started = qa_net_read_u64(r); a->sequence = qa_net_read_u32(r); a->required = qa_net_read_u32(r);
-    a->fragment_bytes = qa_net_read_u32(r); a->received_count = qa_net_read_u32(r); a->fragments = qa_net_read_u16(r);
+    uint64_t started = qa_net_read_u64(r);
+    uint32_t sequence = qa_net_read_u32(r), required = qa_net_read_u32(r);
+    uint32_t fragment_bytes = qa_net_read_u32(r), received_count = qa_net_read_u32(r);
+    uint16_t fragments = qa_net_read_u16(r);
     uint32_t size = qa_net_read_u32(r);
-    if (r->failed || size > c->limits.message_bytes || size > qa_net_reader_remaining(r) || !a->fragments ||
-        a->fragments > c->limits.fragments || (reliable && size > c->limits.queued_reliable_bytes - *budget))
+    if (r->failed || size > c->limits.message_bytes || size > qa_net_reader_remaining(r) || !fragments ||
+        fragments > c->limits.fragments || (reliable && size > c->limits.queued_reliable_bytes - *budget))
         return qa_net_reader_fail(r, "Invalid unified assembly extent");
-    a->payload.data = malloc(size ? size : 1); a->payload.size = size;
-    a->received = malloc(a->fragments);
-    if (reliable) a->pending_ack = malloc(a->fragments);
-    if (!a->payload.data || !a->received || (reliable && !a->pending_ack)) {
-        qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring full unified assembly backing"); return false;
-    }
-    if (!qa_net_read_data(r, a->payload.data, size) || !qa_net_read_data(r, a->received, a->fragments) ||
-        (reliable && !qa_net_read_data(r, a->pending_ack, a->fragments))) return false;
+    assembly *a = qa_unified_assembly_acquire(c,size,fragments,reliable,sequence,r->error);
+    if (!a) return qa_net_reader_fail(r, "Invalid unified assembly extent");
+    *out = a;
+    a->started = started; a->sequence = sequence; a->required = required;
+    a->fragment_bytes = fragment_bytes; a->received_count = received_count;
+    if (!qa_unified_payload_read(r,&a->payload) || !qa_net_read_data(r,a->received,fragments) ||
+        (reliable && !qa_net_read_data(r,a->pending_ack,fragments))) return false;
     if (reliable) *budget += size;
     return !r->failed;
 }

@@ -12,16 +12,16 @@ static uint32_t channel_window(const qa_unified_channel *c)
 
 static bool outgoing_valid(const qa_unified_channel *c, const outgoing *m, bool reliable, qa_error *e)
 {
-    if (!m || !m->payload.data || m->payload.size > c->limits.message_bytes || !m->sequence ||
+    if (!m || !m->payload.pages || m->payload.size > c->limits.message_bytes || !m->sequence ||
         m->required >= c->next_reliable || (reliable && m->required) ||
         m->fragments != (m->payload.size ? (m->payload.size - 1) / (c->limits.datagram_bytes - QA_UNIFIED_HEADER_BYTES) + 1 : 1) ||
         m->fragments > c->limits.fragments || m->next_fragment > m->fragments ||
-        (reliable ? !m->sent : (m->sent || m->acknowledged || m->next || m->next_fragment == m->fragments)))
+        (reliable ? !m->reliable : (m->reliable || m->acknowledged || m->next || m->next_fragment == m->fragments)))
         return fail(e, "Invalid unified outgoing message continuation");
     if (!reliable) return true;
     uint32_t acknowledged = 0;
     for (uint32_t i = 0; i < m->fragments; ++i) {
-        const sent_fragment *sent = m->sent + i;
+        const sent_fragment *sent = qa_unified_sent_fragment(m,i);
         if (sent->attempts > c->limits.maximum_transmissions ||
             (i < m->next_fragment ? !sent->attempts : (sent->attempts || sent->at || sent->acknowledged)) ||
             (sent->acknowledged && !sent->attempts))
@@ -33,7 +33,7 @@ static bool outgoing_valid(const qa_unified_channel *c, const outgoing *m, bool 
 
 static bool assembly_valid(const qa_unified_channel *c, const assembly *a, bool reliable, qa_error *e)
 {
-    if (!a || !a->payload.data || !a->received || !a->received_count || (reliable ? !a->pending_ack : a->pending_ack != NULL) ||
+    if (!a || !a->payload.pages || !a->received || !a->received_count || (reliable ? !a->pending_ack : a->pending_ack != NULL) ||
         !a->sequence || a->payload.size > c->limits.message_bytes ||
         !a->fragment_bytes || a->fragment_bytes > QA_UNIFIED_MAX_DATAGRAM - QA_UNIFIED_HEADER_BYTES ||
         a->fragments != (a->payload.size ? (a->payload.size - 1) / a->fragment_bytes + 1 : 1) ||
@@ -49,7 +49,7 @@ static bool assembly_valid(const qa_unified_channel *c, const assembly *a, bool 
             return fail(e, "Invalid unified fragment bitmap or actual datagram extent");
         if (!a->received[i]) {
             for (size_t byte = 0; byte < bytes; ++byte)
-                if (a->payload.data[offset + byte]) return fail(e, "Unreceived unified fragment changes its initialized backing");
+                if (qa_unified_payload_byte(&a->payload,offset+byte)) return fail(e, "Unreceived unified fragment changes its initialized backing");
         }
         received += a->received[i];
     }
@@ -134,7 +134,7 @@ bool qa_unified_channel_progress_read(const qa_unified_channel *c, qa_unified_pr
         .frame_admitted=c->frame_admitted, .frame_acknowledged=c->frame_acknowledged};
     for (const outgoing *m = c->reliable; m; m = m->next)
         for (uint32_t i = 0; i < m->fragments; ++i)
-            if (m->sent[i].at > out->time_ceiling) out->time_ceiling = m->sent[i].at;
+            if (qa_unified_sent_fragment(m,i)->at > out->time_ceiling) out->time_ceiling = qa_unified_sent_fragment(m,i)->at;
     for (size_t i = 0; i < 64; ++i)
         if (c->assemblies[i] && c->assemblies[i]->started > out->time_ceiling) out->time_ceiling = c->assemblies[i]->started;
     if (c->frame_assembly && c->frame_assembly->started > out->time_ceiling) out->time_ceiling = c->frame_assembly->started;

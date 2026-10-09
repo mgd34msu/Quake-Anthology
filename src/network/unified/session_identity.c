@@ -91,8 +91,7 @@ bool qa_unified_session_control_receipt(const qa_unified_session *s, uint32_t se
     while (queued && queued->sequence != sequence) queued = queued->next;
     qa_buffer wire = {0};
     if (!qa_unified_document_encode(document, &wire, e)) return false;
-    bool okay = queued && queued->payload.size == wire.size &&
-        (!wire.size || !memcmp(queued->payload.data, wire.data, wire.size));
+    bool okay = queued && qa_unified_payload_equal(&queued->payload, (qa_bytes){wire.data, wire.size});
     qa_buffer_free(&wire);
     return okay || qa_unified_session_fail(e, QA_ERROR_FORMAT, "Source control receipt differs from its actual retained reliable bytes");
 }

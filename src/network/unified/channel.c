@@ -23,35 +23,25 @@ static uint32_t window(const qa_unified_channel *c) {
         ? c->limits.reliable_window_messages:c->limits.queued_reliable_messages;
 }
 
-static void outgoing_free(outgoing *message) {
-    if (!message) return;
-    qa_buffer_free(&message->payload); free(message->sent); free(message);
-}
-
-static void assembly_free(assembly *a) {
-    if (!a) return;
-    qa_buffer_free(&a->payload); free(a->received); free(a->pending_ack); free(a);
-}
-
 static void close_channel(qa_unified_channel *c) {
     c->closed=true;
     while (c->reliable) {
         outgoing *next=c->reliable->next;
-        outgoing_free(c->reliable); c->reliable=next;
+        qa_unified_outgoing_release(c, c->reliable); c->reliable=next;
     }
     c->tail=NULL; c->reliable_count=0; c->queued_bytes=0;
-    outgoing_free(c->frame); c->frame=NULL;
-    outgoing_free(c->pending_frame); c->pending_frame=NULL;
-    for (size_t i=0;i<64;++i) { assembly_free(c->assemblies[i]); c->assemblies[i]=NULL; }
-    assembly_free(c->frame_assembly); c->frame_assembly=NULL;
-    assembly_free(c->waiting_frame); c->waiting_frame=NULL;
+    qa_unified_outgoing_release(c, c->frame); c->frame=NULL;
+    qa_unified_outgoing_release(c, c->pending_frame); c->pending_frame=NULL;
+    for (size_t i=0;i<64;++i) { qa_unified_assembly_release(c, c->assemblies[i]); c->assemblies[i]=NULL; }
+    qa_unified_assembly_release(c, c->frame_assembly); c->frame_assembly=NULL;
+    qa_unified_assembly_release(c, c->waiting_frame); c->waiting_frame=NULL;
     c->received_bytes=0; c->cumulative_pending=false; c->frame_ack_pending=false;
 }
 
 void qa_unified_channel_close(qa_unified_channel *c) { if (c && !c->busy) close_channel(c); }
 void qa_unified_channel_destroy(qa_unified_channel *c) {
     if (!c || c->busy) return;
-    close_channel(c); free(c->packet); free(c);
+    close_channel(c); qa_arena_destroy(&c->storage); free(c);
 }
 bool qa_unified_channel_closed(const qa_unified_channel *c) { return !c || c->closed; }
 uint32_t qa_unified_channel_received(const qa_unified_channel *c) { return c?c->reliable_received:0; }
@@ -67,9 +57,10 @@ bool qa_unified_channel_create(qa_unified_token token, const qa_unified_limits *
         return error_message(error,QA_ERROR_ARGUMENT,"invalid unified channel capacity");
     qa_unified_channel *c=calloc(1,sizeof(*c));
     if (!c) return error_message(error,QA_ERROR_MEMORY,"allocating unified channel");
-    c->packet=calloc(l.datagram_bytes,1);
-    if (!c->packet) { free(c); return error_message(error,QA_ERROR_MEMORY,"allocating unified datagram buffer"); }
     c->limits=l; c->token=token; c->next_reliable=1; c->next_frame=1;
+    if (!qa_unified_channel_storage_prepare(c,error)) {
+        qa_arena_destroy(&c->storage); free(c); return false;
+    }
     *out=c; return true;
 }
 
@@ -90,7 +81,7 @@ bool qa_unified_channel_frame_applied(qa_unified_channel *c, uint32_t sequence, 
     c->frame_admitted=sequence; c->frame_ack_pending=true; return true;
 }
 
-static outgoing *outgoing_create(const qa_unified_channel *c, qa_bytes payload,
+static outgoing *outgoing_create(qa_unified_channel *c, qa_bytes payload,
                                   uint64_t sequence, uint32_t required, bool reliable,
                                   qa_error *error) {
     if (payload.size>c->limits.message_bytes || (payload.size && !payload.data) || sequence>UINT32_MAX) {
@@ -101,16 +92,10 @@ static outgoing *outgoing_create(const qa_unified_channel *c, qa_bytes payload,
     if (fragments>c->limits.fragments) {
         error_message(error,QA_ERROR_ARGUMENT,"unified message exceeds fragment limit"); return NULL;
     }
-    outgoing *message=calloc(1,sizeof(*message));
-    if (!message) { error_message(error,QA_ERROR_MEMORY,"allocating unified message"); return NULL; }
-    message->payload.data=malloc(payload.size?payload.size:1);
-    if (reliable) message->sent=calloc(fragments,sizeof(*message->sent));
-    if (!message->payload.data || (reliable && !message->sent)) {
-        outgoing_free(message); error_message(error,QA_ERROR_MEMORY,"allocating unified message payload"); return NULL;
-    }
-    if (payload.size) memcpy(message->payload.data,payload.data,payload.size);
-    message->payload.size=payload.size; message->sequence=(uint32_t)sequence;
-    message->required=required; message->fragments=(uint16_t)fragments;
+    outgoing *message=qa_unified_outgoing_acquire(c,payload.size,(uint16_t)fragments,reliable,error);
+    if (!message) return NULL;
+    if (payload.size) qa_unified_payload_copy(&message->payload,0,payload.data,payload.size);
+    message->sequence=(uint32_t)sequence; message->required=required;
     return message;
 }
 
@@ -167,7 +152,7 @@ bool qa_unified_channel_reliable_batch(qa_unified_channel *c, const qa_bytes *pa
     for (size_t i=0;i<count;++i) {
         outgoing *m=outgoing_create(c,payloads[i],c->next_reliable+i,0,true,error);
         if (!m) {
-            while (head) { outgoing *next=head->next; outgoing_free(head); head=next; }
+            while (head) { outgoing *next=head->next; qa_unified_outgoing_release(c, head); head=next; }
             return false;
         }
         if (tail) tail->next=m; else head=m;
@@ -186,11 +171,19 @@ bool qa_unified_channel_frame(qa_unified_channel *c, qa_bytes payload,
     if (!writable_channel(c,error)) return false;
     if (required_reliable>=c->next_reliable)
         return error_message(error,QA_ERROR_ARGUMENT,"unified frame depends on unqueued control");
+    size_t fragment_bytes=c->limits.datagram_bytes-QA_UNIFIED_HEADER_BYTES;
+    size_t fragments=payload.size?(payload.size-1)/fragment_bytes+1:1;
+    if (payload.size>c->limits.message_bytes || (payload.size && !payload.data) ||
+        c->next_frame>UINT32_MAX)
+        return error_message(error,QA_ERROR_ARGUMENT,"unified message capacity or sequence exhausted");
+    if (fragments>c->limits.fragments)
+        return error_message(error,QA_ERROR_ARGUMENT,"unified message exceeds fragment limit");
+    qa_unified_outgoing_release(c,c->pending_frame); c->pending_frame=NULL;
     outgoing *message=outgoing_create(c,payload,c->next_frame,required_reliable,false,error);
     if (!message) return false;
     c->next_frame++;
     if (!c->frame) c->frame=message;
-    else { outgoing_free(c->pending_frame); c->pending_frame=message; }
+    else { qa_unified_outgoing_release(c, c->pending_frame); c->pending_frame=message; }
     return true;
 }
 
@@ -204,7 +197,7 @@ static bool expire(qa_unified_channel *c, uint64_t now, qa_error *error) {
         }
     }
     if (c->frame_assembly && elapsed(now,c->frame_assembly->started,c->limits.assembly_ns)) {
-        assembly_free(c->frame_assembly); c->frame_assembly=NULL;
+        qa_unified_assembly_release(c, c->frame_assembly); c->frame_assembly=NULL;
     }
     return true;
 }
@@ -215,17 +208,11 @@ static assembly **assembly_slot(qa_unified_channel *c, uint32_t sequence) {
     return NULL;
 }
 
-static assembly *assembly_create(const qa_unified_packet *p, uint64_t now, qa_error *error) {
-    assembly *a=calloc(1,sizeof(*a));
-    if (!a) { error_message(error,QA_ERROR_MEMORY,"allocating unified assembly"); return NULL; }
-    a->payload.data=calloc(p->total_bytes?p->total_bytes:1,1);
-    a->received=calloc(p->fragments,1);
-    if (p->kind==QA_UNIFIED_RELIABLE) a->pending_ack=calloc(p->fragments,1);
-    if (!a->payload.data || !a->received || (p->kind==QA_UNIFIED_RELIABLE && !a->pending_ack)) {
-        assembly_free(a); error_message(error,QA_ERROR_MEMORY,"allocating unified assembly payload"); return NULL;
-    }
-    a->payload.size=p->total_bytes; a->sequence=p->sequence; a->required=p->required_reliable;
-    a->fragment_bytes=p->fragment_bytes; a->fragments=p->fragments; a->started=now;
+static assembly *assembly_create(qa_unified_channel *c,const qa_unified_packet *p, uint64_t now, qa_error *error) {
+    assembly *a=qa_unified_assembly_acquire(c,p->total_bytes,p->fragments,p->kind==QA_UNIFIED_RELIABLE,p->sequence,error);
+    if (!a) return NULL;
+    a->sequence=p->sequence; a->required=p->required_reliable;
+    a->fragment_bytes=p->fragment_bytes; a->started=now;
     return a;
 }
 
@@ -233,7 +220,7 @@ static bool append(assembly *a, const qa_unified_packet *p) {
     if (a->required!=p->required_reliable || a->payload.size!=p->total_bytes ||
         a->fragment_bytes!=p->fragment_bytes || a->fragments!=p->fragments) return false;
     if (!a->received[p->fragment]) {
-        if (p->payload.size) memcpy(a->payload.data+(size_t)p->fragment*p->fragment_bytes,p->payload.data,p->payload.size);
+        if (p->payload.size) qa_unified_payload_copy(&a->payload,(size_t)p->fragment*p->fragment_bytes,p->payload.data,p->payload.size);
         a->received[p->fragment]=1; a->received_count++;
     }
     if (a->pending_ack) a->pending_ack[p->fragment]=1;
@@ -256,7 +243,7 @@ static void accept_ack(qa_unified_channel *c, const qa_unified_packet *p) {
             for (uint32_t i=0;i<prefix;++i) {
                 outgoing *done=c->reliable; c->reliable=done->next;
                 c->queued_bytes-=done->payload.size; c->reliable_count--;
-                outgoing_free(done);
+                qa_unified_outgoing_release(c, done);
             }
             if (!c->reliable) c->tail=NULL;
             c->reliable_acknowledged=p->acknowledged_reliable;
@@ -268,8 +255,8 @@ static void accept_ack(qa_unified_channel *c, const qa_unified_packet *p) {
     message=c->reliable;
     for (uint32_t i=0;message && i<window(c);++i,message=message->next) {
         if (message->sequence==p->sequence && p->fragment<message->fragments &&
-            message->sent[p->fragment].attempts && !message->sent[p->fragment].acknowledged) {
-            message->sent[p->fragment].acknowledged=true; message->acknowledged++; break;
+            qa_unified_sent_fragment(message,p->fragment)->attempts && !qa_unified_sent_fragment(message,p->fragment)->acknowledged) {
+            qa_unified_sent_fragment(message,p->fragment)->acknowledged=true; message->acknowledged++; break;
         }
     }
 }
@@ -284,21 +271,23 @@ static bool deliver_frame(qa_unified_channel *c, qa_unified_admit_delivery_fn ad
         if (!deliver(context,&value,error)) { close_channel(c); return false; }
         c->frame_received=frame->sequence;
     }
-    c->waiting_frame=NULL; assembly_free(frame); return true;
+    c->waiting_frame=NULL; qa_unified_assembly_release(c, frame); return true;
 }
 
 static bool deliver_ready(qa_unified_channel *c, qa_unified_admit_delivery_fn admit,
                            qa_unified_deliver_fn deliver, void *context, qa_error *error) {
     while (c->reliable_received<UINT32_MAX) {
         assembly **ready_slot=assembly_slot(c,c->reliable_received+1);
-        if (!ready_slot || (*ready_slot)->received_count!=(*ready_slot)->fragments) break;
+        if (!ready_slot) break;
         assembly *ready=*ready_slot;
+        qa_unified_assembly_promote_head(c,ready);
+        if (ready->received_count!=ready->fragments) break;
         qa_unified_delivery value={QA_UNIFIED_RELIABLE,ready->sequence,0,{ready->payload.data,ready->payload.size}};
         if (admit && !admit(context,&value)) break;
         if (!deliver(context,&value,error)) { close_channel(c); return false; }
         c->reliable_received=ready->sequence; c->received_bytes-=ready->payload.size;
         cumulative_ack(c,ready->sequence,(uint16_t)(ready->fragments-1));
-        *ready_slot=NULL; assembly_free(ready);
+        *ready_slot=NULL; qa_unified_assembly_release(c, ready);
     }
     return deliver_frame(c,admit,deliver,context,error);
 }
@@ -318,7 +307,7 @@ static bool receive_reliable(qa_unified_channel *c, const qa_unified_packet *p, 
         if (reserve>available || p->total_bytes>available-reserve) return true;
         for (size_t i=0;i<64;++i) if (!c->assemblies[i]) { slot=&c->assemblies[i]; break; }
         if (!slot) return true;
-        *slot=assembly_create(p,now,error);
+        *slot=assembly_create(c,p,now,error);
         if (!*slot) return false;
         c->received_bytes+=p->total_bytes;
     }
@@ -331,16 +320,16 @@ static bool receive_frame(qa_unified_channel *c, const qa_unified_packet *p, uin
                            void *context, qa_error *error) {
     if (p->sequence<=c->frame_received || p->sequence<c->newest_frame) return true;
     if (p->sequence>c->newest_frame) {
-        c->newest_frame=p->sequence; assembly_free(c->frame_assembly); c->frame_assembly=NULL;
+        c->newest_frame=p->sequence; qa_unified_assembly_release(c, c->frame_assembly); c->frame_assembly=NULL;
     }
     if (c->waiting_frame && c->waiting_frame->sequence==p->sequence) return true;
     if (!c->frame_assembly) {
-        c->frame_assembly=assembly_create(p,now,error);
+        c->frame_assembly=assembly_create(c,p,now,error);
         if (!c->frame_assembly) return false;
     }
     if (!append(c->frame_assembly,p)) return true;
     if (c->frame_assembly->received_count==c->frame_assembly->fragments) {
-        assembly_free(c->waiting_frame); c->waiting_frame=c->frame_assembly; c->frame_assembly=NULL;
+        qa_unified_assembly_release(c, c->waiting_frame); c->waiting_frame=c->frame_assembly; c->frame_assembly=NULL;
         return deliver_frame(c,admit,deliver,context,error);
     }
     return true;
@@ -427,7 +416,7 @@ static qa_unified_packet data_packet(qa_unified_channel *c, outgoing *message,
         .acknowledged_frame=c->frame_admitted,
         .total_bytes=(uint32_t)message->payload.size,.fragment_bytes=fragment_bytes,
         .fragment=fragment,.fragments=message->fragments,
-        .payload={message->payload.data+offset,size}
+        .payload={qa_unified_payload_page(&message->payload,fragment),size}
     };
 }
 
@@ -443,16 +432,16 @@ static bool send_reliable(qa_unified_channel *c, uint64_t now, qa_unified_send_f
         bool fresh=fragment<message->fragments;
         if (!fresh) {
             for (fragment=0;fragment<message->fragments;++fragment) {
-                sent_fragment *s=&message->sent[fragment];
+                sent_fragment *s=qa_unified_sent_fragment(message,fragment);
                 if (!s->acknowledged && elapsed(now,s->at,c->limits.retry_ns)) break;
             }
             if (fragment==message->fragments) {
                 if (index || message->acknowledged!=message->fragments) continue;
                 fragment=(uint32_t)message->fragments-1;
-                if (!elapsed(now,message->sent[fragment].at,c->limits.retry_ns)) continue;
+                if (!elapsed(now,qa_unified_sent_fragment(message,fragment)->at,c->limits.retry_ns)) continue;
             }
         }
-        sent_fragment *s=&message->sent[fragment];
+        sent_fragment *s=qa_unified_sent_fragment(message,fragment);
         if (s->attempts>=c->limits.maximum_transmissions) {
             close_channel(c); return error_message(error,QA_ERROR_IO,"unified reliable retry limit exceeded");
         }
@@ -473,7 +462,7 @@ static bool send_frame(qa_unified_channel *c, qa_unified_send_fn send, void *con
     if (!send_packet(c,&p,send,context,error)) return false;
     if (++message->next_fragment==message->fragments) {
         c->frame_transmitted=message->sequence;
-        c->frame=c->pending_frame; c->pending_frame=NULL; outgoing_free(message);
+        c->frame=c->pending_frame; c->pending_frame=NULL; qa_unified_outgoing_release(c, message);
     }
     *progress=true; return true;
 }

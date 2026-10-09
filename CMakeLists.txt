@@ -1031,6 +1031,7 @@ add_library(qa_network STATIC
     src/network/transport/ipx_native.c
     src/network/transport/socket_events.c
     src/network/unified/channel.c
+    src/network/unified/channel_storage.c
     src/network/unified/composition.c
     src/network/unified/document.c
     src/network/unified/frame.c

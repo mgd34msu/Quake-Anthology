@@ -64,8 +64,7 @@ bool qa_unified_session_continuation_valid(const qa_unified_session *s, const qa
             if (sequence > s->channel->reliable_acknowledged) {
                 const outgoing *queued = s->channel->reliable;
                 while (queued && queued->sequence != sequence) queued = queued->next;
-                okay = queued && queued->payload.size == wire.size &&
-                    (!wire.size || !memcmp(queued->payload.data, wire.data, wire.size));
+                okay = queued && qa_unified_payload_equal(&queued->payload, (qa_bytes){wire.data, wire.size});
             }
         }
         qa_buffer_free(&wire);
