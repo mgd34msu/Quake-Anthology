@@ -7,8 +7,10 @@ static qa_command_result declared_command(void *context,
     if (!host || host->retired || !command || command->console!=host->options.console ||
         !qa_console_invocation_current(command->console,command) ||
         command->receiver!=host->options.owner || command->registration_owner!=host->options.service_owner ||
-        !qa_console_invocation_delivered_view(command,host->options.command_context.cvar_view,
-            host->options.owner,host->options.service_owner) ||
+        !(host->options.command_context.cvar_view ?
+            qa_console_invocation_delivered_view(command,host->options.command_context.cvar_view,
+                host->options.owner,host->options.service_owner) :
+            qa_console_invocation_delivered(command,host->options.owner,host->options.service_owner)) ||
         command->context.seat!=host->options.command_context.seat || !host->options.console_command) {
         q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 declaration lost its retained module command owner");
         return QA_COMMAND_FAILED;
