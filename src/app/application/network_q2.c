@@ -42,7 +42,7 @@ bool qa_application_network_q2_host_source(qa_application *app, qa_net_protocol_
     } else {
         struct application_native_q2 *engine = provider->state.native.q2_engine;
         qa_native_entity_table table;
-        const qa_cvar_view *clients = engine ? qa_cvars_find(engine->cvars, "maxclients") : NULL;
+        const qa_cvar_view *clients = engine ? qa_cvars_read(engine->cvars, provider->q2_maxclients) : NULL;
         if (!engine || !clients || clients->integer < 1 || clients->integer > 256 ||
             !qa_native_entity_table_get(qa_native_host_instance(provider->state.native.host), &table, error))
             return application_fail(error, QA_ERROR_FORMAT, "Original Q2 wire lost its source client/entity policy");
@@ -327,6 +327,9 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
     owner->app = app; owner->server_count = server_count;
     bool ok = qa_application_network_q2_host_source(app, protocol, &owner->host, error);
     if (ok) {
+        const application_provider *provider = application_network_q2_provider(owner);
+        owner->sv_novis = provider->sv_novis;
+        owner->sv_airaccelerate = provider->q2_airaccelerate;
         const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
         owner->source_instance = application_network_q2_copy(owner->host.source.launch->selection.instance, error);
         owner->source_map = map ? application_network_q2_copy(map, error) : NULL;
@@ -658,7 +661,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     if (!config_number(owner, owner->checksum_index, qa_block_checksum(qa_resource_bytes(owner->app->map_resource)), error) ||
         !config_number(owner, owner->clients_index, owner->host.client_slots, error)) return false;
-    const qa_cvar_view *air = qa_cvars_find(owner->host.cvars, "sv_airaccelerate");
+    const qa_cvar_view *air = qa_cvars_read(owner->host.cvars, owner->sv_airaccelerate);
     if (!air || !application_network_q2_config(owner, owner->air_index, air->value, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
     if (owner->n64_index != UINT32_MAX && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {

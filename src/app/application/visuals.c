@@ -224,7 +224,7 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
             if (slot) {
                 qa_cvars *cvars = v->q2_source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN ?
                     application_native_q2_console_registry(source) : source->state.native.q2_engine->cvars;
-                const qa_cvar_view *novis = cvars ? qa_cvars_find(cvars, "sv_novis") : NULL;
+                const qa_cvar_view *novis = cvars ? qa_cvars_read(cvars, source->sv_novis) : NULL;
                 v->no_vis |= novis && novis->number != 0;
                 if (!application_q2_visibility_recipient_prepare(app, recipient, slot, pvs_origin,
                     &v->q2_recipient, error)) return false;

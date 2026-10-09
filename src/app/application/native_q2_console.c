@@ -101,11 +101,21 @@ struct application_native_q2_console {
     qa_console *console;
     qa_cvars *cvars;
     qa_hud_cvar_handles hud_cvars;
+    struct {
+        qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
+    } weapon_cvars;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
     size_t observer_count;
 };
+
+static void weapon_cvars_bind(struct application_native_q2_console *owner) {
+    owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
+    owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
+    owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
+    owner->weapon_cvars.no_stack_double = qa_cvars_resolve(owner->cvars, "g_dm_no_stack_double");
+}
 
 static qa_console_dialect dialect(const application_provider *provider) {
     return provider->launch->selection.clock.kind == QA_CLOCK_Q2_RERELEASE ?
@@ -365,6 +375,7 @@ bool application_native_q2_console_create_restored(application_provider *provide
         application_native_q2_console_destroy(provider, NULL);
         return false;
     }
+    weapon_cvars_bind(owner);
     return true;
 }
 static bool observe_name(struct application_native_q2_console *owner, const char *name, qa_error *error) {
@@ -529,7 +540,10 @@ bool application_native_q2_console_restore(application_provider *provider, qa_by
     qa_cvars_restore *ticket = NULL;
     bool okay = qa_cvars_save_prepare(cvars, bytes, &ticket, error) && qa_cvars_save_commit(ticket, error);
     if (!okay) qa_cvars_save_abort(ticket);
-    if (okay) qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
+    if (okay) {
+        qa_hud_cvars_bind(cvars, QA_HUD_CVAR_USE_FONT, &provider->native_q2_console->hud_cvars);
+        weapon_cvars_bind(provider->native_q2_console);
+    }
     return okay && observe(provider->native_q2_console, error);
 }
 bool application_native_q2_rotation_changed(void *context, const qa_string_id *maps, size_t count, qa_error *error) {
@@ -663,15 +677,11 @@ bool application_native_q2_source_weapon_input(application_provider *provider, q
     if (!input || !application_native_q2_console_registry(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 weapon input requires its source registry");
     if (dialect(provider) == QA_CONSOLE_Q2_RERELEASE) {
-        int32_t infinite, instant, quick, no_stack;
-        if (!application_native_q2_source_integer(provider, "g_infinite_ammo", &infinite, error) ||
-            !application_native_q2_source_integer(provider, "g_instant_weapon_switch", &instant, error) ||
-            !application_native_q2_source_integer(provider, "g_quick_weapon_switch", &quick, error) ||
-            !application_native_q2_source_integer(provider, "g_dm_no_stack_double", &no_stack, error)) return false;
-        input->infinite_ammo = infinite != 0;
-        input->instant_switch = instant != 0;
-        input->quick_switch = quick != 0;
-        input->no_stack_double = no_stack != 0;
+        struct application_native_q2_console *owner = provider->native_q2_console;
+        input->infinite_ammo = qa_cvars_read(owner->cvars, owner->weapon_cvars.infinite_ammo)->integer != 0;
+        input->instant_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.instant_switch)->integer != 0;
+        input->quick_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.quick_switch)->integer != 0;
+        input->no_stack_double = qa_cvars_read(owner->cvars, owner->weapon_cvars.no_stack_double)->integer != 0;
     }
     return true;
 }

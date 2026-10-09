@@ -178,29 +178,17 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .ch_x=qa_cvars_resolve(registry,"ch_x"),
         .ch_y=qa_cvars_resolve(registry,"ch_y"),
         .cl_blend=qa_cvars_resolve(registry,"cl_blend"),
-        .cl_disable_explosions=qa_cvars_resolve(registry,"cl_disable_explosions"),
-        .cl_disable_particles=qa_cvars_resolve(registry,"cl_disable_particles"),
-        .cl_dlight_hacks=qa_cvars_resolve(registry,"cl_dlight_hacks"),
         .cl_entities=qa_cvars_resolve(registry,"cl_entities"),
-        .cl_gunfov=qa_cvars_resolve(registry,"cl_gunfov"),
         .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
         .cl_lights=qa_cvars_resolve(registry,"cl_lights"),
-        .cl_muzzleflashes=qa_cvars_resolve(registry,"cl_muzzleflashes"),
-        .cl_muzzlelight_time=qa_cvars_resolve(registry,"cl_muzzlelight_time"),
         .cl_particles=qa_cvars_resolve(registry,"cl_particles"),
-        .cl_railcore_color=qa_cvars_resolve(registry,"cl_railcore_color"),
-        .cl_railcore_width=qa_cvars_resolve(registry,"cl_railcore_width"),
-        .cl_railspiral_color=qa_cvars_resolve(registry,"cl_railspiral_color"),
-        .cl_railspiral_radius=qa_cvars_resolve(registry,"cl_railspiral_radius"),
-        .cl_railtrail_time=qa_cvars_resolve(registry,"cl_railtrail_time"),
-        .cl_railtrail_type=qa_cvars_resolve(registry,"cl_railtrail_type"),
-        .cl_rerelease_effects=qa_cvars_resolve(registry,"cl_rerelease_effects"),
         .crosshair=qa_cvars_resolve(registry,"crosshair"),
         .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
         .paused=qa_cvars_resolve(registry,"paused"),
         .scr_hit_marker_time=qa_cvars_resolve(registry,"scr_hit_marker_time"),
     };
     frontend_legacy_cvars_bind(registry,&row->cvar_handles.legacy);
+    frontend_remote_q2_effects_cvars_bind(registry,&row->cvar_handles.effects);
 }
 bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options *options,
     frontend_remote_q2 **out, qa_error *error)

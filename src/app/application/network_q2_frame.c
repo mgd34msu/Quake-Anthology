@@ -661,7 +661,7 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     const qa_bsp_view *map = qa_collision_bsp(owner->app->geometry);
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL && map->family != QA_BSP_Q2)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q2 frame requires its actual Q2 portal geometry");
-    const qa_cvar_view *novis = qa_cvars_find(owner->host.cvars, "sv_novis");
+    const qa_cvar_view *novis = qa_cvars_read(owner->host.cvars, owner->sv_novis);
     bool no_visibility = novis && novis->number != 0;
     qa_q2_wire_frame value = {.valid = true, .delta_frame = -1, .player_count = seats};
     uint32_t frame_bits = (uint32_t)owner->host.source.clock.frame_number;

@@ -1,6 +1,8 @@
 #include "remote_q2_effects_private.h"
 #include "qa/material.h"
 #include "../../gameplay/q2/monsters/muzzle_data.h"
+#include "qa/console_cvar_observer.h"
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +43,94 @@ bool frontend_remote_q2_effects_color(const char *text, uint32_t *out)
         if (index>=8) return false;
     }
     *out=values[index]; return true;
+}
+void frontend_remote_q2_effects_cvars_bind(qa_cvars *registry, frontend_remote_q2_effects_cvars *out)
+{
+    *out = (frontend_remote_q2_effects_cvars){
+        .cl_disable_explosions = qa_cvars_resolve(registry, "cl_disable_explosions"),
+        .cl_disable_particles = qa_cvars_resolve(registry, "cl_disable_particles"),
+        .cl_dlight_hacks = qa_cvars_resolve(registry, "cl_dlight_hacks"),
+        .cl_gunfov = qa_cvars_resolve(registry, "cl_gunfov"),
+        .cl_muzzleflashes = qa_cvars_resolve(registry, "cl_muzzleflashes"),
+        .cl_muzzlelight_time = qa_cvars_resolve(registry, "cl_muzzlelight_time"),
+        .cl_railcore_color = qa_cvars_resolve(registry, "cl_railcore_color"),
+        .cl_railcore_width = qa_cvars_resolve(registry, "cl_railcore_width"),
+        .cl_railspiral_color = qa_cvars_resolve(registry, "cl_railspiral_color"),
+        .cl_railspiral_radius = qa_cvars_resolve(registry, "cl_railspiral_radius"),
+        .cl_railtrail_time = qa_cvars_resolve(registry, "cl_railtrail_time"),
+        .cl_railtrail_type = qa_cvars_resolve(registry, "cl_railtrail_type"),
+        .cl_rerelease_effects = qa_cvars_resolve(registry, "cl_rerelease_effects"),
+    };
+}
+static bool control_rail_color(const frontend_remote_q2_effects_control_source *source,
+    qa_cvar_handle handle, const char *name, uint32_t *out, qa_error *error)
+{
+    const qa_cvar_view *setting = qa_cvars_read(source->cvars, handle);
+    if (!setting) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color lost its actual CLIENT declaration");
+    if (frontend_remote_q2_effects_color(setting->value, out)) return true;
+    size_t value_length = strlen(setting->value), name_length = strlen(name);
+    if (value_length > SIZE_MAX - name_length - 32)
+        return q2fx_fail(error, QA_ERROR_MEMORY, "Q2 rail color warning overflow");
+    size_t capacity = value_length + name_length + 32;
+    char *warning = malloc(capacity);
+    if (!warning) return q2fx_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 rail color warning");
+    snprintf(warning, capacity, "Invalid value '%s' for '%s'\n", setting->value, name);
+    qa_console_emit(source->console, source->command_context, warning);
+    free(warning);
+    if (!source->current(source->context, error) || !qa_cvars_reset(source->cvars, name, true, error) ||
+        !source->current(source->context, error)) return false;
+    setting = qa_cvars_read(source->cvars, handle);
+    return (setting && frontend_remote_q2_effects_color(setting->value, out)) ||
+        q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
+}
+bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_control_source *source,
+    frontend_remote_q2_effects_controls *out, qa_error *error)
+{
+    if (!out || !source->current(source->context, error)) return false;
+    if (!qa_cvars_observer_idle(source->cvars))
+        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects controls require their returned CLIENT registry");
+    uint32_t core, spiral;
+    if (!control_rail_color(source, source->handles->cl_railcore_color, "cl_railcore_color", &core, error) ||
+        !control_rail_color(source, source->handles->cl_railspiral_color, "cl_railspiral_color", &spiral, error)) return false;
+    const qa_cvar_view *rail_time = qa_cvars_read(source->cvars, source->handles->cl_railtrail_time);
+    if (!rail_time || !isfinite(rail_time->number))
+        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail time has no actual finite CLIENT row");
+    float duration = rail_time->number;
+    if ((duration < 0 || duration > 2073600) &&
+        (!qa_cvars_set_number(source->cvars, "cl_railtrail_time", duration < 0 ? 0 : 2073600, error) ||
+            !source->current(source->context, error))) return false;
+    rail_time = qa_cvars_read(source->cvars, source->handles->cl_railtrail_time);
+    const qa_cvar_view *core_row = qa_cvars_read(source->cvars, source->handles->cl_railcore_color);
+    const qa_cvar_view *spiral_row = qa_cvars_read(source->cvars, source->handles->cl_railspiral_color);
+    if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value, &core) ||
+        !frontend_remote_q2_effects_color(spiral_row->value, &spiral))
+        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
+    const qa_cvar_view *time = qa_cvars_read(source->cvars, source->handles->cl_muzzlelight_time);
+    const qa_cvar_view *effects = qa_cvars_read(source->cvars, source->handles->cl_rerelease_effects);
+    const qa_cvar_view *flashes = qa_cvars_read(source->cvars, source->handles->cl_muzzleflashes);
+    const qa_cvar_view *hacks = qa_cvars_read(source->cvars, source->handles->cl_dlight_hacks);
+    const qa_cvar_view *particles = qa_cvars_read(source->cvars, source->handles->cl_disable_particles);
+    const qa_cvar_view *explosions = qa_cvars_read(source->cvars, source->handles->cl_disable_explosions);
+    const qa_cvar_view *gun = qa_cvars_read(source->cvars, source->gun);
+    const qa_cvar_view *gun_fov = qa_cvars_read(source->cvars, source->handles->cl_gunfov);
+    const qa_cvar_view *rail_type = qa_cvars_read(source->cvars, source->handles->cl_railtrail_type);
+    const qa_cvar_view *rail_width = qa_cvars_read(source->cvars, source->handles->cl_railcore_width);
+    const qa_cvar_view *rail_radius = qa_cvars_read(source->cvars, source->handles->cl_railspiral_radius);
+    if (!time || !effects || !flashes || !hacks || !particles || !explosions || !gun || !gun_fov ||
+        !rail_time || !rail_type || !rail_width || !rail_radius || !isfinite(rail_time->number) ||
+        rail_time->number < 0 || rail_time->number > 2073600 || !isfinite(rail_radius->number) ||
+        !isfinite(gun_fov->number) || gun_fov->number < -FLT_MAX || gun_fov->number > FLT_MAX)
+        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects have no actual canonical CLIENT controls");
+    frontend_remote_q2_effects_controls result = {.muzzlelight_milliseconds = time->integer,
+        .rerelease_effects = effects->integer != 0, .muzzleflashes = flashes->integer != 0,
+        .dlight_hacks = (uint32_t)hacks->integer, .disable_particles = (uint32_t)particles->integer,
+        .disable_explosions = (uint32_t)explosions->integer,
+        .gun = gun->integer, .gun_fov = gun_fov->number,
+        .rail_type = rail_type->integer, .rail_width = rail_width->integer,
+        .rail_seconds = rail_time->number, .rail_radius = rail_radius->number,
+        .rail_core_rgba = core, .rail_spiral_rgba = spiral};
+    if (!source->current(source->context, error)) return false;
+    *out = result; return true;
 }
 bool q2fx_source_valid(const frontend_remote_q2_effects_source *s)
 {

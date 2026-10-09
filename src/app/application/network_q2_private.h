@@ -87,6 +87,7 @@ typedef struct application_q2_resource_table {
 struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
+    qa_cvar_handle sv_novis, sv_airaccelerate;
     char *source_instance, *source_map;
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
