@@ -12,72 +12,6 @@ bool application_qc_may_move(void *opaque, qa_actor_id actor)
 {
     return controls_body(opaque, actor);
 }
-static bool collision_read(void *opaque, qa_actor_collision *out, qa_error *error)
-{
-    application_qc_actor *row = opaque;
-    struct application_qc_state *engine = row->engine;
-    qa_qc_instance *vm = engine->provider->state.qc.instance;
-    qa_actor_id expected = row->actor, current;
-    if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC collision binding lost its actor generation");
-    const qa_qc_game_fields *fields = qa_qc_game_resolved_fields(engine->provider->state.qc.game);
-    if (!fields || !fields->solid || fields->solid->type != QA_QC_FLOAT ||
-        !fields->flags || fields->flags->type != QA_QC_FLOAT ||
-        !fields->owner || fields->owner->type != QA_QC_ENTITY)
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine field is missing or has a different type");
-    float solid, flags;
-    int32_t owner;
-    if (!qa_qc_entity_float(vm, row->reference, fields->solid->offset, &solid, error) ||
-        !qa_qc_entity_float(vm, row->reference, fields->flags->offset, &flags, error) ||
-        !qa_qc_entity_int(vm, row->reference, fields->owner->offset, &owner, error)) return false;
-    if (!isfinite(solid) || !isfinite(flags) || (double)flags < INT32_MIN || (double)flags > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC collision flags");
-    uint32_t bits = (uint32_t)(int32_t)flags;
-    qa_actor_collision value = {.family = QA_COLLISION_Q1, .shape = QA_SHAPE_BOX,
-        .contents = solid == 0 || solid == 1 ? 0 : -2,
-        .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
-        .monster = (bits & 32u) != 0, .q1_corpse = solid == 5 && engine->profile == QA_QC_RERELEASE};
-    if (solid == 4) {
-        float model;
-        if (!fields->modelindex || fields->modelindex->type != QA_QC_FLOAT)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeC engine field is missing or has a different type");
-        if (!qa_qc_entity_float(vm, row->reference, fields->modelindex->offset, &model, error)) return false;
-        int32_t index = qa_source_float_to_i32(model);
-        const application_qc_resource *resource = NULL;
-        if (isfinite(model) && index > 0)
-            for (size_t i = 0; i < engine->resource_count; ++i)
-                if (engine->resources[i].kind == QA_QC_RESOURCE_MODEL &&
-                    engine->resources[i].value.index == (uint32_t)index) {
-                    resource = &engine->resources[i]; break;
-                }
-        /* Stock doors/plats link their origin before setmodel installs the
-         * brush index. SV_LinkEdict uses the current box; hull queries require
-         * the actual precached brush and remain strict. */
-        bool pending = model == 0 && qa_world_collision_link_observation(engine->world, expected);
-        if ((!resource || (!resource->has_inline_model && !resource->geometry)) && !pending)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeC brush solid has no retained inline model");
-        if (!pending) {
-            value.inline_model = true;
-            value.model = resource->inline_model;
-            value.model_geometry = resource->geometry;
-        }
-    }
-    uint32_t owner_slot = 0;
-    if (owner) {
-        int32_t stride;
-        if (owner < 0 || !qa_qc_slot_reference(vm, 1, &stride, error) || stride <= 0 || owner % stride)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeC collision owner is not a physical entity row");
-        owner_slot = (uint32_t)(owner / stride);
-    }
-    qa_qc_slot_binding owner_binding;
-    if (!qa_qc_slot(vm, owner_slot, &owner_binding))
-        return application_fail(error, QA_ERROR_FORMAT, "QuakeC collision owner leaves its physical entity table");
-    value.owner = owner_binding.kind == QA_QC_SLOT_BORROWED ?
-        qa_actor_reference_lifetime(owner_binding.actor) : qa_actor_reference_source(engine->provider->owner, owner_slot);
-    if (!qa_qc_reference_actor(vm, row->reference, &current, error) || !qa_actor_id_equal(current, expected))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC collision actor changed during projection");
-    *out = value; return true;
-}
 static bool bind_entity(struct application_qc_state *engine, qa_qc_instance *vm,
                           const qa_qc_entity_access *access, qa_error *error)
 {
@@ -88,8 +22,13 @@ static bool bind_entity(struct application_qc_state *engine, qa_qc_instance *vm,
     if (controls_body(engine, actor) && (!engine->provider->state.qc.qualified || access->binding.kind == QA_QC_SLOT_OWNED)) {
         application_qc_actor *row = &engine->actors[actor.slot];
         if (!qa_actor_id_equal(row->actor, actor)) *row = (application_qc_actor){.engine = engine, .actor = actor, .reference = access->reference};
+        int32_t stride;
+        if(!qa_qc_slot_reference(vm,1,&stride,error) ||
+           !qa_qc_entity_collision_fields(vm,(uint32_t)access->reference/(uint32_t)stride,
+                                          &row->collision_fields,error)) return false;
+        row->collision_fields.models=&engine->model_fields;
         if (!row->collision_bound) {
-            qa_collision_binding binding = {.context = row, .read = collision_read};
+            qa_collision_binding binding = {.context = row, .fields = &row->collision_fields};
             if (!qa_world_collision_bind(engine->world, actor, &binding, error)) return false;
             row->collision_bound = true;
         }

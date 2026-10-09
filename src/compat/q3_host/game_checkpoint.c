@@ -197,6 +197,7 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
 bool q3_game_checkpoint_install(qa_q3_host *host, q3_game_data *game, qa_error *error)
 {
     if (!game) return true;
+    q3_game_fields_clear(host);
     q3_game_checkpoint_free(host->game); host->game = game;
     host->restore_pending = true;
     /* Binding allocation failure leaves this candidate owned by the host.

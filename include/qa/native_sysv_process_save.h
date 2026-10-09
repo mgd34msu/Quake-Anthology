@@ -16,6 +16,10 @@ typedef struct qa_native_sysv_process_restore_bindings {
     uint64_t clock_id;
     bool output_is_terminal;
     bool (*time)(void *, int64_t *, qa_error *);
+    bool (*random)(void *, void *, size_t, uint32_t, size_t *, int32_t *, qa_error *);
+    bool (*clock)(void *, int32_t, int64_t *, int32_t *, qa_error *);
+    bool (*calendar)(void *, int64_t, bool, qa_platform_calendar_fields *, qa_error *);
+    bool (*getcwd)(void *, qa_buffer *, qa_error *);
     bool (*current)(void *, qa_error *);
     void *context;
     /* Borrows an existing capability by its durable identity. Only its
@@ -25,6 +29,7 @@ typedef struct qa_native_sysv_process_restore_bindings {
     /* Rebinds the actual opener for future source calls; restore never opens. */
     bool (*open_file)(void *, const char *, uint32_t, uint32_t,
                       qa_native_sysv_file *, bool *, qa_error *);
+    bool (*open_temporary_file)(void *, qa_native_sysv_file *, bool *, qa_error *);
     void *file_context;
     /* Resolves actual saved source-bridge callback IDs outside the runtime
      * import registry. Descriptor or address faults never fall through. */

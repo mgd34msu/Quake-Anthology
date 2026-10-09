@@ -269,7 +269,7 @@ bool application_q3_guest_native_options(qa_application *application,
         provider->application != application || (unsigned)role > QA_QVM_UI)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid native Q3 options request");
     uint64_t step = provider->launch->selection.clock.interval_ns;
-    *out = (qa_native_host_instance_options){.runner = application->native_runner};
+    *out = (qa_native_host_instance_options){.runtime = application->native_runtime_config};
     if (step != 0) {
         uint64_t rate = UINT64_C(1000000000) / step;
         uint64_t milliseconds = step / UINT64_C(1000000);

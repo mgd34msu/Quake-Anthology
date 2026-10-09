@@ -293,16 +293,6 @@ static bool current(native_source_actor *r,qa_error *e)
     return (slot.kind==QA_NATIVE_SLOT_OWNED&&qa_actor_id_equal(slot.actor,r->actor))||
         application_fail(e,QA_ERROR_ARGUMENT,"Declared native body lost its exact source actor");
 }
-static bool body_read(void *context,qa_body_state *out,qa_error *e)
-{
-    native_source_actor *r=context;
-    if(!current(r,e)) return false;
-    struct application_native_q2_source_actors *o=r->owner;
-    ++o->calls;
-    bool ok=qa_native_host_source_body_read(o->engine->provider->state.native.host,r->slot,o->velocity,o->ground,out,e);
-    --o->calls;
-    return ok&&current(r,e);
-}
 static bool body_write(void *context,const qa_body_state *body,qa_error *e)
 {
     native_source_actor *r=context;
@@ -573,8 +563,8 @@ bool application_native_q2_source_actors_admit(struct application_native_q2 *n,u
         r->owner=o;r->actor=actor;r->slot=slot;r->next=o->actors;o->actors=r;
     }
     if(!r->serial||qa_world_body_storage_serial(n->world,actor)!=r->serial) {
-        qa_body_binding binding={.context=r,.read=body_read,.write=body_write};
-        if(!qa_world_body_bind(n->world,actor,&binding,true,e)) return false;
+        if(!qa_native_host_source_body_bind(n->provider->state.native.host,slot,
+            o->velocity,o->ground,r,body_write,e)) return false;
         r->serial=qa_world_body_storage_serial(n->world,actor);
     }
     if(!watch(r,e)) return false;

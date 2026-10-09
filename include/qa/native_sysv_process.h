@@ -2,6 +2,7 @@
 #define QA_NATIVE_SYSV_PROCESS_H
 
 #include "qa/native_guest.h"
+#include "qa/platform_services.h"
 
 typedef struct qa_native_sysv_process qa_native_sysv_process;
 typedef enum qa_native_sysv_role {
@@ -47,10 +48,16 @@ typedef struct qa_native_sysv_process_options {
      * authority. opened=true transfers ownership even on a false result. */
     bool (*open_file)(void *, const char *, uint32_t, uint32_t,
                       qa_native_sysv_file *, bool *, qa_error *);
+    bool (*open_temporary_file)(void *, qa_native_sysv_file *, bool *, qa_error *);
     void *file_context;
     uint64_t standard_handles[3], clock_id;
     bool output_is_terminal;
     bool (*time)(void *, int64_t *, qa_error *);
+    bool (*random)(void *, void *, size_t, uint32_t, size_t *, int32_t *, qa_error *);
+    bool (*clock)(void *, int32_t, int64_t *, int32_t *, qa_error *);
+    bool (*calendar)(void *, int64_t, bool, qa_platform_calendar_fields *, qa_error *);
+    /* Owned UTF-8 path: size excludes its trailing NUL. */
+    bool (*getcwd)(void *, qa_buffer *, qa_error *);
     /* Qualifies the actual prepared external resource/clock authority. It
      * must work before a source instance is constructed or published. */
     bool (*current)(void *, qa_error *);

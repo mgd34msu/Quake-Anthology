@@ -4,69 +4,13 @@
 #include "qa/archive.h"
 #include "qa/bsp.h"
 #include "qa/frontend.h"
+#include "qa/native_process_platform.h"
 #include "compat/native/guest/host_child.h"
 
 #include <stdio.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_WIN32)
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#else
-#include <unistd.h>
-#endif
-
-static bool executable_path(char **out, qa_error *error)
-{
-    size_t capacity = 256;
-    for (;;) {
-#if defined(_WIN32)
-        if (capacity > UINT32_MAX / sizeof(wchar_t)) break;
-        wchar_t *wide = malloc(capacity * sizeof(*wide));
-        if (!wide) break;
-        DWORD length = GetModuleFileNameW(NULL, wide, (DWORD)capacity);
-        if (!length) { free(wide); break; }
-        if ((size_t)length < capacity) {
-            if (length > INT_MAX) { free(wide); break; }
-            int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
-                (int)length, NULL, 0, NULL, NULL);
-            char *path = bytes > 0 ? malloc((size_t)bytes + 1) : NULL;
-            if (path && WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
-                (int)length, path, bytes, NULL, NULL) == bytes) {
-                path[bytes] = 0; *out = path; free(wide); return true;
-            }
-            free(path); free(wide); break;
-        }
-        free(wide);
-#elif defined(__APPLE__)
-        if (capacity > UINT32_MAX) break;
-        char *path = malloc(capacity);
-        if (!path) break;
-        uint32_t bytes = (uint32_t)capacity;
-        if (!_NSGetExecutablePath(path, &bytes)) { *out = path; return true; }
-        free(path);
-        if (bytes > capacity) { capacity = bytes; continue; }
-#elif defined(__linux__)
-        char *path = malloc(capacity);
-        if (!path) break;
-        ssize_t length = readlink("/proc/self/exe", path, capacity - 1);
-        if (length < 0) { free(path); break; }
-        if ((size_t)length < capacity - 1) {
-            path[length] = 0; *out = path; return true;
-        }
-        free(path);
-#else
-        break;
-#endif
-        if (capacity > SIZE_MAX / 2) break;
-        capacity *= 2;
-    }
-    qa_error_set(error, QA_ERROR_IO, 0, "Cannot retain the actual executable bootstrap path");
-    return false;
-}
-
 static void usage(FILE *stream)
 {
     fputs("Quake Anthology native C engine\n"
@@ -97,7 +41,6 @@ static void usage(FILE *stream)
           "  --connect ADDRESS        Select remote endpoint\n"
           "  --protocol NAME          Select explicit wire protocol\n"
           "  --native-runtime-root PATH Native helper and runtime directory\n"
-          "  --native-wine FILE       Wine launcher override\n"
           "  --native-backend host|emulated  External native execution policy\n"
           "  --native-stack-bytes N --native-backing-bytes N\n"
           "  --native-image-bytes N --native-trap-bytes N\n"
@@ -220,10 +163,14 @@ int main(int argc, char **argv)
         usage(stderr);
         return 2;
     }
-    if (!executable_path(&options.native_bootstrap, &error)) {
+    qa_native_process_environment environment = {0};
+    if (!qa_native_process_environment_acquire(&environment, &error)) {
         qa_frontend_options_destroy(&options);
         return report_error("startup", &error);
     }
+    options.native_bootstrap = environment.executable;
+    environment.executable = NULL;
+    qa_native_process_environment_dispose(&environment);
     options.application.native_bootstrap = options.native_bootstrap;
     if (!qa_frontend_options_resolve_locations(&options,&error)) {
         qa_frontend_options_destroy(&options);

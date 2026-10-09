@@ -63,7 +63,7 @@ typedef struct qa_native_image_info {
 } qa_native_image_info;
 
 /* Inspection never executes the artifact. PE and ELF structural metadata is
- * validated before a module is admitted to either a direct or runner backend.
+ * validated before a module is admitted to the owned guest process.
  */
 bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error);
 /* Packaging inspection for an executable, including ELF PIE. Module admission
@@ -199,9 +199,8 @@ typedef struct qa_native_entity_event {
 typedef void (*qa_native_entity_observer_fn)(void *context, qa_native_instance *,
     const qa_native_entity_event *);
 
-/* context and callback functions remain valid until instance destruction.
- * Dependency bytes and paths are borrowed only during creation. Declaration
- * ownership is retained and region records are copied into the instance. */
+/* Context and callback functions remain valid until instance destruction.
+ * Declaration ownership is retained and region records are copied. */
 typedef struct qa_native_options {
     void *context;
     qa_qvm_role q3_role;
@@ -211,63 +210,28 @@ typedef struct qa_native_options {
     qa_native_host_checkpoint_fn checkpoint;
     qa_native_host_restore_fn restore;
     const qa_native_declaration *declaration;
-    const qa_native_dependency *dependencies;
-    size_t dependency_count;
     uint32_t tick_rate;
     float frame_seconds;
     uint32_t frame_milliseconds;
-    /* Requires the matching instrumented helper even without inline regions. */
     bool observe;
-    /* Requires a separate source process without requesting instrumentation. */
-    bool isolate;
     const struct qa_native_process_options *process;
     qa_native_entity_observer_fn entity_changed;
 } qa_native_options;
 
 typedef enum qa_native_backend {
-    QA_NATIVE_BACKEND_DIRECT,
-    QA_NATIVE_BACKEND_RUNNER,
+    QA_NATIVE_BACKEND_NONE,
     QA_NATIVE_BACKEND_OWNED_PROCESS
 } qa_native_backend;
 
-/* Runner paths are explicit packaging inputs. A Windows target on a non-Windows
- * host requires wine; declared inline regions additionally require the matching
- * DynamoRIO launcher and client. Linux i386 targets use the Linux i386 pair.
- * Paths are borrowed only during creation. wine_drive defaults to "Z:" and is
- * the Wine mapping used to translate absolute host paths passed to drrun. The
- * helper isolates module memory and ABI state, but is not a security sandbox;
- * guest OS calls retain the helper account's authority. */
-typedef bool (*qa_native_runner_validate_fn)(void *context, qa_native_target target,
-                                             bool instrumented, qa_error *error);
+/* Packaging inputs for the owned hardware child and its optional monitor. */
 typedef bool (*qa_native_profile_validate_fn)(void *context, qa_error *error);
-typedef struct qa_native_runner_config {
-    const char *windows_i386_runner;
-    const char *windows_x86_64_runner;
-    const char *linux_i386_runner;
-    const char *linux_x86_64_runner;
-    const char *windows_i386_drrun;
-    const char *windows_x86_64_drrun;
-    const char *windows_i386_client;
-    const char *windows_x86_64_client;
-    const char *linux_i386_drrun;
+typedef struct qa_native_runtime_config {
+    const char *bootstrap;
     const char *linux_x86_64_drrun;
-    const char *linux_i386_client;
-    const char *linux_x86_64_client;
-    /* Source instruction monitor for the isolated Linux x64 hardware child.
-     * This is separate from the declared-region hooks client above. */
     const char *linux_x86_64_profile;
-    /* Exact process-target fallback, including AARCH64, when its ABI-specific
-     * runner slot is absent. It never supplies a foreign target helper. */
-    const char *same_host_runner;
-    const char *wine;
-    const char *wine_drive;
-    size_t maximum_frame_bytes;
-    /* Called before the real helper starts and before original module reload.
-     * The callback and context remain borrowed until the instance is destroyed. */
-    qa_native_runner_validate_fn validate;
-    void *validation_context;
     qa_native_profile_validate_fn validate_profile;
-} qa_native_runner_config;
+    void *validation_context;
+} qa_native_runtime_config;
 
 typedef enum qa_native_lifecycle {
     QA_NATIVE_LOADED,
@@ -277,32 +241,18 @@ typedef enum qa_native_lifecycle {
     QA_NATIVE_RESTART_READY
 } qa_native_lifecycle;
 
-/* Direct instances accept only the current process OS, architecture and ABI,
- * and reject declarations with inline regions. Guest code is trusted native
- * code and may compromise the process. Imports are synchronous. Activation is
- * stacked, so permitted nested calls restore the previous instance. The trusted
- * caller confines source execution and imports to its owning thread; original
- * host adapters require isolated execution instead. Creation outputs start empty. If
- * failed construction cannot unload its real library, it returns that owned
- * failed instance in *out so its callback context can survive until cleanup. */
-bool qa_native_create_direct(qa_native_module *module, const qa_native_options *options,
-                             qa_native_instance **out, qa_error *error);
-bool qa_native_create_runner(qa_native_module *module, const qa_native_options *options,
-                             const qa_native_runner_config *runner, qa_native_instance **out,
-                             qa_error *error);
-/* Selects direct execution for an exact process target unless isolation or
- * instrumentation is required. Other cases require the actual runner config.
- * It never falls back to emulation or a different ABI. */
+/* Creation consumes the supplied process graph through options.process.
+ * Imports are synchronous and permitted nested calls restore the active owner.
+ * Failed construction retains any partially live owner in *out for cleanup. */
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
-                      const qa_native_runner_config *runner, qa_native_instance **out,
-                      qa_error *error);
+                      qa_native_instance **out, qa_error *error);
 /* Clears the owner after actual consumption, including source callback and
- * runner transport faults. A rejected unload or retained original mapping keeps
+ * guest execution faults. A rejected unload or retained original mapping keeps
  * every callback context in *owner. Cleanup never releases a closed loader
  * reference twice; a later attempt qualifies actual image retirement. */
 bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error);
 /* True only when destruction will pass its initial ownership admission.
- * Shutdown or runner cleanup may still fail after admission. */
+ * Shutdown or guest cleanup may still fail after admission. */
 bool qa_native_can_destroy(const qa_native_instance *instance);
 /* Readonly Q3 GAME/QL round admission. Raw-address observers must retire;
  * immutable declaration regions retain their original RVA identities. */
@@ -312,13 +262,13 @@ bool qa_native_restart_ready(const qa_native_instance *, qa_error *);
  * Refresh imports and exports before admitting Init(restart=true). A source or
  * loader fault consumes the reset attempt and prevents initialization. */
 bool qa_native_restart_original(qa_native_instance *, qa_error *);
-/* A poisoned isolated runner cannot execute further source operations. This
+/* A terminal owned guest cannot execute further source operations. This
  * does not authorize replacement of a live source primary or lost snapshot. */
 bool qa_native_terminal(const qa_native_instance *instance);
 /* Read-only parent slot ownership check after actual canonical retirement.
  * Cached bindings are used only for this terminal lifetime qualification. */
 bool qa_native_terminal_retired(const qa_native_instance *, const qa_actor_registry *);
-/* True only on the owning thread during direct or runner loader teardown.
+/* True only on the owning thread during owned module teardown.
  * Memory/import operations remain valid; exports and new teardown reject. */
 bool qa_native_unloading_owner(const qa_native_instance *instance);
 qa_native_backend qa_native_get_backend(const qa_native_instance *instance);
@@ -344,9 +294,7 @@ bool qa_native_ql_initialize(qa_native_instance *instance, int32_t level_time, i
                              bool restart, qa_error *error);
 bool qa_native_ql_shutdown(qa_native_instance *instance, bool restart, qa_error *error);
 
-/* Declared source entry calls use an already validated export or RVA. Inline
- * instruction-region interception requires the separate instrumentation
- * backend and is never approximated by this direct-call operation. */
+/* Declared source calls and instruction observers use the same owned guest. */
 bool qa_native_export(const qa_native_instance *instance, const char *name, qa_native_address *out,
                       qa_error *error);
 /* Reads the admitted profile's actual API callback, including table callbacks
@@ -367,9 +315,7 @@ bool qa_native_invoke_receipt(qa_native_instance *, qa_native_address,
     const qa_native_signature *, const qa_native_value *, size_t,
     qa_native_value *, bool *entered, qa_error *);
 
-/* Address operations are the only portable way for host services to inspect
- * pointer arguments. Direct backends use checked operating-system process
- * memory operations; runner backends use the same contract remotely. */
+/* Address operations read and write the owned guest mappings. */
 bool qa_native_read(const qa_native_instance *instance, qa_native_address source, void *out,
                     size_t bytes, qa_error *error);
 bool qa_native_write(qa_native_instance *instance, qa_native_address destination, qa_bytes bytes,
@@ -379,15 +325,12 @@ enum {
     QA_NATIVE_MEMORY_WRITE = 2,
     QA_NATIVE_MEMORY_EXECUTE = 4
 };
-/* Pure full-range current mapping/permission observation without trial writes.
- * Owned guests also qualify backing/EOF. An OS VM observation does not pin a
- * foreign mapping or promise residency/file EOF validity. */
+/* Pure mapping, permission and backing/EOF observation without trial writes. */
 bool qa_native_range_check(const qa_native_instance *, qa_native_address,
     size_t, uint32_t permissions, qa_error *);
-/* Cold read-only view of live module storage. Direct views use the actual
- * mapped host range; owned guests use their controller backing, never a cast
- * of a guest address. A span crossing mappings must remain contiguous within
- * one backing. The legacy runner has no shared view and reports unsupported.
+/* Cold read-only view of live module storage from the controller backing,
+ * never a cast of a guest address. A span crossing mappings must remain
+ * contiguous within one backing.
  * The caller retires views before their allocation is freed, unmap/protection changes,
  * backing or entity-table replacement, restore, and instance destruction.
  * Mapping/table metadata growth alone does not relocate the backing bytes.
@@ -452,7 +395,7 @@ bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_en
                                 qa_error *error);
 /* Reads the actual original export table without invoking a source entry. */
 bool qa_native_entity_table_refresh(qa_native_instance *, qa_native_entity_table *, qa_error *);
-/* Last parent-owned table metadata only, after an isolated runner has become
+/* Last parent-owned table metadata only, after an owned guest has become
  * terminal and all source callbacks have drained. Addresses cannot be used
  * for source memory operations; this supports actual actor-release cleanup. */
 bool qa_native_terminal_entity_table(const qa_native_instance *, qa_native_entity_table *,
@@ -660,9 +603,5 @@ bool qa_native_region_invoke(qa_native_instance *instance,
                              const qa_native_signature *signature,
                              const qa_native_value *arguments, size_t argument_count,
                              qa_native_value *result, qa_error *error);
-
-/* Entry point for the target-built helper executable. Its stdin/stdout are the
- * framed binary transport and must not be used for logging. */
-int qa_native_runner_main(void);
 
 #endif

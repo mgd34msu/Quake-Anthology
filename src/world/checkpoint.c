@@ -69,7 +69,7 @@ bool qa_world_checkpoint_capture(qa_world *world, qa_world_checkpoint *out, qa_e
         record->storage_serial = body->storage_serial;
         record->collision_serial = body->collision_serial;
         record->external_body = body->external;
-        record->external_collision = body->collision_binding.read != NULL;
+        record->external_collision = body->collision_binding.fields != NULL;
         record->has_collision = body->has_collision;
         record->attached = body->attached;
         record->attachment_order = body->attachment_order;
@@ -285,7 +285,7 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         const qa_actor_record *actor = qa_actors_resolve_saved(world->actors, record->actor);
         qa_world_body *body = actor ? qa_world_find_body(world, actor->id) : NULL;
         if (!body || body->external != record->external_body ||
-            (body->collision_binding.read != NULL) != record->external_collision) {
+            (body->collision_binding.fields != NULL) != record->external_collision) {
             ok = checkpoint_fail(error, QA_ERROR_FORMAT,
                                  "Candidate body/collision owner differs from snapshot"); break;
         }

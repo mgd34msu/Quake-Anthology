@@ -1,6 +1,7 @@
 #include "sysv_libc_private.h"
 #include "sysv_libc_format_float.h"
 #include "sysv_libc_format.h"
+#include "sysv_scan.h"
 #include "qa/binary.h"
 
 typedef enum format_type { FT_NONE, FT_INT, FT_I64, FT_POINTER, FT_DOUBLE, FT_EXTENDED } format_type;
@@ -40,6 +41,7 @@ typedef struct formatter {
     unsigned rounding;
     int format_errno;
 } formatter;
+static void formatter_free(formatter *);
 static bool invalid(formatter *f,int code)
 { f->format_errno = code; return false; }
 static unsigned integer_bits(formatter *f,format_length length)
@@ -438,6 +440,34 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
     if (ok && left) ok = output_repeat(f,' ',padding,error);
     qa_buffer_free(&body); return ok;
 }
+static bool format_layouts(formatter *f, guest_abi_layout **out, qa_error *error)
+{
+    if (f->conflict) return invalid(f,22);
+    size_t count = f->distinct;
+    guest_abi_layout *layouts = count ? calloc(count, sizeof(*layouts)) : NULL;
+    if (count && !layouts) return sysv_fail(error, QA_ERROR_MEMORY, "owning promoted guest format layouts");
+    for (size_t i = 0; i < count; ++i) {
+        format_type type = f->types[i];
+        if (!type) { free(layouts); return invalid(f,22); }
+        size_t bytes = type == FT_POINTER ? f->target.pointer_bytes :
+            type == FT_INT ? 4 : type == FT_EXTENDED ? f->target.pointer_bytes == 8 ? 16 : 12 : 8;
+        size_t alignment = f->target.pointer_bytes == 4 ? 4 : bytes;
+        qa_native_value_type kind = type == FT_POINTER ? QA_NATIVE_ADDRESS : type == FT_INT ? QA_NATIVE_I32 :
+            type == FT_DOUBLE ? QA_NATIVE_F64 : type == FT_EXTENDED ? QA_NATIVE_BYTES : QA_NATIVE_I64;
+        layouts[i] = (guest_abi_layout){.kind = kind, .bytes = bytes, .alignment = alignment,
+            .stack_only = type == FT_EXTENDED};
+    }
+    *out = layouts; return true;
+}
+static bool entry_values(formatter *f, qa_error *error)
+{
+    if (!f->positional || !f->distinct) return true;
+    f->values = calloc(f->distinct,sizeof(*f->values));
+    if (!f->values) return sysv_fail(error,QA_ERROR_MEMORY,"owning positional guest entry values");
+    for (size_t i = 0; i < f->distinct; ++i)
+        if (!entry_value(f,i,f->types[i],f->values+i,error)) return false;
+    f->supplied = true; f->supplied_count = f->distinct; return true;
+}
 bool sysv_format_install(guest_sysv_runtime *r,qa_error *error)
 {
     qa_native_value_type pointer = QA_NATIVE_ADDRESS,size = sysv_size_type(r);
@@ -448,16 +478,22 @@ bool sysv_format_install(guest_sysv_runtime *r,qa_error *error)
         if (!sysv_service_add(r,SYSV_FORMAT,(uint32_t)i+1,0,0,0,"libc.so.6",i ? "__vsnprintf_chk" : "vsnprintf",
             versions,2,i ? checked : normal,i ? 6 : 4,QA_NATIVE_I32,NULL,NULL,error)) return false;
     }
-    return true;
+    const qa_native_value_type entry[] = {pointer,size,pointer};
+    const char *versions[] = {base,NULL};
+    return sysv_service_add(r,SYSV_FORMAT,3,0,0,0,"libc.so.6","snprintf",
+        versions,2,entry,3,QA_NATIVE_I32,NULL,NULL,error) && sysv_scan_install(r,error);
 }
 bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_native_value *out,qa_error *error)
 {
+    if (service->operation >= 4) return sysv_scan_call(service,args,out,error);
     bool checked = service->operation == 2;
+    bool entry = service->operation == 3;
     formatter *f = calloc(1,sizeof(*f));
     if (!f) return sysv_fail(error,QA_ERROR_MEMORY,"allocating guest format argument graph");
     f->runtime = service->runtime; f->guest = f->runtime->guest; f->target = f->runtime->target;
     f->destination = args[0].as.address; f->capacity = sysv_integer(args+1);
-    f->format = args[checked ? 4 : 2].as.address; f->arguments = args[checked ? 5 : 3].as.address;
+    f->format = args[checked ? 4 : 2].as.address;
+    if (!entry) f->arguments = args[checked ? 5 : 3].as.address;
     f->fortify = checked && args[2].as.i32 > 0; out->type = QA_NATIVE_I32;
     bool ok = true;
     if (checked && sysv_integer(args+3) < f->capacity) ok = sysv_fail(error,QA_ERROR_ARGUMENT,"glibc fortified destination size is smaller than maxlen");
@@ -477,8 +513,18 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
         if (ok) f->rounding = (cpu.fp_control>>10)&3;
     }
     if (ok) ok = parse(f,error);
-    if (ok && (f->sequence || f->distinct)) ok = reader_initialize(f,error);
-    if (ok && f->positional) {
+    if (ok && entry) {
+        guest_abi_layout *layouts = NULL;
+        guest_abi_signature signature = {.abi = f->target.abi, .parameters = service->parameters,
+            .parameter_count = service->parameter_count, .result = service->result, .variadic = true};
+        ok = format_layouts(f,&layouts,error) &&
+            guest_abi_plan_create(&signature,layouts,f->distinct,&f->entry_plan,error);
+        free(layouts);
+        f->fixed_count = service->parameter_count;
+        if (ok) ok = entry_values(f,error);
+    }
+    if (ok && !entry && (f->sequence || f->distinct)) ok = reader_initialize(f,error);
+    if (ok && !entry && f->positional) {
         if (f->conflict) ok = invalid(f,22);
         else {
             f->values = calloc(4096,sizeof(*f->values));
@@ -500,7 +546,7 @@ finish:
         if (ok && f->format_errno) ok = sysv_errno(f->runtime,f->format_errno,error);
         out->as.i32 = f->format_errno ? -1 : (int32_t)f->total;
     }
-    qa_buffer_free(&f->text); free(f->tokens); free(f->types); free(f->values); free(f); return ok;
+    formatter_free(f); return ok;
 }
 
 static void formatter_free(formatter *f)
@@ -533,19 +579,8 @@ bool guest_format_select(const qa_native_guest *guest, uint64_t format,
         return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format selector needs empty owned layouts");
     formatter *f = formatter_guest(guest, format, error);
     if (!f) return false;
-    guest_abi_layout *layouts = f->distinct ? calloc(f->distinct, sizeof(*layouts)) : NULL;
-    bool okay = !f->distinct || layouts;
-    if (!okay) sysv_fail(error, QA_ERROR_MEMORY, "owning promoted guest format layouts");
-    for (size_t i = 0; okay && i < f->distinct; ++i) {
-        format_type type = f->types[i];
-        size_t bytes = type == FT_POINTER ? f->target.pointer_bytes :
-            type == FT_INT ? 4 : type == FT_EXTENDED ? f->target.pointer_bytes == 8 ? 16 : 12 : 8;
-        size_t alignment = f->target.pointer_bytes == 4 ? 4 : bytes;
-        qa_native_value_type kind = type == FT_POINTER ? QA_NATIVE_ADDRESS : type == FT_INT ? QA_NATIVE_I32 :
-            type == FT_DOUBLE ? QA_NATIVE_F64 : type == FT_EXTENDED ? QA_NATIVE_BYTES : QA_NATIVE_I64;
-        layouts[i] = (guest_abi_layout){.kind = kind, .bytes = bytes, .alignment = alignment,
-            .stack_only = type == FT_EXTENDED};
-    }
+    guest_abi_layout *layouts = NULL;
+    bool okay = format_layouts(f,&layouts,error);
     if (okay) { *out = layouts; *count = f->distinct; } else free(layouts);
     formatter_free(f); return okay;
 }
@@ -602,19 +637,13 @@ bool guest_format_render_entry(qa_native_guest *guest, const qa_native_signature
         !out || out->data || out->size || !maximum || maximum > INT32_MAX)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format entry needs its genuine variadic prefix and empty output");
     if (!guest_mutable(guest, error)) return false;
-    guest_abi_layout *layouts = NULL; size_t count = 0;
-    if (!guest_format_select(guest, format, &layouts, &count, error)) return false;
+    guest_abi_layout *layouts = NULL;
     formatter *f = formatter_guest(guest, format, error);
-    bool okay = f && guest_abi_plan_native(signature, layouts, count, &f->entry_plan, error);
+    bool okay = f && format_layouts(f,&layouts,error) &&
+        guest_abi_plan_native(signature,layouts,f->distinct,&f->entry_plan,error);
     free(layouts);
     if (okay) f->fixed_count = signature->parameter_count;
-    if (okay && f->positional && count) {
-        f->values = calloc(count, sizeof(*f->values));
-        if (!f->values) okay = sysv_fail(error, QA_ERROR_MEMORY, "owning positional guest entry values");
-        for (size_t i = 0; okay && i < count; ++i)
-            okay = entry_value(f, i, f->types[i], f->values+i, error);
-        f->supplied = true; f->supplied_count = count;
-    }
+    if (okay) okay = entry_values(f,error);
     if (okay) okay = render_output(f, maximum, out, error);
     formatter_free(f); return okay;
 }

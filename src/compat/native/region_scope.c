@@ -18,7 +18,7 @@ struct qa_native_region_scope {
     void *context;
     qa_native_region_snapshot *snapshots;
     const qa_native_region_scope_event *event;
-    uint32_t parent_calls, parent_callbacks, parent_regions, parent_services;
+    uint32_t parent_calls, parent_callbacks, parent_regions;
     uint32_t entered_depth, calls;
     bool invoking, invoked, reached;
 };
@@ -52,7 +52,6 @@ static bool parent_returned(const qa_native_region_scope *scope) {
         instance->active_depth == scope->parent_calls &&
         instance->callback_depth == scope->parent_callbacks &&
         instance->region_depth == scope->parent_regions &&
-        instance->region_service_depth == scope->parent_services &&
         (!scope->parent_calls || native_active_instance == instance);
 }
 bool qa_native_region_scope_open(qa_native_instance *instance,
@@ -65,7 +64,7 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
         instance->write_depth || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->process_host_pending ||
         (instance->active_depth && (native_active_instance != instance || !instance->callback_depth)))
         return fail(error, "Region scope requires its actual acquired declaration and returned or entered source owner");
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !instance->guest)
+    if (!instance->guest)
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
             "Dynamic region scope requires its actual full stopped processor owner");
     const qa_native_declared_region *declared = &declaration->regions[id].definition;
@@ -91,7 +90,7 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
     scope->image = instance->image_base; scope->target = target; scope->region = *actual;
     scope->callback = callback; scope->context = context;
     scope->parent_calls = instance->active_depth; scope->parent_callbacks = instance->callback_depth;
-    scope->parent_regions = instance->region_depth; scope->parent_services = instance->region_service_depth;
+    scope->parent_regions = instance->region_depth;
     if (!guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
         target, target, 0, false, error)) { free(scope); return false; }
     scope->next = instance->region_scopes; instance->region_scopes = scope;
@@ -219,7 +218,7 @@ bool qa_native_region_scope_close(qa_native_region_scope **owner, qa_error *erro
     qa_native_region_scope *scope = *owner;
     qa_native_instance *instance = scope->instance;
     bool drained = physical(scope) && !scope->invoking && !scope->calls && !scope->event &&
-        !instance->active_depth && !instance->callback_depth && !instance->region_depth && !instance->region_service_depth;
+        !instance->active_depth && !instance->callback_depth && !instance->region_depth;
     if ((!parent_returned(scope) && !drained) || instance->checkpointing || instance->destroying || instance->write_depth)
         return fail(error, "Region scope close retains its actual entered processor and callback owner");
     qa_native_region_scope **at = &scope->instance->region_scopes;

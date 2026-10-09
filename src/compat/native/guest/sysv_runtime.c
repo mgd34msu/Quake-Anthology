@@ -160,6 +160,7 @@ static bool service_invoke(void *context, qa_native_guest *guest,
     bool ok;
     switch (service->group) {
     case SYSV_LIBC: ok = sysv_libc_call(service, arguments, result, error); break;
+    case SYSV_PLATFORM: ok = sysv_platform_call(service, arguments, result, error); break;
     case SYSV_STDIO: ok = sysv_stdio_call(service, arguments, result, error); break;
     case SYSV_CXX: ok = sysv_cxx_call(service, arguments, result, error); break;
     case SYSV_LOCALE: ok = sysv_locale_call(service, arguments, result, error); break;
@@ -1128,6 +1129,7 @@ static bool runtime_valid(guest_sysv_runtime *r,qa_error *error)
             for (size_t j = 3; j < 8 && valid; ++j) valid = !o->values[j];
             ++streams; break;
         }
+        case 40: valid = o->bytes == strlen(o->name) + 1; break;
         default: valid = false; break;
         }
         if (o->kind < 20) for (size_t j = 0; j < 8 && valid; ++j) valid = !o->values[j];

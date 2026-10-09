@@ -110,37 +110,13 @@ static bool source_body_address(qa_native_host *host,uint32_t slot,uint32_t velo
 {
     qa_native_entity_table table;
     if(!host||host->kind!=NATIVE_HOST_Q2_GAME||!qa_native_entity_table_get(host->instance,&table,error)) return false;
-    if(slot>=table.count||velocity>table.stride||table.stride-velocity<12||
-        ground>table.stride||table.stride-ground<host->pointer_bytes||table.stride<minimum_edict_size(host))
+    if(slot>=table.count||(velocity&&(velocity>table.stride||table.stride-velocity<12))||
+        (ground&&(ground>table.stride||table.stride-ground<host->pointer_bytes))||table.stride<minimum_edict_size(host))
         return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native owned body fields exceed its real source row");
     if(!qa_native_slot(host->instance,slot,binding,error)||!qa_native_entity_address(host->instance,slot,address,error)) return false;
     if(binding->kind!=QA_NATIVE_SLOT_OWNED||binding->owner!=host->world.owner||binding->source_slot!=slot||!actor_live(host,binding->actor))
         return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body requires its actual owned full actor binding");
     return true;
-}
-
-bool qa_native_host_source_body_read(qa_native_host *host,uint32_t slot,uint32_t velocity,
-    uint32_t ground,qa_body_state *out,qa_error *error)
-{
-    qa_native_address address;qa_native_slot_binding binding;qa_body_state body={0};uint8_t pointer[8];
-    if(!out||!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
-    if(!native_host_read_vec3(host,address+4,&body.origin,error)||
-        !native_host_read_vec3(host,address+16,&body.angles,error)||
-        !native_host_read_vec3(host,address+host->edict->mins,&body.bounds.mins,error)||
-        !native_host_read_vec3(host,address+host->edict->maxs,&body.bounds.maxs,error)||
-        !native_host_read_vec3(host,address+velocity,&body.velocity,error)||
-        !native_host_read(host,address+ground,pointer,host->pointer_bytes,error)) return false;
-    if(!qa_vec_finite(body.origin)||!qa_vec_finite(body.angles)||!qa_vec_finite(body.velocity)||!qa_bounds_valid(body.bounds))
-        return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native source body has invalid authored vectors or bounds");
-    qa_native_address at=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
-    if(at) {
-        uint32_t other;qa_native_slot_binding target;
-        if(!qa_native_entity_slot(host->instance,at,&other,error)||
-            !qa_native_slot(host->instance,other,&target,error)) return false;
-        body.ground=target.kind==QA_NATIVE_SLOT_BORROWED ? qa_actor_reference_lifetime(target.actor) :
-            qa_actor_reference_source(host->world.owner,other);
-    }
-    *out=body;return true;
 }
 
 bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_t velocity,
@@ -150,9 +126,9 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
     if(!body||!qa_vec_finite(body->origin)||!qa_vec_finite(body->angles)||!qa_vec_finite(body->velocity)||
         !qa_bounds_valid(body->bounds)) return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body write has invalid canonical vectors or bounds");
     if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
-    if(body->ground.kind==QA_ACTOR_REFERENCE_SOURCE&&body->ground.value.source.owner==host->world.owner) {
+    if(ground&&body->ground.kind==QA_ACTOR_REFERENCE_SOURCE&&body->ground.value.source.owner==host->world.owner) {
         if(!qa_native_entity_address(host->instance,body->ground.value.source.slot,&target,error)) return false;
-    } else if(qa_actor_reference_present(body->ground)&&!native_host_address_for_actor(host,
+    } else if(ground&&qa_actor_reference_present(body->ground)&&!native_host_address_for_actor(host,
         qa_actor_reference_resolve(qa_session_actors(host->world.session),body->ground),&target,error)) return false;
     qa_native_address current_address;qa_native_slot_binding current_binding;
     if(!source_body_address(host,slot,velocity,ground,&current_address,&current_binding,error)) return false;
@@ -161,15 +137,153 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
     if(host->pointer_bytes==4&&target>UINT32_MAX) return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native ground exceeds its source pointer width");
     const size_t offsets[]={4,16,host->edict->mins,host->edict->maxs,velocity,ground};
     for(size_t i=0;i<sizeof(offsets)/sizeof(*offsets);++i)
-        if(!qa_native_range_check(host->instance,address+offsets[i],i==5?host->pointer_bytes:12,QA_NATIVE_MEMORY_WRITE,error)) return false;
+        if(offsets[i]&&!qa_native_range_check(host->instance,address+offsets[i],i==5?host->pointer_bytes:12,QA_NATIVE_MEMORY_WRITE,error)) return false;
     uint8_t pointer[8];
     if(host->pointer_bytes==4) qa_store_u32le(pointer,(uint32_t)target);else qa_store_u64le(pointer,target);
     return native_host_write_vec3(host,address+4,body->origin,error)&&
         native_host_write_vec3(host,address+16,body->angles,error)&&
         native_host_write_vec3(host,address+host->edict->mins,body->bounds.mins,error)&&
         native_host_write_vec3(host,address+host->edict->maxs,body->bounds.maxs,error)&&
-        native_host_write_vec3(host,address+velocity,body->velocity,error)&&
-        native_host_write(host,address+ground,pointer,host->pointer_bytes,error);
+        (!velocity||native_host_write_vec3(host,address+velocity,body->velocity,error))&&
+        (!ground||native_host_write(host,address+ground,pointer,host->pointer_bytes,error));
+}
+
+static bool fields_vector(qa_native_host *host, qa_native_address address,
+                           qa_entity_vector_field *out, qa_error *error)
+{
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        qa_bytes bytes;
+        if (!qa_native_borrow(host->instance, address + axis * 4u, 4, &bytes, error))
+            return false;
+        out->word[axis] = bytes.data;
+    }
+    return true;
+}
+
+static bool fields_scalar(qa_native_host *host, qa_native_address address, size_t size,
+                           qa_entity_scalar_encoding encoding,
+                           qa_entity_scalar_field *out, qa_error *error)
+{
+    qa_bytes bytes;
+    if (!qa_native_borrow(host->instance, address, size, &bytes, error)) return false;
+    *out = (qa_entity_scalar_field){bytes.data, encoding};
+    return true;
+}
+
+static bool fields_write(void *context, const qa_body_state *body, qa_error *error)
+{
+    native_host_q2_fields *row = context;
+    return qa_native_host_source_body_write(row->host, row->slot,
+        row->extended ? row->velocity_offset : 0,
+        row->extended ? row->ground_offset : 0, body, error);
+}
+
+bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *error)
+{
+    qa_native_slot_binding binding;
+    if (!slot || slot >= host->q2_field_capacity) return true;
+    if (!qa_native_slot(host->instance, slot, &binding, error)) return false;
+    if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED) ||
+        !actor_live(host, binding.actor))
+        return true;
+    native_host_q2_fields *row = host->q2_fields + slot;
+    qa_native_address address;
+    if (!qa_native_entity_address(host->instance, slot, &address, error)) return false;
+    qa_entity_body_fields body = {.references = &host->q2_references};
+    if (!fields_vector(host, address + 4, &body.pose[0].origin, error) ||
+        !fields_vector(host, address + 16, &body.pose[0].angles, error) ||
+        !fields_vector(host, address + host->edict->mins, &body.minimum, error) ||
+        !fields_vector(host, address + host->edict->maxs, &body.maximum, error)) return false;
+    for (unsigned pose = 1; pose < QA_ENTITY_POSE_COUNT; ++pose)
+        body.pose[pose] = body.pose[0];
+    if (row->extended &&
+        (!fields_vector(host, address + row->velocity_offset, &body.velocity, error) ||
+         !fields_scalar(host, address + row->ground_offset, host->pointer_bytes,
+             host->pointer_bytes == 4 ? QA_ENTITY_U32_LE : QA_ENTITY_U64_LE,
+             &body.ground, error))) return false;
+    qa_entity_collision_fields collision = {.family = QA_COLLISION_Q2,
+        .rerelease = host->profile == QA_NATIVE_Q2_GAME_API2023,
+        .references = &host->q2_references, .models = &host->models};
+    bool classic = host->profile == QA_NATIVE_Q2_GAME_API3;
+    if (!fields_scalar(host, address + host->edict->solid, classic ? 4u : 1u,
+            classic ? QA_ENTITY_I32_LE : QA_ENTITY_U8, &collision.solid, error) ||
+        !fields_scalar(host, address + host->edict->flags, 4, QA_ENTITY_U32_LE,
+            &collision.flags, error) ||
+        !fields_scalar(host, address + 40, 4, QA_ENTITY_I32_LE, &collision.model, error) ||
+        !fields_scalar(host, address + host->edict->owner, host->pointer_bytes,
+            host->pointer_bytes == 4 ? QA_ENTITY_U32_LE : QA_ENTITY_U64_LE,
+            &collision.owner, error)) return false;
+    row->host = host; row->slot = slot; row->body = body; row->collision = collision;
+    if (binding.kind == QA_NATIVE_SLOT_BORROWED) return true;
+    if (!row->write || row->write == fields_write) {
+        row->write_context = row; row->write = fields_write;
+    }
+    if (row->bound_world == host->world.world && row->body_serial &&
+        qa_world_body_storage_serial(host->world.world, binding.actor) == row->body_serial)
+        return true;
+    qa_body_binding body_binding = {.context = row->write_context,
+        .fields = &row->body, .write = row->write};
+    qa_collision_binding collision_binding = {.context = row, .fields = &row->collision};
+    if (!qa_world_body_bind(host->world.world, binding.actor, &body_binding, true, error) ||
+        !qa_world_collision_bind(host->world.world, binding.actor, &collision_binding, error))
+        return false;
+    row->body_serial = qa_world_body_storage_serial(host->world.world, binding.actor);
+    row->bound_world = host->world.world;
+    return true;
+}
+
+bool native_host_fields_refresh(qa_native_host *host, qa_error *error)
+{
+    if (host->kind != NATIVE_HOST_Q2_GAME) return true;
+    qa_native_entity_projection_view projection;
+    if (!qa_native_entity_projection(host->instance, &projection, error)) return false;
+    if (projection.table.capacity && projection.table.stride < minimum_edict_size(host))
+        return native_host_fail(error, QA_ERROR_FORMAT, projection.table.stride,
+            "native Q2 entity stride is smaller than its public prefix");
+    bool changed = host->q2_fields_invalidated ||
+        host->q2_references.base != projection.table.base ||
+        host->q2_references.stride != projection.table.stride ||
+        host->q2_references.slots != projection.slots.data ||
+        host->q2_references.capacity != projection.table.capacity ||
+        host->q2_references.owner != host->world.owner ||
+        host->q2_references.actors != qa_session_actors(host->world.session);
+    host->q2_references = (qa_entity_references){
+        .actors = qa_session_actor_registry(host->world.session), .owner = host->world.owner,
+        .base = projection.table.base, .stride = projection.table.stride,
+        .slots = projection.slots.data,
+        .capacity = projection.table.capacity, .slot_stride = projection.slot_stride,
+        .actor_offset = projection.actor_offset, .kind_offset = projection.kind_offset,
+        .kind_encoding = QA_ENTITY_I32_LE, .borrowed_kind = QA_NATIVE_SLOT_BORROWED,
+        .zero_is_none = true};
+    if (projection.table.capacity > host->q2_field_capacity) {
+        native_host_q2_fields *rows = calloc(projection.table.capacity, sizeof(*rows));
+        if (!rows) return native_host_fail(error, QA_ERROR_MEMORY, 0,
+            "Retaining native Q2 live entity fields");
+        if (host->q2_field_capacity)
+            memcpy(rows, host->q2_fields, (size_t)host->q2_field_capacity * sizeof(*rows));
+        free(host->q2_fields); host->q2_fields = rows;
+        host->q2_field_capacity = projection.table.capacity;
+        for (uint32_t slot = 1; slot < host->q2_field_capacity; ++slot)
+            rows[slot].body_serial = 0;
+    }
+    if (!changed) return true;
+    for (uint32_t slot = 1; slot < projection.table.count; ++slot)
+        if (!native_host_fields_bind(host, slot, error)) return false;
+    host->q2_fields_invalidated = false;
+    return true;
+}
+
+bool qa_native_host_source_body_bind(qa_native_host *host, uint32_t slot,
+    uint32_t velocity, uint32_t ground, void *context,
+    bool (*write)(void *, const qa_body_state *, qa_error *), qa_error *error)
+{
+    qa_native_address address; qa_native_slot_binding binding;
+    if (!source_body_address(host, slot, velocity, ground, &address, &binding, error) ||
+        !native_host_fields_refresh(host, error)) return false;
+    native_host_q2_fields *row = host->q2_fields + slot;
+    row->velocity_offset = velocity; row->ground_offset = ground; row->extended = true;
+    row->write_context = context; row->write = write; row->body_serial = 0;
+    return native_host_fields_bind(host, slot, error);
 }
 
 static bool bind_world(qa_native_host *host, uint32_t slot, qa_error *error)
@@ -379,16 +493,6 @@ bool native_host_reconcile(qa_native_host *host, qa_error *error)
         if (!native_host_actor_for_address(host, address, true, &actor, NULL, error))
             return false;
     }
-    return true;
-}
-
-static bool read_pointer(qa_native_host *host, qa_native_address address,
-                         qa_native_address *out, qa_error *error)
-{
-    uint8_t bytes[8] = {0};
-    if (!native_host_read(host, address, bytes, host->pointer_bytes, error))
-        return false;
-    *out = host->pointer_bytes == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
     return true;
 }
 
@@ -656,15 +760,11 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         return false;
     bool borrowed = binding.kind == QA_NATIVE_SLOT_BORROWED;
     const native_host_edict_layout *layout = host->edict;
-    qa_vec3 origin, angles, minimum, maximum;
-    if (!native_host_read_vec3(host, address + 4, &origin, error) ||
-        !native_host_read_vec3(host, address + 16, &angles, error) ||
-        !native_host_read_vec3(host, address + layout->mins, &minimum, error) ||
-        !native_host_read_vec3(host, address + layout->maxs, &maximum, error))
-        return false;
-    if (!qa_vec_finite(origin) || !qa_vec_finite(angles) ||
-        !qa_bounds_valid((qa_bounds){minimum, maximum}))
-        return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link has invalid Source origin or bounds");
+    qa_body_state body;
+    if (!qa_entity_body_read(&host->q2_fields[slot].body, QA_ENTITY_CLIP_POSE,
+        &body, error)) return false;
+    qa_vec3 origin = body.origin, angles = body.angles;
+    qa_vec3 minimum = body.bounds.mins, maximum = body.bounds.maxs;
     uint32_t flags, clipmask;
     int32_t link_count;
     if (!native_host_read_u32(host, address + layout->flags, &flags, error) ||
@@ -690,56 +790,6 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
                                     "API 2023 entity has an invalid solid value");
         solid = source_solid;
     }
-    qa_body_state body = {.origin = origin, .angles = angles, .bounds = {minimum, maximum}};
-    qa_error body_error = {0};
-    qa_body_state existing;
-    if (!borrowed && qa_world_body_read(host->world.world, actor, &existing, &body_error)) {
-        body.velocity = existing.velocity;
-        body.ground = existing.ground;
-        if (!qa_world_body_write(host->world.world, actor, &body, error))
-            return false;
-    } else if (!borrowed && !qa_world_body_create(host->world.world, actor, &body, error)) {
-        return false;
-    }
-    qa_native_address owner_pointer = 0;
-    qa_actor_reference owner_reference = {0};
-    if (!read_pointer(host, address + layout->owner, &owner_pointer, error))
-        return false;
-    if (owner_pointer) {
-        uint32_t owner_slot;
-        qa_native_slot_binding owner_binding;
-        if (!qa_native_entity_slot(host->instance, owner_pointer, &owner_slot, error) ||
-            !qa_native_slot(host->instance, owner_slot, &owner_binding, error)) return false;
-        owner_reference = owner_binding.kind == QA_NATIVE_SLOT_BORROWED ?
-            qa_actor_reference_lifetime(owner_binding.actor) : qa_actor_reference_source(host->world.owner, owner_slot);
-    }
-    int32_t model_index;
-    if (!native_host_read_i32(host, address + 40, &model_index, error))
-        return false;
-    uint32_t inline_model = 0;
-    if (solid == 3) {
-        for (native_host_model *model = host->models; model; model = model->next)
-            if (model->resource == model_index) {
-                inline_model = model->inline_model;
-                break;
-            }
-        if (!inline_model)
-            return native_host_fail(error, QA_ERROR_FORMAT, slot,
-                                    "native solid brush has no registered inline model");
-    }
-    qa_actor_collision collision = {
-        .family = QA_COLLISION_Q2,
-        .shape = QA_SHAPE_BOX,
-        .inline_model = solid == 3,
-        .model = inline_model,
-        .contents = qa_collision_q2_source_contents((uint32_t)solid, flags,
-            host->profile == QA_NATIVE_Q2_GAME_API2023),
-        .owner = owner_reference,
-        .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
-        .monster = (flags & 4u) != 0,
-        .dead_monster = (flags & 2u) != 0};
-    if (!borrowed && !qa_world_set_collision(host->world.world, actor, solid ? &collision : NULL, error))
-        return false;
     if (!borrowed && solid && !qa_world_link(host->world.world, actor, NULL, error))
         return false;
     if (!borrowed && !solid && !qa_world_unlink(host->world.world, actor, error))

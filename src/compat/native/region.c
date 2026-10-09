@@ -70,10 +70,9 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
     if (!instance || !callback || !out || region_id >= instance->region_count)
         return native_fail(error, QA_ERROR_ARGUMENT, region_id,
                            "native region, callback and output are required");
-    if (instance->backend != QA_NATIVE_BACKEND_RUNNER &&
-        !(instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest))
+    if (!instance->guest)
         return native_fail(error, QA_ERROR_UNSUPPORTED, region_id,
-                           "inline native regions require the instrumented runner backend");
+                           "inline native regions require their owned guest process");
     if (instance->active_depth || instance->callback_depth || instance->checkpointing ||
         instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, region_id,
@@ -119,7 +118,7 @@ bool native_process_region_instruction(void *context, qa_native_guest *guest,
         event.state.flags = actual.flags; event.state.instruction = instruction;
         qa_native_region_decision decision;
         ++instance->region_depth;
-        bool okay = native_runner_region_event(instance, &event, &decision, error);
+        bool okay = native_region_event(instance, &event, &decision, error);
         --instance->region_depth;
         if (!okay) return false;
         if (decision.action == QA_NATIVE_REGION_FAIL_INSTANCE)
@@ -165,7 +164,7 @@ void qa_native_unbind_region(qa_native_region_binding *binding) {
     qa_native_remove_region(binding, NULL);
 }
 
-bool native_runner_region_event(qa_native_instance *instance, const qa_native_region_event *event,
+bool native_region_event(qa_native_instance *instance, const qa_native_region_event *event,
                                 qa_native_region_decision *decision, qa_error *error) {
     if (!instance || !event || !decision || event->region.id >= instance->region_count ||
         event->phase > QA_NATIVE_REGION_JOIN)
@@ -174,7 +173,7 @@ bool native_runner_region_event(qa_native_instance *instance, const qa_native_re
     if (event->region.entry_rva != slot->definition.entry_rva ||
         event->region.join_rva != slot->definition.join_rva)
         return native_fail(error, QA_ERROR_FORMAT, event->region.id,
-                           "native runner region identity differs from declaration");
+                           "native region identity differs from declaration");
     qa_native_region_event current = *event;
     current.region = slot->definition;
     qa_native_region_decision combined = {
@@ -245,12 +244,7 @@ bool qa_native_region_invoke(qa_native_instance *instance,
     if (!declared)
         return native_fail(error, QA_ERROR_ARGUMENT, entry,
             "nested source entry lacks its actual whole-function declaration");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
-        if (instance->region_service_depth != instance->region_depth)
-            return native_fail(error, QA_ERROR_UNSUPPORTED, entry,
-                "nested source invocation requires the runner application suspension");
-    } else if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest &&
-        qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
+    if (instance->guest && qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
         bool executable = false;
         for (size_t i = 0; i < qa_native_guest_mapping_count(instance->guest); ++i) {
             qa_native_guest_mapping mapping;

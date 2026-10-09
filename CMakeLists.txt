@@ -124,6 +124,7 @@ target_link_libraries(qa_navigation_assets PUBLIC qa_core)
 add_library(qa_world STATIC
     src/world/actors.c
     src/world/body.c
+    src/world/live_fields.c
     src/world/checkpoint.c
     src/world/collision/contents.c
     src/world/collision/geometry.c
@@ -1059,6 +1060,8 @@ target_link_libraries(qa_qvm PUBLIC qa_content)
 
 add_library(qa_native_host STATIC
     src/platform/native_process.c
+    src/platform/native_runtime.c
+    src/compat/native_host/process_resources.c
     src/compat/native_host/retired.c
     src/compat/native_host/artifact.c
     src/compat/native_host/checkpoint.c
@@ -1405,7 +1408,6 @@ add_library(qa_application STATIC
     src/app/application/guest_q3_pickups_profile.c
     src/app/application/guest_qc_presentation.c
     src/app/application/native_client_roles.c
-    src/app/application/native_process_resources.c
     src/app/application/native_q2_appearance.c
     src/app/application/unified_native_q2_models.c
     src/app/application/unified_player.c
@@ -1648,7 +1650,6 @@ add_library(qa_frontend STATIC
     src/app/frontend/startup_arena.c
     src/app/frontend/content_library_menu.c
     src/app/frontend/content_library_services.c
-    src/platform/native_runtime.c
     src/app/frontend/accessibility.c
     src/app/frontend/campaign.c
     src/app/frontend/campaign_menu.c
@@ -1891,7 +1892,7 @@ file(RELATIVE_PATH QA_NATIVE_RUNTIME_RELATIVE_ROOT
     "${QA_NATIVE_RUNTIME_FULL_ROOT}")
 string(REPLACE "\\" "\\\\" QA_NATIVE_RUNTIME_RELATIVE_ROOT "${QA_NATIVE_RUNTIME_RELATIVE_ROOT}")
 string(REPLACE "\"" "\\\"" QA_NATIVE_RUNTIME_RELATIVE_ROOT "${QA_NATIVE_RUNTIME_RELATIVE_ROOT}")
-target_compile_definitions(qa_frontend PRIVATE
+target_compile_definitions(qa_native_host PRIVATE
     QA_NATIVE_RUNTIME_RELATIVE_ROOT="${QA_NATIVE_RUNTIME_RELATIVE_ROOT}")
 
 if(WIN32)

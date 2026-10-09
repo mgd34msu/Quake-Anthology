@@ -28,6 +28,8 @@ typedef struct qa_platform_calendar_fields {
     int32_t hour, minute, second, millisecond, daylight;
     /* UTC minus local time, matching the native Windows timezone convention. */
     int32_t timezone_minutes;
+    int64_t timezone_seconds; /* UTC minus local time; exact native offset. */
+    char timezone[64]; /* Bounded native abbreviation from this conversion. */
 } qa_platform_calendar_fields;
 
 bool qa_platform_clock_read(qa_platform_clock_kind, qa_platform_timespec *, qa_error *);
@@ -40,6 +42,10 @@ double qa_platform_utc_ms(void);
 /* Renderer instrumentation stores nanoseconds. */
 double qa_platform_tick_ms(void);
 
+/* One native operation. A completed syscall returns true, including errno:
+ * completed is the actual prefix and native_errno is zero on success. */
+bool qa_platform_random(void *, size_t, uint32_t flags, size_t *completed,
+                        int32_t *native_errno, qa_error *);
 bool qa_platform_entropy(void *, size_t, qa_error *);
 bool qa_platform_entropy_u64(uint64_t *, qa_error *);
 bool qa_platform_calendar(int64_t unix_ms, bool local, qa_platform_calendar_fields *, qa_error *);

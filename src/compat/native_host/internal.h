@@ -4,6 +4,7 @@
 #include "qa/binary.h"
 #include "qa/native_host.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/native_process_resources.h"
 #include "qa/network.h"
 #include "qa/source_save.h"
 
@@ -45,12 +46,6 @@ typedef struct native_host_surface {
     struct native_host_surface *next;
 } native_host_surface;
 
-typedef struct native_host_model {
-    int32_t resource;
-    uint32_t inline_model;
-    struct native_host_model *next;
-} native_host_model;
-
 typedef struct native_host_q2_lifetime {
     qa_actor_id actor;
     qa_vec3 creation_origin;
@@ -58,6 +53,18 @@ typedef struct native_host_q2_lifetime {
     qa_native_host_q2_origin origins[8];
     bool present, linked, bot_registered;
 } native_host_q2_lifetime;
+
+typedef struct native_host_q2_fields {
+    qa_native_host *host;
+    uint32_t slot, velocity_offset, ground_offset;
+    uint64_t body_serial;
+    qa_world *bound_world;
+    bool extended;
+    qa_entity_body_fields body;
+    qa_entity_collision_fields collision;
+    void *write_context;
+    bool (*write)(void *, const qa_body_state *, qa_error *);
+} native_host_q2_fields;
 
 typedef struct native_host_edict_layout {
     size_t bytes, inuse, linkcount, area, area2, flags;
@@ -86,6 +93,8 @@ struct qa_native_host {
     const native_host_edict_layout *edict;
     const native_host_classic_layout *classic;
     qa_native_instance *instance;
+    qa_native_process_resources *owned_process;
+    qa_native_process_platform *owned_platform;
     qa_native_host_engine_services engine;
     qa_native_host_world_services world;
     /* Borrowed only while a checked completed-boundary observation is active. */
@@ -105,9 +114,14 @@ struct qa_native_host {
     native_host_string *strings;
     native_host_cvar_record *cvar_shadows;
     native_host_surface *surfaces;
-    native_host_model *models;
+    qa_entity_model_fields models;
+    qa_entity_model_field *model_entries;
     native_host_q2_lifetime *q2_lifetimes;
     size_t q2_lifetime_capacity;
+    native_host_q2_fields *q2_fields;
+    uint32_t q2_field_capacity;
+    qa_entity_references q2_references;
+    bool q2_fields_reported, q2_fields_invalidated;
     uint8_t *message;
     size_t message_size, message_capacity;
     qa_native_host_message_reference *message_references;
@@ -183,6 +197,8 @@ bool native_host_actor_for_address(qa_native_host *, qa_native_address, bool,
 bool native_host_address_for_actor(qa_native_host *, qa_actor_id, qa_native_address *,
                                    qa_error *);
 bool native_host_reconcile(qa_native_host *, qa_error *);
+bool native_host_fields_refresh(qa_native_host *, qa_error *);
+bool native_host_fields_bind(qa_native_host *, uint32_t, qa_error *);
 bool native_host_link(qa_native_host *, qa_native_address, qa_error *);
 bool native_host_q2_bot_register(qa_native_host *, qa_native_address, bool, qa_error *);
 bool native_host_unlink(qa_native_host *, qa_native_address, qa_error *);

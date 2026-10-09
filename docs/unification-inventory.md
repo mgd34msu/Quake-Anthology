@@ -9,6 +9,20 @@ playerstate, item number or string offset is an ABI record translated at the
 module boundary. It does not create another engine owner. This table records
 source ownership; live and installation evidence remains separate.
 
+THE-2861 binds engine fields directly to the live module backing. The common
+reader in `src/world/live_fields.c` decodes QC, Q2 and Q3 fields from declared
+offsets; broad-phase candidates require no module entry or copied field cache.
+Brush model indexes use tables prepared at precache/load. Borrowed foreign actors
+retain actor lifetime references, while source-owned slots retain source indexes.
+
+SDK and application native modules share the process-resource constructor in
+`src/compat/native_host/process_resources.c`. `src/platform/native_process.c`
+supplies acquired OS services; `qa-native-host` is the owned host bootstrap.
+PE/ELF and host/emulated execution are target adapters beneath this one backend.
+The former direct/pipe executors and their helper targets are removed together.
+The genuine SDK service and trace fixtures, rather than constructor success,
+determine compatibility.
+
 | Capability | Common type and implementation | Adapter or remaining work |
 |---|---|---|
 | Entities | [qa_actor_id](../include/qa/actors.h) and the paged registry in [actors.c](../src/world/actors.c); [qa_session_create](../src/session/session.c) creates one registry for the session | Native and guest source slots map into generation handles. Actor pages are allocated in `qa_actors_create`; spawning and releasing actors reuse that storage. Other world-link allocations remain work under THE-873. |

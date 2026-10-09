@@ -52,6 +52,9 @@ typedef struct q3_crossings {
 typedef struct q3_entity_slot {
     qa_q3_host *host;
     qa_actor_id actor;
+    qa_entity_body_fields body_fields;
+    qa_entity_collision_fields collision_fields;
+    qa_entity_vector_field player_origin;
     uint32_t number, input_motion;
     bool borrowed, input_retired, has_visibility;
     int32_t area, area2, last_cluster, clusters[16];
@@ -69,6 +72,7 @@ typedef struct q3_game_data {
     uint64_t entities, clients;
     uint32_t entity_count, entity_stride, client_stride;
     q3_entity_slot slots[1024];
+    qa_entity_references references;
     q3_portal_reference *portals;
     size_t portal_count, portal_capacity;
 } q3_game_data;
@@ -238,7 +242,9 @@ bool q3_game_end(q3_call *, bool);
 bool q3_game_entity_record(q3_call *, uint32_t, q3_record *, qa_error *);
 bool q3_game_player_record(q3_call *, uint32_t, q3_record *, qa_error *);
 bool q3_game_pointer_slot(q3_call *, uint64_t, uint32_t *, qa_error *);
-bool q3_game_collision(void *, qa_actor_collision *, qa_error *);
+void q3_game_fields_clear(qa_q3_host *);
+void q3_game_fields_changed(void *, const qa_native_entity_event *);
+bool q3_game_fields_refresh(qa_q3_host *, qa_error *);
 bool q3_game_portal(qa_q3_host *, int32_t first, int32_t second, bool open, qa_error *);
 bool q3_game_close_portals(qa_q3_host *, qa_error *);
 bool q3_game_bind_restored(qa_q3_host *, qa_error *);

@@ -155,14 +155,19 @@ bool native_process_close(qa_native_instance *instance, qa_error *error)
         qa_native_windows_process_dispose(&instance->windows_process, error);
     if (okay) {
         instance->guest = NULL; free(instance->source_library); instance->source_library = NULL;
+        for (native_process_temporary *temporary = instance->process_temporaries; temporary; temporary = temporary->next) {
+            if (temporary->resource_root && !instance->process_resources.root_remove(
+                instance->process_resources.context, temporary->resource_root, error)) return false;
+            temporary->resource_root = 0;
+        }
+        if (instance->process_resources.context &&
+            !instance->process_resources.release(&instance->process_resources.context, error)) return false;
         while (instance->process_temporaries) {
             native_process_temporary *temporary = instance->process_temporaries;
+            if (!qa_fs_root_temporary_dispose(&temporary->root, error)) return false;
             instance->process_temporaries = temporary->next;
-            native_remove_tree(temporary->directory);
-            free(temporary->directory); free(temporary);
+            free(temporary);
         }
-        if (instance->process_resources.context)
-            okay = instance->process_resources.release(&instance->process_resources.context,error);
     }
     return okay;
 }
@@ -417,9 +422,9 @@ static bool capsule_fields(qa_source_save_io *io, qa_native_instance *instance)
 bool native_process_checkpoint_host(qa_native_instance *instance, qa_bytes actual_host,
     qa_buffer *out, qa_error *error)
 {
-    if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !out || out->data || out->size ||
+    if (!instance || !out || out->data || out->size ||
         instance->active_depth || instance->callback_depth || instance->region_depth ||
-        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
+        instance->write_depth || instance->region_scopes ||
         instance->write_scope || instance->call_scope || instance->destroying ||
         qa_native_terminal(instance) || instance->pending_entry_observers || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process capture requires its idle complete source owner");
@@ -451,10 +456,9 @@ bool qa_native_process_checkpoint(qa_native_instance *instance, qa_buffer *out, 
 {
     if (!instance || !out || out->data || out->size ||
         instance->checkpointing || instance->active_depth || instance->callback_depth ||
-        instance->region_depth || instance->region_service_depth || instance->write_depth ||
+        instance->region_depth || instance->write_depth ||
         instance->region_scopes || instance->write_scope || instance->call_scope ||
         instance->destroying || instance->unloading || instance->process_host_pending ||
-        instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
         !instance->options.checkpoint || !instance->options.restore || qa_native_terminal(instance) ||
         !(instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
             qa_native_sysv_process_idle(instance->sysv_process) :
@@ -468,10 +472,10 @@ bool qa_native_process_checkpoint(qa_native_instance *instance, qa_buffer *out, 
 
 bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expected_host, qa_error *error)
 {
-    if (!instance || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
+    if (!instance ||
         !instance->process_host_pending || !instance->process_host.size ||
         instance->active_depth || instance->callback_depth || instance->region_depth ||
-        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
+        instance->write_depth || instance->region_scopes ||
         instance->write_scope || instance->call_scope || instance->checkpointing ||
         instance->destroying || qa_native_terminal(instance) || !qa_native_guest_idle(instance->guest))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native host adoption requires its staged idle process continuation");
@@ -498,7 +502,7 @@ bool qa_native_process_restore_host(qa_native_instance *instance, qa_bytes expec
 
 bool qa_native_process_restore_pending(const qa_native_instance *instance)
 {
-    return instance && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
+    return instance &&
         (instance->process_host_pending || instance->process_host.size);
 }
 
@@ -571,7 +575,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
     if (okay) okay = qa_source_save_count(&io, &count, profile->entry_count);
     if (okay && count != profile->entry_count)
         okay = native_fail(error, QA_ERROR_FORMAT, io.offset, "native capsule SDK entry count differs");
-    if (okay) okay = native_profile_prepare_remote(instance, error);
+    if (okay) okay = native_profile_prepare_tables(instance, error);
     for (size_t i = 0; okay && i < count; ++i) {
         okay = qa_source_save_u64(&io, &instance->entries[i].address);
         if (okay && !instance->entries[i].address && !instance->entries[i].spec.optional)
@@ -664,8 +668,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
 
 bool native_process_publish(qa_native_instance *instance, qa_native_instance *previous, qa_error *error)
 {
-    if (previous && (previous == instance || previous->backend != QA_NATIVE_BACKEND_OWNED_PROCESS ||
-        previous->process_kind != instance->process_kind || !qa_native_can_destroy(previous)))
+    if (previous && (previous == instance || previous->process_kind != instance->process_kind || !qa_native_can_destroy(previous)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process adoption requires its retained drained previous owner");
     /* Distinct retained helper owners hold separate native references, as
      * produced by actual capture/rebind. Their callbacks have distinct owned

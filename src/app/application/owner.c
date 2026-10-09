@@ -195,7 +195,7 @@ static bool create_application(const qa_application_options *options,
         application->publication_generation = current_unit->publication_generation;
         application->frame_revision = current_unit->frame_revision;
     }
-    application->native_runner = options->native_runner;
+    application->native_runtime_config = options->native_runtime_config;
     application->native_runtime = options->native_runtime;
     qa_native_runtime_retain(application->native_runtime);
     application->native_process_policy = options->native_process_policy;

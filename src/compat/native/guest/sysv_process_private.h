@@ -5,6 +5,7 @@
 #include "internal.h"
 #include "elf_loader.h"
 #include "profile/artifact.h"
+#include "cpu_clock.h"
 
 typedef struct sysv_process_image {
     guest_elf *artifact;
@@ -31,6 +32,7 @@ struct qa_native_sysv_process {
     uint64_t stack, returned;
     sysv_process_stream streams[3];
     sysv_process_opened_file *pending_files;
+    guest_cpu_clock clock;
     bool complete, busy, failed, disposing, provisional;
 };
 

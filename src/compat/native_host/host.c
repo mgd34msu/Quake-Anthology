@@ -2,6 +2,12 @@
 
 static void free_records(qa_native_host *);
 
+static bool release_process(qa_native_host *host, qa_error *error)
+{
+    return qa_native_process_resources_release(&host->owned_process, error) &&
+        qa_native_process_platform_release(&host->owned_platform, error);
+}
+
 static const native_host_classic_layout classic32 = {
     .edict = {.bytes = 260, .inuse = 88, .linkcount = 92,
               .area = 176, .area2 = 180, .flags = 184,
@@ -42,10 +48,151 @@ static bool profile_is_q2_game(qa_native_profile profile)
     return profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023;
 }
 
+static void entity_changed(void *context, qa_native_instance *instance,
+                            const qa_native_entity_event *event)
+{
+    qa_native_host *host = context;
+    if (host->kind == NATIVE_HOST_Q3 && host->q3_role == QA_QVM_GAME) {
+        if (event->change == QA_NATIVE_ENTITIES_INVALIDATE && host->q3.entity_changed)
+            host->q3.entity_changed(host->q3.context, event);
+        return;
+    }
+    if (host->kind != NATIVE_HOST_Q2_GAME) return;
+    bool bootstrap = host->instance == NULL;
+    if (bootstrap) host->instance = instance;
+    if (event->change == QA_NATIVE_ENTITIES_INVALIDATE) {
+        for (uint32_t slot = 1; slot < host->q2_field_capacity; ++slot) {
+            uint64_t address = host->q2_references.base +
+                (uint64_t)slot * host->q2_references.stride;
+            if (event->address && (address >= event->address + event->bytes ||
+                event->address >= address + host->q2_references.stride)) continue;
+            host->q2_fields[slot].body = (qa_entity_body_fields){0};
+            host->q2_fields[slot].collision = (qa_entity_collision_fields){.family = QA_COLLISION_Q2};
+            host->q2_fields_invalidated = true;
+        }
+        if (!event->address) host->q2_references = (qa_entity_references){0};
+    } else {
+        qa_error error = {0};
+        bool ok = native_host_fields_refresh(host, &error);
+        if (ok && event->change == QA_NATIVE_ENTITIES_SLOT &&
+            event->slot < host->q2_field_capacity) {
+            host->q2_fields[event->slot] = (native_host_q2_fields){0};
+            host->q2_fields[event->slot].collision.family = QA_COLLISION_Q2;
+            ok = native_host_fields_bind(host, event->slot, &error);
+        }
+        if (!ok && !host->q2_fields_reported && host->engine.print) {
+            qa_native_host_print message = {.kind = QA_NATIVE_HOST_PRINT_DEBUG,
+                .text = error.message};
+            host->engine.print(host->engine.context, &message);
+            host->q2_fields_reported = true;
+        }
+    }
+    if (bootstrap) host->instance = NULL;
+}
+
+static void module_retain(void *context)
+{ qa_native_module_retain(context); }
+
+static void module_release(void *context)
+{ qa_native_module_release(context); }
+
+static bool create_sdk_process(qa_native_host *host, qa_native_module *module,
+    const qa_native_host_instance_options *options, qa_native_process_options *process,
+    qa_error *error)
+{
+    qa_native_module_info info = qa_native_module_describe(module);
+    qa_native_target target = info.image.target, controller = qa_native_host_target();
+    bool emulated = target.arch == QA_NATIVE_ARCH_I386 ||
+        controller.os != QA_NATIVE_OS_LINUX || controller.arch != QA_NATIVE_ARCH_X86_64;
+    size_t count = options->dependency_count + 1;
+    if (!count || count > SIZE_MAX / sizeof(qa_native_process_resource_artifact) ||
+        (options->dependency_count && !options->dependencies))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, options->dependency_count,
+            "Native SDK dependencies require their actual path and byte rows");
+    qa_native_process_resource_artifact *artifacts = calloc(count, sizeof(*artifacts));
+    if (!artifacts) return native_host_fail(error, QA_ERROR_MEMORY, count,
+        "Retaining native SDK artifact order");
+    for (size_t i = 0; i < options->dependency_count; ++i)
+        artifacts[i] = (qa_native_process_resource_artifact){
+            .path = options->dependencies[i].path, .bytes = options->dependencies[i].bytes};
+    qa_native_process_resource_owner authority = {.context = module,
+        .retain = module_retain, .release = module_release};
+    artifacts[options->dependency_count] = (qa_native_process_resource_artifact){
+        .path = info.source, .bytes = qa_native_module_bytes(module), .owner = authority};
+    qa_native_process_environment environment = {0};
+    qa_native_runtime *runtime = NULL;
+    qa_native_process_resource_root *roots = NULL;
+    size_t root_count = 0;
+    uint64_t identity = (uint64_t)(uintptr_t)host;
+    qa_native_process_platform_options platform = {.id = identity, .standard_ids = {1, 2, 3}};
+    bool ok = qa_native_process_environment_acquire(&environment, error) &&
+        qa_native_process_platform_create(&platform, &host->owned_platform, error) &&
+        qa_native_runtime_create(&(qa_native_runtime_options){
+            .executable_directory = environment.executable_directory,
+            .overrides = options->runtime}, &runtime, error);
+    if (ok) {
+        roots = calloc(environment.root_count + 2, sizeof(*roots));
+        ok = roots != NULL;
+        if (!ok) native_host_fail(error, QA_ERROR_MEMORY, 0,
+            "Retaining actual SDK directory authorities");
+    }
+    if (ok) {
+        roots[0] = (qa_native_process_resource_root){.prefix = "",
+            .mode = QA_FS_OPENED_READ | QA_FS_OPENED_WRITE};
+        ok = qa_fs_root_open(".", &roots[0].root, error);
+        root_count = 1;
+    }
+#if !defined(_WIN32)
+    if (ok) {
+        roots[root_count] = (qa_native_process_resource_root){.prefix = "/",
+            .mode = QA_FS_OPENED_READ | QA_FS_OPENED_WRITE};
+        ok = qa_fs_root_open("/", &roots[root_count++].root, error);
+    }
+#else
+    for (size_t i = 0; ok && i < environment.root_count; ++i) {
+        qa_fs_root *root = NULL;
+        qa_error unavailable = {0};
+        if (!qa_fs_root_open(environment.root_paths[i], &root, &unavailable)) continue;
+        roots[root_count++] = (qa_native_process_resource_root){environment.root_paths[i],
+            root, QA_FS_OPENED_READ | QA_FS_OPENED_WRITE};
+    }
+#endif
+    if (ok) {
+        qa_native_process_resources_options resources = {.identity = identity,
+            .authority = authority, .artifacts = artifacts, .artifact_count = count,
+            .primary = options->dependency_count, .receiver = host->world.owner,
+            .service_owner = identity, .policy = {
+                .backend = emulated ? QA_NATIVE_GUEST_EMULATED : QA_NATIVE_GUEST_HOST_X86_64,
+                .maximum_image_bytes = 256u * 1024u * 1024u,
+                .maximum_backing_bytes = 1024u * 1024u * 1024u,
+                .stack_bytes = 8u * 1024u * 1024u,
+                .runtime_trap_bytes = 1024u * 1024u,
+                .instruction_budget = emulated ? 50000000u : 0},
+            .runtime = runtime, .bootstrap = qa_native_runtime_bootstrap(runtime),
+            .platform = host->owned_platform, .roots = roots, .root_count = root_count,
+            .temporary_root = qa_native_process_platform_temporary_root,
+            .environment = (const char *const *)environment.values,
+            .environment_count = environment.count,
+            .windows_environment = environment.windows_values,
+            .windows_environment_units = environment.windows_units};
+        ok = qa_native_process_resources_create(&resources, &host->owned_process, error) &&
+            qa_native_process_resources_options_read(host->owned_process, process, error);
+    }
+    qa_native_runtime_release(runtime);
+    for (size_t i = 0; i < root_count; ++i) qa_fs_root_close(roots[i].root);
+    free(roots);
+    qa_native_process_environment_dispose(&environment);
+    free(artifacts);
+    return ok;
+}
+
 static bool configure_instance(qa_native_host *host, qa_native_module *module,
                                const qa_native_host_instance_options *options,
-                               const qa_native_runner_config *runner, qa_error *error)
+                               qa_error *error)
 {
+    qa_native_process_options owned = {0};
+    if (!options->process && !create_sdk_process(host, module, options, &owned, error))
+        return false;
     qa_native_options native = {
         .context = host,
         .q3_role = host->q3_role,
@@ -56,16 +203,14 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
         .syscall = host->profile == QA_NATIVE_Q3_VMMAIN ? native_host_syscall : NULL,
         .checkpoint = native_host_capture,
         .restore = native_host_apply,
+        .entity_changed = entity_changed,
         .declaration = options->declaration,
-        .dependencies = options->dependencies,
-        .dependency_count = options->dependency_count,
         .tick_rate = options->tick_rate,
         .frame_seconds = options->frame_seconds,
         .frame_milliseconds = options->frame_milliseconds,
         .observe = options->observe,
-        .process = options->process,
-        .isolate = true};
-    return qa_native_create(module, &native, runner, &host->instance, error);
+        .process = options->process ? options->process : &owned};
+    return qa_native_create(module, &native, &host->instance, error);
 }
 
 static qa_native_host *allocate_host(qa_native_module *module, native_host_kind kind,
@@ -100,6 +245,17 @@ static qa_native_host *allocate_host(qa_native_module *module, native_host_kind 
     return host;
 }
 
+static bool creation_failed(qa_native_host *host, qa_native_host **out, qa_error *error)
+{
+    if (host->instance || !release_process(host, error)) {
+        *out = host;
+        return false;
+    }
+    free_records(host);
+    free(host);
+    return false;
+}
+
 bool qa_native_host_create_q2_game(qa_native_module *module,
                                    const qa_native_host_q2_game_options *options,
                                    qa_native_host **out, qa_error *error)
@@ -130,12 +286,9 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
                                  : 65536u;
     host->message = malloc(host->message_capacity);
     if (!host->message ||
-        !configure_instance(host, module, &options->instance, options->instance.runner,
-                            error)) {
-        if (host->instance) { *out = host; return false; }
-        free_records(host);
-        free(host);
-        return false;
+        !configure_instance(host, module, &options->instance,
+                            error) || !native_host_fields_refresh(host, error)) {
+        return creation_failed(host, out, error);
     }
     *out = host;
     return true;
@@ -161,12 +314,8 @@ bool qa_native_host_create_q2_cgame(qa_native_module *module,
     host->cvars = options->cvars;
     host->console = options->console;
     host->command_context = options->command_context;
-    if (!configure_instance(host, module, &options->instance, options->instance.runner,
-                            error)) {
-        if (host->instance) { *out = host; return false; }
-        free_records(host);
-        free(host);
-        return false;
+    if (!configure_instance(host, module, &options->instance, error)) {
+        return creation_failed(host, out, error);
     }
     *out = host;
     return true;
@@ -204,12 +353,8 @@ bool qa_native_host_create_q3(qa_native_module *module,
     host->cvars = options->cvars;
     host->console = options->console;
     host->command_context = options->command_context;
-    if (!configure_instance(host, module, &options->instance, options->instance.runner,
-                            error)) {
-        if (host->instance) { *out = host; return false; }
-        free_records(host);
-        free(host);
-        return false;
+    if (!configure_instance(host, module, &options->instance, error)) {
+        return creation_failed(host, out, error);
     }
     *out = host;
     return true;
@@ -224,20 +369,18 @@ static void free_records(qa_native_host *host)
         free(host->surfaces);
         host->surfaces = next;
     }
-    while (host->models) {
-        native_host_model *next = host->models->next;
-        free(host->models);
-        host->models = next;
-    }
+    free(host->model_entries);
     free(host->message);
     free(host->message_references);
     free(host->retained_clients);
     free(host->q2_lifetimes);
+    free(host->q2_fields);
 }
 
 bool qa_native_host_destroy_ready(const qa_native_host *host)
 {
-    return host && !host->destroying && !host->callback_depth && qa_native_can_destroy(host->instance);
+    return host && !host->destroying && !host->callback_depth &&
+        (!host->instance || qa_native_can_destroy(host->instance));
 }
 
 bool qa_native_host_terminal_retired(const qa_native_host *host)
@@ -254,8 +397,12 @@ bool qa_native_host_destroy_owned(qa_native_host **owner, qa_error *error)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;
-    bool ok = qa_native_destroy_owned(&host->instance, error);
+    bool ok = !host->instance || qa_native_destroy_owned(&host->instance, error);
     if (host->instance) { host->destroying = false; return false; }
+    if (!release_process(host, error)) {
+        host->destroying = false;
+        return false;
+    }
     free_records(host);
     free(host);
     *owner = NULL;

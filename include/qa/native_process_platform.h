@@ -4,8 +4,24 @@
 #include "qa/native_windows_process.h"
 #include "qa/native_sysv_process.h"
 #include "qa/filesystem.h"
+#include "qa/platform_services.h"
 
 typedef struct qa_native_process_platform qa_native_process_platform;
+typedef struct qa_native_process_environment {
+    char **values;
+    size_t count;
+    uint16_t *windows_values;
+    size_t windows_units; /* Includes the terminating double NUL. */
+    char *executable, *executable_directory;
+    char **root_paths;
+    size_t root_count; /* Actual Windows logical drives; empty on POSIX. */
+} qa_native_process_environment;
+/* Cold acquisition of the current process environment and absolute executable
+ * path. The environment also has a double-NUL UTF-16 view for Windows guests.
+ * All strings are independent owned copies (UTF-8 on Windows). Start
+ * with a zero-initialized result; failures leave it unchanged. */
+bool qa_native_process_environment_acquire(qa_native_process_environment *, qa_error *);
+void qa_native_process_environment_dispose(qa_native_process_environment *);
 /* The enclosing resource graph issues these durable identities. Fresh creation
  * duplicates the actual standard descriptors; it does not open replacement
  * files or derive a stream from a source library name. */
@@ -28,6 +44,9 @@ bool qa_native_process_platform_native_error_read(const qa_native_process_platfo
 /* Pure retained-owner fence for detached capability rebinding. */
 bool qa_native_process_platform_retained(const qa_native_process_platform *, qa_error *);
 bool qa_native_process_platform_entropy(void *, void *, size_t, qa_error *);
+bool qa_native_process_platform_random(void *, void *, size_t, uint32_t,
+    size_t *, int32_t *, qa_error *);
+bool qa_native_process_platform_temporary_root(void *, qa_fs_root **, qa_error *);
 bool qa_native_process_platform_milliseconds(void *, int64_t *, qa_error *);
 bool qa_native_process_platform_seconds(void *, int64_t *, qa_error *);
 bool qa_native_process_platform_performance(void *, int64_t *, qa_error *);
@@ -42,6 +61,8 @@ bool qa_native_process_platform_compare_string(void *, uint32_t, uint32_t, bool,
     const uint16_t *, size_t, const uint16_t *, size_t, int32_t *, uint32_t *, qa_error *);
 bool qa_native_process_platform_calendar(void *, int64_t, bool,
     qa_native_windows_calendar *, qa_error *);
+bool qa_native_process_platform_sysv_calendar(void *, int64_t, bool,
+    qa_platform_calendar_fields *, qa_error *);
 /* Actual Linux security credentials/kernel personality and owned stream
  * metadata. Source process IDs are owned by the kernel/physical child, not
  * borrowed from this controller. These calls perform real native observation. */

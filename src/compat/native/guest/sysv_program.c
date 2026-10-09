@@ -1,67 +1,11 @@
 #include "sysv_program_private.h"
-#include "qa/platform_services.h"
 
-static bool physical_clock(qa_native_sysv_program *owner, int32_t clock_id,
-    int64_t *seconds, int32_t *nanoseconds, qa_error *error)
-{
-    if (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64)
-        return guest_host_child_cpu_clock_read(owner->guest->child, clock_id, seconds, nanoseconds, error);
-#if defined(__linux__)
-    /* The emulated task executes synchronously on this exclusive strand.
-     * Count only its entered execution interval, including its kernel work;
-     * other controller threads and stopped construction are not source tasks. */
-    qa_platform_timespec value;
-    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_THREAD_CPU,&value,error)) return false;
-    *seconds=value.seconds; *nanoseconds=value.nanoseconds; return true;
-#else
-    (void)clock_id; (void)seconds; (void)nanoseconds;
-    return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "emulated task CPU accounting requires its actual platform execution clock");
-#endif
-}
 bool program_clock_read(qa_native_sysv_program *owner, int32_t clock_id,
     int64_t *seconds, int32_t *nanoseconds, qa_error *error)
 {
-    if (!owner || (clock_id != 2 && clock_id != 3) || !seconds || !nanoseconds)
-        return guest_fail(error, QA_ERROR_ARGUMENT, 0, "source CPU clock needs its actual task owner");
-    const program_clock *saved = owner->clocks + (clock_id - 2);
-    uint64_t total = saved->seconds; int64_t part = saved->nanoseconds;
-    if (owner->clock_active) {
-        int64_t now; int32_t nanos;
-        if (!physical_clock(owner, clock_id, &now, &nanos, error)) return false;
-        if (now < saved->baseline_seconds || nanos < 0 || nanos >= 1000000000 ||
-            (now == saved->baseline_seconds && nanos < saved->baseline_nanoseconds))
-            return guest_fail(error, QA_ERROR_FORMAT, 0, "physical source CPU clock moved backwards");
-        uint64_t elapsed = (uint64_t)(now - saved->baseline_seconds);
-        if (elapsed > (uint64_t)INT64_MAX - total)
-            return guest_fail(error, QA_ERROR_FORMAT, 0, "source CPU accounting overflowed its timespec domain");
-        total += elapsed; part += (int64_t)nanos - saved->baseline_nanoseconds;
-        if (part < 0) { --total; part += 1000000000; }
-        if (part >= 1000000000) {
-            if (total == INT64_MAX) return guest_fail(error, QA_ERROR_FORMAT, 0, "source CPU accounting seconds overflow");
-            ++total; part -= 1000000000;
-        }
-    }
-    *seconds = (int64_t)total; *nanoseconds = (int32_t)part; return true;
-}
-static bool clocks_start(qa_native_sysv_program *owner, qa_error *error)
-{
-    for (int32_t clock_id = 2; clock_id <= 3; ++clock_id) {
-        program_clock *saved = owner->clocks + (clock_id - 2);
-        if (!physical_clock(owner, clock_id, &saved->baseline_seconds, &saved->baseline_nanoseconds, error)) return false;
-        if (saved->baseline_seconds < 0 || saved->baseline_nanoseconds < 0 || saved->baseline_nanoseconds >= 1000000000)
-            return guest_fail(error, QA_ERROR_FORMAT, 0, "source physical CPU clock has invalid fields");
-    }
-    owner->clock_active = true; return true;
-}
-static bool clocks_finish(qa_native_sysv_program *owner, qa_error *error)
-{
-    for (int32_t clock_id = 2; clock_id <= 3; ++clock_id) {
-        int64_t seconds; int32_t nanos;
-        if (!program_clock_read(owner, clock_id, &seconds, &nanos, error)) return false;
-        owner->clocks[clock_id - 2].seconds = (uint64_t)seconds;
-        owner->clocks[clock_id - 2].nanoseconds = (uint32_t)nanos;
-    }
-    owner->clock_active = false; return true;
+    if (!owner) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Source CPU clock needs its actual task owner");
+    return guest_cpu_clock_read(&owner->clock, owner->guest, clock_id,
+        seconds, nanoseconds, error);
 }
 
 bool program_current(qa_native_sysv_program *owner, qa_error *error)
@@ -223,14 +167,14 @@ bool qa_native_sysv_program_run(qa_native_sysv_program *owner, qa_error *error)
         !qa_native_guest_idle(owner->guest) || !program_current(owner, error))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Linux scheduling requires its live stopped program");
     owner->busy = true; qa_native_guest_cpu cpu; bool stopped = false;
-    bool okay = qa_native_guest_cpu_read(owner->guest, &cpu, error) && clocks_start(owner, error) &&
+    bool okay = qa_native_guest_cpu_read(owner->guest, &cpu, error) && guest_cpu_clock_enter(&owner->clock, owner->guest, error) &&
         qa_native_guest_run_program(owner->guest, cpu.instruction, owner->returned,
             owner->options.instruction_budget, program_syscall, owner, &stopped, error);
-    if (okay) okay = clocks_finish(owner, error);
+    if (okay) okay = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
     if (okay && (!stopped || !owner->status.exited))
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.instruction, "Linux program reached a controller return without a kernel exit");
     if (!okay) { owner->failed = true; owner->guest->failed = true; }
-    owner->clock_active = false; owner->busy = false; return okay;
+    owner->clock.depth = 0; owner->busy = false; return okay;
 }
 bool qa_native_sysv_program_dispose(qa_native_sysv_program **slot, qa_error *error)
 {

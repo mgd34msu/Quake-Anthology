@@ -40,6 +40,39 @@ static bool clock_read(void *context, int64_t *seconds, qa_error *error)
     return sysv_process_current(owner, error) &&
         owner->options.time(owner->options.context, seconds, error);
 }
+static bool random_read(void *context, void *data, size_t size, uint32_t flags,
+    size_t *completed, int32_t *native_errno, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    return sysv_process_current(owner, error) &&
+        owner->options.random(owner->options.context, data, size, flags, completed, native_errno, error);
+}
+static bool clock_get(void *context, int32_t id, int64_t *seconds,
+    int32_t *nanoseconds, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    if (!sysv_process_current(owner, error)) return false;
+    if (id == 2 || id == 3)
+        return owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ?
+            guest_cpu_clock_physical_read(owner->guest, id, seconds, nanoseconds, error) :
+            guest_cpu_clock_read(&owner->clock, owner->guest, id, seconds, nanoseconds, error);
+    return owner->options.clock ?
+        owner->options.clock(owner->options.context, id, seconds, nanoseconds, error) :
+        guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "System V global clock has no prepared platform producer");
+}
+static bool calendar_read(void *context, int64_t milliseconds, bool local,
+    qa_platform_calendar_fields *calendar, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    return sysv_process_current(owner, error) &&
+        owner->options.calendar(owner->options.context, milliseconds, local, calendar, error);
+}
+static bool directory_read(void *context, qa_buffer *path, qa_error *error)
+{
+    qa_native_sysv_process *owner = context;
+    return sysv_process_current(owner, error) &&
+        owner->options.getcwd(owner->options.context, path, error);
+}
 static void pending_file_remove(qa_native_sysv_process *owner, sysv_process_opened_file *file)
 {
     sysv_process_opened_file **link = &owner->pending_files;
@@ -60,8 +93,8 @@ static bool pending_files_close(qa_native_sysv_process *owner, qa_error *error)
     }
     return true;
 }
-static bool open_file(void *context, const char *name, uint32_t mode, uint32_t creation,
-    uint64_t *handle, bool *opened, qa_error *error)
+static bool open_file_inner(void *context, const char *name, uint32_t mode, uint32_t creation,
+    bool temporary, uint64_t *handle, bool *opened, qa_error *error)
 {
     qa_native_sysv_process *owner = context;
     *opened = false;
@@ -72,8 +105,11 @@ static bool open_file(void *context, const char *name, uint32_t mode, uint32_t c
     pending->next = owner->pending_files; owner->pending_files = pending;
     /* Registration can allocate after the authority transfers ownership.
      * Keep the actual close callback until the registry accepts that owner. */
-    bool okay = owner->options.open_file(owner->options.file_context, name,
-        mode, creation, &pending->file, &pending->opened, error);
+    bool okay = temporary ?
+        owner->options.open_temporary_file(owner->options.file_context,
+            &pending->file, &pending->opened, error) :
+        owner->options.open_file(owner->options.file_context, name,
+            mode, creation, &pending->file, &pending->opened, error);
     *opened = pending->opened;
     qa_error first = error ? *error : (qa_error){0};
     if (*opened) {
@@ -95,12 +131,27 @@ static bool open_file(void *context, const char *name, uint32_t mode, uint32_t c
     return sysv_process_current(owner, error);
 }
 
+static bool open_file(void *context, const char *name, uint32_t mode, uint32_t creation,
+    uint64_t *handle, bool *opened, qa_error *error)
+{
+    return open_file_inner(context, name, mode, creation, false, handle, opened, error);
+}
+static bool open_temporary_file(void *context, uint64_t *handle, bool *opened, qa_error *error)
+{
+    return open_file_inner(context, NULL, 0, 0, true, handle, opened, error);
+}
+
 guest_sysv_bindings sysv_process_bindings(qa_native_sysv_process *owner)
 {
     guest_sysv_bindings bindings = {.clock_id = owner->options.clock_id,
         .resources = owner->resources,
         .open_file = owner->options.open_file ? open_file : NULL,
         .time = owner->options.time ? clock_read : NULL,
+        .random = owner->options.random ? random_read : NULL,
+        .clock = clock_get,
+        .calendar = owner->options.calendar ? calendar_read : NULL,
+        .getcwd = owner->options.getcwd ? directory_read : NULL,
+        .open_temporary_file = owner->options.open_temporary_file ? open_temporary_file : NULL,
         .output_is_terminal = owner->options.output_is_terminal,
         .current = runtime_current, .context = owner};
     for (size_t i = 0; i < 3; ++i) {
@@ -290,11 +341,28 @@ static bool end(qa_native_sysv_process *owner, bool okay)
     if (!okay && owner->guest->failed) owner->failed = true;
     return okay;
 }
+static bool execution_begin(qa_native_sysv_process *owner, qa_error *error)
+{
+    if (!begin(owner, error)) return false;
+    if (owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 ||
+        guest_cpu_clock_enter(&owner->clock, owner->guest, error)) return true;
+    return end(owner, false);
+}
+static bool execution_end(qa_native_sysv_process *owner, bool okay, qa_error *error)
+{
+    if (owner->options.guest.backend != QA_NATIVE_GUEST_HOST_X86_64) {
+        qa_error failure = error ? *error : (qa_error){0};
+        bool clock = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
+        if (!okay && error) *error = failure;
+        okay = okay && clock;
+    }
+    return end(owner, okay);
+}
 
 bool qa_native_sysv_process_initialize(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
 {
-    if (!begin(owner, error)) return false;
-    return end(owner, guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error));
+    if (!execution_begin(owner, error)) return false;
+    return execution_end(owner, guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error), error);
 }
 bool qa_native_sysv_process_reload(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
 {
@@ -304,7 +372,7 @@ bool qa_native_sysv_process_reload(qa_native_sysv_process *owner, uint64_t provi
     const guest_elf_view *image = row ? guest_elf_describe(row->artifact) : NULL;
     if (!image || image->role != GUEST_ELF_LIBRARY || !row->loaded)
         return guest_fail(error, QA_ERROR_ARGUMENT, provider, "System V reload requires its actual retained library attachment");
-    if (!begin(owner, error)) return false;
+    if (!execution_begin(owner, error)) return false;
     bool okay = guest_sysv_finalize(owner->runtime, provider, owner->options.instruction_budget, error) &&
         guest_sysv_finalize_image_destructors(owner->runtime, provider, image->bias + image->first,
             image->end - image->first, error) && guest_elf_loaded_unmap(row->loaded, error);
@@ -318,22 +386,22 @@ bool qa_native_sysv_process_reload(qa_native_sysv_process *owner, uint64_t provi
             guest_sysv_initialize(owner->runtime, provider, owner->options.instruction_budget, error);
     }
     if (!okay) owner->guest->failed = true;
-    return end(owner, okay);
+    return execution_end(owner, okay, error);
 }
 bool qa_native_sysv_process_finalize(qa_native_sysv_process *owner, uint64_t provider, qa_error *error)
 {
-    if (!begin(owner, error)) return false;
-    return end(owner, guest_sysv_finalize(owner->runtime, provider, owner->options.instruction_budget, error));
+    if (!execution_begin(owner, error)) return false;
+    return execution_end(owner, guest_sysv_finalize(owner->runtime, provider, owner->options.instruction_budget, error), error);
 }
 bool qa_native_sysv_process_finalize_destructors(qa_native_sysv_process *owner, uint64_t dso, qa_error *error)
 {
-    if (!begin(owner, error)) return false;
-    return end(owner, guest_sysv_finalize_destructors(owner->runtime, dso, error));
+    if (!execution_begin(owner, error)) return false;
+    return execution_end(owner, guest_sysv_finalize_destructors(owner->runtime, dso, error), error);
 }
 bool qa_native_sysv_process_finalize_all(qa_native_sysv_process *owner, qa_error *error)
 {
-    if (!begin(owner, error)) return false;
-    return end(owner, guest_sysv_finalize_all(owner->runtime, owner->options.instruction_budget, error));
+    if (!execution_begin(owner, error)) return false;
+    return execution_end(owner, guest_sysv_finalize_all(owner->runtime, owner->options.instruction_budget, error), error);
 }
 bool qa_native_sysv_process_file_add(qa_native_sysv_process *owner, const qa_native_sysv_file *file, qa_error *error)
 {
@@ -420,13 +488,21 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
     } else okay = begin(owner, error);
     if (okay) {
         owner->busy=true;
-        bool invoked = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64 && !original ?
+        bool host = owner->options.guest.backend == QA_NATIVE_GUEST_HOST_X86_64;
+        bool entered = host || guest_cpu_clock_enter(&owner->clock, owner->guest, error);
+        bool invoked = entered && (host && !original ?
             guest_abi_invoke_native(plan, owner->guest, target, owner->returned,
                 arguments, count, result, error) :
             original ? guest_abi_invoke_original(plan, owner->guest, original, target, owner->returned,
                 arguments, count, result, owner->options.instruction_budget, error) :
             guest_abi_invoke(plan, owner->guest, target, owner->returned,
-                arguments, count, result, owner->options.instruction_budget, error);
+                arguments, count, result, owner->options.instruction_budget, error));
+        if (entered && !host) {
+            qa_error failure = error ? *error : (qa_error){0};
+            bool clock = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
+            if (!invoked && error) *error = failure;
+            invoked = invoked && clock;
+        }
         owner->busy = enclosing_busy;
         if (!invoked && owner->guest->failed) owner->failed = true;
         okay = invoked;

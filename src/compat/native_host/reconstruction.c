@@ -27,6 +27,9 @@ static void apply(qa_native_host *host, const reconstruction_services *value)
     host->engine = value->engine; host->world = value->world; host->movement = value->movement;
     host->q2_application = value->application; host->q2_application_context = value->application_context;
     host->cvars = value->cvars; host->console = value->console; host->command_context = value->command;
+    for (uint32_t index = 0; index < host->models.count; ++index)
+        if (host->model_entries[index].present)
+            host->model_entries[index].geometry = qa_world_geometry(host->world.world);
 }
 static bool clear_slots(qa_native_host *host, qa_error *error)
 {

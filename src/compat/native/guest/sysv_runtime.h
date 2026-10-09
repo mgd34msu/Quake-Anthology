@@ -3,6 +3,7 @@
 
 #include "runtime_import.h"
 #include "runtime_resource.h"
+#include "qa/platform_services.h"
 
 typedef struct guest_sysv_runtime guest_sysv_runtime;
 typedef struct guest_sysv_load guest_sysv_load;
@@ -19,6 +20,10 @@ typedef struct guest_sysv_stream {
 typedef struct guest_sysv_bindings {
     uint64_t clock_id;
     bool (*time)(void *, int64_t *, qa_error *);
+    bool (*random)(void *, void *, size_t, uint32_t, size_t *, int32_t *, qa_error *);
+    bool (*clock)(void *, int32_t, int64_t *, int32_t *, qa_error *);
+    bool (*calendar)(void *, int64_t, bool, qa_platform_calendar_fields *, qa_error *);
+    bool (*getcwd)(void *, qa_buffer *, qa_error *);
     guest_sysv_stream streams[3];
     /* Borrowed process-owned registry of actually opened file capabilities. */
     guest_runtime_resources *resources;
@@ -26,6 +31,7 @@ typedef struct guest_sysv_bindings {
      * handle in resources before returning. opened retains cleanup on error. */
     bool (*open_file)(void *, const char *, uint32_t, uint32_t,
         uint64_t *, bool *, qa_error *);
+    bool (*open_temporary_file)(void *, uint64_t *, bool *, qa_error *);
     bool output_is_terminal;
     bool (*current)(void *, const qa_native_guest *, qa_error *);
     void *context;

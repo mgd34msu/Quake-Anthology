@@ -1,40 +1,251 @@
-#include "protocol.h"
+#include "internal.h"
 #include "guest/internal.h"
 #include "qa/source_save.h"
 
-#if defined(_WIN32)
-__declspec(dllexport) __declspec(noinline)
-#else
-__attribute__((visibility("default"), noinline))
+typedef struct native_signature_buffer {
+    uint8_t *data;
+    size_t size, capacity;
+} native_signature_buffer;
+typedef struct native_signature_reader {
+    qa_bytes bytes;
+    size_t offset;
+} native_signature_reader;
+#define NATIVE_SIGNATURE_MAX_TYPES 1024u
+
+static bool signature_grow(native_signature_buffer *buffer, size_t added, qa_error *error) {
+    size_t required;
+    if (!native_size_add(buffer->size, added, &required))
+        return native_fail(error, QA_ERROR_MEMORY, 0, "native observer message size overflows");
+    if (required <= buffer->capacity)
+        return true;
+    size_t capacity = buffer->capacity ? buffer->capacity : 256u;
+    while (capacity < required) {
+        size_t next = capacity <= SIZE_MAX / 2u ? capacity * 2u : required;
+        if (next < capacity)
+            return native_fail(error, QA_ERROR_MEMORY, 0,
+                               "native observer message capacity overflows");
+        capacity = next;
+    }
+    uint8_t *grown = realloc(buffer->data, capacity);
+    if (!grown)
+        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native observer message");
+    buffer->data = grown;
+    buffer->capacity = capacity;
+    return true;
+}
+
+static void native_signature_buffer_free(native_signature_buffer *buffer) {
+    if (!buffer)
+        return;
+    free(buffer->data);
+    *buffer = (native_signature_buffer){0};
+}
+
+static bool native_signature_put_raw(native_signature_buffer *buffer, const void *bytes, size_t size,
+                         qa_error *error) {
+    if ((!bytes && size) || !signature_grow(buffer, size, error))
+        return false;
+    if (size)
+        memcpy(buffer->data + buffer->size, bytes, size);
+    buffer->size += size;
+    return true;
+}
+
+static bool native_signature_put_u8(native_signature_buffer *buffer, uint8_t value, qa_error *error) {
+    return native_signature_put_raw(buffer, &value, 1, error);
+}
+
+static bool native_signature_put_u32(native_signature_buffer *buffer, uint32_t value, qa_error *error) {
+    uint8_t bytes[4];
+    qa_store_u32le(bytes, value);
+    return native_signature_put_raw(buffer, bytes, sizeof(bytes), error);
+}
+
+static bool native_signature_put_u64(native_signature_buffer *buffer, uint64_t value, qa_error *error) {
+    uint8_t bytes[8];
+    qa_store_u64le(bytes, value);
+    return native_signature_put_raw(buffer, bytes, sizeof(bytes), error);
+}
+
+static bool signature_put_type(native_signature_buffer *buffer, const qa_native_type *type, unsigned depth,
+                          size_t *count, qa_error *error) {
+    if (!type || !type->count || type->kind > QA_NATIVE_BYTES || depth > 16u ||
+        ++*count > NATIVE_SIGNATURE_MAX_TYPES)
+        return native_fail(error, QA_ERROR_ARGUMENT, depth, "invalid native observer ABI type tree");
+    if ((type->kind == QA_NATIVE_BYTES) != (type->field_count != 0) ||
+        (type->field_count && !type->fields))
+        return native_fail(error, QA_ERROR_ARGUMENT, depth,
+                           "native observer aggregate fields are invalid");
+    if (!native_signature_put_u32(buffer, (uint32_t)type->kind, error) ||
+        !native_signature_put_u64(buffer, type->count, error) ||
+        !native_signature_put_u64(buffer, type->field_count, error))
+        return false;
+    for (size_t index = 0; index < type->field_count; ++index)
+        if (!signature_put_type(buffer, &type->fields[index], depth + 1u, count, error))
+            return false;
+    return true;
+}
+
+static bool native_signature_put_signature(native_signature_buffer *buffer, const qa_native_signature *signature,
+                               qa_error *error) {
+    if (!signature || signature->parameter_count > NATIVE_MAX_ARGUMENTS ||
+        (signature->parameter_count && !signature->parameters))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "valid native observer signature is required");
+    if (!native_signature_put_u32(buffer, (uint32_t)signature->abi, error) ||
+        !native_signature_put_u8(buffer, signature->variadic ? 1u : 0u, error) ||
+        !native_signature_put_u64(buffer, signature->parameter_count, error))
+        return false;
+    size_t count = 0;
+    for (size_t index = 0; index < signature->parameter_count; ++index)
+        if (!signature_put_type(buffer, &signature->parameters[index], 0, &count, error))
+            return false;
+    return signature_put_type(buffer, &signature->result, 0, &count, error);
+}
+
+static bool signature_take(native_signature_reader *reader, size_t size, const uint8_t **out,
+                      qa_error *error) {
+    if (!reader || reader->offset > reader->bytes.size ||
+        size > reader->bytes.size - reader->offset)
+        return native_fail(error, QA_ERROR_FORMAT, reader ? reader->offset : 0,
+                           "native observer message is truncated");
+    *out = reader->bytes.data + reader->offset;
+    reader->offset += size;
+    return true;
+}
+
+static bool native_signature_get_u8(native_signature_reader *reader, uint8_t *out, qa_error *error) {
+    const uint8_t *bytes;
+    if (!out || !signature_take(reader, 1, &bytes, error))
+        return false;
+    *out = bytes[0];
+    return true;
+}
+
+static bool native_signature_get_u32(native_signature_reader *reader, uint32_t *out, qa_error *error) {
+    const uint8_t *bytes;
+    if (!out || !signature_take(reader, 4, &bytes, error))
+        return false;
+    *out = qa_load_u32le(bytes);
+    return true;
+}
+
+static bool native_signature_get_u64(native_signature_reader *reader, uint64_t *out, qa_error *error) {
+    const uint8_t *bytes;
+    if (!out || !signature_take(reader, 8, &bytes, error))
+        return false;
+    *out = qa_load_u64le(bytes);
+    return true;
+}
+
+static void signature_type_free(qa_native_type *type) {
+    if (!type || !type->fields)
+        return;
+    qa_native_type *fields = (qa_native_type *)type->fields;
+    for (size_t index = 0; index < type->field_count; ++index)
+        signature_type_free(&fields[index]);
+    free(fields);
+    type->fields = NULL;
+    type->field_count = 0;
+}
+
+static bool signature_get_type(native_signature_reader *reader, qa_native_type *out, unsigned depth,
+                          size_t *count, qa_error *error) {
+    uint32_t kind;
+    uint64_t repetition, field_count;
+    if (depth > 16u || ++*count > NATIVE_SIGNATURE_MAX_TYPES ||
+        !native_signature_get_u32(reader, &kind, error) ||
+        !native_signature_get_u64(reader, &repetition, error) ||
+        !native_signature_get_u64(reader, &field_count, error) || kind > QA_NATIVE_BYTES ||
+        !repetition ||
+#if SIZE_MAX < UINT64_MAX
+        repetition > (uint64_t)SIZE_MAX || field_count > (uint64_t)SIZE_MAX ||
 #endif
-void qa_native_runner_hook_control(native_hook_control *control) {
-    /* The instrumentation insertion sets status before this application marker
-     * executes. Keep a real ABI argument and symbol in uninstrumented helpers. */
-    volatile uint64_t magic = control->magic;
-    (void)magic;
+        field_count > NATIVE_SIGNATURE_MAX_TYPES || ((kind == QA_NATIVE_BYTES) != (field_count != 0)))
+        return native_fail(error, QA_ERROR_FORMAT, reader->offset,
+                           "native observer ABI type tree is invalid");
+    qa_native_type type = {.kind = (qa_native_value_type)kind, .count = (size_t)repetition};
+    if (field_count) {
+        qa_native_type *fields = calloc((size_t)field_count, sizeof(*fields));
+        if (!fields)
+            return native_fail(error, QA_ERROR_MEMORY, reader->offset,
+                               "allocating native observer ABI fields");
+        type.fields = fields;
+        type.field_count = (size_t)field_count;
+        for (size_t index = 0; index < type.field_count; ++index) {
+            if (!signature_get_type(reader, &fields[index], depth + 1u, count, error)) {
+                signature_type_free(&type);
+                return false;
+            }
+        }
+    }
+    *out = type;
+    return true;
 }
 
-bool native_hooks_control(native_hook_control *control) {
-    control->magic = NATIVE_HOOK_CONTROL_MAGIC;
-    control->status = 0;
-    qa_native_runner_hook_control(control);
-    return ((volatile native_hook_control *)control)->status == 1u;
+static void native_signature_signature_free(qa_native_signature *signature) {
+    if (!signature)
+        return;
+    qa_native_type *parameters = (qa_native_type *)signature->parameters;
+    for (size_t index = 0; index < signature->parameter_count; ++index)
+        signature_type_free(&parameters[index]);
+    free(parameters);
+    signature_type_free(&signature->result);
+    *signature = (qa_native_signature){0};
 }
 
-void native_hooks_depth(uint32_t depth) {
-    native_hook_control control = {.operation = NATIVE_HOOK_DEPTH, .size = depth};
-    (void)native_hooks_control(&control);
+
+static bool native_signature_get_signature(native_signature_reader *reader, qa_native_signature *out,
+                               qa_error *error) {
+    uint32_t abi;
+    uint8_t variadic;
+    uint64_t parameter_count;
+    if (!out || !native_signature_get_u32(reader, &abi, error) ||
+        !native_signature_get_u8(reader, &variadic, error) || variadic > 1u ||
+        !native_signature_get_u64(reader, &parameter_count, error) || abi > QA_NATIVE_ABI_AAPCS64 ||
+        parameter_count > NATIVE_MAX_ARGUMENTS)
+        return native_fail(error, QA_ERROR_FORMAT, reader ? reader->offset : 0,
+                           "native observer signature header is invalid");
+    qa_native_signature signature = {.abi = (qa_native_abi)abi,
+                                     .variadic = variadic != 0,
+                                     .parameter_count = (size_t)parameter_count};
+    qa_native_type *parameters = NULL;
+    if (signature.parameter_count) {
+        parameters = calloc(signature.parameter_count, sizeof(*parameters));
+        if (!parameters)
+            return native_fail(error, QA_ERROR_MEMORY, reader->offset,
+                               "allocating native observer signature");
+        signature.parameters = parameters;
+    }
+    size_t count = 0;
+    for (size_t index = 0; index < signature.parameter_count; ++index) {
+        if (!signature_get_type(reader, &parameters[index], 0, &count, error)) {
+            native_signature_signature_free(&signature);
+            return false;
+        }
+    }
+    if (!signature_get_type(reader, &signature.result, 0, &count, error)) {
+        native_signature_signature_free(&signature);
+        return false;
+    }
+    *out = signature;
+    return true;
+}
+
+static bool native_signature_end(native_signature_reader *reader, qa_error *error) {
+    if (!reader || reader->offset != reader->bytes.size)
+        return native_fail(error, QA_ERROR_FORMAT, reader ? reader->offset : 0,
+                           "native observer message has trailing bytes");
+    return true;
 }
 
 static bool observer_boundary(qa_native_instance *instance, qa_error *error) {
     if (!instance || instance->checkpointing || instance->destroying || instance->unloading)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native observation requires a live instance");
-    bool owned = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && instance->guest;
-    if ((!owned && instance->backend != QA_NATIVE_BACKEND_RUNNER) ||
-        (!instance->options.observe && !instance->region_count))
+    if (!instance->guest || (!instance->options.observe && !instance->region_count))
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                           "native observation requires its actual instrumented execution owner");
+                           "native observation requires its actual guest execution owner");
     return true;
 }
 
@@ -47,13 +258,13 @@ static bool next_id(qa_native_instance *instance, uint64_t *id, qa_error *error)
 
 static bool copy_signature(const qa_native_signature *signature, qa_native_signature *out,
                             qa_error *error) {
-    native_wire_buffer encoded = {0};
-    bool ok = native_wire_put_signature(&encoded, signature, error);
+    native_signature_buffer encoded = {0};
+    bool ok = native_signature_put_signature(&encoded, signature, error);
     if (ok) {
-        native_wire_reader reader = {.bytes = {encoded.data, encoded.size}};
-        ok = native_wire_get_signature(&reader, out, error) && native_wire_end(&reader, error);
+        native_signature_reader reader = {.bytes = {encoded.data, encoded.size}};
+        ok = native_signature_get_signature(&reader, out, error) && native_signature_end(&reader, error);
     }
-    native_wire_buffer_free(&encoded);
+    native_signature_buffer_free(&encoded);
     return ok;
 }
 
@@ -86,28 +297,28 @@ static bool process_entry(void *context, qa_native_guest *guest, uint64_t id, qa
 
 static bool signature_equal(const qa_native_signature *a,const qa_native_signature *b,qa_error *error)
 {
-    native_wire_buffer left={0},right={0};
-    bool ok=native_wire_put_signature(&left,a,error) && native_wire_put_signature(&right,b,error) &&
+    native_signature_buffer left={0},right={0};
+    bool ok=native_signature_put_signature(&left,a,error) && native_signature_put_signature(&right,b,error) &&
         left.size==right.size && !memcmp(left.data,right.data,left.size);
-    native_wire_buffer_free(&left); native_wire_buffer_free(&right); return ok;
+    native_signature_buffer_free(&left); native_signature_buffer_free(&right); return ok;
 }
 static bool observer_signature_fields(qa_source_save_io *io,qa_native_signature *signature)
 {
-    native_wire_buffer wire={0}; size_t count=0;
+    native_signature_buffer wire={0}; size_t count=0;
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    bool ok=reading || native_wire_put_signature(&wire,signature,io->error);
+    bool ok=reading || native_signature_put_signature(&wire,signature,io->error);
     if (!reading) count=wire.size;
     if (ok) ok=qa_source_save_count(io,&count,SIZE_MAX);
     if (ok && reading) {
         ok=io->offset<=io->input.size && count<=io->input.size-io->offset;
         if (!ok) native_fail(io->error,QA_ERROR_FORMAT,io->offset,"Saved Source signature leaves its counted extent");
         if (ok) {
-            native_wire_reader reader={.bytes={io->input.data+io->offset,count}};
-            ok=native_wire_get_signature(&reader,signature,io->error) && native_wire_end(&reader,io->error);
+            native_signature_reader reader={.bytes={io->input.data+io->offset,count}};
+            ok=native_signature_get_signature(&reader,signature,io->error) && native_signature_end(&reader,io->error);
             if (ok) io->offset+=count;
         }
     } else if (ok) ok=qa_source_save_bytes(io,wire.data,count);
-    native_wire_buffer_free(&wire); return ok;
+    native_signature_buffer_free(&wire); return ok;
 }
 bool native_observers_fields(qa_source_save_io *io,qa_native_instance *instance)
 {
@@ -165,7 +376,7 @@ bool qa_native_observers_restore_ready(const qa_native_instance *instance,qa_err
 }
 static bool stopped_write_subscription(const qa_native_instance *instance)
 {
-    return instance->backend==QA_NATIVE_BACKEND_OWNED_PROCESS&&instance->guest&&
+    return instance->guest&&
         instance->active_write_event&&instance->write_depth&&instance->callback_depth&&
         native_active_instance==instance&&
         instance->guest->publication_depth&&!instance->guest->faulting&&!instance->guest->stepping;
@@ -234,10 +445,9 @@ bool qa_native_observe_entry(qa_native_instance *instance, qa_native_address ent
     binding->context = context;
     bool ok = next_id(instance, &binding->id, error) &&
               copy_signature(signature, &binding->signature, error) &&
-              (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS ?
-                  process_entry_bind(binding, error) : native_runner_observer_entry_add(binding, error));
+              process_entry_bind(binding, error);
     if (!ok) {
-        native_wire_signature_free(&binding->signature);
+        native_signature_signature_free(&binding->signature);
         guest_abi_plan_destroy(binding->guest_plan);
         free(binding);
         return false;
@@ -256,17 +466,13 @@ bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *erro
         return false;
     if (binding->active_calls || instance->region_depth || instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native entry cannot be removed");
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
-        if (!qa_native_guest_unbind(instance->guest, binding->guest_id, error)) return false;
-    } else if ((!qa_native_terminal(instance) || instance->active_depth || instance->callback_depth) &&
-        !native_runner_observer_entry_remove(binding, error))
-        return false;
+    if (!qa_native_guest_unbind(instance->guest, binding->guest_id, error)) return false;
     qa_native_entry_observer **cursor = &instance->entry_observers;
     while (*cursor && *cursor != binding)
         cursor = &(*cursor)->next;
     if (*cursor)
         *cursor = binding->next;
-    native_wire_signature_free(&binding->signature);
+    native_signature_signature_free(&binding->signature);
     guest_abi_plan_destroy(binding->guest_plan);
     free(binding);
     return true;
@@ -297,13 +503,11 @@ bool qa_native_invoke_original(qa_native_entry_observer *binding,
     ++instance->active_depth;
     qa_native_instance *previous = native_active_instance;
     native_active_instance = instance;
-    bool ok = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS ?
-        (instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+    bool ok = instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
             qa_native_sysv_process_invoke_original(instance->sysv_process, binding->guest_id, binding->address,
                 &binding->signature, arguments, count, result, error) :
             qa_native_windows_process_invoke_original(instance->windows_process, binding->guest_id, binding->address,
-                &binding->signature, arguments, count, result, error)) :
-        native_runner_observer_original(binding, arguments, count, result, error);
+                &binding->signature, arguments, count, result, error);
     native_active_instance = previous;
     --instance->active_depth;
     --binding->active_calls;
@@ -314,7 +518,7 @@ bool qa_native_write_scope_open(qa_native_instance *instance,const qa_native_wri
     qa_native_write_scope **out,qa_error *error)
 {
     if(!out||*out||!event||!observer_boundary(instance,error)||
-        instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||!instance->guest||
+        !instance->guest||
         instance->active_write_event!=event||!instance->write_depth||!instance->callback_depth||
         native_active_instance!=instance||
         !instance->guest->publication_depth||instance->guest->faulting||
@@ -335,7 +539,7 @@ bool qa_native_invoke_original_cancellable(qa_native_entry_observer *binding,
     if(!cancelled)return native_fail(error,QA_ERROR_ARGUMENT,0,"Original cancellation omitted its actual result receipt");
     *cancelled=false;
     if(!instance||!accepts||!binding->active_calls||native_active_instance!=instance||
-        !instance->callback_depth||instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||
+        !instance->callback_depth||
         !instance->guest||
         binding->signature.result.kind!=QA_NATIVE_VOID||!guest_mutable(instance->guest,error))
         return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Original cancellation requires its actual stopped VOID entry");
@@ -381,7 +585,7 @@ bool qa_native_call_scope_open(qa_native_instance *instance,qa_native_entry_canc
 {
     if(!out||*out||!instance||!accepts||instance->lifecycle!=QA_NATIVE_INITIALIZED||
         instance->checkpointing||instance->destroying||instance->unloading||
-        instance->backend!=QA_NATIVE_BACKEND_OWNED_PROCESS||!instance->guest||
+        !instance->guest||
         !guest_mutable(instance->guest,error))
         return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Source cancellation requires its live stopped processor");
     qa_native_call_scope *scope=calloc(1,sizeof(*scope));
@@ -515,11 +719,8 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
                               qa_native_write_observer **out, qa_error *error) {
     if (!observer_boundary(instance, error))
         return false;
-    if (!address || !bytes || bytes > NATIVE_HOOK_MAX_WATCH_BYTES ||
-        bytes > UINT64_MAX - address || !callback || !out ||
-        (instance->backend == QA_NATIVE_BACKEND_RUNNER &&
-            (!instance->runner || instance->runner->maximum_frame < 48u ||
-             bytes > (instance->runner->maximum_frame - 48u) / 2u)))
+    if (!address || !bytes || bytes > NATIVE_MAX_WATCH_BYTES ||
+        bytes > UINT64_MAX - address || !callback || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, bytes, "native write watch range is invalid");
     qa_native_write_observer *binding = calloc(1, sizeof(*binding));
     if (!binding)
@@ -529,11 +730,8 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
     binding->size = bytes;
     binding->callback = callback;
     binding->context = context;
-    native_hook_control control = {.operation = NATIVE_HOOK_WATCH_ADD,
-                                   .address = address, .size = bytes};
     bool ok = next_id(instance, &binding->id, error);
-    control.id = binding->id;
-    if (ok && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
+    if (ok) {
         binding->snapshot.data = malloc(bytes); binding->snapshot.size = bytes;
         if (!binding->snapshot.data) ok = native_fail(error, QA_ERROR_MEMORY, binding->id, "owning actual write watch snapshot");
         if (ok) ok = qa_native_guest_read(instance->guest, address, binding->snapshot.data, bytes, error);
@@ -543,7 +741,7 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
         }
         if (ok) ok = guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
             binding->id, address, bytes, false, error);
-    } else if (ok) ok = native_runner_observer_control(instance, control, error);
+    }
     if (!ok) {
         qa_buffer_free(&binding->snapshot); free(binding);
         return false;
@@ -562,15 +760,11 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
         return false;
     if (binding->active_calls)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native write watch cannot be removed");
-    native_hook_control control = {.operation = NATIVE_HOOK_WATCH_REMOVE, .id = binding->id};
     bool control_needed = !qa_native_terminal(instance) || instance->active_depth ||
         instance->callback_depth || instance->region_depth || instance->write_depth;
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS && control_needed &&
+    if (control_needed &&
         !guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
             binding->id, binding->address, binding->size, true, error)) return false;
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && control_needed &&
-        !native_runner_observer_control(instance, control, error))
-        return false;
     qa_native_write_observer **cursor = &instance->write_observers;
     while (*cursor && *cursor != binding)
         cursor = &(*cursor)->next;
@@ -584,16 +778,13 @@ void native_observers_destroy(qa_native_instance *instance) {
     while (instance->pending_entry_observers) {
         qa_native_entry_observer *binding=instance->pending_entry_observers;
         instance->pending_entry_observers=binding->next;
-        native_wire_signature_free(&binding->signature);
+        native_signature_signature_free(&binding->signature);
         guest_abi_plan_destroy(binding->guest_plan); free(binding);
     }
     while (instance->entry_observers) {
         qa_native_entry_observer *binding = instance->entry_observers;
         instance->entry_observers = binding->next;
-        if (binding->closure)
-            ffi_closure_free(binding->closure);
-        native_ffi_destroy(&binding->ffi);
-        native_wire_signature_free(&binding->signature);
+        native_signature_signature_free(&binding->signature);
         guest_abi_plan_destroy(binding->guest_plan);
         free(binding);
     }

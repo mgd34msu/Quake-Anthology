@@ -140,7 +140,6 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         }
         else if (!strcmp(arg, "--user-content-root")) options->application.user_root = value;
         else if (!strcmp(arg, "--native-runtime-root")) options->native_runtime_root = value;
-        else if (!strcmp(arg, "--native-wine")) options->native_wine = value;
         else if (!strcmp(arg, "--native-backend")) {
             qa_native_process_resource_policy *policy = &options->application.native_process_policy;
             if (!strcmp(value, "host")) {

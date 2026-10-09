@@ -277,7 +277,8 @@ qa_q3_presentation_assets *qa_q3_host_presentation_resources(const qa_q3_host *h
 bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_error *error)
 {
     if (!options || !out || (unsigned)options->role > QA_QVM_UI ||
-        (unsigned)options->abi > QA_QVM_Q3_116N || !options->owner ||
+        (unsigned)options->abi > QA_QVM_Q3_116N ||
+        (options->role == QA_QVM_GAME && !options->owner) ||
         options->client_time_from_game ||
         (!!options->client_time_cvars != !!options->client_time_owner) ||
         (options->role == QA_QVM_GAME && options->client_time_cvars) ||
@@ -313,7 +314,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     qa_q3_host *host = calloc(1, sizeof(*host));
     if (!host) return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 module host");
     host->options = *options;
-    if (!host->options.service_owner) host->options.service_owner = options->owner;
+    if (!host->options.service_owner)
+        host->options.service_owner = options->owner ? options->owner : (uint64_t)(uintptr_t)host;
     if (options->role == QA_QVM_GAME) {
         if (!options->session || !options->world) {
             free(host); return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 game host requires the shared session and world");
@@ -422,6 +424,7 @@ bool qa_q3_host_round_reset(qa_q3_host *host, qa_bytes entity_text, qa_error *er
     qa_common_cursor cursor;
     if (!qa_common_cursor_init(&cursor, entity_text, QA_COMMON_TERMINATED, error)) return false;
     if (!q3_game_close_portals(host, error)) return false;
+    q3_game_fields_clear(host);
     host->game->entities = host->game->clients = 0;
     host->game->entity_count = host->game->entity_stride = host->game->client_stride = 0;
     for (uint32_t i = 0; i < 1024; ++i)
@@ -544,6 +547,7 @@ bool qa_q3_host_attach_native(qa_q3_host *host, qa_native_host *native, qa_error
 void qa_q3_host_native_consumed(qa_q3_host *host)
 {
     if (!host) return;
+    q3_game_fields_clear(host);
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
     free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
     host->native = NULL;
@@ -558,6 +562,7 @@ void qa_q3_host_native_consumed(qa_q3_host *host)
 void qa_q3_host_qvm_consumed(qa_q3_host *host)
 {
     if (!host) return;
+    q3_game_fields_clear(host);
     free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
     free(host->cvar_status.previous_value); host->cvar_status=(q3_cvar_status){0};
     host->vm = NULL;
@@ -577,5 +582,7 @@ qa_qvm_options qa_q3_host_qvm_options(qa_q3_host *host, qa_qvm_semantics semanti
 
 qa_native_host_q3_bridge qa_q3_host_native_bridge(qa_q3_host *host)
 {
-    return (qa_native_host_q3_bridge){host, native_describe, native_call, checkpoint, restore};
+    return (qa_native_host_q3_bridge){.context = host, .describe_native = native_describe,
+        .dispatch = native_call, .checkpoint = checkpoint, .restore = restore,
+        .entity_changed = q3_game_fields_changed};
 }

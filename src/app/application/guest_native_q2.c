@@ -464,12 +464,12 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
         .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
             engine->source_control != NULL || engine->primary_inventory != NULL ||
             application_native_q2_callbacks_observation_required(engine->callbacks),
-        .runner = provider->application->native_runner,
+        .runtime = provider->application->native_runtime_config,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
         .frame_seconds = (float)interval / 1000000000.f,
         .frame_milliseconds = (uint32_t)(interval / UINT64_C(1000000))};
     qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
-    qa_native_process_resource_artifact artifact = {.resource = provider->launch->artifact,
+    application_native_process_artifact artifact = {.resource = provider->launch->artifact,
         .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
     const qa_native_process_resources *capture = NULL;
     qa_bytes lower_recipe = {0};

@@ -244,8 +244,8 @@ bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state 
 
 bool qa_world_body_bind(qa_world *world,qa_actor_id actor,const qa_body_binding *binding,bool replace,qa_error *error)
 {
-    if(binding==NULL || binding->read==NULL || binding->write==NULL)
-        return fail(error,QA_ERROR_ARGUMENT,"Body binding needs read and write callbacks");
+    if(binding==NULL || binding->fields==NULL || binding->write==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Body binding needs fields and a write callback");
     qa_world_body *body=ensure_body(world,actor,error);
     if(body==NULL) return false;
     if(body->present && !replace) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body binding");
@@ -260,25 +260,22 @@ uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
     return body==NULL?0:body->storage_serial;
 }
 
-bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
+bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
+                            qa_body_state *out,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
     qa_body_state state;
     if(body->external) {
-        uint64_t serial=body->storage_serial;
-        qa_body_binding binding=body->binding;
-        ++world->callback_depth;
-        bool ok=binding.read(binding.context,&state,error);
-        --world->callback_depth;
-        if(!ok) return false;
-        if(qa_world_find_body(world,actor)!=body || body->storage_serial!=serial)
-            return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during read callback");
+        if(!qa_entity_body_read(body->binding.fields,pose,&state,error)) return false;
         if(!valid_state(&state)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
         body->state=state;
     } else state=body->state;
     *out=state; return true;
 }
+
+bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
+{ return qa_world_body_read_pose(world,actor,QA_ENTITY_CONTROL_POSE,out,error); }
 
 bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
 {
@@ -346,8 +343,8 @@ bool qa_world_collision_bind(qa_world *world,qa_actor_id actor,const qa_collisio
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
-    if(binding!=NULL && binding->read==NULL)
-        return fail(error,QA_ERROR_ARGUMENT,"Collision binding needs a read callback");
+    if(binding!=NULL && binding->fields==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Collision binding needs fields");
     if(body->collision_serial==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
     ++body->collision_serial;
@@ -359,7 +356,7 @@ bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_
     if(world==NULL || !qa_world_idle(world))
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding teardown requires an idle world");
     qa_world_body *body=qa_world_find_body(world,actor);
-    if(body==NULL || body->collision_binding.read==NULL || body->collision_binding.context!=expected_context)
+    if(body==NULL || body->collision_binding.fields==NULL || body->collision_binding.context!=expected_context)
         return true;
     if(body->collision_serial==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
@@ -375,27 +372,12 @@ static bool read_collision(qa_world *world,qa_actor_id actor,qa_actor_collision 
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return false;
     qa_collision_binding binding=body->collision_binding;
-    if(binding.read==NULL) {
+    if(binding.fields==NULL) {
         if(!body->has_collision) return false;
         *out=body->collision; return true;
     }
-    uint64_t serial=body->storage_serial,collision_serial=body->collision_serial;
     qa_actor_collision collision={0};
-    qa_error local={0};
-    qa_actor_id previous=world->collision_link_actor;
-    world->collision_link_actor=link_metadata?actor:(qa_actor_id){0};
-    ++world->callback_depth;
-    bool ok=binding.read(binding.context,&collision,&local);
-    --world->callback_depth;
-    world->collision_link_actor=previous;
-    if(!ok) {
-        if(local.code==QA_OK) qa_error_set(&local,QA_ERROR_FORMAT,0,"Collision binding read failed");
-        if(error!=NULL) *error=local;
-        return false;
-    }
-    if(qa_world_find_body(world,actor)!=body || body->storage_serial!=serial
-        || body->collision_serial!=collision_serial)
-        return fail(error,QA_ERROR_NOT_FOUND,"Collision binding changed during read callback");
+    if(!qa_entity_collision_read(binding.fields,link_metadata,&collision,error)) return false;
     if(!valid_collision(world,&collision,QA_ERROR_FORMAT,error)) return false;
     *out=collision; return true;
 }
@@ -404,9 +386,6 @@ bool qa_world_get_collision(qa_world *world,qa_actor_id actor,qa_actor_collision
 { return read_collision(world,actor,out,false,error); }
 bool qa_world_get_link_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,qa_error *error)
 { return read_collision(world,actor,out,true,error); }
-bool qa_world_collision_link_observation(const qa_world *world,qa_actor_id actor)
-{ return world!=NULL && actor.registry!=0 && qa_actor_id_equal(world->collision_link_actor,actor); }
-
 bool qa_world_attach(qa_world *world,qa_actor_id actor,const qa_body_attachment *attachment,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
@@ -461,9 +440,6 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
 {
     qa_spatial_link *spatial=qa_actors_link(world->actors->links,body->actor.slot);
     uint64_t serial=body->storage_serial;
-    uint64_t previous_count=body->link_count;
-    bool previous_linked=body->linked;
-    bool previous_spatial=spatial->linked;
     qa_actor_collision collision;
     qa_error local={0};
     if(!qa_world_get_link_collision(world,linked->actor,&collision,&local)) {
@@ -471,10 +447,6 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         memset(&collision,0,sizeof(collision));
         collision.family=qa_collision_geometry_family(world->geometry);
     }
-    if(qa_world_find_body(world,linked->actor)!=body || body->storage_serial!=serial)
-        return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during collision link read");
-    if(body->link_count!=previous_count || body->linked!=previous_linked || spatial->linked!=previous_spatial)
-        return fail(error,QA_ERROR_ARGUMENT,"Body link changed during collision link read");
     if(policy==BODY_LINK_COMMIT && body->linked && spatial->linked && same_state(&body->linked_state,&linked->state)
         && same_bounds(spatial->bounds,linked->absolute_bounds)
         && same_collision(&body->linked_collision,&collision)) return true;

@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -20,7 +23,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #if defined(__linux__)
-#include <sys/random.h>
+#include <sys/syscall.h>
 #endif
 #endif
 
@@ -179,6 +182,28 @@ double qa_platform_tick_ms(void)
     return 0.000001;
 }
 
+bool qa_platform_random(void *out, size_t bytes, uint32_t flags,
+    size_t *completed, int32_t *native_errno, qa_error *error)
+{
+    *completed = 0; *native_errno = 0;
+#if defined(__linux__)
+    (void)error;
+    ssize_t received = syscall(SYS_getrandom, out, bytes, flags);
+    if (received < 0) *native_errno = errno;
+    else *completed = (size_t)received;
+    return true;
+#else
+    if (flags) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, flags,
+            "Linux random flags are unavailable on this platform");
+        return false;
+    }
+    if (!qa_platform_entropy(out, bytes, error)) return false;
+    *completed = bytes;
+    return true;
+#endif
+}
+
 bool qa_platform_entropy(void *out, size_t bytes, qa_error *error)
 {
 #if defined(_WIN32)
@@ -193,36 +218,43 @@ bool qa_platform_entropy(void *out, size_t bytes, qa_error *error)
     }
 #elif defined(__APPLE__)
     if (bytes) arc4random_buf(out, bytes);
+#elif defined(__linux__)
+    size_t offset = 0;
+    while (offset < bytes) {
+        size_t count = bytes - offset > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes - offset;
+        size_t received;
+        int32_t code;
+        if (!qa_platform_random((uint8_t *)out + offset, count, 0, &received, &code, error))
+            return false;
+        if (code == EINTR) continue;
+        if (code || !received) {
+            if (!code) code = EIO;
+            qa_error_set(error, QA_ERROR_IO, (size_t)code,
+                "Reading platform entropy: %s", strerror(code));
+            return false;
+        }
+        offset += received;
+    }
 #else
     size_t offset = 0;
-#if !defined(__linux__)
     int descriptor = bytes ? open("/dev/urandom", O_RDONLY | O_CLOEXEC) : -1;
     if (bytes && descriptor < 0) {
         qa_error_set(error, QA_ERROR_IO, (size_t)errno, "Opening platform entropy");
         return false;
     }
-#endif
     while (offset < bytes) {
         size_t count = bytes - offset > (size_t)SSIZE_MAX ? (size_t)SSIZE_MAX : bytes - offset;
-#if defined(__linux__)
-        ssize_t received = getrandom((uint8_t *)out + offset, count, 0);
-#else
         ssize_t received = read(descriptor, (uint8_t *)out + offset, count);
-#endif
         if (received < 0 && errno == EINTR) continue;
         if (received <= 0) {
             int code = received < 0 ? errno : EIO;
-#if !defined(__linux__)
             close(descriptor);
-#endif
             qa_error_set(error, QA_ERROR_IO, (size_t)code, "Reading platform entropy: %s", strerror(code));
             return false;
         }
         offset += (size_t)received;
     }
-#if !defined(__linux__)
     if (descriptor >= 0) close(descriptor);
-#endif
 #endif
     return true;
 }
@@ -266,7 +298,8 @@ bool qa_platform_calendar(int64_t milliseconds, bool local, qa_platform_calendar
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Platform calendar cannot represent timestamp");
         return false;
     }
-    int64_t timezone_minutes = (calendar_seconds(&utc) - calendar_seconds(&date)) / 60;
+    int64_t timezone_seconds = calendar_seconds(&utc) - calendar_seconds(&date);
+    int64_t timezone_minutes = timezone_seconds / 60;
     if (date.tm_year > INT32_MAX - 1900 || timezone_minutes < INT32_MIN || timezone_minutes > INT32_MAX) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Platform calendar exceeds native fields");
         return false;
@@ -279,7 +312,18 @@ bool qa_platform_calendar(int64_t milliseconds, bool local, qa_platform_calendar
         .weekday = date.tm_wday, .yearday = date.tm_yday,
         .hour = date.tm_hour, .minute = date.tm_min, .second = date.tm_sec,
         .millisecond = (int32_t)fraction, .daylight = date.tm_isdst,
-        .timezone_minutes = (int32_t)timezone_minutes};
+        .timezone_minutes = (int32_t)timezone_minutes,
+        .timezone_seconds = timezone_seconds};
+#if defined(__linux__) || defined(__APPLE__)
+    const char *zone = date.tm_zone;
+    size_t length = zone ? strnlen(zone, sizeof(out->timezone) - 1) : 0;
+    if (length) memcpy(out->timezone, zone, length);
+#else
+    char zone[256];
+    size_t length = strftime(zone, sizeof(zone), "%Z", &date);
+    if (length >= sizeof(out->timezone)) length = sizeof(out->timezone) - 1;
+    if (length) memcpy(out->timezone, zone, length);
+#endif
     return true;
 }
 

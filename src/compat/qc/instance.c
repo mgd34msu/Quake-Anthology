@@ -231,6 +231,7 @@ static uint32_t actor_slot(const qa_qc_instance *instance, qa_actor_id actor)
 
 static void binding_set(qa_qc_instance *instance, uint32_t slot, qc_slot binding)
 {
+    instance->bodies[slot].fields = (qa_entity_body_fields){0};
     instance->bodies[slot].projection_revision = 0;
     instance->bodies[slot].body_revision = 0;
     qc_slot previous = instance->slots[slot];
@@ -359,6 +360,19 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         free_instance(instance); return false;
     }
     instance->slots[0] = (qc_slot){.kind = QA_QC_SLOT_WORLD};
+    instance->references = (qa_entity_references){
+        .actors = options->host.session ? qa_session_actor_registry(options->host.session) : NULL,
+        .owner = instance->options.host.owner,
+        .stride = instance->layout.stride_bytes,
+        .slots = (const uint8_t *)instance->slots,
+        .count = &instance->entity_count,
+        .capacity = instance->options.entity_capacity,
+        .slot_stride = sizeof(*instance->slots),
+        .actor_offset = offsetof(qc_slot, actor),
+        .kind_offset = offsetof(qc_slot, kind),
+        .kind_encoding = QA_ENTITY_U32_LE,
+        .borrowed_kind = QA_QC_SLOT_BORROWED
+    };
     instance->entity_count = instance->options.first_dynamic_slot;
     for (uint32_t slot = 1; slot < instance->entity_count; ++slot)
         set_free_metadata(instance, slot, true, 0.0f);
@@ -993,64 +1007,71 @@ bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error)
     return true;
 }
 
-static bool field_vector(qa_qc_instance *instance, uint32_t slot,
-                         const qa_qc_definition *field, qa_vec3 fallback, qa_vec3 *out,
-                         qa_error *error)
+static bool live_field(const qa_qc_instance *instance, uint32_t slot,
+    const qa_qc_definition *definition, qa_qc_value_type type, uint32_t width,
+    const uint8_t **out, qa_error *error)
 {
-    if (field == NULL) { *out = fallback; return true; }
-    if (field->type != QA_QC_VECTOR)
-        return qc_fail(error, QA_ERROR_FORMAT, field->offset,
-                       "QuakeC body field is not a vector");
-    return qa_qc_entity_vector(instance, reference_of(instance, slot),
-                               field->offset, out, error);
-}
-
-static bool body_read_impl(void *context, qa_body_state *out, qa_error *error)
-{
-    qc_body_context *body = context;
-    qa_qc_instance *instance = body->instance;
-    if (body->slot >= instance->entity_count
-        || instance->slots[body->slot].kind != QA_QC_SLOT_OWNED)
-        return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot, "QuakeC body binding is retired");
-    qa_actor_id actor = instance->slots[body->slot].actor;
-    qa_body_state state = {0};
-    if (!field_vector(instance, body->slot, instance->program->engine_fields.origin, qa_v3(0,0,0), &state.origin, error)
-        || !field_vector(instance, body->slot, instance->program->engine_fields.angles, qa_v3(0,0,0), &state.angles, error)
-        || !field_vector(instance, body->slot, instance->program->engine_fields.velocity, qa_v3(0,0,0), &state.velocity, error)
-        || !field_vector(instance, body->slot, instance->program->engine_fields.mins, qa_v3(0,0,0), &state.bounds.mins, error)
-        || !field_vector(instance, body->slot, instance->program->engine_fields.maxs, qa_v3(0,0,0), &state.bounds.maxs, error)) return false;
-    const qa_qc_definition *ground = instance->program->engine_fields.groundentity;
-    int32_t reference;
-    if (ground != NULL) {
-        if (ground->type != QA_QC_ENTITY)
-            return qc_fail(error, QA_ERROR_FORMAT, ground->offset,
-                           "QuakeC groundentity field has the wrong type");
-        if (!qa_qc_entity_int(instance, reference_of(instance, body->slot),
-                              ground->offset, &reference, error)) return false;
-        uint32_t target;
-        if (!qc_entity_slot(instance, reference, &target, error)) return false;
-        state.ground = instance->slots[target].kind == QA_QC_SLOT_BORROWED ?
-            qa_actor_reference_lifetime(instance->slots[target].actor) :
-            qa_actor_reference_source(instance->options.host.owner, target);
-    }
-    if (!slot_matches(instance, body->slot, QA_QC_SLOT_OWNED, actor))
-        return qc_fail(error, QA_ERROR_NOT_FOUND, body->slot,
-                       "QuakeC body changed during source read");
-    *out = state;
+    *out = NULL;
+    if (!definition) return true;
+    if (definition->type != type)
+        return qc_fail(error, QA_ERROR_FORMAT, definition->offset,
+            "QuakeC body field has the wrong type");
+    if (!qc_entity_range(instance, slot, definition->offset, width, error)) return false;
+    *out = qc_entity_words_const(instance, slot) + (size_t)definition->offset * 4u;
     return true;
 }
 
-static bool body_read(void *context, qa_body_state *out, qa_error *error)
+bool qa_qc_entity_body_fields(qa_qc_instance *instance, uint32_t slot,
+    const qa_entity_body_fields **out, qa_error *error)
 {
-    qc_body_context *body = context;
-    qa_qc_instance *instance = body->instance;
-    if (instance->callback_depth == UINT32_MAX)
-        return qc_fail(error, QA_ERROR_ARGUMENT, body->slot,
-                       "QuakeC body callback depth exhausted");
-    ++instance->callback_depth;
-    bool ok = body_read_impl(context, out, error);
-    --instance->callback_depth;
-    return ok;
+    if (!instance || !out || slot >= instance->entity_count)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Invalid QuakeC body row");
+    const qa_qc_game_fields *resolved = &instance->program->engine_fields;
+    const uint8_t *origin, *angles, *velocity, *minimum, *maximum, *ground;
+    if (!live_field(instance, slot, resolved->origin, QA_QC_VECTOR, 3, &origin, error) ||
+        !live_field(instance, slot, resolved->angles, QA_QC_VECTOR, 3, &angles, error) ||
+        !live_field(instance, slot, resolved->velocity, QA_QC_VECTOR, 3, &velocity, error) ||
+        !live_field(instance, slot, resolved->mins, QA_QC_VECTOR, 3, &minimum, error) ||
+        !live_field(instance, slot, resolved->maxs, QA_QC_VECTOR, 3, &maximum, error) ||
+        !live_field(instance, slot, resolved->groundentity, QA_QC_ENTITY, 1, &ground, error))
+        return false;
+    qa_entity_body_fields fields = {
+        .velocity = qa_entity_vector_bytes(velocity),
+        .minimum = qa_entity_vector_bytes(minimum),
+        .maximum = qa_entity_vector_bytes(maximum),
+        .ground = {ground, ground ? QA_ENTITY_I32_LE : QA_ENTITY_NO_FIELD},
+        .references = &instance->references
+    };
+    for (size_t i = 0; i < QA_ENTITY_POSE_COUNT; ++i) {
+        fields.pose[i].origin = qa_entity_vector_bytes(origin);
+        fields.pose[i].angles = qa_entity_vector_bytes(angles);
+    }
+    instance->bodies[slot].fields = fields;
+    *out = &instance->bodies[slot].fields;
+    return true;
+}
+
+bool qa_qc_entity_collision_fields(const qa_qc_instance *instance, uint32_t slot,
+    qa_entity_collision_fields *out, qa_error *error)
+{
+    if (!instance || !out || slot >= instance->entity_count)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "Invalid QuakeC collision row");
+    const qa_qc_game_fields *resolved = &instance->program->engine_fields;
+    if (!resolved->solid || !resolved->flags || !resolved->owner)
+        return qc_fail(error, QA_ERROR_FORMAT, slot, "QuakeC collision fields are missing");
+    const uint8_t *solid, *flags, *owner, *model;
+    if (!live_field(instance, slot, resolved->solid, QA_QC_FLOAT, 1, &solid, error) ||
+        !live_field(instance, slot, resolved->flags, QA_QC_FLOAT, 1, &flags, error) ||
+        !live_field(instance, slot, resolved->owner, QA_QC_ENTITY, 1, &owner, error) ||
+        !live_field(instance, slot, resolved->modelindex, QA_QC_FLOAT, 1, &model, error))
+        return false;
+    *out = (qa_entity_collision_fields){.family = QA_COLLISION_Q1,
+        .rerelease = instance->options.profile == QA_QC_RERELEASE,
+        .solid = {solid, QA_ENTITY_F32_LE}, .flags = {flags, QA_ENTITY_F32_LE},
+        .owner = {owner, QA_ENTITY_I32_LE},
+        .model = {model, model ? QA_ENTITY_F32_LE : QA_ENTITY_NO_FIELD},
+        .references = &instance->references};
+    return true;
 }
 
 static bool body_write_impl(void *context, const qa_body_state *state,
@@ -1126,11 +1147,10 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
                        "QuakeC body source is unavailable");
     qa_actor_id actor = instance->slots[slot].actor;
     qa_world *world = instance->options.host.world;
+    const qa_entity_body_fields *fields;
     qa_body_state state;
-    if (!body_read(&instance->bodies[slot], &state, error)) return false;
-    if (!slot_matches(instance, slot, QA_QC_SLOT_OWNED, actor))
-        return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
-                       "QuakeC body source changed during synchronization");
+    if (!qa_qc_entity_body_fields(instance, slot, &fields, error) ||
+        !qa_entity_body_read(fields, QA_ENTITY_CONTROL_POSE, &state, error)) return false;
     qa_body_state existing;
     bool has_body;
     if (!read_body_optional(world, actor, &existing, &has_body, error)) return false;
@@ -1139,7 +1159,7 @@ bool qc_sync_body_from_fields(qa_qc_instance *instance, uint32_t slot,
                        "QuakeC body source changed during world read");
     if (!has_body && !qa_world_body_create(world, actor, &state, error)) return false;
     qa_body_binding binding = {
-        &instance->bodies[slot], body_read, body_write, body_linked
+        &instance->bodies[slot], fields, body_write, body_linked
     };
     return qa_world_body_bind(world, actor, &binding, true, error);
 }

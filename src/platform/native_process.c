@@ -9,6 +9,7 @@
 #endif
 #include "qa/native_process_platform.h"
 #include "qa/platform_services.h"
+#include "qa/text.h"
 #include "qa/source_save.h"
 #include "qa/native_windows_locale_save.h"
 
@@ -19,6 +20,7 @@
 #include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
+#include <wchar.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
@@ -33,6 +35,10 @@
 #endif
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 typedef struct platform_handle { size_t references; } platform_handle;
@@ -69,6 +75,265 @@ bool qa_native_process_platform_native_error_read(const qa_native_process_platfo
 }
 static bool fail(qa_error *error, qa_status status, const char *message)
 { qa_error_set(error, status, 0, "%s", message); return false; }
+void qa_native_process_environment_dispose(qa_native_process_environment *environment)
+{
+    if (!environment) return;
+    for (size_t i = 0; i < environment->count; ++i) free(environment->values[i]);
+    free(environment->values);
+    free(environment->windows_values);
+    free(environment->executable);
+    free(environment->executable_directory);
+    for (size_t i = 0; i < environment->root_count; ++i) free(environment->root_paths[i]);
+    free(environment->root_paths);
+    *environment = (qa_native_process_environment){0};
+}
+#if defined(_WIN32)
+static char *process_utf8(const wchar_t *wide, qa_error *error)
+{
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1, NULL, 0, NULL, NULL);
+    if (count <= 0) {
+        qa_error_set(error, QA_ERROR_IO, GetLastError(), "Converting inherited process text to UTF-8");
+        return NULL;
+    }
+    char *text = malloc((size_t)count);
+    if (!text) { fail(error, QA_ERROR_MEMORY, "Owning inherited process text"); return NULL; }
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1, text, count, NULL, NULL)) {
+        qa_error_set(error, QA_ERROR_IO, GetLastError(), "Converting inherited process text to UTF-8");
+        free(text); return NULL;
+    }
+    return text;
+}
+static bool process_drive_roots(qa_native_process_environment *out, qa_error *error)
+{
+    DWORD capacity = GetLogicalDriveStringsW(0, NULL);
+    if (!capacity) {
+        qa_error_set(error, QA_ERROR_IO, GetLastError(), "Acquiring logical filesystem roots");
+        return false;
+    }
+    for (;;) {
+        size_t bytes = (size_t)capacity * sizeof(wchar_t);
+        if (bytes / sizeof(wchar_t) != capacity)
+            return fail(error, QA_ERROR_MEMORY, "Logical filesystem roots exceed native storage");
+        wchar_t *paths = malloc(bytes);
+        if (!paths) return fail(error, QA_ERROR_MEMORY, "Owning logical filesystem roots");
+        DWORD length = GetLogicalDriveStringsW(capacity, paths);
+        if (!length) {
+            DWORD code = GetLastError(); free(paths);
+            qa_error_set(error, QA_ERROR_IO, code, "Acquiring logical filesystem roots");
+            return false;
+        }
+        if (length >= capacity) { free(paths); capacity = length; continue; }
+        size_t count = 0;
+        for (const wchar_t *path = paths; *path; path += wcslen(path) + 1) ++count;
+        bool okay = count < SIZE_MAX / sizeof(*out->root_paths);
+        if (okay) out->root_paths = calloc(count + 1, sizeof(*out->root_paths));
+        if (!okay || !out->root_paths) {
+            free(paths);
+            return fail(error, QA_ERROR_MEMORY, "Owning logical filesystem root paths");
+        }
+        out->root_count = count;
+        const wchar_t *path = paths;
+        for (size_t i = 0; i < count; ++i, path += wcslen(path) + 1) {
+            out->root_paths[i] = process_utf8(path, error);
+            if (!out->root_paths[i]) { free(paths); return false; }
+        }
+        free(paths); return true;
+    }
+}
+#endif
+#if !defined(_WIN32)
+static bool process_windows_environment(qa_native_process_environment *out, qa_error *error)
+{
+    size_t units = out->count ? 1 : 2;
+    for (size_t i = 0; i < out->count; ++i) {
+        qa_bytes text = {(const uint8_t *)out->values[i], strlen(out->values[i])};
+        size_t cursor = 0; uint32_t scalar;
+        while (qa_utf8_next(text, &cursor, &scalar)) {
+            size_t added = scalar > 0xffff ? 2 : 1;
+            if (units > SIZE_MAX - added)
+                return fail(error, QA_ERROR_MEMORY, "Inherited environment exceeds UTF-16 storage");
+            units += added;
+        }
+        if (units == SIZE_MAX)
+            return fail(error, QA_ERROR_MEMORY, "Inherited environment exceeds UTF-16 storage");
+        ++units;
+    }
+    if (units > SIZE_MAX / sizeof(*out->windows_values))
+        return fail(error, QA_ERROR_MEMORY, "Inherited environment exceeds UTF-16 storage");
+    out->windows_values = calloc(units, sizeof(*out->windows_values));
+    if (!out->windows_values)
+        return fail(error, QA_ERROR_MEMORY, "Owning inherited Windows environment");
+    out->windows_units = units;
+    size_t written = 0;
+    for (size_t i = 0; i < out->count; ++i) {
+        qa_bytes text = {(const uint8_t *)out->values[i], strlen(out->values[i])};
+        size_t cursor = 0; uint32_t scalar;
+        while (qa_utf8_next(text, &cursor, &scalar)) {
+            if (scalar > 0xffff) {
+                scalar -= 0x10000;
+                out->windows_values[written++] = (uint16_t)(0xd800 + (scalar >> 10));
+                out->windows_values[written++] = (uint16_t)(0xdc00 + (scalar & 0x3ff));
+            } else out->windows_values[written++] = (uint16_t)scalar;
+        }
+        ++written;
+    }
+    return true;
+}
+#endif
+static bool process_environment_values(qa_native_process_environment *out, qa_error *error)
+{
+#if defined(_WIN32)
+    wchar_t *native = GetEnvironmentStringsW();
+    if (!native) {
+        qa_error_set(error, QA_ERROR_IO, GetLastError(), "Acquiring inherited process environment");
+        return false;
+    }
+    size_t count = 0, units = 1;
+    for (const wchar_t *entry = native; *entry; entry += wcslen(entry) + 1) {
+        ++count; units += wcslen(entry) + 1;
+    }
+    if (!count) units = 2;
+    if (units > SIZE_MAX / sizeof(*out->windows_values)) {
+        FreeEnvironmentStringsW(native);
+        return fail(error, QA_ERROR_MEMORY, "Inherited environment exceeds UTF-16 storage");
+    }
+    out->windows_values = malloc(units * sizeof(*out->windows_values));
+    if (!out->windows_values) {
+        FreeEnvironmentStringsW(native);
+        return fail(error, QA_ERROR_MEMORY, "Owning inherited Windows environment");
+    }
+    memcpy(out->windows_values, native, units * sizeof(*out->windows_values));
+    out->windows_units = units;
+#else
+#if defined(__APPLE__)
+    char **native = *_NSGetEnviron();
+#else
+    extern char **environ;
+    char **native = environ;
+#endif
+    size_t count = 0;
+    while (native && native[count]) ++count;
+#endif
+    bool okay = count < SIZE_MAX / sizeof(*out->values);
+    if (okay) out->values = calloc(count + 1, sizeof(*out->values));
+    if (!okay || !out->values) {
+        fail(error, QA_ERROR_MEMORY, "Owning inherited process environment"); okay = false;
+    } else {
+        out->count = count;
+#if defined(_WIN32)
+        const wchar_t *entry = native;
+        for (size_t i = 0; i < count; ++i, entry += wcslen(entry) + 1) {
+            out->values[i] = process_utf8(entry, error);
+            if (!out->values[i]) { okay = false; break; }
+        }
+#else
+        for (size_t i = 0; i < count; ++i) {
+            out->values[i] = strdup(native[i]);
+            if (!out->values[i]) {
+                fail(error, QA_ERROR_MEMORY, "Owning inherited process environment entry");
+                okay = false; break;
+            }
+        }
+#endif
+    }
+#if defined(_WIN32)
+    FreeEnvironmentStringsW(native);
+#else
+    if (okay) okay = process_windows_environment(out, error);
+#endif
+    return okay;
+}
+static bool process_executable(char **out, qa_error *error)
+{
+    size_t capacity = 256;
+    for (;;) {
+#if defined(_WIN32)
+        if (capacity > UINT32_MAX || capacity > SIZE_MAX / sizeof(wchar_t)) break;
+        wchar_t *path = malloc(capacity * sizeof(*path));
+        if (!path) return fail(error, QA_ERROR_MEMORY, "Owning current executable path");
+        DWORD length = GetModuleFileNameW(NULL, path, (DWORD)capacity);
+        if (!length) {
+            DWORD code = GetLastError(); free(path);
+            qa_error_set(error, QA_ERROR_IO, code, "Acquiring current executable path");
+            return false;
+        }
+        if ((size_t)length < capacity) {
+            path[length] = 0;
+            *out = process_utf8(path, error); free(path);
+            return *out != NULL;
+        }
+        free(path);
+#elif defined(__APPLE__)
+        if (capacity > UINT32_MAX) break;
+        char *path = malloc(capacity);
+        if (!path) return fail(error, QA_ERROR_MEMORY, "Owning current executable path");
+        uint32_t needed = (uint32_t)capacity;
+        if (!_NSGetExecutablePath(path, &needed)) {
+            *out = realpath(path, NULL);
+            int code = errno; free(path);
+            if (*out) return true;
+            qa_error_set(error, QA_ERROR_IO, (uint64_t)code, "Resolving current executable path");
+            return false;
+        }
+        free(path);
+        if (needed > capacity) { capacity = needed; continue; }
+#elif defined(__linux__)
+        char *path = malloc(capacity);
+        if (!path) return fail(error, QA_ERROR_MEMORY, "Owning current executable path");
+        ssize_t length = readlink("/proc/self/exe", path, capacity - 1);
+        if (length < 0) {
+            int code = errno; free(path);
+            qa_error_set(error, QA_ERROR_IO, (uint64_t)code, "Acquiring current executable path");
+            return false;
+        }
+        if ((size_t)length < capacity - 1) {
+            path[length] = 0; *out = path; return true;
+        }
+        free(path);
+#else
+        (void)out;
+        return fail(error, QA_ERROR_UNSUPPORTED, "Current executable path is unavailable on this platform");
+#endif
+        if (capacity > SIZE_MAX / 2) break;
+        capacity *= 2;
+    }
+    return fail(error, QA_ERROR_MEMORY, "Current executable path exceeds native storage");
+}
+bool qa_native_process_environment_acquire(qa_native_process_environment *out, qa_error *error)
+{
+    if (!out) return fail(error, QA_ERROR_ARGUMENT, "Inherited process output is required");
+    qa_native_process_environment acquired = {0};
+    if (!process_environment_values(&acquired, error) || !process_executable(&acquired.executable, error)) {
+        qa_native_process_environment_dispose(&acquired); return false;
+    }
+    const char *separator = strrchr(acquired.executable, '/');
+#if defined(_WIN32)
+    const char *backslash = strrchr(acquired.executable, '\\');
+    if (backslash && (!separator || backslash > separator)) separator = backslash;
+#endif
+    if (!separator) {
+        qa_native_process_environment_dispose(&acquired);
+        return fail(error, QA_ERROR_IO, "Current executable has no absolute directory");
+    }
+    size_t length = (size_t)(separator - acquired.executable);
+    if (!length) length = 1;
+#if defined(_WIN32)
+    if (length == 2 && acquired.executable[1] == ':') ++length;
+#endif
+    acquired.executable_directory = malloc(length + 1);
+    if (!acquired.executable_directory) {
+        qa_native_process_environment_dispose(&acquired);
+        return fail(error, QA_ERROR_MEMORY, "Owning current executable directory");
+    }
+    memcpy(acquired.executable_directory, acquired.executable, length);
+    acquired.executable_directory[length] = 0;
+#if defined(_WIN32)
+    if (!process_drive_roots(&acquired, error)) {
+        qa_native_process_environment_dispose(&acquired); return false;
+    }
+#endif
+    *out = acquired; return true;
+}
 static bool platform_fail_errno(const qa_native_process_platform *owner, int code, qa_error *error, const char *message)
 {
     native_error_owner = owner;
@@ -345,6 +610,18 @@ bool qa_native_process_platform_entropy(void *context, void *out, size_t bytes, 
     return platform_fail_errno(owner,(int)failure.offset,error,"Reading actual platform entropy");
 #endif
 }
+bool qa_native_process_platform_random(void *context, void *out, size_t bytes,
+    uint32_t flags, size_t *completed, int32_t *native_errno, qa_error *error)
+{
+    if (!qa_native_process_platform_current(context, error)) return false;
+    return qa_platform_random(out, bytes, flags, completed, native_errno, error);
+}
+bool qa_native_process_platform_temporary_root(void *context, qa_fs_root **out,
+    qa_error *error)
+{
+    return qa_native_process_platform_current(context, error) &&
+        qa_fs_root_temporary_create(out, error);
+}
 bool qa_native_process_platform_milliseconds(void *context, int64_t *out, qa_error *error)
 {
     if (!out || !qa_native_process_platform_current(context, error)) return false;
@@ -463,6 +740,12 @@ bool qa_native_process_platform_compare_string(void *context, uint32_t locale, u
     return fail(error,QA_ERROR_UNSUPPORTED,"Native platform has no Windows NLS provider");
 #endif
 }
+bool qa_native_process_platform_sysv_calendar(void *context, int64_t milliseconds, bool local,
+    qa_platform_calendar_fields *out, qa_error *error)
+{
+    return qa_native_process_platform_current(context, error) &&
+        qa_platform_calendar(milliseconds, local, out, error);
+}
 bool qa_native_process_platform_calendar(void *context, int64_t milliseconds, bool local,
     qa_native_windows_calendar *out, qa_error *error)
 {
@@ -501,46 +784,39 @@ bool qa_native_process_platform_linux_clock_read(qa_native_process_platform *own
     int32_t id, int64_t *seconds, int32_t *nanoseconds, qa_error *error)
 {
     if (!seconds || !nanoseconds || !qa_native_process_platform_current(owner, error)) return false;
-#if defined(__linux__)
     qa_platform_clock_kind kind;
+    /* Linux source clock IDs retain their ABI on every controller host. */
     switch (id) {
-    case CLOCK_REALTIME: kind=QA_PLATFORM_CLOCK_REALTIME; break;
-    case CLOCK_MONOTONIC: kind=QA_PLATFORM_CLOCK_MONOTONIC; break;
-#if defined(CLOCK_MONOTONIC_RAW)
-    case CLOCK_MONOTONIC_RAW: kind=QA_PLATFORM_CLOCK_MONOTONIC_RAW; break;
-#endif
-#if defined(CLOCK_REALTIME_COARSE)
-    case CLOCK_REALTIME_COARSE: kind=QA_PLATFORM_CLOCK_REALTIME_COARSE; break;
-#endif
-#if defined(CLOCK_MONOTONIC_COARSE)
-    case CLOCK_MONOTONIC_COARSE: kind=QA_PLATFORM_CLOCK_MONOTONIC_COARSE; break;
-#endif
-#if defined(CLOCK_BOOTTIME)
-    case CLOCK_BOOTTIME: kind=QA_PLATFORM_CLOCK_BOOTTIME; break;
-#endif
-#if defined(CLOCK_REALTIME_ALARM)
-    case CLOCK_REALTIME_ALARM: kind=QA_PLATFORM_CLOCK_REALTIME_ALARM; break;
-#endif
-#if defined(CLOCK_BOOTTIME_ALARM)
-    case CLOCK_BOOTTIME_ALARM: kind=QA_PLATFORM_CLOCK_BOOTTIME_ALARM; break;
-#endif
-#if defined(CLOCK_TAI)
-    case CLOCK_TAI: kind=QA_PLATFORM_CLOCK_TAI; break;
-#endif
-    case CLOCK_PROCESS_CPUTIME_ID: case CLOCK_THREAD_CPUTIME_ID:
+    case 0: kind = QA_PLATFORM_CLOCK_REALTIME; break;
+    case 1: kind = QA_PLATFORM_CLOCK_MONOTONIC; break;
+    case 4: kind = QA_PLATFORM_CLOCK_MONOTONIC_RAW; break;
+    case 5: kind = QA_PLATFORM_CLOCK_REALTIME_COARSE; break;
+    case 6: kind = QA_PLATFORM_CLOCK_MONOTONIC_COARSE; break;
+    case 7: kind = QA_PLATFORM_CLOCK_BOOTTIME; break;
+    case 8: kind = QA_PLATFORM_CLOCK_REALTIME_ALARM; break;
+    case 9: kind = QA_PLATFORM_CLOCK_BOOTTIME_ALARM; break;
+    case 11: kind = QA_PLATFORM_CLOCK_TAI; break;
+    case 2: case 3:
         return fail(error, QA_ERROR_UNSUPPORTED, "Source CPU clock requires its actual task owner");
     default:
         return fail(error, QA_ERROR_UNSUPPORTED, "Linux clock ID is outside the retained global-clock capability");
     }
-    qa_platform_timespec time; qa_error failure={0};
-    if (!qa_platform_clock_read(kind,&time,&failure))
-        return platform_fail_errno(owner,(int)failure.offset,error,"Reading actual Linux global clock");
-    *seconds=time.seconds; *nanoseconds=time.nanoseconds;
-    return true;
+    qa_platform_timespec time; qa_error failure = {0};
+    if (!qa_platform_clock_read(kind, &time, &failure)) {
+        if (failure.code == QA_ERROR_UNSUPPORTED) {
+            if (error) *error = failure;
+            return false;
+        }
+#if defined(_WIN32)
+        return platform_fail_windows(owner, (DWORD)failure.offset, error,
+            "Reading actual global clock");
 #else
-    (void)id;
-    return fail(error, QA_ERROR_UNSUPPORTED, "Actual Linux clock producer is unavailable on this operating system");
+        return platform_fail_errno(owner, (int)failure.offset, error,
+            "Reading actual global clock");
 #endif
+    }
+    *seconds = time.seconds; *nanoseconds = time.nanoseconds;
+    return true;
 }
 bool qa_native_process_platform_file_status(qa_native_process_platform *owner, uint64_t id,
     qa_fs_posix_status *out, qa_error *error)

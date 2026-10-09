@@ -22,13 +22,12 @@ static bool checkpoint_ready(qa_native_instance *instance, qa_error *error) {
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance is required for checkpointing");
     if (instance->active_depth || instance->callback_depth || instance->region_depth ||
-        instance->region_service_depth || instance->write_depth || instance->region_scopes ||
+        instance->write_depth || instance->region_scopes ||
         instance->write_scope || instance->call_scope || instance->checkpointing ||
         instance->destroying || instance->unloading ||
-        (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
-         !(instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
+        !(instance->process_kind == QA_NATIVE_PROCESS_SYSV ?
              qa_native_sysv_process_idle(instance->sysv_process) :
-             qa_native_windows_process_idle(instance->windows_process))))
+             qa_native_windows_process_idle(instance->windows_process)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native checkpoint requires an idle instance");
     return true;
@@ -46,16 +45,69 @@ static bool call_entry(qa_native_instance *instance, const char *name,
     return native_call_binding(instance, entry, arguments, count, result, error);
 }
 
-static bool empty_file(const char *directory, const char *name, char **out, qa_error *error) {
-    return native_temp_file(directory, name, (qa_bytes){0}, out, error);
+static bool temporary_create(qa_native_instance *instance,
+    native_process_temporary **out, qa_error *error) {
+    native_process_temporary *temporary = calloc(1, sizeof(*temporary));
+    if (!temporary) return native_fail(error, QA_ERROR_MEMORY, 0, "owning native save directory");
+    if (!qa_fs_root_temporary_create(&temporary->root, error)) { free(temporary); return false; }
+    temporary->next = instance->process_temporaries;
+    instance->process_temporaries = temporary;
+    *out = temporary;
+    return true;
+}
+
+static bool temporary_release(qa_native_instance *instance, native_process_temporary *temporary,
+    bool okay, qa_error *error) {
+    qa_error cleanup = {0};
+    bool released = !temporary->resource_root || instance->process_resources.root_remove(
+        instance->process_resources.context, temporary->resource_root, &cleanup);
+    if (released) {
+        temporary->resource_root = 0;
+        released = qa_fs_root_temporary_dispose(&temporary->root, &cleanup);
+    }
+    if (released) {
+        native_process_temporary **link = &instance->process_temporaries;
+        while (*link != temporary) link = &(*link)->next;
+        *link = temporary->next;
+        free(temporary);
+    }
+    if (okay && !released && error) *error = cleanup;
+    return okay && released;
+}
+
+static bool temporary_file(native_process_temporary *temporary, const char *name,
+    qa_bytes bytes, char **out, qa_error *error) {
+    qa_fs_stream *stream = NULL;
+    if (!qa_fs_root_stream_open(temporary->root, name, QA_FS_STREAM_WRITE, false, &stream, NULL, error))
+        return false;
+    bool okay = true;
+    size_t offset = 0;
+    while (okay && offset < bytes.size) {
+        size_t written = 0;
+        okay = qa_fs_stream_write_some(stream, (qa_bytes){bytes.data + offset, bytes.size - offset},
+            offset, &written, error);
+        if (okay && !written) okay = native_fail(error, QA_ERROR_IO, offset, "native save file made no write progress");
+        offset += written;
+    }
+    qa_error cleanup = {0};
+    bool closed = qa_fs_stream_close_checked(stream, &cleanup);
+    if (okay && !closed && error) *error = cleanup;
+    return okay && closed && qa_fs_root_join(temporary->root, name, out, error);
+}
+
+static bool temporary_read(native_process_temporary *temporary, const char *name,
+    qa_buffer *out, qa_error *error) {
+    qa_fs_file *file = NULL;
+    qa_fs_identity identity;
+    if (!qa_fs_root_file_open(temporary->root, name, &file, &identity, error)) return false;
+    bool okay = qa_fs_file_read_snapshot(file, &identity, out, error);
+    qa_fs_file_close(file);
+    return okay;
 }
 
 static bool source_string(qa_native_instance *instance, const char *text,
     qa_native_address *out, qa_error *error)
 {
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) {
-        *out = (qa_native_address)(uintptr_t)text; return true;
-    }
     size_t bytes = strlen(text) + 1;
     return qa_native_allocate(instance, bytes, INT32_C(0x4e534156), out, error) &&
         qa_native_write(instance, *out, (qa_bytes){(const uint8_t *)text, bytes}, error);
@@ -64,7 +116,7 @@ static bool source_string(qa_native_instance *instance, const char *text,
 static bool release_source_string(qa_native_instance *instance, qa_native_address address,
     bool okay, qa_error *error)
 {
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS || !address) return okay;
+    if (!address) return okay;
     qa_error cleanup = {0};
     bool released = qa_native_free(instance, address, &cleanup);
     if (okay && !released && error) *error = cleanup;
@@ -72,37 +124,31 @@ static bool release_source_string(qa_native_instance *instance, qa_native_addres
 }
 
 typedef struct source_file {
-    uint64_t root, handle;
+    uint64_t handle;
     qa_native_sysv_file capability;
     qa_native_windows_file windows_capability;
     bool opened, registered;
 } source_file;
 
-static bool source_file_admit(qa_native_instance *instance, const char *directory,
+static bool source_file_admit(qa_native_instance *instance, native_process_temporary *temporary,
     const char *path, bool write, source_file *file, qa_error *error)
 {
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return true;
     if (!instance->process_resources.context)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native save file requires its retained resource graph");
-    native_process_temporary *retained = calloc(1, sizeof(*retained));
-    if (retained) retained->directory = native_strdup(directory, error);
-    if (!retained || !retained->directory) {
-        free(retained);
-        return native_fail(error, QA_ERROR_MEMORY, 0, "holding actual native save directory lifetime");
-    }
-    retained->next = instance->process_temporaries; instance->process_temporaries = retained;
-    size_t length = strlen(directory);
-    if (length > SIZE_MAX - 2) return native_fail(error, QA_ERROR_MEMORY, 0, "native save directory prefix overflows");
-    char *prefix = malloc(length + 2);
-    if (!prefix) return native_fail(error, QA_ERROR_MEMORY, 0, "holding native save directory prefix");
-    memcpy(prefix, directory, length); prefix[length] = '/'; prefix[length + 1] = 0;
-    qa_fs_root *root = NULL;
-    bool okay = qa_fs_root_open(directory, &root, error);
     uint32_t mode = QA_FS_OPENED_READ | (write ? QA_FS_OPENED_WRITE : 0u);
-    if (okay) okay = instance->process_resources.root_add(instance->process_resources.context,
-        prefix,root,mode,&file->root,error);
-    qa_fs_root_close(root); free(prefix);
-    if (!okay) return false;
+    bool okay = true;
+    if (!temporary->resource_root) {
+        char *directory = NULL;
+        if (!qa_fs_root_join(temporary->root, "", &directory, error)) return false;
+        size_t length = strlen(directory);
+        char *prefix = realloc(directory, length + 2);
+        if (!prefix) { free(directory); return native_fail(error, QA_ERROR_MEMORY, 0, "owning native save directory prefix"); }
+        prefix[length] = '/'; prefix[length + 1] = 0;
+        okay = instance->process_resources.root_add(instance->process_resources.context,
+            prefix, temporary->root, mode, &temporary->resource_root, error);
+        free(prefix);
+        if (!okay) return false;
+    }
     bool windows = instance->process_kind == QA_NATIVE_PROCESS_WINDOWS;
     okay = windows ? instance->process_resources.open_windows_file(instance->process_resources.context, path, mode,
         QA_FS_OPEN_EXISTING, &file->windows_capability, &file->opened, error) :
@@ -124,7 +170,6 @@ static bool source_file_admit(qa_native_instance *instance, const char *director
 static bool source_file_release(qa_native_instance *instance, source_file *file,
     bool okay, qa_error *error)
 {
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) return okay;
     qa_error cleanup = {0}; bool closed = true;
     bool windows = instance->process_kind == QA_NATIVE_PROCESS_WINDOWS;
     if (file->registered) {
@@ -134,46 +179,45 @@ static bool source_file_release(qa_native_instance *instance, source_file *file,
             qa_native_sysv_process_file_remove(instance->sysv_process, file->handle, &cleanup);
     } else if (file->opened) closed = windows ? file->windows_capability.close(file->windows_capability.context, &cleanup) :
         file->capability.close(file->capability.context, &cleanup);
-    if (closed && file->root)
-        closed = instance->process_resources.root_remove(instance->process_resources.context, file->root, &cleanup);
     if (okay && !closed && error) *error = cleanup;
     return okay && closed;
 }
 
 static bool capture_classic(qa_native_instance *instance, qa_native_checkpoint_request request,
                             qa_native_checkpoint *checkpoint, qa_error *error) {
-    char *directory = NULL, *game_path = NULL, *level_path = NULL;
-    if (!native_temp_directory(&directory, error))
+    native_process_temporary *temporary = NULL;
+    char *game_path = NULL, *level_path = NULL;
+    if (!temporary_create(instance, &temporary, error))
         return false;
     bool ok = true;
     if (request.game) {
-        ok = empty_file(directory, "game.ssv", &game_path, error);
+        ok = temporary_file(temporary, "game.ssv", (qa_bytes){0}, &game_path, error);
         if (ok) {
             source_file file = {0};
             qa_native_address source = 0;
-            ok = source_file_admit(instance, directory, game_path, true, &file, error) &&
+            ok = source_file_admit(instance, temporary, game_path, true, &file, error) &&
                 source_string(instance, game_path, &source, error);
             qa_native_value arguments[] = {
                 {.type = QA_NATIVE_ADDRESS, .as.address = source},
                 {.type = QA_NATIVE_I32, .as.i32 = request.autosave ? 1 : 0}};
             ok = ok && call_entry(instance, "WriteGame", arguments, 2, NULL, error) &&
-                 native_read_file(game_path, &checkpoint->game, error);
+                 temporary_read(temporary, "game.ssv", &checkpoint->game, error);
             ok = release_source_string(instance, source, ok, error);
             ok = source_file_release(instance, &file, ok, error);
         }
         checkpoint->has_game = ok;
     }
     if (ok && request.level) {
-        ok = empty_file(directory, "level.sav", &level_path, error);
+        ok = temporary_file(temporary, "level.sav", (qa_bytes){0}, &level_path, error);
         if (ok) {
             source_file file = {0};
             qa_native_address source = 0;
-            ok = source_file_admit(instance, directory, level_path, true, &file, error) &&
+            ok = source_file_admit(instance, temporary, level_path, true, &file, error) &&
                 source_string(instance, level_path, &source, error);
             qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
                                         .as.address = source};
             ok = ok && call_entry(instance, "WriteLevel", &argument, 1, NULL, error) &&
-                 native_read_file(level_path, &checkpoint->level, error);
+                 temporary_read(temporary, "level.sav", &checkpoint->level, error);
             ok = release_source_string(instance, source, ok, error);
             ok = source_file_release(instance, &file, ok, error);
         }
@@ -181,23 +225,20 @@ static bool capture_classic(qa_native_instance *instance, qa_native_checkpoint_r
     }
     free(game_path);
     free(level_path);
-    if (ok || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) native_remove_tree(directory);
-    free(directory);
-    return ok;
+    return temporary_release(instance, temporary, ok, error);
 }
 
 static bool capture_json_entry(qa_native_instance *instance, const char *entry_name, bool flag,
                                qa_buffer *out, qa_error *error) {
     uint64_t length = 0;
-    qa_native_address source_length = (qa_native_address)(uintptr_t)&length;
-    bool owned = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS;
-    if (owned && !qa_native_allocate(instance, sizeof(length), INT32_C(0x4e534156), &source_length, error)) return false;
+    qa_native_address source_length = 0;
+    if (!qa_native_allocate(instance, sizeof(length), INT32_C(0x4e534156), &source_length, error)) return false;
     qa_native_value arguments[] = {
         {.type = QA_NATIVE_U8, .as.u8 = flag ? 1u : 0u},
         {.type = QA_NATIVE_ADDRESS, .as.address = source_length}};
     qa_native_value result = {0};
     bool called = call_entry(instance, entry_name, arguments, 2, &result, error);
-    if (called && owned) called = qa_native_read(instance, source_length, &length, sizeof(length), error);
+    if (called) called = qa_native_read(instance, source_length, &length, sizeof(length), error);
     called = release_source_string(instance, source_length, called, error);
     if (!called)
         return false;
@@ -259,16 +300,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native checkpoint output is required");
     if (!checkpoint_ready(instance, error))
         return false;
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
-        instance->checkpointing = true;
-        bool ok = native_runner_checkpoint_capture(instance, request, out, error);
-        instance->checkpointing = false;
-        return ok;
-    }
     qa_native_profile profile = instance->module->info.profile;
-    if (profile == QA_NATIVE_Q2_CGAME_API2023 && instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                           "Q2 rerelease cgame has no source save API");
     if ((profile == QA_NATIVE_Q3_VMMAIN || profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) &&
         (!instance->options.checkpoint || !instance->options.restore))
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
@@ -299,8 +331,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
         ok = instance->options.checkpoint(instance->options.context, &checkpoint.host, error);
         checkpoint.has_host = ok;
     }
-    if (ok && instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
-        profile != QA_NATIVE_Q2_GAME_API3 && profile != QA_NATIVE_Q2_GAME_API2023) {
+    if (ok && profile != QA_NATIVE_Q2_GAME_API3 && profile != QA_NATIVE_Q2_GAME_API2023) {
         ok = checkpoint.has_host && instance->options.restore &&
             native_process_checkpoint_host(instance, (qa_bytes){checkpoint.host.data, checkpoint.host.size},
                 &checkpoint.process, error);
@@ -339,14 +370,15 @@ static bool same_identity(const qa_native_instance *instance,
 
 static bool restore_classic(qa_native_instance *instance, qa_bytes bytes, const char *file_name,
                             const char *entry_name, qa_error *error) {
-    char *directory = NULL, *path = NULL;
-    if (!native_temp_directory(&directory, error))
+    native_process_temporary *temporary = NULL;
+    char *path = NULL;
+    if (!temporary_create(instance, &temporary, error))
         return false;
-    bool ok = native_temp_file(directory, file_name, bytes, &path, error);
+    bool ok = temporary_file(temporary, file_name, bytes, &path, error);
     if (ok) {
         source_file file = {0};
         qa_native_address source = 0;
-        ok = source_file_admit(instance, directory, path, false, &file, error) &&
+        ok = source_file_admit(instance, temporary, path, false, &file, error) &&
             source_string(instance, path, &source, error);
         qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
                                     .as.address = source};
@@ -355,9 +387,7 @@ static bool restore_classic(qa_native_instance *instance, qa_bytes bytes, const 
         ok = source_file_release(instance, &file, ok, error);
     }
     free(path);
-    if (ok || instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) native_remove_tree(directory);
-    free(directory);
-    return ok;
+    return temporary_release(instance, temporary, ok, error);
 }
 
 static bool restore_json(qa_native_instance *instance, qa_bytes bytes, const char *entry_name,
@@ -399,13 +429,6 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
         if (instance->regions[i].first)
             return native_fail(error, QA_ERROR_ARGUMENT, i,
                                "native restore requires detached source region observers");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
-        native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
-        instance->checkpointing = true;
-        bool ok = native_runner_checkpoint_restore(instance, checkpoint, part, error);
-        instance->checkpointing = false;
-        return ok;
-    }
     bool present = part == QA_NATIVE_RESTORE_GAME    ? checkpoint->has_game
                    : part == QA_NATIVE_RESTORE_LEVEL ? checkpoint->has_level
                                                      : checkpoint->has_host;

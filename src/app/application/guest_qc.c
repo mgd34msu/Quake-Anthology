@@ -116,6 +116,27 @@ bool application_qc_resource_resolve_model(application_qc_resource *entry, qa_er
     entry->has_inline_model = true;
     return true;
 }
+bool application_qc_model_publish(struct application_qc_state *engine,
+                                    const application_qc_resource *entry,qa_error *error)
+{
+    if(entry->kind!=QA_QC_RESOURCE_MODEL) return true;
+    uint32_t index=entry->value.index;
+    if(index>=engine->model_fields.count) {
+        uint32_t count=engine->model_fields.count?engine->model_fields.count:32;
+        while(count<=index) count*=2;
+        qa_entity_model_field *columns=calloc(count,sizeof(*columns));
+        if(!columns) return application_fail(error,QA_ERROR_MEMORY,"Allocating source model columns");
+        if(engine->model_fields.entries)
+            memcpy(columns,engine->model_fields.entries,
+                   (size_t)engine->model_fields.count*sizeof(*columns));
+        free((void *)engine->model_fields.entries);
+        engine->model_fields=(qa_entity_model_fields){columns,count};
+    }
+    qa_entity_model_field *column=(qa_entity_model_field *)engine->model_fields.entries+index;
+    *column=(qa_entity_model_field){.model=entry->inline_model,.geometry=entry->geometry,
+        .present=entry->has_inline_model || entry->geometry!=NULL};
+    return true;
+}
 bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
                                       const char *name, bool precache,
                                       qa_qc_game_resource *out, qa_error *error)
@@ -177,6 +198,9 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
         }
     }
     if (!ok) {
+        application_qc_resource_dispose(&entry); return false;
+    }
+    if (!application_qc_model_publish(engine,&entry,error)) {
         application_qc_resource_dispose(&entry); return false;
     }
     engine->resources[engine->resource_count++] = entry;
@@ -1361,6 +1385,9 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             application_qc_resource_dispose(&engine->resources[i]);
         }
         engine->resource_count = 0;
+        if(engine->model_fields.entries)
+            memset((void *)engine->model_fields.entries,0,
+                   (size_t)engine->model_fields.count*sizeof(*engine->model_fields.entries));
         for (size_t i = 0; i < engine->message_count; ++i) {
             free(engine->messages[i].data); free(engine->messages[i].references);
         }
@@ -1396,6 +1423,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     engine->resources[engine->resource_count++] = (application_qc_resource){.name = world_name,
         .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .has_inline_model = true,
         .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
+    if(!application_qc_model_publish(engine,engine->resources+engine->resource_count-1,error)) return false;
     size_t model_count = qa_bsp_record_count(bsp, QA_BSP_MODELS);
     for (size_t i = 1; i < model_count; ++i) {
         char inline_name[32]; qa_qc_game_resource resource;
@@ -1488,6 +1516,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
+    free((void *)engine->model_fields.entries);
     free(engine->resources); free(engine->messages); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
     return true;

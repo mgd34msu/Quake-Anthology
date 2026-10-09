@@ -602,13 +602,6 @@ static void movement_output_owner(void)
     qa_collision_destroy(map.geometry);
 }
 
-static bool linked_box_collision(void *context, qa_actor_collision *out, qa_error *error)
-{
-    (void)error;
-    *out = *(qa_actor_collision *)context;
-    return true;
-}
-
 static void exiting_body_over_world_hit(void)
 {
     qa_error error = {0};
@@ -622,11 +615,24 @@ static void exiting_body_over_world_hit(void)
     GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
     qa_body_state body = {.origin = {0, 0, 24}, .bounds = {{-16, -16, -8}, {16, 16, 8}}};
     GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
-        .contents = 1, .role = QA_COLLISION_SOLID};
-    qa_collision_binding binding = {.context = &collision, .read = linked_box_collision};
+    uint8_t solid[4];
+    qa_store_u32le(solid, 2);
+    qa_entity_collision_fields fields = {.family = QA_COLLISION_Q2,
+        .solid = {solid, QA_ENTITY_U32_LE}};
+    qa_collision_binding binding = {.context = solid, .fields = &fields};
     GAME_CHECK(qa_world_collision_bind(world, actor, &binding, &error));
     GAME_CHECK(qa_world_link(world, actor, NULL, &error));
+    qa_linked_body linked;
+    GAME_CHECK(qa_world_linked(world, actor, &linked));
+    uint64_t link_count = linked.link_count;
+    qa_store_u32le(solid, 0);
+    qa_trace_query live_query = {.start = {0, 0, 24}, .end = {0, 0, -24},
+        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    qa_trace_result live_hit;
+    GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
+    GAME_CHECK(live_hit.hit == QA_TRACE_HIT_WORLD && !live_hit.start_solid && live_hit.fraction < .5f);
+    GAME_CHECK(qa_world_linked(world, actor, &linked) && linked.link_count == link_count);
+    qa_store_u32le(solid, 2);
     for (unsigned caller = 0; caller < 4; ++caller) {
         qa_collision_family family = caller == 0 ? QA_COLLISION_Q1 :
             caller == 3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
@@ -646,14 +652,6 @@ static void exiting_body_over_world_hit(void)
     GAME_CHECK(qa_world_destroy(world, &error));
     GAME_CHECK(qa_actors_destroy(actors, &error));
     qa_collision_destroy(map.geometry);
-}
-
-static bool external_brush_collision(void *context, qa_actor_collision *out, qa_error *error)
-{
-    (void)error;
-    *out = (qa_actor_collision){.family = QA_COLLISION_Q1, .inline_model = true,
-        .model_geometry = *(qa_collision_geometry **)context, .contents = -2};
-    return true;
 }
 
 static void retained_external_brush(void)
@@ -681,9 +679,36 @@ static void retained_external_brush(void)
     GAME_CHECK(qa_actors_allocate(actors, 1, 1, &actor, &error));
     qa_body_state body = {.origin = {0, 0, 128}, .bounds = {{-16, -16, -64}, {16, 16, 64}}};
     GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
-    qa_collision_binding binding = {.context = &external.geometry, .read = external_brush_collision};
+    uint8_t solid[4], model_index[4];
+    gameplay_float(solid, 4);
+    gameplay_float(model_index, 1);
+    qa_entity_model_field model_entries[3] = {
+        [1] = {.model = 0, .geometry = external.geometry, .present = true},
+        [2] = {.model = 0, .geometry = map.geometry, .present = true}};
+    qa_entity_model_fields models = {.entries = model_entries, .count = 3};
+    qa_entity_collision_fields fields = {.family = QA_COLLISION_Q1,
+        .solid = {solid, QA_ENTITY_F32_LE}, .model = {model_index, QA_ENTITY_F32_LE},
+        .models = &models};
+    qa_collision_binding binding = {.context = model_index, .fields = &fields};
     GAME_CHECK(qa_world_collision_bind(world, actor, &binding, &error));
     GAME_CHECK(qa_world_link(world, actor, NULL, &error));
+    qa_linked_body linked;
+    GAME_CHECK(qa_world_linked(world, actor, &linked));
+    uint64_t link_count = linked.link_count;
+    qa_trace_query live_query = {.start = {0, 0, 200}, .end = {0, 0, 160},
+        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+    qa_trace_result live_hit;
+    GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
+    GAME_CHECK(live_hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(live_hit.actor, actor));
+    GAME_CHECK(fabsf(live_hit.end.z - 192.03125f) < .0001f);
+    gameplay_float(model_index, 2);
+    GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
+    GAME_CHECK(live_hit.hit == QA_TRACE_HIT_NONE && live_hit.fraction == 1 && live_hit.end.z == 160);
+    GAME_CHECK(qa_world_linked(world, actor, &linked) && linked.link_count == link_count);
+    gameplay_float(model_index, 1);
+    GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
+    GAME_CHECK(live_hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(live_hit.actor, actor));
+    GAME_CHECK(fabsf(live_hit.end.z - 192.03125f) < .0001f);
     qa_world_checkpoint checkpoint = {0};
     GAME_CHECK(qa_world_checkpoint_capture(world, &checkpoint, &error));
     GAME_CHECK(checkpoint.body_count == 1 && checkpoint.spatial_count == 1);
@@ -694,6 +719,7 @@ static void retained_external_brush(void)
     GAME_CHECK(qa_collision_create(&bsp, &replacement, &error));
     qa_collision_destroy(external.geometry);
     external.geometry = replacement;
+    model_entries[1].geometry = replacement;
     GAME_CHECK(qa_world_checkpoint_restore(world, &checkpoint, NULL, NULL, &error));
     for (qa_collision_family family = QA_COLLISION_Q1; family <= QA_COLLISION_Q3; ++family) {
         qa_trace_query query = {.start = {0, 0, 200}, .end = {0, 0, 160},

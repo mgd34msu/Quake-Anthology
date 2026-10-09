@@ -7,9 +7,14 @@ typedef struct application_native_process_owner {
     qa_native_process_resources *resources;
     qa_native_process_options process;
 } application_native_process_owner;
+typedef struct application_native_process_artifact {
+    const qa_resource *resource;
+    const qa_vfs_acquisition *acquisition;
+    const char *path;
+} application_native_process_artifact;
 
 bool application_native_process_prepare(qa_application *, const qa_launch_instance *,
-    qa_actor_owner, uint64_t, const qa_native_process_resource_artifact *, size_t,
+    qa_actor_owner, uint64_t, const application_native_process_artifact *, size_t,
     size_t, const qa_native_image_info *,
     bool (*)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *),
     void *, const qa_native_process_resources *, qa_bytes, application_native_process_owner *, qa_error *);

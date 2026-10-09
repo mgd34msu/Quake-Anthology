@@ -481,6 +481,12 @@ bool qa_qc_unbind_actor(qa_qc_instance *instance, uint32_t slot,
                         qa_error *error);
 bool qa_qc_slot(const qa_qc_instance *instance, uint32_t slot,
                 qa_qc_slot_binding *out);
+/* Cold ABI views borrow stable instance storage. Only OWNED rows publish a
+ * body; borrowed rows retain their existing canonical-to-guest projection. */
+bool qa_qc_entity_body_fields(qa_qc_instance *, uint32_t slot,
+    const qa_entity_body_fields **out, qa_error *);
+bool qa_qc_entity_collision_fields(const qa_qc_instance *, uint32_t slot,
+    qa_entity_collision_fields *out, qa_error *);
 /* Reads the actual ABI reference of an allocated physical row, including the
  * world and reserved/free rows. This does not bind or project an actor. */
 bool qa_qc_slot_reference(const qa_qc_instance *, uint32_t slot,

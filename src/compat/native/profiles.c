@@ -657,7 +657,7 @@ static const native_profile_spec profiles[] = {
      COUNT(q2_entries), 0, 15, true, false, false},
     {QA_NATIVE_Q2_GAME_API2023, "GetGameAPI", 2023, rr_game_imports, COUNT(rr_game_imports),
      rr_game_entries, COUNT(rr_game_entries), 16, 19, true, false, false},
-    {QA_NATIVE_Q2_CGAME_API2023, "GetCGameAPI", 2023, rr_cgame_imports, COUNT(rr_cgame_imports),
+    {QA_NATIVE_Q2_CGAME_API2023, "GetCGameAPI", 2022, rr_cgame_imports, COUNT(rr_cgame_imports),
      rr_cgame_entries, COUNT(rr_cgame_entries), 16, SIZE_MAX, true, false, false},
     {QA_NATIVE_Q3_VMMAIN, "dllEntry", 8, NULL, 0, q3_entries, COUNT(q3_entries), 0, SIZE_MAX, false,
      true, false},
@@ -734,9 +734,6 @@ static bool read_pointer(const qa_native_instance *instance, qa_native_address a
 
 static bool publish_import_table(qa_native_instance *instance, qa_error *error)
 {
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) {
-        instance->import_table_address = (uint64_t)(uintptr_t)instance->import_table; return true;
-    }
     return qa_native_guest_allocate(instance->guest, instance->import_table_bytes,
         INT32_C(0x4e494d50), &instance->import_table_address, error) &&
         qa_native_guest_write(instance->guest, instance->import_table_address,
@@ -816,26 +813,9 @@ static bool bind_q2_table(qa_native_instance *instance, const native_profile_spe
                sizeof(instance->options.frame_milliseconds));
     }
     for (size_t index = 0; index < profile->import_count; ++index) {
-        void *code;
-        if (profile->imports[index].signature.variadic && instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS) {
-            code = native_variadic_import(profile->profile, profile->imports[index].slot);
-            if (!code) {
-                qa_error_set(error, QA_ERROR_UNSUPPORTED, profile->imports[index].slot,
-                             "native variadic import %s has no ABI thunk",
-                             profile->imports[index].name);
-                return false;
-            }
-            instance->imports[index].instance = instance;
-            instance->imports[index].spec = profile->imports[index];
-            instance->imports[index].spec.signature.abi = instance->module->info.image.target.abi;
-        } else if (!native_import_bind(&instance->imports[index], instance,
-                                       &profile->imports[index], error)) {
-            return false;
-        } else {
-            code = instance->imports[index].code;
-        }
-        uint64_t address = instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS ?
-            instance->imports[index].guest_address : (uint64_t)(uintptr_t)code;
+        if (!native_import_bind(&instance->imports[index], instance,
+                                &profile->imports[index], error)) return false;
+        uint64_t address = instance->imports[index].guest_address;
         write_pointer(instance->import_table, profile->import_prefix + index * pointer_bytes, address, pointer_bytes);
     }
     if (!publish_import_table(instance, error)) return false;
@@ -847,15 +827,11 @@ static bool bind_q2_table(qa_native_instance *instance, const native_profile_spe
                                          .parameters = get_parameters,
                                          .parameter_count = 1,
                                          .result = TYPE(QA_NATIVE_ADDRESS)};
-    native_ffi_signature prepared = {0};
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && !native_ffi_prepare(&prepared, &get_signature, error))
-        return false;
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
                                 .as.address = instance->import_table_address};
     qa_native_value result = {0};
     bool ok =
-        native_ffi_call(instance, get_api, &get_signature, &prepared, &argument, 1, &result, error);
-    native_ffi_destroy(&prepared);
+        native_process_invoke(instance, get_api, &get_signature, &argument, 1, &result, error);
     if (!ok)
         return false;
     if (!result.as.address)
@@ -886,9 +862,6 @@ static bool bind_q2_table(qa_native_instance *instance, const native_profile_spe
                          binding->spec.name);
             return false;
         }
-        if (binding->address && instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS &&
-            !native_ffi_prepare(&binding->ffi, &binding->spec.signature, error))
-            return false;
     }
     return native_profile_refresh_entities(instance, error);
 }
@@ -899,25 +872,15 @@ static bool bind_q3(qa_native_instance *instance, const native_profile_spec *pro
     if (!qa_native_export(instance, "dllEntry", &dll_entry, error) ||
         !qa_native_export(instance, "vmMain", &vm_main, error))
         return false;
-    union {
-        intptr_t (*function)(int32_t, ...);
-        uintptr_t integer;
-    } syscall_address = {.function = native_q3_syscall};
     qa_native_type parameter[] = {TYPE(QA_NATIVE_ADDRESS)};
     qa_native_signature signature = {.abi = instance->module->info.image.target.abi,
                                      .parameters = parameter,
                                      .parameter_count = 1,
                                      .result = TYPE(QA_NATIVE_VOID)};
-    native_ffi_signature prepared = {0};
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && !native_ffi_prepare(&prepared, &signature, error))
-        return false;
-    qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
-                                .as.address = (qa_native_address)syscall_address.integer};
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS &&
-        !native_process_q3_bind(instance, &argument.as.address, error)) return false;
+    qa_native_value argument = {.type = QA_NATIVE_ADDRESS};
+    if (!native_process_q3_bind(instance, &argument.as.address, error)) return false;
     bool ok =
-        native_ffi_call(instance, dll_entry, &signature, &prepared, &argument, 1, NULL, error);
-    native_ffi_destroy(&prepared);
+        native_process_invoke(instance, dll_entry, &signature, &argument, 1, NULL, error);
     if (!ok)
         return false;
     instance->entries = calloc(1, sizeof(*instance->entries));
@@ -927,8 +890,7 @@ static bool bind_q3(qa_native_instance *instance, const native_profile_spec *pro
     instance->entries[0].spec = profile->entries[0];
     instance->entries[0].spec.signature.abi = instance->module->info.image.target.abi;
     instance->entries[0].address = vm_main;
-    return instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS ||
-        native_ffi_prepare(&instance->entries[0].ffi, &instance->entries[0].spec.signature, error);
+    return true;
 }
 
 static bool bind_ql(qa_native_instance *instance, const native_profile_spec *profile,
@@ -950,15 +912,14 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
         if (!native_import_bind(&instance->imports[index], instance, spec, error))
             return false;
         write_pointer(instance->import_table, (size_t)spec->slot * pointer_bytes,
-            instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS ? instance->imports[index].guest_address :
-            (uint64_t)(uintptr_t)instance->imports[index].code, pointer_bytes);
+            instance->imports[index].guest_address, pointer_bytes);
     }
     if (!publish_import_table(instance, error)) return false;
 
     qa_native_address dll_entry;
     if (!qa_native_export(instance, profile->entry_export, &dll_entry, error))
         return false;
-    void *exports = NULL;
+    qa_native_address exports = 0;
     int32_t api_version = 0;
     qa_native_type parameters[] = {TYPE(QA_NATIVE_ADDRESS), TYPE(QA_NATIVE_ADDRESS),
                                    TYPE(QA_NATIVE_ADDRESS)};
@@ -966,27 +927,21 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
                                      .parameters = parameters,
                                      .parameter_count = COUNT(parameters),
                                      .result = TYPE(QA_NATIVE_VOID)};
-    native_ffi_signature prepared = {0};
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && !native_ffi_prepare(&prepared, &signature, error))
-        return false;
     qa_native_value arguments[] = {
-        {.type = QA_NATIVE_ADDRESS, .as.address = (qa_native_address)(uintptr_t)&exports},
+        {.type = QA_NATIVE_ADDRESS},
         {.type = QA_NATIVE_ADDRESS,
          .as.address = instance->import_table_address},
-        {.type = QA_NATIVE_ADDRESS, .as.address = (qa_native_address)(uintptr_t)&api_version}};
+        {.type = QA_NATIVE_ADDRESS}};
     uint64_t scratch = 0;
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
-        if (!qa_native_guest_allocate(instance->guest, pointer_bytes + 4, INT32_C(0x4e414249), &scratch, error)) return false;
-        arguments[0].as.address = scratch; arguments[2].as.address = scratch + pointer_bytes;
-    }
-    bool ok = native_ffi_call(instance, dll_entry, &signature, &prepared, arguments,
+    if (!qa_native_guest_allocate(instance->guest, pointer_bytes + 4, INT32_C(0x4e414249), &scratch, error)) return false;
+    arguments[0].as.address = scratch; arguments[2].as.address = scratch + pointer_bytes;
+    bool ok = native_process_invoke(instance, dll_entry, &signature, arguments,
                               COUNT(arguments), NULL, error);
-    native_ffi_destroy(&prepared);
     if (scratch) {
         qa_native_address actual_exports = 0;
         if (ok) ok = read_pointer(instance, scratch, &actual_exports, error) &&
             qa_native_read(instance, scratch + pointer_bytes, &api_version, 4, error);
-        exports = (void *)(uintptr_t)actual_exports;
+        exports = actual_exports;
         qa_error cleanup = {0};
         if (!qa_native_guest_free(instance->guest, scratch, &cleanup) && ok) { if (error) *error = cleanup; ok = false; }
     }
@@ -1001,7 +956,7 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
     if (!exports)
         return native_fail(error, QA_ERROR_FORMAT, 0,
                            "Quake Live dllEntry returned a null export table");
-    instance->export_table = (qa_native_address)(uintptr_t)exports;
+    instance->export_table = exports;
     instance->entries = calloc(profile->entry_count, sizeof(*instance->entries));
     if (!instance->entries)
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating Quake Live export bindings");
@@ -1019,8 +974,6 @@ static bool bind_ql(qa_native_instance *instance, const native_profile_spec *pro
                          binding->spec.name);
             return false;
         }
-        if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS && !native_ffi_prepare(&binding->ffi, &binding->spec.signature, error))
-            return false;
     }
     return true;
 }
@@ -1038,15 +991,15 @@ bool native_profile_bind(qa_native_instance *instance, qa_error *error) {
     return native_fail(error, QA_ERROR_ARGUMENT, 0, "native profile has no binding strategy");
 }
 
-bool native_profile_prepare_remote(qa_native_instance *instance, qa_error *error) {
+bool native_profile_prepare_tables(qa_native_instance *instance, qa_error *error) {
     const native_profile_spec *profile =
         instance ? native_profile(instance->module->info.profile) : NULL;
     if (!profile)
-        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native runner profile is invalid");
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native process profile is invalid");
     instance->entries = calloc(profile->entry_count, sizeof(*instance->entries));
     if (profile->entry_count && !instance->entries)
         return native_fail(error, QA_ERROR_MEMORY, 0,
-                           "allocating native runner entry descriptions");
+                           "allocating native process entry descriptions");
     instance->entry_count = profile->entry_count;
     for (size_t index = 0; index < profile->entry_count; ++index) {
         instance->entries[index].spec = profile->entries[index];
@@ -1058,8 +1011,6 @@ bool native_profile_prepare_remote(qa_native_instance *instance, qa_error *error
 void native_profile_unbind(qa_native_instance *instance) {
     if (!instance)
         return;
-    for (size_t index = 0; index < instance->entry_count; ++index)
-        native_ffi_destroy(&instance->entries[index].ffi);
     for (size_t index = 0; index < instance->import_count; ++index)
         native_import_unbind(&instance->imports[index]);
     free(instance->entries);

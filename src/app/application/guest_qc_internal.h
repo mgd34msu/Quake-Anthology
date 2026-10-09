@@ -52,6 +52,7 @@ typedef struct application_qc_actor {
     struct application_qc_state *engine;
     qa_actor_id actor;
     int32_t reference;
+    qa_entity_collision_fields collision_fields;
     bool collision_bound;
 } application_qc_actor;
 typedef struct application_qc_cvar_handles {
@@ -76,6 +77,7 @@ struct application_qc_state {
     qa_net_protocol_id protocol;
     application_qc_resource *resources;
     size_t resource_count, resource_capacity;
+    qa_entity_model_fields model_fields;
     application_qc_client *clients;
     uint32_t max_clients, check_slot;
     double check_time;
@@ -124,6 +126,7 @@ bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, q
 bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, bool,
                                     qa_qc_game_resource *, qa_error *);
 bool application_qc_resource_resolve_model(application_qc_resource *, qa_error *);
+bool application_qc_model_publish(struct application_qc_state *, const application_qc_resource *, qa_error *);
 void application_qc_resource_dispose(application_qc_resource *);
 const qa_qc_definition *application_qc_field(struct application_qc_state *, const char *, qa_qc_value_type, qa_error *);
 bool application_qc_float(struct application_qc_state *, int32_t, const char *, float *, qa_error *);

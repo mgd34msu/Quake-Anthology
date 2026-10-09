@@ -5,11 +5,8 @@ bool qa_native_range_check(const qa_native_instance *instance, qa_native_address
     size_t bytes, uint32_t permissions, qa_error *error) {
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)) || !permissions || permissions > 7)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native range proof requires its live owner and actual permission bits");
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return guest_ready(instance->guest, error) && guest_range(instance->guest, address, bytes, permissions, error);
-    return instance->backend == QA_NATIVE_BACKEND_DIRECT ?
-        native_direct_range_check(address, bytes, permissions, error) :
-        native_runner_range_check((qa_native_instance *)instance, address, bytes, permissions, error);
+    return guest_ready(instance->guest, error) &&
+        guest_range(instance->guest, address, bytes, permissions, error);
 }
 
 bool qa_native_borrow(const qa_native_instance *instance, qa_native_address address,
@@ -18,14 +15,6 @@ bool qa_native_borrow(const qa_native_instance *instance, qa_native_address addr
     if (!instance || !out || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance and borrowed output are required");
-    if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
-        if (!native_direct_range_check(address, bytes, QA_NATIVE_MEMORY_READ, error)) return false;
-        *out = (qa_bytes){bytes ? (const uint8_t *)(uintptr_t)address : NULL, bytes};
-        return true;
-    }
-    if (instance->backend != QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                           "native runner does not expose shared live storage");
     const qa_native_guest *guest = instance->guest;
     if (!guest_ready(guest, error) ||
         !guest_range(guest, address, bytes, QA_NATIVE_GUEST_READ, error)) return false;
@@ -57,11 +46,7 @@ bool qa_native_read(const qa_native_instance *instance, qa_native_address source
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance is required for memory reads");
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return qa_native_guest_read(instance->guest, source, out, bytes, error);
-    return instance->backend == QA_NATIVE_BACKEND_DIRECT
-               ? native_direct_read(source, out, bytes, error)
-               : native_runner_read((qa_native_instance *)instance, source, out, bytes, error);
+    return qa_native_guest_read(instance->guest, source, out, bytes, error);
 }
 
 bool qa_native_write(qa_native_instance *instance, qa_native_address destination, qa_bytes bytes,
@@ -69,11 +54,7 @@ bool qa_native_write(qa_native_instance *instance, qa_native_address destination
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)) || (!bytes.data && bytes.size))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance and bytes are required for memory writes");
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS)
-        return qa_native_guest_write(instance->guest, destination, bytes, error);
-    return instance->backend == QA_NATIVE_BACKEND_DIRECT
-               ? native_direct_write(destination, bytes.data, bytes.size, error)
-               : native_runner_write(instance, destination, bytes, error);
+    return qa_native_guest_write(instance->guest, destination, bytes, error);
 }
 
 static bool grow_string(uint8_t **data, size_t *capacity, size_t required, qa_error *error) {
@@ -154,31 +135,15 @@ bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
     if (!instance || !out || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance and allocation output are required");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
-        return native_runner_allocate(instance, bytes, tag, out, error);
     size_t amount = bytes ? bytes : 1u;
     native_allocation *allocation = calloc(1, sizeof(*allocation));
-    if (instance->backend == QA_NATIVE_BACKEND_OWNED_PROCESS) {
-        if (!allocation) return native_fail(error, QA_ERROR_MEMORY, 0, "owning native tagged allocation receipt");
-        if (!qa_native_guest_allocate(instance->guest, amount, tag, &allocation->guest_address, error)) {
-            free(allocation); return false;
-        }
-        allocation->size = amount; allocation->tag = tag;
-        allocation->next = instance->allocations; instance->allocations = allocation;
-        *out = allocation->guest_address; return true;
+    if (!allocation) return native_fail(error, QA_ERROR_MEMORY, 0, "owning native tagged allocation receipt");
+    if (!qa_native_guest_allocate(instance->guest, amount, tag, &allocation->guest_address, error)) {
+        free(allocation); return false;
     }
-    void *memory = calloc(1, amount);
-    if (!allocation || !memory) {
-        free(allocation);
-        free(memory);
-        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating tagged native module memory");
-    }
-    allocation->bytes = memory;
-    allocation->size = amount;
-    allocation->tag = tag;
-    allocation->next = instance->allocations;
-    instance->allocations = allocation;
-    *out = (qa_native_address)(uintptr_t)memory;
+    allocation->size = amount; allocation->tag = tag;
+    allocation->next = instance->allocations; instance->allocations = allocation;
+    *out = allocation->guest_address;
     return true;
 }
 
@@ -186,11 +151,8 @@ bool qa_native_allocation_query(const qa_native_instance *instance, qa_native_ad
                                 qa_native_allocation_info *out, qa_error *error) {
     if (!instance || !address || !out || instance->destroying || instance->unloading)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native allocation and output are required");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
-        return native_runner_allocation_query((qa_native_instance *)instance, address, out, error);
     for (const native_allocation *allocation = instance->allocations; allocation; allocation = allocation->next) {
-        qa_native_address base = allocation->guest_address ? allocation->guest_address :
-            (qa_native_address)(uintptr_t)allocation->bytes;
+        qa_native_address base = allocation->guest_address;
         if (address >= base && address - base < allocation->size) {
             *out = (qa_native_allocation_info){base, allocation->size, allocation->tag};
             return true;
@@ -205,23 +167,16 @@ bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_
                            "live native instance is required for tagged free");
     if (!address)
         return true;
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
-        return native_runner_free(instance, address, error);
     native_allocation **link = &instance->allocations;
-    while (*link && ((*link)->guest_address ? (*link)->guest_address :
-        (qa_native_address)(uintptr_t)(*link)->bytes) != address)
+    while (*link && (*link)->guest_address != address)
         link = &(*link)->next;
     if (!*link)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native TagFree address is unowned or already freed");
     native_allocation *allocation = *link;
-    if (allocation->guest_address && !qa_native_guest_free(instance->guest, address, error)) return false;
+    if (!qa_native_guest_free(instance->guest, address, error)) return false;
     *link = allocation->next;
-    if (!allocation->guest_address) {
-        native_entity_notify(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX,
-                             address, allocation->size);
-        free(allocation->bytes);
-    }
+
     free(allocation);
     return true;
 }
@@ -229,11 +184,6 @@ bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_
 void qa_native_free_tag(qa_native_instance *instance, int32_t tag) {
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return;
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
-        qa_error ignored = {0};
-        native_runner_free_tag(instance, tag, &ignored);
-        return;
-    }
     native_allocation **link = &instance->allocations;
     while (*link) {
         native_allocation *allocation = *link;
@@ -241,18 +191,11 @@ void qa_native_free_tag(qa_native_instance *instance, int32_t tag) {
             link = &allocation->next;
             continue;
         }
-        if (allocation->guest_address) {
-            qa_error failure = {0};
-            if (!qa_native_guest_free(instance->guest, allocation->guest_address, &failure)) {
-                native_latch_error(instance, &failure); return;
-            }
+        qa_error failure = {0};
+        if (!qa_native_guest_free(instance->guest, allocation->guest_address, &failure)) {
+            native_latch_error(instance, &failure); return;
         }
         *link = allocation->next;
-        if (!allocation->guest_address) {
-            native_entity_notify(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX,
-                (qa_native_address)(uintptr_t)allocation->bytes, allocation->size);
-            free(allocation->bytes);
-        }
         free(allocation);
     }
 }
@@ -264,12 +207,6 @@ bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_en
                            "native instance and entity-table output are required");
     if (!instance->entities.base && instance->entities.capacity)
         return native_fail(error, QA_ERROR_FORMAT, 0, "native entity table has no storage");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
-        qa_native_instance *mutable_instance = (qa_native_instance *)instance;
-        if (!native_runner_entity_get(mutable_instance, out, error))
-            return false;
-        return native_entity_table_store(mutable_instance, *out, error);
-    }
     *out = instance->entities;
     return true;
 }
@@ -280,8 +217,6 @@ bool qa_native_entity_table_refresh(qa_native_instance *instance, qa_native_enti
     if (!instance || !out || instance->destroying || qa_native_terminal(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "Native export refresh requires its live source instance");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
-        return qa_native_entity_table_get(instance, out, error);
     if (!native_profile_refresh_entities(instance, error)) return false;
     return qa_native_entity_table_get(instance, out, error);
 }
@@ -290,7 +225,7 @@ bool qa_native_terminal_entity_table(const qa_native_instance *instance,
                                       qa_native_entity_table *out, qa_error *error) {
     if (!out || !qa_native_terminal(instance) || !qa_native_can_destroy(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
-                           "cached native table requires a drained terminal runner");
+                           "cached native table requires a drained terminal guest");
     if (instance->entities.capacity > instance->slot_capacity ||
         instance->entities.count > instance->entities.capacity ||
         (instance->entities.capacity && (!instance->entities.base || !instance->entities.stride)))
@@ -352,9 +287,6 @@ bool qa_native_set_entity_table(qa_native_instance *instance, qa_native_entity_t
         return native_fail(
             error, QA_ERROR_ARGUMENT, 0,
             "only a live native Q3 or Quake Live instance accepts located game data");
-    if (instance->backend == QA_NATIVE_BACKEND_RUNNER &&
-        !native_runner_entity_set(instance, table, error))
-        return false;
     return native_entity_table_store(instance, table, error);
 }
 

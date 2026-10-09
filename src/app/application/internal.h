@@ -270,7 +270,7 @@ struct qa_application {
     qa_cvar_handle bot_minplayers;
     qa_ui_preference_handles ui_preference_handles;
     qa_console *console;
-    const qa_native_runner_config *native_runner;
+    const qa_native_runtime_config *native_runtime_config;
     qa_native_runtime *native_runtime;
     char *native_bootstrap;
     qa_native_process_resource_policy native_process_policy;

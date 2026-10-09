@@ -128,7 +128,8 @@ bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn vis
     return true;
 }
 
-bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_spatial_actor *out,qa_error *error)
+bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
+                      qa_spatial_actor *out,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return false;
@@ -136,10 +137,7 @@ bool qa_world_refresh(qa_world *world,qa_actor_id actor,qa_spatial_actor *out,qa
     qa_actor_collision collision;
     if(!qa_world_get_collision(world,captured.body.actor,&collision,error)) return false;
     qa_body_state state;
-    if(!qa_world_body_read(world,captured.body.actor,&state,error)) {
-        if(error!=NULL && error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Body state callback failed");
-        return false;
-    }
+    if(!qa_world_body_read_pose(world,captured.body.actor,pose,&state,error)) return false;
     *out=captured; out->body.state=state; out->collision=collision; return true;
 }
 
@@ -157,7 +155,7 @@ static qa_spatial_visit visit_current(void *opaque,uint32_t slot)
     world_visit_context *context=opaque;
     qa_spatial_actor actor; qa_error error={0};
     qa_actor_id id=qa_actors_body(context->world->actors->pages,slot)->actor;
-    if(!qa_world_refresh(context->world,id,&actor,&error)) {
+    if(!qa_world_refresh(context->world,id,QA_ENTITY_CLIP_POSE,&actor,&error)) {
         if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
         return QA_SPATIAL_CONTINUE;
     }

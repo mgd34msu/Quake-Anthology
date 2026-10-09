@@ -83,11 +83,10 @@ if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
             ${QA_NATIVE_PROFILE_LINKER_ARGS}
             "-DQA_SOURCE_ROOT:PATH=${QA_NATIVE_PROFILE_SOURCE_ROOT}"
             "-DQA_DYNAMORIO_SDK:PATH=${QA_NATIVE_PROFILE_SDK}"
-            "-DQA_DECLARED_REGIONS:BOOL=${QA_NATIVE_DYNAMORIO}"
             -DCMAKE_BUILD_TYPE:STRING=Release
         BUILD_BYPRODUCTS "${QA_NATIVE_PROFILE_CLIENT}/qa-native-profile.so")
 
-    add_dependencies(qa-native-runner qa-native-profile-build)
+    add_dependencies(qa-native-host qa-native-profile-build)
     install(PROGRAMS "${QA_NATIVE_PROFILE_SDK}/bin64/drrun"
         DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio/bin64")
     install(PROGRAMS "${QA_NATIVE_PROFILE_SDK}/lib64/release/libdynamorio.so"
@@ -102,8 +101,4 @@ if(QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64")
         DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio")
     install(FILES "${QA_NATIVE_PROFILE_CLIENT}/qa-native-profile.so"
         DESTINATION "${QA_NATIVE_INSTALL_DIR}")
-    if(QA_NATIVE_DYNAMORIO)
-        install(FILES "${QA_NATIVE_PROFILE_CLIENT}/qa-native-hooks.so"
-            DESTINATION "${QA_NATIVE_INSTALL_DIR}")
-    endif()
 endif()

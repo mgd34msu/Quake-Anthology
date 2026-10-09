@@ -8,7 +8,7 @@
 
 enum { SYSV_MAX_ALLOCATION = 0x10000000, SYSV_MAX_STRING = 0x100000 };
 typedef enum sysv_group {
-    SYSV_RUNTIME, SYSV_LIBC, SYSV_STDIO, SYSV_CXX, SYSV_LOCALE, SYSV_IOSTREAM, SYSV_FORMAT
+    SYSV_RUNTIME, SYSV_LIBC, SYSV_STDIO, SYSV_CXX, SYSV_LOCALE, SYSV_IOSTREAM, SYSV_FORMAT, SYSV_PLATFORM
 } sysv_group;
 typedef struct sysv_service {
     guest_sysv_runtime *runtime;
@@ -113,6 +113,9 @@ bool sysv_invoke(guest_sysv_runtime *, uint64_t, const qa_native_value_type *,
     size_t, qa_native_value_type, const qa_native_value *, qa_native_value *, qa_error *);
 bool sysv_service_valid(const sysv_service *, qa_error *);
 
+bool sysv_platform_install(guest_sysv_runtime *, qa_error *);
+bool sysv_platform_call(sysv_service *, const qa_native_value *, qa_native_value *, qa_error *);
+bool sysv_platform_valid(const sysv_service *, qa_error *);
 bool sysv_libc_install(guest_sysv_runtime *, qa_error *);
 bool sysv_libc_call(sysv_service *, const qa_native_value *, qa_native_value *, qa_error *);
 bool sysv_stdio_install(guest_sysv_runtime *, qa_error *);

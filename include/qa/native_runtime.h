@@ -7,11 +7,10 @@ typedef struct qa_native_runtime qa_native_runtime;
 struct guest_profile_guard_launch;
 typedef struct qa_native_runtime_options {
     /* Actual executable directory; the build defines its install-relative
-     * runtime directory. Explicit roots and Wine paths override that package. */
+     * runtime directory. Explicit roots override that package. */
     const char *executable_directory;
     const char *root;
-    const char *wine;
-    const qa_native_runner_config *overrides;
+    const qa_native_runtime_config *overrides;
 } qa_native_runtime_options;
 
 /* Opens existing artifacts only, inspects their actual target, and retains
@@ -20,7 +19,8 @@ typedef struct qa_native_runtime_options {
 bool qa_native_runtime_create(const qa_native_runtime_options *, qa_native_runtime **, qa_error *);
 void qa_native_runtime_retain(qa_native_runtime *);
 void qa_native_runtime_release(qa_native_runtime *);
-const qa_native_runner_config *qa_native_runtime_config(const qa_native_runtime *);
+const qa_native_runtime_config *qa_native_runtime_configuration(const qa_native_runtime *);
+const char *qa_native_runtime_bootstrap(const qa_native_runtime *);
 /* Borrows the retained Linux x64 source monitor launcher/client after checking
  * their actual file identities. Installation and CPU admission remain the
  * physical child's responsibility. The runtime owner must outlive the borrow. */

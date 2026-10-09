@@ -20,7 +20,7 @@ typedef struct qa_frontend_options {
     const char *weapons, *monsters;
     const char *font_directory, *font_file;
     const char *network_host, *network_connect;
-    const char *native_runtime_root, *native_wine;
+    const char *native_runtime_root;
     char *native_bootstrap;
     const char **game_paths, **save_game_paths;
     size_t game_path_count, save_game_path_count;

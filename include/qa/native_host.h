@@ -136,7 +136,7 @@ typedef struct qa_native_host_instance_options {
     const qa_native_declaration *declaration;
     const qa_native_dependency *dependencies;
     size_t dependency_count;
-    const qa_native_runner_config *runner;
+    const qa_native_runtime_config *runtime;
     const struct qa_native_process_options *process;
     uint32_t tick_rate;
     float frame_seconds;
@@ -259,6 +259,7 @@ typedef struct qa_native_host_q3_bridge {
     bool (*dispatch)(void *, const qa_native_host_q3_call *, qa_native_value *, qa_error *);
     bool (*checkpoint)(void *, qa_buffer *, qa_error *);
     bool (*restore)(void *, qa_bytes, qa_error *);
+    void (*entity_changed)(void *, const qa_native_entity_event *);
 } qa_native_host_q3_bridge;
 
 typedef struct qa_native_host_q3_options {
@@ -274,8 +275,8 @@ typedef struct qa_native_host_q3_options {
     size_t maximum_string_bytes;
 } qa_native_host_q3_options;
 
-/* Creation outputs start empty. A failed factory whose original library remains
- * mapped returns its retained host in *out; keep all borrowed service contexts
+/* Creation outputs start empty. A failed factory with retained source or
+ * process resources returns its host in *out; keep borrowed service contexts
  * alive until destroy_owned clears it. */
 bool qa_native_host_create_q2_game(qa_native_module *, const qa_native_host_q2_game_options *,
                                    qa_native_host **, qa_error *);
@@ -316,8 +317,10 @@ bool qa_native_host_source_active(qa_native_host *, uint32_t source_slot, bool *
 bool qa_native_host_source_frame_begin(qa_native_host *, qa_error *);
 bool qa_native_host_source_frame_end(qa_native_host *, qa_error *);
 bool qa_native_host_source_birth(qa_native_host *, qa_native_address, qa_actor_id *, qa_error *);
-bool qa_native_host_source_body_read(qa_native_host *, uint32_t source_slot,
-    uint32_t velocity_offset, uint32_t ground_offset, qa_body_state *, qa_error *);
+bool qa_native_host_source_body_bind(qa_native_host *, uint32_t source_slot,
+    uint32_t velocity_offset, uint32_t ground_offset,
+    void *write_context, bool (*write)(void *, const qa_body_state *, qa_error *),
+    qa_error *);
 bool qa_native_host_source_body_write(qa_native_host *, uint32_t source_slot,
     uint32_t velocity_offset, uint32_t ground_offset, const qa_body_state *, qa_error *);
 typedef struct qa_native_host_source_touch qa_native_host_source_touch;

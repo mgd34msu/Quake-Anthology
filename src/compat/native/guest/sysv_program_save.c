@@ -71,11 +71,7 @@ static bool fields(qa_source_save_io *io, qa_native_sysv_program *owner)
     for (size_t i = 0; i < sizeof(words) / sizeof(*words); ++i)
         if (!qa_source_save_u64(io, words[i])) return false;
     if (!qa_source_save_u32(io, &owner->status.exit_code) || !qa_source_save_bool(io, &owner->status.exited)) return false;
-    for (size_t i = 0; i < 2; ++i)
-        if (!qa_source_save_u64(io, &owner->clocks[i].seconds) ||
-            !qa_source_save_u32(io, &owner->clocks[i].nanoseconds) ||
-            owner->clocks[i].seconds > INT64_MAX || owner->clocks[i].nanoseconds >= 1000000000)
-            return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "saved source CPU clock has invalid named fields");
+    if (!guest_cpu_clock_fields(io, &owner->clock)) return false;
     if (!o->guest.allocation_base || o->guest.allocation_base % 4096 || !o->guest.maximum_backing_bytes ||
         !o->stack_bytes || o->stack_bytes % 4096 || o->anonymous_permissions > 7 || !o->services.id ||
         (backend == QA_NATIVE_GUEST_HOST_X86_64 ? o->instruction_budget != 0 : !o->instruction_budget) ||

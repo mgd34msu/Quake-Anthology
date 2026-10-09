@@ -347,7 +347,7 @@ typedef struct qa_application_options {
     const qa_ranking_provider *ranking_provider;
     const char *ranking_game_key;
     qa_application_ranking_effect_fn ranking_effect;
-    const qa_native_runner_config *native_runner;
+    const qa_native_runtime_config *native_runtime_config;
     qa_native_runtime *native_runtime;
     const char *native_bootstrap;
     qa_native_process_resource_policy native_process_policy;

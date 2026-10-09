@@ -6,7 +6,7 @@ enum libc_operation {
     LC_ERRNO = 1, LC_TLS, LC_MALLOC, LC_CALLOC, LC_FREE, LC_REALLOC,
     LC_COPY, LC_SET, LC_COMPARE, LC_LENGTH, LC_STRING_COMPARE, LC_STRING_COPY,
     LC_STRING_NCOPY, LC_CHARACTER, LC_SUBSTRING, LC_TOKEN, LC_STRTOL, LC_TIME,
-    LC_SORT, LC_MATH, LC_ATAN2, LC_SINCOS, LC_ISNAN, LC_STACK, LC_RAND, LC_SRAND, LC_STRTOD
+    LC_SORT, LC_MATH, LC_ATAN2, LC_SINCOS, LC_ISNAN, LC_STACK, LC_RAND, LC_SRAND, LC_STRTOD, LC_GETENV, LC_GETCWD, LC_ABORT
 };
 static uint32_t random_step(uint8_t state[128])
 {
@@ -45,6 +45,7 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
     const char *versions[] = {base, NULL}, *checked[] = {"GLIBC_2.3.4", NULL};
     const char *tls[] = {"GLIBC_2.3", NULL}, *memcpy_versions[] = {base, NULL, "GLIBC_2.14"};
     const char *stack[] = {"GLIBC_2.4", NULL}, *atan[] = {"GLIBC_2.15", NULL};
+    const char *c23[] = {"GLIBC_2.38", NULL};
     const char *sincos_versions[] = {r->target.pointer_bytes == 4 ? "GLIBC_2.1" : base, NULL};
     qa_native_value_type p = QA_NATIVE_ADDRESS, z = sysv_size_type(r), s = sysv_signed_type(r);
     const qa_native_value_type zp[] = {z}, zz[] = {z,z}, pp[] = {p,p}, pz[] = {p,z};
@@ -58,7 +59,7 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
             NULL, 0, QA_NATIVE_I32, error) ||
         !add(r, LC_SRAND, random_state, "libc.so.6", "srand", versions, 2,
             &seed_type, 1, QA_NATIVE_VOID, error)) return false;
-    if (!sysv_format_install(r, error) ||
+    if (!sysv_format_install(r, error) || !sysv_platform_install(r, error) ||
         !add(r, LC_ERRNO, 0, "libc.so.6", "__errno_location", versions, 2, NULL, 0, p, error) ||
         (r->target.pointer_bytes == 8 && !add(r, LC_TLS, 0, "ld-linux-x86-64.so.2", "__tls_get_addr", tls, 2, &p, 1, p, error)) ||
         !add(r, LC_MALLOC, 0, "libc.so.6", "malloc", versions, 2, zp, 1, p, error) ||
@@ -74,6 +75,8 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
     if (!add(r, LC_SET, 0, "libc.so.6", "memset", versions, 2, piz, 3, p, error) ||
         !add(r, LC_COMPARE, 0, "libc.so.6", "memcmp", versions, 2, ppz, 3, QA_NATIVE_I32, error) ||
         !add(r, LC_LENGTH, 0, "libc.so.6", "strlen", versions, 2, &p, 1, z, error) ||
+        !add(r, LC_GETENV, 0, "libc.so.6", "getenv", versions, 2, &p, 1, p, error) ||
+        !add(r, LC_GETCWD, 0, "libc.so.6", "getcwd", versions, 2, pz, 2, p, error) ||
         !add(r, LC_STRING_COMPARE, 0, "libc.so.6", "strcmp", versions, 2, pp, 2, QA_NATIVE_I32, error)) return false;
     const char *string_names[] = {"strcpy", "stpcpy", "strcat", "__strcpy_chk", "__stpcpy_chk", "__strcat_chk"};
     for (size_t i = 0; i < 6; ++i) {
@@ -89,6 +92,7 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
         !sysv_allocate(r, r->target.pointer_bytes, false, &r->strtok_slot, error) ||
         !add(r, LC_TOKEN, 0, "libc.so.6", "strtok", versions, 2, pp, 2, p, error) ||
         !add(r, LC_STRTOL, 0, "libc.so.6", "strtol", versions, 2, ppi, 3, s, error) ||
+        !add(r, LC_STRTOL, 1, "libc.so.6", "__isoc23_strtol", c23, 2, ppi, 3, s, error) ||
         !add(r, LC_STRTOD, 0, "libc.so.6", "strtod", versions, 2, pp, 2, QA_NATIVE_F64, error) ||
         !add(r, LC_TIME, 0, "libc.so.6", "time", versions, 2, &p, 1, s, error) ||
         !add(r, LC_SORT, 0, "libc.so.6", "qsort", versions, 2, pzzp, 4, QA_NATIVE_VOID, error)) return false;
@@ -108,7 +112,8 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
     }
     qa_native_value_type float_type = QA_NATIVE_F32;
     return add(r, LC_ISNAN, 0, "libc.so.6", "__isnanf", versions, 2, &float_type, 1, QA_NATIVE_I32, error) &&
-        add(r, LC_STACK, 0, "libc.so.6", "__stack_chk_fail", stack, 2, NULL, 0, QA_NATIVE_VOID, error);
+        add(r, LC_STACK, 0, "libc.so.6", "__stack_chk_fail", stack, 2, NULL, 0, QA_NATIVE_VOID, error) &&
+        add(r, LC_ABORT, 0, "libc.so.6", "abort", versions, 2, NULL, 0, QA_NATIVE_VOID, error);
 }
 static bool extent(uint64_t value, size_t *out, qa_error *error)
 {
@@ -137,6 +142,57 @@ static bool full_string(guest_sysv_runtime *r, uint64_t address, qa_buffer *out,
     if (!terminated) { qa_buffer_free(out); return sysv_fail(error, QA_ERROR_ARGUMENT, "System V string exceeds supported terminated extent"); }
     return true;
 }
+static bool getenv_call(guest_sysv_runtime *r, uint64_t name_address,
+    qa_native_value *out, qa_error *error)
+{
+    qa_buffer name = {0};
+    if (!full_string(r, name_address, &name, error)) return false;
+    out->as.address = 0;
+    bool okay = true;
+    for (size_t i = 0; name.size && i < r->options.environment_count; ++i) {
+        uint64_t entry;
+        if (!sysv_pointer(r, r->envp + i * r->target.pointer_bytes, &entry, error)) { okay = false; break; }
+        if (!entry) break;
+        size_t at = 0;
+        for (; at <= name.size; ++at) {
+            uint8_t byte;
+            if (entry > UINT64_MAX - at || !sysv_read(r, entry + at, &byte, 1, error)) {
+                okay = false; break;
+            }
+            if (byte != (at == name.size ? '=' : name.data[at])) break;
+        }
+        if (!okay) break;
+        if (at > name.size) { out->as.address = entry + name.size + 1; break; }
+    }
+    qa_buffer_free(&name); return okay;
+}
+static bool getcwd_call(guest_sysv_runtime *r, uint64_t address, uint64_t size,
+    qa_native_value *out, qa_error *error)
+{
+    out->as.address = 0;
+    if (address && !size) return sysv_errno(r, 22, error);
+    if (!r->options.bindings.getcwd)
+        return sysv_fail(error, QA_ERROR_UNSUPPORTED, "System V getcwd has no acquired working directory");
+    qa_buffer path = {0};
+    if (!r->options.bindings.getcwd(r->options.bindings.context, &path, error)) {
+        qa_buffer_free(&path); return false;
+    }
+    uint64_t bytes = (uint64_t)path.size + 1;
+    if (size && size < bytes) {
+        qa_buffer_free(&path); return sysv_errno(r, 34, error);
+    }
+    bool allocated = !address;
+    if (allocated && !sysv_allocate(r, size ? size : bytes, true, &address, error)) {
+        qa_buffer_free(&path); return sysv_errno(r, 12, error);
+    }
+    bool okay = sysv_write(r, address, path.data, path.size + 1, error);
+    qa_buffer_free(&path);
+    if (!okay) {
+        if (allocated && address) (void)sysv_free(r, address, NULL);
+        return false;
+    }
+    out->as.address = address; return true;
+}
 static bool set_integer(qa_native_value *out, qa_native_value_type type, uint64_t value)
 {
     out->type = type;
@@ -157,7 +213,7 @@ static int digit(uint8_t byte)
     if (byte >= 'a' && byte <= 'z') return byte - 'a' + 10;
     return -1;
 }
-static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args,
+static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args, bool binary,
     qa_native_value *out, qa_error *error)
 {
     uint64_t source = args[0].as.address, end = args[1].as.address;
@@ -176,6 +232,11 @@ static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args,
     if ((!radix || radix == 16) && at + 2 < text.size && text.data[at] == '0' &&
         (text.data[at + 1] == 'x' || text.data[at + 1] == 'X') && digit(text.data[at + 2]) >= 0 && digit(text.data[at + 2]) < 16) {
         radix = 16; at += 2;
+    }
+    if (binary && (!radix || radix == 2) && at + 2 < text.size && text.data[at] == '0' &&
+        (text.data[at + 1] == 'b' || text.data[at + 1] == 'B') &&
+        (text.data[at + 2] == '0' || text.data[at + 2] == '1')) {
+        radix = 2; at += 2;
     }
     if (!radix) radix = at < text.size && text.data[at] == '0' ? 8 : 10;
     size_t first = at;
@@ -295,6 +356,8 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
             if (first[i] != second[i]) { out->as.i32 = (int)first[i] - (int)second[i]; break; }
         free(first); free(second); return ok;
     }
+    case LC_GETENV: return getenv_call(r, a, out, error);
+    case LC_GETCWD: return getcwd_call(r, a, b, out, error);
     case LC_LENGTH: {
         qa_buffer text = {0}; if (!full_string(r, a, &text, error)) return false;
         set_integer(out, sysv_size_type(r), text.size); qa_buffer_free(&text); return true;
@@ -375,7 +438,7 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         out->as.address = first == text.size ? 0 : a + first;
         qa_buffer_free(&text); qa_buffer_free(&delimiters); return ok;
     }
-    case LC_STRTOL: return strtol_call(r, args, out, error);
+    case LC_STRTOL: return strtol_call(r, args, service->a != 0, out, error);
     case LC_STRTOD: {
         qa_buffer text = {0};
         qa_native_guest_cpu cpu;
@@ -454,6 +517,7 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
     }
     case LC_ISNAN: out->as.i32 = isnan(args[0].as.f32); return true;
     case LC_STACK: return sysv_fail(error, QA_ERROR_UNSUPPORTED, "System V guest stack protection failure");
+    case LC_ABORT: return sysv_fail(error, QA_ERROR_UNSUPPORTED, "System V guest called abort");
     default: return sysv_fail(error, QA_ERROR_FORMAT, "unknown retained System V libc operation");
     }
 }

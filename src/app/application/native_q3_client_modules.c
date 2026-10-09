@@ -429,7 +429,7 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
             native.instance.declaration = role->native_declaration;
         }
         qa_native_module_info module = qa_native_module_describe(role->module);
-        qa_native_process_resource_artifact artifact = {.resource = role->artifact.resource,
+        application_native_process_artifact artifact = {.resource = role->artifact.resource,
             .acquisition = &role->artifact.acquisition, .path = role->artifact.path};
         if (!application_native_process_prepare(owner->app, actual.descriptor,
             actual.receiver.receiver, role->service_owner, &artifact, 1, 0, &module.image,

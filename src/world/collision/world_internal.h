@@ -39,7 +39,6 @@ struct qa_world {
     qa_spatial_cursor *cursors;
     uint32_t visit_depth, callback_depth;
     uint64_t attachment_order, body_serial;
-    qa_actor_id collision_link_actor;
     qa_world_geometry_admission *geometry_admission;
     qa_world_snapshot_frame *snapshot_frames;
 };
@@ -65,7 +64,7 @@ void qa_spatial_remove(qa_world *, uint32_t);
 void qa_spatial_dispose(qa_world *);
 typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, uint32_t);
 bool qa_spatial_visit_raw(qa_world *, qa_bounds, qa_spatial_raw_fn, void *, qa_error *);
-bool qa_world_refresh(qa_world *, qa_actor_id, qa_spatial_actor *, qa_error *);
+bool qa_world_refresh(qa_world *, qa_actor_id, qa_entity_pose, qa_spatial_actor *, qa_error *);
 
 /* BOTH captures raw links; filtered roles retain current provider readers. */
 bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,

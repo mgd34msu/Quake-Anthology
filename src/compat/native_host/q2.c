@@ -111,6 +111,9 @@ static bool index_resource(qa_native_host *host, qa_native_host_resource_kind ki
     return host->engine.resource_index(host->engine.context, kind, name, out, error);
 }
 
+static bool remember_inline_model(qa_native_host *, int32_t, const char *,
+                                  uint32_t *, qa_error *);
+
 static bool resource_import(qa_native_host *host, const qa_native_import_call *call,
                             qa_native_value *result, qa_error *error)
 {
@@ -120,6 +123,10 @@ static bool resource_import(qa_native_host *host, const qa_native_import_call *c
     int32_t index;
     bool ok = index_resource(host, resource_kind(call->name), (const char *)name.data,
                              &index, error);
+    if (ok && resource_kind(call->name) == QA_NATIVE_HOST_MODEL) {
+        uint32_t model;
+        ok = remember_inline_model(host, index, (const char *)name.data, &model, error);
+    }
     qa_buffer_free(&name);
     if (ok)
         result->as.i32 = index;
@@ -130,6 +137,8 @@ static bool remember_inline_model(qa_native_host *host, int32_t resource, const 
                                   uint32_t *model, qa_error *error)
 {
     if (name[0] != '*') {
+        if (resource >= 0 && (uint32_t)resource < host->models.count)
+            host->model_entries[resource] = (qa_entity_model_field){0};
         *model = 0;
         return true;
     }
@@ -139,20 +148,27 @@ static bool remember_inline_model(qa_native_host *host, int32_t resource, const 
     if (errno || end == name + 1 || *end || parsed == 0 || parsed > UINT32_MAX)
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native inline model name is invalid");
-    native_host_model *record = host->models;
-    while (record && record->resource != resource)
-        record = record->next;
-    if (!record) {
-        record = calloc(1, sizeof(*record));
-        if (!record)
+    if (resource < 0)
+        return native_host_fail(error, QA_ERROR_FORMAT, 0,
+                                "native inline model has an invalid resource index");
+    if ((uint32_t)resource >= host->models.count) {
+        uint32_t count = host->models.count ? host->models.count : 16u;
+        while (count <= (uint32_t)resource) count *= 2u;
+        qa_entity_model_field *entries = calloc(count, sizeof(*entries));
+        if (!entries)
             return native_host_fail(error, QA_ERROR_MEMORY, 0,
                                     "allocating native inline-model mapping");
-        record->resource = resource;
-        record->next = host->models;
-        host->models = record;
+        if (host->models.count)
+            memcpy(entries, host->model_entries,
+                   (size_t)host->models.count * sizeof(*entries));
+        free(host->model_entries);
+        host->model_entries = entries;
+        host->models = (qa_entity_model_fields){entries, count};
     }
-    record->inline_model = (uint32_t)parsed;
-    *model = record->inline_model;
+    host->model_entries[resource] = (qa_entity_model_field){
+        .model = (uint32_t)parsed, .geometry = qa_world_geometry(host->world.world),
+        .present = true};
+    *model = (uint32_t)parsed;
     return true;
 }
 

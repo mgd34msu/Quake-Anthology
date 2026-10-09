@@ -33,14 +33,73 @@ typedef struct qa_actor_collision {
     bool has_q3_owner;
     int32_t q3_entity_number, q3_owner_number;
 } qa_actor_collision;
+typedef enum qa_entity_pose {
+    QA_ENTITY_CONTROL_POSE, QA_ENTITY_CLIP_POSE, QA_ENTITY_CONTENTS_POSE,
+    QA_ENTITY_POSE_COUNT
+} qa_entity_pose;
+typedef enum qa_entity_scalar_encoding {
+    QA_ENTITY_NO_FIELD, QA_ENTITY_F32_LE, QA_ENTITY_I32_LE,
+    QA_ENTITY_U32_LE, QA_ENTITY_U8, QA_ENTITY_U64_LE
+} qa_entity_scalar_encoding;
+typedef struct qa_entity_scalar_field {
+    const uint8_t *bytes;
+    qa_entity_scalar_encoding encoding;
+} qa_entity_scalar_field;
+typedef struct qa_entity_vector_field { const uint8_t *word[3]; } qa_entity_vector_field;
+/* A borrowed view of the module's existing slot projection. It adds no actor
+ * identities. Count and rows stay current at module admission/release sites. */
+typedef struct qa_entity_references {
+    qa_actor_registry *actors;
+    qa_actor_owner owner;
+    uint64_t base, stride;
+    const uint8_t *slots;
+    const uint32_t *count;
+    uint32_t capacity, slot_stride, actor_offset, kind_offset;
+    qa_entity_scalar_encoding kind_encoding;
+    uint32_t borrowed_kind;
+    bool foreign_owner, zero_is_none, invalid_is_none;
+    bool has_world_number, has_none_number;
+    int32_t world_number, none_number;
+    qa_actor_reference world;
+} qa_entity_references;
+typedef struct qa_entity_body_fields {
+    struct { qa_entity_vector_field origin, angles; } pose[QA_ENTITY_POSE_COUNT];
+    qa_entity_vector_field velocity, minimum, maximum;
+    qa_entity_scalar_field ground;
+    const qa_entity_references *references;
+} qa_entity_body_fields;
+typedef struct qa_entity_model_field {
+    uint32_t model;
+    qa_collision_geometry *geometry;
+    bool present;
+} qa_entity_model_field;
+typedef struct qa_entity_model_fields {
+    const qa_entity_model_field *entries;
+    uint32_t count;
+} qa_entity_model_fields;
+typedef struct qa_entity_collision_fields {
+    qa_collision_family family;
+    bool rerelease;
+    int32_t entity_number;
+    qa_entity_scalar_field solid, flags, model, owner, contents, brush_model;
+    const qa_entity_references *references;
+    const qa_entity_model_fields *models;
+} qa_entity_collision_fields;
+/* Cold adapters resolve addresses and ABI rules. Sampling only reads those
+ * bytes; it never enters a module, resolves names or observes OS mappings. */
+qa_entity_vector_field qa_entity_vector_bytes(const void *);
+bool qa_entity_body_read(const qa_entity_body_fields *, qa_entity_pose,
+                         qa_body_state *, qa_error *);
+bool qa_entity_collision_read(const qa_entity_collision_fields *, bool linking,
+                              qa_actor_collision *, qa_error *);
 typedef struct qa_collision_binding {
     void *context;
-    bool (*read)(void *, qa_actor_collision *, qa_error *);
+    const qa_entity_collision_fields *fields;
 } qa_collision_binding;
 typedef struct qa_spatial_actor { qa_linked_body body; qa_actor_collision collision; } qa_spatial_actor;
 typedef struct qa_body_binding {
     void *context;
-    bool (*read)(void *, qa_body_state *, qa_error *);
+    const qa_entity_body_fields *fields;
     bool (*write)(void *, const qa_body_state *, qa_error *);
     void (*linked)(void *, const qa_linked_body *);
 } qa_body_binding;
@@ -96,6 +155,8 @@ bool qa_world_body_create(qa_world *, qa_actor_id, const qa_body_state *, qa_err
 bool qa_world_body_bind(qa_world *, qa_actor_id, const qa_body_binding *, bool replace, qa_error *);
 uint64_t qa_world_body_storage_serial(const qa_world *, qa_actor_id);
 bool qa_world_body_read(qa_world *, qa_actor_id, qa_body_state *, qa_error *);
+bool qa_world_body_read_pose(qa_world *, qa_actor_id, qa_entity_pose,
+                            qa_body_state *, qa_error *);
 bool qa_world_body_write(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
 /* Internal movement commit. NULL state retains the authoritative body; a
  * changed state reaches its normal write binding. Optional linking preserves
@@ -113,10 +174,9 @@ bool qa_world_collision_bind(qa_world *, qa_actor_id, const qa_collision_binding
 bool qa_world_collision_unbind(qa_world *, qa_actor_id, void *expected_context, qa_error *);
 /* False with no error means absent; reader/validation failures set an error. */
 bool qa_world_get_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
-/* Link metadata does not require an initialized clipping hull. Only the bound
- * reader for this exact actor observes this purpose; nested queries are strict. */
+/* Link metadata permits a brush awaiting its model index; clipping remains
+ * strict. The purpose is passed directly to the shared field sampler. */
 bool qa_world_get_link_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
-bool qa_world_collision_link_observation(const qa_world *, qa_actor_id);
 bool qa_world_collision_validate(qa_world *, const qa_actor_collision *, qa_error *);
 bool qa_world_attach(qa_world *, qa_actor_id, const qa_body_attachment *, qa_error *);
 bool qa_world_detach(qa_world *, qa_actor_id, qa_error *);

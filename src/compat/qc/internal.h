@@ -35,6 +35,7 @@ typedef struct qc_slot {
 typedef struct qc_body_context {
     struct qa_qc_instance *instance;
     uint32_t slot;
+    qa_entity_body_fields fields;
     bool refreshing;
     uint64_t projection_revision, body_revision;
 } qc_body_context;
@@ -92,6 +93,7 @@ struct qa_qc_instance {
     uint32_t *actor_slots;
     uint32_t actor_capacity;
     qc_body_context *bodies;
+    qa_entity_references references;
     uint64_t *projected_words;
     size_t projection_stride;
     uint64_t projection_revision;

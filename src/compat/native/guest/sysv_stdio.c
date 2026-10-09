@@ -2,7 +2,7 @@
 #include "qa/filesystem.h"
 
 enum stdio_operation { ST_FLUSH = 1, ST_PUT, ST_GET, ST_UNGET, ST_WRITE, ST_READ, ST_WIDE, ST_OVERFLOW,
-    ST_OPEN, ST_CLOSE, ST_SEEK, ST_TELL };
+    ST_OPEN, ST_CLOSE, ST_SEEK, ST_TELL, ST_TMPFILE, ST_REWIND };
 typedef struct file_layout { size_t size, descriptor, mode, lock, offset, wide, old; } file_layout;
 static file_layout layout(const guest_sysv_runtime *r)
 {
@@ -103,11 +103,21 @@ bool sysv_stdio_install(guest_sysv_runtime *r, qa_error *error)
         !STDIO_ADD(ST_WRITE,"fwrite",pssp,4,size,versions) ||
         !STDIO_ADD(ST_READ,"fread",pssp,4,size,versions) ||
         !STDIO_ADD(ST_WIDE,"fwide",pi,2,integer,wide_versions) ||
-        !STDIO_ADD(ST_OPEN,"fopen",pp,2,pointer,versions) ||
+        !STDIO_ADD(ST_OPEN,"fopen",pp,2,pointer,wide_versions) ||
         !STDIO_ADD(ST_OPEN,"fopen64",pp,2,pointer,wide_versions) ||
-        !STDIO_ADD(ST_CLOSE,"fclose",&pointer,1,integer,versions) ||
+        !STDIO_ADD(ST_CLOSE,"fclose",&pointer,1,integer,wide_versions) ||
         !STDIO_ADD(ST_SEEK,"fseek",pli,3,integer,versions) ||
-        !STDIO_ADD(ST_TELL,"ftell",&pointer,1,sysv_signed_type(r),versions)) return false;
+        !STDIO_ADD(ST_TELL,"ftell",&pointer,1,sysv_signed_type(r),versions) ||
+        !STDIO_ADD(ST_TMPFILE,"tmpfile",NULL,0,pointer,wide_versions) ||
+        !STDIO_ADD(ST_TMPFILE,"tmpfile64",NULL,0,pointer,wide_versions) ||
+        !STDIO_ADD(ST_REWIND,"rewind",&pointer,1,QA_NATIVE_VOID,versions)) return false;
+    if (p == 4) {
+        const char *legacy[] = {base};
+        if (!sysv_service_add(r,SYSV_STDIO,ST_OPEN,0,0,0,"libc.so.6","fopen",legacy,1,
+                pp,2,pointer,NULL,NULL,error) ||
+            !sysv_service_add(r,SYSV_STDIO,ST_CLOSE,0,0,0,"libc.so.6","fclose",legacy,1,
+                &pointer,1,integer,NULL,NULL,error)) return false;
+    }
 #undef STDIO_ADD
     const char *operations[] = {"finish","overflow","underflow","uflow","pbackfail","xsputn","xsgetn",
         "seekoff","seekpos","setbuf","sync","doallocate","read","write","seek","close","stat","showmanyc","imbue"};
@@ -314,6 +324,57 @@ bool sysv_stdio_unget(guest_sysv_runtime *r,uint64_t file,bool wide,uint32_t val
         !sysv_unsigned(r,file,4,&flags,error) || !sysv_store(r,file,4,flags&~UINT64_C(0x10),error)) return false;
     *out = value <= INT32_MAX ? (int32_t)value : -(int32_t)(UINT32_MAX-value)-1; return true;
 }
+static bool reserve_file(guest_sysv_runtime *r, uint64_t handle, bool *available, qa_error *error)
+{
+    *available = false;
+    for (size_t i = 0; i < r->open_file_count; ++i) if (r->open_files[i].handle == handle) {
+        return sysv_errno(r,16,error);
+    }
+    if (r->next_file > INT32_MAX) return sysv_errno(r,24,error);
+    if (!guest_grow((void **)&r->open_files,&r->open_file_capacity,r->open_file_count+1,
+        sizeof(*r->open_files),error)) return false;
+    *available = true; return true;
+}
+static bool publish_file(guest_sysv_runtime *r, const guest_runtime_file_view *view,
+    uint32_t rights, bool append, uint64_t *out, qa_error *error)
+{
+    sysv_file *entry = r->open_files+r->open_file_count++;
+    *entry = (sysv_file){.handle=view->id,.capability=view->capability,.descriptor=r->next_file++,
+        .mode=rights,.append=append};
+    file_layout l = layout(r); size_t p = r->target.pointer_bytes;
+    uint32_t flags = UINT32_C(0xfbad0000)|0x2000|(append ? 0x1000u : 0u)|
+        ((rights & GUEST_RUNTIME_FILE_READ) ? 0u : 4u)|((rights & GUEST_RUNTIME_FILE_WRITE) ? 0u : 8u);
+    if (!sysv_allocate(r,l.size+p,true,&entry->address,error) ||
+        !sysv_allocate(r,p*2+8,true,&entry->lock,error) ||
+        !sysv_allocate(r,p == 8 ? 312 : 180,true,&entry->wide,error) ||
+        !sysv_store(r,entry->address,4,flags,error) ||
+        !sysv_store(r,entry->address+l.descriptor,4,entry->descriptor,error) ||
+        !sysv_store(r,entry->address+l.offset,8,UINT64_MAX,error) ||
+        !sysv_store(r,entry->address+l.old,p,UINT64_MAX,error) ||
+        !sysv_put_pointer(r,entry->address+l.lock,entry->lock,error) ||
+        !sysv_put_pointer(r,entry->address+l.wide,entry->wide,error) ||
+        !sysv_put_pointer(r,entry->address+l.size,r->file_tables[0],error) ||
+        !sysv_put_pointer(r,entry->wide+(p == 8 ? 304 : 176),r->file_tables[1],error)) {
+        r->failed = true; return false;
+    }
+    *out = entry->address; return true;
+}
+static bool temporary_file(guest_sysv_runtime *r, uint64_t *out, qa_error *error)
+{
+    *out = 0;
+    if (!r->options.bindings.open_temporary_file) return sysv_errno(r,38,error);
+    uint64_t handle = 0; bool acquired = false;
+    if (!r->options.bindings.open_temporary_file(r->options.bindings.context, &handle, &acquired, error) ||
+        !sysv_current(r,error)) return false;
+    if (!acquired || !handle) return sysv_errno(r,5,error);
+    guest_runtime_file_view view;
+    if (!guest_runtime_resources_find(r->options.bindings.resources,handle,&view,error)) return false;
+    bool available;
+    if (!reserve_file(r,handle,&available,error)) return false;
+    if (!available) return guest_runtime_resources_close(r->options.bindings.resources,handle,error);
+    if (!guest_runtime_resources_seek(r->options.bindings.resources,handle,0,error)) return false;
+    return publish_file(r, &view, GUEST_RUNTIME_FILE_READ|GUEST_RUNTIME_FILE_WRITE, false, out, error);
+}
 static bool open_file(guest_sysv_runtime *r,uint64_t name_address,uint64_t mode_address,
     uint64_t *out,qa_error *error)
 {
@@ -383,39 +444,16 @@ static bool open_file(guest_sysv_runtime *r,uint64_t name_address,uint64_t mode_
         if (!sysv_errno(r,found ? 13 : in_use ? 16 : 2,error)) goto failed;
         goto done;
     }
-    for (size_t i = 0; i < r->open_file_count; ++i) if (r->open_files[i].handle == view.id) {
-        if (!sysv_errno(r,16,error)) goto failed;
-        goto done;
-    }
-    if (r->next_file > INT32_MAX) { if (!sysv_errno(r,24,error)) goto failed; goto done; }
-    if (!guest_grow((void **)&r->open_files,&r->open_file_capacity,r->open_file_count+1,
-        sizeof(*r->open_files),error)) goto failed;
+    bool available;
+    if (!reserve_file(r, view.id, &available, error)) goto failed;
+    if (!available) goto done;
     uint64_t start = 0;
     if (mode[0] == 'w' && !fresh && (!guest_runtime_resources_truncate(r->options.bindings.resources,view.id,0,error) ||
         !sysv_current(r,error))) goto failed;
     if (append && !plus && (!guest_runtime_resources_size(r->options.bindings.resources,view.id,&start,error) ||
         !sysv_current(r,error))) goto failed;
     if (!guest_runtime_resources_seek(r->options.bindings.resources,view.id,start,error)) goto failed;
-    sysv_file *entry = r->open_files+r->open_file_count++;
-    *entry = (sysv_file){.handle=view.id,.capability=view.capability,.descriptor=r->next_file++,
-        .mode=rights,.append=append};
-    file_layout l = layout(r); size_t p = r->target.pointer_bytes;
-    uint32_t flags = UINT32_C(0xfbad0000)|0x2000|(append ? 0x1000u : 0u)|
-        ((rights & GUEST_RUNTIME_FILE_READ) ? 0u : 4u)|((rights & GUEST_RUNTIME_FILE_WRITE) ? 0u : 8u);
-    if (!sysv_allocate(r,l.size+p,true,&entry->address,error) ||
-        !sysv_allocate(r,p*2+8,true,&entry->lock,error) ||
-        !sysv_allocate(r,p == 8 ? 312 : 180,true,&entry->wide,error) ||
-        !sysv_store(r,entry->address,4,flags,error) ||
-        !sysv_store(r,entry->address+l.descriptor,4,entry->descriptor,error) ||
-        !sysv_store(r,entry->address+l.offset,8,UINT64_MAX,error) ||
-        !sysv_store(r,entry->address+l.old,p,UINT64_MAX,error) ||
-        !sysv_put_pointer(r,entry->address+l.lock,entry->lock,error) ||
-        !sysv_put_pointer(r,entry->address+l.wide,entry->wide,error) ||
-        !sysv_put_pointer(r,entry->address+l.size,r->file_tables[0],error) ||
-        !sysv_put_pointer(r,entry->wide+(p == 8 ? 304 : 176),r->file_tables[1],error)) {
-        r->failed = true; goto failed;
-    }
-    *out = entry->address;
+    if (!publish_file(r, &view, rights, append, out, error)) goto failed;
 done:
     qa_buffer_free(&name); qa_buffer_free(&text); return true;
 invalid:
@@ -638,6 +676,13 @@ bool sysv_stdio_call(sysv_service *service,const qa_native_value *args,qa_native
 {
     guest_sysv_runtime *r = service->runtime; out->type = service->result.kind;
     switch (service->operation) {
+    case ST_TMPFILE: return temporary_file(r, &out->as.address, error);
+    case ST_REWIND: {
+        int32_t result; uint64_t flags;
+        return seek_file(r,args[0].as.address,0,0,&result,error) &&
+            sysv_unsigned(r,args[0].as.address,4,&flags,error) &&
+            sysv_store(r,args[0].as.address,4,flags&~UINT64_C(0x30),error);
+    }
     case ST_OPEN: return open_file(r,args[0].as.address,args[1].as.address,&out->as.address,error);
     case ST_CLOSE: return close_file(r,args[0].as.address,&out->as.i32,error);
     case ST_SEEK:

@@ -101,7 +101,7 @@ static bool layout_read(const qa_json_document *doc, qa_json_id value, uint8_t p
         if (ok && (!repeats || repeats > *bytes / sizes[i])) ok = fail(error, QA_ERROR_FORMAT, "Native combat aggregate field extent is invalid");
         if (ok) members[i].count = repeats;
     }
-    /* libffi describes natural records. Reject packed, overlapping, sparse or
+    /* The declared ABI describes natural records. Reject packed, overlapping, sparse or
      * over-aligned records rather than replacing their ABI classification. */
     for (size_t i = 1; ok && i < count; ++i) for (size_t j = i; j && offsets[j] < offsets[j - 1]; --j) {
         uint32_t offset = offsets[j]; offsets[j] = offsets[j - 1]; offsets[j - 1] = offset;

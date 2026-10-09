@@ -385,7 +385,7 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
 {
     application->native_runtime=frontend->native_runtime;
     application->native_bootstrap=frontend->options.native_bootstrap;
-    if (frontend->native_runtime) application->native_runner=qa_native_runtime_config(frontend->native_runtime);
+    if (frontend->native_runtime) application->native_runtime_config=qa_native_runtime_configuration(frontend->native_runtime);
     application->startup_commands=frontend->options.startup;
     application->startup_command_count=frontend->options.startup_count;
     application->initial_product_key=frontend->options.game;
@@ -675,16 +675,16 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     if (native_runtime) {
         frontend->native_runtime=native_runtime;
         qa_native_runtime_retain(native_runtime);
-        frontend->options.application.native_runner=qa_native_runtime_config(native_runtime);
+        frontend->options.application.native_runtime_config=qa_native_runtime_configuration(native_runtime);
     } else {
         char *executable=SDL_GetBasePath();
         if (!executable) { qa_error_set(error,QA_ERROR_IO,0,"Reading native executable directory: %s",SDL_GetError()); goto fail; }
         qa_native_runtime_options native={.executable_directory=executable,.root=options->native_runtime_root,
-            .wine=options->native_wine,.overrides=options->application.native_runner};
+            .overrides=options->application.native_runtime_config};
         bool ready=qa_native_runtime_create(&native,&frontend->native_runtime,error);
         SDL_free(executable);
         if (!ready) goto fail;
-        frontend->options.application.native_runner=qa_native_runtime_config(frontend->native_runtime);
+        frontend->options.application.native_runtime_config=qa_native_runtime_configuration(frontend->native_runtime);
     }
     frontend->keys=frontend_keys_create(error);
     if (!frontend->keys) goto fail;

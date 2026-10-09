@@ -1,17 +1,28 @@
 #ifndef QA_NATIVE_PROCESS_RESOURCES_H
 #define QA_NATIVE_PROCESS_RESOURCES_H
 
-#include "qa/launch.h"
 #include "qa/native_process.h"
 #include "qa/native_process_platform.h"
 #include "qa/native_runtime.h"
 #include "qa/native_sysv_program_save.h"
 
 typedef struct qa_native_process_resources qa_native_process_resources;
+/* Immutable bytes and callback context remain owned by their actual producer.
+ * A graph takes one hold; captures take independent holds. The optional retained
+ * callback preserves an acquired object's existing receipt semantics. */
+typedef struct qa_native_process_resource_owner {
+    void *context;
+    void (*retain)(void *);
+    void (*release)(void *);
+    bool (*retained)(void *, qa_error *);
+} qa_native_process_resource_owner;
 typedef struct qa_native_process_resource_artifact {
-    const qa_resource *resource;
-    const qa_vfs_acquisition *acquisition;
+    /* With owner hooks, bytes are borrowed under that hold. Without them the
+     * constructor copies these creation-borrowed bytes once; captures share
+     * that immutable allocation. Owners provide both retain and release. */
+    qa_bytes bytes;
     const char *path;
+    qa_native_process_resource_owner owner;
 } qa_native_process_resource_artifact;
 typedef struct qa_native_process_resource_policy {
     qa_native_guest_backend backend;
@@ -28,10 +39,11 @@ typedef struct qa_native_process_resource_root {
 } qa_native_process_resource_root;
 /* Exact acquired order, including the selected primary. Implementation-owned
  * addresses/callback IDs are issued beneath this genuine service owner. The
- * current callback qualifies the original prepared/live application row and
- * must already work before any source constructor executes. */
+ * optional current callback belongs to the caller's real authority. SDK callers
+ * without a changing Source authority need only retain the actual module. */
 typedef struct qa_native_process_resources_options {
-    const qa_launch_instance *descriptor;
+    uint64_t identity;
+    qa_native_process_resource_owner authority;
     const qa_native_process_resource_artifact *artifacts;
     size_t artifact_count, primary;
     qa_actor_owner receiver;
@@ -40,6 +52,9 @@ typedef struct qa_native_process_resources_options {
     qa_native_runtime *runtime;
     const char *bootstrap;
     qa_native_process_platform *platform;
+    /* Optional acquired temporary-directory capability. Uses the graph's
+     * retained platform owner, including after capture/rebind. */
+    bool (*temporary_root)(void *, qa_fs_root **, qa_error *);
     const qa_native_process_resource_root *roots;
     size_t root_count;
     const char *const *argv, *const *environment;
@@ -48,8 +63,7 @@ typedef struct qa_native_process_resources_options {
     size_t command_line_units, windows_environment_units;
     qa_native_guest_callback_resolve_fn external_callback;
     void *external_context;
-    bool (*current)(void *, const qa_launch_instance *, qa_actor_owner, uint64_t, qa_error *);
-    void *context;
+    bool (*current)(void *, qa_error *);
 } qa_native_process_resources_options;
 typedef struct qa_native_process_resource_program {
     bool has_interpreter, read_implies_execute;
@@ -92,6 +106,9 @@ bool qa_native_process_resources_current(const qa_native_process_resources *, qa
  * may intervene between the failed capability call and this pure read. */
 bool qa_native_process_resources_native_error_read(const qa_native_process_resources *,
     qa_fs_native_error *);
+/* Owned UTF-8 path from the actually held working-directory root. The trailing
+ * NUL is outside the returned buffer's counted size. */
+bool qa_native_process_resources_getcwd(qa_native_process_resources *, qa_buffer *, qa_error *);
 /* Options borrow this owner through source construction only. Source process
  * destruction must finish before the last resource-owner release. */
 bool qa_native_process_resources_options_read(qa_native_process_resources *,
@@ -140,7 +157,7 @@ bool qa_native_process_resources_linux_clock_read(qa_native_process_resources *,
     int32_t, int64_t *, int32_t *, qa_error *);
 /* Adds an actually opened temporary/source directory to this owner's path
  * namespace. Removal requires all live file rows for that root to be closed;
- * historical rows and retained captures keep their original root identity. */
+ * closed rows keep metadata, while earlier captures keep independent holds. */
 bool qa_native_process_resources_root_add(qa_native_process_resources *,
     const qa_native_process_resource_root *, uint64_t *, qa_error *);
 bool qa_native_process_resources_root_remove(qa_native_process_resources *, uint64_t, qa_error *);

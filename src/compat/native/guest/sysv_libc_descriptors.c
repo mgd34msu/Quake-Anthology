@@ -15,7 +15,11 @@ static bool identity(const sysv_service *s)
     if (s->group == SYSV_FORMAT)
         return !strcmp(s->library,"libc.so.6") &&
             ((named(s,"vsnprintf",1,0) && version(s,base)) ||
-             (named(s,"__vsnprintf_chk",2,0) && version(s,"GLIBC_2.3.4")));
+             (named(s,"__vsnprintf_chk",2,0) && version(s,"GLIBC_2.3.4")) ||
+             (named(s,"snprintf",3,0) && version(s,base)) ||
+             (named(s,"sscanf",4,0) && version(s,base)) ||
+             (named(s,"__isoc99_sscanf",4,0) && version(s,"GLIBC_2.7")) ||
+             (named(s,"__isoc23_sscanf",5,0) && version(s,"GLIBC_2.38")));
     if (s->group == SYSV_LIBC) {
         if (!strcmp(s->library,"ld-linux-x86-64.so.2"))
             return wide && named(s,"__tls_get_addr",2,0) && version(s,"GLIBC_2.3");
@@ -42,9 +46,15 @@ static bool identity(const sysv_service *s)
             return true;
         }
         if (s->operation == 27) return named(s,"strtod",27,0) && version(s,base);
+        if (s->operation == 28) return named(s,"getenv",28,0) && version(s,base);
+        if (s->operation == 29) return named(s,"getcwd",29,0) && version(s,base);
+        if (s->operation == 30) return named(s,"abort",30,0) && version(s,base);
+        if (s->operation == 17) return
+            (named(s,"strtol",17,0) && version(s,base)) ||
+            (named(s,"__isoc23_strtol",17,1) && version(s,"GLIBC_2.38"));
         const char *names[] = {"__errno_location",NULL,"malloc","calloc","free","realloc",
             NULL,"memset","memcmp","strlen","strcmp",NULL,"strncpy",NULL,NULL,
-            "strtok","strtol","time","qsort",NULL,NULL,NULL,"__isnanf","__stack_chk_fail"};
+            "strtok",NULL,"time","qsort",NULL,NULL,NULL,"__isnanf","__stack_chk_fail"};
         if (s->operation >= 1 && s->operation <= 24 && names[s->operation-1])
             return named(s,names[s->operation-1],s->operation,0) &&
                 version(s,s->operation == 24 ? "GLIBC_2.4" : base);
@@ -85,18 +95,22 @@ static bool identity(const sysv_service *s)
     if (s->group == SYSV_STDIO) {
         if (strcmp(s->library,"libc.so.6")) return false;
         const char *names[] = {"fflush","fputc","fgetc","ungetc","fwrite","fread","fwide","__guest_IO_file_overflow",
-            "fopen","fclose","fseek","ftell"};
-        if (s->operation < 1 || s->operation > 12) return false;
+            "fopen","fclose","fseek","ftell","tmpfile","rewind"};
+        if (s->operation < 1 || s->operation > 14) return false;
         bool name = !strcmp(s->name,names[s->operation-1]) ||
             (s->operation == 2 && !strcmp(s->name,"putc")) ||
             (s->operation == 3 && !strcmp(s->name,"getc")) ||
             (s->operation == 3 && !strcmp(s->name,"__uflow")) ||
             (s->operation == 8 && !strcmp(s->name,"__overflow")) ||
             (s->operation == 1 && !strcmp(s->name,"__guest_IO_file_sync")) ||
-            (s->operation == 9 && !strcmp(s->name,"fopen64"));
+            (s->operation == 9 && !strcmp(s->name,"fopen64")) ||
+            (s->operation == 13 && !strcmp(s->name,"tmpfile64"));
         if ((s->operation == 8 && strcmp(s->name,"__overflow")) ||
             (s->operation == 1 && !strcmp(s->name,"__guest_IO_file_sync"))) return name && !s->version;
-        return name && version(s,!wide && (s->operation == 7 || !strcmp(s->name,"fopen64")) ? "GLIBC_2.1" : base);
+        if (!wide && (s->operation == 9 || s->operation == 10))
+            return name && (version(s,"GLIBC_2.1") ||
+                (strcmp(s->name,"fopen64") && version(s,base)));
+        return name && version(s,!wide && (s->operation == 7 || s->operation == 13) ? "GLIBC_2.1" : base);
     }
     if (s->group == SYSV_LOCALE) {
         if (s->operation == 1) return !strcmp(s->library,"libc.so.6") && version(s,"GLIBC_2.3") &&
@@ -129,14 +143,17 @@ static bool identity(const sysv_service *s)
  * decoded record can reach argument indexing. No service installer runs here. */
 bool sysv_service_valid(const sysv_service *s,qa_error *error)
 {
+    if (s->group == SYSV_PLATFORM) return sysv_platform_valid(s, error);
     qa_native_value_type p = QA_NATIVE_ADDRESS,z = sysv_size_type(s->runtime),signed_size = sysv_signed_type(s->runtime);
     qa_native_value_type parameters[8] = {p,p,p,p,p,p,p,p},result = QA_NATIVE_VOID;
     size_t count = 0; bool valid = !s->b && !s->c;
     switch (s->group) {
     case SYSV_RUNTIME: count = 1; valid = valid && s->detail && !s->a; break;
     case SYSV_FORMAT:
-        valid = valid && !s->a && (s->operation == 1 || s->operation == 2);
-        count = s->operation == 1 ? 4 : 6; result = QA_NATIVE_I32; parameters[1] = z;
+        valid = valid && !s->a && s->operation >= 1 && s->operation <= 5;
+        count = s->operation == 1 ? 4 : s->operation == 2 ? 6 : s->operation == 3 ? 3 : 2;
+        result = QA_NATIVE_I32;
+        if (s->operation <= 3) parameters[1] = z;
         if (s->operation == 2) { parameters[2] = QA_NATIVE_I32; parameters[3] = z; }
         break;
     case SYSV_CXX:
@@ -146,7 +163,7 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         if (s->operation == 6 || s->operation == 8) { result = p; parameters[0] = z; }
         break;
     case SYSV_STDIO:
-        valid = valid && !s->a && s->operation >= 1 && s->operation <= 12; result = QA_NATIVE_I32;
+        valid = valid && !s->a && s->operation >= 1 && s->operation <= 14; result = QA_NATIVE_I32;
         count = s->operation == 1 || s->operation == 3 ? 1 : s->operation == 5 || s->operation == 6 ? 4 : 2;
         if (s->operation == 2 || s->operation == 4) parameters[0] = QA_NATIVE_I32;
         if (s->operation == 7 || s->operation == 8) parameters[1] = QA_NATIVE_I32;
@@ -155,6 +172,8 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         if (s->operation == 10 || s->operation == 12) count = 1;
         if (s->operation == 11) { count = 3; parameters[1] = signed_size; parameters[2] = QA_NATIVE_I32; }
         if (s->operation == 12) result = signed_size;
+        if (s->operation == 13) { count = 0; result = p; }
+        if (s->operation == 14) { count = 1; result = QA_NATIVE_VOID; }
         break;
     case SYSV_LOCALE: {
         valid = valid && s->operation >= 1 && s->operation <= 9;
@@ -180,7 +199,7 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         else if (s->operation >= 10) result = s->a ? QA_NATIVE_U32 : QA_NATIVE_I32;
         break;
     case SYSV_LIBC:
-        valid = valid && s->operation >= 1 && s->operation <= 27;
+        valid = valid && s->operation >= 1 && s->operation <= 30;
         switch (s->operation) {
         case 1: result = p; break;
         case 2: count = 1; result = p; valid = valid && s->runtime->target.pointer_bytes == 8; break;
@@ -199,7 +218,8 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         case 14: count = 2; parameters[1] = QA_NATIVE_I32; result = p; valid = valid && s->a <= 1; break;
         case 15: count = 2; result = p; valid = valid && s->a <= 1; break;
         case 16: count = 2; result = p; break;
-        case 17: count = 3; parameters[2] = QA_NATIVE_I32; result = signed_size; break;
+        case 17: count = 3; parameters[2] = QA_NATIVE_I32; result = signed_size;
+            valid = valid && s->a <= 1; break;
         case 18: count = 1; result = signed_size; break;
         case 19: count = 4; parameters[1] = parameters[2] = z; break;
         case 20: count = 1; result = s->result.kind; parameters[0] = result;
@@ -211,9 +231,11 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
         case 25: result = QA_NATIVE_I32; valid = valid && s->a; break;
         case 26: count = 1; parameters[0] = QA_NATIVE_U32; valid = valid && s->a; break;
         case 27: count = 2; result = QA_NATIVE_F64; break;
+        case 28: count = 1; result = p; break;
+        case 29: count = 2; parameters[1] = z; result = p; break;
         default: break;
         }
-        if (s->operation != 7 && s->operation != 12 && s->operation != 14 && s->operation != 15 && s->operation != 20 &&
+        if (s->operation != 7 && s->operation != 12 && s->operation != 14 && s->operation != 15 && s->operation != 17 && s->operation != 20 &&
             s->operation != 25 && s->operation != 26)
             valid = valid && !s->a;
         break;

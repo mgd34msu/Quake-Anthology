@@ -11,7 +11,7 @@ import tempfile
 
 
 FILES = {
-    'qa-native-runner': 'native-runtime/linux-x86_64/qa-native-runner',
+    'qa-native-host': 'native-runtime/linux-x86_64/qa-native-host',
     'native-profile/client/qa-native-profile.so':
         'native-runtime/linux-x86_64/qa-native-profile.so',
     'quake-anthology': 'qa-c',

@@ -578,7 +578,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             native.instance.declaration = role->declaration;
         }
         qa_native_module_info module = qa_native_module_describe(role->module);
-        qa_native_process_resource_artifact artifact = {.resource = role->artifact->resource,
+        application_native_process_artifact artifact = {.resource = role->artifact->resource,
             .acquisition = &role->artifact->acquisition, .path = role->path};
         qa_bytes restored_executor = {0}, recipe = {0};
         const qa_native_process_resources *capture = NULL;

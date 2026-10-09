@@ -84,7 +84,8 @@ q3_service_result q3_game_records(q3_call *call, int32_t *result, qa_error *erro
     q3_game_data *game = call->host->game;
     game->entities = call->arguments[0]; game->clients = call->arguments[3];
     game->entity_count = (uint32_t)count; game->entity_stride = (uint32_t)entity_stride;
-    game->client_stride = (uint32_t)client_stride; return Q3_COMPLETED;
+    game->client_stride = (uint32_t)client_stride;
+    return q3_game_fields_refresh(call->host, error) ? Q3_COMPLETED : Q3_FAILED;
 }
 
 bool qa_q3_host_game_data_read(const qa_q3_host *host, qa_q3_host_game_data *out)
@@ -123,7 +124,7 @@ bool qa_q3_host_game_data_bind(qa_q3_host *host,qa_qvm *vm,const qa_q3_host_game
     host->game->clients=data->client_count?tag+data->clients_address:0;
     host->game->entity_count=data->entity_count; host->game->entity_stride=data->entity_stride;
     host->game->client_stride=data->client_stride;
-    return true;
+    return q3_game_fields_refresh(host,error);
 }
 
 bool qa_q3_host_entity(qa_q3_host *host, uint32_t number, qa_q3_entity *entity,
@@ -250,55 +251,130 @@ static bool current(const q3_entity_slot *slot, qa_error *error)
         q3_fail(error, QA_ERROR_ARGUMENT, slot->number, "Q3 source actor generation is retired");
 }
 
-static qa_actor_reference physical_reference(qa_q3_host *host, int32_t number)
+static void reference_fields(qa_q3_host *host)
 {
-    if (number < 0 || number >= 1023) return (qa_actor_reference){0};
-    if (number == 1022) {
-        qa_actor_id world = host->options.server.world_actor ?
-            host->options.server.world_actor(host->options.server.context) : (qa_actor_id){0};
-        const qa_actor_record *record = qa_actors_get(qa_session_actors(host->options.session), world);
-        return record && record->owner == host->options.owner && record->has_source ?
-            qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(world);
-    }
-    qa_actor_id id = host->game->slots[number].actor;
-    const qa_actor_record *record = qa_actors_get(qa_session_actors(host->options.session), id);
-    return record && record->owner != host->options.owner ? qa_actor_reference_lifetime(id) :
-        qa_actor_reference_source(host->options.owner, (uint32_t)number);
+    qa_actor_id world = host->options.server.world_actor ?
+        host->options.server.world_actor(host->options.server.context) : (qa_actor_id){0};
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(host->options.session), world);
+    host->game->references = (qa_entity_references){
+        .actors = qa_session_actor_registry(host->options.session), .owner = host->options.owner,
+        .base = 0, .stride = 1, .slots = (const uint8_t *)host->game->slots,
+        .capacity = 1022, .slot_stride = sizeof(q3_entity_slot),
+        .actor_offset = offsetof(q3_entity_slot, actor), .foreign_owner = true,
+        .invalid_is_none = true, .has_world_number = true, .world_number = 1022,
+        .has_none_number = true, .none_number = 1023,
+        .world = record && record->owner == host->options.owner && record->has_source ?
+            qa_actor_reference_source(record->owner, record->source_slot) : qa_actor_reference_lifetime(world)};
 }
 
-static qa_vec3 body_vector(const uint8_t *bytes, size_t offset)
+static bool live_word(qa_q3_host *host, uint64_t address,
+                      qa_entity_scalar_encoding encoding, qa_entity_scalar_field *out,
+                      qa_error *error)
 {
-    return qa_v3(qa_load_f32le(bytes + offset), qa_load_f32le(bytes + offset + 4),
-        qa_load_f32le(bytes + offset + 8));
+    qa_bytes bytes;
+    bool ok = host->vm ? q3_vm_span(host->vm, address, 4, &bytes, error) :
+        qa_native_borrow(host->native, address, 4, &bytes, error);
+    if (ok) *out = (qa_entity_scalar_field){bytes.data, encoding};
+    return ok;
 }
 
-static bool body_read(void *context, qa_body_state *out, qa_error *error)
+static bool live_vector(qa_q3_host *host, uint64_t address,
+                        qa_entity_vector_field *out, qa_error *error)
 {
-    q3_entity_slot *slot = context; q3_call call;
-    if (!current(slot, error) || !q3_game_begin(slot->host, &call, error)) return false;
-    q3_record record;
-    bool ok = q3_game_entity_record(&call, slot->number, &record, error);
-    if (ok) {
-        const uint8_t *entity = record.abi.bytes.data;
-        qa_qvm_abi abi = slot->host->options.abi;
-        qa_body_state body = {.origin = body_vector(entity, q3_shared_offset(abi, 488)),
-            .angles = body_vector(entity, q3_shared_offset(abi, 500)),
-            .bounds = {body_vector(entity, q3_shared_offset(abi, 436)),
-                body_vector(entity, q3_shared_offset(abi, 448))},
-            .velocity = body_vector(entity, 36),
-            .ground = physical_reference(slot->host, qa_load_i32le(entity + 148))};
-        if (slot->number < slot->host->options.server.maximum_clients) {
-            ok = q3_game_player_record(&call, slot->number, &record, error);
-            if (ok) {
-                const uint8_t *player = record.abi.bytes.data;
-                body.velocity = body_vector(player, 32);
-                if (slot->input_motion)
-                    body.origin = body_vector(player, 20);
-            }
-        }
-        if (ok) *out = body;
+    if (host->vm) {
+        qa_bytes bytes;
+        if (!q3_vm_span(host->vm, address, 12, &bytes, error)) return false;
+        *out = qa_entity_vector_bytes(bytes.data);
+        return true;
     }
-    return q3_game_end(&call, ok);
+    for (size_t i = 0; i < 3; ++i) {
+        qa_entity_scalar_field word;
+        if (!live_word(host, address + i * 4u, QA_ENTITY_F32_LE, &word, error)) return false;
+        out->word[i] = word.bytes;
+    }
+    return true;
+}
+
+static bool slot_fields(q3_entity_slot *slot, qa_error *error)
+{
+    qa_q3_host *host = slot->host; q3_game_data *game = host->game;
+    qa_qvm_abi abi = host->options.abi; uint64_t entity, player;
+    if (!indexed(game->entities, game->entity_stride, slot->number, &entity, error)) return false;
+    qa_entity_body_fields body = {.references = &game->references};
+    qa_entity_collision_fields collision = {.family = QA_COLLISION_Q3,
+        .entity_number = (int32_t)slot->number, .references = &game->references};
+    qa_entity_vector_field player_origin = {0};
+    if (!live_vector(host, entity + q3_shared_offset(abi, 488), &body.pose[QA_ENTITY_CLIP_POSE].origin, error) ||
+        !live_vector(host, entity + q3_shared_offset(abi, 500), &body.pose[QA_ENTITY_CLIP_POSE].angles, error) ||
+        !live_vector(host, entity + 92, &body.pose[QA_ENTITY_CONTENTS_POSE].origin, error) ||
+        !live_vector(host, entity + 116, &body.pose[QA_ENTITY_CONTENTS_POSE].angles, error) ||
+        !live_vector(host, entity + q3_shared_offset(abi, 436), &body.minimum, error) ||
+        !live_vector(host, entity + q3_shared_offset(abi, 448), &body.maximum, error) ||
+        !live_word(host, entity + 148, QA_ENTITY_I32_LE, &body.ground, error) ||
+        !live_word(host, entity + q3_shared_offset(abi, 424), QA_ENTITY_I32_LE, &collision.flags, error) ||
+        !live_word(host, entity + q3_shared_offset(abi, 432), QA_ENTITY_I32_LE, &collision.brush_model, error) ||
+        !live_word(host, entity + q3_shared_offset(abi, 460), QA_ENTITY_I32_LE, &collision.contents, error) ||
+        !live_word(host, entity + 160, QA_ENTITY_U32_LE, &collision.model, error) ||
+        !live_word(host, entity + q3_shared_offset(abi, 512), QA_ENTITY_I32_LE, &collision.owner, error)) return false;
+    body.pose[QA_ENTITY_CONTROL_POSE] = body.pose[QA_ENTITY_CLIP_POSE];
+    if (slot->number < host->options.server.maximum_clients) {
+        if (!indexed(game->clients, game->client_stride, slot->number, &player, error) ||
+            !live_vector(host, player + 20, &player_origin, error) ||
+            !live_vector(host, player + 32, &body.velocity, error)) return false;
+        if (slot->input_motion) body.pose[QA_ENTITY_CONTROL_POSE].origin = player_origin;
+    } else if (!live_vector(host, entity + 36, &body.velocity, error)) return false;
+    slot->body_fields = body; slot->collision_fields = collision;
+    slot->player_origin = player_origin;
+    return true;
+}
+
+static void slot_fields_clear(q3_entity_slot *slot)
+{
+    slot->body_fields = (qa_entity_body_fields){0};
+    slot->collision_fields = (qa_entity_collision_fields){0};
+    slot->player_origin = (qa_entity_vector_field){0};
+}
+
+void q3_game_fields_clear(qa_q3_host *host)
+{
+    if (!host->game) return;
+    host->game->references = (qa_entity_references){0};
+    for (size_t i = 0; i < 1024; ++i) slot_fields_clear(&host->game->slots[i]);
+}
+
+static bool storage_overlaps(uint64_t address, uint64_t bytes,
+                             uint64_t base, uint64_t length)
+{
+    return bytes && length && (address < base ? base - address < bytes : address - base < length);
+}
+
+void q3_game_fields_changed(void *context, const qa_native_entity_event *event)
+{
+    qa_q3_host *host = context;
+    if (!host || !host->game || host->options.role != QA_QVM_GAME ||
+        event->change != QA_NATIVE_ENTITIES_INVALIDATE) return;
+    if (!event->address) { q3_game_fields_clear(host); return; }
+    q3_game_data *game = host->game;
+    for (uint32_t i = 0; i < game->entity_count && i < 1022; ++i) {
+        bool retired = storage_overlaps(event->address, event->bytes,
+            game->entities + (uint64_t)i * game->entity_stride, game->entity_stride);
+        if (i < host->options.server.maximum_clients)
+            retired = retired || storage_overlaps(event->address, event->bytes,
+                game->clients + (uint64_t)i * game->client_stride, game->client_stride);
+        if (retired) slot_fields_clear(&game->slots[i]);
+    }
+}
+
+bool q3_game_fields_refresh(qa_q3_host *host, qa_error *error)
+{
+    q3_game_fields_clear(host);
+    if (!host->game || !host->game->entities) return true;
+    reference_fields(host);
+    for (uint32_t i = 0; i < host->game->entity_count && i < 1022; ++i) {
+        q3_entity_slot *slot = &host->game->slots[i];
+        if (slot->actor.registry && !slot->borrowed && !slot_fields(slot, error)) return false;
+    }
+    return true;
 }
 
 typedef struct body_write_scope {
@@ -391,27 +467,6 @@ static bool body_write(void *context, const qa_body_state *body, qa_error *error
     return q3_game_end(&call, ok);
 }
 
-bool q3_game_collision(void *context, qa_actor_collision *out, qa_error *error)
-{
-    q3_entity_slot *slot = context; q3_call call;
-    if (!current(slot, error) || !q3_game_begin(slot->host, &call, error)) return false;
-    q3_record record;
-    bool ok = q3_game_entity_record(&call, slot->number, &record, error);
-    if (ok) {
-        const uint8_t *entity = record.abi.bytes.data;
-        qa_qvm_abi abi = slot->host->options.abi;
-        int32_t owner = qa_load_i32le(entity + q3_shared_offset(abi, 512));
-        *out = (qa_actor_collision){.family = QA_COLLISION_Q3,
-            .shape = (qa_load_i32le(entity + q3_shared_offset(abi, 424)) & 1024) ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
-            .inline_model = qa_load_i32le(entity + q3_shared_offset(abi, 432)) != 0,
-            .model = qa_load_u32le(entity + 160),
-            .contents = qa_load_i32le(entity + q3_shared_offset(abi, 460)),
-            .owner = physical_reference(slot->host, owner), .role = QA_COLLISION_SOLID, .has_q3_owner = true,
-            .q3_entity_number = (int32_t)slot->number, .q3_owner_number = owner};
-    }
-    return q3_game_end(&call, ok);
-}
-
 bool qa_q3_host_bind_actor(qa_q3_host *host, uint32_t number, qa_actor_id actor,
                              bool borrowed, qa_error *error)
 {
@@ -438,9 +493,9 @@ bool qa_q3_host_bind_actor(qa_q3_host *host, uint32_t number, qa_actor_id actor,
     slot->actor = actor; slot->borrowed = borrowed;
     bool ok = true;
     if (!borrowed) {
-        qa_body_binding body = {.context = slot, .read = body_read, .write = body_write};
-        qa_collision_binding collision = {.context = slot, .read = q3_game_collision};
-        ok = qa_world_body_bind(host->options.world, actor, &body, false, error);
+        qa_body_binding body = {.context = slot, .fields = &slot->body_fields, .write = body_write};
+        qa_collision_binding collision = {.context = slot, .fields = &slot->collision_fields};
+        ok = slot_fields(slot, error) && qa_world_body_bind(host->options.world, actor, &body, false, error);
         if (!ok) {
             slot->actor = (qa_actor_id){0}; slot->borrowed = false;
             return q3_game_end(&call, false);
@@ -457,11 +512,12 @@ bool qa_q3_host_bind_actor(qa_q3_host *host, uint32_t number, qa_actor_id actor,
 bool q3_game_bind_restored(qa_q3_host *host, qa_error *error)
 {
     if (!host->game) return true;
+    if (!q3_game_fields_refresh(host, error)) return false;
     for (uint32_t i = 0; i < 1022; ++i) {
         q3_entity_slot *slot = &host->game->slots[i];
         if (!slot->actor.registry || slot->borrowed) continue;
-        qa_body_binding body = {.context = slot, .read = body_read, .write = body_write};
-        qa_collision_binding collision = {.context = slot, .read = q3_game_collision};
+        qa_body_binding body = {.context = slot, .fields = &slot->body_fields, .write = body_write};
+        qa_collision_binding collision = {.context = slot, .fields = &slot->collision_fields};
         if (!qa_world_body_bind(host->options.world, slot->actor, &body, true, error) ||
             !qa_world_collision_bind(host->options.world, slot->actor, &collision, error)) return false;
     }
@@ -529,9 +585,14 @@ bool qa_q3_host_player_motion(qa_q3_host *host, uint32_t number, bool begin, qa_
     q3_entity_slot *slot = &host->game->slots[number];
     if (begin ? slot->input_motion == UINT32_MAX || slot->input_retired : !slot->input_motion)
         return q3_fail(error, QA_ERROR_ARGUMENT, number, "unbalanced Q3 input motion scope");
-    if (begin) ++slot->input_motion;
-    else if (!--slot->input_motion && slot->input_retired && !slot->actor.registry)
-        slot->input_retired = false;
+    if (begin) {
+        if (!slot->input_motion++ && slot->actor.registry && !slot->borrowed)
+            slot->body_fields.pose[QA_ENTITY_CONTROL_POSE].origin = slot->player_origin;
+    } else if (!--slot->input_motion) {
+        if (slot->actor.registry && !slot->borrowed)
+            slot->body_fields.pose[QA_ENTITY_CONTROL_POSE].origin = slot->body_fields.pose[QA_ENTITY_CLIP_POSE].origin;
+        if (slot->input_retired && !slot->actor.registry) slot->input_retired = false;
+    }
     return true;
 }
 

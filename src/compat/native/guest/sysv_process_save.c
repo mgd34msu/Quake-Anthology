@@ -283,6 +283,11 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         owner->options.output_is_terminal != bindings->output_is_terminal))
         okay = guest_fail(error, QA_ERROR_FORMAT, 0, "System V saved process policy differs from its actual external authority");
     owner->options.time = bindings->time; owner->options.current = bindings->current;
+    owner->options.random = bindings->random;
+    owner->options.clock = bindings->clock;
+    owner->options.calendar = bindings->calendar;
+    owner->options.getcwd = bindings->getcwd;
+    owner->options.open_temporary_file = bindings->open_temporary_file;
     owner->options.open_file = bindings->open_file;
     owner->options.file_context = bindings->file_context;
     owner->options.guest.host_executable = bindings->host_executable;

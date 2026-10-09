@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "windows_crt.h"
+#include "scan.h"
 #include "qa/text.h"
 #include <math.h>
 #include <fenv.h>
@@ -916,188 +917,28 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
     result(out, QA_NATIVE_I32, (uint32_t)returned); return true;
 }
 
-typedef struct scan_directive {
-    char code, literal;
-    uint64_t width;
-    bool space, suppressed, long_float;
-} scan_directive;
-
-static bool scan_space(unsigned char c)
-{ return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
-
-static bool scan_parse(const char *format, scan_directive **out, size_t *count, qa_error *error)
+typedef struct windows_scan_arguments { guest_windows *owner; uint64_t cursor; } windows_scan_arguments;
+static bool scanf_destination(void *context, uint64_t *out, qa_error *error)
 {
-    size_t capacity = 0; scan_directive *directives = NULL;
-    for (size_t at = 0; format[at]; ) {
-        char c = format[at++]; scan_directive directive = {.width = UINT64_C(9007199254740991)};
-        if (scan_space((unsigned char)c)) directive.space = true;
-        else if (c != '%') directive.literal = c;
-        else if (format[at] == '%') { ++at; directive.literal = '%'; }
-        else {
-            if (format[at] == '*') { ++at; directive.suppressed = true; }
-            if (format[at] >= '0' && format[at] <= '9') {
-                directive.width = 0;
-                do {
-                    unsigned digit = (unsigned)(format[at++] - '0');
-                    if (directive.width > (UINT64_C(9007199254740991) - digit) / 10) goto unsupported;
-                    directive.width = directive.width * 10 + digit;
-                } while (format[at] >= '0' && format[at] <= '9');
-                if (!directive.width) goto unsupported;
-            }
-            if (format[at] == 'l') { ++at; directive.long_float = true; }
-            c = format[at]; if (!c) goto unsupported; ++at;
-            if (strchr("fFeEgG", c)) directive.code = 'f';
-            else if ((c == 'd' || c == 'i') && !directive.long_float) directive.code = c;
-            else goto unsupported;
-        }
-        if (!guest_grow((void **)&directives, &capacity, *count + 1, sizeof(*directives), error)) { free(directives); return false; }
-        directives[(*count)++] = directive; continue;
-unsupported:
-        free(directives); return guest_fail(error, QA_ERROR_UNSUPPORTED, at, "unsupported Windows scanf conversion or width");
-    }
-    *out = directives; return true;
+    windows_scan_arguments *arguments = context;
+    return va_next(arguments->owner, &arguments->cursor,
+        arguments->owner->target.pointer_bytes, out, error);
 }
-
-typedef struct scan_input { guest_windows *owner; uint64_t address, capacity, cursor; } scan_input;
-
-static bool scan_peek(scan_input *input, unsigned char *out, qa_error *error)
-{
-    *out = 0;
-    if (input->cursor >= input->capacity) return true;
-    uint64_t value;
-    if (!windows_read(input->owner, input->address + input->cursor, 1, &value, error)) return false;
-    *out = (unsigned char)value; return true;
-}
-
-static int scan_digit(unsigned char c)
-{ return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99; }
-
-static bool scan_take(scan_input *input, char **token, size_t *count, size_t *capacity,
-    unsigned char c, qa_error *error)
-{
-    if (!guest_grow((void **)token, capacity, *count + 2, 1, error)) return false;
-    (*token)[(*count)++] = (char)c; (*token)[*count] = 0; ++input->cursor; return true;
-}
-
 static bool scanf_service(guest_windows *owner, const qa_native_value *args,
     qa_native_value *out, qa_error *error)
 {
     if (integer(args + 4) || (integer(args) & ~UINT64_C(2)))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "unsupported Windows scanf locale/options");
-    if (!integer(args + 1)) return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows scanf input is null");
-    char *format = NULL; scan_directive *directives = NULL; size_t count = 0;
-    if (!text(owner, integer(args + 3), &format, error) || !scan_parse(format, &directives, &count, error)) { free(format); return false; }
-    free(format); scan_input input = {owner, integer(args + 1), integer(args + 2), 0};
-    uint64_t arguments = integer(args + 5); int32_t assigned = 0; bool converted = false, okay = true;
-    for (size_t i = 0; okay && i < count; ++i) {
-        scan_directive directive = directives[i]; unsigned char c;
-        if (!scan_peek(&input, &c, error)) { okay = false; break; }
-        if (directive.space || directive.code) {
-            while (scan_space(c)) { ++input.cursor; if (!scan_peek(&input, &c, error)) { okay = false; break; } }
-            if (!okay) break;
-        }
-        if (directive.space) continue;
-        if (directive.literal) {
-            if (c != (unsigned char)directive.literal) { if (!converted && !c) assigned = -1; break; }
-            ++input.cursor; continue;
-        }
-        if (!c) { if (!converted) assigned = -1; break; }
-        uint64_t start = input.cursor; char *token = NULL; size_t token_count = 0, token_capacity = 0;
-        bool negative = c == '-';
-        if (c == '+' || c == '-') {
-            if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { free(token); okay = false; break; }
-        }
-        if (input.cursor - start >= directive.width) c = 0;
-        bool valid = true; int base = 10; size_t digits = 0;
-        if (directive.code == 'f') {
-            if (c == 'i' || c == 'I' || c == 'n' || c == 'N') {
-                while (((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) && token_count < 9) {
-                    if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { okay = false; break; }
-                    if (input.cursor - start >= directive.width) c = 0;
-                }
-                const char *word = token ? token + (negative || token[0] == '+') : "";
-                bool nonfinite = strlen(word) >= 3 &&
-                    (((word[0] | 32) == 'i' && (word[1] | 32) == 'n' && (word[2] | 32) == 'f') ||
-                     ((word[0] | 32) == 'n' && (word[1] | 32) == 'a' && (word[2] | 32) == 'n'));
-                if (okay && nonfinite) okay = guest_fail(error, QA_ERROR_UNSUPPORTED, input.address + start, "Windows scanf nonfinite text is not implemented");
-                free(token); break;
-            }
-            while (c >= '0' && c <= '9') {
-                ++digits;
-                if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { okay = false; break; }
-                if (input.cursor - start >= directive.width) c = 0;
-            }
-            const char *unsigned_token = token ? token + (negative || token[0] == '+') : "";
-            if (okay && !strcmp(unsigned_token, "0") && (c == 'x' || c == 'X')) okay = guest_fail(error, QA_ERROR_UNSUPPORTED, input.address + start, "Windows scanf hexadecimal floating input is not implemented");
-            if (okay && c == '.') {
-                if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) okay = false;
-                if (input.cursor - start >= directive.width) c = 0;
-                while (okay && c >= '0' && c <= '9') {
-                    ++digits;
-                    if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { okay = false; break; }
-                    if (input.cursor - start >= directive.width) c = 0;
-                }
-            }
-            if (okay && (c == 'e' || c == 'E')) {
-                if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) okay = false;
-                if (input.cursor - start >= directive.width) c = 0;
-                if (okay && (c == '+' || c == '-')) {
-                    if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) okay = false;
-                    if (input.cursor - start >= directive.width) c = 0;
-                }
-                size_t exponent_digits = 0;
-                while (okay && c >= '0' && c <= '9') {
-                    ++exponent_digits;
-                    if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { okay = false; break; }
-                    if (input.cursor - start >= directive.width) c = 0;
-                }
-                if (!exponent_digits) valid = false;
-            }
-            if (!digits) valid = false;
-        } else {
-            if (directive.code == 'i' && c == '0') {
-                base = 8; ++digits;
-                if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) okay = false;
-                if (input.cursor - start >= directive.width) c = 0;
-                if (okay && (c == 'x' || c == 'X')) {
-                    base = 16; digits = 0;
-                    if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) okay = false;
-                    if (input.cursor - start >= directive.width) c = 0;
-                }
-            }
-            while (okay && scan_digit(c) < base) {
-                ++digits;
-                if (!scan_take(&input, &token, &token_count, &token_capacity, c, error) || !scan_peek(&input, &c, error)) { okay = false; break; }
-                if (input.cursor - start >= directive.width) c = 0;
-            }
-            if (!digits) valid = false;
-        }
-        if (!okay || !valid) { free(token); break; }
-        converted = true;
-        if (!directive.suppressed) {
-            uint64_t destination;
-            if (!va_next(owner, &arguments, owner->target.pointer_bytes, &destination, error)) { free(token); okay = false; break; }
-            if (!destination) { free(token); okay = guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows scanf destination is null"); break; }
-            if (directive.code == 'f') {
-                fenv_t saved; bool held = feholdexcept(&saved) == 0;
-                if (!held || fesetround(FE_TONEAREST) != 0) { free(token); okay = guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "host cannot provide nearest decimal scan rounding"); if (held) fesetenv(&saved); break; }
-                uint64_t bits = 0;
-                if (directive.long_float) { double value; okay = qa_parse_atof(token, &value, error); if (okay) memcpy(&bits, &value, 8); }
-                else { float value; uint32_t encoded; okay = qa_parse_atof_float(token, &value, error); if (okay) { memcpy(&encoded, &value, 4); bits = encoded; } }
-                if (fesetenv(&saved) != 0) okay = guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "host decimal scan environment restore failed");
-                if (okay) okay = windows_write(owner, destination, directive.long_float ? 8 : 4, bits, error);
-            } else {
-                const char *at = token + (negative || token[0] == '+');
-                if (base == 16) at += 2;
-                uint32_t value = 0; while (*at) { value = value * (uint32_t)base + (uint32_t)scan_digit((unsigned char)*at++); }
-                if (negative) value = 0u - value;
-                okay = windows_write(owner, destination, 4, value, error);
-            }
-            if (okay) ++assigned;
-        }
-        free(token);
-    }
-    free(directives); result(out, QA_NATIVE_I32, (uint32_t)assigned); return okay;
+    if (!integer(args + 1)) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows scanf input is null");
+    guest_scan_program *program = NULL;
+    if (!guest_scan_prepare(owner->guest, integer(args + 3), false, &program, error)) return false;
+    windows_scan_arguments arguments = {owner, integer(args + 5)};
+    int32_t assigned;
+    bool okay = guest_scan_execute(program, owner->guest, integer(args + 1), integer(args + 2),
+        scanf_destination, &arguments, &assigned, error);
+    guest_scan_destroy(program);
+    if (okay) result(out, QA_NATIVE_I32, (uint32_t)assigned);
+    return okay;
 }
 
 bool windows_crt_validate(guest_windows *owner, qa_error *error)

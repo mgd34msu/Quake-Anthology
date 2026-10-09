@@ -393,6 +393,7 @@ static void dispose_candidate(struct application_qc_state *candidate)
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
     free(candidate->resources); free(candidate->messages); free(candidate->clients);
+    free((void *)candidate->model_fields.entries);
 }
 bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
 {
@@ -494,6 +495,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     for (uint32_t i = 0; ok && i < resources; ++i) {
         application_qc_resource *entry=candidate.resources+candidate.resource_count++;
         ok=read_resource(&reader,&candidate,entry,i,error) && entry->value.index==++indices[entry->kind];
+        if(ok) ok=application_qc_model_publish(&candidate,entry,error);
         for (uint32_t j=0;ok && j<i;++j)
             if (entry->kind==candidate.resources[j].kind && !strcmp(entry->name,candidate.resources[j].name))
                 ok=qa_net_reader_fail(&reader,"Duplicate saved source precache name");
@@ -601,6 +603,9 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         for (size_t i = 0; i < engine->message_count; ++i) { free(engine->messages[i].data); free(engine->messages[i].references); }
         for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = candidate.lightstyles[i]; candidate.lightstyles[i] = NULL; }
         free(engine->resources); free(engine->messages); free(engine->clients);
+        free((void *)engine->model_fields.entries);
+        engine->model_fields=candidate.model_fields;
+        candidate.model_fields=(qa_entity_model_fields){0};
         engine->resources = candidate.resources; engine->resource_count = candidate.resource_count; engine->resource_capacity = candidate.resource_capacity;
         candidate.resources = NULL; candidate.resource_count = 0;
         engine->messages = candidate.messages; engine->message_count = candidate.message_count; engine->message_capacity = candidate.message_capacity;

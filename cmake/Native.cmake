@@ -1,8 +1,6 @@
 include(GNUInstallDirs)
 find_package(Threads REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBFFI REQUIRED IMPORTED_TARGET libffi)
 
 add_library(qa_data STATIC
     src/core/common.c
@@ -29,7 +27,6 @@ endif()
 add_library(qa_native STATIC
     src/compat/native/checkpoint.c
     src/compat/native/declaration.c
-    src/compat/native/direct.c
     src/compat/native/ffi.c
     src/compat/native/image.c
     src/compat/native/instance.c
@@ -38,19 +35,15 @@ add_library(qa_native STATIC
     src/compat/native/observe.c
     src/compat/native/profiles.c
     src/compat/native/process.c
-    src/compat/native/protocol.c
     src/compat/native/region.c
-    src/compat/native/region_scope.c
-    src/compat/native/runner_child.c
-    src/compat/native/runner_host.c
-    src/compat/native/variadic.c)
-target_link_libraries(qa_native PUBLIC qa_data PRIVATE PkgConfig::LIBFFI ICU::uc ${CMAKE_DL_LIBS})
+    src/compat/native/region_scope.c)
+target_link_libraries(qa_native PUBLIC qa_data PRIVATE ICU::uc)
 if(UNIX)
     target_compile_definitions(qa_native PRIVATE _POSIX_C_SOURCE=200809L)
 endif()
-add_executable(qa-native-runner src/compat/native/main.c)
-set_target_properties(qa-native-runner PROPERTIES ENABLE_EXPORTS ON)
-target_link_libraries(qa-native-runner PRIVATE qa_native)
+add_executable(qa-native-host src/compat/native/main.c)
+set_target_properties(qa-native-host PROPERTIES ENABLE_EXPORTS ON)
+target_link_libraries(qa-native-host PRIVATE qa_native)
 
 if(WIN32)
     set(QA_NATIVE_PLATFORM windows)
@@ -82,69 +75,6 @@ endif()
 if(DEFINED QA_NATIVE_EXPECTED_ARCH AND NOT QA_NATIVE_ARCH STREQUAL QA_NATIVE_EXPECTED_ARCH)
     message(FATAL_ERROR "Native helper toolchain produced a different architecture")
 endif()
-install(TARGETS qa-native-runner RUNTIME DESTINATION "${QA_NATIVE_INSTALL_DIR}")
+install(TARGETS qa-native-host RUNTIME DESTINATION "${QA_NATIVE_INSTALL_DIR}")
 
-set(QA_NATIVE_LIBFFI_PREFIX "" CACHE PATH "Complete target libffi installation prefix to deliver")
-if(QA_NATIVE_LIBFFI_PREFIX)
-    get_filename_component(QA_NATIVE_LIBFFI_PREFIX "${QA_NATIVE_LIBFFI_PREFIX}" ABSOLUTE)
-    if(NOT IS_DIRECTORY "${QA_NATIVE_LIBFFI_PREFIX}")
-        message(FATAL_ERROR "Native libffi delivery requires its actual installation prefix")
-    endif()
-    install(DIRECTORY "${QA_NATIVE_LIBFFI_PREFIX}/"
-        DESTINATION "${QA_NATIVE_INSTALL_DIR}/libffi" USE_SOURCE_PERMISSIONS)
-    if(WIN32)
-        file(GLOB QA_NATIVE_LIBFFI_DLLS "${QA_NATIVE_LIBFFI_PREFIX}/bin/*.dll")
-        if(QA_NATIVE_LIBFFI_DLLS)
-            install(FILES ${QA_NATIVE_LIBFFI_DLLS} DESTINATION "${QA_NATIVE_INSTALL_DIR}")
-        endif()
-    else()
-        set(QA_NATIVE_LIBFFI_RPATHS "")
-        foreach(QA_NATIVE_LIBFFI_DIRECTORY IN LISTS LIBFFI_LIBRARY_DIRS)
-            file(RELATIVE_PATH QA_NATIVE_LIBFFI_RELATIVE "${QA_NATIVE_LIBFFI_PREFIX}" "${QA_NATIVE_LIBFFI_DIRECTORY}")
-            if(IS_ABSOLUTE "${QA_NATIVE_LIBFFI_RELATIVE}" OR QA_NATIVE_LIBFFI_RELATIVE MATCHES "^\\.\\.(/|$)")
-                message(FATAL_ERROR "Selected libffi library directory leaves its delivered prefix")
-            endif()
-            list(APPEND QA_NATIVE_LIBFFI_RPATHS "$ORIGIN/libffi/${QA_NATIVE_LIBFFI_RELATIVE}")
-        endforeach()
-        set_target_properties(qa-native-runner PROPERTIES INSTALL_RPATH "${QA_NATIVE_LIBFFI_RPATHS}")
-    endif()
-endif()
-
-option(QA_NATIVE_DYNAMORIO "Build declared-region instrumentation for this helper ABI" OFF)
 include("${CMAKE_CURRENT_LIST_DIR}/NativeProfile.cmake")
-if(QA_NATIVE_DYNAMORIO AND NOT (QA_NATIVE_PLATFORM STREQUAL "linux" AND QA_NATIVE_ARCH STREQUAL "x86_64"))
-    find_package(DynamoRIO CONFIG REQUIRED)
-    if(UNIX)
-        set(DynamoRIO_RPATH ON)
-    else()
-        # Windows SDK .drpath files contain absolute build paths. Deliver the
-        # actual imported extension DLLs beside the client instead.
-        set(DynamoRIO_RPATH OFF)
-    endif()
-    add_library(qa-native-hooks SHARED src/compat/native/instrument_client.c)
-    target_compile_definitions(qa-native-hooks PRIVATE QA_NATIVE_DYNAMORIO_CLIENT)
-    configure_DynamoRIO_client(qa-native-hooks)
-    use_DynamoRIO_extension(qa-native-hooks drmgr)
-    use_DynamoRIO_extension(qa-native-hooks drutil)
-    set_target_properties(qa-native-hooks PROPERTIES PREFIX "")
-    math(EXPR QA_NATIVE_BITS "${CMAKE_SIZEOF_VOID_P} * 8")
-    if(UNIX)
-        set_target_properties(qa-native-hooks PROPERTIES
-            SKIP_BUILD_RPATH FALSE
-            INSTALL_RPATH "$ORIGIN/dynamorio/lib${QA_NATIVE_BITS}/release;$ORIGIN/dynamorio/ext/lib${QA_NATIVE_BITS}/release")
-    else()
-        install(FILES "$<TARGET_FILE:drmgr>" "$<TARGET_FILE:drutil>"
-            DESTINATION "${QA_NATIVE_INSTALL_DIR}")
-    endif()
-    get_filename_component(QA_NATIVE_DYNAMORIO_PREFIX "${DynamoRIO_DIR}/.." ABSOLUTE)
-    if(NOT IS_DIRECTORY "${QA_NATIVE_DYNAMORIO_PREFIX}/lib${QA_NATIVE_BITS}" OR
-       NOT IS_DIRECTORY "${QA_NATIVE_DYNAMORIO_PREFIX}/ext/lib${QA_NATIVE_BITS}" OR
-       NOT EXISTS "${QA_NATIVE_DYNAMORIO_PREFIX}/License.txt")
-        message(FATAL_ERROR "Native instrumentation delivery requires the complete installed DynamoRIO SDK")
-    endif()
-    install(DIRECTORY "${QA_NATIVE_DYNAMORIO_PREFIX}/"
-        DESTINATION "${QA_NATIVE_INSTALL_DIR}/dynamorio" USE_SOURCE_PERMISSIONS)
-    install(TARGETS qa-native-hooks
-        LIBRARY DESTINATION "${QA_NATIVE_INSTALL_DIR}"
-        RUNTIME DESTINATION "${QA_NATIVE_INSTALL_DIR}")
-endif()
