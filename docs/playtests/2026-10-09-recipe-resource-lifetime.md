@@ -20,3 +20,17 @@ Actual frame reports establish e1m1, one client and a 320×200 drawable. Root in
 An initial tiled-compositor run returned a 636×372 drawable and was excluded; its receipt is retained. Evidence is under `/tmp/qa-the2874-recipe-current-20261009`, `/tmp/qa-the2874-recipe-isolated-build-20261009` and `/tmp/qa-the2874-recipe-frame-20261009`.
 
 The whole-frame allocation gate still has other callers to migrate. This slice does not install a new owner executable.
+
+One additional before/after pair sampled `cycles:u` at 499 Hz with DWARF call chains, on the same stationary e1m1 CPU320 workload and private compositor settings. Both diagnostic binaries used identical dependencies and an identical temporary entry counter. Analysis uses only the final 600 consecutive presents, joined to the counter records by sequence and monotonic timestamp; sampled timings do not replace the production ABBA above.
+
+| Function | Before cycle share | After cycle share |
+| --- | ---: | ---: |
+| `qa_executable_recipe_current`, inclusive | 54.86% | 1.02% |
+| `qa_vfs_acquisition_retained`, inclusive | 51.66% | No samples |
+| `qa_vfs_resource_origin_read`, self | 12.42% | No samples |
+| `history_bucket`, self | 7.38% | No samples |
+| `history_find`, inclusive | 11.47% | No samples |
+| `normalize_path`, inclusive | 9.77% | No samples |
+| `qa_vfs_normalize_path`, self | 4.42% | No samples |
+
+Inclusive shares overlap and must not be added. Recipe calls averaged 207.65 before and 191.99 after per present (124,591 and 115,194 calls over 600 presents); real-time tick admission differs as frames get faster. The samples identify the removed history/origin/path work as a major CPU hotspot. They do not assign the entire 7.5 ms wall-time reduction to it. No change to pacing configuration, actual drawable or compositor setup was found. Call-chain coverage is incomplete: 19.16% before and 52.13% after of recorded periods have no chain. There were no lost samples. Raw profiles, exact counter records and analysis are retained in `profile-pair.json` and `profile-attribution.json` under the frame evidence directory above. Both launches quit normally with private display/audio containment and unchanged owner files. No installation was made.
