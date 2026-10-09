@@ -5003,7 +5003,15 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
     if(active->network->kex_transport) {
         (void)qa_kex_transport_handoff(active->network->kex_transport,candidate->network->kex_transport,NULL);
         qa_network_transport_publish_retained(active->network->runtime,candidate->network->runtime);
-    } else qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
+    } else {
+        qa_network_transport_exchange(active->network->runtime, candidate->network->runtime);
+        qa_net_loopback *loopback = active->network->loopback;
+        qa_net_address server = active->network->loopback_server;
+        active->network->loopback = candidate->network->loopback;
+        active->network->loopback_server = candidate->network->loopback_server;
+        candidate->network->loopback = loopback;
+        candidate->network->loopback_server = server;
+    }
     active->network->detached_transport = true; candidate->network->detached_transport = false;
     frontend_network_q2_client_publish(candidate->network->q2_client_owner);
     frontend_network_q1_client_publish(candidate->network->q1_client_owner);
