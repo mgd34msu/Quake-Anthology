@@ -263,6 +263,7 @@ static bool target_set_targetname(void *context, qa_actor_id actor, qa_string_id
     if (text.size && !q3_map_intern_fold(game, text, &folded, error))
         return false;
     state->targetname = folded;
+    qa_targets_changed(game->map->options.targets, actor);
     return true;
 }
 

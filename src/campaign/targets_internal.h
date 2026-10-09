@@ -12,6 +12,7 @@ typedef struct authored_index {
     uint32_t order, slot;
 } authored_index;
 typedef struct target_monster {
+    qa_targets *targets;
     qa_target_binding native;
     qa_monster_mission mission;
     qa_authored_monster authored;
@@ -23,12 +24,10 @@ struct qa_targets {
     void *monster_context;
     bool (*monster_resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *);
     uint64_t *binding_serial;
-    target_index *index;
+    target_index *index, *indexed;
     authored_index *authored;
     qa_arena scratch;
     size_t count, authored_count, capacity, depth;
-    uint64_t actor_revision;
     uint64_t next_binding_serial;
-    bool dirty;
 };
 #endif

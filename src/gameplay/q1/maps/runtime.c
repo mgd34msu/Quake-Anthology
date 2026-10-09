@@ -174,10 +174,12 @@ static bool target_set_target(void *context, qa_actor_id actor, qa_string_id val
 }
 static bool target_set_targetname(void *context, qa_actor_id actor, qa_string_id value,
                                   qa_error *error) {
-    q1_actor *entity = q1_entity(context, actor);
+    qa_q1_game *game = context;
+    q1_actor *entity = q1_entity(game, actor);
     if (!entity || !entity->native)
         return q1_map_fail(error, "Q1 targetname field owner is unavailable");
     entity->targetname = value;
+    qa_targets_changed(game->maps->options.targets, actor);
     return true;
 }
 static bool target_set_delay(void *context, qa_actor_id actor, float value, qa_error *error) {

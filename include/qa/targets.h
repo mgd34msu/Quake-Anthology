@@ -99,9 +99,9 @@ bool qa_targets_bind(qa_targets *, const qa_target_binding *, qa_error *);
 void qa_targets_unbind(qa_targets *, qa_actor_id);
 /* Provider teardown removes only its own current binding. */
 void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_context);
-/* Call after changing a bound actor's targetname or source-slot mapping. The
- * retained index rebuilds only after such changes or registry mutations. */
-void qa_targets_changed(qa_targets *);
+/* Commit this actor's current targetname and source ordering to the index.
+ * Notify at the field store, before any nested target query. */
+void qa_targets_changed(qa_targets *, qa_actor_id);
 void qa_targets_monsters_configure(qa_targets *, void *context,
     bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *));
 bool qa_targets_monster_admit(qa_targets *, qa_actor_id, const qa_authored_monster *, qa_error *);
@@ -109,8 +109,8 @@ void qa_targets_monster_route(qa_targets *, qa_actor_id, qa_string_id, qa_actor_
 qa_authored_monster *qa_targets_monster(qa_targets *, qa_actor_id);
 bool qa_targets_monster_lookup(void *targets, qa_actor_id, qa_monster_mission *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
-/* The binding owns the field. Any attempted write invalidates the retained
- * index, including a callback that mutates its field before returning failure. */
+/* The binding owns the field. Name setters notify at the committed store;
+ * the wrapper also reconciles a callback that mutates then returns failure. */
 bool qa_targets_set_targetname(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_set_target(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_set_delay(qa_targets *, qa_actor_id, float seconds, qa_error *);

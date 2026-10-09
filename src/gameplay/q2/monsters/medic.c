@@ -351,6 +351,7 @@ static void clear_targets(q2m_context *c, q2m_context *target) {
     if (entity) {
         entity->spawnflags = 0;
         entity->target = entity->targetname = 0;
+        qa_targets_changed(target->actor->entity_targets, target->actor->id);
         for (size_t i = 0; i < entity->field_count; ++i) {
             const char *key = qa_strings_cstr(
                 qa_session_strings(c->game->services.session), entity->fields[i].key);
@@ -359,8 +360,6 @@ static void clear_targets(q2m_context *c, q2m_context *target) {
                                           !strcmp(key, "itemtarget")))))
                 entity->fields[i].value = 0;
         }
-        if (target->actor->entity_targets)
-            qa_targets_changed(target->actor->entity_targets);
     }
     if (!rogue(c) && c->monster->definition->species != Q2M_FIXBOT)
         return;

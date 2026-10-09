@@ -59,13 +59,13 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
     targets->monsters = calloc(targets->capacity, sizeof(*targets->monsters));
     targets->binding_serial = calloc(targets->capacity, sizeof(*targets->binding_serial));
     targets->index = calloc(targets->capacity, sizeof(*targets->index));
+    targets->indexed = calloc(targets->capacity, sizeof(*targets->indexed));
     targets->authored = calloc(targets->capacity, sizeof(*targets->authored));
-    if (!targets->bindings || !targets->monsters || !targets->binding_serial || !targets->index || !targets->authored) {
+    if (!targets->bindings || !targets->monsters || !targets->binding_serial || !targets->index || !targets->indexed || !targets->authored) {
         qa_targets_destroy(targets);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
     }
-    targets->dirty = true;
     return targets;
 }
 void qa_targets_destroy(qa_targets *targets) {
@@ -80,6 +80,7 @@ void qa_targets_destroy(qa_targets *targets) {
     free(targets->monsters);
     free(targets->authored);
     free(targets->index);
+    free(targets->indexed);
     free(targets->bindings);
     free(targets->binding_serial);
     free(targets);
@@ -117,8 +118,10 @@ static bool monster_field(void *opaque, qa_actor_id actor, const char *key, qa_t
     return monster->native.field && monster->native.field(monster->native.context, actor, key, out);
 }
 static bool monster_targetname(void *opaque, qa_actor_id actor, qa_string_id name, qa_error *error) {
-    (void)actor; (void)error;
-    ((target_monster *)opaque)->authored.fields.targetname = name;
+    (void)error;
+    target_monster *monster = opaque;
+    monster->authored.fields.targetname = name;
+    qa_targets_changed(monster->targets, actor);
     return true;
 }
 static bool monster_target(void *opaque, qa_actor_id actor, qa_string_id name, qa_error *error) {
@@ -169,7 +172,9 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
         return fail(error, "Selected monster requires its real native binding and authored map fields");
     target_monster *row = calloc(1, sizeof(*row));
     if (!row) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating authored monster target"); return false; }
-    *row = (target_monster){.native = *native, .authored = *authored};
+    *row = (target_monster){.targets = targets,
+        .native = targets->monsters[actor.slot] ? targets->monsters[actor.slot]->native : *native,
+        .authored = *authored};
     if (!targets->monster_resolve || !targets->monster_resolve(targets->monster_context,
         authored->owner, &row->mission, error)) { free(row); return false; }
     const char *classname = qa_strings_cstr(qa_session_strings(targets->options.session), authored->fields.classname);
@@ -185,7 +190,7 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
     free(targets->monsters[actor.slot]);
     targets->monsters[actor.slot] = row;
     targets->bindings[actor.slot] = monster_binding(row);
-    qa_targets_changed(targets);
+    qa_targets_changed(targets, actor);
     return true;
 }
 bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_error *error) {
@@ -204,7 +209,7 @@ bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_err
     if (monster) monster->native = *entry;
     targets->bindings[entry->actor.slot] = monster ? monster_binding(monster) : *entry;
     targets->binding_serial[entry->actor.slot] = ++targets->next_binding_serial;
-    targets->dirty = true;
+    qa_targets_changed(targets, entry->actor);
     return true;
 }
 void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
@@ -215,7 +220,7 @@ void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
         targets->monsters[actor.slot] = NULL;
         targets->bindings[actor.slot] = (qa_target_binding){0};
         targets->binding_serial[actor.slot] = 0;
-        targets->dirty = true;
+        qa_targets_changed(targets, actor);
     }
 }
 void qa_targets_unbind_context(qa_targets *targets, qa_actor_id actor, const void *context) {
@@ -223,7 +228,6 @@ void qa_targets_unbind_context(qa_targets *targets, qa_actor_id actor, const voi
         (targets->monsters[actor.slot] && targets->monsters[actor.slot]->native.context == context)))
         qa_targets_unbind(targets, actor);
 }
-void qa_targets_changed(qa_targets *targets) { targets->dirty = true; }
 bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_target *out) {
     const qa_target_binding *entry = binding(targets, actor);
     qa_authored_target fields;
@@ -244,11 +248,10 @@ static bool set_target_field(qa_targets *targets, qa_actor_id actor, qa_string_i
     }
     qa_target_binding before = *entry;
     uint64_t serial = targets->binding_serial[actor.slot];
-    targets->dirty = true;
     bool (*write)(void *, qa_actor_id, qa_string_id, qa_error *) =
         targetname ? before.set_targetname : before.set_target;
     bool ok = write(before.context, actor, nonempty(targets, name), error);
-    targets->dirty = true;
+    if (targetname) qa_targets_changed(targets, actor);
     if (!ok)
         return false;
     entry = binding(targets, actor);
@@ -276,9 +279,7 @@ bool qa_targets_set_delay(qa_targets *targets, qa_actor_id actor, float seconds,
     }
     qa_target_binding before = *entry;
     uint64_t serial = targets->binding_serial[actor.slot];
-    targets->dirty = true;
     bool ok = before.set_delay(before.context, actor, seconds, error);
-    targets->dirty = true;
     if (!ok)
         return false;
     entry = binding(targets, actor);
@@ -367,50 +368,92 @@ bool qa_targets_vector(const qa_targets *targets, qa_actor_id actor, const char 
     *out = qa_v3(components[0], components[1], components[2]);
     return true;
 }
-static int compare(const void *left, const void *right) {
-    const target_index *a = left, *b = right;
+static int compare(const target_index *a, const target_index *b) {
     if (a->name != b->name)
         return a->name < b->name ? -1 : 1;
     if (a->order != b->order)
         return a->order < b->order ? -1 : 1;
     return a->actor.slot < b->actor.slot ? -1 : a->actor.slot > b->actor.slot;
 }
-static int compare_authored(const void *left, const void *right) {
-    const authored_index *a = left, *b = right;
+static int compare_authored(const authored_index *a, const authored_index *b) {
     if (a->order != b->order)
         return a->order < b->order ? -1 : 1;
     return a->slot < b->slot ? -1 : a->slot > b->slot;
 }
-static void refresh(qa_targets *targets) {
-    uint64_t revision = qa_actors_revision(qa_session_actors(targets->options.session));
-    if (!targets->dirty && targets->actor_revision == revision)
-        return;
-    targets->count = 0;
-    targets->authored_count = 0;
-    for (size_t i = 0; i < targets->capacity; ++i) {
-        const qa_target_binding *entry = &targets->bindings[i];
-        const qa_actor_record *actor =
-            qa_actors_get(qa_session_actors(targets->options.session), entry->actor);
-        qa_authored_target fields;
-        if (!actor || !qa_targets_read(targets, entry->actor, &fields))
-            continue;
-        uint32_t order = targets->monsters[i] ? targets->monsters[i]->authored.ordinal :
-            actor->has_source ? actor->source_slot : actor->id.slot;
-        targets->authored[targets->authored_count++] = (authored_index){order, actor->id.slot};
-        if (fields.targetname)
-            targets->index[targets->count++] =
-                (target_index){entry->actor, fields.targetname, order};
+static size_t index_at(const qa_targets *targets, const target_index *key) {
+    size_t low = 0, high = targets->count;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        if (compare(&targets->index[mid], key) < 0)
+            low = mid + 1;
+        else
+            high = mid;
     }
-    if (targets->count > 1)
-        qsort(targets->index, targets->count, sizeof(*targets->index), compare);
-    if (targets->authored_count > 1)
-        qsort(targets->authored, targets->authored_count, sizeof(*targets->authored),
-              compare_authored);
-    targets->actor_revision = revision;
-    targets->dirty = false;
+    return low;
+}
+static size_t authored_at(const qa_targets *targets, const authored_index *key) {
+    size_t low = 0, high = targets->authored_count;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        if (compare_authored(&targets->authored[mid], key) < 0)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    return low;
+}
+void qa_targets_changed(qa_targets *targets, qa_actor_id actor) {
+    if (!targets || actor.slot >= targets->capacity)
+        return;
+    target_index before = targets->indexed[actor.slot], after = {0};
+    const qa_target_binding *entry = binding(targets, actor);
+    if (entry) {
+        qa_authored_target fields;
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(targets->options.session), actor);
+        if (qa_targets_read(targets, actor, &fields)) {
+            uint32_t order = targets->monsters[actor.slot] ? targets->monsters[actor.slot]->authored.ordinal :
+                record->has_source ? record->source_slot : actor.slot;
+            after = (target_index){actor, fields.targetname, order};
+        }
+    } else if (!qa_actor_id_equal(before.actor, actor)) {
+        return;
+    }
+    bool same_actor = qa_actor_id_equal(before.actor, after.actor);
+    bool same_order = same_actor && before.order == after.order;
+    bool same_name = same_order && before.name == after.name;
+    if (same_name)
+        return;
+    if (!same_name && before.actor.registry && before.name) {
+        size_t at = index_at(targets, &before);
+        --targets->count;
+        memmove(targets->index + at, targets->index + at + 1,
+            (targets->count - at) * sizeof(*targets->index));
+    }
+    if (!same_order && before.actor.registry) {
+        authored_index key = {before.order, actor.slot};
+        size_t at = authored_at(targets, &key);
+        --targets->authored_count;
+        memmove(targets->authored + at, targets->authored + at + 1,
+            (targets->authored_count - at) * sizeof(*targets->authored));
+    }
+    if (!same_name && after.actor.registry && after.name) {
+        size_t at = index_at(targets, &after);
+        memmove(targets->index + at + 1, targets->index + at,
+            (targets->count - at) * sizeof(*targets->index));
+        targets->index[at] = after;
+        ++targets->count;
+    }
+    if (!same_order && after.actor.registry) {
+        authored_index key = {after.order, actor.slot};
+        size_t at = authored_at(targets, &key);
+        memmove(targets->authored + at + 1, targets->authored + at,
+            (targets->authored_count - at) * sizeof(*targets->authored));
+        targets->authored[at] = key;
+        ++targets->authored_count;
+    }
+    targets->indexed[actor.slot] = after;
 }
 static size_t lower(qa_targets *targets, qa_string_id name) {
-    refresh(targets);
     size_t low = 0, high = targets->count;
     while (low < high) {
         size_t mid = low + (high - low) / 2;
@@ -471,7 +514,6 @@ bool qa_targets_pick(qa_targets *targets, qa_string_id name, uint32_t random, si
 }
 bool qa_targets_next_authored(qa_targets *targets, const char *classname, qa_target_cursor *cursor,
                               qa_actor_id *out) {
-    refresh(targets);
     size_t at = 0;
     if (cursor->started) {
         size_t high = targets->authored_count;

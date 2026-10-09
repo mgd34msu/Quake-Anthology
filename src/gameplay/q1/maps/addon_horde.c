@@ -48,7 +48,7 @@ bool q1_map_horde_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return true;
         if (!qa_builtin_resource(&g->services, "horde_manager", &e->targetname, error))
             return false;
-        qa_targets_changed(g->maps->options.targets);
+        qa_targets_changed(g->maps->options.targets, e->id);
         qa_string_id name;
         float enabled = 0;
         if (!qa_builtin_resource(&g->services, "horde", &name, error) ||

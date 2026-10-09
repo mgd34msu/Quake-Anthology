@@ -476,7 +476,7 @@ bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
                 continue;
             if (q1_map_text(g, candidate->targetname)) {
                 master->targetname = candidate->targetname;
-                qa_targets_changed(g->maps->options.targets);
+                qa_targets_changed(g->maps->options.targets, master->id);
             }
             if (q1_map_text(g, candidate->message))
                 master->message = candidate->message;

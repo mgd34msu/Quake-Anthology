@@ -150,6 +150,7 @@ bool qa_persistence_targets_restore(qa_targets *targets, const qa_persistence_ga
             previous = binding.actor.slot; scratch->bindings[binding.actor.slot] = binding;
             scratch->binding_serial[binding.actor.slot] = serial;
             if (selected) ok = qa_targets_monster_admit(scratch, binding.actor, &authored, error);
+            else qa_targets_changed(scratch, binding.actor);
         }
         free(authored.barriers);
     }
@@ -160,7 +161,16 @@ bool qa_persistence_targets_restore(qa_targets *targets, const qa_persistence_ga
         scratch->bindings = old; scratch->binding_serial = old_serial;
         target_monster **old_monsters = targets->monsters;
         targets->monsters = scratch->monsters; scratch->monsters = old_monsters;
-        targets->next_binding_serial = scratch->next_binding_serial; qa_targets_changed(targets);
+        target_index *old_index = targets->index, *old_indexed = targets->indexed;
+        authored_index *old_authored = targets->authored;
+        targets->index = scratch->index; targets->indexed = scratch->indexed;
+        targets->authored = scratch->authored;
+        scratch->index = old_index; scratch->indexed = old_indexed;
+        scratch->authored = old_authored;
+        targets->count = scratch->count; targets->authored_count = scratch->authored_count;
+        targets->next_binding_serial = scratch->next_binding_serial;
+        for (size_t i = 0; i < targets->capacity; ++i)
+            if (targets->monsters[i]) targets->monsters[i]->targets = targets;
     }
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid saved target continuation");
     free(serials); qa_source_save_dispose(&io); qa_targets_destroy(scratch); return ok;

@@ -23,7 +23,7 @@ bool qa_q2_entity_set_targetname(qa_q2_game *g, qa_actor_id id, qa_string_id nam
     a->entity->targetname = name;
     qa_q2_entity_services *s = &g->entity_runtime->services;
     if (s->targets)
-        qa_targets_changed(s->targets);
+        qa_targets_changed(s->targets, id);
     return !s->target_name_changed || s->target_name_changed(s->context, id, previous, name, e);
 }
 static bool fields(qa_q2_game *g, qa_actor_id id, qa_string_id *name, qa_string_id *target,

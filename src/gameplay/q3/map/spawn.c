@@ -729,12 +729,13 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
             member->team_slave = true;
             if (q3_map_text(game, member->targetname)) {
                 master->targetname = member->targetname;
+                qa_targets_changed(game->map->options.targets, master->actor);
                 member->targetname = QA_STRING_NONE;
+                qa_targets_changed(game->map->options.targets, member->actor);
             }
         }
     }
     free(ordered);
-    qa_targets_changed(game->map->options.targets);
     if (!q3_map_mover_post_spawn(game, error))
         return false;
     game->map->post_spawned = true;

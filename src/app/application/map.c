@@ -2263,19 +2263,6 @@ static bool q2_player_push(void *opaque, qa_actor_id actor, qa_vec3 velocity,
                                error);
 }
 
-static bool q2_target_name_changed(void *opaque, qa_actor_id actor,
-                                   qa_string_id old_name,
-                                   qa_string_id new_name, qa_error *error)
-{
-    (void)actor;
-    (void)old_name;
-    (void)new_name;
-    (void)error;
-    application_provider *provider = opaque;
-    qa_targets_changed(provider->application->targets);
-    return true;
-}
-
 static bool q2_target_anger(void *opaque, qa_actor_id actor,
                             qa_actor_id target, qa_error *error)
 {
@@ -2347,7 +2334,6 @@ static qa_q2_entity_services q2_entity_services(application_provider *provider,
         .actor_gravity = q2_actor_gravity,
         .world_gravity = q2_world_gravity,
         .player_push = q2_player_push,
-        .target_name_changed = q2_target_name_changed,
         .path_follower = q2_monster_path_follower,
         .path_advance = q2_monster_path_advance,
         .target_anger = q2_target_anger,
