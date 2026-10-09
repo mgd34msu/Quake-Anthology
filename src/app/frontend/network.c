@@ -6499,32 +6499,6 @@ static uint64_t network_events_retired(qa_frontend_network *network)
     return retired < next ? retired : next;
 }
 
-static bool network_events_admit(qa_frontend *f, bool *ready, qa_error *error)
-{
-    qa_frontend_network *network = f->network;
-    for (;;) {
-        uint64_t minimum = network_events_retired(network);
-        application_unified_events_consume(f->application, minimum);
-        if (qa_application_events_admit(f->application, NULL)) {
-            *ready = true;
-            return true;
-        }
-        bool released = false;
-        if (!frontend_network_unified_release_pressure(network ? network->unified : NULL,
-            minimum, &released, error)) return false;
-        if (!released && !frontend_nq_events_pressure(network ? network->nq_host : NULL,
-            minimum, &released, error)) return false;
-        if (!released && !frontend_qw_events_pressure(network ? network->qw_host : NULL,
-            minimum, &released, error)) return false;
-        if (!released && !frontend_network_q2_host_events_pressure(network ? network->q2_host : NULL,
-            minimum, &released, error)) return false;
-        if (!released) {
-            *ready = false;
-            return true;
-        }
-    }
-}
-
 bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *error)
 {
     if(!source_ready) return frontend_fail(error,QA_ERROR_ARGUMENT,"Network Source step requires an admission output");
@@ -6534,8 +6508,8 @@ bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_ma
         if(!frontend_network_unified_step_ready(f->network->unified,source_ready,error)) return false;
         if(!*source_ready) return true;
     }
-    if (!network_events_admit(f, source_ready, error)) return false;
-    if (!*source_ready || !f->network) return true;
+    application_unified_events_consume(f->application, network_events_retired(f->network));
+    if (!f->network) return true;
     if (f->network->unified && !retiring_map &&
         !frontend_network_unified_pre_frame(f->network->unified,error)) return false;
     return frontend_nq_tick(f->network->nq_host,elapsed_ns,retiring_map,error);

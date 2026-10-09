@@ -673,26 +673,6 @@ uint64_t frontend_network_q2_host_events_retired(frontend_network_q2_host *host)
     if(host->demo_held && host->demo_event_cursor<retired) retired=host->demo_event_cursor;
     return retired;
 }
-bool frontend_network_q2_host_events_pressure(frontend_network_q2_host *host,uint64_t minimum,
-    bool *released,qa_error *error)
-{
-    *released=false;
-    if(!host) return true;
-    for(size_t i=0;i<host->capacity;++i) {
-        q2_host_peer *peer=host->peers+i;
-        if(!peer->committed || peer->retiring) continue;
-        qa_network_q2_state transport;
-        if(!qa_network_q2_state_read(host->options.runtime,peer->client,&transport,error)) return false;
-        uint64_t first=event_retired(peer,&transport);
-        bool outstanding=qa_event_receipts_count(&peer->event_receipts) ||
-            peer->event_transport_after>peer->event_transport_first;
-        if(first!=minimum || !outstanding) continue;
-        if(!event_drop(peer,error)) return false;
-        *released=true; return true;
-    }
-    return true;
-}
-
 bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t now,qa_error *error)
 {
     if(!host || host->calls || !current(host,error)) return false;

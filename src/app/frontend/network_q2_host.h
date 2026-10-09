@@ -26,7 +26,6 @@ bool frontend_network_q2_host_admit(frontend_network_q2_host *,const qa_net_conn
 bool frontend_network_q2_host_tick(frontend_network_q2_host *,uint64_t,qa_error *);
 bool frontend_network_q2_host_publish(frontend_network_q2_host *,uint64_t,qa_error *);
 uint64_t frontend_network_q2_host_events_retired(frontend_network_q2_host *);
-bool frontend_network_q2_host_events_pressure(frontend_network_q2_host *,uint64_t,bool *,qa_error *);
 bool frontend_network_q2_host_demo_record(frontend_network_q2_host *, qa_actor_id,
     qa_fs_root *, frontend_demo_record_source *, qa_error *);
 void frontend_network_q2_host_disconnected(frontend_network_q2_host *,qa_net_client_id);

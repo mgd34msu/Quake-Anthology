@@ -754,21 +754,6 @@ uint64_t qa_application_events_local_first(const qa_application *app)
 uint64_t qa_application_events_next(const qa_application *app)
 { return app && app->event_ring ? qa_event_ring_next(app->event_ring) : 1; }
 
-bool qa_application_events_admit(const qa_application *app, qa_application_event_headroom *out)
-{
-    qa_application_event_headroom headroom = {0};
-    if (app && app->event_ring) {
-        qa_event_capacity capacity;
-        qa_event_capacity_read(app->event_ring, &capacity);
-        headroom = (qa_application_event_headroom){.available_bytes = capacity.available_bytes,
-            .available_records = capacity.available_records, .reserve_bytes = capacity.total_bytes / 2,
-            .reserve_records = capacity.total_records / 2};
-    }
-    if (out) *out = headroom;
-    return headroom.available_bytes >= headroom.reserve_bytes &&
-        headroom.available_records >= headroom.reserve_records;
-}
-
 bool qa_application_event_kind_at(const qa_application *app, uint64_t id,
     qa_application_event_kind *out)
 {

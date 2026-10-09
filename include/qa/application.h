@@ -606,14 +606,6 @@ typedef enum qa_application_event_kind {
 uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
-typedef struct qa_application_event_headroom {
-    size_t available_bytes, available_records, reserve_bytes, reserve_records;
-} qa_application_event_headroom;
-/* O(1) admission for the next server phase, before game callbacks run. A false
- * result is capacity pressure; retire an ACKed prefix or detach its blocking
- * peer, then query again. Client/receive work can continue while a tick waits.
- * This finite stock-tick reserve does not bound arbitrary guest output. */
-bool qa_application_events_admit(const qa_application *, qa_application_event_headroom *);
 bool qa_application_event_kind_at(const qa_application *, uint64_t,
     qa_application_event_kind *);
 bool qa_application_event_at(const qa_application *, uint64_t,

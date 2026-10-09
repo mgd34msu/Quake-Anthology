@@ -94,31 +94,6 @@ static bool prune(frontend_network_unified *owner, qa_error *error)
     return true;
 }
 
-bool frontend_network_unified_release_pressure(frontend_network_unified *owner,
-    uint64_t minimum, bool *released, qa_error *error)
-{
-    *released = false;
-    if (!owner || !owner->options.server) return true;
-    ++owner->calls;
-    bool okay = true;
-    for (size_t i = 0; i < UNIFIED_PEERS; ++i) {
-        unified_peer *peer = owner->peers + i;
-        application_unified_server *server = peer->server;
-        if (!server || (!server->admitted && !server->resync_pending) || server->closed ||
-            qa_unified_session_retiring(peer->session) ||
-            application_unified_server_events_retired(server) != minimum) continue;
-        okay = qa_network_detach(owner->options.runtime, peer->client,
-            "Unified event backlog exceeded bounded tick headroom", error);
-        if (okay) {
-            *released = true;
-            okay = prune(owner, error);
-        }
-        break;
-    }
-    --owner->calls;
-    return okay;
-}
-
 static bool resync_peer(frontend_network_unified *owner, unified_peer *peer,
     uint64_t now, qa_error *error)
 {

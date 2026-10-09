@@ -979,22 +979,6 @@ uint64_t frontend_nq_events_retired(frontend_nq_host *host)
     }
     return retired;
 }
-bool frontend_nq_events_pressure(frontend_nq_host *host,uint64_t minimum,bool *released,qa_error *error)
-{
-    *released = false;
-    if (!host) return true;
-    for (size_t i = 0; i < NQ_CLIENTS; ++i) {
-        nq_frontend_peer *peer = host->peers + i;
-        if (!peer->occupied || peer->retiring) continue;
-        qa_network_nq_server_state state;
-        if (!qa_network_nq_server_state_read(host->runtime,peer->client,&state,error)) return false;
-        uint64_t first = qa_event_receipts_retired(&peer->event_receipts,state.reliable_acknowledged);
-        if (first != minimum || !qa_event_receipts_count(&peer->event_receipts)) continue;
-        if (!qa_network_detach(host->runtime,peer->client,"Reliable event overflow",error)) return false;
-        *released = true; return true;
-    }
-    return true;
-}
 bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
 {
     if (!host) return true;
