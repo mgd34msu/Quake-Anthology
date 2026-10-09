@@ -11,6 +11,7 @@ bool bot_ai_source_wants_camp(struct qa_bots *, struct bot_ai_state *, bool *, q
 bool bot_ai_source_roam_goal(struct qa_bots *, struct bot_ai_state *, qa_vec3 *, qa_error *);
 bool bot_ai_source_entity_visible(struct qa_bots *, struct bot_ai_state *, int32_t source_entity,
                                   float fov, float *, qa_error *);
+bool bot_ai_source_point_contents(struct qa_bots *, qa_vec3, qa_actor_id, int32_t *, qa_error *);
 
 /* Existing decision-stack owners supply these operations without another goal
  * stack, movement owner, or item chooser. */

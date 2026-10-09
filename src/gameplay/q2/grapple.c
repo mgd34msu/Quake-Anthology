@@ -314,7 +314,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     }
     if (!q2_actor_live(g, hook_id))
         return true;
-    if ((contact->has_surface && ((uint32_t)contact->surface.flags & 4u) != 0) ||
+    if ((contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4u) != 0) ||
         (lm && (classification == ANCHOR_NONE || classification == ANCHOR_BOX ||
                 dead(g, contact->other) ||
                 (g->hooks.grapple_can_attach != NULL &&
@@ -535,7 +535,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                             .end = body.origin,
                             .pass_actor = lm ? owner->id : id,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = hook->physics.clip_mask;
+    query.policy.contents_mask = qa_collision_contents_mask(hook->physics.clip_mask, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;

@@ -283,8 +283,8 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
     bool ctf = threewave(hook), accept;
-    if (contents.contents == -6 ||
-        (ctf && contact && contact->has_surface && (contact->surface.flags & 4)))
+    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6 ||
+        (ctf && contact && contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q1) & 4)))
         return reset(g, hook, error);
     if (!allowed(g, hook, actor, false, error, &accept))
         return false;

@@ -113,7 +113,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
     bool overload = game->options.rules.game_type == 6;
     qa_bounds bounds = {qa_v3(-15, -15, 0), qa_v3(15, 15, 87)};
     qa_actor_collision collision = {.family = QA_COLLISION_Q3, .shape = QA_SHAPE_BOX,
-        .contents = overload ? 1 : Q3_CONTENTS_TRIGGER,
+        .contents = qa_collision_contents_decode(overload ? 1 : Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3),
         .role = overload ? QA_COLLISION_SOLID : QA_COLLISION_TRIGGER};
     qa_combat_state combat = {.health = (float)current.health, .mass = 200,
         .can_take_damage = true, .no_knockback = true};
@@ -143,7 +143,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
         end.z = (end.z + -4096);
         qa_trace_query query = {.start = start, .end = end, .pass_actor = actor,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
-            .policy = {.family = QA_COLLISION_Q3, .contents_mask = 1, .curves = true}};
+            .policy = {.family = QA_COLLISION_Q3, .contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q3), .curves = true}};
         qa_trace_result trace;
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return q3_rollback_spawn(game, actor, error);

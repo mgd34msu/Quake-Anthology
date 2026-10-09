@@ -59,7 +59,7 @@ bool qa_q3_bot_supply_preview(qa_q3_game *game,qa_actor_id pickup,qa_actor_id re
     qa_q3_wire_body body;
     if(!qa_q3_wire_body_read(game,item_slot,&body,error)) {ok=false;goto discard;}
     if(!source || entry->state.item.hidden || !body.colliding ||
-       !(body.collision.contents&Q3_CONTENTS_TRIGGER) || (source->flags&0x80) ||
+       !(qa_collision_bits_overlap(body.collision.contents, qa_collision_bit(QA_CONTENT_TRIGGER))) || (source->flags&0x80) ||
        (game->source_entities[item_slot].server_flags&1) ||
        source->free_after_event || source->unlink_after_event) goto done;
     qa_combat_state combat;

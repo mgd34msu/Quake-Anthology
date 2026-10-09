@@ -70,7 +70,8 @@ static bool same_collision(const qa_actor_collision *left,const qa_actor_collisi
 {
     return left->family==right->family && left->shape==right->shape
         && left->inline_model==right->inline_model && left->model==right->model
-        && left->model_geometry==right->model_geometry && left->contents==right->contents
+        && left->model_geometry==right->model_geometry && qa_collision_bits_equal(left->contents,right->contents)
+        && left->q1_opaque_token==right->q1_opaque_token
         && qa_actor_reference_equal(left->owner,right->owner) && left->role==right->role
         && left->monster==right->monster && left->dead_monster==right->dead_monster
         && left->q1_corpse==right->q1_corpse && left->has_q3_owner==right->has_q3_owner
@@ -315,12 +316,19 @@ bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
                           qa_body_state *out,qa_error *error)
 {
     qa_body_state state;
+    qa_body_state *selected=components==QA_ENTITY_BODY_ALL?&state:out;
     if(body->external) {
-        if(!qa_entity_body_read(body->binding.fields,pose,components,&state,error)) return false;
-        if(!valid_state(&state,components)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
-        if(components==QA_ENTITY_BODY_ALL) body->state=state;
-    } else state=body->state;
-    *out=state; return true;
+        if(!qa_entity_body_read(body->binding.fields,pose,components,selected,error)) return false;
+        if(!valid_state(selected,components)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
+        if(components==QA_ENTITY_BODY_ALL) body->state=*selected;
+    } else if(components==QA_ENTITY_BODY_ALL) state=body->state;
+    else {
+        selected->origin=body->state.origin;
+        selected->angles=body->state.angles;
+        selected->bounds=body->state.bounds;
+    }
+    if(components==QA_ENTITY_BODY_ALL) *out=*selected;
+    return true;
 }
 
 bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,

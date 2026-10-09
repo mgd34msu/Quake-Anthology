@@ -583,7 +583,8 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
     profile.crouched_shape.bounds.maxs.z=fminf(graph->bounds.maxs.z,16);
     profile.policy=(qa_trace_policy){.family=graph->profile.kind==QA_MOVEMENT_Q3?QA_COLLISION_Q3:
         graph->profile.kind==QA_MOVEMENT_NETQUAKE || graph->profile.kind==QA_MOVEMENT_QUAKEWORLD?QA_COLLISION_Q1:QA_COLLISION_Q2,
-        .contents_mask=0x2010001,.q1_hull=-1,.curves=true,.player_curve_clip=true};
+        .q1_hull=-1,.curves=true,.player_curve_clip=true};
+    profile.policy.contents_mask=qa_collision_contents_mask(0x2010001,profile.policy.family);
     qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
     qa_navigation_services services=application_bot_navigation_services(bots);
     services.topology_geometry_only=true;

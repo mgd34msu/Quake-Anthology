@@ -1579,9 +1579,10 @@ bool application_qc_water_transition(application_provider *provider, qa_actor_id
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC water transition needs source Q1 contents");
     if (qa_actors_get(actors, actor) == NULL) return true;
     if (!application_qc_float(engine, reference, "watertype", &previous, error)) return false;
-    bool splash = previous != 0 && (contents.contents <= -3 ? previous == -1 : previous != -1);
-    float water_type = previous == 0 || contents.contents <= -3 ? (float)contents.contents : -1;
-    float water_level = previous == 0 || contents.contents <= -3 ? 1 : (float)contents.contents;
+    int32_t native_contents = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
+    bool splash = previous != 0 && (native_contents <= -3 ? previous == -1 : previous != -1);
+    float water_type = previous == 0 || native_contents <= -3 ? (float)native_contents : -1;
+    float water_level = previous == 0 || native_contents <= -3 ? 1 : (float)native_contents;
     if (splash) {
         const char *path = "misc/h2ohit1.wav";
         bool precached = false;

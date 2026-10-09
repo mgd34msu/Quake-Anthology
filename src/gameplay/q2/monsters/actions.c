@@ -673,7 +673,7 @@ static bool soldier_aim(q2m_context *context, int flash, unsigned index,
         .pass_actor = context->actor->id,
         .policy = qa_collision_default_policy(QA_COLLISION_Q2),
     };
-    query.policy.contents_mask = UINT32_C(0x06000003);
+    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000003), QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
@@ -1218,7 +1218,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
           .pass_actor = context->actor->id,
           .policy = qa_collision_default_policy(QA_COLLISION_Q2),
       };
-      eye_query.policy.contents_mask = UINT32_C(0x46004003);
+      eye_query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46004003), QA_COLLISION_Q2);
       qa_trace_result trace;
       if (!qa_world_trace(context->game->services.world, &eye_query, &trace,
                           error))
@@ -1235,7 +1235,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
           .end = predicted,
           .policy = qa_collision_default_policy(QA_COLLISION_Q2),
       };
-      lead_query.policy.contents_mask = 3u;
+      lead_query.policy.contents_mask = qa_collision_contents_mask(3u, QA_COLLISION_Q2);
       if (!qa_world_trace(context->game->services.world, &lead_query, &trace,
                           error))
         return false;
@@ -1576,7 +1576,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
         .pass_actor = context->actor->id,
         .policy = qa_collision_default_policy(QA_COLLISION_Q2),
     };
-    query.policy.contents_mask = 3u;
+    query.policy.contents_mask = qa_collision_contents_mask(3u, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error)) {
       result = false;
@@ -2013,7 +2013,7 @@ static bool widow2_tongue(q2m_context *context, qa_error *error) {
   qa_trace_query query = {.start = start, .end = enemy.origin,
       .pass_actor = context->actor->id,
       .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-  query.policy.contents_mask = UINT32_C(0x06000003);
+  query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000003), QA_COLLISION_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
     return false;
@@ -3339,7 +3339,7 @@ static bool blind_direction(q2m_context *context, qa_vec3 start,
         .pass_actor = context->actor->id,
         .policy = qa_collision_default_policy(QA_COLLISION_Q2),
     };
-    query.policy.contents_mask = mask;
+    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
@@ -3423,7 +3423,7 @@ static bool trace_point(q2m_context *context, qa_vec3 start, qa_vec3 end,
       .pass_actor = context->actor->id,
       .policy = qa_collision_default_policy(QA_COLLISION_Q2),
   };
-  query.policy.contents_mask = mask;
+  query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2);
   return qa_world_trace(context->game->services.world, &query, trace, error);
 }
 
@@ -3454,7 +3454,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
           .end = qa_vec_add(origin, qa_vec_scale(velocity, 0.1f)),
           .policy = qa_collision_default_policy(QA_COLLISION_Q2),
       };
-      query.policy.contents_mask = UINT32_C(0x46000003);
+      query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000003), QA_COLLISION_Q2);
       qa_trace_result trace;
       if (!qa_world_trace(context->game->services.world, &query, &trace,
                           error))
@@ -3464,7 +3464,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
       origin = trace.end;
       if (trace.fraction >= 1.0f)
         continue;
-      if (trace.has_surface && (trace.surface_flags & 4) != 0)
+      if (trace.has_surface && (qa_collision_surface_export(trace.surface_flags, QA_COLLISION_Q2) & 4) != 0)
         break;
       qa_vec3 normal =
           trace.contact ? trace.contact_plane.normal : qa_v3(0.0f, 0.0f, 0.0f);
@@ -3493,7 +3493,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
         best_pitch = pitch;
         best_distance = distance;
       }
-      if (((uint32_t)trace.contents & UINT32_C(0x46000000)) != 0)
+      if (((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & UINT32_C(0x46000000)) != 0)
         break;
     }
   }
@@ -3847,9 +3847,9 @@ static bool shambler_lightning(q2m_context *context, qa_error *error) {
       .pass_actor = context->actor->id,
       .policy = qa_collision_default_policy(QA_COLLISION_Q2),
   };
-  query.policy.contents_mask = Q2M_ATTACK_MASK;
+  query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_COLLISION_Q2);
   if (context->game->options.edition == QA_Q2_RERELEASE)
-    query.policy.contents_mask |= UINT32_C(0x40000000);
+    query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_COLLISION_Q2));
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
     return false;
@@ -4018,8 +4018,8 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
       direction = qa_vec_sub(qa_vec_add(point, qa_vec_scale(enemy.velocity, distance / 1000)), start);
     qa_trace_query query = {.start = start, .end = point, .pass_actor = context->actor->id,
                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = Q2M_ATTACK_MASK;
-    if (rerelease) query.policy.contents_mask |= UINT32_C(0x40000000);
+    query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_COLLISION_Q2);
+    if (rerelease) query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_COLLISION_Q2));
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
@@ -4329,15 +4329,15 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
     qa_builtin_angle_vectors(context->body.angles, NULL, NULL, &up);
     query.end = qa_vec_add(context->body.origin, qa_vec_scale(up, vertical < 0 ? -8096 : 128));
     query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = bounds};
-    query.policy.contents_mask = Q2M_MONSTER_MASK;
+    query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
     point = trace.end;
   } else {
     float longest = 0;
-    query.policy.contents_mask = Q2M_ATTACK_MASK |
-        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
+    query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK |
+        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_COLLISION_Q2);
     for (int i = 0; i < 12; ++i) {
       qa_vec3 angles = context->body.angles, forward;
       angles.y += (float)(i < 6 ? 30 * i : -30 * (i - 6));

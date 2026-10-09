@@ -193,7 +193,8 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     query.policy.q2_merged_contents=!classic;
     qa_point_contents contents;
     if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
-    out->water_type=out->water_level && (contents.contents & 56) ? (uint32_t)contents.contents : 0;
+    int32_t native_contents=qa_collision_point_contents_export(contents.contents,QA_COLLISION_Q2,contents.q1_opaque_token);
+    out->water_type=out->water_level && (native_contents & 56) ? (uint32_t)native_contents : 0;
     return true;
 }
 

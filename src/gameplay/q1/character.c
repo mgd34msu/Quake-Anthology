@@ -587,8 +587,9 @@ bool q1_bubble_think(qa_q1_game *g, q1_actor *bubble, qa_error *error) {
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (bubble->count >= 20 ||
-        (contents.contents != -3 && contents.contents != -4 && contents.contents != -5))
+    int32_t medium = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1,
+                                                   contents.q1_opaque_token);
+    if (bubble->count >= 20 || (medium != -3 && medium != -4 && medium != -5))
         return q1_remove(g, bubble, error);
     float x = body.velocity.x - 10 + q1_random(g) * 20,
           y = body.velocity.y - 10 + q1_random(g) * 20,

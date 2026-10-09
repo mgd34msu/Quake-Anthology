@@ -82,8 +82,8 @@ static bool drop_to_floor(q2m_context *context, qa_error *error) {
                            .shape = {.kind = QA_SHAPE_BOX, .bounds = context->body.bounds},
                            .pass_actor = context->actor->id,
                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = Q2M_MONSTER_MASK |
-        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
+    query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK |
+        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_COLLISION_Q2);
     qa_trace_result hit;
     bool offset = context->game->options.edition == QA_Q2_CLASSIC;
     if (!offset) {

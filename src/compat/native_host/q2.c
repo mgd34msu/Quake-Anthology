@@ -210,7 +210,7 @@ static bool point_contents(qa_native_host *host, qa_native_address address,
     qa_point_contents contents;
     if (!qa_world_point_contents(host->world.world, &query, &contents, error))
         return false;
-    *out = (uint32_t)contents.contents;
+    *out = (uint32_t)qa_collision_point_contents_export(contents.contents,QA_COLLISION_Q2,contents.q1_opaque_token);
     return true;
 }
 

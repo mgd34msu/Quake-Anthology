@@ -55,7 +55,7 @@ static bool point(q3_call *call, qa_collision_geometry *geometry, qa_trace_scrat
     query.target.model = (uint32_t)handle;
     qa_point_contents contents;
     if (!qa_collision_point_contents(geometry, scratch, &query, &contents, error)) return false;
-    *result = contents.contents; return true;
+    *result = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q3, contents.q1_opaque_token); return true;
 }
 
 static bool trace(q3_call *call, qa_collision_geometry *geometry, qa_trace_scratch *scratch, bool nodes,
@@ -72,7 +72,7 @@ static bool trace(q3_call *call, qa_collision_geometry *geometry, qa_trace_scrat
     }
     qa_trace_query query = {.policy = qa_collision_default_policy(QA_COLLISION_Q3),
         .shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX};
-    query.policy.contents_mask = (uint32_t)q3_integer(call, 6);
+    query.policy.contents_mask = qa_collision_contents_mask((uint32_t)q3_integer(call, 6), QA_COLLISION_Q3);
     if (!q3_vector(call, call->arguments[1], &query.start, error) ||
         !q3_vector(call, call->arguments[2], &query.end, error) ||
         !bounds_vector(call, call->arguments[3], &query.shape.bounds.mins, error) ||

@@ -44,7 +44,7 @@ static inline void qa_move_q3_view(qa_q3_movement_state *state, const qa_movemen
 
 
 bool qa_move_trace(qa_move_context *, qa_vec3 start, qa_vec3 end, qa_bounds,
-                    uint32_t mask, bool world_only, qa_trace_result *);
+                    qa_collision_bits mask, bool world_only, qa_trace_result *);
 bool qa_move_trace_q1(qa_move_context *, qa_vec3 start, qa_vec3 end,
                        qa_trace_shape, qa_q1_move_kind, qa_trace_result *);
 bool qa_move_contents(qa_move_context *, qa_vec3, int32_t *);
@@ -57,7 +57,7 @@ bool qa_move_contact(qa_move_context *, const qa_trace_result *, bool touch_now,
 bool qa_move_touch(qa_move_context *, const qa_trace_result *);
 bool qa_move_event(qa_move_context *, int32_t event, int32_t parameter);
 bool qa_move_animation(qa_move_context *, qa_movement_animation_kind, int32_t value, bool force, bool backwards);
-bool qa_move_bounds(qa_move_context *, qa_bounds requested, uint32_t mask, qa_bounds *);
+bool qa_move_bounds(qa_move_context *, qa_bounds requested, qa_collision_bits mask, qa_bounds *);
 bool qa_move_apply_stance(qa_move_context *);
 int32_t qa_move_mode_type(qa_movement_kind, qa_movement_mode);
 qa_vec3 qa_move_clip(qa_vec3 velocity, qa_vec3 normal, float overbounce, float stop_epsilon);

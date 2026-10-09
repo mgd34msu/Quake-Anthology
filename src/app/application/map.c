@@ -1347,16 +1347,16 @@ typedef struct monster_placement_query {
     size_t door_count;
     const qa_actor_id *excluded;
     size_t excluded_count;
-    int32_t medium;
+    qa_collision_bits medium;
 } monster_placement_query;
-static bool monster_medium(monster_placement_query *query, qa_vec3 origin, int32_t *out, qa_error *error)
+static bool monster_medium(monster_placement_query *query, qa_vec3 origin, qa_collision_bits *out, qa_error *error)
 {
     qa_point_contents contents;
     if (!qa_world_point_contents(query->map->application->world,
         &(qa_point_query){.point = origin, .policy = query->policy, .pass_actor = query->actor}, &contents, error)) return false;
-    *out = query->policy.family == QA_COLLISION_Q1 ?
-        contents.contents == -3 ? 32 : contents.contents == -4 ? 16 : contents.contents == -5 ? 8 : 0 :
-        contents.contents & 56;
+    qa_collision_bits liquids = qa_collision_bits_union(qa_collision_bit(QA_CONTENT_WATER),
+        qa_collision_bits_union(qa_collision_bit(QA_CONTENT_SLIME), qa_collision_bit(QA_CONTENT_LAVA)));
+    *out = qa_collision_bits_intersection(contents.contents, liquids);
     return true;
 }
 static bool monster_trace(monster_placement_query *query, qa_vec3 start, qa_vec3 end,
@@ -1414,9 +1414,9 @@ static bool monster_candidate(monster_placement_query *query, qa_vec3 start,
     if (!monster_trace(query, start, end, query->body.bounds, false, false, &floor, error)) return false;
     if (floor.start_solid || floor.all_solid ||
         (walking && (floor.fraction == 1 || !floor.contact || floor.contact_plane.normal.z < 0.7f))) return true;
-    int32_t medium;
+    qa_collision_bits medium;
     if (!monster_medium(query, floor.end, &medium, error)) return false;
-    if (medium != query->medium) return true;
+    if (!qa_collision_bits_equal(medium, query->medium)) return true;
     if (!monster_trace(query, floor.end, floor.end, query->body.bounds, false, false, &fit, error)) return false;
     if (fit.start_solid || fit.all_solid) return true;
     qa_vec3 destination = floor.end;
@@ -1473,9 +1473,9 @@ static bool monster_corner_placement(monster_placement_query *query, qa_vec3 sou
                 pending[count++] = (monster_placement_node){.origin = floor.end, .x = x, .y = y};
                 qa_vec3 origin = floor.end;
                 origin.z += query->authored_bounds.mins.z - query->body.bounds.mins.z;
-                int32_t medium;
+                qa_collision_bits medium;
                 if (!monster_medium(query, origin, &medium, error)) { ok = false; break; }
-                if (medium == query->medium) {
+                if (qa_collision_bits_equal(medium, query->medium)) {
                     if (!monster_trace(query, origin, origin, query->body.bounds, false, false, &fit, error)) { ok = false; break; }
                     if (!fit.start_solid && !fit.all_solid) {
                         *out = query->body;
@@ -1570,7 +1570,8 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         !app->physics->services.read(app->physics->services.context, actor, &query.movement))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected monster has no physical Source body");
     query.policy = qa_collision_default_policy(query.movement.family);
-    if (query.policy.family == QA_COLLISION_Q2) query.policy.contents_mask = 1;
+    if (query.policy.family == QA_COLLISION_Q2)
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
     qa_trace_result trace;
     if (!monster_trace(&query, query.body.origin, query.body.origin, query.body.bounds,
         false, false, &trace, error)) return false;

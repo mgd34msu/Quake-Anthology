@@ -83,7 +83,7 @@ static qa_trace_result rr_trace(rr_move *p, qa_vec3 start, qa_vec3 end,
             ? RR_MASK_DEAD : RR_MASK_PLAYER;
         if (p->state->flags & RR_IGNORE_PLAYERS) mask &= ~(uint32_t)RR_PLAYER;
     }
-    qa_move_trace(p->move, start, end, bounds, mask, world_only, &trace);
+    qa_move_trace(p->move, start, end, bounds, qa_collision_contents_mask(mask,QA_COLLISION_Q2), world_only, &trace);
     return trace;
 }
 
@@ -350,7 +350,8 @@ static void rr_add_currents(rr_move *p, qa_vec3 *wish)
                 qa_vec3 flat = p->forward; flat.z = 0.0f; rr_normalize(&flat);
                 qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                                  p->bounds, RR_CONTENTS_LADDER);
-                if (trace.fraction != 1.0f && (trace.contents & RR_CONTENTS_LADDER)) {
+                if (trace.fraction != 1.0f &&
+                    (qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER)) {
                     qa_vec3 right = qa_vec_cross(trace.plane.normal, qa_v3(0,0,1));
                     wish->x = wish->y = 0.0f;
                     *wish = qa_vec_add(*wish, qa_vec_scale(right, -speed));
@@ -457,8 +458,8 @@ static void rr_categorize(rr_move *p)
         if (p->move->failed) return;
         p->ground_plane = trace.plane;
         p->ground_surface = trace.has_surface;
-        p->ground_surface_flags = trace.surface.flags;
-        p->ground_contents = trace.contents;
+        p->ground_surface_flags = qa_collision_surface_export(trace.surface.flags,QA_COLLISION_Q2);
+        p->ground_contents = qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token);
         bool slanted = trace.fraction < 1.0f && trace.plane.normal.z < 0.7f;
         if (slanted) {
             qa_trace_result slant = rr_trace(p, *p->origin,
@@ -519,7 +520,9 @@ static void rr_special(rr_move *p)
     qa_vec3 flat = p->forward; flat.z = 0.0f; rr_normalize(&flat);
     qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                      p->bounds, RR_CONTENTS_LADDER);
-    if (trace.fraction < 1.0f && (trace.contents & RR_CONTENTS_LADDER) && p->result->water_level < 2)
+    if (trace.fraction < 1.0f &&
+        (qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER) &&
+        p->result->water_level < 2)
         p->state->flags |= RR_LADDER;
     if (p->state->gravity == 0 ||
         (!(p->command.buttons & RR_JUMP_BUTTON) && p->command.forward_move <= 0) ||

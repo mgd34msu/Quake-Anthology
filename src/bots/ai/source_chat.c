@@ -190,13 +190,6 @@ bool bot_ai_source_visible_enemies(qa_bots *b,bot_ai_state *s,bool *out,qa_error
     }
     return true;
 }
-static bool contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_error *e) {
-    qa_point_query query={.point=point,.pass_actor=pass,.q3_server_entities=true,
-        .policy={.family=QA_COLLISION_Q3,.q1_hull=-1}};
-    qa_point_contents result;
-    if(!qa_world_point_contents(b->services.shared.world,&query,&result,e)) return false;
-    *out=result.contents;return true;
-}
 bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
     int32_t type;CHAT_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&type,e));
@@ -207,11 +200,11 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
     below.z-=24.0f;
     CHAT_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
     qa_actor_id pass=bot_ai_source_actor(b,entity);
-    CHAT_CALL(contents(b,below,pass,&point,e));if(point&(8|16)) return true;
+    CHAT_CALL(bot_ai_source_point_contents(b,below,pass,&point,e));if(point&(8|16)) return true;
     qa_vec3 above=bot_ai_origin(s);above.z+=32.0f;
     CHAT_CALL(bot_ai_storage_i32(b,s,QA_BOT_SOURCE_ENTITY,&entity,false,e));
     pass=bot_ai_source_actor(b,entity);
-    CHAT_CALL(contents(b,above,pass,&point,e));if(point&(8|16|32)) return true;
+    CHAT_CALL(bot_ai_source_point_contents(b,above,pass,&point,e));if(point&(8|16|32)) return true;
     qa_bot_navigation *nav=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
     if(!nav) return bot_ai_fail(e,"Source chat position lacks its actual navigation");
     qa_bounds bounds=qa_bot_navigation_presence(nav,4);qa_trace_result trace;

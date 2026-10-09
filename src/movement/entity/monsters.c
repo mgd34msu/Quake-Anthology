@@ -18,10 +18,7 @@ static bool monster_trace(qa_physics *p, qa_actor_id actor,
 static bool monster_contents(qa_physics *p, qa_actor_id actor,
                               const qa_physics_properties *props, qa_vec3 point,
                               int32_t *value, qa_error *error) {
-    qa_point_contents contents;
-    if (!ph_contents(p, actor, props, point, &contents, error)) return false;
-    *value = contents.contents;
-    return true;
+    return ph_contents(p, actor, props, point, value, error);
 }
 
 static bool monster_bottom_state(qa_physics *p, qa_actor_id actor,

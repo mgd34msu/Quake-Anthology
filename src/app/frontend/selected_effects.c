@@ -101,7 +101,7 @@ static bool trace(void *context, const q3n_frame *frame, qa_vec3 start, qa_vec3 
     frontend_selected_effects_group *group = context;
     qa_trace_query query = {.start = start, .end = end, .shape = {QA_SHAPE_BOX, bounds},
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = mask;
+    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q3);
     return active_current(group, frame, error) && qa_collision_trace(group->geometry,
         qa_world_trace_scratch(qa_application_world(group->owner->frontend->application),group->geometry),
         &query, out, error) &&
@@ -119,7 +119,7 @@ static bool contents(void *context, const q3n_frame *frame, qa_vec3 point, int32
         !qa_collision_point_contents(group->geometry,
             qa_world_trace_scratch(qa_application_world(group->owner->frontend->application),group->geometry),
             &query, &value, error) || !active_current(group, frame, error)) return false;
-    *out = (uint32_t)value.contents; return true;
+    *out = (uint32_t)qa_collision_point_contents_export(value.contents, QA_COLLISION_Q3, value.q1_opaque_token); return true;
 }
 
 static bool marks(void *context, const q3n_frame *frame, const qa_vec3 *points, size_t count,

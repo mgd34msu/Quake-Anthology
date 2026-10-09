@@ -505,7 +505,7 @@ bool q3_trace(qa_q3_game *game, qa_vec3 start, qa_vec3 end, qa_actor_id pass, ui
                             .shape = {.kind = QA_SHAPE_POINT},
                             .pass_actor = pass,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = mask;
+    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q3);
     return qa_world_trace(game->options.services.world, &query, trace, error);
 }
 bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {

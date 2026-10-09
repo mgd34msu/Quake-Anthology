@@ -168,7 +168,8 @@ static bool bullet(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
         qa_trace_result trace;
         if (!q3_trace(game, attack.muzzle, end, pass, Q3_MASK_SHOT, &trace, error))
             return false;
-        if (trace.surface_flags & Q3_SURF_NOIMPACT)
+        if (qa_collision_bits_overlap(trace.surface_flags, qa_collision_bits_union(
+            qa_collision_bit(QA_SURFACE_NOIMPACT), qa_collision_bit(QA_SURFACE_SKY_NOIMPACT))))
             return true;
         qa_vec3 point = qa_physics_q3_snap_towards(trace.end, attack.muzzle);
         qa_combat_state target;
@@ -213,7 +214,9 @@ bool q3_gauntlet(qa_q3_game *game, qa_actor_id shooter, bool *hit, qa_error *err
                   shooter, Q3_MASK_SHOT, &trace, error))
         return false;
     qa_combat_state state;
-    if ((trace.surface_flags & Q3_SURF_NOIMPACT) || trace.hit != QA_TRACE_HIT_ACTOR ||
+    if (qa_collision_bits_overlap(trace.surface_flags, qa_collision_bits_union(
+            qa_collision_bit(QA_SURFACE_NOIMPACT), qa_collision_bit(QA_SURFACE_SKY_NOIMPACT))) ||
+        trace.hit != QA_TRACE_HIT_ACTOR ||
         !target_state(game, trace.actor, &state))
         return true;
     q3_actor *entry = q3_actor_get(game, shooter);
@@ -278,7 +281,8 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
                            error))
                 return false;
         }
-        if (!(trace.surface_flags & Q3_SURF_NOIMPACT) &&
+        if (!(qa_collision_bits_overlap(trace.surface_flags, qa_collision_bits_union(
+            qa_collision_bit(QA_SURFACE_NOIMPACT), qa_collision_bit(QA_SURFACE_SKY_NOIMPACT)))) &&
             !impact_event(game, shooter, attack.firing_weapon, &trace, trace.end, false, error))
             return false;
         if (q3_accuracy(game, trace.actor, shooter))
@@ -343,7 +347,9 @@ static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry at
             if (!q3_trace(game, start, end, pass, Q3_MASK_SHOT, &trace, error))
                 return false;
             qa_combat_state state;
-            if ((trace.surface_flags & Q3_SURF_NOIMPACT) || trace.hit != QA_TRACE_HIT_ACTOR ||
+            if (qa_collision_bits_overlap(trace.surface_flags, qa_collision_bits_union(
+            qa_collision_bit(QA_SURFACE_NOIMPACT), qa_collision_bit(QA_SURFACE_SKY_NOIMPACT))) ||
+        trace.hit != QA_TRACE_HIT_ACTOR ||
                 !target_state(game, trace.actor, &state))
                 break;
             if (shielded(game, trace.actor)) {
@@ -430,7 +436,7 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
                 }
             }
         }
-        if (trace.contents & 1)
+        if (qa_collision_bits_overlap(trace.contents, qa_collision_contents_mask(1, QA_COLLISION_Q3)))
             break;
         if (qa_actors_get(qa_session_actors(game->options.services.session), trace.actor)) {
             uint32_t source_slot;
@@ -468,7 +474,9 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
         qa_vec3 start = qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.right, 4)),
                                    qa_vec_scale(attack.up, -1));
         if (!beam_event(game, shooter, 53,
-                      trace.surface_flags & Q3_SURF_NOIMPACT ? 255 : normal,
+                      qa_collision_bits_overlap(trace.surface_flags, qa_collision_bits_union(
+                          qa_collision_bit(QA_SURFACE_NOIMPACT),
+                          qa_collision_bit(QA_SURFACE_SKY_NOIMPACT))) ? 255 : normal,
                       qa_physics_q3_snap_towards(trace.end, attack.muzzle), start,
                       trace.contact_plane.normal, error))
             return false;

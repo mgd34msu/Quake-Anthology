@@ -133,7 +133,7 @@ bool qa_physics_q3_missile_move(qa_physics *physics, qa_actor_id actor,
     qa_trace_query query = {.start = body.origin, .end = destination,
         .shape = {QA_SHAPE_BOX, body.bounds}, .pass_actor = pass,
         .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = properties.clip_mask;
+    query.policy.contents_mask = qa_collision_contents_mask(properties.clip_mask,QA_COLLISION_Q3);
     qa_trace_result trace;
     if (!qa_world_trace(physics->world, &query, &trace, error)) return false;
     if (trace.start_solid || trace.all_solid) {

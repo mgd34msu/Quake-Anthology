@@ -4,14 +4,14 @@
 #include "qa/actors.h"
 #include "qa/bsp.h"
 #include "qa/math.h"
+#include "qa/collision_bits.h"
 
-typedef enum qa_collision_family { QA_COLLISION_Q1 = 1, QA_COLLISION_Q2, QA_COLLISION_Q3 } qa_collision_family;
 typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa_shape_kind;
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
 typedef enum qa_q1_move_kind { QA_Q1_MOVE_NORMAL, QA_Q1_MOVE_NO_MONSTERS, QA_Q1_MOVE_MISSILE } qa_q1_move_kind;
 typedef struct qa_trace_policy {
     qa_collision_family family;
-    uint32_t contents_mask;
+    qa_collision_bits contents_mask;
     qa_q1_move_kind q1_move;
     int32_t q1_hull; /* -1 selects the Q1 box hull from its X width. */
     bool q2_merged_contents; /* Q2 rerelease leaf and brush-clip rules. */
@@ -30,7 +30,7 @@ typedef struct qa_trace_query {
     qa_actor_id pass_actor; /* Zero registry means no actor. */
 } qa_trace_query;
 typedef struct qa_collision_plane { qa_vec3 normal; float distance; int32_t type; uint8_t signbits; } qa_collision_plane;
-typedef struct qa_collision_surface { char name[64]; int32_t flags, value; char material[16]; } qa_collision_surface;
+typedef struct qa_collision_surface { char name[64]; qa_collision_bits flags; int32_t value; char material[16]; } qa_collision_surface;
 typedef enum qa_trace_hit { QA_TRACE_HIT_NONE, QA_TRACE_HIT_WORLD, QA_TRACE_HIT_ACTOR } qa_trace_hit;
 typedef struct qa_trace_result {
     qa_collision_family family;
@@ -42,7 +42,8 @@ typedef struct qa_trace_result {
     qa_trace_hit hit;
     uint32_t model;
     qa_actor_id actor;
-    int32_t contents, surface_flags;
+    qa_collision_bits contents, surface_flags;
+    int32_t q1_opaque_token;
     bool has_surface, has_secondary;
     qa_collision_surface surface;
     qa_collision_plane secondary_plane;
@@ -60,9 +61,10 @@ typedef struct qa_point_query {
 } qa_point_query;
 typedef struct qa_point_contents {
     qa_collision_family family;
-    int32_t contents, stored, merged;
+    qa_collision_bits contents, stored, merged;
+    int32_t q1_opaque_token;
 } qa_point_contents;
-typedef struct qa_collision_leaf { uint32_t leaf; int64_t cluster, area; int32_t contents; } qa_collision_leaf;
+typedef struct qa_collision_leaf { uint32_t leaf; int64_t cluster, area; qa_collision_bits contents; int32_t q1_opaque_token; } qa_collision_leaf;
 typedef struct qa_leaf_list {
     size_t count;
     int32_t topnode;
@@ -76,7 +78,7 @@ struct qa_resource;
 
 /* Source Q2 solid and svflags select the temporary box contents; BSP models
  * retain their authored brushes. Rerelease adds player/projectile masks. */
-int32_t qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease);
+qa_collision_bits qa_collision_q2_source_contents(uint32_t solid, uint32_t svflags, bool rerelease);
 
 /* Retains the BSP view and derived collision data; source bytes must outlive it.
  * One geometry serves every gameplay policy. Queries only read it. */
@@ -103,7 +105,7 @@ bool qa_collision_trace(const qa_collision_geometry *, qa_trace_scratch *, const
  * Hosts use this for source APIs that explicitly name an entity to clip. */
 bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family,
                              qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin,
-                             int32_t contents, qa_trace_result *, qa_error *);
+                             qa_collision_bits contents, qa_trace_result *, qa_error *);
 /* Source Q3 capsule handle: target supplies the optional origin/angles. The
  * box-through-capsule swap resolves real Q3 submodel 255 when present. Handle
  * admission, no-node early returns and temporary-box state belong to the host. */
@@ -158,10 +160,8 @@ typedef struct qa_collision_portal_checkpoint {
 bool qa_collision_capture_portals(const qa_collision_geometry *, qa_collision_portal_checkpoint *, qa_error *);
 void qa_collision_portal_checkpoint_free(qa_collision_portal_checkpoint *);
 bool qa_collision_restore_portals(qa_collision_geometry *, const qa_collision_portal_checkpoint *, qa_error *);
-int32_t qa_collision_convert_contents(int32_t, qa_collision_family from, qa_collision_family to);
-int32_t qa_collision_convert_surface_flags(int32_t, qa_collision_family from, qa_collision_family to);
-uint32_t qa_collision_geometry_mask(const qa_trace_policy *, qa_collision_family);
-bool qa_collision_contents_block(int32_t, qa_collision_family, const qa_trace_policy *);
+/* Applies source contact conventions without converting canonical fields. */
+void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
 qa_trace_policy qa_collision_default_policy(qa_collision_family);
 
 #endif

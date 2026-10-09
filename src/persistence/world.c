@@ -1,8 +1,8 @@
 #include "internal.h"
 
 #define WORLD_HEADER_BYTES 28u
-#define WORLD_BODY_MIN_BYTES 35u
-#define WORLD_BODY_MAX_BYTES 456u
+#define WORLD_BODY_MIN_BYTES 38u
+#define WORLD_BODY_MAX_BYTES 507u
 #define WORLD_SPATIAL_BYTES 16u
 
 enum {
@@ -102,37 +102,49 @@ static uint8_t collision_flags(qa_actor_collision v)
         (v.dead_monster ? 4u : 0) | (v.q1_corpse ? 8u : 0) | (v.has_q3_owner ? 16u : 0));
 }
 
-static void collision_fields(qa_actor_collision v, uint32_t fields[7])
+static void collision_fields(qa_actor_collision v, uint64_t fields[9])
 {
-    uint32_t value[7] = {(uint32_t)v.family, (uint32_t)v.shape, v.model, (uint32_t)v.contents,
-        (uint32_t)v.role, (uint32_t)v.q3_entity_number, (uint32_t)v.q3_owner_number};
+    uint64_t value[9] = {(uint32_t)v.family, (uint32_t)v.shape, v.model, v.contents.lo,
+        v.contents.hi, (uint32_t)v.q1_opaque_token, (uint32_t)v.role,
+        (uint32_t)v.q3_entity_number, (uint32_t)v.q3_owner_number};
     memcpy(fields, value, sizeof(value));
 }
 
 static void write_collision(qa_net_writer *w, qa_actor_collision v, qa_actor_collision base)
 {
-    uint32_t fields[7], baseline[7];
+    uint64_t fields[9], baseline[9];
     collision_fields(v, fields); collision_fields(base, baseline);
-    uint8_t flags = collision_flags(v), mask = flags != collision_flags(base) ? 128u : 0;
-    for (unsigned i = 0; i < 7; ++i)
-        if (fields[i] != baseline[i]) mask |= (uint8_t)(1u << i);
-    qa_net_write_u8(w, mask);
-    for (unsigned i = 0; i < 7; ++i)
-        if (mask & (1u << i)) qa_net_write_u32(w, fields[i]);
-    if (mask & 128u) qa_net_write_u8(w, flags);
+    uint8_t flags = collision_flags(v);
+    uint16_t mask = flags != collision_flags(base) ? 512u : 0;
+    for (unsigned i = 0; i < 9; ++i)
+        if (fields[i] != baseline[i]) mask |= (uint16_t)(1u << i);
+    qa_net_write_u16(w, mask);
+    for (unsigned i = 0; i < 9; ++i) {
+        if (!(mask & (1u << i))) continue;
+        if (i == 3 || i == 4) qa_net_write_u64(w, fields[i]);
+        else if (i == 5) qa_net_write_i32(w, v.q1_opaque_token);
+        else qa_net_write_u32(w, (uint32_t)fields[i]);
+    }
+    if (mask & 512u) qa_net_write_u8(w, flags);
 }
 
 static qa_actor_collision read_collision(qa_net_reader *r, qa_actor_collision base)
 {
-    uint32_t fields[7]; collision_fields(base, fields);
-    uint8_t mask = qa_net_read_u8(r);
-    for (unsigned i = 0; i < 7; ++i)
-        if (mask & (1u << i)) fields[i] = qa_net_read_u32(r);
-    uint8_t flags = mask & 128u ? qa_net_read_u8(r) : collision_flags(base);
+    uint64_t fields[9]; collision_fields(base, fields);
+    int32_t opaque_token = base.q1_opaque_token;
+    uint16_t mask = qa_net_read_u16(r);
+    for (unsigned i = 0; i < 9; ++i) {
+        if (!(mask & (1u << i))) continue;
+        if (i == 3 || i == 4) fields[i] = qa_net_read_u64(r);
+        else if (i == 5) opaque_token = qa_net_read_i32(r);
+        else fields[i] = qa_net_read_u32(r);
+    }
+    uint8_t flags = mask & 512u ? qa_net_read_u8(r) : collision_flags(base);
     if (flags & ~31u) qa_net_reader_fail(r, "Unknown saved collision flags");
     return (qa_actor_collision){.family = (qa_collision_family)fields[0], .shape = (qa_shape_kind)fields[1],
-        .model = fields[2], .contents = (int32_t)fields[3], .role = (qa_collision_role)fields[4],
-        .q3_entity_number = (int32_t)fields[5], .q3_owner_number = (int32_t)fields[6],
+        .model = (uint32_t)fields[2], .contents = {fields[3], fields[4]}, .q1_opaque_token = opaque_token,
+        .role = (qa_collision_role)fields[6],
+        .q3_entity_number = (int32_t)fields[7], .q3_owner_number = (int32_t)fields[8],
         .inline_model = (flags & 1u) != 0, .monster = (flags & 2u) != 0,
         .dead_monster = (flags & 4u) != 0, .q1_corpse = (flags & 8u) != 0, .has_q3_owner = (flags & 16u) != 0};
 }

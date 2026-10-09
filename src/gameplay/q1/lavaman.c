@@ -227,7 +227,7 @@ bool q1_lavaman_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (contents.contents == -6)
+    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, shot, error);
     if (q1_health(g, other) != 0 &&
         !q1_damage(g, other, shot->id, q1_ref_actor(g, shot->owner),

@@ -66,7 +66,7 @@ bool ph_link(qa_physics *p, qa_actor_id actor, bool triggers, qa_error *error) {
 static qa_trace_policy ph_policy(const qa_physics_properties *props, uint32_t mask,
                                  qa_q1_move_kind move) {
     qa_trace_policy policy = qa_collision_default_policy(props->family);
-    policy.contents_mask = mask;
+    policy.contents_mask = qa_collision_contents_mask(mask,props->family);
     policy.q1_move = move;
     policy.q1_hull = -1;
     policy.q2_merged_contents = props->q2_rerelease;
@@ -100,10 +100,13 @@ bool ph_body_trace(qa_physics *p, qa_actor_id actor, const qa_body_state *body,
 }
 
 bool ph_contents(qa_physics *p, qa_actor_id actor, const qa_physics_properties *props,
-                  qa_vec3 point, qa_point_contents *out, qa_error *error) {
+                  qa_vec3 point, int32_t *out, qa_error *error) {
     qa_point_query query = {.point = point, .pass_actor = actor,
         .policy = ph_policy(props, UINT32_MAX, QA_Q1_MOVE_NORMAL)};
-    return qa_world_point_contents(p->world, &query, out, error);
+    qa_point_contents contents;
+    if (!qa_world_point_contents(p->world, &query, &contents, error)) return false;
+    *out = qa_collision_point_contents_export(contents.contents,props->family,contents.q1_opaque_token);
+    return true;
 }
 
 qa_actor_id ph_hit(const qa_physics *p, const qa_trace_result *trace) {
@@ -247,10 +250,14 @@ bool qa_physics_impact(qa_physics *p, qa_actor_id actor,
         .plane = trace->contact ? trace->contact_plane : trace->plane,
         .has_surface = trace->has_surface, .surface = trace->surface,
         .has_source_trace = rerelease, .source_trace = *trace};
-    if (trace->family == QA_COLLISION_Q1 && (trace->has_surface || trace->surface_flags)) {
+    if (trace->family == QA_COLLISION_Q1 &&
+        (trace->has_surface || !qa_collision_bits_equal(trace->surface_flags,(qa_collision_bits){0}))) {
         contact.has_surface = true;
         memset(&contact.surface, 0, sizeof(contact.surface));
-        contact.surface.flags = trace->surface_flags & 0x86;
+        const qa_collision_bits touch_flags = {
+            (UINT64_C(1) << QA_SURFACE_SLICK) | (UINT64_C(1) << QA_SURFACE_NODRAW) |
+            (UINT64_C(1) << QA_SURFACE_SKY_NOIMPACT) | (UINT64_C(1) << QA_SURFACE_SKY), 0};
+        contact.surface.flags = qa_collision_bits_intersection(trace->surface_flags,touch_flags);
     }
     if (self_props.solid != QA_PHYSICS_NOT_SOLID ||
         (rerelease && (self_props.flags & QA_PHYSICS_ALWAYS_TOUCH)))
@@ -333,9 +340,8 @@ bool qa_physics_water_transition(qa_physics *p, qa_actor_id actor,
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
-    qa_point_contents contents;
-    if (!ph_contents(p, actor, &props, body.origin, &contents, error)) return false;
-    int32_t value = contents.contents;
+    int32_t value;
+    if (!ph_contents(p, actor, &props, body.origin, &value, error)) return false;
     bool wet = ph_wet(props.family, value), was_wet = props.water_level != 0;
     props.water_level = wet ? 1 : 0;
     props.water_type = value;
@@ -593,11 +599,11 @@ static bool ph_new_toss(qa_physics *p, qa_actor_id actor, float seconds,
         !ph_link(p, actor, true, error)) return false;
     read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-    qa_point_contents contents;
+    int32_t contents;
     if (!ph_contents(p, actor, &props, body.origin, &contents, error)) return false;
-    bool was_wet = (props.water_type & 56) != 0, wet = (contents.contents & 56) != 0;
+    bool was_wet = (props.water_type & 56) != 0, wet = (contents & 56) != 0;
     props.water_level = wet ? 1 : 0;
-    props.water_type = contents.contents;
+    props.water_type = contents;
     if (!ph_properties(p, actor, &props, error)) return false;
     if (wet != was_wet && !ph_event(p, p->world_actor.registry ? p->world_actor : actor,
         QA_PHYSICS_WATER_ENTER, wet ? old_origin : body.origin, error)) return false;

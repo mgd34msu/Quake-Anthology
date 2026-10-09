@@ -163,7 +163,7 @@ static bool restore_reference(qa_world *world, bool present, qa_saved_actor_id s
 static bool collision_equal(qa_actor_collision a,qa_actor_collision b)
 {
     return a.family==b.family && a.shape==b.shape && a.inline_model==b.inline_model &&
-        a.model==b.model && a.contents==b.contents && qa_actor_reference_equal(a.owner,b.owner) &&
+        a.model==b.model && qa_collision_bits_equal(a.contents,b.contents) && a.q1_opaque_token==b.q1_opaque_token && qa_actor_reference_equal(a.owner,b.owner) &&
         a.role==b.role && a.monster==b.monster && a.dead_monster==b.dead_monster &&
         a.q1_corpse==b.q1_corpse && a.has_q3_owner==b.has_q3_owner &&
         a.q3_entity_number==b.q3_entity_number && a.q3_owner_number==b.q3_owner_number;
