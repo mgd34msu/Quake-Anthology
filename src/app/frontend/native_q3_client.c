@@ -290,12 +290,14 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
 {
     frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
     if(!frontend_native_q3_current(row))return false;
+    const qa_native_q3_cvar_refs *refs = qa_native_q3_client_cvar_refs(row->view.client);
+    qa_cvar_handle shadows = refs ? refs->rows[QA_NATIVE_Q3_CVAR_cg_shadows] : (qa_cvar_handle){0};
     return frontend_source_prepare_scene(f,f->application,row->view.seat,definition,options,e) &&
         (!row->composition.prepare_view || row->composition.prepare_view(row->composition.context,definition,options,e)) &&
         frontend_native_components_scene_prepare(row,options,e) &&
         frontend_native_q3_current(row) &&
         frontend_q3_scene_policy_read(f,options,e) &&
-        frontend_q3_shadow_mode_read(row->view.cvars,&options->shadow_mode,e) && frontend_native_q3_current(row);
+        frontend_q3_shadow_mode_read(row->view.cvars,shadows,&options->shadow_mode,e) && frontend_native_q3_current(row);
 }
 static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
 {
@@ -390,14 +392,16 @@ bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentati
         .scene_cleared=scene_cleared,.prepare_picture=prepare_picture,.remap=remap,.print=print_row};
     if (row->shader_movies && !frontend_material_movies_cinematic_read(row->shader_movies,&out->cinematics,e)) return false;
     if (!frontend_q3_renderer_options_read(f,out,e)) return false;
-    if(row->view.cvars && !qa_cvars_find(row->view.cvars,"cg_shadows")) {
+    const qa_native_q3_cvar_refs *refs = qa_native_q3_client_cvar_refs(row->view.client);
+    qa_cvar_handle shadows = refs ? refs->rows[QA_NATIVE_Q3_CVAR_cg_shadows] : (qa_cvar_handle){0};
+    if(row->view.cvars && !qa_cvars_read(row->view.cvars,shadows)) {
         qa_application_q3_client_context client;
         if(!row->view.client || !qa_native_q3_client_context_read(row->view.client,&client,e) ||
             client.cvars!=row->view.cvars || client.initialized)
             return frontend_fail(e,QA_ERROR_ARGUMENT,"Native shadow constructor lost its actual pre-Init CLIENT");
         return true;
     }
-    return frontend_q3_shadow_mode_read(row->view.cvars,&out->shadow_mode,e);
+    return frontend_q3_shadow_mode_read(row->view.cvars,shadows,&out->shadow_mode,e);
 }
 static int32_t memory_remaining(void *context)
 {

@@ -212,6 +212,10 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle r_skipBackEnd, r_clear, r_subdivisions, r_mapOverBrightBits;
     qa_cvar_handle r_fullbright, r_finish, r_showImages, r_speeds;
     qa_cvar_handle r_measureOverdraw, r_shadows;
+    qa_cvar_handle r_ignorehwgamma, r_intensity, r_overBrightBits;
+    qa_cvar_handle r_picmip, r_roundImagesDown, r_simpleMipMaps;
+    qa_cvar_handle r_colorMipLevels, r_texturebits, r_ext_compressed_textures;
+    qa_cvar_handle r_primitives, r_ext_compiled_vertex_array;
     qa_cvar_handle resource_policy[15];
     frontend_legacy_cvar_handles legacy;
 } frontend_engine_cvar_handles;

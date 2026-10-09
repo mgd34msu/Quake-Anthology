@@ -136,6 +136,7 @@ struct frontend_source_lease {
     qa_cvars *cvars;
     frontend_client_registry *registry;
     frontend_config_host_cvars namespaces;
+    qa_cvar_handle shadows;
     qa_command_context command;
     frontend_equipment_source *equipment;
     source_body_draw *body_draw;
@@ -790,7 +791,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
         options->world.source_scratch=NULL;
     }
     if (scope->lease->role==QA_QVM_CGAME &&
-        !frontend_q3_shadow_mode_read(scope->lease->cvars,&options->shadow_mode,error)) return false;
+        !frontend_q3_shadow_mode_read(scope->lease->cvars,scope->lease->shadows,&options->shadow_mode,error)) return false;
     return render_current(source,scope) ||
         frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during renderer settings observation");
 }
@@ -1263,8 +1264,9 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .remap = source_remap, .print = print_source};
     if (ok && source->shader_movies) ok=frontend_material_movies_cinematic_read(source->shader_movies,&presentation.cinematics,error);
     if (ok && !restoring) ok=frontend_q3_renderer_options_read(frontend,&presentation,error);
-    if (ok && qa_cvars_find(host->cvars,"cg_shadows"))
-        ok=frontend_q3_shadow_mode_read(host->cvars,&presentation.shadow_mode,error);
+    qa_cvar_handle shadows=ok?qa_cvars_resolve(host->cvars,"cg_shadows"):(qa_cvar_handle){0};
+    if (ok && qa_cvars_read(host->cvars,shadows))
+        ok=frontend_q3_shadow_mode_read(host->cvars,shadows,&presentation.shadow_mode,error);
     if (ok) ok = qa_q3_presentation_create(&presentation, &source->presentation, error);
     source->constructed = ok;
     return ok;
@@ -1498,6 +1500,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         if (!host->cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its canonical prepared registry");
     }
     lease->common=host->common; lease->cvars=host->cvars;
+    lease->shadows=qa_cvars_resolve(lease->cvars,"cg_shadows");
     qa_application_startup_source parent_game;
     if(!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error) ||
         client_tuple.console!=host->console || client_tuple.cvars!=host->cvars ||

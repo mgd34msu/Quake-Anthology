@@ -227,7 +227,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     if(!definition || !options || !o->entered || !current(o,o->entered,e))return false;
     options->world_family=QA_SCENE_Q3; options->split_screen=o->frontend->options.seats>1;
     return frontend_q3_scene_policy_read(o->frontend,options,e) &&
-        frontend_q3_shadow_mode_read(o->entered->source.basis.client.cvars,&options->shadow_mode,e) &&
+        frontend_q3_shadow_mode_read(o->entered->source.basis.client.cvars,qa_native_q3_remote_client_cvar_refs(o->services.client)->rows[QA_NATIVE_Q3_CVAR_cg_shadows],&options->shadow_mode,e) &&
         current(o,o->entered,e);
 }
 static bool prepare_picture(void *context,qa_material_context *material,qa_error *e)

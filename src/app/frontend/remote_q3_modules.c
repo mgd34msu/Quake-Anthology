@@ -569,8 +569,8 @@ static bool prepare_view(void *context, const qa_q3_refdef *definition, qa_q3_sc
         if (!qa_application_native_q3_client_modules_initialization_read(lease->owner->modules,
             lease->role, &initialized, &succeeded, error)) return false;
         const qa_cvars *cvars = frontend_client_registry_cvars(lease->registry);
-        if (succeeded || qa_cvars_find(cvars, "cg_shadows"))
-            return frontend_q3_shadow_mode_read(cvars, &options->shadow_mode, error) && render_current(lease);
+        if (succeeded || qa_cvars_read(cvars, lease->shadows))
+            return frontend_q3_shadow_mode_read(cvars, lease->shadows, &options->shadow_mode, error) && render_current(lease);
     }
     return true;
 }
@@ -772,6 +772,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     lease->constructor = (qa_q3_host_client_context){host->session, host->role, host->owner,
         host->service_owner, host->console, host->cvars, host->client_time_cvars,
         host->client_time_owner, host->command_context, lease};
+    if (ok) lease->shadows=qa_cvars_resolve(host->cvars,"cg_shadows");
     lease->media_views[0] = mounts(owner);
     if (ok && request->role == QA_QVM_UI) {
         lease->preparing = true;

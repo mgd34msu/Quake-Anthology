@@ -110,6 +110,8 @@ bool qa_native_q3_client_update(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_force_model_change(qa_native_q3_client_service *, qa_error *);
 /* symbol is the donor C global name, e.g. cg_zoomFov or cg_gun_x. Read and
  * direct numeric writes use CGAME private cache, not the engine registry. */
+/* Borrowed references share the actual CLIENT cache lifetime and registration. */
+const qa_native_q3_cvar_refs *qa_native_q3_client_cvar_refs(const qa_native_q3_client_service *);
 bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *, qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *, qa_error *);
 bool qa_native_q3_client_cvar_number(qa_native_q3_client_service *, qa_native_q3_cvar_id id,

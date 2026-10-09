@@ -155,6 +155,8 @@ bool native_client_cache_read(const qa_native_q3_cvar_refs *refs,const qa_native
         return native_client_fail(error,QA_ERROR_NOT_FOUND,"Native CGAME cvar symbol is absent for this product");
     *out=cache[refs->ordinals[id]]; return true;
 }
+const qa_native_q3_cvar_refs *qa_native_q3_client_cvar_refs(const qa_native_q3_client_service *service)
+{ return service ? &service->cvar_refs : NULL; }
 bool qa_native_q3_client_cvar_read(const qa_native_q3_client_service *service,qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *out,qa_error *error)
 {

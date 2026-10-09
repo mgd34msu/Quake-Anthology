@@ -90,6 +90,7 @@ struct frontend_component_scene {
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     qa_cvars *cvars;
+    qa_cvar_handle shadows;
     qa_command_context command;
     qa_q3_presentation_options restored_policy;
     qa_audio_music *music;
@@ -342,7 +343,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *ref,qa_q3_scene_optio
 {
     struct frontend_component_scene *owner=context; application_q3_scene_context view; (void)ref;
     if (!publication(owner,&view,e) || !frontend_q3_scene_policy_read(owner->frontend,options,e) ||
-        !frontend_q3_shadow_mode_read(owner->cvars,&options->shadow_mode,e)) return false;
+        !frontend_q3_shadow_mode_read(owner->cvars,owner->shadows,&options->shadow_mode,e)) return false;
     options->world.no_world=true;
     options->world.source_scratch=NULL;
     options->world.source_diagnostics_read=diagnostics;
@@ -794,6 +795,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     struct frontend_component_scene *owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(e,QA_ERROR_MEMORY,"Allocating component private renderer");
     owner->frontend=f; owner->request=*request; owner->retired=request->retired; owner->cvars=request->host->cvars; owner->command=request->host->command_context;
+    owner->shadows=qa_cvars_resolve(owner->cvars,"cg_shadows");
     if (request->restoring) {
         if (request->frontend_identity<=QA_FRONTEND_COMMAND_OWNER ||
             request->frontend_identity-QA_FRONTEND_COMMAND_OWNER>f->next_source_id ||

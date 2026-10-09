@@ -7,6 +7,8 @@
 
 typedef struct frontend_q3_color frontend_q3_color;
 typedef struct frontend_q3_color_ticket frontend_q3_color_ticket;
+/* Bind fixed canonical color rows after shared ENGINE registration. */
+void frontend_q3_color_cvars_bind(qa_frontend *);
 /* Entered by a genuine Source renderer constructor before its image loads. */
 bool frontend_q3_source_color_ensure(qa_frontend *, qa_error *);
 bool frontend_q3_source_color_lighting_read(qa_frontend *, const qa_cvars_edit *,

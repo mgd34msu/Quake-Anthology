@@ -312,6 +312,8 @@ bool qa_native_q3_remote_client_video_reset(qa_native_q3_remote_client_service *
     free(service->system_info); service->system_info=NULL;
     return qa_native_q3_remote_client_current(service);
 }
+const qa_native_q3_cvar_refs *qa_native_q3_remote_client_cvar_refs(const qa_native_q3_remote_client_service *service)
+{ return service ? &service->cvar_refs : NULL; }
 bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *service,qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *out,qa_error *error)
 {

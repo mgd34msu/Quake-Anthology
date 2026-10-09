@@ -6,8 +6,25 @@
 #include "qa/display_settings.h"
 #include "qa/material_library_save.h"
 #include "qa/material_source_scratch.h"
+#include "qa/cvars_alias.h"
 #include <limits.h>
 #include <math.h>
+
+void frontend_q3_color_cvars_bind(qa_frontend *f)
+{
+    const qa_cvars *registry = qa_application_cvars(f->application);
+#define BIND(name) f->engine_cvars.name = qa_cvars_resolve(registry, qa_cvars_canonical_name(registry, #name))
+    BIND(r_ignorehwgamma);
+    BIND(r_intensity);
+    BIND(r_overBrightBits);
+    BIND(r_picmip);
+    BIND(r_roundImagesDown);
+    BIND(r_simpleMipMaps);
+    BIND(r_colorMipLevels);
+    BIND(r_texturebits);
+    BIND(r_ext_compressed_textures);
+#undef BIND
+}
 
 struct frontend_q3_color {
     qa_frontend *frontend;
@@ -20,9 +37,8 @@ struct frontend_q3_color {
     qa_q3_color_lighting lighting;
     frontend_q3_color_ticket *ticket;
     qa_display_endpoint device_endpoint;
-    const qa_cvars *device_registry, *bits_registry;
-    const qa_cvar_view *bits_row;
-    uint64_t device_sequence, device_revision, bits_revision;
+    const qa_cvars *device_registry;
+    uint64_t device_sequence, device_revision;
     bool initializing, lighting_ready, initialized, device_admitted;
 };
 
@@ -46,18 +62,14 @@ static bool current(const frontend_q3_color *owner, qa_error *error)
         frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lost its actual selected display and renderer");
 }
 
-static bool record(qa_frontend *f, const qa_cvars_edit *edit, const char *name,
+static bool record(qa_frontend *f, const qa_cvars_edit *edit, qa_cvar_handle handle,
     const qa_cvar_view **out, qa_error *error)
 {
     qa_cvars *registry = f && f->application ? qa_application_cvars(f->application) : NULL;
     if (!registry || (edit && (qa_cvars_edit_registry(edit) != registry ||
         !qa_cvars_edit_returned_is(edit, registry))))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color requires its actual canonical ENGINE rows");
-    const qa_cvar_view *canonical = edit ? qa_cvars_edit_canonical_record(edit, name) :
-        frontend_render_control_record(registry, name);
-    if (!canonical || !canonical->value)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lacks a physical canonical setting");
-    *out = edit ? qa_cvars_edit_find(edit, canonical->name) : canonical;
+    *out = edit ? qa_cvars_edit_read(edit, handle) : qa_cvars_read(registry, handle);
     return (*out && (*out)->value) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "Source color lacks a physical canonical setting");
 }
@@ -67,7 +79,7 @@ static bool gamma_acquire(frontend_q3_color *owner, const qa_cvars_edit *edit,
 {
     if (owner->gamma) return true;
     const qa_cvar_view *ignore;
-    if (!record(owner->frontend, edit, "r_ignorehwgamma", &ignore, error)) return false;
+    if (!record(owner->frontend, edit, owner->frontend->engine_cvars.r_ignorehwgamma, &ignore, error)) return false;
     owner->gamma = qa_display_gamma_borrow(display);
     if (owner->gamma) return true;
     if (!qa_display_gamma_begin(display, ignore->integer != 0, &owner->gamma, error)) return false;
@@ -102,11 +114,12 @@ static bool device_read(frontend_q3_color *owner, qa_display *display,
 static bool profile_read(frontend_q3_color *owner, const qa_cvars_edit *edit,
     qa_display *display, qa_q3_image_upload_options *out, qa_error *error)
 {
-    static const char *const names[] = {"r_gamma", "r_intensity", "r_overBrightBits",
-        "r_picmip", "r_roundImagesDown", "r_simpleMipMaps", "r_colorMipLevels"};
+    const frontend_engine_cvar_handles *refs = &owner->frontend->engine_cvars;
+    const qa_cvar_handle handles[] = {refs->r_gamma, refs->r_intensity, refs->r_overBrightBits,
+        refs->r_picmip, refs->r_roundImagesDown, refs->r_simpleMipMaps, refs->r_colorMipLevels};
     const qa_cvar_view *rows[7];
     for (size_t i = 0; i < 7; ++i)
-        if (!record(owner->frontend, edit, names[i], &rows[i], error)) return false;
+        if (!record(owner->frontend, edit, handles[i], &rows[i], error)) return false;
     qa_q3_image_upload_options next = {0};
     if (!device_read(owner, display, &next.color.device, &next.maximum_texture_size, error)) return false;
     next.color.gamma = (float)rows[0]->number; next.color.intensity = (float)rows[1]->number;
@@ -114,13 +127,13 @@ static bool profile_read(frontend_q3_color *owner, const qa_cvars_edit *edit,
     next.picmip = rows[3]->integer; next.round_down = rows[4]->integer != 0;
     next.simple_mips = rows[5]->integer != 0; next.color_mips = rows[6]->integer != 0;
     const qa_cvar_view *bits;
-    if (!record(owner->frontend,edit,"r_texturebits",&bits,error)) return false;
+    if (!record(owner->frontend, edit, owner->frontend->engine_cvars.r_texturebits,&bits,error)) return false;
     next.texture_bits=bits->integer;
     if (owner->initialized) next.s3tc=owner->upload.s3tc;
     else {
         const qa_cvar_view *compression,*extensions;
-        if (!record(owner->frontend,edit,"r_ext_compressed_textures",&compression,error) ||
-            !record(owner->frontend,edit,"r_allowExtensions",&extensions,error)) return false;
+        if (!record(owner->frontend, edit, owner->frontend->engine_cvars.r_ext_compressed_textures,&compression,error) ||
+            !record(owner->frontend, edit, owner->frontend->engine_cvars.r_allowExtensions,&extensions,error)) return false;
         const qa_gl_capabilities *caps=owner->gl?qa_gl_capabilities_get(owner->gl):NULL;
 #ifdef _WIN32
         bool enabled=compression->integer!=0;
@@ -162,7 +175,7 @@ bool frontend_q3_source_color_ensure(qa_frontend *f, qa_error *error)
     const qa_cvar_view *requested;
     qa_q3_color_device device; uint32_t maximum;
     bool ok = device_read(owner, owner->display, &device, &maximum, error) &&
-        record(f, edit, "r_overBrightBits", &requested, error) &&
+        record(f, edit, f->engine_cvars.r_overBrightBits, &requested, error) &&
         qa_q3_color_lighting_read(&device, requested->integer, &owner->lighting, error);
     if (ok) owner->lighting_ready = true;
     if (ok) ok = frontend_source_color_clamp(f, edit, error) &&
@@ -186,7 +199,7 @@ bool frontend_q3_source_color_lighting_read(qa_frontend *f, const qa_cvars_edit 
         !owner->ticket->published) { *out = owner->ticket->lighting; return true; }
     if (!edit) { *out = owner->lighting; return true; }
     const qa_cvar_view *requested; qa_q3_color_device device; uint32_t maximum;
-    return record(f, edit, "r_overBrightBits", &requested, error) &&
+    return record(f, edit, f->engine_cvars.r_overBrightBits, &requested, error) &&
         device_read(owner, owner->display, &device, &maximum, error) &&
         qa_q3_color_lighting_read(&device, requested->integer, out, error);
 }
@@ -255,27 +268,6 @@ static bool upload_device_current(frontend_q3_color *owner, qa_display *display,
     return true;
 }
 
-static bool upload_bits(frontend_q3_color *owner, const qa_cvars_edit *edit,
-    const qa_cvar_view **out, qa_error *error)
-{
-    if (edit) return record(owner->frontend, edit, "r_texturebits", out, error);
-    qa_cvars *registry = qa_application_cvars(owner->application);
-    uint64_t revision = qa_cvars_revision(registry);
-    if (revision && owner->bits_registry == registry && owner->bits_revision == revision && owner->bits_row) {
-        *out = owner->bits_row;
-        return true;
-    }
-    owner->bits_revision = 0;
-    owner->bits_row = NULL;
-    if (!record(owner->frontend, NULL, "r_texturebits", out, error)) return false;
-    if (revision) {
-        owner->bits_registry = registry;
-        owner->bits_revision = revision;
-        owner->bits_row = *out;
-    }
-    return true;
-}
-
 bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipmap,
     qa_q3_image_upload_options *out, qa_error *error)
 {
@@ -288,7 +280,7 @@ bool frontend_q3_source_upload_read(void *context, bool allow_picmip, bool mipma
     if (!upload_device_current(f->source_color,candidate?ticket->target:f->display,profile,error)) return false;
     qa_q3_image_upload_options next=*profile;
     const qa_cvar_view *bits;
-    if (!upload_bits(f->source_color,candidate?ticket->edit:NULL,&bits,error)) return false;
+    if (!record(f,candidate?ticket->edit:NULL,f->engine_cvars.r_texturebits,&bits,error)) return false;
     next.texture_bits=bits->integer;
     next.allow_picmip = allow_picmip; next.mipmap = mipmap;
     *out=next;

@@ -108,6 +108,8 @@ bool qa_native_q3_remote_client_prepare(qa_native_q3_remote_client_service *, qa
 bool qa_native_q3_remote_client_update(qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_system_info(qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_force_model_change(qa_native_q3_remote_client_service *, qa_error *);
+/* Borrowed references share the actual CLIENT cache lifetime and registration. */
+const qa_native_q3_cvar_refs *qa_native_q3_remote_client_cvar_refs(const qa_native_q3_remote_client_service *);
 bool qa_native_q3_remote_client_cvar_read(const qa_native_q3_remote_client_service *, qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *, qa_error *);
 bool qa_native_q3_remote_client_cvar_number(qa_native_q3_remote_client_service *, qa_native_q3_cvar_id id, float, qa_error *);

@@ -16,6 +16,7 @@ typedef struct remote_module_lease {
     qa_qvm_role role;
     uint64_t service_owner;
     frontend_client_registry *registry;
+    qa_cvar_handle shadows;
     qa_catalog_write_resolver *write_resolver;
     frontend_key_profile *keys;
     frontend_config_host_cvars namespaces;

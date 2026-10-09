@@ -16,10 +16,18 @@ struct frontend_shared_render_controls {
 static bool fail(qa_error *error, const char *message)
 { return frontend_fail(error, QA_ERROR_ARGUMENT, message); }
 static const char *const names[3] = {"r_primitives", "r_allowExtensions", "r_ext_compiled_vertex_array"};
+void frontend_render_controls_cvars_bind(qa_frontend *f)
+{
+    const qa_cvars *registry = qa_application_cvars(f->application);
+    f->engine_cvars.r_primitives = qa_cvars_resolve(registry, qa_cvars_canonical_name(registry, names[0]));
+    f->engine_cvars.r_ext_compiled_vertex_array = qa_cvars_resolve(registry, qa_cvars_canonical_name(registry, names[2]));
+}
 static bool values_current(const frontend_shared_render_controls *owner)
 {
+    const frontend_engine_cvar_handles *refs = &owner->frontend->engine_cvars;
+    const qa_cvar_handle handles[] = {refs->r_primitives, refs->r_allowExtensions, refs->r_ext_compiled_vertex_array};
     for (size_t i = 0; i < 3; ++i) {
-        const qa_cvar_view *row = qa_cvars_edit_canonical_record(owner->edit, names[i]);
+        const qa_cvar_view *row = qa_cvars_edit_read(owner->edit, handles[i]);
         if (!row || !row->value || !owner->values[i] || strcmp(row->value, owner->values[i])) return false;
     }
     return true;
@@ -47,15 +55,16 @@ bool frontend_shared_render_controls_prepare(qa_frontend *f, const qa_cvars_edit
         qa_cvars_edit_registry(edit) != qa_application_cvars(f->application) ||
         !qa_cvars_edit_returned_is(edit, qa_application_cvars(f->application)))
         return fail(error, "Renderer settings require the actual returned canonical ENGINE owner");
-    const qa_cvar_view *rows[3], *projected[3];
+    const frontend_engine_cvar_handles *refs = &f->engine_cvars;
+    const qa_cvar_handle handles[] = {refs->r_primitives, refs->r_allowExtensions, refs->r_ext_compiled_vertex_array};
+    const qa_cvar_view *rows[3];
     for (size_t i = 0; i < 3; ++i) {
-        rows[i] = qa_cvars_edit_canonical_record(edit, names[i]);
-        projected[i] = qa_cvars_edit_find(edit, names[i]);
-        if (!rows[i] || !rows[i]->value || !projected[i] || !projected[i]->value)
+        rows[i] = qa_cvars_edit_read(edit, handles[i]);
+        if (!rows[i] || !rows[i]->value)
             return fail(error, "Renderer primitive selection lacks its canonical rows");
     }
-    qa_render_controls_values values = {.primitives = projected[0]->integer,
-        .compiled_vertex_arrays = projected[1]->integer != 0 && projected[2]->number != 0};
+    qa_render_controls_values values = {.primitives = rows[0]->integer,
+        .compiled_vertex_arrays = rows[1]->integer != 0 && rows[2]->number != 0};
     if (!f->cpu && !f->gl) return true;
     frontend_shared_render_controls *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining shared renderer settings");
@@ -115,16 +124,11 @@ bool frontend_shared_render_controls_abort(frontend_shared_render_controls **out
     if (!qa_render_controls_abort(&(*out)->ticket, error)) return false;
     release(out); return true;
 }
-const qa_cvar_view *frontend_render_control_record(const qa_cvars *registry, const char *name)
-{
-    if (!registry || !name) return NULL;
-    return qa_cvars_find(registry, qa_cvars_canonical_name(registry, name));
-}
 bool frontend_render_controls_live(qa_frontend *f, qa_error *error)
 {
     if (!f || !f->application || f->capture || f->source_restoring || (f->cpu && f->gl))
         return fail(error, "Live renderer settings require their actual frontend/application");
-    const qa_cvar_view *row = frontend_render_control_record(qa_application_cvars(f->application), "r_primitives");
+    const qa_cvar_view *row = qa_cvars_read(qa_application_cvars(f->application), f->engine_cvars.r_primitives);
     if (!row || !row->value) return fail(error, "Live renderer has no physical ENGINE r_primitives row");
     if (f->frame.source_backend && !frontend_q3_frame_policy_read(f, error)) return false;
     if (!f->cpu && !f->gl) return true;
@@ -134,9 +138,9 @@ bool frontend_render_controls_live(qa_frontend *f, qa_error *error)
     if (values.primitives == row->integer) return true;
     return qa_render_controls_live_primitives(controls, row->integer, error);
 }
-bool frontend_q3_shadow_mode_read(const qa_cvars *registry, uint32_t *out, qa_error *error)
+bool frontend_q3_shadow_mode_read(const qa_cvars *registry, qa_cvar_handle handle, uint32_t *out, qa_error *error)
 {
-    const qa_cvar_view *row = registry ? qa_cvars_find(registry, "cg_shadows") : NULL;
+    const qa_cvar_view *row = registry ? qa_cvars_read(registry, handle) : NULL;
     if (!out || !row || !row->value) return fail(error, "Q3 renderer has no actual CLIENTCG cg_shadows setting");
     *out = (uint32_t)row->integer;
     return true;
