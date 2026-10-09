@@ -27,6 +27,13 @@ typedef struct cvar cvar;
 typedef struct cvar_alias cvar_alias;
 typedef struct cvar_store cvar_store;
 typedef struct cvar_edit_view cvar_edit_view;
+typedef struct cvar_projection {
+    qa_cvar_view view;
+    char value[64], reset[64], latched[64];
+    uint64_t revision;
+    qa_console_dialect dialect;
+    bool valid, available;
+} cvar_projection;
 typedef struct cvar_detail {
     struct cvar_detail *next;
     const qa_cvar_catalog_binding *binding;
@@ -56,8 +63,7 @@ struct cvar {
     char *declaration_default;
     cvar_detail *details;
     bool pending_explicit;
-    qa_cvar_view projection;
-    char projected_value[64], projected_reset[64], projected_latch[64];
+    cvar_projection projection;
     qa_cvar_view view;
     qa_cvar_binding binding;
     bool bound;
@@ -80,8 +86,7 @@ struct cvar_alias {
     qa_console_dialect flags_dialect;
     size_t handle;
     bool vm_bound;
-    qa_cvar_view projection;
-    char value[64], reset[64], latched[64];
+    cvar_projection projection;
     cvar_name_node indexed_name;
 };
 typedef struct cvar_values {
@@ -110,7 +115,7 @@ struct cvar_store {
     qa_cvar_video_resolver video_resolver;
     void *video_user;
     qa_cvars *views, *last_view;
-    uint64_t revision, next_binding;
+    uint64_t revision, projection_revision, next_binding;
     struct qa_cvars_edit *edit;
     size_t references;
 };
@@ -192,6 +197,7 @@ cvar_values *qac_cvars_current_values(const qa_cvars *);
 cvar *qac_cvars_canonical(cvar *);
 void qac_cvars_refresh(qa_cvars *, cvar *);
 const qa_cvar_view *qac_cvars_project(const qa_cvars *, cvar_values *, cvar *);
+const qa_cvar_view *qac_cvars_project_alias(const qa_cvars *, cvar_values *, cvar *, cvar_alias *);
 const qa_cvar_view *qac_cvars_values_find(const qa_cvars *, cvar_values *, const char *);
 const qa_cvar_view *qac_cvars_values_at(const qa_cvars *, cvar_values *, size_t, bool aliases, bool whole_store);
 const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *, cvar_values *, size_t);

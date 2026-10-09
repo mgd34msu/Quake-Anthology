@@ -15,8 +15,11 @@ bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
         if (view->notifying)
             return qac_fail(error, QA_ERROR_ARGUMENT, "cvar callback cannot mutate its shared owner");
     qa_cvars_edit *edit = qac_cvars_current_edit(registry);
-    if (edit) return !edit->ready && edit->fault.code == QA_OK &&
-        qac_cvars_edit_add_view(edit, registry, error);
+    if (edit) {
+        bool okay=!edit->ready && edit->fault.code==QA_OK &&
+            qac_cvars_edit_add_view(edit,registry,error);
+        return okay;
+    }
     if (registry->store->revision == UINT64_MAX)
         return qac_fail(error, QA_ERROR_MEMORY, "cvar mutation identity is exhausted");
     ++registry->store->revision; ++registry->mutation_revision;
@@ -178,65 +181,24 @@ static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values
         :values->rows[alias->target_ordinal];
     if (!target) return NULL;
     alias->target_ordinal=target->ordinal;
-    qac_cvars_refresh((qa_cvars *)registry,target);
-    alias->projection=target->view;
-    alias->projection.name=alias->name;
-    alias->projection.description=alias->description;
-    alias->projection.documentation=alias->documentation;
-    alias->projection.flags=registry->options.role==QA_CVAR_ROLE_ENGINE
-        ?qac_cvars_flags(alias->flags,alias->flags_dialect,qac_cvars_view_options(registry,values).dialect)|
-            qac_cvars_canonical(target)->view.flags|
-            qac_cvars_catalog_flags(registry,values,target->catalog_row,alias->name)
-        :alias->flags;
-    alias->projection.owner=alias->owner;
-    alias->projection.declared=alias->declared;
-    alias->projection.console_created=alias->console_created;
-    alias->projection.handle=alias->handle;
-    alias->projection.modification_count=alias->modification_count;
-    alias->projection.modified=alias->modified;
-    const cvar *canonical=qac_cvars_canonical(target);
-    const cvar_detail *detail=canonical->details;
-    while (detail && (detail->binding!=alias->catalog_binding || detail->dialect!=qac_cvars_view_options(registry,values).dialect)) detail=detail->next;
-    if (alias->catalog_binding) {
-        qa_cvar_options options=qac_cvars_view_options(registry,values);
-        qac_cvar_conversion_input input={.options=&options,
-            .conversion=qac_cvars_conversion(registry,values,alias->catalog_binding),.binding=alias->catalog_binding,
-            .current=target->view.value,.value=target->view.value,.detail=detail?detail->value:NULL};
-        qac_cvar_conversion_output output;
-        cvar_projection_context context={.registry=registry,.values=values};
-        input.user=&context; input.operand=qac_cvars_operand; input.video=qac_cvars_video;
-        if (!qac_cvar_read_conversion(&input,&output,NULL)) return NULL;
-        if (output.value==output.text) { memcpy(alias->value,output.text,strlen(output.text)+1); alias->projection.value=alias->value; }
-        else alias->projection.value=output.value;
-        input.value=target->view.reset_value; input.detail=NULL; context.reset=true;
-        if (!qac_cvar_read_conversion(&input,&output,NULL)) return NULL;
-        if (output.value==output.text) { memcpy(alias->reset,output.text,strlen(output.text)+1); alias->projection.reset_value=alias->reset; }
-        else alias->projection.reset_value=output.value;
-        context.reset=false;
-        if (target->view.latched_value) {
-            context.latched=true;
-            input.value=target->view.latched_value; input.detail=detail?detail->latched_value:NULL;
-            if (!qac_cvar_read_conversion(&input,&output,NULL)) return NULL;
-            if (output.value==output.text) { memcpy(alias->latched,output.text,strlen(output.text)+1); alias->projection.latched_value=alias->latched; }
-            else alias->projection.latched_value=output.value;
-        }
-    }
-    if (!alias->projection.value || !alias->projection.reset_value) return NULL;
-    alias->projection.number=qac_number(alias->projection.value,qac_cvars_view_options(registry,values).dialect);
-    alias->projection.integer=qac_integer(alias->projection.value);
-    return &alias->projection;
+    return qac_cvars_project_alias(registry,(cvar_values *)values,target,alias);
 }
 
 static cvar_target live_target(qa_cvars *registry)
 { return (cvar_target){registry,qac_cvars_current_values(registry),qac_cvars_current_edit(registry)}; }
 static bool target_touch(cvar_target target, qa_error *error)
 {
-    if (!target.edit) return qac_cvars_touch(target.registry,error);
+    if (!target.edit) {
+        if (!qac_cvars_touch(target.registry,error)) return false;
+        ++target.registry->store->projection_revision;
+        return true;
+    }
     if (!target.registry || target.registry->store->edit!=target.edit || target.edit->ready ||
         target.edit->fault.code!=QA_OK || target.registry->store->revision!=target.edit->revision ||
         target.registry->notifying || target.registry->draining || target.registry->post_first ||
         target.registry->edit_first || target.registry->edit_bindings_pending)
         return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar values are unavailable or stale");
+    ++target.registry->store->projection_revision;
     return true;
 }
 
@@ -330,11 +292,13 @@ static bool post_drain(qa_cvars *registry, qa_error *error)
 static bool mutation_begin(qa_cvars *registry,qa_error *error)
 {
     if (!registry || registry->mutation_depth==SIZE_MAX || !qac_cvars_touch(registry,error)) return false;
+    ++registry->store->projection_revision;
     ++registry->mutation_depth; return true;
 }
 static bool mutation_end(qa_cvars *registry,bool ok,qa_error *error)
 {
     --registry->mutation_depth;
+    ++registry->store->projection_revision;
     if (qac_cvars_current_edit(registry)) return ok;
     for (qa_cvars *view=registry->store->views;view;view=view->next_view)
         if (!post_drain(view,error)) ok=false;
@@ -387,6 +351,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry,const qa_cvar_registry_state *
     if (!qa_cvars_observer_idle(registry) || !state || count!=qa_cvars_count(registry) ||
         (count && !records) || !qac_cvars_touch(registry,error))
         return qac_fail(error,QA_ERROR_ARGUMENT,"metadata restore needs this returned Source declaration inventory");
+    ++registry->store->projection_revision;
     cvar_values *values=qac_cvars_current_values(registry);
     for (size_t i=0;i<count;++i) {
         const cvar_name_node *node=find_name(registry,values,records[i].name);
@@ -420,6 +385,7 @@ bool qa_cvars_restore_metadata(qa_cvars *registry,const qa_cvar_registry_state *
     values->next_handle=state->next_handle; values->changed_flags=state->modified_flags;
     values->userinfo_modified=state->userinfo_modified; values->server_active=state->server_active;
     values->high_characters=state->high_characters; values->cheats=state->cheats;
+    ++registry->store->projection_revision;
     return true;
 }
 static bool retain_shared_variable(cvar_target target,const char *name,qa_error *error)
@@ -575,6 +541,7 @@ bool qa_cvars_document(qa_cvars *registry, const char *name, uint64_t owner,
                         const qa_console_documentation *doc, qa_error *error)
 {
     if (!qac_cvars_touch(registry, error)) return false;
+    ++registry->store->projection_revision;
     cvar_alias *alias=find_alias(registry,qac_cvars_current_values(registry),name);
     if (alias) {
         const cvar *target=find_variable(registry,alias->target);
@@ -764,6 +731,7 @@ static bool write_prepare(cvar_target target,cvar_write *write,qa_error *error)
         cvar *entry=values->rows[canonical->ordinal];
         if (!entry) continue;
         cvar *original=entry->canonical; entry->canonical=&shadow;
+        ++receiver->store->projection_revision;
         bool okay=true;
         if (receives_value(receiver,values,&entry->view,entry->bound)) {
             const qa_cvar_view *view=qac_cvars_project(receiver,values,entry);
@@ -785,6 +753,7 @@ static bool write_prepare(cvar_target target,cvar_write *write,qa_error *error)
                 alias->binding_order,observers,&write->events,error);
         }
         entry->canonical=original; qac_cvars_refresh(receiver,entry);
+        ++receiver->store->projection_revision;
         if (!okay) goto failed;
     }
     return true;
@@ -1111,10 +1080,10 @@ const qa_cvar_view *qa_cvars_next(const qa_cvars *registry,const qa_cvar_view *p
         const cvar_name_node *node=find_name(registry,values,previous->name);
         if (!node) return NULL;
         if (node->alias) {
-            if (&node->owner.alias->projection!=previous) return NULL;
+            if (&node->owner.alias->projection.view!=previous) return NULL;
             entry=NULL; alias=node->owner.alias->next;
         } else {
-            if (&node->owner.entry->projection!=previous) return NULL;
+            if (&node->owner.entry->projection.view!=previous) return NULL;
             entry=(engine?qac_cvars_canonical(node->owner.entry):node->owner.entry)->next;
         }
     }
@@ -1134,6 +1103,32 @@ const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *registry,cvar_values
 }
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry,size_t handle)
 { return qac_cvars_values_handle(registry,qac_cvars_current_values(registry),handle); }
+
+static const qa_cvar_view *typed_read(const qa_cvars *registry,cvar_values *values,qa_cvar_handle handle)
+{
+    if (!handle.slot) return NULL;
+    if (!values) return NULL;
+    size_t ordinal=(handle.slot>>1)-1;
+    if (handle.slot&1) {
+        cvar_alias *alias=ordinal<values->alias_capacity?values->alias_rows[ordinal]:NULL;
+        return alias?alias_view(registry,values,alias):NULL;
+    }
+    cvar *entry=ordinal<values->row_capacity?values->rows[ordinal]:NULL;
+    return entry?qac_cvars_project(registry,values,entry):NULL;
+}
+static qa_cvar_handle typed_resolve(const qa_cvars *registry,cvar_values *values,const char *name)
+{
+    const cvar_name_node *node=find_name(registry,values,name);
+    if (!node) return (qa_cvar_handle){0};
+    size_t ordinal=node->alias?node->owner.alias->ordinal:node->owner.entry->ordinal;
+    qa_cvar_handle handle={((ordinal+1)<<1)|(size_t)node->alias};
+    (void)typed_read(registry,values,handle);
+    return handle;
+}
+qa_cvar_handle qa_cvars_resolve(const qa_cvars *registry,const char *name)
+{ return typed_resolve(registry,qac_cvars_current_values(registry),name); }
+const qa_cvar_view *qa_cvars_read(const qa_cvars *registry,qa_cvar_handle handle)
+{ return typed_read(registry,qac_cvars_current_values(registry),handle); }
 
 size_t qa_cvars_count(const qa_cvars *registry)
 { return qac_cvars_values_count(registry,qac_cvars_current_values(registry),false,false); }
@@ -1366,6 +1361,7 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
             previous[i].proposed.value=writes[i].owned_detail; previous[i].proposed.next=canonical->details; canonical->details=&previous[i].proposed;
         }
     }
+    ++target.registry->store->projection_revision;
     bool okay=true;
     for (size_t i=0;okay && i<count;++i) {
         for (cvar_edit_event *event=writes[i].events;event;event=event->next) {
@@ -1386,6 +1382,7 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
             qac_cvars_refresh(view,values->rows[canonical->ordinal]);
         }
     }
+    ++target.registry->store->projection_revision;
     if (previous!=retained) free(previous);
     if (!okay) goto failed;
     for (size_t i=0;i<count;++i)
@@ -1394,6 +1391,7 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
                 (writes[i].reset_value && !validate_value(event->registry,&event->snapshot->binding,event->snapshot->view.reset_value,error)))) goto failed;
     for (size_t i=0;i<count;++i) write_commit(target,&writes[i]);
     write_projection_metadata(target,writes,count);
+    ++target.registry->store->projection_revision;
     cvar_write published={0};
     for (size_t i=0;i<count;++i) {
         while (writes[i].events) {
@@ -1854,6 +1852,10 @@ bool qa_cvars_edit_leave(qa_cvars_edit *edit,qa_cvars *registry,qa_error *error)
 }
 static cvar_values *edit_source_values(const qa_cvars_edit *edit)
 { cvar_edit_view *view=qac_cvars_edit_view((qa_cvars_edit *)edit,edit?edit->registry:NULL); return view?&view->values:NULL; }
+qa_cvar_handle qa_cvars_edit_resolve(const qa_cvars_edit *edit,const char *name)
+{ return typed_resolve(edit?edit->registry:NULL,edit_source_values(edit),name); }
+const qa_cvar_view *qa_cvars_edit_read(const qa_cvars_edit *edit,qa_cvar_handle handle)
+{ return typed_read(edit?edit->registry:NULL,edit_source_values(edit),handle); }
 const qa_cvar_view *qa_cvars_edit_find(const qa_cvars_edit *edit,const char *name)
 { return qac_cvars_values_find(edit?edit->registry:NULL,edit_source_values(edit),name); }
 const qa_cvar_view *qa_cvars_edit_at(const qa_cvars_edit *edit,size_t ordinal)
@@ -1928,6 +1930,7 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
     qa_error fault={0};
     bool ok=target_touch(target,&fault);
     if (ok) ok=apply_operation(target,command,&fault);
+    ++edit->registry->store->projection_revision;
     if (edit->fault.code!=QA_OK) { if (fault.code==QA_OK) fault=edit->fault; ok=false; }
     if (!ok) {
         if (fault.code==QA_OK) qac_fail(&fault,QA_ERROR_ARGUMENT,"prepared cvar operation failed");
@@ -2018,6 +2021,7 @@ void qa_cvars_edit_publish(qa_cvars_edit *edit)
     registry->edit_bindings_pending=true;
     registry->edit_bindings=edit->bindings; registry->edit_binding_count=edit->binding_count;
     registry->ready_edit=NULL; store->edit=NULL; ++store->revision;
+    ++store->projection_revision;
     qac_cvars_values_free(&previous);
     while (edit->views) { cvar_edit_view *view=edit->views; edit->views=view->next; free(view); }
     free(edit);
@@ -2114,6 +2118,7 @@ void qa_cvars_set_high_characters(qa_cvars *registry,bool enabled)
 void qa_cvars_remove_owner(qa_cvars *registry,uint64_t owner)
 {
     if (!qac_cvars_touch(registry,NULL)) return;
+    ++registry->store->projection_revision;
     cvar_observer *observer=registry->observers;
     while (observer) {
         cvar_observer *next=observer->next;
@@ -2150,9 +2155,9 @@ void qa_cvars_clear_modified(qa_cvars *registry,const char *name)
     if (!qac_cvars_touch(registry,NULL)) return;
     cvar_values *values=qac_cvars_current_values(registry);
     cvar *entry=qac_cvars_find_values(registry,values,canonical_name(registry,values,name));
-    if (entry) entry->view.modified=false;
+    if (entry) { entry->view.modified=false; entry->projection.view.modified=false; }
     cvar_alias *alias=find_alias(registry,values,name);
-    if (alias) alias->modified=false;
+    if (alias) { alias->modified=false; alias->projection.view.modified=false; }
 }
 bool qa_cvars_take_userinfo_modified(qa_cvars *registry)
 {

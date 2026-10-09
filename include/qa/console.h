@@ -111,6 +111,10 @@ typedef struct qa_cvar_view {
     qa_cvar_save_policy save_policy;
 } qa_cvar_view;
 
+/* Engine references address existing physical row/alias slots, independently
+ * of the module ABI's declaration handles. Zero is an absent reference. */
+typedef struct qa_cvar_handle { size_t slot; } qa_cvar_handle;
+
 typedef enum qa_cvar_effect_kind {
     QA_CVAR_EFFECT_USERINFO,
     QA_CVAR_EFFECT_SERVERINFO,
@@ -204,6 +208,13 @@ const qa_cvar_view *qa_cvars_at(const qa_cvars *registry, size_t ordinal);
  * Alias projections and rows from another registry are not physical cursors. */
 const qa_cvar_view *qa_cvars_next(const qa_cvars *registry, const qa_cvar_view *previous);
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry, size_t handle);
+/* Resolve at registration/bind time. Reads are indexed and do not allocate.
+ * References survive prepared publication; rebind when replacing a registry.
+ * Returned views and strings are immutable until the common store is mutated. */
+qa_cvar_handle qa_cvars_resolve(const qa_cvars *, const char *name);
+const qa_cvar_view *qa_cvars_read(const qa_cvars *, qa_cvar_handle);
+qa_cvar_handle qa_cvars_edit_resolve(const struct qa_cvars_edit *, const char *name);
+const qa_cvar_view *qa_cvars_edit_read(const struct qa_cvars_edit *, qa_cvar_handle);
 /* Same-process borrowed row receipt. Zero excludes an entered mutation,
  * observer drain or prepared publication; every live mutation invalidates it. */
 uint64_t qa_cvars_revision(const qa_cvars *registry);

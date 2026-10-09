@@ -99,6 +99,7 @@ bool qa_cvars_set_video_resolver(qa_cvars *registry, qa_cvar_video_resolver reso
     if (!registry || registry->options.role!=QA_CVAR_ROLE_ENGINE)
         return qac_fail(error,QA_ERROR_ARGUMENT,"video mode policy requires its ENGINE view");
     if (!qac_cvars_touch(registry,error)) return false;
+    ++registry->store->projection_revision;
     registry->store->video_owner=resolver?registry:NULL;
     registry->store->video_resolver=resolver;
     registry->store->video_user=resolver?user:NULL;
@@ -142,15 +143,16 @@ void qac_cvars_refresh(qa_cvars *registry, cvar *entry)
     entry->view.integer = qac_integer(entry->view.value);
 }
 
-static const char *project_text(const qa_cvars *registry, cvar *entry,
-    cvar_values *values, const char *value, const char *detail, char buffer[64],bool reset,bool latched)
+static const char *project_text(const qa_cvars *registry, cvar_values *values,
+    const qa_cvar_catalog_binding *binding, const char *value, const char *current,
+    const char *detail, char buffer[64], bool reset, bool latched)
 {
     if (!value) return NULL;
     cvar_projection_context context = {.registry=registry,.values=values,.reset=reset,.latched=latched};
     qa_cvar_options options=qac_cvars_view_options(registry,values);
     qac_cvar_conversion_input input = {.options = &options,
-        .conversion = qac_cvars_conversion(registry, values, entry->catalog_binding), .binding=entry->catalog_binding,
-        .value = value, .current = value, .detail = detail,
+        .conversion = qac_cvars_conversion(registry, values, binding), .binding=binding,
+        .value = value, .current = current, .detail = detail,
         .user = &context, .operand = qac_cvars_operand, .video=qac_cvars_video};
     qac_cvar_conversion_output output;
     if (!qac_cvar_read_conversion(&input, &output, NULL)) return NULL;
@@ -159,39 +161,67 @@ static const char *project_text(const qa_cvars *registry, cvar *entry,
     return buffer;
 }
 
-const qa_cvar_view *qac_cvars_project(const qa_cvars *registry, cvar_values *values,
-    cvar *entry)
+const qa_cvar_view *qac_cvars_project_alias(const qa_cvars *registry,
+    cvar_values *values, cvar *entry, cvar_alias *alias)
 {
+    cvar_projection *cache=alias?&alias->projection:&entry->projection;
+    qa_cvar_options options=qac_cvars_view_options(registry,values);
+    if (cache->valid && cache->revision==registry->store->projection_revision &&
+        cache->dialect==options.dialect) return cache->available?&cache->view:NULL;
+    cache->valid=false;
     qac_cvars_refresh((qa_cvars *)registry, entry);
-    entry->projection = entry->view;
+    cache->view=entry->view;
+    qa_cvar_view *view=&cache->view;
     const cvar *canonical=qac_cvars_canonical(entry);
+    const qa_cvar_catalog_binding *binding=alias?alias->catalog_binding:entry->catalog_binding;
+    uint32_t flags=alias?alias->flags:entry->view.flags;
+    qa_console_dialect flags_dialect=alias?alias->flags_dialect:entry->flags_dialect;
+    const char *name=alias?alias->name:entry->view.name;
     if (registry->options.role==QA_CVAR_ROLE_ENGINE)
-        entry->projection.flags=qac_cvars_flags(entry->view.flags,entry->flags_dialect,
-            qac_cvars_view_options(registry,values).dialect)|canonical->view.flags|
-            qac_cvars_catalog_flags(registry,values,entry->catalog_row,entry->view.name);
+        view->flags=qac_cvars_flags(flags,flags_dialect,options.dialect)|canonical->view.flags|
+            qac_cvars_catalog_flags(registry,values,entry->catalog_row,name);
+    else view->flags=flags;
+    if (alias) {
+        view->name=alias->name; view->description=alias->description;
+        view->documentation=alias->documentation; view->owner=alias->owner;
+        view->declared=alias->declared; view->console_created=alias->console_created;
+        view->handle=alias->handle; view->modification_count=alias->modification_count;
+        view->modified=alias->modified;
+    }
     const cvar_detail *detail=canonical->details;
-    while (detail && (detail->binding!=entry->catalog_binding || detail->dialect!=qac_cvars_view_options(registry,values).dialect)) detail=detail->next;
-    entry->projection.value = project_text(registry, entry, values, entry->view.value,
-        detail?detail->value:NULL, entry->projected_value,false,false);
-    entry->projection.reset_value = project_text(registry, entry, values,
-        entry->view.reset_value, NULL, entry->projected_reset,true,false);
-    entry->projection.latched_value = project_text(registry, entry, values,
-        entry->view.latched_value, detail?detail->latched_value:NULL, entry->projected_latch,false,true);
-    if (entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW && qa_cvar_catalog_rows[entry->catalog_row].not_stored) {
-        const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,entry->catalog_binding);
+    while (detail && (detail->binding!=binding || detail->dialect!=options.dialect)) detail=detail->next;
+    if (!alias || binding) {
+        view->value=project_text(registry,values,binding,entry->view.value,entry->view.value,
+            detail?detail->value:NULL,cache->value,false,false);
+        view->reset_value=project_text(registry,values,binding,entry->view.reset_value,
+            alias?entry->view.value:entry->view.reset_value,NULL,cache->reset,true,false);
+        view->latched_value=project_text(registry,values,binding,entry->view.latched_value,
+            alias?entry->view.value:entry->view.latched_value,
+            detail?detail->latched_value:NULL,cache->latched,false,true);
+    }
+    if (!alias && entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW &&
+        qa_cvar_catalog_rows[entry->catalog_row].not_stored) {
+        const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,binding);
         for (size_t i=0;conversion && i<conversion->operand_count;++i) {
             uint16_t operand=qa_cvar_catalog_operands[conversion->operand_first+i].row_index;
-            const char *name=qa_cvar_catalog_string(qa_cvar_catalog_rows[operand].name);
-            const cvar *record=qac_cvars_canonical(qac_cvars_find_values(registry,values,name));
-            entry->projection.explicit_value |= record && record->view.explicit_value;
+            const char *operand_name=qa_cvar_catalog_string(qa_cvar_catalog_rows[operand].name);
+            const cvar *record=qac_cvars_canonical(qac_cvars_find_values(registry,values,operand_name));
+            view->explicit_value |= record && record->view.explicit_value;
         }
     }
-    if (!entry->projection.value || !entry->projection.reset_value) return NULL;
-    qa_cvar_options options=qac_cvars_view_options(registry,values);
-    entry->projection.number = qac_number(entry->projection.value, options.dialect);
-    entry->projection.integer = qac_integer(entry->projection.value);
-    return &entry->projection;
+    cache->available=view->value && view->reset_value;
+    if (cache->available) {
+        view->number=qac_number(view->value,options.dialect);
+        view->integer=qac_integer(view->value);
+    }
+    cache->revision=registry->store->projection_revision;
+    cache->dialect=options.dialect; cache->valid=true;
+    return cache->available?view:NULL;
 }
+
+const qa_cvar_view *qac_cvars_project(const qa_cvars *registry, cvar_values *values,
+    cvar *entry)
+{ return qac_cvars_project_alias(registry,values,entry,NULL); }
 
 bool qa_cvars_same_store(const qa_cvars *a, const qa_cvars *b)
 { return a && b && a->store == b->store; }
@@ -413,6 +443,7 @@ static cvar *source_row(qa_cvars *registry, const cvar_values *values, cvar *can
     cvar *entry = calloc(1, sizeof(*entry));
     if (!entry) { qac_fail(error, QA_ERROR_MEMORY, "allocating Source cvar declaration"); return NULL; }
     if (source) *entry = *source;
+    entry->projection=(cvar_projection){0};
     entry->canonical = canonical;
     entry->next = NULL;
     entry->ordinal = canonical->ordinal;
@@ -506,6 +537,7 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
             copy = calloc(1, sizeof(*copy));
             if (!copy) { qac_fail(error, QA_ERROR_MEMORY, "copying canonical cvar state"); goto failed; }
             *copy = *entry;
+            copy->projection=(cvar_projection){0};
             copy->next = NULL; copy->canonical = NULL;
             copy->view.name = qac_copy(entry->view.name, error);
             copy->view.value = qac_copy(entry->view.value, error);
@@ -621,6 +653,7 @@ bool qa_cvars_select_dialect(qa_cvars *registry, qa_console_dialect dialect,
     qa_error *error)
 {
     if (!registry || !qac_dialect_valid(dialect) || !qac_cvars_touch(registry, error)) return false;
+    ++registry->store->projection_revision;
     qa_cvars_edit *edit=qac_cvars_current_edit(registry);
     cvar_values *canonical=edit?&edit->values:&registry->store->values;
     cvar_values *values=qac_cvars_current_values(registry);
