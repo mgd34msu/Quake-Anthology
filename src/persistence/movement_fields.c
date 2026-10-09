@@ -147,31 +147,58 @@ bool qa_persistence_movement_profile(qa_source_save_io *io, qa_movement_profile 
 static bool plane(qa_source_save_io *io, qa_collision_plane *value)
 { V(value->normal); F(value->distance); I(value->type); FIELD(u8, value->signbits); return true; }
 
-static bool surface(qa_source_save_io *io, qa_collision_surface *value)
+static bool surface(qa_source_save_io *io, qa_collision_surface *value, qa_collision_family family)
 {
+    int32_t flags = io->direction == QA_SOURCE_SAVE_READ ? 0 : qa_collision_surface_export(value->flags, family);
     if (!qa_source_save_bytes(io, value->name, sizeof(value->name))) return false;
-    FIELD(u64, value->flags.lo); FIELD(u64, value->flags.hi); I(value->value);
+    I(flags); I(value->value);
+    if (io->direction == QA_SOURCE_SAVE_READ) value->flags = qa_collision_surface_decode(flags, family);
     return qa_source_save_bytes(io, value->material, sizeof(value->material));
 }
 
 static bool trace(qa_source_save_io *io, qa_trace_result *value)
 {
-    uint32_t family = value->family, hit = value->hit;
-    if (!qa_source_save_u32(io, &family) || family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3)
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    const uint32_t canonical_tag = UINT32_C(0x80000000);
+    uint8_t extensions = 0;
+    int32_t contents = 0, surface_flags = 0, word;
+    if (!reading) {
+        if (!qa_persistence_contents_compact(value->contents, value->family, value->q1_opaque_token, &contents)) extensions |= 1;
+        if (!qa_persistence_surface_compact(value->surface_flags, value->family, &surface_flags)) extensions |= 2;
+        if (value->has_surface && !qa_persistence_surface_compact(value->surface.flags, value->family, &word)) extensions |= 4;
+        if (value->has_secondary && value->secondary_has_surface &&
+            !qa_persistence_surface_compact(value->secondary_surface.flags, value->family, &word)) extensions |= 8;
+    }
+    uint32_t family = reading ? 0 : (uint32_t)value->family | (extensions ? canonical_tag : 0);
+    uint32_t hit = reading ? 0 : (uint32_t)value->hit;
+    if (!qa_source_save_u32(io, &family)) return false;
+    bool extended = (family & canonical_tag) != 0;
+    family &= ~canonical_tag;
+    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3)
         return fail(io, "Invalid movement contact family");
     value->family = (qa_collision_family)family;
     F(value->fraction); V(value->end); B(value->start_solid); B(value->all_solid); B(value->in_open); B(value->in_water); B(value->contact);
     if (!plane(io, &value->plane) || !plane(io, &value->contact_plane) || !qa_source_save_u32(io, &hit) || hit > QA_TRACE_HIT_ACTOR)
         return fail(io, "Invalid movement contact hit");
-    value->hit = (qa_trace_hit)hit; U(value->model); A(value->actor);
-    FIELD(u64, value->contents.lo); FIELD(u64, value->contents.hi); I(value->q1_opaque_token);
-    FIELD(u64, value->surface_flags.lo); FIELD(u64, value->surface_flags.hi);
+    value->hit = (qa_trace_hit)hit; U(value->model); A(value->actor); I(contents); I(surface_flags);
+    if (reading) {
+        qa_collision_terminal decoded = qa_persistence_contents_import(contents, value->family);
+        value->contents = decoded.bits; value->q1_opaque_token = decoded.opaque_token;
+        value->surface_flags = qa_collision_surface_decode(surface_flags, value->family);
+    }
     B(value->has_surface); B(value->has_secondary);
-    if (value->has_surface && !surface(io, &value->surface)) return false;
+    if (value->has_surface && !surface(io, &value->surface, value->family)) return false;
     if (value->has_secondary) {
         if (!plane(io, &value->secondary_plane)) return false;
         B(value->secondary_has_surface);
-        if (value->secondary_has_surface && !surface(io, &value->secondary_surface)) return false;
+        if (value->secondary_has_surface && !surface(io, &value->secondary_surface, value->family)) return false;
+    }
+    if (extended) {
+        FIELD(u8, extensions);
+        if (extensions & 1) { FIELD(u64, value->contents.lo); FIELD(u64, value->contents.hi); I(value->q1_opaque_token); }
+        if (extensions & 2) { FIELD(u64, value->surface_flags.lo); FIELD(u64, value->surface_flags.hi); }
+        if (extensions & 4) { FIELD(u64, value->surface.flags.lo); FIELD(u64, value->surface.flags.hi); }
+        if (extensions & 8) { FIELD(u64, value->secondary_surface.flags.lo); FIELD(u64, value->secondary_surface.flags.hi); }
     }
     return true;
 }

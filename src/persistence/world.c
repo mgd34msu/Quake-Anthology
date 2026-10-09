@@ -1,8 +1,9 @@
 #include "internal.h"
+#include "qa/persistence_fields.h"
 
 #define WORLD_HEADER_BYTES 28u
-#define WORLD_BODY_MIN_BYTES 38u
-#define WORLD_BODY_MAX_BYTES 507u
+#define WORLD_BODY_MIN_BYTES 35u
+#define WORLD_BODY_MAX_BYTES 517u
 #define WORLD_SPATIAL_BYTES 16u
 
 enum {
@@ -10,7 +11,8 @@ enum {
     WORLD_ATTACHMENT_ORDER = 16384u,
     WORLD_LINK_COUNT = 32768u,
     WORLD_ATTACHMENT_FOLLOW = 65536u,
-    WORLD_FLAGS = 131071u
+    WORLD_CANONICAL_COLLISION = 131072u,
+    WORLD_FLAGS = 262143u
 };
 
 static void write_ref(qa_net_writer *w, qa_saved_actor_id value)
@@ -102,49 +104,40 @@ static uint8_t collision_flags(qa_actor_collision v)
         (v.dead_monster ? 4u : 0) | (v.q1_corpse ? 8u : 0) | (v.has_q3_owner ? 16u : 0));
 }
 
-static void collision_fields(qa_actor_collision v, uint64_t fields[9])
+static void collision_fields(qa_actor_collision v, uint32_t fields[7])
 {
-    uint64_t value[9] = {(uint32_t)v.family, (uint32_t)v.shape, v.model, v.contents.lo,
-        v.contents.hi, (uint32_t)v.q1_opaque_token, (uint32_t)v.role,
-        (uint32_t)v.q3_entity_number, (uint32_t)v.q3_owner_number};
+    uint32_t value[7] = {(uint32_t)v.family, (uint32_t)v.shape, v.model,
+        (uint32_t)qa_collision_contents_export(v.contents, v.family, v.q1_opaque_token),
+        (uint32_t)v.role, (uint32_t)v.q3_entity_number, (uint32_t)v.q3_owner_number};
     memcpy(fields, value, sizeof(value));
 }
 
 static void write_collision(qa_net_writer *w, qa_actor_collision v, qa_actor_collision base)
 {
-    uint64_t fields[9], baseline[9];
+    uint32_t fields[7], baseline[7];
     collision_fields(v, fields); collision_fields(base, baseline);
-    uint8_t flags = collision_flags(v);
-    uint16_t mask = flags != collision_flags(base) ? 512u : 0;
-    for (unsigned i = 0; i < 9; ++i)
-        if (fields[i] != baseline[i]) mask |= (uint16_t)(1u << i);
-    qa_net_write_u16(w, mask);
-    for (unsigned i = 0; i < 9; ++i) {
-        if (!(mask & (1u << i))) continue;
-        if (i == 3 || i == 4) qa_net_write_u64(w, fields[i]);
-        else if (i == 5) qa_net_write_i32(w, v.q1_opaque_token);
-        else qa_net_write_u32(w, (uint32_t)fields[i]);
-    }
-    if (mask & 512u) qa_net_write_u8(w, flags);
+    uint8_t flags = collision_flags(v), mask = flags != collision_flags(base) ? 128u : 0;
+    for (unsigned i = 0; i < 7; ++i)
+        if (fields[i] != baseline[i]) mask |= (uint8_t)(1u << i);
+    qa_net_write_u8(w, mask);
+    for (unsigned i = 0; i < 7; ++i)
+        if (mask & (1u << i)) qa_net_write_u32(w, fields[i]);
+    if (mask & 128u) qa_net_write_u8(w, flags);
 }
 
 static qa_actor_collision read_collision(qa_net_reader *r, qa_actor_collision base)
 {
-    uint64_t fields[9]; collision_fields(base, fields);
-    int32_t opaque_token = base.q1_opaque_token;
-    uint16_t mask = qa_net_read_u16(r);
-    for (unsigned i = 0; i < 9; ++i) {
-        if (!(mask & (1u << i))) continue;
-        if (i == 3 || i == 4) fields[i] = qa_net_read_u64(r);
-        else if (i == 5) opaque_token = qa_net_read_i32(r);
-        else fields[i] = qa_net_read_u32(r);
-    }
-    uint8_t flags = mask & 512u ? qa_net_read_u8(r) : collision_flags(base);
+    uint32_t fields[7]; collision_fields(base, fields);
+    uint8_t mask = qa_net_read_u8(r);
+    for (unsigned i = 0; i < 7; ++i)
+        if (mask & (1u << i)) fields[i] = qa_net_read_u32(r);
+    uint8_t flags = mask & 128u ? qa_net_read_u8(r) : collision_flags(base);
     if (flags & ~31u) qa_net_reader_fail(r, "Unknown saved collision flags");
+    qa_collision_terminal decoded = qa_persistence_contents_import((int32_t)fields[3], (qa_collision_family)fields[0]);
     return (qa_actor_collision){.family = (qa_collision_family)fields[0], .shape = (qa_shape_kind)fields[1],
-        .model = (uint32_t)fields[2], .contents = {fields[3], fields[4]}, .q1_opaque_token = opaque_token,
-        .role = (qa_collision_role)fields[6],
-        .q3_entity_number = (int32_t)fields[7], .q3_owner_number = (int32_t)fields[8],
+        .model = fields[2], .contents = decoded.bits, .q1_opaque_token = decoded.opaque_token,
+        .role = (qa_collision_role)fields[4],
+        .q3_entity_number = (int32_t)fields[5], .q3_owner_number = (int32_t)fields[6],
         .inline_model = (flags & 1u) != 0, .monster = (flags & 2u) != 0,
         .dead_monster = (flags & 4u) != 0, .q1_corpse = (flags & 8u) != 0, .has_q3_owner = (flags & 16u) != 0};
 }
@@ -168,13 +161,21 @@ bool qa_save_world_encode(const qa_world_checkpoint *value, qa_buffer *out, qa_e
     qa_net_write_u64(&w, value->attachment_order); qa_net_write_u64(&w, value->body_serial);
     for (size_t i = 0; i < value->body_count; ++i) {
         const qa_world_body_checkpoint *v = value->bodies + i;
+        const qa_actor_collision *collisions[3] = {&v->collision, &v->stored_collision, &v->retained_collision};
+        uint8_t extensions = 0;
+        for (unsigned c = 0; c < 3; ++c) {
+            int32_t word;
+            if (!qa_persistence_contents_compact(collisions[c]->contents, collisions[c]->family,
+                collisions[c]->q1_opaque_token, &word)) extensions |= (uint8_t)(1u << c);
+        }
         uint32_t flags = (v->external_body ? 1u : 0) | (v->external_collision ? 2u : 0) |
             (v->has_collision ? 4u : 0) | (v->effective_collision ? 8u : 0) | (v->attached ? 16u : 0) |
             (v->has_ground ? 32u : 0) | (v->has_stored_ground ? 64u : 0) | (v->has_linked_ground ? 128u : 0) |
             (v->has_collision_owner ? 256u : 0) | (v->has_stored_collision_owner ? 512u : 0) |
             (v->has_retained_collision_owner ? 1024u : 0) | (v->has_anchor ? 2048u : 0) | (v->link.linked ? 4096u : 0) |
             (v->collision_serial ? WORLD_COLLISION_SERIAL : 0) | (v->attachment_order ? WORLD_ATTACHMENT_ORDER : 0) |
-            (v->link.link_count ? WORLD_LINK_COUNT : 0) | (v->attachment.follow ? WORLD_ATTACHMENT_FOLLOW : 0);
+            (v->link.link_count ? WORLD_LINK_COUNT : 0) | (v->attachment.follow ? WORLD_ATTACHMENT_FOLLOW : 0) |
+            (extensions ? WORLD_CANONICAL_COLLISION : 0);
         write_ref(&w, v->actor); qa_net_write_u32(&w, flags);
         if (v->has_ground) write_reference(&w, v->ground, v->ground_kind, v->ground_owner);
         if (v->has_stored_ground) write_reference(&w, v->stored_ground, v->stored_ground_kind, v->stored_ground_owner);
@@ -195,6 +196,13 @@ bool qa_save_world_encode(const qa_world_checkpoint *value, qa_buffer *out, qa_e
         qa_net_write_u64(&w, v->storage_serial);
         if (v->collision_serial) qa_net_write_u64(&w, v->collision_serial);
         if (v->attachment_order) qa_net_write_u64(&w, v->attachment_order);
+        if (extensions) {
+            qa_net_write_u8(&w, extensions);
+            for (unsigned c = 0; c < 3; ++c) if (extensions & (1u << c)) {
+                qa_net_write_u64(&w, collisions[c]->contents.lo); qa_net_write_u64(&w, collisions[c]->contents.hi);
+                qa_net_write_i32(&w, collisions[c]->q1_opaque_token);
+            }
+        }
     }
     for (size_t i = 0; i < value->spatial_count; ++i) {
         write_ref(&w, value->spatial[i].actor); qa_net_write_u32(&w, value->spatial[i].sector);
@@ -257,6 +265,14 @@ bool qa_save_world_decode(qa_bytes bytes, qa_world_checkpoint *out, qa_error *er
         v->storage_serial = qa_net_read_u64(&r);
         if (flags & WORLD_COLLISION_SERIAL) v->collision_serial = qa_net_read_u64(&r);
         if (flags & WORLD_ATTACHMENT_ORDER) v->attachment_order = qa_net_read_u64(&r);
+        if (flags & WORLD_CANONICAL_COLLISION) {
+            uint8_t extensions = qa_net_read_u8(&r);
+            qa_actor_collision *collisions[3] = {&v->collision, &v->stored_collision, &v->retained_collision};
+            for (unsigned c = 0; c < 3; ++c) if (extensions & (1u << c)) {
+                collisions[c]->contents.lo = qa_net_read_u64(&r); collisions[c]->contents.hi = qa_net_read_u64(&r);
+                collisions[c]->q1_opaque_token = qa_net_read_i32(&r);
+            }
+        }
     }
     for (size_t i = 0; i < value.spatial_count && !r.failed; ++i) {
         value.spatial[i].actor = read_ref(&r); value.spatial[i].sector = qa_net_read_u32(&r);

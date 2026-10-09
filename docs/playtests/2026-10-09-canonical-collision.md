@@ -73,3 +73,11 @@ Historical ABBA median / p99 microseconds:
 | rerelease | 9.580 / 13.570 | 9.940 / 10.100 | 9.730 / 9.881 | 9.840 / 14.090 |
 
 The immediate-live comparison also showed no gain. All candidate medians exceeded 9.6 us. The three source changes were dropped; the experiment is retained only as evidence under `/tmp/qa-the2873-owner-projection-20261009` and `/tmp/qa-the2873-owner-projection-final-20261009`.
+
+## Shared-save compatibility
+
+The initial canonical migration widened untagged collision fields. The single codec now retains their compact native encoding, imports it into canonical state on read, and appends sparse canonical fields only where a native word cannot retain the state. Ordinary saves keep their original bytes. No format choice or second reader was added.
+
+Actual writers from 23356edb's parent produced 471 payloads that the repaired reader decoded and rewrote byte-identically. Another 207 mixed/opaque cases round-tripped without loss. GCC, Clang and both ASan/UBSan variants passed. The owner profile's Q2 rerelease, Q3 and recovery world records also decoded and rewrote identically: 537/268, 70/11 and 390/197 body/spatial counts respectively. This component check does not establish a full saved-session restore.
+
+Exact staged source 01ee20c4 passed full production and ASan builds and both seven core suites. Evidence: `/tmp/qa-the2873-persistence-compat-20261009` and `/tmp/qa-the2873-one-pass-final-20261009`. The transient untagged widened layout was never installed in qa-c and is not guessed by the reader; the inspected owner records use the original compact layout.
