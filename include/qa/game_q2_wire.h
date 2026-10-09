@@ -17,17 +17,6 @@ typedef struct qa_q2_wire_view {
     uint64_t frame, time_ns;
     bool present;
 } qa_q2_wire_view;
-typedef struct qa_q2_wire_movement {
-    qa_movement_state state;
-    qa_vec3 view_angles, view_offset, command_angles;
-    qa_bounds bounds;
-    qa_movement_ground ground;
-    uint64_t frame, time_ns, source_sequence, pending_sequence;
-    uint32_t water_type;
-    int32_t water_level;
-    float view_height;
-    bool present, command_seen, command_pending;
-} qa_q2_wire_movement;
 typedef struct qa_q2_wire_map {
     qa_string_id music, sky;
     qa_vec3 sky_axis;
@@ -99,18 +88,17 @@ bool qa_q2_wire_view_read(const qa_q2_game *, qa_actor_id,
     qa_q2_wire_view *, qa_error *);
 bool qa_q2_wire_lightstyle_read(const qa_q2_game *, uint32_t,
     qa_string_id *, qa_error *);
-bool qa_q2_wire_movement_read(const qa_q2_game *, qa_actor_id,
-    qa_q2_wire_movement *, qa_error *);
-/* ClientThink entry prepares the physical Source policy and clock. Freeze and
- * chase commands commit their real no-Pmove turn here. */
-bool qa_q2_wire_movement_prepare(qa_q2_game *, qa_actor_id,
-    const qa_movement_command *, qa_q2_wire_movement *, bool *run_pmove, qa_error *);
-bool qa_q2_wire_movement_complete(qa_q2_game *, qa_actor_id,
-    const qa_movement_result *, const qa_movement_command *, bool source_movement, qa_error *);
-/* Commit the true Source ClientThink/Pmove result at its real source clock.
- * This does not overwrite the independently selected movement continuation. */
-bool qa_q2_wire_movement_publish(qa_q2_game *, qa_actor_id,
-    const qa_q2_wire_movement *, qa_error *);
+/* Original PM fields are a temporary projection of common movement and the
+ * Source-only rule tail. No second current movement record is retained. */
+bool qa_q2_player_movement_read(const qa_q2_game *, qa_actor_id,
+    qa_movement_result *, qa_vec3 *command_angles, qa_error *);
+bool qa_q2_player_movement_prepare(qa_q2_game *, qa_actor_id,
+    const qa_movement_command *, qa_movement_result *, bool *run_pmove, qa_error *);
+bool qa_q2_player_movement_complete(qa_q2_game *, qa_actor_id,
+    const qa_movement_result *, const qa_movement_command *, bool source_movement,
+    bool was_grounded, qa_error *);
+bool qa_q2_player_movement_restore(qa_q2_game *, qa_actor_id, const qa_body_state *,
+    const qa_movement_result *, const qa_vec3 *command_angles, qa_error *);
 bool qa_q2_wire_map_read(const qa_q2_game *, qa_q2_wire_map *, qa_error *);
 bool qa_q2_wire_shadow_read(const qa_q2_game *, uint32_t,
     qa_q2_wire_shadow_light *, qa_error *);

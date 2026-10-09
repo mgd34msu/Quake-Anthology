@@ -84,6 +84,15 @@ typedef struct q2_projectile {
     float scale, alpha;
     bool hand, held, armed, visible, gekk, dodgeable;
 } q2_projectile;
+typedef struct qa_q2_player_pm_rules {
+    int32_t type;
+    uint32_t flags, time;
+    int16_t gravity;
+    union { int16_t words[3]; qa_vec3 angles; } delta;
+    qa_vec3 command_angles;
+    uint64_t frame, time_ns, source_sequence, pending_sequence;
+    bool command_seen, command_pending;
+} qa_q2_player_pm_rules;
 typedef struct q2_actor {
     struct q2_actor *all_next, *free_next;
     struct q2_actor *live_next, *live_previous;
@@ -92,7 +101,7 @@ typedef struct q2_actor {
     uint64_t wire_event_frame;
     bool wire_bound;
     qa_q2_wire_view wire_view;
-    qa_q2_wire_movement wire_movement;
+    qa_q2_player_pm_rules source_pm;
     qa_q2_wire_lifetime wire_lifetime;
     /* Ephemeral HUD messages, rebuilt after load and excluded from checkpoints. */
     qa_string_id pickup_icon, pickup_text, selected_item_name;
@@ -250,7 +259,7 @@ q2_actor *q2_actor_get(qa_q2_game *, qa_actor_id, bool create, qa_error *);
 void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id, bool new_storage);
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
 bool q2_wire_admit(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
-bool q2_wire_player_motion(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
+bool q2_player_source_motion_rules(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
 bool q2_wire_shadow_event(qa_q2_game *, const qa_q2_map_event *, qa_error *);
 bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
 void q2_wire_release(qa_q2_game *, q2_actor *);

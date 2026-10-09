@@ -799,7 +799,7 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
     return true;
 }
 
-static bool movement_record(q2_original_record_io *io, qa_q2_wire_movement *movement)
+static bool movement_record(q2_original_record_io *io, qa_movement_result *movement)
 {
     if (io->edition == QA_Q2_RERELEASE) {
         qa_json_id saved = io->object;
@@ -902,7 +902,6 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
     q2_original_record_io child;
     bool present;
     if (!q2_original_object_begin(io, "ps", &child, &present)) return false;
-    bool ps_present = present;
     if (present && (!movement_record(&child, &state->movement) ||
         !q2_original_record(&child, Q2_ORIGINAL_VIEW, &state->view) ||
         !q2_original_resource(g, &child, level, "gunindex", 88, 88, 88, 32, &state->weapon.view_model) ||
@@ -940,7 +939,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         !original_weapon(g, io, "newweapon", 3532, 3548, 3564, false, &state->weapon.pending) ||
         !q2_original_scalar(io, "v_angle", Q2_ORIGINAL_VECTOR, 3636, 3652, 3668, &state->movement.view_angles) ||
         !q2_original_scalar(io, "resp.cmd_angles", Q2_ORIGINAL_VECTOR, 3452, 3468, 3484,
-            &state->movement.command_angles) ||
+            &state->command_angles) ||
         !q2_original_scalar(io, "silencer_shots", Q2_ORIGINAL_I32, 3732, 3752, 3764, &state->silencer) ||
         !q2_original_resource(g, io, level, "weapon_sound", 3736, 3756, 3768, 288, &state->weapon.loop_sound))
         return false;
@@ -977,7 +976,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         state->player.fov = state->view.fov;
         state->player.loop_sound = state->weapon.loop_sound;
         state->movement.view_offset = state->view.offset;
-        state->movement.present = ps_present;
+        state->movement.status = QA_MOVEMENT_ACTIVE;
     }
     return true;
 }
@@ -1185,7 +1184,7 @@ bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
     state->sphere = actor->powers ? actor->powers->sphere : (qa_actor_id){0};
     state->silencer = actor->silencer;
     state->view = actor->wire_view.view;
-    state->movement = actor->wire_movement;
+    if (!qa_q2_player_movement_read(g, actor->id, &state->movement, &state->command_angles, error)) return false;
     return true;
 }
 

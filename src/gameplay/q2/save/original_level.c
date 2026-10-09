@@ -310,18 +310,10 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             }
         }
         if (okay && live_level) {
-            okay = qa_world_body_write(game->services.world, actor, &body, error) &&
-                q2_player_move(game, source, &(qa_q2_player_motion){.kind = QA_Q2_PLAYER_SPAWN,
-                    .origin = body.origin, .velocity = body.velocity,
-                    .angles = client.movement.view_angles,
-                    .command_angles = client.movement.command_angles,
-                    .preserve_view_angles = true, .spectator = client.player.info.spectator}, error);
+            client.movement.bounds = body.bounds;
+            client.movement.view_height = (float)view_height;
+            okay = qa_q2_player_movement_restore(game, actor, &body, &client.movement, &client.command_angles, error);
             if (okay) {
-                client.movement.bounds = body.bounds;
-                client.movement.view_height = (float)view_height;
-                client.movement.frame = game->wire_frame;
-                client.movement.time_ns = game->now_ns;
-                source->wire_movement = client.movement;
                 source->wire_view = (qa_q2_wire_view){.present = true, .view = client.view,
                     .frame = game->wire_frame, .time_ns = game->now_ns};
             }

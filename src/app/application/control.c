@@ -2511,9 +2511,10 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
     if (arsenal->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind != APPLICATION_PROVIDER_Q2 &&
         arsenal->kind != APPLICATION_PROVIDER_Q3)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected original arsenal has no isolated native Q2 weapon-decision capability");
-    qa_q2_wire_movement physical;
+    qa_movement_result physical;
+    qa_vec3 command_angles;
     qa_combat_state combat;
-    if (!application_native_q2_input_read(source, actor, &physical, error) ||
+    if (!application_native_q2_input_read(source, actor, &physical, &command_angles, error) ||
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
     if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
     application_control_record *control = &app->controls[actor.slot];
@@ -2523,7 +2524,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         .water_level = physical.water_level};
     memcpy(&completed.water_type, &physical.water_type, sizeof(completed.water_type));
     application_control_publish_motion(control, &completed);
-    control->command_angles = physical.command_angles;
+    control->command_angles = command_angles;
     control->previous_buttons = control->buttons; control->buttons = command->buttons;
     qa_movement_command applied = *command;
     const application_control_context *context = application_control_frame_current(app, actor);

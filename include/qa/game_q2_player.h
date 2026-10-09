@@ -2,8 +2,14 @@
 #define QA_GAME_Q2_PLAYER_H
 #include "qa/game_q2.h"
 #include "qa/game_q2_entities.h"
+#include "qa/movement.h"
 
 typedef struct qa_q2_player_movement {
+    qa_movement_state *state;
+    const qa_movement_ground *ground;
+    qa_vec3 view_offset;
+    float view_height;
+    bool source_movement;
     qa_vec3 view_angles, command_angles;
     qa_bounds standing_bounds;
     uint32_t buttons, water_type;
@@ -25,6 +31,7 @@ typedef struct qa_q2_player_motion {
     uint64_t hold_ns;
     bool spectator, enabled;
     bool has_command_view_angles, preserve_view_angles;
+    const qa_movement_result *restore;
 } qa_q2_player_motion;
 typedef struct qa_q2_blend {
     float x, y, z, w;

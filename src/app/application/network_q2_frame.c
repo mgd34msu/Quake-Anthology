@@ -528,9 +528,9 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
     }
     qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
     qa_q2_wire_view retained;
-    qa_q2_wire_movement movement;
+    qa_movement_result movement;
     qa_q2_wire_source_entity entity;
-    if (!qa_q2_wire_movement_read(game, actor, &movement, error) ||
+    if (!qa_q2_player_movement_read(game, actor, &movement, NULL, error) ||
         !qa_q2_wire_view_read(game, actor, &retained, error) ||
         !qa_q2_wire_entity_read(game, physical.source_slot, &entity, error)) return false;
     qa_q2_player value = {.clientnum = (int32_t)(physical.source_slot - 1)};

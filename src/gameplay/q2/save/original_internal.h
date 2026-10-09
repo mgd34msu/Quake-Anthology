@@ -70,7 +70,8 @@ typedef struct q2_original_client_state {
     qa_q2_weapon_state weapon;
     qa_q2_powerups powers;
     qa_q2_player_view view;
-    qa_q2_wire_movement movement;
+    qa_movement_result movement;
+    qa_vec3 command_angles;
     int32_t silencer;
     qa_actor_id sphere;
 } q2_original_client_state;

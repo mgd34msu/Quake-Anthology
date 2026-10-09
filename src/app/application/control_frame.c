@@ -968,7 +968,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     application_control_record *record = &app->controls[actor.slot];
     application_provider *provider = source_provider(app, actor);
     qa_clock_state clock;
-    qa_q2_wire_movement source;
+    qa_movement_result source;
     if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
         !provider || (provider->kind != APPLICATION_PROVIDER_Q2 &&
             !application_native_q2_source_client(provider, actor) &&
@@ -986,9 +986,9 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
             return application_fail(error, QA_ERROR_UNSUPPORTED, "Declared native Q2 has no isolated foreign arsenal phase");
     }
     bool physical = provider->kind == APPLICATION_PROVIDER_Q2
-        ? qa_q2_wire_movement_read(provider->state.q2, actor, &source, error)
+        ? qa_q2_player_movement_read(provider->state.q2, actor, &source, NULL, error)
         : application_native_q2_source_client(provider, actor)
-            ? application_native_q2_input_read(provider, actor, &source, error)
+            ? application_native_q2_input_read(provider, actor, &source, NULL, error)
             : application_native_q2_declared_input_read(provider, actor, &source.state, error);
     if (!physical) return false;
     if (raw->kind != source.state.kind || !q2_raw_valid(raw))
@@ -1788,7 +1788,7 @@ static bool nq_selected_command(qa_application *app, qa_actor_id actor,
 }
 
 static bool q2_selected_command(qa_application *app, qa_actor_id actor,
-    application_provider *source, const qa_q2_wire_movement *physical, const qa_movement_command *raw,
+    application_provider *source, const qa_movement_result *physical, const qa_movement_command *raw,
     const qa_source_command *admission, qa_movement_command *out, qa_error *error)
 {
     if (physical->state.kind != raw->kind) return false;
@@ -2000,7 +2000,7 @@ static bool native_q2_command_move(void *context, const qa_movement_input *input
         input->command.sequence != call->current->source_command.sequence ||
         input->state.kind != call->current->source_command.kind || call->movement == call->source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lost its selected Source command stage");
-    qa_q2_wire_movement physical = {.state = input->state};
+    qa_movement_result physical = {.state = input->state};
     qa_movement_command selected;
     if (!q2_selected_command(call->app, input->actor, call->source, &physical,
             &input->command, &call->current->command, &selected, error)) return false;
@@ -2054,10 +2054,8 @@ static bool end_skipped_command(qa_application *app, qa_actor_id actor,
     if (!current->source_q2cmd || !qa_actors_get(qa_session_actors(app->session), actor)) return true;
     application_provider *source = source_provider(app, actor);
     if (!source || source->kind != APPLICATION_PROVIDER_Q2) return true;
-    qa_q2_wire_movement physical;
-    if (!qa_q2_wire_movement_read(source->state.q2, actor, &physical, error)) return false;
-    return !physical.command_pending || qa_q2_wire_movement_complete(source->state.q2, actor,
-        NULL, &current->source_command, false, error);
+    return qa_q2_player_movement_complete(source->state.q2, actor,
+        NULL, &current->source_command, false, false, error);
 }
 
 static bool apply_command_group(void *opaque, qa_session *session, const qa_source_command *command, qa_error *error)
@@ -2092,18 +2090,18 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
             bool physical_q2 = source && source->kind == APPLICATION_PROVIDER_Q2 &&
                 source == application_world_provider(app, QA_ROLE_ENTITIES, "") && source->component.command_actor &&
                 source->component.command_actor(source->component.state, app->session, group->actor);
-            qa_q2_wire_movement physical;
-            bool run_pmove = true, source_movement = false;
+            qa_movement_result physical;
+            bool run_pmove = true, source_movement = false, was_grounded = false;
             if (physical_q2) {
-                ok = qa_q2_wire_movement_read(source->state.q2, group->actor, &physical, error) &&
+                ok = qa_q2_player_movement_read(source->state.q2, group->actor, &physical, NULL, error) &&
                     unified_q2_source(&group->unified, physical.state.kind, &selected,
                         current.source_elapsed_ns, &current.source_command, error) &&
-                    qa_q2_wire_movement_prepare(source->state.q2, group->actor,
+                    qa_q2_player_movement_prepare(source->state.q2, group->actor,
                         &current.source_command, &physical, &run_pmove, error);
+                was_grounded = ok && physical.ground.hit != QA_TRACE_HIT_NONE;
                 current.source_q2cmd = true;
                 source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
                 if (ok && source_movement && run_pmove) {
-                    app->controls[group->actor.slot].state = physical.state;
                     ok = unified_command(app, group->actor, &group->unified, &selected, error);
                 }
             }
@@ -2120,8 +2118,8 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                     (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
                         record->result.command_sequence != group->unified.sequence)))
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 Source completion lost its selected turn");
-                else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
-                    cutscene ? NULL : &record->result, &current.source_command, !cutscene && source_movement, error);
+                else ok = qa_q2_player_movement_complete(source->state.q2, group->actor,
+                    cutscene ? NULL : &record->result, &current.source_command, !cutscene && source_movement, was_grounded, error);
                 if (ok && !cutscene) ok = qa_q2_player_after_movement(source->state.q2, group->actor, false, error);
             }
         }
@@ -2149,15 +2147,15 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
             }
         } else {
             qa_movement_command selected;
-            qa_q2_wire_movement physical;
-            bool run_pmove = false;
+            qa_movement_result physical;
+            bool run_pmove = false, was_grounded = false;
             bool source_movement = application_provider_for(app, group->actor, QA_ROLE_MOVEMENT, "") == source;
             ok = source && source->kind == APPLICATION_PROVIDER_Q2 &&
-                qa_q2_wire_movement_prepare(source->state.q2, group->actor,
+                qa_q2_player_movement_prepare(source->state.q2, group->actor,
                     &current.source_command, &physical, &run_pmove, error);
+            was_grounded = ok && physical.ground.hit != QA_TRACE_HIT_NONE;
             bool cutscene = ok && app->controls[group->actor.slot].cutscene;
             if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
-                if (source_movement) app->controls[group->actor.slot].state = physical.state;
                 ok = q2_selected_command(app, group->actor, source, &physical,
                     &current.source_command, command, &selected, error);
                 if (ok) {
@@ -2173,9 +2171,9 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                     (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
                         record->result.command_sequence != selected.sequence)))
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source completion lost its selected phase");
-                else ok = qa_q2_wire_movement_complete(source->state.q2, group->actor,
+                else ok = qa_q2_player_movement_complete(source->state.q2, group->actor,
                     cutscene ? NULL : &record->result, &current.source_command,
-                    !cutscene && source_movement, error);
+                    !cutscene && source_movement, was_grounded, error);
                 if (ok && !cutscene)
                     ok = qa_q2_player_after_movement(source->state.q2, group->actor, false, error);
             }

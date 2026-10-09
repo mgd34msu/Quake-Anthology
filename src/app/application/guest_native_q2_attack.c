@@ -121,7 +121,7 @@ static bool source_actor(struct application_native_q2_attack *p, qa_native_addre
 }
 #include "guest_native_q2_attack_decisions.h"
 bool application_native_q2_attack_input_fields(struct application_native_q2 *engine,uint32_t slot,
-    qa_actor_id actor,qa_q2_wire_movement *out,qa_error *error)
+    qa_actor_id actor,qa_movement_result *out,qa_vec3 *command_angles,qa_error *error)
 {
     struct application_native_q2_attack *p=engine?engine->source_attack:NULL;
     if(!p||!out) return application_fail(error,QA_ERROR_NOT_FOUND,"Native Source input has no qualified primary field producer");
@@ -145,8 +145,8 @@ bool application_native_q2_attack_input_fields(struct application_native_q2 *eng
         return application_fail(error,QA_ERROR_FORMAT,"Native Source command angles exceed its qualified client record");
     uint8_t bytes[12];
     if(!qa_native_read(instance(p),client+offset,bytes,sizeof(bytes),error)) return false;
-    out->command_angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));
-    return qa_vec_finite(out->command_angles)||application_fail(error,QA_ERROR_FORMAT,"Native Source command angles are not finite");
+    *command_angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));
+    return qa_vec_finite(*command_angles)||application_fail(error,QA_ERROR_FORMAT,"Native Source command angles are not finite");
 }
 static attack_factor *factor_for(struct application_native_q2_attack *p, qa_actor_id actor)
 {

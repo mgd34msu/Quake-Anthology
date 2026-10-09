@@ -23,7 +23,7 @@ bool application_native_q2_declared_raw_capable(const application_provider *);
 bool application_native_q2_declared_input_read(application_provider *,qa_actor_id,
     qa_movement_state *,qa_error *);
 bool application_native_q2_input_read(application_provider *, qa_actor_id,
-    qa_q2_wire_movement *, qa_error *);
+    qa_movement_result *, qa_vec3 *command_angles, qa_error *);
 bool application_native_q2_input_think(application_provider *, qa_actor_id,
     const qa_movement_command *, const application_native_q2_input_stage *, qa_error *);
 #endif

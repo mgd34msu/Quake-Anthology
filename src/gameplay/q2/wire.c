@@ -490,73 +490,6 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
     return true;
 }
 
-static bool movement_valid(const qa_q2_game *g, const qa_q2_wire_movement *value,
-    qa_error *error)
-{
-    qa_ruleset_id kind = g->options.edition == QA_Q2_RERELEASE ?
-        QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
-    if (!value->present || value->state.kind != kind || value->frame > g->wire_frame ||
-        value->time_ns > g->now_ns || !qa_vec_finite(value->view_angles) ||
-        !qa_vec_finite(value->view_offset) || !qa_vec_finite(value->command_angles) || !qa_vec_finite(value->bounds.mins) ||
-        !qa_vec_finite(value->bounds.maxs) || !isfinite(value->view_height) ||
-        value->water_level < 0 || value->water_level > 3 ||
-        (!value->command_seen && value->source_sequence) ||
-        (!value->command_pending && value->pending_sequence) ||
-        (value->command_pending && value->command_seen && value->pending_sequence <= value->source_sequence)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source pmove receipt has invalid identity, clock or fields");
-        return false;
-    }
-    if (kind == QA_RULESET_Q2_CLASSIC) {
-        if (value->state.data.q2.type < 0 || value->state.data.q2.type > 4 ||
-            value->state.data.q2.flags > UINT8_MAX) {
-            qa_error_set(error, QA_ERROR_FORMAT, 0, "Classic Q2 Source pmove leaves its SDK fields");
-            return false;
-        }
-    } else {
-        const qa_q2r_movement_state *s = &value->state.data.q2r;
-        if (s->type < 0 || s->type > 6 || s->flags > UINT16_MAX || s->time_ms > UINT16_MAX ||
-            !qa_vec_finite(s->origin) || !qa_vec_finite(s->velocity) || !qa_vec_finite(s->delta_angles) ||
-            !isfinite(s->view_height) || s->view_height < INT8_MIN || s->view_height > INT8_MAX) {
-            qa_error_set(error, QA_ERROR_FORMAT, 0, "Rerelease Q2 Source pmove leaves its SDK fields");
-            return false;
-        }
-    }
-    return true;
-}
-
-bool qa_q2_wire_movement_read(const qa_q2_game *g, qa_actor_id id,
-    qa_q2_wire_movement *out, qa_error *error)
-{
-    if (!g || !out || g->restoring_continuation || g->continuation_pending || g->continuation_failed)
-        return false;
-    const q2_actor *a = id.slot < g->capacity ? g->actors[id.slot] : NULL;
-    if (!qa_actors_get(qa_session_actors(g->services.session), id) || !a ||
-        !qa_actor_id_equal(a->id, id) || !a->client || !a->client->info.connected ||
-        !a->wire_bound || a->wire_slot >= g->wire_extent || a->wire_slot != a->client->info.slot + 1 ||
-        !qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 pmove has no physical Source client");
-        return false;
-    }
-    if (!movement_valid(g, &a->wire_movement, error)) return false;
-    *out = a->wire_movement;
-    return true;
-}
-
-bool qa_q2_wire_movement_publish(qa_q2_game *g, qa_actor_id id,
-    const qa_q2_wire_movement *value, qa_error *error)
-{
-    qa_q2_wire_movement prior;
-    if (!value || !qa_q2_wire_movement_read(g, id, &prior, error) ||
-        !movement_valid(g, value, error) || value->frame != g->wire_frame ||
-        value->time_ns != g->now_ns || !value->command_seen || value->command_pending ||
-        (prior.command_seen && value->source_sequence <= prior.source_sequence)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Source pmove completion lost its actual command turn");
-        return false;
-    }
-    g->actors[id.slot]->wire_movement = *value;
-    return true;
-}
-
 static int16_t source_short(float value)
 {
     uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32(value);
@@ -573,35 +506,102 @@ static qa_vec3 source_command_angles(const qa_movement_command *command)
             (float)command->angle_words[2] * (360.f / 65536.f)) : command->angles;
 }
 
-bool qa_q2_wire_movement_prepare(qa_q2_game *g, qa_actor_id id,
-    const qa_movement_command *command, qa_q2_wire_movement *out,
+static void source_policy_read(const qa_q2_player_pm_rules *rules, qa_movement_state *state)
+{
+    if (state->kind == QA_RULESET_Q2_RERELEASE) {
+        state->data.q2r.type = rules->type;
+        state->data.q2r.flags = rules->flags;
+        state->data.q2r.time_ms = rules->time;
+        state->data.q2r.gravity = rules->gravity;
+        state->data.q2r.delta_angles = rules->delta.angles;
+    } else {
+        state->data.q2.type = rules->type;
+        state->data.q2.flags = rules->flags;
+        state->data.q2.time_eight_ms = (uint8_t)rules->time;
+        state->data.q2.gravity = rules->gravity;
+        memcpy(state->data.q2.delta_angle_shorts, rules->delta.words, sizeof(rules->delta.words));
+    }
+}
+
+static void source_policy_write(qa_q2_player_pm_rules *rules, const qa_movement_state *state)
+{
+    if (state->kind == QA_RULESET_Q2_RERELEASE) {
+        rules->type = state->data.q2r.type;
+        rules->flags = state->data.q2r.flags;
+        rules->time = state->data.q2r.time_ms;
+        rules->gravity = state->data.q2r.gravity;
+        rules->delta.angles = state->data.q2r.delta_angles;
+    } else {
+        rules->type = state->data.q2.type;
+        rules->flags = state->data.q2.flags;
+        rules->time = state->data.q2.time_eight_ms;
+        rules->gravity = state->data.q2.gravity;
+        memcpy(rules->delta.words, state->data.q2.delta_angle_shorts, sizeof(rules->delta.words));
+    }
+}
+
+bool qa_q2_player_movement_read(const qa_q2_game *game, qa_actor_id id,
+    qa_movement_result *out, qa_vec3 *command_angles, qa_error *error)
+{
+    qa_q2_game *g = (qa_q2_game *)game;
+    q2_actor *a = q2_actor_get(g, id, false, error);
+    qa_q2_player_movement current;
+    qa_body_state body;
+    if (!a || !q2_player_observe(g, a, &current, error) ||
+        !qa_world_body_read(g->services.world, id, &body, error)) return false;
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    qa_movement_state state = {.kind = rr ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC};
+    if (current.source_movement) state = *current.state;
+    else {
+        source_policy_read(&a->source_pm, &state);
+        if (rr) {
+            state.data.q2r.origin = body.origin;
+            state.data.q2r.velocity = body.velocity;
+            state.data.q2r.view_height = a->client->info.view_height;
+        } else {
+            const float positions[] = {body.origin.x, body.origin.y, body.origin.z};
+            const float speeds[] = {body.velocity.x, body.velocity.y, body.velocity.z};
+            for (unsigned i = 0; i < 3; ++i) {
+                state.data.q2.origin_eighths[i] = source_short(positions[i] * 8.f);
+                state.data.q2.velocity_eighths[i] = source_short(speeds[i] * 8.f);
+            }
+        }
+    }
+    *out = (qa_movement_result){.status = QA_MOVEMENT_ACTIVE, .actor = id, .state = state,
+        .view_angles = current.view_angles, .view_offset = current.view_offset,
+        .view_height = rr ? state.data.q2r.view_height : current.view_height, .bounds = body.bounds,
+        .water_level = current.water_level, .water_type = (int32_t)current.water_type,
+        .ground = *current.ground};
+    if (command_angles) *command_angles = a->source_pm.command_angles;
+    return true;
+}
+
+bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
+    const qa_movement_command *command, qa_movement_result *out,
     bool *run_pmove, qa_error *error)
 {
-    qa_q2_wire_movement value;
-    if (!command || !out || !run_pmove || !qa_q2_wire_movement_read(g, id, &value, error) ||
-        command->kind != value.state.kind || !qa_vec_finite(command->angles) ||
-        value.command_pending || (value.command_seen && command->sequence <= value.source_sequence)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 ClientThink lost its literal physical Source command");
-        return false;
-    }
+    if (!qa_q2_player_movement_read(g, id, out, NULL, error)) return false;
     q2_actor *a = g->actors[id.slot];
     q2_client_state *client = a->client;
+    qa_q2_player_movement current;
+    if (!q2_player_observe(g, a, &current, error)) return false;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
-    value.frame = g->wire_frame; value.time_ns = g->now_ns;
-    value.command_angles = source_command_angles(command);
+    qa_movement_state *state = &out->state;
+    a->source_pm.frame = g->wire_frame; a->source_pm.time_ns = g->now_ns;
+    a->source_pm.command_angles = source_command_angles(command);
     *run_pmove = !g->player_runtime->intermission && !(rr && client->awaiting_respawn) &&
         !client->info.chase_target.registry;
     int32_t type;
     if (g->player_runtime->intermission || (rr && client->awaiting_respawn)) {
         type = rr ? 6 : 4;
         if (rr) {
-            value.view_height = g->player_runtime->intermission &&
+            out->view_height = g->player_runtime->intermission &&
                 g->options.product == QA_Q2_N64 && !g->options.deathmatch ? 0 : 22;
-            value.state.data.q2r.view_height = value.view_height;
-            client->info.view_height = value.view_height;
+            state->data.q2r.view_height = out->view_height;
+            client->info.view_height = out->view_height;
         }
     } else if (client->info.chase_target.registry) {
-        type = rr ? value.state.data.q2r.type : value.state.data.q2.type;
+        type = rr ? state->data.q2r.type : state->data.q2.type;
     } else {
         type = client->info.noclip ? (rr ? (client->info.spectator ? 3 : 2) : 1) :
             client->gibbed ? (rr ? 5 : 3) : client->info.dead ? (rr ? 4 : 2) :
@@ -610,153 +610,110 @@ bool qa_q2_wire_movement_prepare(qa_q2_game *g, qa_actor_id id,
         float gravity = g->services.physics->gravity;
         if (!rr && !qa_q2_source_value(g, QA_Q2_SOURCE_GRAVITY, 800, &gravity, error)) return false;
         if (rr) gravity *= a->physics_bound ? a->physics.gravity_scale : 1;
-        if (!isfinite(gravity)) {
-            qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 ClientThink Source gravity is not finite");
-            return false;
-        }
         if (rr) {
-            qa_q2r_movement_state *state = &value.state.data.q2r;
-            state->gravity = source_short(gravity);
+            state->data.q2r.gravity = source_short(gravity);
             bool collide = !g->options.cooperative ||
                 (g->player_runtime->rules.coop_player_collision && client->player_collision);
-            state->flags = collide ? state->flags & ~UINT32_C(512) : state->flags | UINT32_C(512);
-        } else value.state.data.q2.gravity = source_short(gravity);
+            state->data.q2r.flags = collide ? state->data.q2r.flags & ~UINT32_C(512) :
+                state->data.q2r.flags | UINT32_C(512);
+        } else state->data.q2.gravity = source_short(gravity);
     }
-    if (rr) value.state.data.q2r.type = type;
-    else value.state.data.q2.type = type;
-    if (!movement_valid(g, &value, error)) return false;
+    if (rr) state->data.q2r.type = type;
+    else state->data.q2.type = type;
+    if (current.source_movement) *current.state = *state;
+    else source_policy_write(&a->source_pm, state);
+    a->source_pm.command_pending = *run_pmove;
+    a->source_pm.pending_sequence = *run_pmove ? command->sequence : 0;
     if (!*run_pmove) {
-        value.source_sequence = command->sequence; value.command_seen = true;
-        if (!qa_q2_wire_movement_publish(g, id, &value, error)) return false;
-    } else {
-        value.command_pending = true; value.pending_sequence = command->sequence;
-        a->wire_movement = value;
+        a->source_pm.source_sequence = command->sequence;
+        a->source_pm.command_seen = true;
     }
-    *out = value;
     return true;
 }
 
-bool qa_q2_wire_movement_complete(qa_q2_game *g, qa_actor_id id,
+bool qa_q2_player_movement_complete(qa_q2_game *g, qa_actor_id id,
     const qa_movement_result *result, const qa_movement_command *command,
-    bool source_movement, qa_error *error)
+    bool source_movement, bool was_grounded, qa_error *error)
 {
-    qa_q2_wire_movement value;
-    if (!command || !qa_q2_wire_movement_read(g, id, &value, error) ||
-        command->kind != value.state.kind || !value.command_pending ||
-        value.pending_sequence != command->sequence || value.frame != g->wire_frame ||
-        value.time_ns != g->now_ns || (!result && source_movement) ||
-        (result && (result->status != QA_MOVEMENT_ACTIVE || !qa_actor_id_equal(result->actor, id) ||
-            result->command_sequence != command->sequence ||
-            (source_movement && result->state.kind != value.state.kind)))) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Pmove completion lost its actual Source command/result");
-        return false;
-    }
-    bool was_grounded = value.ground.hit != QA_TRACE_HIT_NONE;
-    value.command_pending = false; value.pending_sequence = 0;
-    if (!result) {
-        value.source_sequence = command->sequence; value.command_seen = true;
-        return qa_q2_wire_movement_publish(g, id, &value, error);
-    }
-    qa_vec3 origin = qa_movement_origin(&result->state), velocity = qa_movement_velocity(&result->state);
-    if (!qa_vec_finite(origin) || !qa_vec_finite(velocity) || !qa_vec_finite(command->angles)) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Pmove completion has invalid physical fields");
-        return false;
-    }
-    if (source_movement) value.state = result->state;
-    else if (value.state.kind == QA_RULESET_Q2_RERELEASE) {
-        value.state.data.q2r.origin = origin; value.state.data.q2r.velocity = velocity;
-        value.state.data.q2r.view_height = result->view_height;
-    } else {
-        const float positions[3] = {origin.x, origin.y, origin.z};
-        const float speeds[3] = {velocity.x, velocity.y, velocity.z};
-        for (size_t i = 0; i < 3; ++i) {
-            value.state.data.q2.origin_eighths[i] = source_short(positions[i] * 8.0f);
-            value.state.data.q2.velocity_eighths[i] = source_short(speeds[i] * 8.0f);
-        }
-    }
-    value.view_angles = result->view_angles; value.view_offset = result->view_offset;
-    value.command_angles = source_command_angles(command); value.bounds = result->bounds; value.ground = result->ground;
-    value.water_level = result->water_level; value.water_type = (uint32_t)result->water_type;
-    value.view_height = result->view_height;
-    value.frame = g->wire_frame; value.time_ns = g->now_ns;
-    value.source_sequence = command->sequence; value.command_seen = true;
-    if (!qa_q2_wire_movement_publish(g, id, &value, error)) return false;
-    g->actors[id.slot]->client->info.view_height = value.view_height;
-    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
-    bool jumped = rerelease ? result->jump_sound && !(result->state.data.q2r.flags & 128u) :
+    q2_actor *a = q2_actor_get(g, id, false, error);
+    if (!a) return false;
+    a->source_pm.command_pending = false; a->source_pm.pending_sequence = 0;
+    a->source_pm.source_sequence = command->sequence; a->source_pm.command_seen = true;
+    if (!result) return true;
+    a->client->info.view_height = result->view_height;
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool jumped = rr ? result->jump_sound &&
+        !(source_movement && (result->state.data.q2r.flags & 128u)) :
         was_grounded && result->ground.hit == QA_TRACE_HIT_NONE && command->up_move >= 10 &&
         result->water_level == 0;
-    return !jumped || q2_player_jump(g, id, origin, error);
+    return !jumped || q2_player_jump(g, id, qa_movement_origin(&result->state), error);
 }
 
-bool q2_wire_player_motion(qa_q2_game *g, q2_actor *a,
+bool q2_player_source_motion_rules(qa_q2_game *g, q2_actor *a,
     const qa_q2_player_motion *change, qa_error *error)
 {
-    if (!a->client || !qa_vec_finite(change->origin) || !qa_vec_finite(change->velocity) ||
-        !qa_vec_finite(change->angles) || !qa_vec_finite(change->command_angles) ||
-        (change->has_command_view_angles && !qa_vec_finite(change->command_view_angles))) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Source motion has invalid physical client fields");
-        return false;
-    }
+    qa_q2_player_movement current;
+    if (!q2_player_observe(g, a, &current, error)) return false;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
-    qa_q2_wire_movement value = a->wire_movement;
     if (change->kind == QA_Q2_PLAYER_SPAWN && !change->preserve_view_angles) {
-        bool seen = value.command_seen; uint64_t sequence = value.source_sequence;
-        bool pending = value.command_pending; uint64_t pending_sequence = value.pending_sequence;
-        value = (qa_q2_wire_movement){.state.kind = rr ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
-            .command_seen = seen, .source_sequence = sequence,
-            .command_pending = pending, .pending_sequence = pending_sequence};
-        a->wire_view = (qa_q2_wire_view){0};
-        a->wire_event = 0; a->wire_event_frame = g->wire_frame;
+        uint64_t sequence = a->source_pm.source_sequence, pending = a->source_pm.pending_sequence;
+        bool seen = a->source_pm.command_seen, command_pending = a->source_pm.command_pending;
+        a->source_pm = (qa_q2_player_pm_rules){.source_sequence = sequence, .pending_sequence = pending,
+            .command_seen = seen, .command_pending = command_pending};
+        a->wire_view = (qa_q2_wire_view){0}; a->wire_event = 0; a->wire_event_frame = g->wire_frame;
     }
-    value.present = true; value.frame = g->wire_frame; value.time_ns = g->now_ns;
+    a->source_pm.frame = g->wire_frame; a->source_pm.time_ns = g->now_ns;
     bool force_view = change->kind != QA_Q2_PLAYER_NOCLIP && !change->preserve_view_angles;
+    if (force_view) a->source_pm.command_angles = change->command_angles;
+    qa_q2_player_pm_rules policy = {0};
+    if (current.source_movement &&
+        !(change->kind == QA_Q2_PLAYER_SPAWN && !change->preserve_view_angles))
+        source_policy_write(&policy, current.state);
+    else if (!current.source_movement) policy = a->source_pm;
+    qa_q2_player_pm_rules *rules = &policy;
     if (force_view) {
-        value.view_angles = change->angles; value.command_angles = change->command_angles;
-    }
-    value.view_height = a->client->info.view_height;
-    value.view_offset = rr ? qa_v3(0, 0, 0) : qa_v3(0, 0, value.view_height);
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, error)) return false;
-    value.bounds = body.bounds;
-    qa_vec3 command_view = change->has_command_view_angles ? change->command_view_angles : change->angles;
-    qa_vec3 delta = qa_vec_sub(command_view, change->command_angles);
-    if (force_view && !qa_vec_finite(delta)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 Source motion has a nonfinite command angle offset");
-        return false;
-    }
-    if (rr) {
-        qa_q2r_movement_state *s = &value.state.data.q2r;
-        if (change->kind != QA_Q2_PLAYER_NOCLIP) {
-            s->origin = change->origin; s->velocity = change->velocity;
-            if (force_view) s->delta_angles = delta;
-        }
-        s->view_height = value.view_height;
-        s->type = change->kind == QA_Q2_PLAYER_FREEZE ? 6 :
-            change->kind == QA_Q2_PLAYER_NOCLIP ? (change->enabled ? 2 : 0) : change->spectator ? 3 : 0;
-        if (change->hold_ns) { s->flags |= 32; s->time_ms = (uint32_t)fmin((double)(change->hold_ns / Q2_MS), UINT16_MAX); }
-    } else {
-        qa_q2_movement_state *s = &value.state.data.q2;
-        if (change->kind != QA_Q2_PLAYER_NOCLIP) {
-            const float origin[] = {change->origin.x, change->origin.y, change->origin.z};
-            const float velocity[] = {change->velocity.x, change->velocity.y, change->velocity.z};
+        qa_vec3 view = change->has_command_view_angles ? change->command_view_angles : change->angles;
+        qa_vec3 delta = qa_vec_sub(view, change->command_angles);
+        if (rr) rules->delta.angles = delta;
+        else {
             const float angles[] = {delta.x, delta.y, delta.z};
-            for (size_t i = 0; i < 3; ++i) {
-                s->origin_eighths[i] = source_short(origin[i] * 8.0f);
-                s->velocity_eighths[i] = source_short(velocity[i] * 8.0f);
-                if (force_view) {
-                    uint16_t bits = qa_angle_to_word(angles[i]);
-                    memcpy(&s->delta_angle_shorts[i], &bits, sizeof(bits));
-                }
+            for (unsigned i = 0; i < 3; ++i) {
+                uint16_t bits = qa_angle_to_word(angles[i]);
+                memcpy(&rules->delta.words[i], &bits, sizeof(bits));
             }
         }
-        s->type = change->kind == QA_Q2_PLAYER_FREEZE ? 4 :
-            change->kind == QA_Q2_PLAYER_NOCLIP ? (change->enabled ? 1 : 0) : change->spectator ? 1 : 0;
-        if (change->hold_ns) { s->flags |= 32; s->time_eight_ms = (uint8_t)fmin((double)(change->hold_ns / (8 * Q2_MS)), UINT8_MAX); }
     }
-    if (!movement_valid(g, &value, error)) return false;
-    a->wire_movement = value;
+    rules->type = change->kind == QA_Q2_PLAYER_FREEZE ? (rr ? 6 : 4) :
+        change->kind == QA_Q2_PLAYER_NOCLIP ? (change->enabled ? (rr ? 2 : 1) : 0) :
+        change->spectator ? (rr ? 3 : 1) : 0;
+    if (change->hold_ns) {
+        rules->flags |= 32;
+        rules->time = (uint32_t)fmin((double)(change->hold_ns / (rr ? Q2_MS : 8 * Q2_MS)), rr ? UINT16_MAX : UINT8_MAX);
+    }
+    if (current.source_movement) {
+        source_policy_read(rules, current.state);
+        if (rr) current.state->data.q2r.view_height = a->client->info.view_height;
+    } else {
+        a->source_pm.type = policy.type; a->source_pm.flags = policy.flags;
+        a->source_pm.time = policy.time; a->source_pm.gravity = policy.gravity;
+        a->source_pm.delta = policy.delta;
+    }
     return true;
+}
+
+bool qa_q2_player_movement_restore(qa_q2_game *g, qa_actor_id id, const qa_body_state *body,
+    const qa_movement_result *state, const qa_vec3 *command_angles, qa_error *error)
+{
+    q2_actor *a = q2_actor_get(g, id, false, error);
+    qa_q2_player_movement current;
+    if (!a || !q2_player_observe(g, a, &current, error)) return false;
+    if (!current.source_movement) source_policy_write(&a->source_pm, &state->state);
+    if (command_angles) a->source_pm.command_angles = *command_angles;
+    qa_q2_player_motion change = {.kind = QA_Q2_PLAYER_SPAWN,
+        .origin = body->origin, .velocity = body->velocity,
+        .angles = state->view_angles, .command_angles = a->source_pm.command_angles,
+        .preserve_view_angles = true, .spectator = a->client->info.spectator, .restore = state};
+    return g->player_runtime->services.set_movement(g->player_runtime->services.context, id, &change, error);
 }
 
 bool qa_q2_wire_next(const qa_q2_game *g, uint64_t *order,

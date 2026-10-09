@@ -4,9 +4,9 @@
 struct application_native_q2;
 struct application_native_q2_attack;
 struct application_native_q2_attack_restore;
-struct qa_q2_wire_movement;
+#include "qa/movement.h"
 bool application_native_q2_attack_input_fields(struct application_native_q2 *,uint32_t,
-    qa_actor_id,struct qa_q2_wire_movement *,qa_error *);
+    qa_actor_id,qa_movement_result *,qa_vec3 *command_angles,qa_error *);
 bool application_native_q2_attack_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_attack_activate(struct application_native_q2 *, qa_error *);
 bool application_native_q2_attack_suspend(struct application_native_q2 *, qa_error *);

@@ -87,8 +87,8 @@ bool qa_application_native_q2_presentation_player(qa_application *app,
         qa_q2_wire_view view;
         if (!qa_q2_wire_view_read(source->source.game,client->actor,&view,error)) return false;
         if (view.present) {
-            qa_q2_wire_movement movement;
-            if (!qa_q2_wire_movement_read(source->source.game,client->actor,&movement,error)) return false;
+            qa_movement_result movement;
+            if (!qa_q2_player_movement_read(source->source.game,client->actor,&movement, NULL, error)) return false;
             application_provider *arsenal = application_provider_for(app, client->actor, QA_ROLE_ARSENAL, "");
             if (!arsenal || !arsenal->constructed || !arsenal->attached || arsenal->close_pending)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q2 player sample lost its selected arsenal");

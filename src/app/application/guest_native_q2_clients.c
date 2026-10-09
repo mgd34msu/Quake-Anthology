@@ -147,8 +147,11 @@ static bool player_motion_finite(uint32_t slot, const qa_movement_state *state,
 }
 
 static bool physical_input_read(application_provider *provider, qa_actor_id actor,
-    qa_q2_wire_movement *out, qa_error *error)
+    qa_movement_result *out, qa_vec3 *command_angles, qa_error *error)
 {
+    qa_vec3 discarded_angles;
+    if (!command_angles) command_angles = &discarded_angles;
+    *command_angles = qa_v3(0, 0, 0);
     uint32_t slot = source_client_slot(provider, actor);
     struct application_native_q2 *engine = slot ? provider->state.native.q2_engine : NULL;
     bool reached=engine&&engine->input_arsenal&&engine->input_stage&&
@@ -173,18 +176,18 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical player read changed its Source binding");
     qa_movement_state state = player_movement(&player,
         classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE, body.origin);
-    *out = (qa_q2_wire_movement){.state=state,
+    *out = (qa_movement_result){.status=QA_MOVEMENT_ACTIVE,.actor=actor,.state=state,
         .view_angles=qa_v3(player.viewangles[0],player.viewangles[1],player.viewangles[2]),
         .view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]),
-        .bounds=body.bounds,.frame=engine->frame.number,.time_ns=engine->frame.time_ns,
-        .view_height=classic ? player.viewoffset[2] : (float)player.pmove.viewheight,.present=true};
+        .bounds=body.bounds,
+        .view_height=classic ? player.viewoffset[2] : (float)player.pmove.viewheight};
     qa_actor_id ground_actor = qa_actor_reference_resolve(qa_session_actors(engine->provider->application->session), body.ground);
     if (qa_actor_reference_present(body.ground)) out->ground = qa_actor_id_equal(ground_actor,engine->world_actor)
         ? (qa_movement_ground){.hit=QA_TRACE_HIT_WORLD}
         : (qa_movement_ground){.hit=QA_TRACE_HIT_ACTOR,.actor=ground_actor};
     if (!player_motion_finite(slot, &state, out->view_angles, out->view_offset, error)) return false;
     if(engine->callbacks || application_native_q2_whole_source(engine, actor)) return true;
-    if(!application_native_q2_attack_input_fields(engine,slot,actor,out,error)) return false;
+    if(!application_native_q2_attack_input_fields(engine,slot,actor,out,command_angles,error)) return false;
     /* The profile publishes Source waterlevel; watertype is a genuine current
      * shared-world sample in that Source collision dialect. */
     qa_vec3 origin=qa_movement_origin(&out->state);
@@ -194,16 +197,16 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     qa_point_contents contents;
     if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
     int32_t native_contents=qa_collision_point_contents_export(contents.contents,QA_COLLISION_Q2,contents.q1_opaque_token);
-    out->water_type=out->water_level && (native_contents & 56) ? (uint32_t)native_contents : 0;
+    out->water_type=out->water_level && (native_contents & 56) ? native_contents : 0;
     return true;
 }
 
 bool application_native_q2_input_read(application_provider *provider,qa_actor_id actor,
-    qa_q2_wire_movement *out,qa_error *error)
+    qa_movement_result *out,qa_vec3 *command_angles,qa_error *error)
 {
     if(!application_native_q2_source_client(provider,actor))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Native Q2 input requires its Original physical Source producer");
-    return physical_input_read(provider,actor,out,error);
+    return physical_input_read(provider,actor,out,command_angles,error);
 }
 bool application_native_q2_declared_input_read(application_provider *provider,qa_actor_id actor,
     qa_movement_state *out,qa_error *error)
@@ -213,8 +216,8 @@ bool application_native_q2_declared_input_read(application_provider *provider,qa
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared native Q2 has no raw physical ClientThink producer");
     if(application_provider_for(provider->application,actor,QA_ROLE_ARSENAL,NULL)!=provider)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared raw Source lacks its reached isolated foreign arsenal capability");
-    qa_q2_wire_movement physical;
-    if(!physical_input_read(provider,actor,&physical,error)) return false;
+    qa_movement_result physical;
+    if(!physical_input_read(provider,actor,&physical,NULL,error)) return false;
     *out=physical.state; return true;
 }
 
@@ -332,8 +335,8 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
     qa_application *app=provider->application;
     if (ok && qa_actors_get(qa_session_actors(app->session),actor) &&
         application_provider_for(app,actor,QA_ROLE_MOVEMENT,NULL)==provider) {
-        qa_q2_wire_movement physical;
-        if (!physical_input_read(provider,actor,&physical,error)) return false;
+        qa_movement_result physical;
+        if (!physical_input_read(provider,actor,&physical,NULL,error)) return false;
         if (actor.slot>=app->control_capacity || !app->controls[actor.slot].active ||
             !qa_actor_id_equal(app->controls[actor.slot].actor,actor))
             return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Source completion lost its selected control generation");

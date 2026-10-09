@@ -1551,14 +1551,19 @@ static bool q2_movement(void *context, qa_actor_id actor,
     if (!qa_world_body_read(provider->application->world, actor, &body, error) ||
         !application_control_ensure(provider->application, actor, body.angles, &control, error))
         return false;
-    *out = (qa_q2_player_movement){.view_angles = control->view_angles,
+    qa_movement_state *state = application_control_frames_state_current(provider->application, actor);
+    if (!state) state = &control->state;
+    *out = (qa_q2_player_movement){.state = state, .ground = &control->ground,
+        .view_offset = control->view_offset, .view_height = control->view_height,
+        .source_movement = application_provider_for(provider->application, actor, QA_ROLE_MOVEMENT, "") == provider,
+        .view_angles = control->view_angles,
         .command_angles = control->command_angles, .standing_bounds = control->standing_bounds,
         .buttons = control->buttons, .water_type = (uint32_t)control->water_type,
         .water_level = control->water_level, .grounded = control->ground.hit != QA_TRACE_HIT_NONE,
         .impact_delta = control->result.impact_delta,
         .noclip = control->player_mode_set && control->player_mode == QA_MOVEMENT_MODE_NOCLIP,
-        .on_ladder = control->state.kind == QA_RULESET_Q2_RERELEASE &&
-                     (control->state.data.q2r.flags & 128u) != 0,
+        .on_ladder = state->kind == QA_RULESET_Q2_RERELEASE &&
+                     (state->data.q2r.flags & 128u) != 0,
         .grounded_on_world = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(provider->application->session), body.ground), provider->application->physics->world_actor),
         .ducked = body.bounds.maxs.z < control->standing_bounds.maxs.z,
         .animate_q2 = application_provider_for(provider->application, actor,
@@ -1620,7 +1625,12 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
     body.origin = motion->origin;
     body.velocity = motion->velocity;
     body.angles = motion->angles;
-    body.ground = (qa_actor_reference){0};
+    if (motion->restore) {
+        body.bounds = motion->restore->bounds;
+        qa_actor_id ground = motion->restore->ground.hit == QA_TRACE_HIT_WORLD
+            ? application->physics->world_actor : motion->restore->ground.actor;
+        body.ground = qa_actor_reference_from_actor(qa_session_actors(application->session), provider->owner, ground);
+    } else body.ground = (qa_actor_reference){0};
     if (!qa_world_body_write(application->world, actor, &body, error))
         return false;
     qa_builtin_motion_change change = {.body = body, .view_angles = motion->angles,
@@ -1630,6 +1640,10 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
         .command_view_angles = motion->command_view_angles,
         .has_command_view_angles = relative_angles && motion->has_command_view_angles,
         .preserve_command_angles = relative_angles};
+    if (motion->restore && application_provider_for(application, actor, QA_ROLE_MOVEMENT, "") == provider) {
+        application_control_publish_motion(control, motion->restore);
+        return application_record_motion_change(application, actor, &change, error);
+    }
     if (!application_control_motion_changed(application, actor, &change, error) ||
         !application_record_motion_change(application, actor, &change, error))
         return false;
@@ -3071,8 +3085,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (map_source->kind == APPLICATION_PROVIDER_NATIVE &&
             application_native_q2_whole_source(map_source->state.native.q2_engine, actor) &&
             application_native_q2_source_client(map_source, actor)) {
-            qa_q2_wire_movement physical;
-            if (!application_native_q2_input_read(map_source, actor, &physical, error)) return false;
+            qa_movement_result physical;
+            if (!application_native_q2_input_read(map_source, actor, &physical, NULL, error)) return false;
             if (actor.slot >= application->control_capacity)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn has no admitted control");
             application_control_record *control = application->controls + actor.slot;

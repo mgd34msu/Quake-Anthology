@@ -228,7 +228,7 @@ bool q2_player_move(qa_q2_game *g, q2_actor *a, const qa_q2_player_motion *chang
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 movement control service is not configured");
         return false;
     }
-    return q2_wire_player_motion(g, a, change, e) &&
+    return q2_player_source_motion_rules(g, a, change, e) &&
         s->set_movement(s->context, a->id, change, e);
 }
 bool q2_player_inventory_copy(qa_q2_game *g, qa_actor_id id, qa_inventory_entry **out,

@@ -12,56 +12,73 @@ static bool short_field(q2_save_io *io, int16_t *field)
     return true;
 }
 
-static bool movement_fields(q2_save_io *io, qa_q2_wire_movement *s)
+static bool movement_fields(q2_save_io *io, q2_actor *actor, bool player)
 {
-    Q2B(present);
-    if (!s->present) return true;
-    Q2T(frame); Q2T(time_ns); Q2T(source_sequence); Q2B(command_seen);
-    Q2T(pending_sequence); Q2B(command_pending);
-    Q2V(view_angles); Q2V(view_offset); Q2V(command_angles); Q2V(bounds.mins); Q2V(bounds.maxs);
-    Q2U(water_type); Q2I(water_level); Q2F(view_height); Q2U(state.kind);
+    /* This is the old positional file boundary, not a retained runtime row. */
+    bool present = player;
+    if (!q2_save_bool(io, &present)) return false;
+    if (present != player) return q2_save_fail(io, "Q2 continuation movement has invalid player membership");
+    if (!present) return true;
+    qa_movement_result movement = {0};
+    qa_vec3 command_angles = actor->source_pm.command_angles;
+    if (!io->reading && !qa_q2_player_movement_read(io->game, actor->id,
+            &movement, &command_angles, io->error)) return false;
+    qa_q2_player_pm_rules *rules = &actor->source_pm;
+    if (!q2_save_u64(io, &rules->frame) || !q2_save_u64(io, &rules->time_ns) ||
+        !q2_save_u64(io, &rules->source_sequence) || !q2_save_bool(io, &rules->command_seen) ||
+        !q2_save_u64(io, &rules->pending_sequence) || !q2_save_bool(io, &rules->command_pending) ||
+        !q2_save_vec(io, &movement.view_angles) || !q2_save_vec(io, &movement.view_offset) ||
+        !q2_save_vec(io, &command_angles) || !q2_save_vec(io, &movement.bounds.mins) ||
+        !q2_save_vec(io, &movement.bounds.maxs)) return false;
+    uint32_t water = (uint32_t)movement.water_type, kind = (uint32_t)movement.state.kind;
+    if (!q2_save_u32(io, &water) || !q2_save_i32(io, &movement.water_level) ||
+        !q2_save_f32(io, &movement.view_height) || !q2_save_u32(io, &kind)) return false;
     qa_q2_game *g = io->game;
-    if (s->state.kind != (g->options.edition == QA_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
-        s->water_level < 0 || s->water_level > 3 || (!s->command_seen && s->source_sequence) ||
-        s->command_pending || s->pending_sequence)
+    if (kind != (uint32_t)(g->options.edition == QA_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
+        movement.water_level < 0 || movement.water_level > 3 ||
+        (!rules->command_seen && rules->source_sequence) || rules->command_pending || rules->pending_sequence)
         return q2_save_fail(io, "Q2 Source pmove continuation has invalid edition or command state");
+    movement.state.kind = (qa_ruleset_id)kind;
     qa_q2_saved_reference ground = {0};
-    uint32_t hit = s->ground.hit, model = s->ground.model;
-    if (!io->reading && !q2_save_reference(g, s->ground.actor, &ground, io->error)) return false;
+    uint32_t hit = movement.ground.hit, model = movement.ground.model;
+    if (!io->reading && !q2_save_reference(g, movement.ground.actor, &ground, io->error)) return false;
     if (!q2_save_u32(io, &hit) || !q2_save_u32(io, &model) || !q2_save_ref(io, &ground)) return false;
     if (hit > QA_TRACE_HIT_ACTOR || ((hit == QA_TRACE_HIT_ACTOR) != ground.present))
         return q2_save_fail(io, "Q2 Source pmove continuation has invalid physical ground");
-    if (io->reading) {
-        const qa_actor_record *record = ground.present ?
-            qa_actors_resolve_saved(qa_session_actors(g->services.session), ground.actor) : NULL;
-        if (ground.present && !record) return q2_save_fail(io, "Q2 Source pmove ground generation retired");
-        s->ground = (qa_movement_ground){.hit = (qa_trace_hit)hit, .model = model,
-            .actor = record ? record->id : (qa_actor_id){0}};
-    }
-    if (s->state.kind == QA_RULESET_Q2_CLASSIC) {
-        qa_q2_movement_state *p = &s->state.data.q2;
-        if (!q2_save_i32(io, &p->type) || !q2_save_u32(io, &p->flags) ||
-            p->type < 0 || p->type > 4 || p->flags > UINT8_MAX) return q2_save_fail(io, "Invalid classic Q2 Source pmove");
+    if (movement.state.kind == QA_RULESET_Q2_CLASSIC) {
+        qa_q2_movement_state *state = &movement.state.data.q2;
+        if (!q2_save_i32(io, &state->type) || !q2_save_u32(io, &state->flags) ||
+            state->type < 0 || state->type > 4 || state->flags > UINT8_MAX)
+            return q2_save_fail(io, "Invalid classic Q2 Source pmove");
         for (size_t i = 0; i < 3; ++i)
-            if (!short_field(io, &p->origin_eighths[i]) || !short_field(io, &p->velocity_eighths[i]) ||
-                !short_field(io, &p->delta_angle_shorts[i])) return false;
-        uint32_t time = p->time_eight_ms;
-        if (!q2_save_u32(io, &time) || time > UINT8_MAX || !short_field(io, &p->gravity))
+            if (!short_field(io, &state->origin_eighths[i]) || !short_field(io, &state->velocity_eighths[i]) ||
+                !short_field(io, &state->delta_angle_shorts[i])) return false;
+        uint32_t time = state->time_eight_ms;
+        if (!q2_save_u32(io, &time) || time > UINT8_MAX || !short_field(io, &state->gravity))
             return q2_save_fail(io, "Invalid classic Q2 Source pmove time");
-        if (io->reading) p->time_eight_ms = (uint8_t)time;
+        if (io->reading) {
+            rules->type = state->type; rules->flags = state->flags; rules->time = time;
+            rules->gravity = state->gravity;
+            memcpy(rules->delta.words, state->delta_angle_shorts, sizeof(rules->delta.words));
+        }
     } else {
-        qa_q2r_movement_state *p = &s->state.data.q2r;
-        if (!q2_save_i32(io, &p->type) || !q2_save_u32(io, &p->flags) || !q2_save_u32(io, &p->time_ms) ||
-            !short_field(io, &p->gravity) || !q2_save_vec(io, &p->origin) || !q2_save_vec(io, &p->velocity) ||
-            !q2_save_vec(io, &p->delta_angles) || !q2_save_f32(io, &p->view_height)) return false;
-        if (p->type < 0 || p->type > 6 || p->flags > UINT16_MAX || p->time_ms > UINT16_MAX ||
-            p->view_height < INT8_MIN || p->view_height > INT8_MAX)
+        qa_q2r_movement_state *state = &movement.state.data.q2r;
+        if (!q2_save_i32(io, &state->type) || !q2_save_u32(io, &state->flags) || !q2_save_u32(io, &state->time_ms) ||
+            !short_field(io, &state->gravity) || !q2_save_vec(io, &state->origin) || !q2_save_vec(io, &state->velocity) ||
+            !q2_save_vec(io, &state->delta_angles) || !q2_save_f32(io, &state->view_height)) return false;
+        if (state->type < 0 || state->type > 6 || state->flags > UINT16_MAX || state->time_ms > UINT16_MAX ||
+            state->view_height < INT8_MIN || state->view_height > INT8_MAX)
             return q2_save_fail(io, "Invalid rerelease Q2 Source pmove");
+        if (io->reading) {
+            rules->type = state->type; rules->flags = state->flags; rules->time = state->time_ms;
+            rules->gravity = state->gravity; rules->delta.angles = state->delta_angles;
+        }
     }
+    if (io->reading) rules->command_angles = command_angles;
+    /* Common motion belongs to QA_SAVE_CONTROLS/QA_SAVE_WORLD. The legacy
+     * duplicate fields above are consumed, not installed in another owner. */
     return true;
 }
-
-
 
 static bool view_fields(q2_save_io *io, qa_q2_wire_view *s)
 {
@@ -161,20 +178,17 @@ bool q2_save_wire(q2_save_io *io)
         seen[record->id.slot] = 1;
         if (io->reading) { actors[slot] = record->id; a->wire_bound = true; a->wire_slot = slot; }
         qa_q2_wire_view value = a->wire_view;
-        qa_q2_wire_movement movement = a->wire_movement;
         qa_q2_wire_lifetime lifetime = a->wire_lifetime;
         uint32_t event = a->wire_event;
         uint64_t event_frame = a->wire_event_frame;
-        ok = view_fields(io, &value) && movement_fields(io, &movement) && lifetime_fields(io, &lifetime, frame) &&
+        ok = view_fields(io, &value) && movement_fields(io, a, player) && lifetime_fields(io, &lifetime, frame) &&
             q2_save_u32(io, &event) && q2_save_u64(io, &event_frame);
         if (ok && ((value.present && (!player || value.frame > frame || value.time_ns > g->now_ns)) ||
             value.view.hit_marker_damage < INT16_MIN || value.view.hit_marker_damage > INT16_MAX ||
-            (movement.present && (!player || movement.frame > frame || movement.time_ns > g->now_ns)) ||
-            (player && !movement.present) || event_frame > frame || event > 255))
+            (player && (a->source_pm.frame > frame || a->source_pm.time_ns > g->now_ns)) || event_frame > frame || event > 255))
             ok = q2_save_fail(io, "Q2 continuation VIEW/event exceeds its actual source publication");
         if (ok && io->reading) {
             a->wire_view = value; a->wire_event = event; a->wire_event_frame = event_frame;
-            a->wire_movement = movement;
             a->wire_lifetime = lifetime;
         }
     }
