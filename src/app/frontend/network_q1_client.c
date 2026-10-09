@@ -497,7 +497,6 @@ static bool complete_configuration(frontend_network_q1_client *o,qa_error *error
     } else if(!qa_nq_connect_create(&o->nq,error)) return false;
     o->attachment=(qa_net_connect){.attachment=o->options.demo_playback ? QA_NET_LOCAL_SEAT : QA_NET_REMOTE,.endpoint=o->options.remote,
         .protocol=o->options.protocol,.seats=&o->binding,.seat_count=1,.composition=physical.source.configuration_generation};
-    if (o->options.demo_playback) o->attachment.endpoint = (qa_net_address){.kind=QA_NET_LOOPBACK};
     o->configured=true; return true;
 }
 bool frontend_network_q1_client_create(const frontend_network_q1_client_options *options,

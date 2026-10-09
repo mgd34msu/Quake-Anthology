@@ -21,6 +21,7 @@
 #include "qa/console_cvars_prepare.h"
 #include "qa/cvars_save.h"
 #include "qa/source_frame_time.h"
+#include "qa/network_save.h"
 #include "qa/application_native_q3_cvars.h"
 #include "qa/q3_product_policy.h"
 #include "qa/input_release.h"
@@ -96,6 +97,23 @@ static bool demo_continuation(const frontend_neutral_config *row)
 {
     qa_frontend *f=row->owner->frontend;
     return frontend_demo_playback_path(frontend_demo_dispatch_service(f->demos,row->physical_seat))!=NULL;
+}
+static const frontend_config_source *local_continuation(const frontend_neutral_config *row,
+    const qa_application_client_source *client,qa_input_seat *live)
+{
+    const qa_net_address *address=qa_network_local_address(client->runtime);
+    if (!address || address->kind!=QA_NET_LOOPBACK) return NULL;
+    qa_application_startup_source game; bool present=false;
+    if (!frontend_config_store_primary_server_read(row->owner->manager,&game,&present,NULL) || !present) return NULL;
+    const frontend_config_source *previous=frontend_config_store_source(row->owner->manager,game.cvars);
+    qa_application_startup_source completed;
+    if (!frontend_config_source_primary(previous) || !frontend_config_source_published(previous) ||
+        !frontend_config_source_tuple(previous,&completed) ||
+        qa_launch_instance_catalog(completed.descriptor)!=qa_launch_instance_catalog(client->descriptor) ||
+        completed.descriptor->selection.product!=client->descriptor->selection.product ||
+        completed.command.dialect!=row->dialect ||
+        frontend_config_source_input(previous,row->command.seat)!=live) return NULL;
+    return previous;
 }
 static bool checkpoint_ready(const frontend_neutral_config *row,qa_error *e)
 {
@@ -529,10 +547,13 @@ static bool install(void *context,const qa_application_client_source *source,boo
             .console=source->context.console,.cvars=row->mouse,.gamepad=*qa_input_seat_gamepad_tuning(live),
             .context_ready=input_context,.context_user=row};
         row->input=qa_input_seat_create(&input,e);
-        row->continuation=demo_continuation(row);
+        const frontend_config_source *local_game=local_continuation(row,source,live);
+        row->continuation=demo_continuation(row) || local_game;
         frontend_authored_bindings **carried=row->owner->continuation+row->physical_seat;
         if (row->continuation) { row->authored=*carried; *carried=NULL; }
         else { frontend_authored_bindings_destroy(*carried); *carried=NULL; }
+        if (local_game && !row->authored &&
+            !frontend_config_source_clone_bindings(local_game,row->command.seat,&row->authored,e)) return false;
         if (row->continuation && !row->authored) {
             qa_console *console=NULL; qa_cvars *registry=NULL; qa_command_context command;
             if (qa_input_seat_recipient_read(live,&console,&registry,&command)) {
