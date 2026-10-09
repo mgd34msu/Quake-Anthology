@@ -67,7 +67,8 @@ bool frontend_content_library_source_read(frontend_seat *seat,frontend_config_fi
     if(cvars)*cvars=source?frontend_config_source_cvars(source):qa_application_cvars(app);
     if(console)*console=source?frontend_config_source_console(source):qa_application_console(app);
     if(!qa_application_capture_command_context(app,&input,command,e))return false;
-    *files=*scripts?frontend_config_files_source_content(*scripts):qa_application_context_files(app,command,NULL);
+    *files=*scripts?frontend_config_files_source_content(*scripts):NULL;
+    if(!*files)*files=qa_application_context_files(app,command,NULL);
     if(!*files) { qa_settings_store store=frontend_config_store_input_store(f->config_store);*files=store.vfs; }
     return *files!=NULL || frontend_fail(e,QA_ERROR_NOT_FOUND,"Library has no admitted source content");
 }
