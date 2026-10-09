@@ -457,7 +457,7 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
     state->children[1] = local;
     qa_net_limits limits = local->limits;
     if (external) {
-        if (external->limits.datagram_bytes < limits.datagram_bytes)
+        if (external->limits.datagram_bytes > limits.datagram_bytes)
             limits.datagram_bytes = external->limits.datagram_bytes;
         if (external->limits.queue_packets > limits.queue_packets)
             limits.queue_packets = external->limits.queue_packets;
