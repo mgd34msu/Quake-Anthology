@@ -546,6 +546,237 @@ static bool rows(qa_source_save_io *io, event_store *store)
     return normalized_rows(io, store) && persistent_rows(io, store);
 }
 
+/* Older files share this signature but retain delivery queues and counters.
+ * Normalize their wire records once, then read the current durable rows. */
+typedef struct event_wire_layout {
+    uint8_t words, durable[7], queues, journal, unified;
+} event_wire_layout;
+static const event_wire_layout event_wire_layouts[] = {
+    {7, {0,1,2,3,4,5,6}, 0, 0, 0},
+    {22, {12,14,15,16,17,19,21}, 1, 8, 11},
+    {20, {10,12,13,14,15,17,19}, 1, 0, 9}
+};
+enum { WIRE_TEXT = -1, WIRE_BLOB = -2, WIRE_ARGUMENTS = -3 };
+
+static bool event_wire_span(qa_source_save_io *io, qa_source_save_io *out, size_t size)
+{
+    qa_bytes bytes;
+    return qa_source_save_span(io, size, &bytes) &&
+        (!out || qa_source_save_bytes(out, (void *)bytes.data, bytes.size));
+}
+static bool event_wire_blob(qa_source_save_io *io)
+{
+    size_t size = 0; qa_bytes bytes;
+    return qa_source_save_count(io, &size, io->input.size - io->offset) &&
+        qa_source_save_span(io, size, &bytes);
+}
+static bool event_wire_text(qa_source_save_io *io)
+{
+    bool present = false;
+    return qa_source_save_bool(io, &present) && (!present || event_wire_blob(io));
+}
+static bool event_wire_arguments(qa_source_save_io *io)
+{
+    size_t count = 0;
+    if (!qa_source_save_count(io, &count, (io->input.size - io->offset) / 5)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t kind = 0;
+        if (!qa_source_save_u32(io, &kind) || kind > QA_BUILTIN_MESSAGE_NUMBER ||
+            !(kind == QA_BUILTIN_MESSAGE_STRING ? event_wire_text(io) : event_wire_span(io, NULL, 8))) return false;
+    }
+    return true;
+}
+static bool event_wire_fields(qa_source_save_io *io, const int *fields)
+{
+    for (; *fields; ++fields) {
+        if (*fields == WIRE_TEXT) { if (!event_wire_text(io)) return false; }
+        else if (*fields == WIRE_BLOB) { if (!event_wire_blob(io)) return false; }
+        else if (*fields == WIRE_ARGUMENTS) { if (!event_wire_arguments(io)) return false; }
+        else if (!event_wire_span(io, NULL, (size_t)*fields)) return false;
+    }
+    return true;
+}
+static bool event_wire_array(qa_source_save_io *io, const int *fields)
+{
+    size_t count = 0;
+    if (!qa_source_save_count(io, &count, io->input.size - io->offset)) return false;
+    for (size_t i = 0; i < count; ++i) if (!event_wire_fields(io, fields)) return false;
+    return true;
+}
+static bool event_wire_audience(qa_source_save_io *io)
+{
+    static const int fields[] = {WIRE_TEXT,WIRE_TEXT,WIRE_TEXT,81,0}, recipient[] = {75,0};
+    bool captured = false;
+    return qa_source_save_bool(io, &captured) && (!captured ||
+        (event_wire_fields(io, fields) && event_wire_array(io, recipient)));
+}
+static bool event_wire_builtin(qa_source_save_io *io)
+{
+    static const int common[] = {WIRE_TEXT,13,13,WIRE_TEXT,WIRE_TEXT,12,12,12,4,4,4,4,4,4,4,4,WIRE_ARGUMENTS};
+    static const int choice[] = {WIRE_TEXT,4,0};
+    uint32_t kind = 0, family = 0, fields = 0, code = 0;
+    if (!qa_source_save_u32(io, &kind) || kind > QA_BUILTIN_Q2_ENTITY_EVENT ||
+        !qa_source_save_u32(io, &family) || family > QA_GAME_Q3 ||
+        !event_wire_span(io, NULL, 8) || !qa_source_save_u32(io, &fields) || (fields & ~UINT32_C(131071))) return false;
+    for (unsigned i = 0; i < 17; ++i) if (fields & (UINT32_C(1) << i)) {
+        if (i == 11) { if (!qa_source_save_u32(io, &code)) return false; }
+        else { int field[] = {common[i],0}; if (!event_wire_fields(io, field)) return false; }
+    }
+    if (family == QA_GAME_Q2 && kind == QA_BUILTIN_MUZZLE) {
+        bool pose = false;
+        if (!qa_source_save_bool(io, &pose) || (pose && !event_wire_span(io, NULL, 16))) return false;
+    }
+    if (family == QA_GAME_Q2 && kind == QA_BUILTIN_ITEM && !code && !event_wire_text(io)) return false;
+    if (kind == QA_BUILTIN_CTF_STATUS && !event_wire_span(io, NULL, 32)) return false;
+    if (kind == QA_BUILTIN_CTF_CAPTURE && !event_wire_span(io, NULL, 9)) return false;
+    if (kind == QA_BUILTIN_Q1_POWERUP && !event_wire_span(io, NULL, 12)) return false;
+    if (kind == QA_BUILTIN_SOURCE_PROMPT && !event_wire_array(io, choice)) return false;
+    return event_wire_audience(io);
+}
+static bool event_wire_q2_map(qa_source_save_io *io)
+{
+    static const int fields[] = {WIRE_TEXT,12,39,WIRE_TEXT,WIRE_TEXT,149,WIRE_ARGUMENTS,0};
+    static const int level[] = {WIRE_TEXT,WIRE_TEXT,28,0};
+    size_t count = 0;
+    if (!event_wire_fields(io, fields) ||
+        !qa_source_save_count(io, &count, io->input.size - io->offset) || !event_wire_span(io, NULL, 8)) return false;
+    for (size_t i = 0; i < count; ++i) if (!event_wire_fields(io, level)) return false;
+    return event_wire_audience(io);
+}
+static bool event_wire_q2_player(qa_source_save_io *io)
+{
+    static const int fields[] = {WIRE_TEXT,12,26,WIRE_TEXT,WIRE_TEXT,96,WIRE_TEXT,WIRE_TEXT,20,WIRE_TEXT,WIRE_TEXT,6,0};
+    static const int score[] = {4,WIRE_TEXT,13,0}, inventory[] = {WIRE_TEXT,20,0};
+    static const int after[] = {32,WIRE_TEXT,34,0}, recipient[] = {54,0};
+    size_t count = 0; bool scores = false, items = false;
+    if (!event_wire_fields(io, fields) ||
+        !qa_source_save_count(io, &count, io->input.size - io->offset) ||
+        !qa_source_save_bool(io, &scores) || !qa_source_save_bool(io, &items)) return false;
+    for (size_t i = 0; scores && i < count; ++i) if (!event_wire_fields(io, score)) return false;
+    for (size_t i = 0; items && i < count; ++i) if (!event_wire_fields(io, inventory)) return false;
+    return event_wire_fields(io, after) && event_wire_array(io, recipient);
+}
+static bool event_wire_protocol(qa_source_save_io *io)
+{
+    static const int fields[] = {WIRE_TEXT,37,WIRE_BLOB,0}, reference[] = {22,0};
+    static const int resource[] = {16,WIRE_TEXT,QA_APPLICATION_RESOURCE_KEY_CAPACITY,8,0};
+    bool q2 = false;
+    return event_wire_fields(io, fields) && event_wire_array(io, reference) && event_wire_array(io, resource) &&
+        event_wire_span(io, NULL, 7) && qa_source_save_bool(io, &q2) &&
+        (!q2 || (event_wire_span(io, NULL, 8) && event_wire_audience(io)));
+}
+static bool event_wire_queues(qa_source_save_io *io, const uint64_t *header, const event_wire_layout *layout)
+{
+    if (!layout->queues) return true;
+    static const int q3[] = {WIRE_TEXT,12,26,WIRE_TEXT,WIRE_TEXT,78,0};
+    for (unsigned queue = 0; queue < 5; ++queue) {
+        uint64_t count = header[layout->queues + queue];
+        if (count > io->input.size - io->offset) return false;
+        for (uint64_t i = 0; i < count; ++i) {
+            bool ok = queue == 0 ? event_wire_builtin(io) : queue == 1 ? event_wire_q2_map(io) :
+                queue == 2 ? event_wire_fields(io, q3) : queue == 3 ? event_wire_q2_player(io) : event_wire_protocol(io);
+            if (!ok) return false;
+        }
+    }
+    uint64_t count = layout->journal ? header[layout->journal] : 0;
+    if (count > (io->input.size - io->offset) / 2) return false;
+    for (uint64_t i = 0; i < count; ++i) {
+        uint8_t queue = 0, clock = 0;
+        if (!qa_source_save_u8(io, &queue) || queue > 4 ||
+            !qa_source_save_u8(io, &clock) || clock > 2 || (clock == 1 && !i)) return false;
+        if (clock == 2 && (!event_wire_text(io) || !event_wire_span(io, NULL, 40))) return false;
+    }
+    return true;
+}
+static bool event_wire_envelope(qa_source_save_io *io, qa_source_save_io *out, bool retired, bool persistent)
+{
+    if (retired && !event_wire_span(io, NULL, 24)) return false;
+    if (!event_wire_span(io, out, 25)) return false;
+    if (retired && !event_wire_span(io, NULL, 8)) return false;
+    if (!event_wire_span(io, out, 25)) return false;
+    if (retired && !event_wire_span(io, NULL, 13)) return false;
+    size_t start = io->offset;
+    if (!event_wire_text(io) || !event_wire_text(io) || !event_wire_span(io, NULL, 5)) return false;
+    if (out && !qa_source_save_bytes(out, (void *)(io->input.data + start), io->offset - start)) return false;
+    if (retired && !event_wire_span(io, NULL, 21)) return false;
+    start = io->offset;
+    if (!event_wire_blob(io)) return false;
+    if (out && !qa_source_save_bytes(out, (void *)(io->input.data + start), io->offset - start)) return false;
+    return !retired || (event_wire_blob(io) && (!persistent || event_wire_blob(io)));
+}
+static bool event_wire_state(qa_source_save_io *io, qa_source_save_io *out,
+    const uint64_t *header, const event_wire_layout *layout)
+{
+    static const int resource[] = {WIRE_TEXT,WIRE_TEXT,WIRE_TEXT,24,QA_APPLICATION_RESOURCE_KEY_CAPACITY,WIRE_TEXT,WIRE_BLOB,0};
+    static const int custody[] = {24,WIRE_TEXT,0}, world_text[] = {WIRE_TEXT,WIRE_TEXT,WIRE_TEXT,64,0};
+    static const int registration[] = {WIRE_TEXT,WIRE_TEXT,20,0}, owner[] = {WIRE_TEXT,WIRE_TEXT,9,0};
+    if (!event_wire_queues(io, header, layout)) return false;
+    uint64_t count = layout->unified ? header[layout->unified] : 0;
+    if (count > (io->input.size - io->offset) / 60) return false;
+    for (uint64_t i = 0; i < count; ++i) if (!event_wire_envelope(io, NULL, true, false)) return false;
+    size_t start = io->offset;
+    count = header[layout->durable[3]];
+    if (count > (io->input.size - io->offset) / 100) return false;
+    for (uint64_t i = 0; i < count; ++i)
+        if (!event_wire_fields(io, resource) || !event_wire_array(io, custody)) return false;
+    count = header[layout->durable[5]];
+    if (count > (io->input.size - io->offset) / 60) return false;
+    for (uint64_t i = 0; i < count; ++i) if (!event_wire_fields(io, world_text)) return false;
+    count = header[layout->durable[4]];
+    if (count > (io->input.size - io->offset) / 13) return false;
+    for (uint64_t i = 0; i < count; ++i) if (!event_wire_fields(io, registration)) return false;
+    if (out && !qa_source_save_bytes(out, (void *)(io->input.data + start), io->offset - start)) return false;
+    count = header[layout->durable[0]];
+    if (count > (io->input.size - io->offset) / 60) return false;
+    for (uint64_t i = 0; i < count; ++i)
+        if (!event_wire_envelope(io, out, layout->queues != 0, true)) return false;
+    start = io->offset;
+    count = header[layout->durable[1]];
+    if (count > (io->input.size - io->offset) / 27) return false;
+    for (uint64_t i = 0; i < count; ++i) if (!event_wire_fields(io, owner)) return false;
+    return (!out || qa_source_save_bytes(out, (void *)(io->input.data + start), io->offset - start)) &&
+        qa_source_save_finish(io, NULL);
+}
+static bool event_wire_import(qa_bytes bytes, const event_wire_layout *layout,
+    qa_source_save_io *out, qa_error *error)
+{
+    qa_source_save_io io = {0}; uint64_t header[22] = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && signature(&io);
+    for (unsigned i = 0; ok && i < layout->words; ++i) ok = qa_source_save_u64(&io, header + i);
+    if (ok && out) {
+        event_store store = {
+            .persistent_count = (size_t)header[layout->durable[0]], .persistent_capacity = (size_t)header[layout->durable[0]],
+            .owner_count = (size_t)header[layout->durable[1]], .owner_capacity = (size_t)header[layout->durable[1]],
+            .owner_generation = header[layout->durable[2]],
+            .resource_count = (size_t)header[layout->durable[3]], .resource_capacity = (size_t)header[layout->durable[3]],
+            .registration_count = (size_t)header[layout->durable[4]], .registration_capacity = (size_t)header[layout->durable[4]],
+            .world_text_count = (size_t)header[layout->durable[5]], .world_text_capacity = (size_t)header[layout->durable[5]],
+            .world_text_map = header[layout->durable[6]]
+        };
+        ok = prefix(out, &store);
+    }
+    if (ok) ok = event_wire_state(&io, out, header, layout);
+    qa_source_save_dispose(&io);
+    return ok;
+}
+static bool event_wire_normalize(qa_bytes bytes, qa_buffer *normalized, qa_error *error)
+{
+    const event_wire_layout *selected = NULL;
+    for (size_t i = 0; i < sizeof(event_wire_layouts) / sizeof(event_wire_layouts[0]); ++i) {
+        qa_error probe = {0};
+        if (!event_wire_import(bytes, event_wire_layouts + i, NULL, &probe)) continue;
+        if (selected) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Ambiguous retained event wire layout"); return false; }
+        selected = event_wire_layouts + i;
+    }
+    if (!selected) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained event wire extent"); return false; }
+    if (selected == event_wire_layouts) return true;
+    qa_source_save_io out = {0};
+    bool ok = qa_source_save_writer(&out, NULL, error) && event_wire_import(bytes, selected, &out, error) &&
+        qa_source_save_finish(&out, normalized);
+    qa_source_save_dispose(&out);
+    return ok;
+}
+
 static bool leased(qa_application *app, qa_error *error)
 {
     if (!app || app->operation != APPLICATION_PERSISTING || !app->session ||
@@ -702,6 +933,9 @@ static void install_store(qa_application *app, event_store *store)
 bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
     if (!leased(app, error)) return false;
+    qa_buffer normalized = {0};
+    if (!event_wire_normalize(bytes, &normalized, error)) return false;
+    if (normalized.data) bytes = (qa_bytes){normalized.data, normalized.size};
     qa_application staging = *app;
     staging.event_pages = NULL;
     staging.event_write = NULL;
@@ -713,6 +947,7 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     bool ok = qa_source_save_reader(&io, app->session, bytes, error) && prefix(&io, &store) &&
         allocate_store(&io, &store) && rows(&io, &store) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    qa_buffer_free(&normalized);
     if (ok) ok = resource_bindings(&store, app, error);
     if (ok) install_store(app, &store);
     dispose_store(&store);
