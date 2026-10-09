@@ -378,7 +378,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     if (!row->media_ready || !frame) return true;
     qa_movement_kind kind = remote_q2_float_movement(row) ? QA_MOVEMENT_Q2_RERELEASE : QA_MOVEMENT_Q2_CLASSIC;
     qa_input_command_tuning tuning;
-    if (!qa_input_settings_read(row->options.domain.cvars, kind, &tuning, error)) return false;
+    if (!qa_input_settings_read(row->options.domain.cvars, row->options.domain.cvars, &row->input_tuning, kind, &tuning, error)) return false;
     qa_vec3 delta = frame->player.pmove.float_delta_angles ? vector(frame->player.pmove.delta_angles_f) :
         qa_v3(frame->player.pmove.delta_angles[0] * (360.0f / 65536), frame->player.pmove.delta_angles[1] * (360.0f / 65536),
             frame->player.pmove.delta_angles[2] * (360.0f / 65536));

@@ -17,6 +17,7 @@ typedef struct frontend_remote_config_view {
     qa_movement_kind movement;
     bool ready,published;
     const qa_source_frame_time_binding *frame_time;
+    const qa_input_tuning_handles *q3_input_tuning,*movement_input_tuning;
 } frontend_remote_config_view;
 
 frontend_remote_configs *frontend_remote_configs_create(qa_frontend *,frontend_config_store *,qa_error *);

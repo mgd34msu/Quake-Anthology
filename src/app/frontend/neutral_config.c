@@ -46,6 +46,7 @@ struct frontend_neutral_config {
     qa_input_seat *retirement_input;
     qa_input_release *retirement_release;
     qa_cvars *client, *mouse, *movement;
+    qa_input_tuning_handles input_tuning;
     qa_cvar_archive client_archive, mouse_archive, movement_archive, shared_archive;
     qa_seat_settings settings;
     char *saved_instance;
@@ -501,9 +502,11 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     row->mouse=qa_cvars_create_view(client,&options,e);
     if (qa_movement_console_dialect(row->kind)==row->dialect) row->movement=client;
     else { options.dialect=qa_movement_console_dialect(row->kind); row->movement=qa_cvars_create_view(client,&options,e); }
-    return row->mouse && row->movement &&
+    bool ok=row->mouse && row->movement &&
         qa_input_mouse_settings_register(row->mouse,row->kind,e) &&
         qa_input_movement_settings_register(row->movement,row->kind,e);
+    if (ok) qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
+    return ok;
 }
 static bool restore_settings_view(frontend_neutral_config *row,qa_cvars **saved,
     qa_console_dialect dialect,bool mouse,qa_error *e)
@@ -548,6 +551,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
             if (!qa_input_movement_settings_register(row->client,row->kind,e)) return false;
             row->movement=row->client;
         } else if (!restore_settings_view(row,&row->movement,qa_movement_console_dialect(row->kind),false,e)) return false;
+        qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
         row->imported=false;
     }
     const qa_launch_instance *held=descriptor(row);
@@ -1027,6 +1031,7 @@ bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *owner,cons
         if (!ok) { if (next!=row->client) qa_cvars_destroy(next); return false; }
         if (row->movement!=row->client) qa_cvars_destroy(row->movement);
         row->movement=next; row->kind=movement; row->movement_selected=true; ++row->namespace_revision;
+        qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
         return true;
     }
     return fail(e,QA_ERROR_NOT_FOUND,"No actual neutral CLIENT owns movement adoption");
@@ -1044,7 +1049,8 @@ bool frontend_neutral_config_read(const frontend_neutral_configs *owner,const qa
         settings_source(row,&actual);
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,
             .mouse=row->mouse,.movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
-            .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true};
+            .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true,
+            .input_tuning=&row->input_tuning};
         return true;
     }
     return fail(e,QA_ERROR_NOT_FOUND,"No neutral configuration owns this CLIENT cvar view");
@@ -1100,7 +1106,8 @@ bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *own
         }
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,.mouse=row->mouse,
             .movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
-            .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true};
+            .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true,
+            .input_tuning=&row->input_tuning};
         return true;
     }
     return fail(e,QA_ERROR_NOT_FOUND,"No retained neutral namespace owns this checkpoint cvar view");

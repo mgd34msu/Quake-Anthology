@@ -200,6 +200,12 @@ typedef struct qa_input_command_tuning {
     qa_mouse_tuning mouse;
     float drift_speed, drift_delay;
 } qa_input_command_tuning;
+typedef struct qa_input_tuning_handles {
+    qa_cvar_handle sensitivity, acceleration, filter, yaw, pitch, side, forward;
+    qa_cvar_handle free_look, look_spring, look_strafe, drift_speed, drift_delay, always_run;
+    qa_cvar_handle forward_speed, back_speed, side_speed, up_speed;
+    qa_cvar_handle yaw_speed, pitch_speed, angle_multiplier, move_multiplier;
+} qa_input_tuning_handles;
 /* Physical moves use power-of-two units so normalization loses no source
  * bits. Directional sources supply a local unit direction and source speed. */
 typedef struct qa_input_move_intent { double x, y, z; } qa_input_move_intent;
@@ -463,11 +469,13 @@ bool qa_input_seat_impulse(qa_input_seat *, const char *, qa_error *);
  * may alias for a composed registry; no other registry is consulted. */
 bool qa_input_mouse_settings_register(qa_cvars *, qa_movement_kind selected, qa_error *);
 bool qa_input_movement_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
-bool qa_input_settings_read_routed(const qa_cvars *mouse, const qa_cvars *movement,
-                                   qa_movement_kind, qa_input_command_tuning *, qa_error *);
 bool qa_input_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
-bool qa_input_settings_read(const qa_cvars *, qa_movement_kind, qa_input_command_tuning *,
-                            qa_error *);
+/* Bind once for the actual mouse and movement registry views after registration
+ * or replacement. Scalar changes are projected by the common cvar store. */
+void qa_input_settings_bind(const qa_cvars *mouse, const qa_cvars *movement,
+    qa_input_tuning_handles *);
+bool qa_input_settings_read(const qa_cvars *mouse, const qa_cvars *movement,
+    const qa_input_tuning_handles *, qa_movement_kind, qa_input_command_tuning *, qa_error *);
 bool qa_input_mouse_settings_write(qa_cvars *, const qa_mouse_tuning *, qa_error *);
 bool qa_input_device_settings_register(qa_cvars *, qa_error *);
 bool qa_input_bindings_config(const qa_input_seat *, bool controllers, qa_buffer *, qa_error *);

@@ -64,7 +64,7 @@ bool frontend_remote_input_build(frontend_remote_input *input, const qa_seat_inp
     }
     qa_input_command_tuning tuning;
     qa_movement_command command;
-    if (!qa_input_settings_read_routed(source.input_settings, source.movement_settings, QA_MOVEMENT_Q3, &tuning, error) ||
+    if (!qa_input_settings_read(source.input_settings, source.movement_settings, source.input_tuning, QA_MOVEMENT_Q3, &tuning, error) ||
         !qa_input_command_build(&next, &tuning, sample, &source.frame, source_frame_ms, &command, error)) return false;
     if (!input->options.source_current(input->options.context, &source))
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 receiver retired while building physical input");

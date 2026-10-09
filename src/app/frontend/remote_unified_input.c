@@ -158,7 +158,7 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
     frontend_unified_prediction_view snapshot;
     qa_input_command_tuning tuning;
     if(!frontend_remote_unified_prediction_snapshot(p->prediction,&snapshot,e) ||
-        !qa_input_settings_read_routed(p->configuration.mouse,p->configuration.movement,p->builder.kind,&tuning,e)) return false;
+        !qa_input_settings_read(p->configuration.mouse,p->configuration.movement,p->configuration.input_tuning,p->builder.kind,&tuning,e)) return false;
     bool acknowledged=p->submitted && snapshot.sequence>=0 && (uint64_t)snapshot.sequence>=p->last_sequence;
     double baseline=snapshot.command_time_ms;
     double duration=p->builder.kind==QA_MOVEMENT_NETQUAKE || p->builder.kind==QA_MOVEMENT_Q3?

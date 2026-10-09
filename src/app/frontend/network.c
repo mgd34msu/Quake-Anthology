@@ -3520,6 +3520,7 @@ static bool client_input_source_read(void *context, frontend_remote_input_source
     out->connection = n->q3_client; out->epoch = n->q3_client_epoch;
     out->input_settings = configuration.q3_mouse;
     out->movement_settings = configuration.q3_view;
+    out->input_tuning = configuration.q3_input_tuning;
     out->media_owner = n->q3_client_content;
     qa_vec3 delta = qa_v3((float)(uint16_t)snapshot->player.deltaAngles[0] * (360.0f / 65536.0f),
         (float)(uint16_t)snapshot->player.deltaAngles[1] * (360.0f / 65536.0f),
@@ -3600,6 +3601,7 @@ bool frontend_network_prediction_input_read(const qa_frontend *f,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Prediction input lost its actual retained source command and settings");
     out->connection=n->q3_client; out->epoch=n->q3_client_epoch;
     out->input_settings=configuration.q3_mouse; out->movement_settings=configuration.q3_view;
+    out->input_tuning=configuration.q3_input_tuning;
     out->media_owner=n->q3_client_content;
     out->frame=(qa_input_command_frame){.kind=QA_MOVEMENT_Q3,.sequence=number,
         .server_time_ms=n->q3_client_time,.weapon=command->weapon};
@@ -7500,6 +7502,7 @@ bool frontend_network_restore_prediction_input_read(const qa_frontend *f,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Imported input lost its actual retained raw ring and CLIENT settings");
     out->connection=domain.connection; out->epoch=domain.epoch; out->receiver=domain.source.receiver;
     out->input_settings=configuration.q3_mouse; out->movement_settings=configuration.q3_view;
+    out->input_tuning=configuration.q3_input_tuning;
     out->media_owner=n->q3_clients[0].q3_client_content;
     out->frame=(qa_input_command_frame){.kind=QA_MOVEMENT_Q3,.sequence=number,
         .server_time_ms=n->q3_clients[0].q3_client_time,.weapon=command->weapon};

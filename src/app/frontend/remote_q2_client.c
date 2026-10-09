@@ -171,6 +171,7 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
 {
     qa_cvars *registry=row->options.domain.cvars;
     if (row->cvar_handles.registry==registry) return;
+    qa_input_settings_bind(registry,registry,&row->input_tuning);
     row->cvar_handles=(remote_q2_cvar_handles){.registry=registry,
         .ch_alpha=qa_cvars_resolve(registry,"ch_alpha"),
         .ch_scale=qa_cvars_resolve(registry,"ch_scale"),

@@ -49,6 +49,7 @@ struct frontend_remote_config {
     qa_cvars *hosted_cvars;
     qa_cvars *owned,*cvars,*q3_mouse,*q3_view,*movement_mouse;
     qa_source_frame_time_binding frame_time;
+    qa_input_tuning_handles q3_input_tuning,movement_input_tuning;
     frontend_client_registry *registry;
     frontend_key_profile *keys;
     frontend_config_files *files;
@@ -185,7 +186,8 @@ bool frontend_remote_config_read(const frontend_remote_config *row,frontend_remo
         frontend_client_registry_cvars(row->registry)!=row->cvars) return false;
     *out=(frontend_remote_config_view){row,descriptor(row),row->scope,row->console,row->cvars,
         row->q3_mouse,row->q3_view,row->movement_mouse,row->keys,row->physical_seat,row->movement,
-        row->configured && row->released,row->published,&row->frame_time}; return true;
+        row->configured && row->released,row->published,&row->frame_time,
+        &row->q3_input_tuning,&row->movement_input_tuning}; return true;
 }
 bool frontend_remote_config_current(const frontend_remote_config *row,const frontend_remote_config_view *view)
 {
@@ -717,6 +719,8 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
             (row->movement_mouse!=row->q3_view && !copy_registry(row->movement_mouse,old->movement_mouse,error)))) return false;
     }
     qa_source_frame_time_bind(row->cvars,&row->frame_time);
+    qa_input_settings_bind(row->q3_mouse,row->q3_view,&row->q3_input_tuning);
+    qa_input_settings_bind(row->q3_mouse,row->movement_mouse,&row->movement_input_tuning);
     if (!qa_application_capture_command_context(application,&row->command,&row->command,error)) return false;
     row->input=frontend_config_store_candidate_input(owner->manager,application,candidate,(unsigned)ordinal);
     if (!row->input && !clone_input(row,f->seats[ordinal].input,error)) return false;
@@ -1053,6 +1057,8 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     if (!row->input) return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding lost its actual GAME input owner");
     if (!install_commands(row,error)) return false;
     qa_source_frame_time_bind(row->cvars,&row->frame_time);
+    qa_input_settings_bind(row->q3_mouse,row->q3_view,&row->q3_input_tuning);
+    qa_input_settings_bind(row->q3_mouse,row->movement_mouse,&row->movement_input_tuning);
     row->configured=row->released=true; *out=row->cvars; return true;
 }
 void frontend_remote_config_publish_hosted(frontend_remote_configs *owner,qa_application *application,
@@ -1347,6 +1353,8 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
     }
     if (!install_commands(row,error)) return false;
     qa_source_frame_time_bind(row->cvars,&row->frame_time);
+    qa_input_settings_bind(row->q3_mouse,row->q3_view,&row->q3_input_tuning);
+    qa_input_settings_bind(row->q3_mouse,row->movement_mouse,&row->movement_input_tuning);
     row->imported=false; return true;
 }
 bool frontend_remote_configs_finish_restore(frontend_remote_configs *owner,qa_error *error)

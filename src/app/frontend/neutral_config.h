@@ -15,6 +15,7 @@ typedef struct frontend_neutral_config_view {
     const frontend_neutral_config *owner;
     qa_application_client_source source;
     qa_cvars *client, *mouse, *movement;
+    const qa_input_tuning_handles *input_tuning;
     qa_movement_kind kind;
     uint32_t physical_seat;
     uint64_t namespace_revision;

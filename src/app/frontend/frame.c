@@ -348,7 +348,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         if (!input_settings || !view_settings || configured_kind!=kind)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Player input lacks its actual published source settings and movement profile");
         if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
-            !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
+            !qa_input_settings_read(input_settings, view_settings, configuration.movement_input_tuning, kind, &tuning, error)) return false;
         if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
         uint64_t command_time=frontend->time_ns;
         uint32_t server_time_word=(uint32_t)(command_time / UINT64_C(1000000));

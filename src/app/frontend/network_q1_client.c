@@ -975,7 +975,7 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
         .acknowledged_server_seconds=received.seconds,.has_pitch_drift=true,
         .grounded=player.grounded,.ideal_pitch=player.ideal_pitch,.drift_disabled=player.pitch_drift_disabled};
     if(!qa_input_command_angles(&next,player.angles,error) ||
-        !qa_input_settings_read_routed(settings.mouse,settings.movement,next.kind,&tuning,error)) return false;
+        !qa_input_settings_read(settings.mouse,settings.movement,settings.input_tuning,next.kind,&tuning,error)) return false;
     if(o->input_center) qa_input_command_center(&next,0);
     if(!qa_input_command_build(&next,&tuning,sample,&frame,source_frame_ms,&movement,error) ||
         !frontend_remote_q1_current(&received) || !frontend_remote_q1_source_current(&source) ||

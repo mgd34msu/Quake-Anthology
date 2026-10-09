@@ -90,6 +90,7 @@ struct frontend_remote_q2 {
     qa_frontend *frontend;
     frontend_remote_q2_options options;
     remote_q2_cvar_handles cvar_handles;
+    qa_input_tuning_handles input_tuning;
     uint64_t identity, loading_generation, content_generation, received_ns, sample_ns;
     uint32_t acknowledged;
     remote_q2_sent_command sent[64];

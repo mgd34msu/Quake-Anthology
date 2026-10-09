@@ -16,6 +16,7 @@ typedef struct frontend_remote_input_source {
     /* Actual Q3-view speed registry. Foreign selected movement may have a
      * distinct view owner while both builders share this same mouse owner. */
     const qa_cvars *movement_settings;
+    const qa_input_tuning_handles *input_tuning;
     /* Actual completed native CLIENT content/media owner. Acquired modules
      * complete their own Init while the physical native receiver stays cold. */
     const void *media_owner;
