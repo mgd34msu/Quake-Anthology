@@ -39,6 +39,8 @@ find_package(CURL 7.85 REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc i18n)
 find_package(Freetype REQUIRED)
 find_package(Threads REQUIRED)
+option(QA_ALLOCATION_GATE "Measure engine-owned frame heap calls with ELF link-time wrapping" OFF)
+
 find_package(SDL2 2.0.18 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
@@ -56,6 +58,16 @@ add_library(qa_core STATIC
 target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
+if(QA_ALLOCATION_GATE)
+    if(NOT UNIX OR APPLE OR NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "QA_ALLOCATION_GATE requires an ELF GNU or LLVM linker")
+    endif()
+    target_sources(qa_core PRIVATE src/core/allocation_gate.c)
+    target_compile_definitions(qa_core PUBLIC QA_ALLOCATION_GATE=1)
+    target_link_options(qa_core INTERFACE
+        "LINKER:--wrap=malloc" "LINKER:--wrap=calloc"
+        "LINKER:--wrap=realloc" "LINKER:--wrap=free")
+endif()
 
 add_library(qa_platform_events STATIC src/platform/events.c)
 target_link_libraries(qa_platform_events PUBLIC qa_core)

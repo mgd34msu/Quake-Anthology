@@ -40,6 +40,9 @@
 #include "qa/text.h"
 #include "qa/game_domains.h"
 #include <stdio.h>
+#ifdef QA_ALLOCATION_GATE
+#include "qa/allocation_gate.h"
+#endif
 
 static bool pause_flag(frontend_pause_cvars *binding,qa_cvars *cvars,uint64_t owner,
     bool server,bool paused,qa_error *error)
@@ -1016,21 +1019,29 @@ bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
     qa_error *fault = error ? error : &local;
     bool playing = false;
     uint64_t frame = frontend ? frontend->frame_number : 0;
+#ifdef QA_ALLOCATION_GATE
+    qa_allocation_gate_begin();
+#endif
     bool ok=frontend_step(frontend,elapsed_ns,NULL,&playing,fault);
-    if (ok) return true;
+    if (ok) goto completed;
     frontend_save_commands_recovery_abandon(frontend);
     if (!playing || qa_application_should_stop(frontend->application) ||
-        qa_application_startup_pending(frontend->application)) return false;
-    if (!qa_profiler_idle(qa_tools_profiler(frontend_tools_owner(frontend)))) return false;
+        qa_application_startup_pending(frontend->application)) goto completed;
+    if (!qa_profiler_idle(qa_tools_profiler(frontend_tools_owner(frontend)))) goto completed;
     qa_error cleanup = {0};
     if (!frontend_frame_cancel(frontend, &cleanup)) {
         if (error) *error = cleanup;
-        return false;
+        goto completed;
     }
     qa_application_feature_report(frontend->application, "frontend frame", fault);
     if (frontend->frame_number == frame) ++frontend->frame_number;
     *fault = (qa_error){0};
-    return true;
+    ok = true;
+completed:
+#ifdef QA_ALLOCATION_GATE
+    (void)qa_allocation_gate_end(playing, ok);
+#endif
+    return ok;
 }
 
 bool frontend_replay_frame(qa_frontend *frontend,const frontend_replay_timing *timing,qa_error *error)

@@ -1,4 +1,7 @@
 #include "source_prompt.h"
+#ifdef QA_ALLOCATION_GATE
+#include "qa/allocation_gate.h"
+#endif
 #include "component_scene.h"
 #include "visual_access.h"
 #include "source_cinematics.h"
@@ -1021,5 +1024,8 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
     }
     if (previous_int != SIG_ERR) signal(SIGINT, previous_int);
     if (previous_term != SIG_ERR) signal(SIGTERM, previous_term);
+#ifdef QA_ALLOCATION_GATE
+    qa_allocation_gate_report();
+#endif
     return ok;
 }
