@@ -48,6 +48,7 @@ struct frontend_remote_config {
     qa_console *console;
     qa_cvars *hosted_cvars;
     qa_cvars *owned,*cvars,*q3_mouse,*q3_view,*movement_mouse;
+    qa_source_frame_time_binding frame_time;
     frontend_client_registry *registry;
     frontend_key_profile *keys;
     frontend_config_files *files;
@@ -184,7 +185,7 @@ bool frontend_remote_config_read(const frontend_remote_config *row,frontend_remo
         frontend_client_registry_cvars(row->registry)!=row->cvars) return false;
     *out=(frontend_remote_config_view){row,descriptor(row),row->scope,row->console,row->cvars,
         row->q3_mouse,row->q3_view,row->movement_mouse,row->keys,row->physical_seat,row->movement,
-        row->configured && row->released,row->published}; return true;
+        row->configured && row->released,row->published,&row->frame_time}; return true;
 }
 bool frontend_remote_config_current(const frontend_remote_config *row,const frontend_remote_config_view *view)
 {
@@ -715,6 +716,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
             !copy_registry(row->q3_view,old->q3_view,error) ||
             (row->movement_mouse!=row->q3_view && !copy_registry(row->movement_mouse,old->movement_mouse,error)))) return false;
     }
+    qa_source_frame_time_bind(row->cvars,&row->frame_time);
     if (!qa_application_capture_command_context(application,&row->command,&row->command,error)) return false;
     row->input=frontend_config_store_candidate_input(owner->manager,application,candidate,(unsigned)ordinal);
     if (!row->input && !clone_input(row,f->seats[ordinal].input,error)) return false;
@@ -1050,6 +1052,7 @@ bool frontend_remote_config_bind_hosted(frontend_remote_configs *owner,qa_applic
     row->input=frontend_config_source_input(game,row->scope.seat);
     if (!row->input) return fail(error,QA_ERROR_ARGUMENT,"Hosted CLIENT binding lost its actual GAME input owner");
     if (!install_commands(row,error)) return false;
+    qa_source_frame_time_bind(row->cvars,&row->frame_time);
     row->configured=row->released=true; *out=row->cvars; return true;
 }
 void frontend_remote_config_publish_hosted(frontend_remote_configs *owner,qa_application *application,
@@ -1343,6 +1346,7 @@ bool frontend_remote_config_bind_restored(frontend_remote_configs *owner,qa_appl
         if (!frontend_key_profile_bind(row->keys,row->cvars,&refs,error)) return false;
     }
     if (!install_commands(row,error)) return false;
+    qa_source_frame_time_bind(row->cvars,&row->frame_time);
     row->imported=false; return true;
 }
 bool frontend_remote_configs_finish_restore(frontend_remote_configs *owner,qa_error *error)

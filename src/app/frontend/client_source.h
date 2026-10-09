@@ -7,6 +7,7 @@
 #include "qa/application_client_prepare.h"
 #include "qa/console_save.h"
 #include "qa/persistence_content.h"
+#include "qa/source_frame_time.h"
 
 typedef struct frontend_client_source frontend_client_source;
 bool frontend_client_source_descriptor_equal(const qa_launch_instance *, const qa_launch_instance *);
@@ -45,6 +46,7 @@ typedef struct frontend_client_source_view {
     const frontend_client_source *owner;
     qa_application_client_source source;
     bool ready;
+    const qa_source_frame_time_binding *frame_time;
 } frontend_client_source_view;
 /* Partial construction is linked and returned before fallible acquisitions.
  * The caller keeps that owner reachable until checked destruction succeeds. */

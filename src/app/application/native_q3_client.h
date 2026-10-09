@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NATIVE_Q3_CLIENT_PRIVATE_H
 #include "qa/application_native_q3_client.h"
 #include "qa/source_save.h"
+#include "qa/source_frame_time.h"
 
 typedef struct native_client_definition {
     const char *symbol, *name, *value;
@@ -13,6 +14,7 @@ typedef struct native_client_definition {
 struct qa_native_q3_client_service {
     qa_application *application;
     qa_native_q3_client_services services;
+    qa_source_frame_time_binding frame_time;
     qa_native_q3_character_selection character;
     qa_launch_instance_lease *source_lease;
     const qa_q3_game *source_game;

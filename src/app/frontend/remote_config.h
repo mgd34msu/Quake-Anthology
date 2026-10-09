@@ -2,6 +2,7 @@
 #define QA_FRONTEND_REMOTE_CONFIG_H
 #include "config_store.h"
 #include "qa/application_q3_factory.h"
+#include "qa/source_frame_time.h"
 
 typedef struct frontend_remote_configs frontend_remote_configs;
 typedef struct frontend_remote_config frontend_remote_config;
@@ -15,6 +16,7 @@ typedef struct frontend_remote_config_view {
     uint32_t physical_seat;
     qa_movement_kind movement;
     bool ready,published;
+    const qa_source_frame_time_binding *frame_time;
 } frontend_remote_config_view;
 
 frontend_remote_configs *frontend_remote_configs_create(qa_frontend *,frontend_config_store *,qa_error *);

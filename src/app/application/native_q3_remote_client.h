@@ -6,6 +6,7 @@
 
 struct qa_native_q3_remote_client_service {
     qa_native_q3_remote_client_services services;
+    qa_source_frame_time_binding frame_time;
     qa_native_q3_character_selection character;
     qa_launch_instance_lease *descriptor;
     application_provider *provider;

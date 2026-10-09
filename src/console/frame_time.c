@@ -48,24 +48,40 @@ bool qa_source_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *er
         (dialect != QA_CONSOLE_Q3 || register_control(cvars, "com_cameraMode", "0", cheat, owner, error));
 }
 
-bool qa_source_frame_time_controls_read(const qa_cvars *cvars,
+void qa_source_frame_time_bind(const qa_cvars *cvars, qa_source_frame_time_binding *binding)
+{
+    *binding = (qa_source_frame_time_binding){.cvars = cvars,
+        .timescale = qa_cvars_resolve(cvars, "timescale"),
+        .fixedtime = qa_cvars_resolve(cvars, "fixedtime"),
+        .host_framerate = qa_cvars_resolve(cvars, "host_framerate"),
+        .camera_mode = qa_cvars_resolve(cvars, "com_cameraMode"),
+        .maximum_fps = qa_cvars_resolve(cvars, "cl_maxfps"),
+        .rate = qa_cvars_resolve(cvars, "rate"),
+        .server_minimum_seconds = qa_cvars_resolve(cvars, "sv_mintic"),
+        .server_maximum_seconds = qa_cvars_resolve(cvars, "sv_maxtic"),
+        .dedicated = qa_cvars_resolve(cvars, "dedicated"),
+        .capture_fps = qa_cvars_resolve(cvars, "cl_avidemo")};
+}
+
+bool qa_source_frame_time_controls_read(const qa_source_frame_time_binding *binding,
     qa_source_frame_time_controls *out, qa_error *error)
 {
+    const qa_cvars *cvars = binding ? binding->cvars : NULL;
     if (!cvars || !out || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame controls require an actual source registry and output");
     qa_source_frame_time_controls controls = {.timescale = 1, .rate = 2500,
         .server_minimum_seconds = .03f, .server_maximum_seconds = .1f};
     const qa_cvar_view *view;
-    if ((view = qa_cvars_find(cvars, "timescale"))) controls.timescale = view->number;
-    if ((view = qa_cvars_find(cvars, "fixedtime")))
+    if ((view = qa_cvars_read(cvars, binding->timescale))) controls.timescale = view->number;
+    if ((view = qa_cvars_read(cvars, binding->fixedtime)))
         controls.fixedtime = qa_cvars_dialect(cvars) == QA_CONSOLE_Q3 ||
             qa_cvars_dialect(cvars) == QA_CONSOLE_Q2_RERELEASE ? (double)view->integer : (double)view->number;
-    if ((view = qa_cvars_find(cvars, "host_framerate"))) controls.host_framerate = view->number;
-    if ((view = qa_cvars_find(cvars, "com_cameraMode"))) controls.camera_mode = view->integer;
-    if ((view = qa_cvars_find(cvars, "cl_maxfps"))) controls.maximum_fps = view->number;
-    if ((view = qa_cvars_find(cvars, "rate"))) controls.rate = view->number;
-    if ((view = qa_cvars_find(cvars, "sv_mintic"))) controls.server_minimum_seconds = view->number;
-    if ((view = qa_cvars_find(cvars, "sv_maxtic"))) controls.server_maximum_seconds = view->number;
+    if ((view = qa_cvars_read(cvars, binding->host_framerate))) controls.host_framerate = view->number;
+    if ((view = qa_cvars_read(cvars, binding->camera_mode))) controls.camera_mode = view->integer;
+    if ((view = qa_cvars_read(cvars, binding->maximum_fps))) controls.maximum_fps = view->number;
+    if ((view = qa_cvars_read(cvars, binding->rate))) controls.rate = view->number;
+    if ((view = qa_cvars_read(cvars, binding->server_minimum_seconds))) controls.server_minimum_seconds = view->number;
+    if ((view = qa_cvars_read(cvars, binding->server_maximum_seconds))) controls.server_maximum_seconds = view->number;
     *out = controls;
     return true;
 }
@@ -147,21 +163,21 @@ bool qa_source_frame_time_transform(qa_console_dialect dialect, double supplied_
     return true;
 }
 
-bool qa_source_frame_time_sample(const qa_cvars *cvars, double supplied_milliseconds,
+bool qa_source_frame_time_sample(const qa_source_frame_time_binding *binding, double supplied_milliseconds,
     bool dedicated, bool local_server, double *out, qa_error *error)
 {
     qa_source_frame_time_controls controls;
-    return qa_source_frame_time_controls_read(cvars, &controls, error) &&
-        qa_source_frame_time_transform(qa_cvars_dialect(cvars), supplied_milliseconds,
+    return qa_source_frame_time_controls_read(binding, &controls, error) &&
+        qa_source_frame_time_transform(qa_cvars_dialect(binding->cvars), supplied_milliseconds,
             &controls, dedicated, local_server, out, error);
 }
 
-bool qa_source_frame_time_admit(const qa_cvars *cvars, uint64_t pending_ns,
+bool qa_source_frame_time_admit(const qa_source_frame_time_binding *binding, uint64_t pending_ns,
     bool server, bool *accepted, uint64_t *source_ns, qa_error *error)
 {
     qa_source_frame_time_controls controls;
-    if (!accepted || !source_ns || !qa_source_frame_time_controls_read(cvars, &controls, error)) return false;
-    qa_console_dialect dialect = qa_cvars_dialect(cvars);
+    if (!accepted || !source_ns || !qa_source_frame_time_controls_read(binding, &controls, error)) return false;
+    qa_console_dialect dialect = qa_cvars_dialect(binding->cvars);
     if (!q1_dialect(dialect))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "host admission requires an actual Q1 registry");
     double seconds = (double)pending_ns / 1000000000.0;

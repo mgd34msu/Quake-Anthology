@@ -213,6 +213,7 @@ bool native_remote_client_allocate(qa_native_q3_remote_client_services *services
     qa_native_q3_remote_client_service *service = calloc(1, sizeof(*service));
     if (!service) return native_client_fail(error, QA_ERROR_MEMORY, "Retaining remote native CGAME service");
     service->services = *services; service->character = *character; service->overlay_initial = true;
+    qa_source_frame_time_bind(services->basis.client.cvars,&service->frame_time);
     service->provider = receiver(basis->application, basis->client.receiver);
     if (!qa_launch_instance_retain_metadata(basis->descriptor, &service->descriptor, error)) { free(service); return false; }
     service->services.basis.descriptor = qa_launch_instance_lease_view(service->descriptor);
@@ -462,5 +463,5 @@ bool qa_native_q3_remote_client_frame_time(qa_native_q3_remote_client_service *s
 {
     if (!out || !qa_native_q3_remote_client_current(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote elapsed time lost its real CLIENT registry");
-    return qa_source_frame_time_sample(service->services.basis.client.cvars, supplied, false, false, out, error);
+    return qa_source_frame_time_sample(&service->frame_time, supplied, false, false, out, error);
 }

@@ -14,6 +14,7 @@ struct frontend_network_q2_client {
     frontend_remote_q2_source *source;
     qa_application_client_source application_source;
     frontend_remote_q2_domain domain;
+    qa_source_frame_time_binding frame_time;
     qa_actor_owner receiver;
     qa_net_seat_binding binding;
     qa_q2_client_admission admission;
@@ -140,6 +141,7 @@ static bool configure(void *context,const qa_launch_instance *descriptor,qa_cvar
     for(size_t i=0;i<sizeof(permissions)/sizeof(*permissions);++i)
         if(!qa_cvars_register(cvars,permissions[i],"1",QA_CVAR_ARCHIVE,owner->receiver,"",error)) return false;
     owner->domain.console=console; owner->domain.cvars=cvars;
+    qa_source_frame_time_bind(cvars,&owner->frame_time);
     owner->domain.command_context.cvar_view=qa_cvars_view_identity(cvars);
     qa_application_client_options options={.descriptor=descriptor,.receiver=owner->receiver,
         .seat=owner->domain.command_context.seat,.physical_seat=owner->options.physical_seat,
@@ -536,6 +538,8 @@ bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_
         source->configuration_generation==held->configuration_generation &&
         qa_net_client_id_equal(source->client,held->client) && source->connection_epoch==held->connection_epoch;
 }
+const qa_source_frame_time_binding *frontend_network_q2_client_frame_time(const frontend_network_q2_client *owner)
+{ return owner ? &owner->frame_time : NULL; }
 bool frontend_network_q2_client_configuration_read(const frontend_network_q2_client *owner,
     qa_application_client_source *out,bool *ready,qa_error *error)
 {

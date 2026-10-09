@@ -6,6 +6,7 @@
 #include "qa/application_client.h"
 #include "qa/application_client_save.h"
 #include "qa/network_q2_kex.h"
+#include "qa/source_frame_time.h"
 typedef struct frontend_network_q2_client frontend_network_q2_client;
 typedef struct frontend_network_q2_client_options {
     qa_frontend *frontend;
@@ -43,6 +44,7 @@ bool frontend_network_q2_client_configuration_primary(const frontend_network_q2_
     const qa_application_client_source *);
 bool frontend_network_q2_client_configuration_advance(frontend_network_q2_client *,
     qa_application_client_preparation *,bool *,qa_error *);
+const qa_source_frame_time_binding *frontend_network_q2_client_frame_time(const frontend_network_q2_client *);
 bool frontend_network_q2_client_configuration_read(const frontend_network_q2_client *,
     qa_application_client_source *,bool *ready,qa_error *);
 bool frontend_network_q2_client_retired_recipient_read(const frontend_network_q2_client *,

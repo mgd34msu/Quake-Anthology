@@ -3621,8 +3621,8 @@ bool frontend_network_prediction_input_current(const qa_frontend *f, const front
         v->ideal_pitch == 0 && v->delta_angles.x == 0 && v->delta_angles.y == 0 && v->delta_angles.z == 0 &&
         !source->has_initial_angles && source->initial_angles.x == 0 && source->initial_angles.y == 0 && source->initial_angles.z == 0;
 }
-bool frontend_network_client_time_cvars_read(const qa_frontend *f,
-    const qa_cvars **out, bool *present, qa_error *error)
+bool frontend_network_client_frame_time_read(const qa_frontend *f,
+    const qa_source_frame_time_binding **out, bool *present, qa_error *error)
 {
     if (!f || !out || !present)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Invalid CLIENT time registry observation");
@@ -3635,7 +3635,7 @@ bool frontend_network_client_time_cvars_read(const qa_frontend *f,
         if(!physical.ready) return true;
         if(!frontend_client_source_current(&physical))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT timing lost its actual physical configuration");
-        *out=physical.source.context.cvars; *present=true; return true;
+        *out=physical.frame_time; *present=true; return true;
     }
     if(n && n->q1_client_owner) {
         if(frontend_network_q1_client_retired(n->q1_client_owner)) return true;
@@ -3644,14 +3644,14 @@ bool frontend_network_client_time_cvars_read(const qa_frontend *f,
         if(!held.physical.ready) return true;
         if(!frontend_client_source_current(&held.physical))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT timing lost its actual physical configuration");
-        *out=held.physical.source.context.cvars; *present=true; return true;
+        *out=held.physical.frame_time; *present=true; return true;
     }
     if(n && n->q2_client_owner) {
         if(frontend_network_q2_client_retired(n->q2_client_owner)) return true;
         qa_application_client_source held; bool ready;
         if(!frontend_network_q2_client_configuration_read(n->q2_client_owner,&held,&ready,error)) return false;
         if(!ready) return true;
-        *out=held.context.cvars; *present=true; return true;
+        *out=frontend_network_q2_client_frame_time(n->q2_client_owner); *present=true; return true;
     }
     if (!n || !n->q3_clients[0].q3_client_requested || !n->q3_clients[0].q3_cgame_owner) return true;
     qa_application_startup_source source;
@@ -3669,7 +3669,7 @@ bool frontend_network_client_time_cvars_read(const qa_frontend *f,
         view.scope.seat != source.scope.seat || view.console != source.console || view.cvars != source.cvars ||
         !frontend_remote_config_current(row, &view))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT timing lacks its completed physical configuration owner");
-    *out = view.cvars; *present = true; return true;
+    *out = view.frame_time; *present = true; return true;
 }
 bool frontend_network_client_map_read(const qa_frontend *f, qa_application *application,
     qa_actor_owner owner, qa_qvm_role role, uint32_t seat, const qa_vfs *mounts,

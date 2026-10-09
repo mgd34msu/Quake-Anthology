@@ -10,6 +10,7 @@
 #include "qa/audio.h"
 #include "qa/scene.h"
 #include "qa/input.h"
+#include "qa/source_frame_time.h"
 
 typedef struct frontend_remote_unified frontend_remote_unified;
 typedef struct frontend_unified_recipient_clock {
@@ -31,6 +32,7 @@ typedef struct frontend_remote_unified_domain {
     qa_resource_pool *resources;
     qa_console *console;
     qa_cvars *cvars;
+    const qa_source_frame_time_binding *frame_time;
     qa_command_context command_context;
 } frontend_remote_unified_domain;
 

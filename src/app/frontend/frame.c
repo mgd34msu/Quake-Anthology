@@ -130,7 +130,9 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     bool present=false;
     if(!frontend_network_q1_frame_time(frontend,&cvars,out,&present,error)) return false;
     if(present) { *owner=cvars; *application_ns=supplied; return true; }
-    if (!frontend_network_client_time_cvars_read(frontend,&cvars,&present,error)) return false;
+    const qa_source_frame_time_binding *binding=NULL;
+    if (!frontend_network_client_frame_time_read(frontend,&binding,&present,error)) return false;
+    cvars=binding?binding->cvars:NULL;
     bool remote=present || frontend->options.network_connect!=NULL;
     if (!present) cvars=NULL;
     if (!remote && !qa_application_startup_pending(frontend->application)) {
@@ -156,7 +158,7 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
         source_dialect == QA_CONSOLE_Q3))
         sampled = qa_source_frame_time_host_delta(frontend->wall_time_ns, supplied);
     double milliseconds=(double)sampled/1000000.0;
-    if (cvars && sampled && !qa_source_frame_time_sample(cvars,milliseconds,frontend->options.dedicated,!remote,
+    if (cvars && sampled && !qa_source_frame_time_sample(binding,milliseconds,frontend->options.dedicated,!remote,
         &milliseconds,error)) return false;
     double duration=milliseconds*1000000.0;
     if (!isfinite(duration) || duration<0 || duration>=18446744073709551616.0) {

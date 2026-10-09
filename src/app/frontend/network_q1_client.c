@@ -923,7 +923,7 @@ bool frontend_network_q1_client_frame_time(frontend_network_q1_client *o,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT clock lost its actual physical Source or host boundary");
     uint64_t pending=f->wall_time_ns-o->input_clock_ns,frame;
     bool accepted;
-    if(!qa_source_frame_time_admit(physical.source.context.cvars,pending,false,&accepted,&frame,error)) return false;
+    if(!qa_source_frame_time_admit(physical.frame_time,pending,false,&accepted,&frame,error)) return false;
     if(accepted) {
         o->input_clock_ns=f->wall_time_ns;
         o->input_frame_ns=frame; o->input_wall_frame_ns=pending;

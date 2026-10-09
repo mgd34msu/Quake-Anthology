@@ -971,7 +971,7 @@ static bool begin_frame(void *context,frontend_remote_unified *replica,uint64_t 
             frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient begin retry changed its genuine frame tuple");
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
     double duration=(double)elapsed/1000000.0;
-    if (!domain || !qa_source_frame_time_sample(domain->cvars,duration,false,false,&duration,error)) return false;
+    if (!domain || !qa_source_frame_time_sample(domain->frame_time,duration,false,false,&duration,error)) return false;
     double time=(p->clock_started?p->clock.milliseconds:(double)(now-elapsed)/1000000.0)+duration;
     if (!isfinite(time) || !isfinite(duration) || duration<0)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock exceeds its real source time range");

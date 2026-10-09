@@ -25,6 +25,7 @@
 #include "qa/qvm.h"
 #include "qa/persistence_content.h"
 #include "qa/save.h"
+#include "qa/source_frame_time.h"
 #include "qa/ui_preferences.h"
 #include "unified_events.h"
 #include "event_stream.h"
@@ -82,6 +83,7 @@ typedef struct application_provider {
     bool event_retirement_frame_present;
     bool event_activation_deferred, event_activation_bound;
     qa_component component;
+    qa_source_frame_time_binding frame_time;
     qa_combat_policy policy;
     qa_q1_game_operation q1_lifetime;
     bool constructed;

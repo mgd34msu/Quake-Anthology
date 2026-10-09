@@ -137,6 +137,7 @@ bool native_client_allocate_bound(qa_application *app,const qa_native_q3_client_
     qa_native_q3_client_service *service=calloc(1,sizeof(*service));
     if (!service) return native_client_fail(error,QA_ERROR_MEMORY,"Allocating native CGAME seat configuration");
     service->application=app; service->services=*services; service->character=*character;
+    qa_source_frame_time_bind(services->client.client_time_cvars,&service->frame_time);
     service->source_game=source->source_game; service->product=source->product;
     service->content_product=source->content_product; service->count=native_client_definition_count;
     service->overlay_initial=true;

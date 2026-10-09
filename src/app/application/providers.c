@@ -1388,10 +1388,10 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
     uint64_t *pending_after_ns, uint64_t *frame_ns, qa_error *error)
 {
     application_provider *provider = context;
-    qa_console *console; qa_cvars *cvars;
-    if (!application_guest_console_at(provider, 0, &console, &cvars, NULL) || !cvars)
+    const qa_cvars *cvars = provider->frame_time.cvars;
+    if (!cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source clock lost its actual GAME registry");
-    const qa_cvar_view *setting = qa_cvars_find(cvars, "dedicated");
+    const qa_cvar_view *setting = qa_cvars_read(cvars, provider->frame_time.dedicated);
     bool dedicated = setting ? setting->number != 0 : provider->application->dedicated;
     qa_console_dialect dialect = qa_cvars_dialect(cvars);
     *frame_ns = 0;
@@ -1400,15 +1400,15 @@ static bool provider_clock_admit(void *context, uint64_t host_ns, uint64_t pendi
             return application_fail(error, QA_ERROR_ARGUMENT, "Source host interval exhausted");
         *pending_after_ns = pending_ns + host_ns;
         bool accepted;
-        return qa_source_frame_time_admit(cvars, *pending_after_ns, dialect == QA_CONSOLE_QW, &accepted, frame_ns, error);
+        return qa_source_frame_time_admit(&provider->frame_time, *pending_after_ns, dialect == QA_CONSOLE_QW, &accepted, frame_ns, error);
     }
     if (!host_ns) { *pending_after_ns = pending_ns; return true; }
     qa_source_frame_time_controls controls;
     double milliseconds;
-    if (!qa_source_frame_time_controls_read(cvars, &controls, error) ||
+    if (!qa_source_frame_time_controls_read(&provider->frame_time, &controls, error) ||
         !qa_source_frame_time_transform(dialect, (double)host_ns / 1000000,
             &controls, dedicated, true, &milliseconds, error)) return false;
-    const qa_cvar_view *fps = qa_cvars_find(cvars, "cl_avidemo");
+    const qa_cvar_view *fps = qa_cvars_read(cvars, provider->frame_time.capture_fps);
     if (dialect == QA_CONSOLE_Q3 && !dedicated && fps && fps->number > 0 && milliseconds > 0 &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider) {
         qa_capture_clock capture;
@@ -1445,6 +1445,9 @@ static bool provider_clock_bind(application_provider *provider, qa_error *error)
         for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
             if (!qa_cvars_register(cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
     }
+    qa_console *console; qa_cvars *cvars = NULL;
+    (void)application_guest_console_at(provider, 0, &console, &cvars, NULL);
+    qa_source_frame_time_bind(cvars, &provider->frame_time);
     provider->component.clock_admit = provider_clock_admit;
     provider->component.clock_context = provider;
     return true;

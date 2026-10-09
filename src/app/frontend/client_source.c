@@ -15,6 +15,7 @@ struct frontend_client_source {
     qa_launch_instance_lease *metadata;
     frontend_client_registry *registry;
     qa_cvars *pending_cvars;
+    qa_source_frame_time_binding frame_time;
     qa_console *console;
     qa_application_client_source application;
     qa_command_context command;
@@ -341,6 +342,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         --s->calls;
         if (!ok) goto done;
     }
+    qa_source_frame_time_bind(registry(s),&s->frame_time);
     qa_application_client_options actual = app_options(s);
     s->constructor_state=state;
     ok = state ? qa_application_client_create_restored(f->application, &actual, &state->application, &s->application, error) :
@@ -432,7 +434,7 @@ bool frontend_client_source_read(const frontend_client_source *s, frontend_clien
     if (!out || !linked(s) || s->closing || s->constructing || !s->app_attached ||
         !qa_application_client_current(s->frontend->application, &s->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT source no longer owns its physical graph");
-    *out = (frontend_client_source_view){s, s->application, s->ready}; return true;
+    *out = (frontend_client_source_view){s, s->application, s->ready, &s->frame_time}; return true;
 }
 bool frontend_client_source_metadata_read(const frontend_client_source *s,
     frontend_client_source_view *out, qa_error *error)
@@ -441,7 +443,7 @@ bool frontend_client_source_metadata_read(const frontend_client_source *s,
         !physical_current((void *)s, s->application.descriptor, s->application.context.console,
             s->application.context.cvars, &s->application.context.command))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT topology leaves its retained physical constructor");
-    *out = (frontend_client_source_view){s, s->application, s->ready}; return true;
+    *out = (frontend_client_source_view){s, s->application, s->ready, &s->frame_time}; return true;
 }
 bool frontend_client_source_preinstall_current(const frontend_client_source *s,
     const qa_application_client_source *source,qa_error *error)

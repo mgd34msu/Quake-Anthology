@@ -408,7 +408,8 @@ static void options_value(frontend_network_unified_client_service *o,const front
     *out=(frontend_remote_unified_options){.domain={.application=o->options.frontend->application,
         .runtime=o->options.runtime,.client=v->source.client,.seat=o->options.seat,.physical_seat=o->options.physical_seat,
         .catalog=qa_launch_instance_catalog(v->source.descriptor),.resources=qa_application_resources(o->options.frontend->application),
-        .console=v->source.context.console,.cvars=v->source.context.cvars,.command_context=v->source.context.command},
+        .console=v->source.context.console,.cvars=v->source.context.cvars,.frame_time=v->frame_time,
+        .command_context=v->source.context.command},
         .context=o,.current=domain_current,.userinfo=userinfo,.disconnected=disconnected,.retirement=retirement,
         .command_text=command_text,.source_command=source_command,
         .transport_restart=transport_restart,.identity_capacity=65536};
