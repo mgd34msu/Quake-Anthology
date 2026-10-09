@@ -24,7 +24,7 @@ bool application_native_q2_wire_begin(struct application_native_q2 *engine, qa_e
     if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !clients ||
         clients->integer < 1 || clients->integer > 256 || !engine->provider->state.native.host ||
         !qa_native_entity_table_get(qa_native_host_instance(engine->provider->state.native.host), &table, error) ||
-        table.capacity <= (uint32_t)clients->integer || table.capacity > 65536)
+        table.capacity <= (uint32_t)clients->integer || table.capacity > APPLICATION_Q2_SOURCE_EXTENT)
         return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine namespace requires its genuine initialized SDK capacity");
     application_native_q2_wire_engine *wire = calloc(1, sizeof(*wire));
     if (!wire) return application_fail(error, QA_ERROR_MEMORY, "Allocating Original Q2 Engine namespace");
@@ -244,7 +244,7 @@ void application_native_q2_wire_released(struct application_native_q2 *engine, q
 static bool fields(qa_source_save_io *io, application_native_q2_wire_engine *wire)
 {
     if (!qa_source_save_u32(io, &wire->capacity) || !qa_source_save_u32(io, &wire->clients) ||
-        !wire->capacity || wire->capacity > 65536 || !wire->clients || wire->clients > 256 || wire->clients >= wire->capacity) return false;
+        !wire->capacity || wire->capacity > APPLICATION_Q2_SOURCE_EXTENT || !wire->clients || wire->clients > 256 || wire->clients >= wire->capacity) return false;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         wire->rows = calloc(wire->capacity, sizeof(*wire->rows));
         if (!wire->rows) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring Original Q2 Engine rows");

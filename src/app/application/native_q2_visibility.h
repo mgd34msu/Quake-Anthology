@@ -6,6 +6,7 @@
 
 typedef struct application_native_q2_visibility application_native_q2_visibility;
 
+bool application_native_q2_visibility_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_visibility_complete(struct application_native_q2 *, qa_error *);
 bool application_native_q2_visibility_read(struct application_native_q2 *, uint32_t,
     qa_actor_id, uint32_t, qa_actor_id, bool *, qa_error *);

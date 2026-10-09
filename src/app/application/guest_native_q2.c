@@ -601,7 +601,8 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
         application_native_q2_combat_activate(engine,error)&&
         application_q2_control_activate(engine,error)&&
         qa_native_host_source_reconcile(provider->state.native.host,error)&&
-        declared_initialize(engine,error);
+        declared_initialize(engine,error)&&
+        application_native_q2_visibility_prepare(engine,error);
     --engine->calls;
     if(!ok)return false;
     engine->map_ready=provider->map_bound=true;
@@ -691,6 +692,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (ok && original) ok = application_q2_original_level(provider,error);
     if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
     if(ok)ok=declared_initialize(engine,error);
+    if(ok)ok=application_native_q2_visibility_prepare(engine,error);
     --engine->calls;
     if (ok) {
         engine->map_ready = provider->map_bound = true;

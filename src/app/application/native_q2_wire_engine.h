@@ -4,6 +4,8 @@
 #include "qa/network_q2_session.h"
 #include "qa/application_native_q2_presentation.h"
 
+enum { APPLICATION_Q2_SOURCE_EXTENT = UINT16_MAX + 1u };
+
 typedef struct application_native_q2_wire_row {
     qa_actor_id actor;
     uint32_t source_slot;
