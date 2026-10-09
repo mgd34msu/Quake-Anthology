@@ -31,8 +31,8 @@ static qa_trace_policy policy(qa_q3_host *host, uint32_t contents)
 {
     qa_trace_policy result = qa_collision_default_policy(QA_COLLISION_Q3);
     result.contents_mask = qa_collision_contents_mask(contents, QA_COLLISION_Q3);
-    const qa_cvar_view *curves = qa_cvars_find(host->options.cvars, "cm_noCurves");
-    const qa_cvar_view *player = qa_cvars_find(host->options.cvars, "cm_playerCurveClip");
+    const qa_cvar_view *curves = qa_cvars_read(host->options.cvars, host->no_curves);
+    const qa_cvar_view *player = qa_cvars_read(host->options.cvars, host->player_curve_clip);
     result.curves = !curves || curves->number == 0;
     result.player_curve_clip = !player || player->integer != 0;
     return result;

@@ -20,9 +20,9 @@ authoritative engine store; preserve their required fields and numeric rules.
 | Player roster, life and travel | Common roster is `src/app/application/map_players_private.h:40`; combat and inventory have shared owners. | Generic view/life/connection fields coexist with rule tails in Q1/Q2/Q3 player records. Q2 score mirrors are `src/gameplay/q2/player/state.c:440,498`. Common travel combat is copied alongside Q2 carry health in `map_players_private.h:13` and `include/qa/game_q2_player.h:166`. Move current generic fields to their common owner; retain prior coop/spawn history and original rule tails. |
 | Item identity and inventory | `qa_item_id`, `qa_item_definition`, `qa_inventory_entry` and `qa_item_bit` in `include/qa/inventory.h`; one definition lookup in `src/gameplay/inventory.c:1020`. QC/QVM/native Q2 use the same item-bit type; their three former definitions are deleted. Equipment presentation at `src/app/application/equipment_presentation.c:305` reads the selected item through that lookup. Its catalog copy, scan and allocation are deleted. | No alternate selected-equipment definition lookup remains in this caller. Other current item consumers remain subject to the full custody audit. |
 | Weapon request state | `qa_weapon_request_status` in `include/qa/equipment_weapon_slot.h:10` now serves equipment and QVM requests/status/cancellation/checkpoints. The duplicate QVM enum and identity translation are deleted. | Original game weapon phases and foreign ABI constants remain rule data. Other common weapon custody still needs the full caller audit. |
-| Damage | Shared combat service and damage dispatch; native game code supplies original damage/armor rules. | Complete current-caller audit is pending. Do not infer complete adoption from shared service existence or delete distinct damage rules. |
+| Damage | One actor-indexed combat store in `src/gameplay/combat_internal.h`, and dispatch in `src/gameplay/combat.c:984`. Built-in, QC, QVM and owned-native callers enter `qa_combat_apply` / `qa_combat_run_source`; foreign actors bind that same store. | No alternate engine damage store or dispatcher found in the current caller audit. Q1/Q2/Q3 authored damage/armor arithmetic remains distinct original rule policy. This source audit does not prove every foreign authored instruction's gameplay. |
 | HUD state | Shared `qa_hud` in `src/ui/hud.c`. Original layout interpreters supply each game's presentation rules. | Q3 centerprint has separate storage at `src/presentation/q3_native/hud.h:50` and mutation at `hud.c:84`; Unified uses shared HUD but discards Q3 position/width. Move all centerprint callers to one per-seat store with caller layout/reveal/fade policy, then delete Q3's copy. |
-| Cvars | One common table and canonical/alias definitions; current handle migration is recorded under THE-2859. | Confirm all steady-state callers retain handles. A valid lookup is a plain canonical-name/alias lookup, with no added context or validation layer. |
+| Cvars | One common table and canonical/alias definitions; current handle migration is recorded under THE-2859. Original Q3 trace/contact policy now reads two handles bound at `src/compat/q3_host/host.c:317`; its named reads at `game_spatial.c:34` are deleted. | Fixed-name hot callers remain in `remote_q1_camera.c:12`, `unified_player.c:872` and `frontend/tools.c:518`. Native ABI shadow refresh also needs its bound-handle/changed-row adoption. A valid lookup is a plain canonical-name/alias lookup, with no added context or validation layer. |
 
 The item-type comparison checks actual request/status/cancel and inventory
 behavior, including high/private bits, signed counts, stale receipts and stored
@@ -62,6 +62,12 @@ identical 256-byte trace/touch output; candidate classic medians are
 the 9.6-microsecond limit. Public kernel timings are broadly unchanged; the
 recorded pooled Q3 result is 1.10% above its pair, so they do not prove a speedup
 or literal improvement in every phase.
+
+Original Q3 trace cvar policy now reads retained handles. Actual shared-store
+comparisons preserve masks, defaults, live edits, Source recreation and table
+lifecycle across five dialect views. All three engine builds and seven core
+checks each pass. This removes two fixed-name queries per original trace;
+it is not a trace-timing result or closure of the remaining cvar callers.
 
 ## Whole-frame allocation: THE-2874 / THE-873 / THE-882
 

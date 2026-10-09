@@ -314,6 +314,8 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     qa_q3_host *host = calloc(1, sizeof(*host));
     if (!host) return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 module host");
     host->options = *options;
+    host->no_curves = qa_cvars_resolve(options->cvars, "cm_noCurves");
+    host->player_curve_clip = qa_cvars_resolve(options->cvars, "cm_playerCurveClip");
     if (!host->options.service_owner)
         host->options.service_owner = options->owner ? options->owner : (uint64_t)(uintptr_t)host;
     if (options->role == QA_QVM_GAME) {
