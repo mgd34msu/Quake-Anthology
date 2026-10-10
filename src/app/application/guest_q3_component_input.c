@@ -46,7 +46,6 @@ static bool bindings(application_q3_component_input *scope,bool before,
         bool ok=application_q3_mod_input_run(scope->mod,i,scope->application,prepare,&preparation,&outputs,&written,e);
         for(size_t j=0;ok&&j<written&&application_q3_mod_client_live(scope->mod,scope->actor);++j)
             ok=output&&output(context,outputs+j,e);
-        free(outputs);
         if(!ok) {
             if(e&&e->code==QA_OK) fail(e,"Component input output has no actual canonical consumer");
             return false;
@@ -55,7 +54,7 @@ static bool bindings(application_q3_component_input *scope,bool before,
     return true;
 }
 bool application_q3_component_input_begin(application_q3_component *component,qa_actor_id actor,
-    bool slice,application_q3_component_input_values values,
+    bool slice,qa_unified_frame_lease *storage,application_q3_component_input_values values,
     application_q3_component_input_output output,void *context,
     application_q3_component_input **out,qa_error *e)
 {
@@ -73,11 +72,12 @@ bool application_q3_component_input_begin(application_q3_component *component,qa
     if(!selected||!application_q3_mod_client_live(mod,actor)) return true;
     application_q3_mod_inputs current={0};
     current.values[Q3_MOD_SELF]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=actor};
-    application_q3_component_input *scope=calloc(1,sizeof(*scope));
+    application_q3_component_input *scope=qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),
+        _Alignof(application_q3_component_input),e);
     if(!scope) { qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining actual component input application"); return false; }
     scope->mod=mod; scope->actor=actor; scope->slice=slice;
     scope->items=application_q3_component_items(component);
-    if(!application_q3_mod_open(mod,actor,&current,&scope->application,e)) { free(scope); return false; }
+    if(!application_q3_mod_open(mod,actor,&current,storage,&scope->application,e)) return false;
     *out=scope;
     if(!application_q3_mod_input_source(scope->application,values,context,e)) return false;
     if(scope->items&&!application_q3_mod_items_open(scope->items,actor,scope->application,
@@ -94,10 +94,10 @@ bool application_q3_component_input_abort(application_q3_component_input **in,qa
     if(scope->running) return fail(e,"Component input retains an executing boundary callback");
     if(!application_q3_mod_items_close(&scope->item_application,e)) return false;
     if(!application_q3_mod_close(&scope->application,e)) {
-        if(!scope->application) { free(scope); *in=NULL; }
+        if(!scope->application) *in=NULL;
         return false;
     }
-    free(scope); *in=NULL; return true;
+    *in=NULL; return true;
 }
 bool application_q3_component_input_complete(application_q3_component_input *scope,bool completed,
     application_q3_component_input_values values,void *context,qa_error *e)

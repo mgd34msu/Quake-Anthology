@@ -12,7 +12,7 @@ typedef bool (*application_q3_component_input_output)(void *,
 /* A failed begin can retain an opened scope in out. Abort consumes only its
  * genuine returned application; callers keep it when checked close refuses. */
 bool application_q3_component_input_begin(application_q3_component *,qa_actor_id,
-    bool movement_slice,application_q3_component_input_values,
+    bool movement_slice,qa_unified_frame_lease *,application_q3_component_input_values,
     application_q3_component_input_output,void *,application_q3_component_input **,qa_error *);
 /* Only a completed canonical body runs the authored after bindings. Values
  * are borrowed afresh at that boundary; no output callback is retained.

@@ -1080,7 +1080,7 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
         application_q3_component *component = NULL;
         if (!application_q3_components_at(move->application, i, &component, error)) return false;
         input->count = i + 1;
-        if (!application_q3_component_input_begin(component, input->actor, slice, component_input_values,
+        if (!application_q3_component_input_begin(component, input->actor, slice, input->storage, component_input_values,
             component_input_output, input, input->scopes + i, error)) return false;
     }
     for (size_t i = 0; i < move->application->provider_count && live(move->application, input->actor); ++i) {

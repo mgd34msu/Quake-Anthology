@@ -9,6 +9,7 @@ typedef struct input_command {
     qa_q3_usercmd before;
 } input_command;
 struct application_q3_mod_application {
+    qa_unified_frame_lease *storage;
     application_q3_mod *owner;
     application_q3_mod_application *previous;
     qa_actor_id actor;
@@ -27,6 +28,7 @@ struct application_q3_mod_capture {
     input_command *commands;
     application_q3_mod_output *changes, *consumed;
     size_t change_count, consumed_count;
+    size_t change_capacity, consumed_capacity;
 };
 typedef struct selected_entry { const mod_output *definition; input_command *command; } selected_entry;
 struct application_q3_mod_entry {
@@ -34,19 +36,28 @@ struct application_q3_mod_entry {
     application_q3_mod_capture *capture;
     selected_entry *selected;
     size_t count;
+    bool pooled;
 };
 static bool active(const application_q3_mod_capture *c)
 {
     return c && c->owner->capture==c && c->owner->application==c->application &&
         c->owner->services.live_client(c->owner->services.context,c->application->actor);
 }
-static bool append(application_q3_mod_output **rows, size_t *count,
+static bool append(qa_unified_frame_lease *storage,application_q3_mod_output **rows, size_t *count,size_t *capacity,
     application_q3_mod_output value, qa_error *e)
 {
     if (*count>=SIZE_MAX/sizeof(**rows)) return q3mod_fail(e,QA_ERROR_MEMORY,"Source input output inventory overflows");
-    void *next=realloc(*rows,(*count+1)*sizeof(**rows));
-    if (!next) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original input changes");
-    *rows=next; (*rows)[(*count)++]=value; return true;
+    if (*count==*capacity) {
+        size_t next_capacity=*capacity?*capacity*2:16;
+        if (next_capacity<*capacity || next_capacity>SIZE_MAX/sizeof(**rows))
+            return q3mod_fail(e,QA_ERROR_MEMORY,"Source input output inventory overflows");
+        application_q3_mod_output *next=qa_unified_frame_lease_alloc(storage,next_capacity,sizeof(*next),
+            _Alignof(application_q3_mod_output),e);
+        if (!next) return false;
+        if (*count) memcpy(next,*rows,*count*sizeof(*next));
+        *rows=next;*capacity=next_capacity;
+    }
+    (*rows)[(*count)++]=value; return true;
 }
 static bool field_read(application_q3_mod_capture *c, const mod_output *d,
     application_q3_mod_output *out, qa_error *e)
@@ -107,7 +118,7 @@ static bool commands(application_q3_mod_capture *c, input_command *command, bool
             value.value.scalar=command_scalar(&after,(application_q3_mod_input)i);
             if (value.value.scalar==command_scalar(&before,(application_q3_mod_input)i)) continue;
         }
-        if (!append(&c->changes,&c->change_count,value,e)) return false;
+        if (!append(c->application->storage,&c->changes,&c->change_count,&c->change_capacity,value,e)) return false;
     }
     return true;
 }
@@ -117,24 +128,25 @@ static bool reconcile(application_q3_mod_capture *c, bool publish, qa_error *e)
         application_q3_mod_output next;
         if (!field_read(c,c->fields[i].definition,&next,e)) return false;
         bool changed=!same(next,c->fields[i].before); c->fields[i].before=next;
-        if (publish && changed && !append(&c->changes,&c->change_count,next,e)) return false;
+        if (publish && changed && !append(c->application->storage,&c->changes,&c->change_count,&c->change_capacity,next,e)) return false;
     }
     for (input_command *command=c->commands;command;command=command->next)
         if (!commands(c,command,publish,e)) return false;
     return true;
 }
 bool application_q3_mod_open(application_q3_mod *o, qa_actor_id actor,
-    const application_q3_mod_inputs *inputs, application_q3_mod_application **out, qa_error *e)
+    const application_q3_mod_inputs *inputs, qa_unified_frame_lease *storage, application_q3_mod_application **out, qa_error *e)
 {
     if (!out || *out || !inputs || !q3mod_current(o,e) || !o->profile->clients || !o->services.live_client(o->services.context,actor))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input application requires its actual admitted source client");
     if (inputs->values[Q3_MOD_SELF].kind!=Q3_MOD_VALUE_ACTOR ||
         !qa_actor_id_equal(inputs->values[Q3_MOD_SELF].as.actor,actor))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input application self differs from its full source actor");
-    application_q3_mod_application *a=calloc(1,sizeof(*a));
+    application_q3_mod_application *a=qa_unified_frame_lease_alloc(storage,1,sizeof(*a),
+        _Alignof(application_q3_mod_application),e);
     if (!a) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original input application");
-    if (active(o->capture) && !reconcile(o->capture,true,e)) { free(a); return false; }
-    a->owner=o; a->previous=o->application; a->actor=actor; a->inputs=*inputs;
+    if (active(o->capture) && !reconcile(o->capture,true,e)) return false;
+    a->storage=storage;a->owner=o; a->previous=o->application; a->actor=actor; a->inputs=*inputs;
     o->application=a; *out=a; return true;
 }
 bool application_q3_mod_close(application_q3_mod_application **in, qa_error *e)
@@ -143,7 +155,7 @@ bool application_q3_mod_close(application_q3_mod_application **in, qa_error *e)
     application_q3_mod_application *a=*in; application_q3_mod *o=a->owner;
     if (o->application!=a || a->reading || (o->capture && o->capture->application==a))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input application still retains a capture or nested application");
-    o->application=a->previous; free(a); *in=NULL;
+    o->application=a->previous; *in=NULL;
     return !active(o->capture) || reconcile(o->capture,false,e);
 }
 bool application_q3_mod_client_live(const application_q3_mod *o, qa_actor_id actor)
@@ -220,13 +232,16 @@ bool application_q3_mod_entry_begin(application_q3_mod *o, const qa_qvm_call *ca
 {
     if (!o || !out || *out || !call || call->vm!=o->vm || !q3mod_current(o,e))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input entry requires its actual source token and empty scope");
-    application_q3_mod_entry *scope=calloc(1,sizeof(*scope));
+    qa_unified_frame_lease *storage=o->application?o->application->storage:NULL;
+    application_q3_mod_entry *scope=storage?qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),
+        _Alignof(application_q3_mod_entry),e):calloc(1,sizeof(*scope));
     if (!scope) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original input entry boundary");
-    scope->owner=o; scope->capture=active(o->capture)?o->capture:NULL;
+    scope->owner=o;scope->pooled=storage!=NULL; scope->capture=active(o->capture)?o->capture:NULL;
     if (scope->capture) {
         application_q3_mod_capture *c=scope->capture;
-        scope->selected=c->binding->output_count?calloc(c->binding->output_count,sizeof(*scope->selected)):NULL;
-        if (c->binding->output_count && !scope->selected) { free(scope); return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original handler selection"); }
+        scope->selected=c->binding->output_count?qa_unified_frame_lease_alloc(storage,c->binding->output_count,
+            sizeof(*scope->selected),_Alignof(selected_entry),e):NULL;
+        if (c->binding->output_count && !scope->selected) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original handler selection");
         for (size_t i=0;i<c->binding->output_count;++i) {
             const mod_output *d=c->binding->outputs+i;
             if (d->kind==MOD_FIELD || d->entry!=call->instruction) continue;
@@ -236,13 +251,13 @@ bool application_q3_mod_entry_begin(application_q3_mod *o, const qa_qvm_call *ca
             selected_entry *selected=scope->selected+scope->count++;
             selected->definition=d;
             if (d->kind==MOD_COMMAND) {
-                input_command *command=calloc(1,sizeof(*command));
+                input_command *command=qa_unified_frame_lease_alloc(storage,1,sizeof(*command),_Alignof(input_command),e);
                 if (!command) { q3mod_fail(e,QA_ERROR_MEMORY,"Retaining actual user-command baseline"); goto fail; }
                 command->definition=d;
                 uint8_t qualification[24];
                 if (!pointer(o,&d->command,call,&command->address,e) ||
                     !qa_qvm_read(o->vm,command->address,qualification,sizeof(qualification),e) ||
-                    !qa_qvm_read_usercmd(o->vm,(int32_t)command->address,&command->before,e)) { free(command); goto fail; }
+                    !qa_qvm_read_usercmd(o->vm,(int32_t)command->address,&command->before,e)) goto fail;
                 input_command **tail=&c->commands; while (*tail) tail=&(*tail)->next;
                 *tail=command; selected->command=command;
             }
@@ -273,17 +288,19 @@ bool application_q3_mod_entry_end(application_q3_mod_entry **in, bool succeeded,
                     }
                 }
                 if ((!d->has_return || returned==d->returned) &&
-                    !append(&c->consumed,&c->consumed_count,(application_q3_mod_output){.consume=true,.value.inputs=d->inputs},e)) ok=false;
+                    !append(c->application->storage,&c->consumed,&c->consumed_count,&c->consumed_capacity,
+                        (application_q3_mod_output){.consume=true,.value.inputs=d->inputs},e)) ok=false;
             }
         }
         if (selected->command) {
             input_command **row=&c->commands;
             while (*row && *row!=selected->command) row=&(*row)->next;
             if (*row) *row=selected->command->next;
-            free(selected->command);
         }
     }
-    --scope->owner->calls; free(scope->selected); free(scope); *in=NULL; return ok;
+    --scope->owner->calls;
+    if (!scope->pooled) free(scope);
+    *in=NULL; return ok;
 }
 bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
     application_q3_mod_application *a,application_q3_mod_input_prepare_fn prepare,void *context,
@@ -293,16 +310,19 @@ bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
         index>=o->profile->input_count || !q3mod_current(o,e))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input binding requires its actual application and empty output");
     *count=0; const mod_input_binding *binding=o->profile->inputs+index;
-    application_q3_mod_capture c={.owner=o,.previous=o->capture,.application=a,.binding=binding};
+    application_q3_mod_capture *c=qa_unified_frame_lease_alloc(a->storage,1,sizeof(*c),
+        _Alignof(application_q3_mod_capture),e);
+    if (!c) return false;
+    *c=(application_q3_mod_capture){.owner=o,.previous=o->capture,.application=a,.binding=binding};
     bool captured=binding->before && binding->output_count;
     if (captured) {
-        c.fields=calloc(binding->output_count,sizeof(*c.fields));
-        if (!c.fields) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning source input field baselines");
+        c->fields=qa_unified_frame_lease_alloc(a->storage,binding->output_count,sizeof(*c->fields),_Alignof(input_field),e);
+        if (!c->fields) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning source input field baselines");
         for (size_t i=0;i<binding->output_count;++i) if (binding->outputs[i].kind==MOD_FIELD) {
-            input_field *f=c.fields+c.field_count++; f->definition=binding->outputs+i;
-            if (!field_read(&c,f->definition,&f->before,e)) { free(c.fields); return false; }
+            input_field *f=c->fields+c->field_count++; f->definition=binding->outputs+i;
+            if (!field_read(c,f->definition,&f->before,e)) return false;
         }
-        o->capture=&c;
+        o->capture=c;
     }
     bool ok=true; double ignored;
     for (size_t i=0;ok && i<binding->call_count && application_q3_mod_client_live(o,a->actor);++i) {
@@ -311,21 +331,21 @@ bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
             ok=q3mod_fail(e,QA_ERROR_ARGUMENT,"Source input preparation retired its actual application");
         if (ok) ok=q3mod_invoke(o,binding->calls+i,&a->inputs,&ignored,e);
     }
-    if (ok && captured && active(&c)) ok=reconcile(&c,true,e);
-    if (captured) o->capture=c.previous;
+    if (ok && captured && active(c)) ok=reconcile(c,true,e);
+    if (captured) o->capture=c->previous;
     if (ok && captured && o->services.live_client(o->services.context,a->actor)) {
-        if (c.consumed_count>SIZE_MAX-c.change_count || c.change_count+c.consumed_count>SIZE_MAX/sizeof(**out))
+        if (c->consumed_count>SIZE_MAX-c->change_count || c->change_count+c->consumed_count>SIZE_MAX/sizeof(**out))
             ok=q3mod_fail(e,QA_ERROR_MEMORY,"Source input result inventory overflows");
-        else if (c.change_count+c.consumed_count) {
-            size_t n=c.change_count+c.consumed_count;
-            *out=malloc(n*sizeof(**out));
+        else if (c->change_count+c->consumed_count) {
+            size_t n=c->change_count+c->consumed_count;
+            *out=qa_unified_frame_lease_alloc(a->storage,n,sizeof(**out),_Alignof(application_q3_mod_output),e);
             if (!*out) ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning ordered source input results");
             else {
-                if (c.change_count) memcpy(*out,c.changes,c.change_count*sizeof(**out));
-                if (c.consumed_count) memcpy(*out+c.change_count,c.consumed,c.consumed_count*sizeof(**out));
+                if (c->change_count) memcpy(*out,c->changes,c->change_count*sizeof(**out));
+                if (c->consumed_count) memcpy(*out+c->change_count,c->consumed,c->consumed_count*sizeof(**out));
                 *count=n;
             }
         }
     }
-    free(c.fields); free(c.changes); free(c.consumed); return ok;
+    return ok;
 }

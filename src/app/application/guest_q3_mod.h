@@ -7,6 +7,7 @@
 #include "qa/operation.h"
 #include "qa/source_save.h"
 #include "qa/network_q3.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct application_q3_mod_profile application_q3_mod_profile;
 typedef struct application_q3_mod application_q3_mod;
@@ -126,7 +127,7 @@ bool application_q3_mod_entry_end(application_q3_mod_entry **,
 /* Application identity is the actual open scope, even for recursive same-actor
  * commands. Closing resumes outer capture with a new baseline, not its deltas. */
 bool application_q3_mod_open(application_q3_mod *, qa_actor_id,
-    const application_q3_mod_inputs *, application_q3_mod_application **, qa_error *);
+    const application_q3_mod_inputs *, qa_unified_frame_lease *, application_q3_mod_application **, qa_error *);
 bool application_q3_mod_close(application_q3_mod_application **, qa_error *);
 bool application_q3_mod_client_live(const application_q3_mod *, qa_actor_id);
 bool application_q3_mod_application_current(application_q3_mod *,
