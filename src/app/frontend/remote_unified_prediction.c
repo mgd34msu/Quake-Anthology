@@ -245,15 +245,14 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
             qa_usercmd command;
             const prediction_command *last=p->commands+p->command_count-1;
             if(!qa_application_control_project_unified(&last->raw,&s->input.state,last->sequence,&command,e)) return false;
+            qa_input_command_basis from={.kind=command.kind,.relative=true}, to={.kind=command.kind};
             if(command.kind==QA_RULESET_Q2_CLASSIC) {
-                float angles[3];
-                for(unsigned i=0;i<3;++i) {
-                    uint16_t word=(uint16_t)command.angle_words[i];
-                    int32_t angle=word<=INT16_MAX?word:(int32_t)word-65536;
-                    angles[i]=(float)(angle*(360.0/65536.0)+s->input.state.data.q2.delta_angle_shorts[i]*(360.0/65536.0));
-                }
-                s->angles=qa_v3(angles[0],angles[1],angles[2]);
-            } else s->angles=qa_vec_add(command.angles,s->input.state.data.q2r.delta_angles);
+                from.words=from.signed_shorts=true;
+                for(unsigned i=0;i<3;++i) from.delta_words[i]=s->input.state.data.q2.delta_angle_shorts[i];
+            } else from.delta_angles=s->input.state.data.q2r.delta_angles;
+            qa_usercmd absolute;
+            qa_input_command_convert(&command,NULL,&from,&to,(qa_input_axis_rule){0},&absolute);
+            s->angles=absolute.angles;
         }
         return true;
     }

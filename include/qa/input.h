@@ -227,7 +227,7 @@ typedef struct qa_input_command_basis {
     double units;
     qa_vec3 delta_angles;
     int32_t delta_words[3];
-    bool words, relative, wrap_words, repack_words, wide_delta;
+    bool words, relative, wrap_words, repack_words, wide_delta, signed_shorts;
 } qa_input_command_basis;
 typedef enum qa_input_axis_quantization {
     QA_INPUT_AXIS_EXACT, QA_INPUT_AXIS_TRUNCATE, QA_INPUT_AXIS_NEAREST, QA_INPUT_AXIS_SHORT
@@ -238,6 +238,7 @@ typedef struct qa_input_axis_rule {
     bool clamp, ratio_first, float_product;
 } qa_input_axis_rule;
 float qa_input_command_units(qa_ruleset_id);
+int32_t qa_input_signed_word(uint32_t);
 void qa_input_command_convert(const qa_usercmd *, const qa_input_move_intent *,
     const qa_input_command_basis *, const qa_input_command_basis *, qa_input_axis_rule, qa_usercmd *);
 

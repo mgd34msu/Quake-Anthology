@@ -267,14 +267,14 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
     if (!engine || !command) return application_fail(error, QA_ERROR_ARGUMENT, "QC input application is absent");
     if (!profile) {
         if (!before) return true;
-        qa_usercmd source = *command;
+        qa_usercmd source;
+        qa_input_command_basis from = {.kind = command->kind,
+            .words = command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC};
+        qa_input_command_basis to = {.kind = command->kind};
+        qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &source);
+        memcpy(source.angle_words, command->angle_words, sizeof(source.angle_words));
         bool jump = application_qc_input_scalar(command, QC_INPUT_JUMP) != 0;
         source.buttons = (command->buttons & 1u) | (jump ? 2u : 0u);
-        if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
-            source.angles = qa_v3((float)((double)command->angle_words[0] * 360 / 65536),
-                (float)((double)command->angle_words[1] * 360 / 65536),
-                (float)((double)command->angle_words[2] * 360 / 65536));
-        }
         if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_RERELEASE) source.impulse = 0;
         return application_qc_player_command(provider, actor, &source, error);
     }

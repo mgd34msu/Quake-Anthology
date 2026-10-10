@@ -220,7 +220,7 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
 static bool action(const qa_input_command_intent *intent, qa_input_action value) {
     return (intent->actions & (UINT64_C(1) << value)) != 0;
 }
-static int32_t signed_word(uint32_t value) {
+int32_t qa_input_signed_word(uint32_t value) {
     uint32_t word = value & 65535;
     return word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
 }
@@ -281,12 +281,15 @@ void qa_usercmd_build(const qa_input_command_intent *intent,
         qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
         if (kind == QA_RULESET_Q2_RERELEASE) command.angles = converted.angles;
         else {
-            float *angles[] = {&command.angles.x, &command.angles.y, &command.angles.z};
             for (unsigned i = 0; i < 3; ++i) {
                 uint32_t word = (uint32_t)converted.angle_words[i];
                 command.angle_words[i] = (int32_t)word;
-                if (intent->directional && kind == QA_RULESET_Q2_CLASSIC)
-                    *angles[i] = (float)signed_word(word) * (360.0f / 65536.0f);
+            }
+            if (intent->directional && kind == QA_RULESET_Q2_CLASSIC) {
+                from.words = from.signed_shorts = true;
+                to = (qa_input_command_basis){.kind = kind};
+                qa_input_command_convert(&converted, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+                command.angles = converted.angles;
             }
         }
     }
@@ -343,7 +346,8 @@ void qa_input_command_convert(const qa_usercmd *source, const qa_input_move_inte
         double wide;
         if (from->words) {
             word += from->relative ? (uint32_t)from->delta_words[i] : 0;
-            double value = from->wrap_words ? (double)(word & 65535u) :
+            double value = from->signed_shorts ? (double)qa_input_signed_word((uint32_t)source->angle_words[i]) +
+                (from->relative ? from->delta_words[i] : 0) : from->wrap_words ? (double)(word & 65535u) :
                 (double)source->angle_words[i] + (from->relative ? from->delta_words[i] : 0);
             wide = value * 360.0 / 65536.0; absolute = (float)wide;
         } else {

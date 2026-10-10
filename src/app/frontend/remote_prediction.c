@@ -142,8 +142,6 @@ static qa_vec3 vector(const float value[3])
 { return qa_v3(value[0], value[1], value[2]); }
 static void store_vector(float value[3], qa_vec3 source)
 { value[0] = source.x; value[1] = source.y; value[2] = source.z; }
-static float angle(int32_t word)
-{ uint32_t low = (uint32_t)word & 65535u; return (float)(low >= 32768u ? (int32_t)low - 65536 : (int32_t)low) * (360.0f / 65536.0f); }
 static uint32_t stat_weapons(qa_q3_product product)
 { return product == QA_Q3_TEAM_ARENA ? 3u : 2u; }
 static uint32_t stat_max_health(qa_q3_product product)
@@ -482,14 +480,16 @@ static qa_usercmd relative_command(const prediction_command *entry,
 {
     qa_usercmd command = entry->selected;
     if (entry->angle_space != FRONTEND_REMOTE_PREDICTION_ABSOLUTE) return command;
+    qa_input_command_basis from = {.kind = state->kind}, to = {.kind = state->kind};
     if (state->kind == QA_RULESET_Q3 || state->kind == QA_RULESET_Q2_CLASSIC) {
-        for (unsigned i = 0; i < 3; ++i) {
-            int32_t delta = state->kind == QA_RULESET_Q3 ? state->data.q3.delta_angle_words[i] :
-                state->data.q2.delta_angle_shorts[i];
-            command.angle_words[i] = signed_word((uint32_t)command.angle_words[i] - (uint32_t)delta);
-        }
-    } else if (state->kind == QA_RULESET_Q2_RERELEASE)
-        command.angles = qa_vec_sub(command.angles, state->data.q2r.delta_angles);
+        from.words = to.words = to.relative = true;
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = state->kind == QA_RULESET_Q3 ?
+            state->data.q3.delta_angle_words[i] : state->data.q2.delta_angle_shorts[i];
+    } else if (state->kind == QA_RULESET_Q2_RERELEASE) {
+        to.relative = true; to.delta_angles = state->data.q2r.delta_angles;
+    }
+    qa_input_command_convert(&entry->selected, NULL, &from, &to, (qa_input_axis_rule){0}, &command);
+    if (to.words) command.angles = entry->selected.angles;
     return command;
 }
 static bool write_player(frontend_remote_prediction *owner, prediction_player *player, qa_error *error)
@@ -535,12 +535,15 @@ static bool update_angles(prediction_player *player, const prediction_command *e
     case QA_RULESET_QUAKEWORLD: player->view.view_angles = command.angles; break;
     case QA_RULESET_Q2_RERELEASE:
         player->view.view_angles = qa_vec_add(command.angles, state->data.q2r.delta_angles); break;
-    case QA_RULESET_Q2_CLASSIC:
-        player->view.view_angles = qa_v3(
-            angle(add_word(command.angle_words[0], state->data.q2.delta_angle_shorts[0])),
-            angle(add_word(command.angle_words[1], state->data.q2.delta_angle_shorts[1])),
-            angle(add_word(command.angle_words[2], state->data.q2.delta_angle_shorts[2])));
+    case QA_RULESET_Q2_CLASSIC: {
+        qa_usercmd source = command, converted;
+        for (size_t i = 0; i < 3; ++i) source.angle_words[i] = qa_input_signed_word(
+            (uint32_t)command.angle_words[i] + (uint32_t)state->data.q2.delta_angle_shorts[i]);
+        qa_input_command_basis from = {.kind = command.kind, .words = true}, to = {.kind = command.kind};
+        qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        player->view.view_angles = converted.angles;
         break;
+    }
     case QA_RULESET_Q3:
         if (!qa_q3_prediction_view(state, player->view.player.stats[0], &command, error)) return false;
         player->view.view_angles = state->data.q3.view_angles;
@@ -806,8 +809,14 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     }
     player->view.movement = result->state; player->view.bounds = result->bounds;
     player->view.view_angles = result->view_angles;
-    player->view.command_angles = input.command.kind == QA_RULESET_Q3 || input.command.kind == QA_RULESET_Q2_CLASSIC ?
-        qa_v3(angle(input.command.angle_words[0]), angle(input.command.angle_words[1]), angle(input.command.angle_words[2])) : input.command.angles;
+    player->view.command_angles = input.command.angles;
+    if (input.command.kind == QA_RULESET_Q3 || input.command.kind == QA_RULESET_Q2_CLASSIC) {
+        qa_usercmd converted;
+        qa_input_command_basis from = {.kind = input.command.kind, .words = true, .signed_shorts = true},
+            to = {.kind = input.command.kind};
+        qa_input_command_convert(&input.command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        player->view.command_angles = converted.angles;
+    }
     player->view.view_offset = result->view_offset; player->view.view_height = result->view_height;
     player->view.ground = result->ground; player->view.water_level = result->water_level;
     player->view.water_type = result->water_type;

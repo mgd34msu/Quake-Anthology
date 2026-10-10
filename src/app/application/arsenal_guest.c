@@ -304,17 +304,14 @@ static qa_vec3 source_view_angles(const application_guest_input *input,
     for (size_t i = 0; i < input->profile.intermission_count; ++i)
         if (player->pmType == input->profile.intermission_modes[i]) return previous;
     if (player->pmType != 2 && player->stats[0] <= 0) return previous;
-    float angles[3];
-    for (size_t i = 0; i < 3; ++i) {
-        uint32_t word = ((uint32_t)command->angles[i] + (uint32_t)player->deltaAngles[i]) & UINT32_C(65535);
-        int32_t signed_word = word >= UINT32_C(32768) ? (int32_t)word - 65536 : (int32_t)word;
-        if (i == 0) {
-            if (signed_word > 16000) signed_word = 16000;
-            else if (signed_word < -16000) signed_word = -16000;
-        }
-        angles[i] = (float)((double)signed_word * (360.0 / 65536.0));
-    }
-    return qa_v3(angles[0], angles[1], angles[2]);
+    qa_usercmd source = {.kind = QA_RULESET_Q3}, converted;
+    for (size_t i = 0; i < 3; ++i)
+        source.angle_words[i] = qa_input_signed_word((uint32_t)command->angles[i] + (uint32_t)player->deltaAngles[i]);
+    if (source.angle_words[0] > 16000) source.angle_words[0] = 16000;
+    else if (source.angle_words[0] < -16000) source.angle_words[0] = -16000;
+    qa_input_command_basis from = {.kind = QA_RULESET_Q3, .words = true}, to = {.kind = QA_RULESET_Q3};
+    qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+    return converted.angles;
 }
 
 static bool source_input(application_guest_input *input, guest_client_scope *scope, const qa_qvm_call *call,

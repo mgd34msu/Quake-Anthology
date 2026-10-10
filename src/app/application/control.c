@@ -713,14 +713,13 @@ bool application_control_q1_source_prethink(qa_application *app, qa_actor_id act
     application_control_record *record = &app->controls[actor.slot];
     qa_vec3 angles = command ? command->angles : record->player.view_angles;
     if (command && (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC)) {
-        float aim[3];
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = command->kind == QA_RULESET_Q3 ? record->player.state.data.q3.delta_angle_words[i]
-                : record->player.state.data.q2.delta_angle_shorts[i];
-            aim[i] = (float)(uint16_t)((uint32_t)command->angle_words[i] + (uint32_t)delta) *
-                (360.0f / 65536.0f);
-        }
-        angles = qa_v3(aim[0], aim[1], aim[2]);
+        qa_usercmd converted;
+        qa_input_command_basis from = {.kind = command->kind, .words = true, .relative = true, .wrap_words = true},
+            to = {.kind = command->kind};
+        for (size_t i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_RULESET_Q3
+            ? record->player.state.data.q3.delta_angle_words[i] : record->player.state.data.q2.delta_angle_shorts[i];
+        qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        angles = converted.angles;
     } else if (command && command->kind == QA_RULESET_Q2_RERELEASE)
         angles = qa_vec_add(angles, record->player.state.data.q2r.delta_angles);
     uint32_t buttons = command ? command->buttons : record->player.buttons;
@@ -768,8 +767,8 @@ static void resume_forced_view(application_move_call *move)
         break;
     }
     input->command.angles = record->player.command_angles;
-    float angles[] = {record->player.command_angles.x, record->player.command_angles.y, record->player.command_angles.z};
-    for (size_t i = 0; i < 3; ++i) input->command.angle_words[i] = qa_angle_to_word(angles[i]);
+    qa_input_command_basis from = {.kind = input->command.kind}, to = {.kind = input->command.kind, .words = true};
+    qa_input_command_convert(&input->command, NULL, &from, &to, (qa_input_axis_rule){0}, &input->command);
 }
 
 static void command_angle_feedback(const application_move_call *move,
@@ -779,13 +778,11 @@ static void command_angle_feedback(const application_move_call *move,
         return;
     qa_vec3 angles = command->angles;
     if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
-        float words[3];
-        for (size_t i = 0; i < 3; ++i) {
-            uint32_t bits = (uint32_t)command->angle_words[i] & UINT32_C(65535);
-            int32_t word = bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536;
-            words[i] = (float)word * (360.0f / 65536.0f);
-        }
-        angles = qa_v3(words[0], words[1], words[2]);
+        qa_usercmd converted;
+        qa_input_command_basis from = {.kind = command->kind, .words = true, .signed_shorts = true},
+            to = {.kind = command->kind};
+        qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        angles = converted.angles;
     }
     move->control->player.command_angles = angles;
 }
@@ -809,18 +806,19 @@ typedef struct application_control_mod_input {
 
 static qa_vec3 component_aim(const qa_movement_state *state, const qa_usercmd *command)
 {
-    if (command->kind == state->kind &&
-        (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC)) {
-        float angles[3];
-        for (unsigned i = 0; i < 3; ++i) {
-            int32_t delta = command->kind == QA_RULESET_Q3 ? state->data.q3.delta_angle_words[i]
-                : state->data.q2.delta_angle_shorts[i];
-            angles[i] = (float)(uint16_t)((uint32_t)command->angle_words[i] + (uint32_t)delta) * (360.0f / 65536.0f);
+    qa_usercmd converted;
+    qa_input_command_basis from = {.kind = command->kind}, to = {.kind = command->kind};
+    if (command->kind == state->kind) {
+        if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
+            from.words = from.relative = from.wrap_words = true;
+            for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_RULESET_Q3
+                ? state->data.q3.delta_angle_words[i] : state->data.q2.delta_angle_shorts[i];
+        } else if (command->kind == QA_RULESET_Q2_RERELEASE) {
+            from.relative = true; from.delta_angles = state->data.q2r.delta_angles;
         }
-        return qa_v3(angles[0], angles[1], angles[2]);
     }
-    return command->kind == state->kind && command->kind == QA_RULESET_Q2_RERELEASE
-        ? qa_vec_add(command->angles, state->data.q2r.delta_angles) : command->angles;
+    qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+    return converted.angles;
 }
 
 static bool component_input_current(const application_control_mod_input *scope, qa_error *error)
@@ -1240,15 +1238,13 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
     bool changed_aim = !same_vector(original_aim, semantic.angles);
     if (changed_aim && command->kind == state->kind &&
         (state->kind == QA_RULESET_Q3 || state->kind == QA_RULESET_Q2_CLASSIC)) {
-        const float angles[] = {semantic.angles.x, semantic.angles.y, semantic.angles.z};
-        for (size_t i = 0; i < 3; ++i) {
-            int32_t delta = state->kind == QA_RULESET_Q3 ? state->data.q3.delta_angle_words[i]
-                                                       : state->data.q2.delta_angle_shorts[i];
-            uint32_t word = (uint32_t)qa_angle_to_word(angles[i]) - (uint32_t)delta;
-            if (state->kind == QA_RULESET_Q3)
-                memcpy(&semantic.angle_words[i], &word, sizeof(word));
-            else semantic.angle_words[i] = (int32_t)(uint16_t)word;
-        }
+        qa_usercmd converted;
+        qa_input_command_basis from = {.kind = semantic.kind}, to = {.kind = semantic.kind,
+            .words = true, .relative = true, .wrap_words = state->kind == QA_RULESET_Q2_CLASSIC};
+        for (size_t i = 0; i < 3; ++i) to.delta_words[i] = state->kind == QA_RULESET_Q3
+            ? state->data.q3.delta_angle_words[i] : state->data.q2.delta_angle_shorts[i];
+        qa_input_command_convert(&semantic, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        memcpy(semantic.angle_words, converted.angle_words, sizeof(semantic.angle_words));
     }
     semantic.angles = changed_aim ? command->kind == state->kind && state->kind == QA_RULESET_Q2_RERELEASE
         ? qa_vec_sub(semantic.angles, state->data.q2r.delta_angles) : semantic.angles : command->angles;

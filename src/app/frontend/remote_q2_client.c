@@ -460,16 +460,22 @@ static bool hook_command(void *context, const qa_usercmd *source, qa_q2_usercmd 
     if (!frontend_remote_q2_wire_seat(row, &remote_index, error)) return false;
     const qa_q2_player *player = row->frame.valid && remote_index < row->frame.player_count ?
         &row->frame.players[remote_index].player : NULL;
+    qa_input_command_basis from = {.kind = command->kind}, to = {.kind = command->kind, .relative = true};
+    qa_usercmd converted;
     if (remote_q2_float_movement(row)) {
-        float angles[3] = {command->angles.x, command->angles.y, command->angles.z};
-        for (size_t i = 0; i < 3; ++i) {
-            float delta = !player ? 0 : player->pmove.float_delta_angles ? player->pmove.delta_angles_f[i] :
-                player->pmove.delta_angles[i] * (360.0f / 65536);
-            uint16_t bits = qa_angle_to_word(angles[i] - delta);
-            memcpy(out->angles + i, &bits, sizeof(bits));
-        }
-    } else for (size_t i = 0; i < 3; ++i)
-        out->angles[i] = (int16_t)(command->angle_words[i] - (player ? player->pmove.delta_angles[i] : 0));
+        if (player) to.delta_angles = player->pmove.float_delta_angles ?
+            qa_v3(player->pmove.delta_angles_f[0], player->pmove.delta_angles_f[1], player->pmove.delta_angles_f[2]) :
+            qa_v3(player->pmove.delta_angles[0] * (360.0f / 65536),
+                player->pmove.delta_angles[1] * (360.0f / 65536), player->pmove.delta_angles[2] * (360.0f / 65536));
+        qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+        from.relative = to.relative = false; to.words = true;
+        qa_input_command_convert(&converted, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+    } else {
+        from.words = to.words = true;
+        if (player) for (size_t i = 0; i < 3; ++i) to.delta_words[i] = player->pmove.delta_angles[i];
+        qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+    }
+    for (size_t i = 0; i < 3; ++i) out->angles[i] = (int16_t)converted.angle_words[i];
     return true;
 }
 static bool hook_server_command(void *context, qa_net_client_id id, uint8_t seat, const char *text, qa_error *error)

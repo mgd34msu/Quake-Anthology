@@ -1,5 +1,6 @@
 #include "map/internal.h"
 #include "qa/game_type.h"
+#include "qa/input.h"
 #include "source_wire.h"
 #include "qa/game_q3_clients.h"
 
@@ -530,17 +531,17 @@ bool qa_q3_wire_player_view_command(qa_q3_game *game, qa_actor_id actor,
             int32_t delta[3] = {motion.delta_pitch_word, motion.delta_yaw_word,
                                 motion.delta_roll_word};
             int32_t angles[3];
-            for (size_t i = 0; i < 3; ++i) {
-                uint32_t value = ((uint32_t)command->angles[i] + (uint32_t)delta[i]) & 65535u;
-                angles[i] = value >= 32768u ? (int32_t)value - 65536 : (int32_t)value;
-            }
+            for (size_t i = 0; i < 3; ++i)
+                angles[i] = qa_input_signed_word((uint32_t)command->angles[i] + (uint32_t)delta[i]);
             if (angles[0] > 16000 || angles[0] < -16000) {
                 angles[0] = angles[0] > 0 ? 16000 : -16000;
                 motion.delta_pitch_word = word((uint32_t)angles[0] - (uint32_t)command->angles[0]);
             }
-            motion.view_angles = qa_v3((float)angles[0] * (360.0f / 65536.0f),
-                (float)angles[1] * (360.0f / 65536.0f),
-                (float)angles[2] * (360.0f / 65536.0f));
+            qa_usercmd source = {.kind = QA_RULESET_Q3,
+                .angle_words = {angles[0], angles[1], angles[2]}}, converted;
+            qa_input_command_basis from = {.kind = source.kind, .words = true}, to = {.kind = source.kind};
+            qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+            motion.view_angles = converted.angles;
         }
         qa_q3_player *followed = q3_client_follow_player(game, slot);
         if (followed) {

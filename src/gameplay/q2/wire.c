@@ -5,6 +5,7 @@
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
 #include "qa/text.h"
+#include "qa/input.h"
 #include <math.h>
 
 #define Q2_STATUS_VITALS \
@@ -500,10 +501,12 @@ static int16_t source_short(float value)
 
 static qa_vec3 source_command_angles(const qa_usercmd *command)
 {
-    return command->kind == QA_RULESET_Q2_CLASSIC ?
-        qa_v3((float)command->angle_words[0] * (360.f / 65536.f),
-            (float)command->angle_words[1] * (360.f / 65536.f),
-            (float)command->angle_words[2] * (360.f / 65536.f)) : command->angles;
+    if (command->kind != QA_RULESET_Q2_CLASSIC) return command->angles;
+    qa_usercmd converted;
+    qa_input_command_basis from = {.kind = command->kind, .words = true, .signed_shorts = true},
+        to = {.kind = command->kind};
+    qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
+    return converted.angles;
 }
 
 static void source_policy_read(const qa_q2_player_pm_rules *rules, qa_movement_state *state)
