@@ -1,4 +1,5 @@
 #include "mixer_internal.h"
+#include "qa/allocation_gate.h"
 
 #include <inttypes.h>
 #include <limits.h>
@@ -15,29 +16,18 @@ static bool mixer_error(qa_error *error, qa_status status, const char *message) 
 }
 
 static void *reserve(void *data, size_t *capacity, size_t needed, size_t width, qa_error *error) {
-    if (needed <= *capacity)
-        return data;
-    if (needed > SIZE_MAX / width) {
-        mixer_error(error, QA_ERROR_MEMORY, "Audio allocation size overflow");
-        return NULL;
+    (void)width;
+    if (needed <= *capacity) return data;
+    qa_allocation_gate_capacity_exhausted();
+    mixer_error(error, QA_ERROR_MEMORY, "Reserved audio workspace exhausted");
+    return NULL;
+}
+
+static void *load_array(qa_audio_mixer *mixer, size_t count, size_t width, size_t alignment, qa_error *error) {
+    if (count > SIZE_MAX / width) {
+        mixer_error(error, QA_ERROR_MEMORY, "Audio allocation size overflow"); return NULL;
     }
-    size_t count = *capacity ? *capacity : 8;
-    while (count < needed) {
-        if (count > SIZE_MAX / 2) {
-            count = needed;
-            break;
-        }
-        count *= 2;
-    }
-    if (count > SIZE_MAX / width)
-        count = needed;
-    void *result = realloc(data, count * width);
-    if (!result) {
-        mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate audio storage");
-        return NULL;
-    }
-    *capacity = count;
-    return result;
+    return qa_arena_alloc(&mixer->prepared_storage, count * width, alignment, error);
 }
 
 static int setting(qa_audio_mixer *mixer, const char *name) {
@@ -599,26 +589,45 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
                          sizeof(qa_mixer_prepared), _Alignof(qa_mixer_prepared), error)) {
         qa_arena_destroy(&mixer->prepared_storage); free(mixer); return false;
     }
-    qa_arena_seal(&mixer->prepared_storage);
-    mixer->prepared_index = calloc(buckets, sizeof(*mixer->prepared_index));
+    mixer->prepared_index = load_array(mixer, buckets, sizeof(*mixer->prepared_index), _Alignof(qa_mixer_prepared *), error);
     if (!mixer->prepared_index) {
         qa_arena_destroy(&mixer->prepared_storage); free(mixer);
         return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect index");
     }
     mixer->prepared_index_capacity = buckets;
-    if (options->initial_voices) {
-        mixer->voices = reserve(NULL, &mixer->voice_capacity, options->initial_voices,
-                                sizeof(*mixer->voices), error);
-        if (!mixer->voices) {
-            free(mixer->prepared_index); qa_arena_destroy(&mixer->prepared_storage); free(mixer);
-            return false;
-        }
-        mixer->voice_count = options->initial_voices;
-        for (size_t i = 0; i < mixer->voice_count; i++) {
-            mixer->voices[i] = (qa_mixer_voice){.next_free = mixer->free_head};
-            mixer->free_head = i;
-        }
+    memset(mixer->prepared_index, 0, buckets * sizeof(*mixer->prepared_index));
+    size_t workspace = options->workspace_capacity ? options->workspace_capacity : 4096;
+    if (workspace < options->initial_voices) workspace = options->initial_voices;
+    if (workspace > SIZE_MAX / 2) {
+        qa_arena_destroy(&mixer->prepared_storage); free(mixer);
+        return mixer_error(error, QA_ERROR_MEMORY, "Audio workspace size overflow");
     }
+    mixer->voice_capacity = mixer->loop_capacity = mixer->loop_mix_capacity = mixer->position_capacity = workspace;
+    mixer->transmission_capacity = workspace * 2;
+    mixer->event_capacity = workspace * 2;
+    mixer->diagnostic_capacity = 65536;
+    mixer->voices = load_array(mixer, workspace, sizeof(*mixer->voices), _Alignof(qa_mixer_voice), error);
+    mixer->loops = load_array(mixer, workspace, sizeof(*mixer->loops), _Alignof(qa_mixer_loop), error);
+    mixer->loop_mixes = load_array(mixer, workspace, sizeof(*mixer->loop_mixes), _Alignof(qa_mixer_loop_mix), error);
+    mixer->positions = load_array(mixer, workspace, sizeof(*mixer->positions), _Alignof(qa_mixer_position), error);
+    mixer->transmissions = load_array(mixer, workspace * 2, sizeof(*mixer->transmissions), _Alignof(qa_mixer_transmission), error);
+    mixer->events = load_array(mixer, workspace * 2, sizeof(*mixer->events), _Alignof(qa_mixer_event), error);
+    mixer->diagnostic_message = load_array(mixer, mixer->diagnostic_capacity, 1, _Alignof(char), error);
+    if (!mixer->voices || !mixer->loops || !mixer->loop_mixes || !mixer->positions ||
+        !mixer->transmissions || !mixer->events || !mixer->diagnostic_message) {
+        qa_arena_destroy(&mixer->prepared_storage); free(mixer); return false;
+    }
+    mixer->voice_count = options->initial_voices;
+    for (size_t i = 0; i < mixer->voice_count; i++) {
+        mixer->voices[i] = (qa_mixer_voice){.next_free = mixer->free_head};
+        mixer->free_head = i;
+    }
+    while (mixer->event_count < mixer->event_capacity) {
+        size_t index = mixer->event_count++;
+        mixer->events[index].next = mixer->event_free;
+        mixer->event_free = index; ++mixer->event_free_count;
+    }
+    qa_arena_seal(&mixer->prepared_storage);
     *out = mixer;
     return true;
 }
@@ -649,15 +658,7 @@ void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
         mixer->event_head = mixer->events[index].next;
         prepared_release(mixer, mixer->events[index].prepared);
     }
-    free(mixer->voices);
-    free(mixer->prepared_index);
     qa_arena_destroy(&mixer->prepared_storage);
-    free(mixer->loops);
-    free(mixer->loop_mixes);
-    free(mixer->positions);
-    free(mixer->transmissions);
-    free(mixer->events);
-    free(mixer->diagnostic_message);
     free(mixer);
 }
 
@@ -1378,7 +1379,10 @@ bool qa_audio_mixer_ambient(qa_audio_mixer *mixer, qa_audio_sample *sounds[2],
         prepared_release(mixer, prepared[1]);
         return mixer_error(error, QA_ERROR_MEMORY, "Ambient voice allocation overflow");
     }
-    qa_mixer_voice *items = reserve(mixer->voices, &mixer->voice_capacity, mixer->voice_count + 2,
+    size_t needed = mixer->voice_count + 2;
+    for (size_t index = mixer->free_head, free = 0; index != SIZE_MAX && free < 2;
+         index = mixer->voices[index].next_free, ++free) --needed;
+    qa_mixer_voice *items = reserve(mixer->voices, &mixer->voice_capacity, needed,
                                     sizeof(*items), error);
     if (!items) {
         prepared_release(mixer, prepared[0]);

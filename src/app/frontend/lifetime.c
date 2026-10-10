@@ -300,7 +300,9 @@ static int32_t audio_milliseconds(void *context)
 void frontend_audio_engine_options(qa_frontend *frontend,qa_audio_engine_options *options)
 {
     *options=(qa_audio_engine_options){.sample_rate=48000,.output_channels=2,
-        .mix_frames=1024,.initial_voices=128,.milliseconds=audio_milliseconds,.milliseconds_user=frontend,
+        .mix_frames=1024,.initial_voices=128,
+        .workspace_capacity=qa_actors_capacity(qa_session_actor_registry(qa_application_session(frontend->application))),
+        .milliseconds=audio_milliseconds,.milliseconds_user=frontend,
         .observer=frontend_ui_audio_event,.observer_user=frontend};
 }
 bool frontend_audio_engine_options_ready(const qa_frontend *frontend)

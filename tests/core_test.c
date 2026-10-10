@@ -437,6 +437,13 @@ static void test_retained_movement_result(void)
     qa_movement_result_free(&out); CHECK(!out.contacts && !out.contact_capacity);
 }
 
+typedef struct audio_notification_counts { size_t starts, stops; } audio_notification_counts;
+static void count_audio_notification(void *context, const qa_audio_voice_event *event)
+{
+    audio_notification_counts *counts = context;
+    CHECK(event->sample && event->voice_id);
+    if (event->started) ++counts->starts; else ++counts->stops;
+}
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -476,8 +483,10 @@ static void test_shared_audio_preparation(void)
         CHECK(changed != first && changed->sample_rate == 32000 && first->sample_rate == 44100);
         CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
         qa_audio_mixer *mixer = NULL;
+        audio_notification_counts counts = {0};
         qa_audio_mixer_options options = {.sample_rate = 44100, .output_channels = 2,
-                                         .initial_voices = 8, .prepared_capacity = 1};
+            .initial_voices = 8, .prepared_capacity = 1, .workspace_capacity = 8,
+            .observer = count_audio_notification, .observer_user = &counts};
         CHECK(qa_audio_mixer_create(&options, &mixer, &error));
         qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
             .family = families[i], .actor = QA_AUDIO_NO_ACTOR, .owner = QA_AUDIO_NO_OWNER,
@@ -486,8 +495,10 @@ static void test_shared_audio_preparation(void)
             bool accepted = false;
             CHECK(qa_audio_mixer_play(mixer, &sound, 0, &accepted, &error) && accepted);
             CHECK(qa_audio_mixer_play(mixer, &sound, 100, &accepted, &error) && accepted);
+            int16_t output[32]; CHECK(qa_audio_mixer_mix(mixer, output, 16, &error));
             qa_audio_mixer_stop_all(mixer);
         }
+        CHECK(counts.starts && counts.starts == counts.stops);
         qa_audio_mixer_destroy(mixer);
         if (i + 1 == sizeof(families) / sizeof(*families)) {
             CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
