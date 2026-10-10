@@ -260,7 +260,7 @@ static bool surface_supported(const qa_cpu_renderer *renderer,
       draw->luminance_alpha || draw->light_count || draw->shadow_atlas ||
       draw->source_arrays || draw->source_direct || draw->source_stage_state ||
       draw->source_primitives || draw->source_retain_depth_range ||
-      draw->source_retain_polygon_offset || renderer->controls.source.issuing ||
+      draw->source_retain_polygon_offset ||
       !draw->brush.texture_size[0] || !draw->brush.texture_size[1] ||
       !draw->brush.texture_extents[0] || !draw->brush.texture_extents[1] ||
       draw->texture_count == 0 || draw->texture_count > 2)

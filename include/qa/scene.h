@@ -512,6 +512,9 @@ typedef struct qa_scene_brush_surface {
     uint64_t identity;
     const struct qa_scene_brush_surface *parts;
     size_t part_count;
+    const struct qa_scene_brush_surface *chain;
+    const struct qa_scene_brush_surface *next;
+    qa_scene_mesh mesh;
     /* Authored meshes retain normalized UVs until the stage binds an image. */
     bool normalized_texture;
     float texture_maxs[2];

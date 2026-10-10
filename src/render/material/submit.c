@@ -436,7 +436,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         draw.fog.effect = adjustment;
     }
     bool swap = false;
-    if (!source && geometry->vertex_count &&
+    if ((!source || context->brush) && geometry->vertex_count &&
         uniform_color_generator(stage->rgb) && uniform_color_generator(stage->alpha) &&
         (context->fog_tc_scale <= 0 ||
          (adjustment != QA_FOG_RGB && adjustment != QA_FOG_ALPHA && adjustment != QA_FOG_RGBA)) &&
@@ -446,16 +446,32 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         if (!material_color_prepare(stage, context, time, &uniform, error) ||
             !material_color_vertex(stage, geometry->vertices, context, &uniform,
                                    previous_colors[0], &color, error)) return false;
+        if (source) color = iterator == QA_MATERIAL_LIGHTMAPPED ?
+            (qa_vec4){1,1,1,1} : source->colors[0];
         draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
             .swap_uv = swap, .color = color};
         if (context->brush && context->brush->present && !swap && !material->deform_count &&
             !first_binding->is_lightmap && (!second_binding || second_binding->is_lightmap) &&
-            environment == QA_TEXTURE_MODULATE && draw.mesh.identity && draw.mesh.geometry) {
+            environment == QA_TEXTURE_MODULATE &&
+            draw.state.blend_source == QA_BLEND_ONE && draw.state.blend_destination == QA_BLEND_ZERO &&
+            draw.state.alpha_test == QA_ALPHA_NONE && draw.state.depth_test == QA_DEPTH_LEQUAL &&
+            draw.state.depth_write && draw.state.color_write &&
+            ((draw.mesh.identity && draw.mesh.geometry) || context->brush->chain)) {
             draw.brush = *context->brush;
             draw.single_coverage = true;
         }
         for (size_t i = 0; i < geometry->vertex_count; ++i) previous_colors[i] = color;
-        return qa_scene_frame_draw(frame, &draw, error);
+        if (!source) return qa_scene_frame_draw(frame, &draw, error);
+        draw.mesh.identity = draw.mesh.revision = 0;
+        qa_scene_vertex *vertices = frame_array(frame, geometry->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
+        if (!vertices) return false;
+        memcpy(vertices, geometry->vertices, geometry->vertex_count * sizeof(*vertices));
+        draw.mesh.vertices = vertices;
+        draw.source_arrays = true;
+        draw.source_vertex_storage = (uint32_t)geometry->vertex_count;
+        if (!qa_scene_frame_draw(frame, &draw, error)) return false;
+        return !source->issuing || !second_binding ||
+            (material_source_texture_enable(source, false, error) && material_source_texture_select(source, 0, error));
     }
     draw.mesh.identity = draw.mesh.revision = 0;
     size_t storage = source ? source_storage : geometry->vertex_count;
@@ -845,6 +861,8 @@ static bool source_begin_surface(qa_material_source_scratch *source,
     const qa_material *previous = source->material;
     source->material = material; qa_material_release(previous);
     source->vertex_count = source->index_count = 0;
+    source->brush_first = source->brush_last = NULL;
+    source->brush_supported = true;
     source->light_mask = 0;
     source->fog_index = row->context.fog_index; source->fog = row->context.fog;
     source->fog_tc_scale = row->context.fog_tc_scale; source->fog_has_surface = row->context.fog_has_surface;
@@ -1276,6 +1294,22 @@ static bool source_append(qa_material_source_scratch *source, const material_sou
         source->index_count += mesh.index_count;
     }
     source->vertex_count += mesh.vertex_count;
+    if (!row->context.brush || !row->context.brush->present || !mesh.identity || !mesh.geometry ||
+        mesh.vertices != row->context.brush->mesh.vertices ||
+        mesh.vertex_count != row->context.brush->mesh.vertex_count ||
+        mesh.index_count != row->context.brush->mesh.index_count)
+        source->brush_supported = false;
+    if (source->brush_supported) {
+        qa_error scratch_error = {0};
+        qa_scene_brush_surface *brush = qa_arena_alloc(&frame->storage, sizeof(*brush), alignof(qa_scene_brush_surface), &scratch_error);
+        if (!brush) source->brush_supported = false;
+        else {
+            *brush = *row->context.brush; brush->mesh = mesh; brush->next = NULL;
+            if (source->brush_last) source->brush_last->next = brush;
+            else source->brush_first = brush;
+            source->brush_last = brush;
+        }
+    }
     return true;
 }
 bool qa_material_source_commands(const qa_material *material, const qa_material_context *context,
@@ -1313,6 +1347,8 @@ static bool source_flush(qa_material_source_scratch *source, const material_sour
     const qa_material *material = source->material;
     if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source EndSurface has no retained shader"); return false; }
     qa_material_context context = row->context; context.source_writer = QA_SOURCE_WRITE_FULL;
+    qa_scene_brush_surface brush = {.present = true, .chain = source->brush_first};
+    context.brush = source->brush_supported && source->brush_first ? &brush : NULL;
     const char *texts[8];
     for (size_t i = 0; i < 8; ++i) texts[i] = source->texts[i];
     context.texts = texts; context.text_count = 8;

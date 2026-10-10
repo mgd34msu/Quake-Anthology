@@ -1457,16 +1457,6 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     }
   }
   const qa_scene_draw *draw = &resolved;
-  if (draw->brush.present && draw->brush.part_count) {
-    for (size_t i = 0; i < draw->brush.part_count; ++i) {
-      qa_scene_draw part = *draw;
-      part.brush = draw->brush.parts[i];
-      part.mesh.indices = part.brush.polygon_indices;
-      part.mesh.index_count = part.brush.polygon_vertices;
-      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
-    }
-    return true;
-  }
   if (!draw_valid(draw, error)) {
     if (fused) return cpu_draw_impl(renderer, &base, error, queued) &&
                       cpu_draw_impl(renderer, &lightmap, error, queued);
@@ -1498,6 +1488,31 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     if (!cpu_sampler_prepare(renderer, resolved.textures[i], &samplers[i]))
       resolved.textures[i] = NULL;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
+  if (draw->brush.present && draw->brush.chain) {
+    for (const qa_scene_brush_surface *brush = draw->brush.chain; brush; brush = brush->next) {
+      qa_scene_draw part = *draw;
+      part.brush = *brush; part.brush.chain = part.brush.next = NULL;
+      part.mesh = brush->mesh;
+      /* The boundary has resolved the stage to explicit state and bindings.
+       * Retained world views no longer depend on mutable client arrays. */
+      part.source_arrays = part.source_primitives = part.source_stage_state = false;
+      part.source_retain_depth_range = part.source_retain_polygon_offset = false;
+      part.source_vertex_storage = 0;
+      part.retain_texture[0] = part.retain_texture[1] = false;
+      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
+    }
+    return true;
+  }
+  if (draw->brush.present && draw->brush.part_count) {
+    for (size_t i = 0; i < draw->brush.part_count; ++i) {
+      qa_scene_draw part = *draw;
+      part.brush = draw->brush.parts[i];
+      part.mesh.indices = part.brush.polygon_indices;
+      part.mesh.index_count = part.brush.polygon_vertices;
+      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
+    }
+    return true;
+  }
   CPU_STATS_ADD(renderer, draws, 1);
   bool brush_handled = false;
   if (draw->brush.present && mode == QA_RENDER_PRIMITIVES_INDEXED) {

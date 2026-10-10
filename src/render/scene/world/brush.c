@@ -22,7 +22,7 @@ static bool polygon(const qa_scene_mesh *mesh, const uint32_t *indices, size_t c
         if (d > determinant) { determinant = d; b = p; c = q; e1 = u; e2 = v; g11 = uu; g12 = uv; g22 = vv; }
     }
     if (!(determinant > 0)) return false;
-    qa_scene_brush_surface brush = {.present = true, .normalized_texture = true,
+    qa_scene_brush_surface brush = {.present = true, .normalized_texture = true, .mesh = *mesh,
         .polygon_vertices = (uint32_t)count, .polygon_indices = indices,
         .texture_mins = {FLT_MAX, FLT_MAX}, .texture_maxs = {-FLT_MAX, -FLT_MAX}};
     qa_vec3 normal = qa_vec_normalize(qa_vec_cross(e1, e2));
@@ -132,7 +132,7 @@ bool qaw_brush_prepare(const qa_scene_mesh *mesh, const qa_scene_image *lightmap
         out->parts[i].polygon_vertices = 3;
         polygon(mesh, mesh->indices + i * 3, 3, lightmap, out->parts + i);
     }
-    out->draw = (qa_scene_brush_surface){.present = true, .parts = out->parts, .part_count = count};
+    out->draw = (qa_scene_brush_surface){.present = true, .parts = out->parts, .part_count = count, .mesh = *mesh};
     qa_scene_geometry_brush_adopt(mesh->geometry, out->parts, NULL);
     return true;
 memory:

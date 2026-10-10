@@ -40,7 +40,7 @@ static void brush_geometry(qaw_surface *surface, const qa_bsp_texinfo *info,
 {
     qaw_legacy *legacy = surface->legacy;
     if (legacy->warp || legacy->flowing || legacy->fence || surface->sky || count > UINT32_MAX) return;
-    qa_scene_brush_surface brush = {.polygon_vertices = (uint32_t)count,
+    qa_scene_brush_surface brush = {.polygon_vertices = (uint32_t)count, .mesh = surface->mesh,
         .plane = surface->plane, .texture_size = {texture->width, texture->height},
         .light_revision = surface->brush.draw.light_revision,
         .lightmap_rect = {(int32_t)legacy->atlas_x, (int32_t)legacy->atlas_y, legacy->width, legacy->height}};

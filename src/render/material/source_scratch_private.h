@@ -63,6 +63,8 @@ struct qa_material_source_scratch {
     qa_vec4 colors[QA_SOURCE_TESS_VERTICES];
     qa_vec2 coordinates[2][QA_SOURCE_TESS_VERTICES];
     size_t vertex_count, index_count;
+    qa_scene_brush_surface *brush_first, *brush_last;
+    bool brush_supported;
     bool entered;
     bool collecting, dispatching, submitting, pictures, issuing;
     qa_scene_frame *frame;

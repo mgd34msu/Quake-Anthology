@@ -1067,6 +1067,8 @@ static void test_cached_world_surface(void)
         .identity_light = 1, .entity_color = {1,1,1,1}};
     context.view.projection = identity; context.view.axis[0] = (qa_vec3){0,0,-1};
     context.view.axis[1] = (qa_vec3){-1,0,0}; context.view.axis[2] = (qa_vec3){0,1,0};
+    qa_scene_brush_surface batch_surface = brush.draw;
+    qa_scene_brush_surface batch = {.present = true, .chain = &batch_surface};
     uint8_t reference[64 * 64 * 4];
     for (unsigned pass = 0; pass < 5; ++pass) {
         qa_scene_frame_reset(&frame, pass + 1);
@@ -1082,8 +1084,10 @@ static void test_cached_world_surface(void)
         }
         if (!pass || pass >= 3) CHECK(qa_scene_frame_draw(&frame, &draw, &error));
         else {
+            context.brush = pass == 2 ? &batch : &brush.draw;
             CHECK(qa_material_submit(&material, &mesh, &context, &frame, &error));
             CHECK(frame.command_count == 2 && frame.commands[1].data.draw.brush.present);
+            CHECK((frame.commands[1].data.draw.brush.chain != NULL) == (pass == 2));
         }
         if (pass == 4) {
             qa_scene_geometry_release(geometry); geometry = NULL;
