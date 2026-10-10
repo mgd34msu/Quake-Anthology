@@ -75,8 +75,7 @@ static void chunks_free(command_chunk *head)
 {
     while (head) {
         command_chunk *next = head->next;
-        free((char *)head->context.script); free((char *)head->caller.script);
-        free(head->text); free(head); head = next;
+        qac_console_chunk_free(head); head = next;
     }
 }
 

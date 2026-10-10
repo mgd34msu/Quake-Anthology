@@ -287,8 +287,7 @@ static void release_chunks_free(command_chunk *chunk)
 {
     while (chunk) {
         command_chunk *next=chunk->next;
-        free((char *)chunk->context.script); free((char *)chunk->caller.script);
-        free(chunk->text); free(chunk); chunk=next;
+        qac_console_chunk_free(chunk); chunk=next;
     }
 }
 static void imported_storage_free(qa_console *console)

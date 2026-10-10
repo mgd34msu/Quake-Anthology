@@ -1,6 +1,7 @@
 #ifndef QA_CONSOLE_COMMANDS_PRIVATE_H
 #define QA_CONSOLE_COMMANDS_PRIVATE_H
 #include "internal.h"
+#include "qa/pool.h"
 typedef struct qa_console_release qa_console_release;
 
 typedef struct command_contribution {
@@ -26,6 +27,8 @@ typedef struct alias_entry {
     struct alias_entry *next;
 } alias_entry;
 typedef struct command_chunk {
+    qa_pool *storage;
+    size_t storage_slot, storage_pages;
     qa_command_context context;
     qa_command_context caller;
     /* Borrow scripts from context/caller while a prepared tail awaits its
@@ -80,6 +83,8 @@ typedef struct console_source {
 struct qa_console_program;
 struct qac_cvar_scope;
 struct qa_console {
+    qa_arena command_storage;
+    qa_pool command_pages;
     qa_console_options options;
     console_source *sources;
     char *startup;
@@ -116,6 +121,9 @@ struct qa_console {
     struct qac_cvar_scope *cvar_scope;
 };
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
+command_chunk *qac_console_chunk_create(qa_console *,const qa_command_context *,const qa_command_context *,
+    const char *,size_t,bool,qa_error *);
+void qac_console_chunk_free(command_chunk *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);
 bool qac_console_context_view_current(const qa_console *,const qa_command_context *,bool publication,qa_error *);
 bool qac_console_release_access(const qa_console *, qa_error *);

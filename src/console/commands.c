@@ -158,8 +158,10 @@ bool qac_console_context_capture(qa_console *console,const qa_command_context *c
     return valid_context(console,&captured,error) && copy_context(out,&captured,error);
 }
 
-static void free_chunk(command_chunk *chunk)
+void qac_console_chunk_free(command_chunk *chunk)
 {
+    if (!chunk) return;
+    if (chunk->storage) { qa_pool_release_run(chunk->storage,chunk->storage_slot,chunk->storage_pages);return; }
     free((char *)chunk->context.script);
     free((char *)chunk->caller.script);
     free(chunk->text);
@@ -170,7 +172,7 @@ static void free_chunks(command_chunk *chunk)
 {
     while (chunk != NULL) {
         command_chunk *next = chunk->next;
-        free_chunk(chunk);
+        qac_console_chunk_free(chunk);
         chunk = next;
     }
 }
@@ -489,21 +491,57 @@ bool qa_console_limits(qa_console *console, const qa_command_context *context,
     return true;
 }
 
-static command_chunk *text_chunk(const qa_command_context *context, const char *text,
-                                   size_t length, bool newline, qa_error *error)
+static bool command_storage_prepare(qa_console *console,qa_error *error)
 {
-    command_chunk *chunk = calloc(1, sizeof(*chunk));
-    if (chunk == NULL) { qac_fail(error, QA_ERROR_MEMORY, "allocating command chunk"); return NULL; }
-    if (!copy_context(&chunk->context, context, error)) { free_chunk(chunk); return NULL; }
-    qac_text contents = {0};
-    if (!qac_text_add(&contents, text, length, error) ||
-        (newline && !qac_text_add(&contents, "\n", 1, error))) {
-        free(contents.data);
-        free_chunk(chunk);
-        return NULL;
+    size_t limit=console->options.maximum_buffer;
+    if (limit<16384) limit=16384;
+    size_t command=console->options.maximum_command?console->options.maximum_command:1024;
+    if (command>(SIZE_MAX-sizeof(command_chunk)-1024)/2)
+        return qac_fail(error,QA_ERROR_MEMORY,"console storage capacity overflows");
+    size_t record_pages=(sizeof(command_chunk)+command*2+1024)/1024;
+    if (limit>(SIZE_MAX-512)/2 || record_pages>SIZE_MAX/(limit*2+512))
+        return qac_fail(error,QA_ERROR_MEMORY,"console storage capacity overflows");
+    size_t pages=(limit*2+512)*record_pages;
+    if (pages>(SIZE_MAX-128)/(1024+sizeof(size_t)))
+        return qac_fail(error,QA_ERROR_MEMORY,"console storage capacity overflows");
+    qa_arena_init(&console->command_storage,0);
+    if (!qa_arena_reserve(&console->command_storage,pages*(1024+sizeof(size_t))+128,error) ||
+        !qa_pool_prepare(&console->command_pages,&console->command_storage,pages,1024,_Alignof(max_align_t),error))
+        return false;
+    qa_arena_seal(&console->command_storage);
+    return true;
+}
+
+command_chunk *qac_console_chunk_create(qa_console *console,const qa_command_context *context,
+    const qa_command_context *caller,const char *text,size_t length,bool newline,qa_error *error)
+{
+    size_t script=context->script?strlen(context->script)+1:0;
+    size_t parent=caller && caller->script?strlen(caller->script)+1:0;
+    size_t bytes=sizeof(command_chunk);
+    bool has_text=text || length || newline;
+    const size_t spans[]={script,parent,has_text?length:0,has_text?(newline?2u:1u):0};
+    for (size_t i=0;i<sizeof(spans)/sizeof(spans[0]);++i) {
+        if (spans[i]>SIZE_MAX-bytes) { qac_fail(error,QA_ERROR_MEMORY,"command chunk size overflows");return NULL; }
+        bytes+=spans[i];
     }
-    chunk->text = contents.data;
-    chunk->length = contents.size;
+    if (bytes>SIZE_MAX-1023) { qac_fail(error,QA_ERROR_MEMORY,"command chunk size overflows");return NULL; }
+    size_t pages=(bytes+1023)/1024,slot=SIZE_MAX;
+    command_chunk *chunk=qa_pool_take_run(&console->command_pages,pages,&slot);
+    if (!chunk) { qac_fail(error,QA_ERROR_MEMORY,"console command storage exhausted");return NULL; }
+    memset(chunk,0,sizeof(*chunk));
+    chunk->storage=&console->command_pages;chunk->storage_slot=slot;chunk->storage_pages=pages;
+    chunk->context=*context;
+    if (caller) chunk->caller=*caller;
+    char *data=(char *)(chunk+1);
+    if (script) { memcpy(data,context->script,script);chunk->context.script=data;data+=script; }
+    if (parent) { memcpy(data,caller->script,parent);chunk->caller.script=data;data+=parent; }
+    if (has_text) {
+        chunk->text=data;
+        if (length) memcpy(data,text,length);
+        data+=length;
+        if (newline) *data++='\n';
+        *data=0;chunk->length=length+(newline?1u:0u);
+    }
     return chunk;
 }
 
@@ -529,7 +567,7 @@ static bool queue_text(qa_console *console, const qa_command_context *context,
         (insert && context->dialect != QA_RULESET_Q3 && added >= limit))
         return qac_fail(error, QA_ERROR_FORMAT, "command buffer overflow");
     if (added == 0) return true;
-    command_chunk *chunk = text_chunk(context, text, length, newline, error);
+    command_chunk *chunk = qac_console_chunk_create(console,context,NULL,text,length,newline,error);
     if (chunk == NULL) return false;
     qac_console_program_touch(console, false);
     if (insert) {
@@ -558,7 +596,8 @@ qa_console *qa_console_create(const qa_console_options *options, qa_error *error
     if (console == NULL) { qac_fail(error, QA_ERROR_MEMORY, "allocating console"); return NULL; }
     console->options = *options;
     console->options.context.script = NULL;
-    if (!copy_context(&console->options.context, &options->context, error)) { free(console); return NULL; }
+    if (!command_storage_prepare(console,error)) { qa_console_destroy(console);return NULL; }
+    if (!copy_context(&console->options.context, &options->context, error)) { qa_console_destroy(console); return NULL; }
     if (options->startup_commands != NULL) {
         console->startup = qac_copy(options->startup_commands, error);
         if (console->startup == NULL) { qa_console_destroy(console); return NULL; }
@@ -746,6 +785,7 @@ void qa_console_destroy(qa_console *console)
     free((char *)console->options.context.script);
     free((char *)console->wait_context.script);
     free(console->startup);
+    qa_arena_destroy(&console->command_storage);
     free(console);
 }
 
@@ -1457,7 +1497,7 @@ static void consume(qa_console *console, size_t bytes)
         if (chunk->offset != chunk->length) break;
         *link = chunk->next;
         if (console->tail == chunk) console->tail = NULL;
-        free_chunk(chunk);
+        qac_console_chunk_free(chunk);
     }
     if (console->head != NULL && console->tail == NULL) {
         console->tail = console->head;
@@ -1507,7 +1547,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             if (options && options->script_complete != NULL)
                 options->script_complete(options->user, &first->context, first->context.script, first->success);
             console->frame = frame.parent;
-            free_chunk(first);
+            qac_console_chunk_free(first);
             continue;
         }
         qa_arena_reset(&storage);
@@ -1622,7 +1662,7 @@ static void discard_chunks(command_chunk **head, command_chunk **tail, size_t *b
         if ((owner ? chunk->context.owner : chunk->context.client) == id) {
             *link = chunk->next;
             if (!chunk->completion) *bytes -= chunk->length - chunk->offset;
-            free_chunk(chunk);
+            qac_console_chunk_free(chunk);
         } else {
             *tail = chunk;
             link = &chunk->next;
@@ -1730,22 +1770,21 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
         found = false;
         qa_error_set(&read_error, QA_ERROR_ARGUMENT, 0, "script reader returned invalid bytes");
     }
-    command_chunk *completion = calloc(1, sizeof(*completion));
+    qa_command_context script_context=command->context;
+    script_context.script=filename.data;script_context.direct=false;
+    command_chunk *completion = qac_console_chunk_create(console,&script_context,&command->context,NULL,0,false,error);
     command_chunk *text = NULL;
-    if (completion == NULL) { qac_fail(error, QA_ERROR_MEMORY, "allocating script completion"); goto fail; }
+    if (completion == NULL) goto fail;
     completion->completion = true;
     completion->success = found;
-    completion->context = command->context;
-    completion->context.script = filename.data;
-    completion->context.direct = false;
+    free(filename.data);
     filename.data = NULL;
-    if (!copy_context(&completion->caller, &command->context, error)) goto fail;
     if (found) {
         size_t length = 0;
         while (length < bytes.size && bytes.data[length] != 0) ++length;
         bool newline = command->context.dialect == QA_RULESET_Q3 || command->context.dialect == QA_RULESET_QUAKEWORLD ||
             (command->context.dialect == QA_RULESET_NETQUAKE && (length == 0 || bytes.data[length - 1] != '\n'));
-        text = text_chunk(&completion->context, (const char *)bytes.data, length, newline, error);
+        text = qac_console_chunk_create(console,&completion->context,NULL,(const char *)bytes.data,length,newline,error);
         if (text == NULL) goto fail;
         size_t limit = buffer_limit(console, &command->context);
         if (console->queued_bytes > limit || text->length > limit - console->queued_bytes) {
@@ -1763,14 +1802,14 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
     }
     output(console, &command->context, "\n");
     if (!valid_context(console, &completion->context, error)) {
-        if (text != NULL) free_chunk(text);
-        free_chunk(completion);
+        if (text != NULL) qac_console_chunk_free(text);
+        qac_console_chunk_free(completion);
         return false;
     }
     size_t limit = buffer_limit(console, &command->context);
     if (text != NULL && (console->queued_bytes > limit || text->length > limit - console->queued_bytes)) {
-        free_chunk(text);
-        free_chunk(completion);
+        qac_console_chunk_free(text);
+        qac_console_chunk_free(completion);
         return qac_fail(error, QA_ERROR_FORMAT, "exec script overflows command buffer after content callback");
     }
     completion->next = console->head;
@@ -1780,7 +1819,7 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
         console->head = text;
         console->queued_bytes += text->length;
     } else {
-        if (text != NULL) free_chunk(text);
+        if (text != NULL) qac_console_chunk_free(text);
         console->head = completion;
     }
     if (console->tail == NULL) console->tail = completion;
@@ -1788,8 +1827,8 @@ static bool execute_script(qa_console *console, const qa_command_invocation *com
 fail:
     if (options->release_script != NULL) options->release_script(options->user, lease);
     free(filename.data);
-    if (text != NULL) free_chunk(text);
-    if (completion != NULL) free_chunk(completion);
+    if (text != NULL) qac_console_chunk_free(text);
+    if (completion != NULL) qac_console_chunk_free(completion);
     return false;
 }
 

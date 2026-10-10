@@ -1097,6 +1097,20 @@ static void test_shared_input_menu_defaults(void)
                 CHECK(!qa_input_seat_action_active(seat, QA_INPUT_SCORES));
             }
         }
+        for (unsigned reuse=0;reuse<2;++reuse) {
+            char queued[]="+showscores 900\n",script[]="queued.cfg";
+            qa_command_context scripted=context;scripted.script=script;
+            CHECK(qa_console_append(console,&scripted,queued,&error));
+            queued[0]='X';script[0]='X';
+            CHECK(qa_console_defer(console,&error));
+            CHECK(qa_console_append(console,&context,"-showscores 900\n",&error));
+            CHECK(qa_console_resume(console,&error));
+            size_t drained=0;
+            CHECK(qa_console_drain(console,1,&drained,&error));
+            CHECK(drained==1 && qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            CHECK(qa_console_drain(console,0,&drained,&error));
+            CHECK(drained==1 && !qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+        }
         qa_input_console_destroy(commands);
         qa_input_seat_destroy(seat);
         qa_console_destroy(console);

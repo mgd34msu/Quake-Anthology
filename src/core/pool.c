@@ -75,10 +75,10 @@ void qa_pool_reset(qa_pool *pool)
 void *qa_pool_at(const qa_pool *pool, size_t slot)
 { return pool->values + slot * pool->stride; }
 
-static void *claim_run(qa_pool *pool,size_t slot,size_t count)
+static void *claim_run(qa_pool *pool,size_t slot,size_t count,size_t acquire)
 {
     size_t *link=&pool->head,acquired=0;
-    while(*link!=SIZE_MAX) {
+    while(*link!=SIZE_MAX && acquired<acquire) {
         size_t index=*link;
         if(index>=slot && index-slot<count) {
             *link=pool->next[index];pool->next[index]=pool->capacity;++acquired;
@@ -98,7 +98,7 @@ void *qa_pool_grow_run(qa_pool *pool,size_t *slot,size_t current,size_t needed)
         while(first && pool->next[first-1]!=pool->capacity && needed>end-first)--first;
         if(needed>end-first)return NULL;
     }
-    *slot=first;return claim_run(pool,first,needed);
+    *slot=first;return claim_run(pool,first,needed,needed-current);
 }
 
 void *qa_pool_take_run(qa_pool *pool, size_t count, size_t *slot)
@@ -109,7 +109,7 @@ void *qa_pool_take_run(qa_pool *pool, size_t count, size_t *slot)
         run=pool->next[i]==pool->capacity?0:run+1;
         if(run!=count) continue;
         *slot=i+1-count;
-        return claim_run(pool,*slot,count);
+        return claim_run(pool,*slot,count,count);
     }
     *slot=SIZE_MAX;
     if(pool->overflow!=SIZE_MAX) ++pool->overflow;

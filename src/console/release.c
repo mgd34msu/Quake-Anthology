@@ -4,11 +4,7 @@
 #include <string.h>
 
 static void chunk_free(command_chunk *chunk)
-{
-    if (!chunk) return;
-    free((char *)chunk->context.script); free((char *)chunk->caller.script);
-    free(chunk->text); free(chunk);
-}
+{ qac_console_chunk_free(chunk); }
 static void release_free(qa_console_release *owner)
 {
     qa_console_release **link=&owner->console->release_first;
@@ -54,18 +50,8 @@ static bool prepare(qa_console *console,const qa_console_release *parent,
     owner->console=console;
     bool ok=qac_console_context_capture(console,context,&owner->context,error);
     if (ok && length) {
-        owner->prepared=calloc(1,sizeof(*owner->prepared));
-        if (!owner->prepared) ok=qac_fail(error,QA_ERROR_MEMORY,"allocating retained release chunk");
-        if (ok) {
-            command_chunk *chunk=owner->prepared;
-            chunk->context=owner->context; chunk->context.script=NULL;
-            if (owner->context.script) {
-                chunk->context.script=qac_copy(owner->context.script,error);
-                if (!chunk->context.script) ok=false;
-            }
-            chunk->text=qac_copy(text,error); chunk->length=length;
-            if (!chunk->text) ok=false;
-        }
+        owner->prepared=qac_console_chunk_create(console,&owner->context,NULL,text,length,false,error);
+        ok=owner->prepared!=NULL;
     }
     if (!ok) { chunk_free(owner->prepared); free((char *)owner->context.script); free(owner); return false; }
     qa_console_release **tail=&console->release_first;
