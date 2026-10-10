@@ -8,11 +8,11 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     if (!qa_builtin_resource(&g->services,
                              head ? "models/objects/gibs/head2/tris.md2"
                                   : "models/objects/gibs/skull/tris.md2",
-                             &s->visual.models[0], e))
+                             &s->rule.visual.models[0], e))
         return false;
-    s->visual.skin = head ? 1 : 0;
-    s->visual.frame = 0;
-    s->visual.effects = 2;
+    s->rule.visual.skin = head ? 1 : 0;
+    s->rule.visual.frame = 0;
+    s->rule.visual.effects = 2;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
@@ -33,7 +33,7 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     combat.can_take_damage = rr;
     combat.no_knockback = true;
     a->character_no_damage_effects = rr;
-    s->gibbed = true;
+    s->rule.gibbed = true;
     if (!qa_combat_set_traits(g->services.combat, a->id, &combat, e)) return false;
     if (!q2_actor_live(g, a->id)) return true;
     if (!qa_world_body_write(g->services.world, a->id, &body, e)) return false;
@@ -52,7 +52,7 @@ static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     return true;
 }
 static bool drop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    if (!g->options.deathmatch || !a->client->use_weapons || !a->weapon_bound)
+    if (!g->options.deathmatch || !a->client->rule.use_weapons || !a->weapon_bound)
         return true;
     qa_q2_weapon weapon = a->weapon.weapon;
     const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(g, weapon);
@@ -123,7 +123,8 @@ bool q2_player_reserve_corpses(qa_q2_game *g, qa_error *e) {
                 qa_session_release(g->services.session, id, NULL);
                 return false;
             }
-            corpse->client->corpse = true;
+            corpse->client->player = qa_actors_player(qa_world_actors(g->services.world), id);
+            corpse->client->rule.corpse = true;
             p->corpses[i] = id;
         }
     return true;
@@ -151,17 +152,17 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, corpse->id))
         return true;
-    corpse->client->visual = a->client->visual;
+    corpse->client->rule.visual = a->client->rule.visual;
     corpse->client->info.slot = a->client->info.slot;
     if (rr) {
-        corpse->client->visual.skin &= 255;
-        corpse->client->visual.effects = 0;
-        corpse->client->visual.render_flags = 0;
+        corpse->client->rule.visual.skin &= 255;
+        corpse->client->rule.visual.effects = 0;
+        corpse->client->rule.visual.render_flags = 0;
         if (!player.can_take_damage)
             body.bounds = (qa_bounds){0};
     }
     corpse->client->info.dead = true;
-    corpse->client->gibbed = rr && a->client->gibbed;
+    corpse->client->rule.gibbed = rr && a->client->rule.gibbed;
     corpse->physics = a->physics;
     corpse->physics_bound = a->physics_bound;
     combat.can_take_damage = true;
@@ -195,7 +196,7 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_link(g->services.world, corpse->id, NULL, e))
         return false;
     return !q2_actor_live(g, corpse->id) ||
-           q2_publish_visual(g, corpse->id, &corpse->client->visual, e);
+           q2_publish_visual(g, corpse->id, &corpse->client->rule.visual, e);
 }
 static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_players *runtime = g->player_runtime;
@@ -230,7 +231,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!okay || !q2_actor_live(g, a->id))
         return okay;
     if (!all_dead) {
-        a->client->respawn_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        a->client->rule.respawn_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
         return true;
     }
     runtime->restart_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
@@ -259,7 +260,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
     q2_client_state *s = a->client;
-    if (!s->corpse && !q2_player_trail_destroy(g, a->id, e)) return false;
+    if (!s->rule.corpse && !q2_player_trail_destroy(g, a->id, e)) return false;
     qa_combat_state combat;
     qa_body_state body;
     if (!qa_combat_read(g->services.combat, a->id, &combat, e) ||
@@ -270,11 +271,11 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
     int means = outcome->request.attack.cause.kind == QA_CAUSE_Q2
                     ? outcome->request.attack.cause.source.q2.means_of_death & ~0x8000000
                     : 0;
-    if (s->corpse) {
+    if (s->rule.corpse) {
         bool changed = false;
         /* The compiled rerelease player edict retains zero gib_health from
          * SpawnEntities; its body queue copies that field, unlike player_die's -40. */
-        if (combat.health < (rr ? 0 : -40) && !s->gibbed) {
+        if (combat.health < (rr ? 0 : -40) && !s->rule.gibbed) {
             if (!throw_gibs(g, a, damage, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -292,7 +293,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         }
         if (rr && means == 20) {
             changed = true;
-            s->visual.visible = false;
+            s->rule.visual.visible = false;
             a->physics_bound = true;
             a->physics.solid = QA_PHYSICS_NOT_SOLID;
             a->physics.motion = QA_PHYSICS_NOCLIP;
@@ -311,7 +312,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
                 return false;
         }
         return !changed || !q2_actor_live(g, a->id) ||
-               q2_publish_visual(g, a->id, &s->visual, e);
+               q2_publish_visual(g, a->id, &s->rule.visual, e);
     }
     qa_q2_player_movement movement;
     if (!q2_player_observe(g, a, &movement, e))
@@ -325,7 +326,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         !qa_q2_player_carry_capture(g, a->id, &carry, e))
         return false;
     if (rr) {
-        s->visual.models[1] = s->visual.models[2] = 0;
+        s->rule.visual.models[1] = s->rule.visual.models[2] = 0;
         if (!q2_player_loop(g, a, 0, e))
             goto fail;
         if (!q2_actor_live(g, a->id))
@@ -339,7 +340,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
     }
     if (first) {
         s->info.dead = true;
-        s->respawn_ns = q2_deadline(g->now_ns, Q2_NS);
+        s->rule.respawn_ns = q2_deadline(g->now_ns, Q2_NS);
         qa_actor_id killer = outcome->request.attack.attacker;
         if (!killer.registry || qa_actor_id_equal(killer, a->id))
             killer = outcome->request.attack.inflictor;
@@ -347,11 +348,11 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         if (killer.registry && !qa_actor_id_equal(killer, a->id) && q2_actor_live(g, killer)) {
             if (!qa_world_body_read(g->services.world, killer, &target, e))
                 goto fail;
-            s->killer_yaw = qa_builtin_angle_mod(
+            s->rule.killer_yaw = qa_builtin_angle_mod(
                 atan2f(target.origin.y - body.origin.y, target.origin.x - body.origin.x) *
                 57.29577951308232f);
         } else
-            s->killer_yaw = body.angles.y;
+            s->rule.killer_yaw = body.angles.y;
         if (!q2_player_obituary(g, a, outcome, e))
             goto fail;
         if (!q2_actor_live(g, a->id))
@@ -361,7 +362,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         if (!q2_actor_live(g, a->id))
             goto finish;
         qa_q2_player_services *services = &g->player_runtime->services;
-        if (!s->use_weapons && services->drop_inventory &&
+        if (!s->rule.use_weapons && services->drop_inventory &&
             !services->drop_inventory(services->context, a->id, &outcome->request.attack, e))
             goto fail;
         if (!q2_actor_live(g, a->id))
@@ -379,7 +380,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
                     !g->player_runtime->rules.coop_squad_respawn);
         if (clear && !q2_player_inventory_set(g, a->id, NULL, 0, e))
             goto fail;
-        s->show_scores = g->options.deathmatch;
+        s->rule.show_scores = g->options.deathmatch;
     }
     if (!q2_actor_live(g, a->id))
         goto finish;
@@ -398,17 +399,17 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
     if (!q2_actor_live(g, a->id))
         goto finish;
     if (rr && first) {
-        s->animation_ns = 0;
+        s->rule.animation_ns = 0;
         qa_q2_player_rules *rules = &g->player_runtime->rules;
         if (g->options.deathmatch && rules->force_respawn_seconds != 0)
-            s->respawn_ns = q2_deadline(g->now_ns, q2_item_seconds(rules->force_respawn_seconds));
+            s->rule.respawn_ns = q2_deadline(g->now_ns, q2_item_seconds(rules->force_respawn_seconds));
         if (carry.inventory || (carry.count == 0 && g->options.cooperative &&
                                    (rules->coop_instanced_items || rules->coop_squad_respawn))) {
             carry.health = carry.maximum_health;
-            qa_q2_player_carry_free(&s->coop);
-            s->coop = carry;
+            qa_q2_player_carry_free(&s->rule.coop);
+            s->rule.coop = carry;
             carry = (qa_q2_player_carry){0};
-            s->has_coop = true;
+            s->rule.has_coop = true;
         }
         if (g->options.cooperative && (rules->coop_squad_respawn || rules->coop_lives)) {
             if (rules->coop_lives && s->info.lives > 0)
@@ -434,7 +435,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         traits.can_take_damage = true;
         if (!qa_combat_set_traits(g->services.combat, a->id, &traits, e))
             goto fail;
-        if (combat.health < -40 && !s->gibbed) {
+        if (combat.health < -40 && !s->rule.gibbed) {
             if (!(rr && means == 47 && combat.health < -80) && !throw_gibs(g, a, damage, e))
                 goto fail;
             if (q2_actor_live(g, a->id) && !client_head(g, a, damage, e))
@@ -449,16 +450,16 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         } else if (first) {
             g->player_runtime->death_animation = (g->player_runtime->death_animation + 1) % 3;
             unsigned index = g->player_runtime->death_animation;
-            s->animation_priority = 5;
-            s->visual.frame = movement.ducked ? 172 : index == 0 ? 177 : index == 1 ? 183 : 189;
-            s->animation_end = movement.ducked ? 177 : index == 0 ? 183 : index == 1 ? 189 : 197;
+            s->rule.animation_priority = 5;
+            s->rule.visual.frame = movement.ducked ? 172 : index == 0 ? 177 : index == 1 ? 183 : 189;
+            s->rule.animation_end = movement.ducked ? 177 : index == 0 ? 183 : index == 1 ? 189 : 197;
             char sound[32];
             snprintf(sound, sizeof(sound), "*death%d.wav", (int)(q2_random(g) * 4) + 1);
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 goto fail;
         }
         if (q2_actor_live(g, a->id) && (!qa_world_link(g->services.world, a->id, NULL, e) ||
-                                        !q2_publish_visual(g, a->id, &s->visual, e)))
+                                        !q2_publish_visual(g, a->id, &s->rule.visual, e)))
             goto fail;
     }
 finish:

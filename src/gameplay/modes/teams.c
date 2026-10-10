@@ -191,13 +191,13 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                     continue;
                 if (!first)
                     first = participant;
-                if (!human && !candidate->value.bot)
+                if (!human && !candidate->identity->bot)
                     human = participant;
                 if (participant->player.leader)
                     leader = participant;
             }
             mode_player *leader_player = leader ? mode_player_get(m, leader->actor) : NULL;
-            if (!leader_player || (side == 1 && leader_player->value.bot && !player->value.bot)) {
+            if (!leader_player || (side == 1 && leader_player->identity->bot && !player->identity->bot)) {
                 if (leader) {
                     leader->player.leader = false;
                 }
@@ -231,7 +231,7 @@ static bool followable(qa_modes *m, mode_instance *v, qa_actor_id viewer, qa_act
         if (!qa_modes_team(m, v->id, actor, &team, NULL) || team != watcher->player.observer_team)
             return false;
     }
-    return p && target && p->value.connected && !p->value.connecting &&
+    return p && target && p->connected && !p->connecting &&
            !target->player.spectator && !qa_actor_id_equal(actor, viewer);
 }
 static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id target, int automatic,
@@ -501,7 +501,7 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
                     (qa_actor_id){0}, (qa_actor_id){0}, p->last_team, v->value.rules.teamplay, 0,
                     e))
         return false;
-    if (player->value.bot && !p->last_team)
+    if (player->identity->bot && !p->last_team)
         impulse = 103;
     if ((impulse >= 100 && impulse <= 104) ||
         (!input->prompt_supported && p->player.spectator &&

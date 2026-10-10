@@ -117,8 +117,8 @@ static bool objective(qa_q2_game *g, q2_actor *a, qa_string_id text, unsigned sl
 bool q2_rerelease_notify(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entities *r = g->entity_runtime;
     q2_client_state *s = a->client;
-    if (g->options.deathmatch || !s || !s->info.connected || !s->spawned ||
-        g->now_ns < q2_deadline(s->entered_ns, 300 * Q2_MS))
+    if (g->options.deathmatch || !s || !s->info.connected || !s->rule.spawned ||
+        g->now_ns < q2_deadline(s->rule.entered_ns, 300 * Q2_MS))
         return true;
     if (r->has_goals) {
         if (r->primary_changes != r->secondary_changes) {
@@ -142,27 +142,27 @@ bool q2_rerelease_notify(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 return false;
             r->secondary_changes = r->primary_changes;
         }
-        if (s->mission_primary != r->primary_changes) {
+        if (s->rule.mission_primary != r->primary_changes) {
             if (!objective(g, a, r->primary, 1, true, e))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
-            s->mission_primary = r->primary_changes;
+            s->rule.mission_primary = r->primary_changes;
         }
     } else {
-        if (s->mission_primary != r->primary_changes) {
-            s->mission_primary = r->primary_changes;
-            s->mission_changed = 1;
-            s->mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
+        if (s->rule.mission_primary != r->primary_changes) {
+            s->rule.mission_primary = r->primary_changes;
+            s->rule.mission_changed = 1;
+            s->rule.mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
             if (r->primary && !objective(g, a, r->primary, 1, false, e))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
         }
-        if (s->mission_secondary != r->secondary_changes) {
-            s->mission_secondary = r->secondary_changes;
-            s->mission_changed = 1;
-            s->mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
+        if (s->rule.mission_secondary != r->secondary_changes) {
+            s->rule.mission_secondary = r->secondary_changes;
+            s->rule.mission_changed = 1;
+            s->rule.mission_time_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
             if (r->secondary && !objective(g, a, r->secondary, 2, false, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -176,8 +176,8 @@ bool q2_rerelease_goal_frame(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_map_event(g,
                         &(qa_q2_map_event){.kind = QA_Q2_MAP_MISSION_STATUS,
                                            .recipient = a->id,
-                                           .visible = s->mission_changed >= 1 &&
-                                                      s->mission_changed <= 2 &&
+                                           .visible = s->rule.mission_changed >= 1 &&
+                                                      s->rule.mission_changed <= 2 &&
                                                       (g->now_ns / Q2_MS) % 1000 < 500},
                         e);
 }
@@ -189,17 +189,17 @@ bool qa_q2_player_help_computer(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     q2_client_state *s = a->client;
     q2_entities *r = g->entity_runtime;
-    s->show_inventory = s->show_scores = false;
-    if (s->show_help &&
-        (s->mission_primary == r->primary_changes || s->mission_secondary == r->secondary_changes))
-        s->show_help = false;
+    s->rule.show_inventory = s->rule.show_scores = false;
+    if (s->rule.show_help &&
+        (s->rule.mission_primary == r->primary_changes || s->rule.mission_secondary == r->secondary_changes))
+        s->rule.show_help = false;
     else {
-        s->show_help = true;
-        s->mission_changed = 0;
+        s->rule.show_help = true;
+        s->rule.mission_changed = 0;
     }
     if (!q2_player_emit(
             g,
-            &(qa_q2_player_event){.kind = QA_Q2_PLAYER_HELP, .actor = id, .visible = s->show_help},
+            &(qa_q2_player_event){.kind = QA_Q2_PLAYER_HELP, .actor = id, .visible = s->rule.show_help},
             e))
         return false;
     return !q2_actor_live(g, id) ||
@@ -208,8 +208,8 @@ bool qa_q2_player_help_computer(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                                            .recipient = id,
                                            .text = r->primary,
                                            .resource = r->secondary,
-                                           .visible = s->show_help,
-                                           .flags = s->show_help ? 1u : 0u},
+                                           .visible = s->rule.show_help,
+                                           .flags = s->rule.show_help ? 1u : 0u},
                         e);
 }
 bool qa_q2_entities_player_reset(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -218,13 +218,13 @@ bool qa_q2_entities_player_reset(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (g->options.edition != QA_Q2_RERELEASE)
         return true;
-    a->client->wanted_fog = g->entity_runtime->world_fog;
-    a->client->fog_transition = 0;
-    a->client->spawned = !a->client->awaiting_respawn;
-    qa_q2_fog fog = a->client->wanted_fog;
+    a->client->rule.wanted_fog = g->entity_runtime->world_fog;
+    a->client->rule.fog_transition = 0;
+    a->client->rule.spawned = !a->client->rule.awaiting_respawn;
+    qa_q2_fog fog = a->client->rule.wanted_fog;
     if (!q2_map_event(g, &(qa_q2_map_event){.kind = QA_Q2_MAP_FOG, .recipient = id, .fog = fog}, e))
         return false;
     if (q2_actor_live(g, id))
-        a->client->fog = fog;
+        a->client->rule.fog = fog;
     return true;
 }

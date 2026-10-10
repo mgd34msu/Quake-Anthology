@@ -31,6 +31,8 @@ components do not prove live renderer/audio behavior or a frame-time speedup.
 The isolated integration record is
 `/tmp/qa-the344-family-build-20261009`, frozen code tree
 `5c1861a851629c335b22bdd6d6ee4262294eb42c`.
+Production, ASan/UBSan and allocation-gate engine builds each pass all seven
+core checks for that exact source. This is not a whole-frame allocation result.
 
 No alternate family TYPE remains for those three capabilities. Original
 rule policies, entity identity custody, fixed allocation and remaining

@@ -566,7 +566,7 @@ static bool agreement(application_bots *bots,qa_error *error) {
         if(app->players) for(size_t j=0;j<app->players->count;++j)
             if(!app->players->records[j].retiring && app->players->records[j].seat==s->seat &&
                 qa_actor_id_equal(app->players->records[j].actor,s->actor)) {record=app->players->records+j;break;}
-        if(!record || !record->bot || !qa_actors_get(qa_session_actors(app->session),s->actor))
+        if(!record || !application_player_identity(record)->bot || !qa_actors_get(qa_session_actors(app->session),s->actor))
             return application_fail(error,QA_ERROR_FORMAT,"Application live bot seat differs from restored roster");
         if(bots->population && !qa_bot_runtime_closed(bots->runtime)) {
             qa_bot_view view;

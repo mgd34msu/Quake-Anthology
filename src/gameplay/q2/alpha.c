@@ -17,7 +17,7 @@ static float *alpha_owner(qa_q2_game *game, qa_actor_id id, qa_error *error) {
     if (qa_q2_monster_read(game, id, &monster))
         return &actor->alpha;
     if (actor->client)
-        return &actor->client->visual.alpha;
+        return &actor->client->rule.visual.alpha;
     if (actor->item)
         return &actor->item->visual.alpha;
     if (actor->entity)

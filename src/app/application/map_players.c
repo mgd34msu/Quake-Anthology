@@ -61,7 +61,7 @@ bool application_player_qw_spectator(const application_provider *source,
                                     const application_player_record *record)
 {
     return source->kind == APPLICATION_PROVIDER_Q1 &&
-        source->component.clock.kind == QA_RULESET_QUAKEWORLD && record->spectator;
+        source->component.clock.kind == QA_RULESET_QUAKEWORLD && application_player_identity(record)->spectator;
 }
 
 static const qa_launch_role player_roles[] = {
@@ -125,7 +125,7 @@ static bool admit_components(qa_application *app, qa_actor_id actor, qa_error *e
             ? provider->state.qc.qualified : NULL;
         if (!profile || !profile->clients) continue;
         if (!application_qc_bind_player(provider, actual->client_slot + 1, actual->seat,
-            actor, actual->name, actual->spectator, true, provider == actual->character, error))
+            actor, application_player_name(actual), application_player_identity(actual)->spectator, true, provider == actual->character, error))
             return false;
         actual = component_player(app, roster, actor, error);
         if (!actual || app->components != components)
@@ -303,9 +303,6 @@ static void roster_free(struct application_player_roster *roster)
     free(roster->q1_points);
     free(roster->points);
     for (size_t i = 0; roster->records != NULL && i < roster->count; ++i) {
-        free(roster->records[i].name);
-        free(roster->records[i].team);
-        free(roster->records[i].skin);
         free(roster->records[i].userinfo);
         free(roster->records[i].bot_definition);
         free(roster->records[i].guests);
@@ -472,7 +469,17 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
 }
 
 static char *player_text(const char *);
-static bool record_text(application_player_record *, const char *, const char *,
+static void record_bind_identity(qa_application *application, application_player_record *record)
+{
+    record->strings = qa_session_strings(application->session);
+    record->player = qa_actors_player(qa_session_actors(application->session), record->actor);
+    if (record->player) {
+        if (!record->player->present) *record->player = record->pending_identity;
+        record->pending_identity = (qa_actor_player){0};
+    }
+}
+
+static bool record_text(qa_application *, application_player_record *, const char *, const char *,
                          const char *, const char *, qa_error *);
 static const char *roster_name(const qa_launch_choices *,
     const application_player_record *, bool);
@@ -577,9 +584,9 @@ static bool qw_initial_userinfo(qa_application *app, application_player_record *
         skin |= !strcmp(view->name, "skin");
         if (!qw_info_add(text, view->name, view->value, error)) return false;
     }
-    if ((!name && !qw_info_add(text, "name", record->name, error)) ||
-        (!team && !qw_info_add(text, "team", record->team, error)) ||
-        (!skin && !qw_info_add(text, "skin", record->skin, error))) return false;
+    if ((!name && !qw_info_add(text, "name", application_player_name(record), error)) ||
+        (!team && !qw_info_add(text, "team", application_player_team(record), error)) ||
+        (!skin && !qw_info_add(text, "skin", application_player_skin(record), error))) return false;
     record->userinfo = player_text(text);
     return record->userinfo != NULL ||
         application_fail(error, QA_ERROR_MEMORY, "cannot retain actual QuakeWorld startup userinfo");
@@ -610,7 +617,7 @@ static bool qw_source_userinfo(qa_application *app, application_player_record *r
         memcpy(text + used, start, extent);
         used += extent;
     }
-    if (record->spectator) {
+    if (application_player_identity(record)->spectator) {
         static const char marker[] = "\\*spectator\\1";
         if (used + sizeof(marker) > sizeof(text))
             return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld trusted spectator userinfo exceeds its source extent");
@@ -622,16 +629,17 @@ static bool qw_source_userinfo(qa_application *app, application_player_record *r
     if (!qa_qw_info_parse(text, &parsed, error)) return false;
     const char *source_name = qa_qw_info_get(&parsed, "name");
     bool has_name = source_name != NULL;
-    char *name = source_name ? player_text(source_name) : NULL;
+    qa_string_id name = 0;
+    bool name_ok = !source_name || qa_strings_intern_cstr(record->strings, source_name, &name, error);
     char *raw = player_text(text);
     qa_qw_info_free(&parsed);
-    if (!raw || (has_name && !name)) {
-        free(raw); free(name);
+    if (!raw || (has_name && !name_ok)) {
+        free(raw);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain actual QuakeWorld source identity");
     }
     free(record->userinfo);
     record->userinfo = raw;
-    if (name) { free(record->name); record->name = name; }
+    if (has_name) application_player_identity_mut(record)->name = name;
     return true;
 }
 
@@ -652,7 +660,7 @@ static bool q3_replacement_client(qa_application *application,
                 previous->client_slot, &client, &present, error))
             return false;
         if (!present || !qa_actor_id_equal(client.actor, previous->actor) ||
-            client.bot != previous->bot || !client.userinfo)
+            client.bot != application_player_identity(previous)->bot || !client.userinfo)
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Q3 map carry lost its actual source client");
         carry->q3_command = client.command;
@@ -673,11 +681,11 @@ static bool q3_replacement_client(qa_application *application,
 static bool extra_travel_player(qa_application *application,
     const qa_launch_choices *choices, const application_player_record *record)
 {
-    if (record->bot && !record->remote)
+    if (application_player_identity(record)->bot && !record->remote)
         for (size_t i = 0; i < choices->seat_count; ++i)
             if (choices->seats[i].id == record->seat) return false;
     return !record->retiring &&
-        (record->remote || (record->bot && record->dynamic)) &&
+        (record->remote || (application_player_identity(record)->bot && record->dynamic)) &&
         qa_actors_get(qa_session_actors(application->session), record->actor);
 }
 
@@ -756,21 +764,21 @@ bool application_players_prepare(qa_application *application,
                     return application_fail(error, QA_ERROR_ARGUMENT, "travel local seat collides with remote roster");
                 }
             application_player_record *record = &travel->roster->records[cursor];
-            *record = (application_player_record){.seat = old->seat, .client_slot = old->client_slot,
+            *record = (application_player_record){.pending_identity = {.spectator = application_player_identity(old)->spectator, .bot = application_player_identity(old)->bot}, .seat = old->seat, .client_slot = old->client_slot,
                 .remote_client = old->remote_client, .remote_seat = old->remote_seat,
                 .remote = old->remote, .dynamic = old->dynamic,
-                .spectator = old->spectator, .bot = old->bot,
+
                 .source_begin_pending = old->source_begin_pending ||
-                    (!old->bot && (publication->map_provider->kind == APPLICATION_PROVIDER_QC ||
+                    (!application_player_identity(old)->bot && (publication->map_provider->kind == APPLICATION_PROVIDER_QC ||
                      (publication->map_provider->launch->selection.clock.kind == QA_RULESET_Q3 &&
                       (publication->map_provider->kind == APPLICATION_PROVIDER_QVM ||
                        publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE))))};
-            if (!record_text(record, old->name, old->team, old->skin, old->userinfo, error)) {
+            if (!record_text(application, record, application_player_name(old), application_player_team(old), application_player_skin(old), old->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
             travel->seats[cursor++] = (qa_launch_seat){.id = record->seat,
-                .name = record->name, .team = record->team, .spectator = record->spectator, .bot = record->bot,
+                .name = application_player_name(record), .team = application_player_team(record), .spectator = application_player_identity(record)->spectator, .bot = application_player_identity(record)->bot,
                 .bot_definition = old->bot_definition, .bot_skill = old->bot_skill,
                 .bot_delay_ms = old->bot_delay_ms};
         }
@@ -876,9 +884,9 @@ bool application_players_prepare(qa_application *application,
                         "Q1 local travel source slot differs from its roster");
                 }
             }
-            if (!record_text(&travel->roster->records[i],
+            if (!record_text(application, &travel->roster->records[i],
                     roster_name(previous_choices, old, false),
-                    roster_name(previous_choices, old, true), old->skin, old->userinfo, error)) {
+                    roster_name(previous_choices, old, true), application_player_skin(old), old->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
@@ -888,19 +896,19 @@ bool application_players_prepare(qa_application *application,
                 application_players_dispose(travel);
                 return application_fail(error, QA_ERROR_ARGUMENT, "travel client slot collides with another seat");
             }
-        travel->roster->records[i].bot = seat->bot;
+        application_player_identity_mut(&travel->roster->records[i])->bot = seat->bot;
         travel->roster->records[i].configured_actor = seat->actor;
         travel->roster->records[i].character = character;
-        travel->roster->records[i].spectator = seat->spectator;
+        application_player_identity_mut(&travel->roster->records[i])->spectator = seat->spectator;
         application_player_record *fresh = &travel->roster->records[i];
-        if (!fresh->name && !fresh->team && !fresh->skin) {
+        if (!application_player_identity(fresh)->present) {
             if (!seat->name) {
                 application_fail(error, QA_ERROR_ARGUMENT,
                     "Local player admission lost its actual declared seat name");
                 application_players_dispose(travel);
                 return false;
             }
-            if (!record_text(fresh, seat->name, seat->team, NULL, fresh->userinfo, error)) {
+            if (!record_text(application, fresh, seat->name, seat->team, NULL, fresh->userinfo, error)) {
                 application_players_dispose(travel);
                 return false;
             }
@@ -1240,8 +1248,8 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
     application_player_point *fallback = NULL, *named_fallback = NULL;
     for (size_t i = 0; i < roster->point_count; ++i) {
         application_player_point *point = &roster->points[i];
-        if ((point->point.no_bots && roster->records[ordinal].bot) ||
-            (point->point.no_humans && !roster->records[ordinal].bot))
+        if ((point->point.no_bots && application_player_identity(&roster->records[ordinal])->bot) ||
+            (point->point.no_humans && !application_player_identity(&roster->records[ordinal])->bot))
             continue;
         if (roster->spawn_point != QA_STRING_NONE && point->target != roster->spawn_point)
             continue;
@@ -1292,7 +1300,7 @@ bool application_q3_player_spawn_pose(qa_application *application,
                 actor, &member, error) || member.state.spectator != spectator)
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "Q3 client spawn differs from its source session");
-        record->spectator = spectator;
+        application_player_identity_mut(record)->spectator = spectator;
         return spawn_pose(application, i, false, body, found, NULL, error);
     }
     return application_fail(error, QA_ERROR_NOT_FOUND,
@@ -1663,6 +1671,16 @@ static bool q2_controlled(void *context, qa_actor_id actor)
 
 static bool q2_player_event(void *context, const qa_q2_player_event *event, qa_error *error)
 {
+    application_provider *provider = context;
+    qa_application *app = provider->application;
+    if (event->kind == QA_Q2_PLAYER_USERINFO && event->text && event->text[0]) {
+        qa_actor_player *identity = qa_actors_player(qa_session_actors(app->session), event->actor);
+        qa_strings *strings = qa_session_strings(app->session);
+        if (application_provider_for(app, event->actor, QA_ROLE_CHARACTER, "") == provider &&
+            !qa_strings_intern_cstr(strings, event->text, &identity->name, error)) return false;
+        if (application_provider_for(app, event->actor, QA_ROLE_SKIN, "") == provider &&
+            !qa_strings_intern_cstr(strings, event->skin, &identity->skin, error)) return false;
+    }
     return application_emit_q2_player(context, event, error);
 }
 
@@ -1716,7 +1734,7 @@ static bool q2_select_spawn(void *context, qa_actor_id actor, qa_vec3 *origin,
         if (qa_actor_id_equal(application->players->records[i].actor, actor)) {
             application_player_record *record = &application->players->records[i];
             application_provider *map_source = application->players->map_provider;
-            if (record->bot && record->source_begin_pending &&
+            if (application_player_identity(record)->bot && record->source_begin_pending &&
                 map_source->kind == APPLICATION_PROVIDER_Q3) {
                 application_native_q3_wire_client_view client;
                 bool present;
@@ -2276,8 +2294,8 @@ static bool selected_qc_native_respawn(application_provider *character,
     if (okay) {
         const application_player_record *record = app->players->records + ordinal;
         qa_launch_seat seat = {.id = record->seat, .actor = record->configured_actor,
-            .name = record->name, .team = record->team, .bot = record->bot,
-            .spectator = record->spectator};
+            .name = application_player_name(record), .team = application_player_team(record), .bot = application_player_identity(record)->bot,
+            .spectator = application_player_identity(record)->spectator};
         okay = apply_loadout(app, qa_launch_snapshot_choices(qa_application_launch(app)), &seat, actor, error) &&
             selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
             qa_equipment_respawn(app->equipment, actor, error) &&
@@ -2290,7 +2308,7 @@ static bool selected_qc_native_respawn(application_provider *character,
         okay = qa_combat_read_traits(app->combat, actor, &traits, error);
         if (okay) {
             traits.invulnerable = false;
-            traits.can_take_damage = !app->players->records[ordinal].spectator;
+            traits.can_take_damage = !application_player_identity(&app->players->records[ordinal])->spectator;
             traits.armor = (qa_armor){0};
             okay = qa_combat_set_traits(app->combat, actor, &traits, error) &&
                 selected_qc_native_current(character, source, &operation, actor, &ordinal, error) &&
@@ -2614,6 +2632,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 return false;
         }
         record->actor = source_actor;
+        record_bind_identity(application, record);
         application_actor_routes_bind(application, source_actor);
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
@@ -2635,7 +2654,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             !qa_q3_source_bind_client(map_source->state.q3,
                 record->client_slot, actor, error))
             return false;
-        if (map_source->kind == APPLICATION_PROVIDER_Q3 && record->bot &&
+        if (map_source->kind == APPLICATION_PROVIDER_Q3 && application_player_identity(record)->bot &&
             phase == PLAYER_ADMISSION_COMPLETE) {
             uint32_t flags;
             if (!qa_q3_client_server_flags(map_source->state.q3, record->client_slot, &flags, error) ||
@@ -2719,7 +2738,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         if (!reserved_player && application->modes != NULL) {
             qa_string_id name;
-            if (!qa_strings_intern_cstr(qa_session_strings(application->session), record->name, &name, error) ||
+            if (!qa_strings_intern_cstr(qa_session_strings(application->session), application_player_name(record), &name, error) ||
                 !qa_modes_player(application->modes, &(qa_match_player){.actor = actor, .name = name,
                                 .connected = phase != PLAYER_ADMISSION_RESERVE, .bot = seat->bot}, error))
                 return false;
@@ -2792,7 +2811,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!qa_combat_set_traits(application->combat, actor, &combat, error) ||
                 !qa_world_set_collision(application->world, actor, NULL, error) ||
                 !application_control_player_mode(application, actor, QA_MOVEMENT_MODE_FREEZE,
-                    record->spectator, error) || !qa_world_unlink(application->world, actor, error))
+                    application_player_identity(record)->spectator, error) || !qa_world_unlink(application->world, actor, error))
                 return false;
             if (phase == PLAYER_ADMISSION_RESERVE) return true;
             if (!application_native_q1_spectator_begin(map_source, actor, error)) return false;
@@ -2843,8 +2862,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             bool accepted;
             const char *reason;
             if (!reserved_player && !application_native_q3_client_connect(map_source, actor,
-                    record->remote || record->bot ? UINT32_MAX : record->seat, record->userinfo,
-                    !round && !carry->q3_client, record->bot, &accepted, &reason, error))
+                    record->remote || application_player_identity(record)->bot ? UINT32_MAX : record->seat, record->userinfo,
+                    !round && !carry->q3_client, application_player_identity(record)->bot, &accepted, &reason, error))
                 return false;
             if (!reserved_player && !accepted) {
                 qa_actor_id dropped;
@@ -2866,6 +2885,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     if (!qa_session_release(application->session, actor, error)) return false;
                 }
                 record->actor = (qa_actor_id){0};
+                record->player = NULL;
                 record->retiring = true;
                 if (round_accepted) *round_accepted = false;
                 if (denial) *denial = reason;
@@ -2938,7 +2958,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     !qw_initial_userinfo(application, record, error)) return false;
                 if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
                     (provider, record->client_slot + 1, seat->id, actor,
-                                                record->name, seat->spectator, !continued,
+                                                application_player_name(record), seat->spectator, !continued,
                                                 provider == character, error))
                     return false;
                 if (defer_source_begin) record->source_begin_pending = true;
@@ -2963,7 +2983,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 application_q3_world_startup startup;
                 bool replaced = carry->q3_client && provider == map_source &&
                     application_q3_world_restart_source(application, provider, &startup);
-                if (!round && !carry->q3_client && record->bot && provider == map_source &&
+                if (!round && !carry->q3_client && application_player_identity(record)->bot && provider == map_source &&
                     !q3_initial_bot_userinfo(application, record, seat, error)) return false;
                 if (!application_q3_guest_client_connect(provider, record->client_slot, actor,
                                                           record->userinfo != NULL ? record->userinfo : userinfo,
@@ -3225,11 +3245,11 @@ bool application_players_publish(qa_application *application,
         if (application->players->records[i].retiring) continue;
         application_player_record *record = &application->players->records[i];
         application_provider *source = application->players->map_provider;
-        if (record->bot && !record->remote && !travel->carry[i].q3_client &&
+        if (application_player_identity(record)->bot && !record->remote && !travel->carry[i].q3_client &&
             application->bots && application_bot_source(application->bots) == source &&
             source->kind <= APPLICATION_PROVIDER_Q3)
             continue;
-        if (record->bot && travel->carry[i].q3_client)
+        if (application_player_identity(record)->bot && travel->carry[i].q3_client)
             record->source_begin_pending = false;
         if (!publish_player(application, choices, &travel->seats[i],
                             &application->players->records[i], &travel->carry[i], i,
@@ -3387,7 +3407,7 @@ bool application_q3_round_players_prepare(qa_application *app,
         application_player_record *old = ordered[slot];
         if (!old) continue;
         const char *userinfo = old->userinfo;
-        bool spectator = old->spectator;
+        bool spectator = application_player_identity(old)->spectator;
         qa_q3_usercmd command;
         if (cut->native) {
             application_native_q3_wire_client_view client;
@@ -3398,7 +3418,7 @@ bool application_q3_round_players_prepare(qa_application *app,
                 !qa_q3_client_session_read(provider->state.q3, old->actor,
                     &source_session, error)) goto failed;
             if (!present || !qa_actor_id_equal(client.actor, old->actor) ||
-                client.bot != old->bot || !client.userinfo) {
+                client.bot != application_player_identity(old)->bot || !client.userinfo) {
                 application_fail(error, QA_ERROR_ARGUMENT,
                     "Q3 round native client lost its actual wire admission");
                 goto failed;
@@ -3412,34 +3432,34 @@ bool application_q3_round_players_prepare(qa_application *app,
             uint64_t entered;
             if (!application_q3_guest_round_client_read(provider, slot,
                     &source_actor, &command, &bot, &entered, error) ||
-                !qa_actor_id_equal(source_actor, old->actor) || bot != old->bot ||
+                !qa_actor_id_equal(source_actor, old->actor) || bot != application_player_identity(old)->bot ||
                 !application_q3_guest_round_userinfo(provider, slot, &userinfo, error))
                 goto failed;
         }
         application_player_record *record = &roster->records[index];
-        *record = (application_player_record){.seat = old->seat, .client_slot = slot,
+        *record = (application_player_record){.pending_identity = {.spectator = spectator, .bot = application_player_identity(old)->bot}, .seat = old->seat, .client_slot = slot,
             .source_slot = slot, .character = provider, .remote_client = old->remote_client,
             .configured_actor = old->configured_actor,
             .remote_seat = old->remote_seat, .remote = old->remote,
-            .dynamic = old->dynamic, .spectator = spectator, .bot = old->bot};
-        if (!record_text(record, roster_name(choices, old, false),
-                roster_name(choices, old, true), old->skin, userinfo, error))
+            .dynamic = old->dynamic,  };
+        if (!record_text(app, record, roster_name(choices, old, false),
+                roster_name(choices, old, true), application_player_skin(old), userinfo, error))
             goto failed;
         if (!record_bot_choice(record, &(qa_launch_seat){.bot_definition = old->bot_definition,
                 .bot_skill = old->bot_skill, .bot_delay_ms = old->bot_delay_ms}, error)) goto failed;
         cut->travel->seats[index] = (qa_launch_seat){.id = record->seat,
             .actor = record->configured_actor,
-            .name = record->name, .team = record->team,
+            .name = application_player_name(record), .team = application_player_team(record),
             .bot_definition = record->bot_definition, .bot_skill = record->bot_skill,
             .bot_delay_ms = record->bot_delay_ms,
-            .spectator = record->spectator, .bot = record->bot};
+            .spectator = application_player_identity(record)->spectator, .bot = application_player_identity(record)->bot};
         char *captured_info = player_text(userinfo);
         if (!captured_info) goto memory;
         cut->clients[index] = (qa_application_q3_round_client){.seat = record->seat,
             .source_slot = slot, .previous_actor = old->actor,
             .remote_client = old->remote_client, .remote_seat = old->remote_seat,
             .userinfo = captured_info, .last_command = command,
-            .remote = old->remote, .bot = old->bot};
+            .remote = old->remote, .bot = application_player_identity(old)->bot};
         ++index;
     }
     if (qa_actors_revision(qa_session_actors(app->session)) != revision) {
@@ -3564,7 +3584,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
                 true, &ordinal, error)) return false;
             record = application->players->records + ordinal;
         }
-        bool spectator = record->spectator;
+        bool spectator = application_player_identity(record)->spectator;
         traits.can_take_damage = !spectator;
         if (!qa_combat_set_traits(application->combat, actor, &traits, error) ||
             (source->kind == APPLICATION_PROVIDER_Q1 &&
@@ -3606,7 +3626,6 @@ static char *player_text(const char *value)
 static void record_free(application_player_record *record)
 {
     qa_q1_travel_destroy(record->q1_entry);
-    free(record->name); free(record->team); free(record->skin);
     free(record->userinfo); free(record->guests);
     free(record->bot_definition);
     *record = (application_player_record){.retiring = true};
@@ -3618,7 +3637,7 @@ bool application_player_bot(const qa_application *app, qa_actor_id actor)
         !qa_actors_get(qa_session_actors(app->session), actor)) return false;
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *record = &app->players->records[i];
-        if (qa_actor_id_equal(record->actor, actor)) return record->bot && !record->retiring;
+        if (qa_actor_id_equal(record->actor, actor)) return application_player_identity(record)->bot && !record->retiring;
     }
     return false;
 }
@@ -3639,7 +3658,7 @@ static bool disconnect_provider(qa_application *app,application_provider *source
     bool okay=true;
     if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q1) {
         if(provider->component.clock.kind==QA_RULESET_QUAKEWORLD&&!record->source_begin_pending)
-            okay=record->spectator?application_native_q1_spectator_disconnect(provider,actor,error):
+            okay=application_player_identity(record)->spectator?application_native_q1_spectator_disconnect(provider,actor,error):
                 application_native_q1_client_disconnect(provider,actor,error);
     }
     else if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q3)
@@ -3754,20 +3773,23 @@ bool application_players_native_q3_retire(qa_application *app,
     return retire_player(app,provider,actor,error);
 }
 
-static bool record_text(application_player_record *record, const char *name,
-                        const char *team, const char *skin, const char *userinfo,
-                        qa_error *error)
+static bool record_text(qa_application *application, application_player_record *record,
+                        const char *name, const char *team, const char *skin,
+                        const char *userinfo, qa_error *error)
 {
-    record->name = player_text(name);
-    record->team = player_text(team);
-    record->skin = player_text(skin);
+    record->strings = qa_session_strings(application->session);
+    qa_actor_player *identity = application_player_identity_mut(record);
+    if (!qa_strings_intern_cstr(record->strings, name ? name : "", &identity->name, error) ||
+        !qa_strings_intern_cstr(record->strings, team ? team : "", &identity->team, error) ||
+        !qa_strings_intern_cstr(record->strings, skin ? skin : "", &identity->skin, error)) return false;
+    identity->present = true;
     if (userinfo != record->userinfo)
         record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
-    if (record->name == NULL || record->team == NULL || record->skin == NULL ||
-        (userinfo != NULL && record->userinfo == NULL)) {
+    if (userinfo != NULL && record->userinfo == NULL) {
         record_free(record);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain player connection text");
     }
+    if (record->actor.registry) record_bind_identity(application, record);
     return true;
 }
 
@@ -3808,7 +3830,7 @@ bool qa_application_network_local_bind(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "Local binding requires its actual connection seat");
     for (size_t i = 0; i < application->players->count; ++i) {
         application_player_record *record = application->players->records + i;
-        if (record->remote || record->bot || record->retiring || record->seat != application_seat ||
+        if (record->remote || application_player_identity(record)->bot || record->retiring || record->seat != application_seat ||
             !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
         if (!qa_net_client_id_equal(record->remote_client, peer->id) ||
             record->remote_seat.owner != seat.owner || record->remote_seat.index != seat.index) {
@@ -3954,7 +3976,7 @@ bool application_players_bot_allocate(qa_application *app,
         for (size_t i = 0; i < app->players->count; ++i) {
             application_player_record *record = &app->players->records[i];
             if (record->retiring || record->seat != seat.id) continue;
-            if (record->actor.registry || record->remote || !record->bot)
+            if (record->actor.registry || record->remote || !application_player_identity(record)->bot)
                 return application_fail(error, QA_ERROR_ARGUMENT, "launch bot seat already owns a source client");
             if (pending != SIZE_MAX)
                 return application_fail(error, QA_ERROR_ARGUMENT, "launch bot seat has duplicate pending roster rows");
@@ -4010,10 +4032,10 @@ bool application_players_bot_allocate(qa_application *app,
         if (!occupied) break;
     }
     if (physical == maximum) return true;
-    application_player_record record = {.seat = seat.id, .client_slot = physical,
+    application_player_record record = {.pending_identity = {.bot = true, .spectator = seat.spectator}, .seat = seat.id, .client_slot = physical,
         .source_slot = physical + offset, .configured_actor = seat.actor,
-        .character = character, .bot = true, .dynamic = true, .spectator = seat.spectator};
-    if (!record_text(&record, seat.name, seat.team, "", "", error)) return false;
+        .character = character,  .dynamic = true, };
+    if (!record_text(app, &record, seat.name, seat.team, "", "", error)) return false;
     if (!record_bot_choice(&record, &seat, error)) { record_free(&record); return false; }
     size_t index;
     if (pending != SIZE_MAX) {
@@ -4057,7 +4079,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
     size_t index;
     for (index = 0; index < app->players->count; ++index) {
         application_player_record *candidate = &app->players->records[index];
-        if (!candidate->retiring && !candidate->remote && candidate->bot && candidate->client_slot == physical) {
+        if (!candidate->retiring && !candidate->remote && application_player_identity(candidate)->bot && candidate->client_slot == physical) {
             record = candidate; break;
         }
     }
@@ -4070,7 +4092,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
         admitted.entity != (int32_t)physical)
         return application_fail(error, QA_ERROR_ARGUMENT, "bot Begin precedes its actual completed source Connect");
     qa_launch_seat seat = {.id = record->seat, .actor = record->configured_actor,
-        .name = record->name, .team = record->team, .bot = true, .spectator = record->spectator,
+        .name = application_player_name(record), .team = application_player_team(record), .bot = true, .spectator = application_player_identity(record)->spectator,
         .bot_definition = record->bot_definition, .bot_skill = record->bot_skill,
         .bot_delay_ms = record->bot_delay_ms};
     application_player_carry carry = {0};
@@ -4083,7 +4105,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
         okay = application_bot_world_begin(app->bots->shared_world, physical, error);
     if (okay && app->bots->shared_world) {
         qa_string_id name;
-        okay = qa_strings_intern_cstr(qa_session_strings(app->session), record->name, &name, error) &&
+        okay = qa_strings_intern_cstr(qa_session_strings(app->session), application_player_name(record), &name, error) &&
             qa_modes_player(app->modes, &(qa_match_player){.actor = record->actor,
                 .name = name, .connected = true, .bot = true}, error);
     }
@@ -4203,11 +4225,11 @@ static bool player_attach(qa_application *application,
     if (!available)
         return application_fail(error,QA_ERROR_MEMORY,"player source client capacity is exhausted");
     uint32_t source_slot=client_slot+(character->component.clock.kind==QA_RULESET_Q3?0u:1u);
-    application_player_record record = {.seat = seat->id, .configured_actor = seat->actor, .client_slot = client_slot,
+    application_player_record record = {.pending_identity = {.spectator = seat->spectator, .bot = seat->bot}, .seat = seat->id, .configured_actor = seat->actor, .client_slot = client_slot,
         .source_slot = source_slot, .character = character, .remote_client = request->client,
         .remote_seat = request->network_seat, .remote = request->remote, .dynamic = request->remote,
-        .spectator = seat->spectator, .bot = seat->bot};
-    if (!record_text(&record, seat->name, seat->team, request->skin, request->userinfo, error)) return false;
+         };
+    if (!record_text(application, &record, seat->name, seat->team, request->skin, request->userinfo, error)) return false;
     size_t index;
     if (!record_append(application, record, &index, error)) { record_free(&record); return false; }
     application->operation = APPLICATION_CONFIGURING;
@@ -4485,7 +4507,13 @@ bool application_players_campaign_reenter(qa_application *candidate,
             if (!ok) return false;
             qa_q1_travel_destroy(carry->q1_source); carry->q1_source=restored;
         }
-        travel->seats[i].name=record->name; travel->seats[i].team=record->team;
+        if (candidate != previous) {
+            if (!campaign_string(candidate, previous, &record->pending_identity.name, error) ||
+                !campaign_string(candidate, previous, &record->pending_identity.team, error) ||
+                !campaign_string(candidate, previous, &record->pending_identity.skin, error)) return false;
+            record->strings = qa_session_strings(candidate->session);
+        }
+        travel->seats[i].name=application_player_name(record); travel->seats[i].team=application_player_team(record);
         travel->seats[i].bot_definition=record->bot_definition;
         travel->seats[i].actor=record->configured_actor;
     }
@@ -4520,7 +4548,7 @@ bool qa_application_local_player_detach(qa_application *application, uint32_t lo
         if (!seat->local || seat->bot) continue;
         for (size_t j=0; j<application->players->count; ++j) {
             const application_player_record *record=application->players->records+j;
-            if (record->retiring || record->remote || record->bot || record->seat!=seat->id ||
+            if (record->retiring || record->remote || application_player_identity(record)->bot || record->seat!=seat->id ||
                 !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
             ++local_count;
             if (seat->id==logical_seat) index=j;
@@ -4543,7 +4571,7 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
     application_player_record *record=NULL;
     for(size_t i=0;i<application->players->count;++i) {
         application_player_record *candidate=application->players->records+i;
-        if(candidate->bot && !candidate->remote && !candidate->retiring && qa_actor_id_equal(candidate->actor,actor)) {
+        if(application_player_identity(candidate)->bot && !candidate->remote && !candidate->retiring && qa_actor_id_equal(candidate->actor,actor)) {
             record=candidate;break;
         }
     }
@@ -4599,10 +4627,10 @@ bool application_players_guest_attach(qa_application *application,
             ++seat;
         }
         const qa_actor_record *source = qa_actors_get(qa_session_actors(application->session), actor);
-        application_player_record record = {.seat = seat, .client_slot = slot,
+        application_player_record record = {.pending_identity = {.spectator = info->spectator, .bot = true}, .seat = seat, .client_slot = slot,
             .source_slot = source->source_slot, .actor = actor, .character = provider,
-            .spectator = info->spectator, .bot = true, .dynamic = true};
-        if (!record_text(&record, info->name, "", info->skin, NULL, error)) return false;
+              .dynamic = true};
+        if (!record_text(application, &record, info->name, "", info->skin, NULL, error)) return false;
         if (!record_append(application, record, &index, error)) { record_free(&record); return false; }
     }
     application_player_record *record = &roster->records[index];
@@ -4751,7 +4779,7 @@ static qa_saved_actor_id roster_read_saved(qa_net_reader *reader)
 static const char *roster_name(const qa_launch_choices *choices,
                                const application_player_record *record, bool team)
 {
-    const char *text = team ? record->team : record->name;
+    const char *text = team ? application_player_team(record) : application_player_name(record);
     if (text != NULL) return text;
     for (size_t i = 0; i < choices->seat_count; ++i)
         if (choices->seats[i].id == record->seat)
@@ -4821,7 +4849,7 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
             if (record->guest_count > UINT32_MAX || (record->guest_count && !record->guests) ||
                 !roster_size(&size, record->guest_count, PLAYER_CHECKPOINT_GUEST, error)) return false;
             const char *text[] = {roster_name(choices, record, false), roster_name(choices, record, true),
-                                 record->skin, record->userinfo, record->bot_definition};
+                                 application_player_skin(record), record->userinfo, record->bot_definition};
             for (size_t j = 0; j < 5; ++j) {
                 size_t length = text[j] ? strlen(text[j]) : 0;
                 if (length > UINT32_MAX || !roster_size(&size, length, 1, error)) return false;
@@ -4879,15 +4907,15 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
         qa_net_write_u64(&writer, connection.generation);
         qa_net_write_u32(&writer, connection.slot);
         qa_net_write_u64(&writer, connection_seat.owner); qa_net_write_u32(&writer, connection_seat.index);
-        uint32_t row_flags = (record->deferred ? 1u : 0u) | (record->spectator ? 2u : 0u) |
-            (record->bot ? 4u : 0u) | (record->remote ? 8u : 0u) | (record->dynamic ? 16u : 0u) |
+        uint32_t row_flags = (record->deferred ? 1u : 0u) | (application_player_identity(record)->spectator ? 2u : 0u) |
+            (application_player_identity(record)->bot ? 4u : 0u) | (record->remote ? 8u : 0u) | (record->dynamic ? 16u : 0u) |
             (record->retiring ? 32u : 0u) | (record->userinfo != NULL ? 64u : 0u) |
             (record->actor.registry ? 128u : 0u) | (record->configured_actor.registry ? 256u : 0u) |
             (record->source_begin_pending ? 512u : 0u) | (record->bot_definition ? 1024u : 0u);
         qa_net_write_u32(&writer, row_flags); qa_net_write_u32(&writer, (uint32_t)record->guest_count);
         roster_write_text(&writer, roster_name(choices, record, false));
         roster_write_text(&writer, roster_name(choices, record, true));
-        roster_write_text(&writer, record->skin); roster_write_text(&writer, record->userinfo);
+        roster_write_text(&writer, application_player_skin(record)); roster_write_text(&writer, record->userinfo);
         roster_write_text(&writer, record->bot_definition);
         qa_net_write_f32(&writer, record->bot_skill); qa_net_write_i32(&writer, record->bot_delay_ms);
         for (size_t j = 0; j < record->guest_count; ++j) {
@@ -4990,17 +5018,27 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         record->remote_client.slot = qa_net_read_u32(&reader);
         record->remote_seat.owner = qa_net_read_u64(&reader); record->remote_seat.index = qa_net_read_u32(&reader);
         uint32_t row_flags = qa_net_read_u32(&reader), guests = qa_net_read_u32(&reader);
-        record->deferred = (row_flags & 1u) != 0; record->spectator = (row_flags & 2u) != 0;
-        record->bot = (row_flags & 4u) != 0; record->remote = (row_flags & 8u) != 0;
+        record->deferred = (row_flags & 1u) != 0; application_player_identity_mut(record)->spectator = (row_flags & 2u) != 0;
+        application_player_identity_mut(record)->bot = (row_flags & 4u) != 0; record->remote = (row_flags & 8u) != 0;
         record->dynamic = (row_flags & 16u) != 0; record->retiring = (row_flags & 32u) != 0;
         record->source_begin_pending = (row_flags & 512u) != 0;
+        char *identity_text[3] = {0};
         ok = !reader.failed && !(row_flags & ~2047u) &&
             roster_resolve_actor(actors, actor, (row_flags & 128u) != 0, &record->actor, error) &&
             roster_resolve_actor(actors, configured, (row_flags & 256u) != 0, &record->configured_actor, error) &&
-            roster_read_text(&reader, &record->name, error) && roster_read_text(&reader, &record->team, error) &&
-            roster_read_text(&reader, &record->skin, error) && roster_read_text(&reader, &record->userinfo, error) &&
+            roster_read_text(&reader, &identity_text[0], error) && roster_read_text(&reader, &identity_text[1], error) &&
+            roster_read_text(&reader, &identity_text[2], error) && roster_read_text(&reader, &record->userinfo, error) &&
             roster_read_text(&reader, &record->bot_definition, error);
+        if (ok) {
+            record->strings = qa_session_strings(candidate->session);
+            ok = qa_strings_intern_cstr(record->strings, identity_text[0], &record->pending_identity.name, error) &&
+                qa_strings_intern_cstr(record->strings, identity_text[1], &record->pending_identity.team, error) &&
+                qa_strings_intern_cstr(record->strings, identity_text[2], &record->pending_identity.skin, error);
+            record->pending_identity.present = true;
+        }
+        for (size_t j = 0; j < 3; ++j) free(identity_text[j]);
         if (!ok) break;
+        if (record->actor.registry) record_bind_identity(candidate, record);
         record->bot_skill = qa_net_read_f32(&reader); record->bot_delay_ms = qa_net_read_i32(&reader);
         if (reader.failed || !isfinite(record->bot_skill) || record->bot_skill < 0 || record->bot_delay_ms < 0 ||
             ((row_flags & 1024u) && !record->bot_definition[0])) { ok = false; break; }
@@ -5163,8 +5201,8 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     bool ok = true;
     if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q1) {
         qa_launch_seat launch_seat = {.id = record->seat, .actor = record->configured_actor,
-            .name = record->name, .team = record->team, .bot = record->bot,
-            .spectator = record->spectator};
+            .name = application_player_name(record), .team = application_player_team(record), .bot = application_player_identity(record)->bot,
+            .spectator = application_player_identity(record)->spectator};
         application_player_carry carry = {0};
         size_t index = (size_t)(record - application->players->records);
         ok = application_player_qw_spectator(application->players->map_provider, record)
@@ -5174,9 +5212,9 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
                 PLAYER_ADMISSION_BEGIN, NULL, NULL, NULL, error);
         if (ok && application->modes) {
             qa_string_id name;
-            ok = qa_strings_intern_cstr(qa_session_strings(application->session), record->name, &name, error) &&
+            ok = qa_strings_intern_cstr(qa_session_strings(application->session), application_player_name(record), &name, error) &&
                 qa_modes_player(application->modes, &(qa_match_player){.actor = actor,
-                    .name = name, .connected = true, .bot = record->bot}, error);
+                    .name = name, .connected = true, .bot = application_player_identity(record)->bot}, error);
         }
     } else if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_begin(application->players->map_provider,
@@ -5212,13 +5250,13 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
                 ok = application_qc_actor_traits(record->character, actor, &source_traits) &&
                     qa_combat_read_traits(application->combat, actor, &traits, error);
                 if (ok) {
-                    traits.can_take_damage = !record->spectator && source_traits.damageable_target;
+                    traits.can_take_damage = !application_player_identity(record)->spectator && source_traits.damageable_target;
                     ok = qa_combat_set_traits(application->combat, actor, &traits, error);
                 } else if (error && error->code == QA_OK)
                     ok = application_fail(error, QA_ERROR_FORMAT, "QC source begin lacks its actual damage traits");
                 if (ok) ok = application_control_player_mode(application, actor,
-                    record->spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
-                    record->spectator, error) && qa_world_link(application->world, actor, NULL, error);
+                    application_player_identity(record)->spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
+                    application_player_identity(record)->spectator, error) && qa_world_link(application->world, actor, NULL, error);
             }
         }
     }

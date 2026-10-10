@@ -29,47 +29,47 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     Q2I(info.score); Q2I(info.ping); Q2I(info.lives); Q2N(info.selected_item); Q2F(info.view_height);
     Q2B(info.connected); Q2B(info.spectator); Q2B(info.dead); Q2B(info.god);
     Q2B(info.notarget); Q2B(info.noclip); Q2B(info.flashlight);
-    if (!q2_save_visual(io, &s->visual) || !carry(io, &s->coop) ||
-        !q2_save_inventory(io, &s->spawn_inventory, &s->spawn_count) ||
-        !q2_save_text(io, s->userinfo, sizeof(s->userinfo)) ||
-        !q2_save_text(io, s->social_id, sizeof(s->social_id)) ||
-        !q2_save_text(io, s->dogtag, sizeof(s->dogtag))) return false;
-    Q2U(hand); Q2I(gender); Q2I(old_water); Q2I(drown_damage); Q2I(breather_sound);
-    Q2I(animation_priority); Q2I(animation_end); Q2I(auto_switch); Q2I(auto_shield); Q2I(flashes);
-    Q2S(i32, hit_marker_damage);
-    Q2U(buttons); Q2U(latched_buttons); Q2U(event);
-    Q2T(entered_ns); Q2T(respawn_ns); Q2T(air_ns); Q2T(drown_ns); Q2T(pain_ns);
-    Q2T(damage_ns); Q2T(power_armor_ns); Q2T(fall_ns); Q2T(landmark_noise_ns); Q2T(flood_until_ns);
-    for (size_t i = 0; i < 10; ++i) Q2T(flood_times[i]);
-    Q2T(slime_ns); Q2T(animation_ns); Q2T(last_damage_ns); Q2T(last_firing_ns);
-    Q2T(invisibility_fade_ns); Q2T(tracker_ns); Q2T(nuke_ns); Q2T(flash_ns);
-    Q2T(respawn_timeout_ns); Q2T(grapple_released_ns); Q2T(quake_ns);
-    Q2T(help_draw_ns); Q2T(help_marker_ns); Q2T(mission_time_ns);
-    Q2U(mission_primary); Q2U(mission_secondary); Q2U(mission_changed);
-    Q2F(fov); Q2F(damage_blood); Q2F(damage_armor); Q2F(damage_power); Q2F(damage_knockback);
-    Q2F(damage_alpha); Q2F(bonus_alpha); Q2F(damage_pitch); Q2F(damage_roll); Q2F(fall_value);
-    Q2F(bob_time); Q2F(bob_move); Q2F(killer_yaw);
-    Q2V(damage_from); Q2V(damage_blend); Q2V(old_velocity); Q2V(old_view_angles);
-    Q2V(slow_view_angles); Q2V(help_location);
-    void *points = s->help_points;
-    if (!q2_save_count(io, &s->help_count, 12, sizeof(*s->help_points), &points)) return false;
-    s->help_points = points;
-    for (size_t i = 0; i < s->help_count; ++i) Q2V(help_points[i]);
-    if (s->help_index > UINT32_MAX) return q2_save_fail(io, "Oversized Q2 help cursor");
-    Q2U(help_index); s->help_capacity = s->help_count;
-    Q2N(loop_sound); Q2N(help_image);
-    Q2N(character_model); Q2I(character_skin); Q2B(character_configured);
-    if (!q2_save_fog(io, &s->fog) || !q2_save_fog(io, &s->wanted_fog)) return false;
-    Q2F(fog_transition); Q2U(flood_count);
-    Q2B(use_weapons); Q2B(use_inventory); Q2B(requested_spectator); Q2B(bot); Q2B(gibbed);
-    Q2B(weapon_thunk); Q2B(animation_duck); Q2B(animation_run); Q2B(landmark_free_fall);
-    Q2B(show_scores); Q2B(show_inventory); Q2B(show_help); Q2B(bob_skip); Q2B(nuke_inside);
-    Q2B(auto_shield_enabled); Q2B(awaiting_respawn); Q2B(spawned); Q2B(player_collision);
-    Q2B(has_coop); Q2B(has_pending_landmark); Q2B(squad_spawn); Q2B(corpse);
-    Q2B(pending_start_items);
-    Q2B(sphere_vehicle);
-    if (!q2_save_landmark(io, &s->pending_landmark)) return false;
-    Q2V(squad_origin); Q2V(squad_angles); return true;
+    if (!q2_save_visual(io, &s->rule.visual) || !carry(io, &s->rule.coop) ||
+        !q2_save_inventory(io, &s->rule.spawn_inventory, &s->rule.spawn_count) ||
+        !q2_save_text(io, s->rule.userinfo, sizeof(s->rule.userinfo)) ||
+        !q2_save_text(io, s->rule.social_id, sizeof(s->rule.social_id)) ||
+        !q2_save_text(io, s->rule.dogtag, sizeof(s->rule.dogtag))) return false;
+    Q2U(rule.hand); Q2I(rule.gender); Q2I(rule.old_water); Q2I(rule.drown_damage); Q2I(rule.breather_sound);
+    Q2I(rule.animation_priority); Q2I(rule.animation_end); Q2I(rule.auto_switch); Q2I(rule.auto_shield); Q2I(rule.flashes);
+    Q2S(i32, rule.hit_marker_damage);
+    Q2U(rule.buttons); Q2U(rule.latched_buttons); Q2U(rule.event);
+    Q2T(rule.entered_ns); Q2T(rule.respawn_ns); Q2T(rule.air_ns); Q2T(rule.drown_ns); Q2T(rule.pain_ns);
+    Q2T(rule.damage_ns); Q2T(rule.power_armor_ns); Q2T(rule.fall_ns); Q2T(rule.landmark_noise_ns); Q2T(rule.flood_until_ns);
+    for (size_t i = 0; i < 10; ++i) Q2T(rule.flood_times[i]);
+    Q2T(rule.slime_ns); Q2T(rule.animation_ns); Q2T(rule.last_damage_ns); Q2T(rule.last_firing_ns);
+    Q2T(rule.invisibility_fade_ns); Q2T(rule.tracker_ns); Q2T(rule.nuke_ns); Q2T(rule.flash_ns);
+    Q2T(rule.respawn_timeout_ns); Q2T(rule.grapple_released_ns); Q2T(rule.quake_ns);
+    Q2T(rule.help_draw_ns); Q2T(rule.help_marker_ns); Q2T(rule.mission_time_ns);
+    Q2U(rule.mission_primary); Q2U(rule.mission_secondary); Q2U(rule.mission_changed);
+    Q2F(rule.fov); Q2F(rule.damage_blood); Q2F(rule.damage_armor); Q2F(rule.damage_power); Q2F(rule.damage_knockback);
+    Q2F(rule.damage_alpha); Q2F(rule.bonus_alpha); Q2F(rule.damage_pitch); Q2F(rule.damage_roll); Q2F(rule.fall_value);
+    Q2F(rule.bob_time); Q2F(rule.bob_move); Q2F(rule.killer_yaw);
+    Q2V(rule.damage_from); Q2V(rule.damage_blend); Q2V(rule.old_velocity); Q2V(rule.old_view_angles);
+    Q2V(rule.slow_view_angles); Q2V(rule.help_location);
+    void *points = s->rule.help_points;
+    if (!q2_save_count(io, &s->rule.help_count, 12, sizeof(*s->rule.help_points), &points)) return false;
+    s->rule.help_points = points;
+    for (size_t i = 0; i < s->rule.help_count; ++i) Q2V(rule.help_points[i]);
+    if (s->rule.help_index > UINT32_MAX) return q2_save_fail(io, "Oversized Q2 help cursor");
+    Q2U(rule.help_index); s->rule.help_capacity = s->rule.help_count;
+    Q2N(rule.loop_sound); Q2N(rule.help_image);
+    Q2N(rule.character_model); Q2I(rule.character_skin); Q2B(rule.character_configured);
+    if (!q2_save_fog(io, &s->rule.fog) || !q2_save_fog(io, &s->rule.wanted_fog)) return false;
+    Q2F(rule.fog_transition); Q2U(rule.flood_count);
+    Q2B(rule.use_weapons); Q2B(rule.use_inventory); Q2B(rule.requested_spectator); Q2B(bot); Q2B(rule.gibbed);
+    Q2B(rule.weapon_thunk); Q2B(rule.animation_duck); Q2B(rule.animation_run); Q2B(rule.landmark_free_fall);
+    Q2B(rule.show_scores); Q2B(rule.show_inventory); Q2B(rule.show_help); Q2B(rule.bob_skip); Q2B(rule.nuke_inside);
+    Q2B(rule.auto_shield_enabled); Q2B(rule.awaiting_respawn); Q2B(rule.spawned); Q2B(rule.player_collision);
+    Q2B(rule.has_coop); Q2B(rule.has_pending_landmark); Q2B(rule.squad_spawn); Q2B(rule.corpse);
+    Q2B(rule.pending_start_items);
+    Q2B(rule.sphere_vehicle);
+    if (!q2_save_landmark(io, &s->rule.pending_landmark)) return false;
+    Q2V(rule.squad_origin); Q2V(rule.squad_angles); return true;
 }
 bool q2_save_player(q2_save_io *io, qa_q2_player_checkpoint *s) {
     Q2B(present);

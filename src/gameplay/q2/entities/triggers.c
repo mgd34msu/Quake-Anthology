@@ -364,7 +364,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
             return false;
         if (traits.player) {
             if (native && native->client)
-                native->client->old_velocity = b.velocity;
+                native->client->rule.old_velocity = b.velocity;
             if (services->player_push &&
                 !services->player_push(services->context, id, b.velocity, e))
                 return false;

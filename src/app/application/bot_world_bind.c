@@ -35,7 +35,7 @@ static qa_actor_id bot_actor(void *context,int32_t client) {
     struct application_player_roster *roster=binding->bots->application->players;
     for(size_t i=0;client>=0 && roster && i<roster->count;++i) {
         application_player_record *record=roster->records+i;
-        if(!record->retiring && record->bot && record->client_slot==(uint32_t)client) return record->actor;
+        if(!record->retiring && application_player_identity(record)->bot && record->client_slot==(uint32_t)client) return record->actor;
     }
     return (qa_actor_id){0};
 }
@@ -271,7 +271,7 @@ bool application_bot_world_binding_transport_client(void *context,qa_actor_id ac
     application_bot_world_binding *binding=context;
     if(!source_live(binding,error)) return false;
     application_player_record *record=player(binding,actor);
-    if(!record || !record->bot || record->remote)
+    if(!record || !application_player_identity(record)->bot || record->remote)
         return application_fail(error,QA_ERROR_NOT_FOUND,"local bot connection lacks its actual roster owner");
     if(binding->source->kind==APPLICATION_PROVIDER_Q1)
         return qa_q1_native_client_slot_prepared(binding->source->state.q1,actor,out,error);

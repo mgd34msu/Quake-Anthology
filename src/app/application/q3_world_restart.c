@@ -247,7 +247,7 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
         if (!text) return false;
         free(record->userinfo);
         record->userinfo = text;
-        record->bot = travel->seats[i].bot = bot;
+        application_player_identity_mut(record)->bot = travel->seats[i].bot = bot;
         if (state->retained_capacity <= record->client_slot)
             state->retained_capacity = record->client_slot + 1;
         (void)entered_ns;
@@ -403,7 +403,7 @@ static bool capture_clients(application_q3_world_restart_state *state,
                 !application_native_q3_wire_client_read(state->source, slot,
                     &wire_client, &present, error)) return false;
             if (!present || !qa_actor_id_equal(wire_client.actor, record->actor) ||
-                wire_client.bot != record->bot)
+                wire_client.bot != application_player_identity(record)->bot)
                 return application_fail(error, QA_ERROR_ARGUMENT,
                     "Q3 replacement source has another wire client admission");
             userinfo = wire_client.userinfo;
@@ -412,7 +412,7 @@ static bool capture_clients(application_q3_world_restart_state *state,
             qa_actor_id actor; bool bot; uint64_t entered;
             if (!application_q3_guest_world_client_read(state->source, slot, &actor,
                     &client->command, &bot, &entered, error) ||
-                !qa_actor_id_equal(actor, record->actor) || bot != record->bot ||
+                !qa_actor_id_equal(actor, record->actor) || bot != application_player_identity(record)->bot ||
                 !application_q3_guest_world_userinfo(state->source, slot, &userinfo, error)) return false;
         }
         if (!userinfo)
@@ -549,7 +549,7 @@ static bool reconcile_native_clients(application_provider *source,
         if (!userinfo) return false;
         free(record->userinfo);
         record->userinfo = userinfo;
-        record->bot = travel->seats[index].bot = client.bot;
+        application_player_identity_mut(record)->bot = travel->seats[index].bot = client.bot;
         travel->carry[index].q3_command = client.command;
     }
     return true;

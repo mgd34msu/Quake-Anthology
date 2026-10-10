@@ -94,7 +94,7 @@ static bool item_action(void *context, qa_item_id item, qa_item_action action, q
         for (size_t j = 0; j < v->item_count; ++j)
             if (v->items[j].inventory == item) {
                 bool handled;
-                if (!qa_modes_item_action(m, v->id, p->value.actor, item, action, &handled, e))
+                if (!qa_modes_item_action(m, v->id, p->actor, item, action, &handled, e))
                     return false;
                 return handled || mode_fail(e, "mode item is not held");
             }

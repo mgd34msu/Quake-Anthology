@@ -232,8 +232,8 @@ static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *statu
                 continue;
             q2_client_state *candidate = other->client;
             uint64_t firing = other->weapon_bound ? other->weapon.last_firing_ns
-                                                  : candidate->last_firing_ns;
-            if (candidate->last_damage_ns >= g->now_ns || q2_map_searching(g, other->id) ||
+                                                  : candidate->rule.last_firing_ns;
+            if (candidate->rule.last_damage_ns >= g->now_ns || q2_map_searching(g, other->id) ||
                 (searching && firing >= g->now_ns)) {
                 *status = QA_Q2_RESPAWN_COMBAT;
                 continue;
@@ -274,9 +274,9 @@ static bool squad_target(qa_q2_game *g, q2_actor *a, qa_q2_respawn_status *statu
             }
             if (!q2_actor_live(g, other->id))
                 continue;
-            a->client->squad_spawn = true;
-            a->client->squad_origin = origin;
-            a->client->squad_angles = qa_v3(body.angles.x, body.angles.y, 0);
+            a->client->rule.squad_spawn = true;
+            a->client->rule.squad_origin = origin;
+            a->client->rule.squad_angles = qa_v3(body.angles.x, body.angles.y, 0);
             found = true;
             break;
         }
@@ -303,8 +303,8 @@ bool q2_player_coop_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return true;
     if (allowed) {
         status = QA_Q2_RESPAWN_READY;
-        s->info.spectator = s->requested_spectator = false;
-        s->latched_buttons = 0;
+        s->info.spectator = s->rule.requested_spectator = false;
+        s->rule.latched_buttons = 0;
         if (!qa_q2_player_respawn(g, a->id, e))
             return false;
     } else {
@@ -316,14 +316,14 @@ bool q2_player_coop_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
             if (!q2_actor_live(g, a->id))
                 return true;
             s->info.spectator = s->info.noclip = true;
-            s->visual.visible = false;
-            s->damage_alpha = s->bonus_alpha = 0;
+            s->rule.visual.visible = false;
+            s->rule.damage_alpha = s->rule.bonus_alpha = 0;
             qa_combat_state combat;
             if (!qa_combat_read_traits(g->services.combat, a->id, &combat, e))
                 return false;
             combat.can_take_damage = false;
             if (!qa_combat_set_traits(g->services.combat, a->id, &combat, e) ||
-                !q2_player_collision(g, a, false, e) || !q2_publish_visual(g, a->id, &s->visual, e))
+                !q2_player_collision(g, a, false, e) || !q2_publish_visual(g, a->id, &s->rule.visual, e))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;

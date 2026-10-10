@@ -924,7 +924,7 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
             if (!granted)
                 return true;
         } else {
-            if (player->value.bot)
+            if (player->identity->bot)
                 return true;
             if (!qa_modes_horde_keys(m, v->id, loot->kind == HORDE_GOLD, 1, e))
                 return false;

@@ -82,7 +82,7 @@ static struct application_qc_state *source(qa_application *app,qa_error *error)
         if (row->retiring || !qa_actors_get(qa_session_actors(app->session),row->actor)) continue;
         ++count;
         matches=qa_actor_id_equal(row->actor,client->actor) && row->seat==client->seat &&
-            !row->remote && !row->bot && !row->spectator && !row->deferred && !row->source_begin_pending;
+            !row->remote && !application_player_identity(row)->bot && !application_player_identity(row)->spectator && !row->deferred && !row->source_begin_pending;
     }
     if (count>1) {
         application_fail(error,QA_ERROR_UNSUPPORTED,"Original Quake saves cannot retain several players"); return NULL;

@@ -16,7 +16,7 @@ mode_player *mode_player_get(qa_modes *m, qa_actor_id actor) {
     if (!mode_live(m, actor) || actor.slot >= m->actor_capacity)
         return NULL;
     mode_player *p = &m->players[actor.slot];
-    return p->active && qa_actor_id_equal(p->value.actor, actor) ? p : NULL;
+    return p->active && qa_actor_id_equal(p->actor, actor) ? p : NULL;
 }
 mode_instance *mode_get(qa_modes *m, qa_mode_id id) {
     if (!m || id.slot >= m->mode_capacity)
@@ -585,13 +585,21 @@ bool qa_modes_player(qa_modes *m, const qa_match_player *value, qa_error *e) {
     qa_actor_id actor = value->actor;
     mode_player *p = &m->players[actor.slot];
     mode_player before = *p;
-    if (p->active && qa_actor_id_equal(p->value.actor, value->actor))
-        p->value = *value;
-    else
-        *p = (mode_player){.modes = m, .active = true, .value = *value};
+    qa_actor_player *identity = qa_actors_player(qa_session_actors(m->options.services.session), actor);
+    qa_actor_player identity_before = *identity;
+    if (!p->active || !qa_actor_id_equal(p->actor, actor))
+        *p = (mode_player){.modes = m, .active = true, .actor = actor};
+    p->identity = identity;
+    p->connected = value->connected;
+    p->connecting = value->connecting;
+    identity->name = value->name;
+    identity->bot = value->bot;
+    identity->present = true;
     if (!m->callback_depth && !qa_builtin_players(&m->options.services, &m->players_order, e)) {
-        if (mode_live(m, actor) && qa_actor_id_equal(p->value.actor, actor))
+        if (mode_live(m, actor) && qa_actor_id_equal(p->actor, actor)) {
             *p = before;
+            *identity = identity_before;
+        }
         return false;
     }
     return true;
@@ -602,7 +610,7 @@ bool qa_modes_player_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     mode_member *member = mode_member_get(m, mode_get(m, id), actor);
     if (!p || !member || !out)
         return mode_fail(e, "unknown match player");
-    qa_mode_player_view view = {.mode = id, .connection = p->value, .state = member->player};
+    qa_mode_player_view view = {.mode = id, .connection = mode_player_connection(p), .state = member->player};
     if (!qa_modes_score(m, id, actor, &view.state.score, e) ||
         !qa_modes_team(m, id, actor, &view.state.team, e)) return false;
     *out = view;
@@ -740,7 +748,7 @@ bool qa_modes_player_lease(const qa_modes *m, qa_mode_id id, qa_actor_id actor,
     if (!v->active || v->id.generation != id.generation) return true;
     const mode_player *player = &m->players[actor.slot];
     const mode_member *member = &v->members[actor.slot];
-    if (!player->active || !qa_actor_id_equal(player->value.actor, actor) ||
+    if (!player->active || !qa_actor_id_equal(player->actor, actor) ||
         !member->joined || !qa_actor_id_equal(member->actor, actor)) return true;
     const mode_match_owner *owner = &v->bindings[actor.slot];
     if (!owner->serial) return true;
@@ -1142,7 +1150,7 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
                 v->last_spawns[j] = (qa_actor_id){0};
     }
     mode_player *p = &m->players[released.id.slot];
-    if (!p->active || !qa_actor_id_equal(p->value.actor, released.id))
+    if (!p->active || !qa_actor_id_equal(p->actor, released.id))
         return true;
     for (uint32_t i = 0; i < m->mode_capacity; ++i) {
         mode_instance *v = &m->instances[i];

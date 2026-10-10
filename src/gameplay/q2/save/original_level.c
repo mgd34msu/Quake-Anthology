@@ -268,7 +268,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         }
     }
     if (okay) {
-        const qa_q2_player_state *current = source->client;
+        const q2_client_state *current = source->client;
         /* Client admission owns the current seat, character and service bindings.
          * The original file owns the player's gameplay fields and inventory. */
         client.player.info.slot = current->info.slot;
@@ -279,17 +279,17 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         client.player.info.noclip = motion == 1;
         client.player.info.god = (flags & 16u) != 0;
         client.player.info.notarget = (flags & 32u) != 0;
-        memcpy(client.player.info.skin, current->info.skin, sizeof(client.player.info.skin));
-        client.player.use_weapons = current->use_weapons;
-        client.player.use_inventory = current->use_inventory;
-        client.player.bot = current->bot;
-        client.player.gender = current->gender;
-        client.player.visual = current->visual;
-        client.player.character_configured = current->character_configured;
-        client.player.character_model = current->character_model;
-        client.player.character_skin = current->character_skin;
-        client.player.spawned = live_level;
-        client.player.pending_start_items = false;
+        snprintf(client.player.info.skin, sizeof(client.player.info.skin), "%s", q2_player_source_skin(game, current));
+        client.player.rule.use_weapons = current->rule.use_weapons;
+        client.player.rule.use_inventory = current->rule.use_inventory;
+        client.player.bot = current->player->bot;
+        client.player.rule.gender = current->rule.gender;
+        client.player.rule.visual = current->rule.visual;
+        client.player.rule.character_configured = current->rule.character_configured;
+        client.player.rule.character_model = current->rule.character_model;
+        client.player.rule.character_skin = current->rule.character_skin;
+        client.player.rule.spawned = live_level;
+        client.player.rule.pending_start_items = false;
         client.player.info.chase_target = (qa_actor_id){0};
         client.persistent.flags = (uint32_t)flags;
         if (live_level) {
@@ -331,7 +331,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
         io = edict_reader(game, &level, row, error);
         io.references_only = true;
         okay = original_edict(game, &io, target, engine_level, error);
-        if (okay && (!target->client || target->client->corpse)) {
+        if (okay && (!target->client || target->client->rule.corpse)) {
             io.references_only = false;
             okay = q2_original_edict_visual(game, &io, target, engine_level, error);
         }
@@ -435,7 +435,7 @@ static bool level_perception(qa_q2_game *g, q2_original_record_io *io)
         qa_actor_id sound = {0};
         if (!io->reading && players->noise[i].present) {
             q2_actor *owner = q2_actor_get(g, players->noise[i].owner, false, NULL);
-            if (owner && owner->client) sound = owner->client->noise[i];
+            if (owner && owner->client) sound = owner->client->rule.noise[i];
         }
         int32_t sound_frame = io->reading ? 0 :
             (int32_t)(players->noise[i].time_ns / (Q2_NS / 10));
@@ -717,13 +717,14 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
         if (name && !strcmp(name, "bodyque") && !actor->client) {
             actor->client = calloc(1, sizeof(*actor->client));
             if (!actor->client) { qa_error_set(error, QA_ERROR_MEMORY, i, "Restoring original Q2 corpse owner"); return false; }
-            actor->client->corpse = true;
+            actor->client->player = qa_actors_player(qa_world_actors(g->services.world), id);
+            actor->client->rule.corpse = true;
             qa_combat_state combat = {0};
             if (!qa_combat_read(g->services.combat, id, &combat, NULL) &&
                 !qa_combat_create_actor(g->services.combat, id, &combat, error)) return false;
         }
         if (row->number > g->wire_clients && row->number <= g->wire_clients + 8 &&
-            actor->client && actor->client->corpse)
+            actor->client && actor->client->rule.corpse)
             g->player_runtime->corpses[row->number - g->wire_clients - 1] = id;
     }
     return true;

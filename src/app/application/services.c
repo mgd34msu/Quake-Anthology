@@ -1037,20 +1037,28 @@ bool qa_application_player_info_read(qa_application *application, qa_actor_id ac
         return false;
     application_provider *provider = application_provider_for(
         application, actor, QA_ROLE_CHARACTER, "");
+    const qa_actor_player *identity = qa_actors_player(qa_session_actors(application->session), actor);
+    qa_strings *strings = qa_session_strings(application->session);
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2 &&
-        qa_q2_player_projection(provider->state.q2, actor, out))
+        qa_q2_player_projection(provider->state.q2, actor, out)) {
+        out->name = qa_strings_cstr(strings, identity->name);
+        out->skin = qa_strings_cstr(strings, identity->skin);
+        out->ping = identity->ping;
+        out->spectator = identity->spectator;
         return true;
+    }
+    if (!identity->present) return false;
 
     bool matched = false;
     const struct application_player_roster *roster = application->players;
     for (size_t index = 0; roster && index < roster->count; ++index) {
         const application_player_record *record = &roster->records[index];
         if (!qa_actor_id_equal(record->actor, actor)) continue;
-        if (record->retiring || record->character != provider || !record->name) return false;
-        *out = (qa_builtin_player_info){.name = record->name, .skin = record->skin,
+        if (record->retiring || record->character != provider || !application_player_name(record)) return false;
+        *out = (qa_builtin_player_info){.name = application_player_name(record), .skin = application_player_skin(record),
             .slot = record->client_slot,
             .connected = !record->deferred && !record->source_begin_pending,
-            .spectator = record->spectator};
+            .spectator = identity->spectator, .ping = identity->ping};
         matched = true;
         break;
     }
@@ -1062,13 +1070,15 @@ bool qa_application_player_info_read(qa_application *application, qa_actor_id ac
             qa_actor_id live = seat->actor;
             (void)qa_application_player_actor(application, seat->id, &live);
             if (!qa_actor_id_equal(live, actor)) continue;
-            *out = (qa_builtin_player_info){.name = seat->name,
-                .slot = (uint32_t)index, .connected = true, .spectator = seat->spectator};
+            *out = (qa_builtin_player_info){.slot = (uint32_t)index, .connected = true,
+                .spectator = identity->spectator, .ping = identity->ping};
             matched = true;
             break;
         }
     }
     if (!matched) return false;
+    out->name = qa_strings_cstr(strings, identity->name);
+    out->skin = qa_strings_cstr(strings, identity->skin);
     qa_builtin_actor_traits traits = {0};
     if (provider_traits(provider, actor, &traits)) out->view_height = traits.view_height;
     qa_combat_state combat;

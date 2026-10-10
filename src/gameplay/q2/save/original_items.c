@@ -138,8 +138,8 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
             q2_actor *owner = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
             if (owner && owner->client) {
                 if (owner->powers) owner->powers->sphere = actor->id;
-                companion->camera = kind == Q2_SPHERE_HUNTER && owner->client->sphere_vehicle;
-                if (companion->camera) owner->client->sphere_camera = actor->id;
+                companion->camera = kind == Q2_SPHERE_HUNTER && owner->client->rule.sphere_vehicle;
+                if (companion->camera) owner->client->rule.sphere_camera = actor->id;
             }
         }
         if (io->references_only) return true;

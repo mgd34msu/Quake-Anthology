@@ -183,7 +183,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
             .player = activator,
             .name = target ? target->entity->targetname : 0,
             .relative_origin = unrotate(qa_vec_sub(b.origin, ref.origin), ref.angles),
-            .relative_velocity = unrotate(player->client->old_velocity, ref.angles),
+            .relative_velocity = unrotate(player->client->rule.old_velocity, ref.angles),
             .relative_view_angles = qa_vec_sub(movement.view_angles, ref.angles)};
         landmark = &carry;
     }

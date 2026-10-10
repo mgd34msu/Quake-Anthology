@@ -716,14 +716,13 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         qa_buffer userinfo = {0}; qa_q1_source_client_view current;
         if (okay) okay = qa_q1_source_client_read(source->state.q1,player.actor,&current) &&
             qa_q1_source_client_userinfo_read(source->state.q1,player.actor,true,&userinfo,error);
-        char *declared = okay ? malloc(strlen(current.name)+1) : NULL;
-        if (okay && !declared) okay = application_fail(error,QA_ERROR_MEMORY,"Retaining changed Source client name");
         if (okay) {
-            strcpy(declared,current.name);
             application_player_record *actual = (application_player_record *)row;
-            free(actual->name); actual->name=declared;
-            free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
-            okay=application_client_userinfo_changed(app,player.actor,error);
+            okay = application_player_identity_text(actual, current.name, NULL, NULL, error);
+            if (okay) {
+                free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
+                okay=application_client_userinfo_changed(app,player.actor,error);
+            }
         }
         qa_buffer_free(&userinfo);
     }

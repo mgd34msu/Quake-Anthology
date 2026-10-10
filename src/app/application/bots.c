@@ -550,7 +550,7 @@ static bool bot_source_action_client(void *opaque,int32_t client,uint32_t *out,q
         const struct application_player_roster *roster=bots->application->players;
         for(size_t i=0;roster && i<roster->count;++i) {
             const application_player_record *record=roster->records+i;
-            if(!record->retiring && !record->bot && record->client_slot==(uint32_t)client &&
+            if(!record->retiring && !application_player_identity(record)->bot && record->client_slot==(uint32_t)client &&
                qa_actor_id_equal(record->actor,actor)) {input=record->actor.slot;break;}
         }
     }
@@ -1185,7 +1185,7 @@ bool application_bots_client_prepare(qa_application *app,qa_actor_id actor,uint3
         if(!app->players->records[i].retiring && qa_actor_id_equal(app->players->records[i].actor,actor)) {
             record=app->players->records+i;break;
         }
-    if(!record || !record->bot || record->client_slot!=physical_client)
+    if(!record || !application_player_identity(record)->bot || record->client_slot!=physical_client)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot admission has no genuine local source roster record");
     application_bot_seat *seat=NULL;
     for(uint32_t i=0;i<bots->capacity;++i)

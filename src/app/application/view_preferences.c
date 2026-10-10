@@ -208,7 +208,7 @@ bool qa_application_player_field_of_view_apply(qa_application *app, double value
         bool selected = false;
         for (size_t i = 0; i < scope.roster->count; ++i) {
             const application_player_record *row = scope.roster->records + i;
-            if (!row->retiring && !row->remote && !row->bot && !row->deferred &&
+            if (!row->retiring && !row->remote && !application_player_identity(row)->bot && !row->deferred &&
                 row->seat == choices->seats[seat].id) {
                 if (selected || count == choices->seat_count) { free(actors); return application_fail(e, QA_ERROR_FORMAT, "FOV fanout aliases local seat declarations"); }
                 selected = true;

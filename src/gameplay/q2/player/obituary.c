@@ -99,7 +99,7 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
             break;
         }
     char text[256];
-    const char *name = a->client->info.name;
+    const char *name = q2_player_source_name(g, a->client);
     if (rr) {
         if (self) {
             const char *key = means == 24                 ? "held_grenade"
@@ -150,11 +150,11 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
     char message[128];
     const char *cause = environment ? environment->classic : NULL;
     if (self) {
-        const char *possessive = a->client->gender == 1   ? "her"
-                                 : a->client->gender == 2 ? "its"
+        const char *possessive = a->client->rule.gender == 1   ? "her"
+                                 : a->client->rule.gender == 2 ? "its"
                                                           : "his";
-        const char *reflexive = a->client->gender == 1   ? "herself"
-                                : a->client->gender == 2 ? "itself"
+        const char *reflexive = a->client->rule.gender == 1   ? "herself"
+                                : a->client->rule.gender == 2 ? "itself"
                                                          : "himself";
         if (means == 24)
             snprintf(message, sizeof(message), "tried to put the pin back in");

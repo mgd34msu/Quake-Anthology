@@ -5,7 +5,6 @@
 #include <ctype.h>
 #include <stdio.h>
 
-typedef qa_q2_player_state q2_client_state;
 typedef struct q2_player_row {
     qa_actor_id actor;
     qa_builtin_player_info info;

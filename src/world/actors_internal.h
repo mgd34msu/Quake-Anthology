@@ -11,6 +11,7 @@ typedef struct qa_actor_page {
     uint64_t generations[QA_ACTOR_PAGE_SIZE];
     uint32_t saved_slots[QA_ACTOR_PAGE_SIZE];
     qa_world_body bodies[QA_ACTOR_PAGE_SIZE];
+    qa_actor_player players[QA_ACTOR_PAGE_SIZE];
 } qa_actor_page;
 
 struct qa_actor_registry {

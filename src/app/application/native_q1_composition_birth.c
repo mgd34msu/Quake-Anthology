@@ -551,7 +551,7 @@ bool application_native_q1_ctf_prethink(application_provider *source, qa_actor_i
     if (okay) {
         for (size_t i = 0; i < call.app->players->count; ++i)
             if (qa_actor_id_equal(call.app->players->records[i].actor, actor)) {
-                bot = call.app->players->records[i].bot; break;
+                bot = application_player_identity(&call.app->players->records[i])->bot; break;
             }
     }
     double team = 0;

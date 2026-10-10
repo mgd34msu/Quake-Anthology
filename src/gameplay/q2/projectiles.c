@@ -880,7 +880,7 @@ bool qa_q2_touch_source(qa_q2_game *g, const qa_touch_contact *contact,
      * absent. Borrowed CHARACTER and weapon-only extensions do not bind it. */
     bool bound = a->entity != NULL || a->item != NULL || a->monster != NULL ||
                  a->projectile.kind != Q2_PROJECTILE_NONE ||
-                 (a->client != NULL && !a->client->character_configured);
+                 (a->client != NULL && !a->client->rule.character_configured);
     if (!bound)
         return true;
     *reached = true;

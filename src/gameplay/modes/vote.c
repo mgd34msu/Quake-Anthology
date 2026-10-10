@@ -24,8 +24,8 @@ static size_t voters(qa_modes *m, mode_instance *v, qa_team_id team) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (!p || !p->value.connected ||
-            (v->value.rules.source >= QA_MODE_Q3 && (p->value.bot || p->value.connecting)))
+        if (!p || !p->connected ||
+            (v->value.rules.source >= QA_MODE_Q3 && (p->identity->bot || p->connecting)))
             continue;
         if (v->value.rules.source >= QA_MODE_Q3 && member->player.spectator)
             continue;
@@ -73,10 +73,10 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     member = mode_member_get(m, v, actor);
     if (!member) return mode_fail(e, "vote initiator retired during native client access");
     mode_player *initiator = mode_player_get(m, actor);
-    if (v->value.rules.voting_disabled || !initiator || !initiator->value.connected ||
+    if (v->value.rules.voting_disabled || !initiator || !initiator->connected ||
         (source >= QA_MODE_Q3 &&
          (member->player.spectator || (!native &&
-             (initiator->value.bot || initiator->value.connecting)))) ||
+             (initiator->identity->bot || initiator->connecting)))) ||
         (native && native_calls >= 3) ||
         (!native && v->value.rules.vote_limit &&
          member->vote_calls[slot] >= (uint32_t)v->value.rules.vote_limit))
@@ -154,9 +154,9 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
         return mode_fail(e, "no active vote");
     qa_mode_vote *vote = &v->votes[slot];
     mode_player *p = mode_player_get(m, actor);
-    if (!p || !p->value.connected ||
+    if (!p || !p->connected ||
         (v->value.rules.source >= QA_MODE_Q3 &&
-         (p->value.bot || p->value.connecting || member->player.spectator)))
+         (p->identity->bot || p->connecting || member->player.spectator)))
         return mode_fail(e, "player cannot vote");
     qa_team_id own;
     if (team && (!qa_modes_team(m, v->id, actor, &own, e) || own != team))
@@ -251,7 +251,7 @@ bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                 qa_actor_id actor = m->players_order.ids[i];
                 mode_member *member = mode_member_get(m, v, actor);
                 mode_player *player = mode_player_get(m, actor);
-                if (!member || !player || !player->value.connected)
+                if (!member || !player || !player->connected)
                     continue;
                 if (member->ballots[slot] > 0)
                     ++vote->yes;

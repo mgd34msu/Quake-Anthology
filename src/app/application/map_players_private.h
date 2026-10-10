@@ -44,15 +44,42 @@ typedef struct application_player_record {
     uint64_t deferred_until_ns;
     qa_net_client_id remote_client;
     qa_net_seat_id remote_seat;
-    char *name, *team, *skin, *userinfo;
+    qa_actor_player pending_identity;
+    qa_actor_player *player;
+    qa_strings *strings;
+    char *userinfo;
     char *bot_definition;
     float bot_skill;
     int32_t bot_delay_ms;
     application_player_guest_binding *guests;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
-    bool deferred, spectator, bot, remote, dynamic, retiring, source_begin_pending;
+    bool deferred, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
+
+static inline const qa_actor_player *application_player_identity(const application_player_record *record)
+{ return record->player ? record->player : &record->pending_identity; }
+static inline qa_actor_player *application_player_identity_mut(application_player_record *record)
+{ return record->player ? record->player : &record->pending_identity; }
+static inline bool application_player_identity_text(application_player_record *record,
+    const char *name, const char *team, const char *skin, qa_error *error)
+{
+    qa_actor_player *identity = application_player_identity_mut(record);
+    qa_actor_player next = *identity;
+    if ((name && !qa_strings_intern_cstr(record->strings, name, &next.name, error)) ||
+        (team && !qa_strings_intern_cstr(record->strings, team, &next.team, error)) ||
+        (skin && !qa_strings_intern_cstr(record->strings, skin, &next.skin, error))) return false;
+    next.present = true;
+    *identity = next;
+    return true;
+}
+static inline const char *application_player_name(const application_player_record *record)
+{ return qa_strings_cstr(record->strings, application_player_identity(record)->name); }
+static inline const char *application_player_team(const application_player_record *record)
+{ return qa_strings_cstr(record->strings, application_player_identity(record)->team); }
+static inline const char *application_player_skin(const application_player_record *record)
+{ return qa_strings_cstr(record->strings, application_player_identity(record)->skin); }
+
 typedef struct application_player_point {
     qa_mode_spawnpoint point;
     qa_string_id target;

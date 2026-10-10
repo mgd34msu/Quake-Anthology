@@ -205,7 +205,7 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
         }
         return true;
     }
-    bool force = a->client->awaiting_respawn && g->now_ns > a->client->respawn_timeout_ns;
+    bool force = a->client->rule.awaiting_respawn && g->now_ns > a->client->rule.respawn_timeout_ns;
     if (rr && count == 1) {
         bool clear = force;
         if (!force && !clear_spawn(g, id, bounds, &clear, e))
@@ -457,7 +457,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         }
     if (!out->registry &&
         (!g->player_runtime->rules.coop_player_collision ||
-         (a->client->awaiting_respawn && g->now_ns > a->client->respawn_timeout_ns)))
+         (a->client->rule.awaiting_respawn && g->now_ns > a->client->rule.respawn_timeout_ns)))
         *out = first;
     okay = true;
 done:
@@ -471,11 +471,11 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
     q2_client_state *s = a->client;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     *found = false;
-    if (s->squad_spawn) {
-        s->squad_spawn = false;
+    if (s->rule.squad_spawn) {
+        s->rule.squad_spawn = false;
         *out = (qa_body_state){
-            .origin = s->squad_origin, .angles = s->squad_angles, .bounds = m->standing_bounds};
-        if (command_view) *command_view = s->squad_angles;
+            .origin = s->rule.squad_origin, .angles = s->rule.squad_angles, .bounds = m->standing_bounds};
+        if (command_view) *command_view = s->rule.squad_angles;
         *found = true;
         return true;
     }
@@ -554,7 +554,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
     if (command_view) *command_view = body.angles;
     body.angles = rr || from_landmark ? qa_v3(body.angles.x / 3, body.angles.y, body.angles.z)
                                       : qa_v3(0, body.angles.y, 0);
-    s->landmark_free_fall = from_landmark;
+    s->rule.landmark_free_fall = from_landmark;
     *out = body;
     *found = true;
     return true;

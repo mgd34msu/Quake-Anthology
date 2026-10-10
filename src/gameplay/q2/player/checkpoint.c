@@ -4,12 +4,12 @@
 void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *s) {
     if (!s)
         return;
-    qa_q2_player_carry_free(&s->value.coop);
-    free(s->value.spawn_inventory);
-    free(s->value.help_points);
+    qa_q2_player_carry_free(&s->value.rule.coop);
+    free(s->value.rule.spawn_inventory);
+    free(s->value.rule.help_points);
     *s = (qa_q2_player_checkpoint){0};
 }
-static bool copy_arrays(const qa_q2_player_state *from, qa_q2_player_state *to, qa_error *e) {
+static bool copy_arrays(const qa_q2_player_rule_tail *from, qa_q2_player_rule_tail *to, qa_error *e) {
     to->coop.inventory = NULL;
     to->spawn_inventory = NULL;
     to->help_points = NULL;
@@ -42,20 +42,22 @@ bool qa_q2_player_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_checkpoint
         *out = saved;
         return true;
     }
-    const qa_q2_player_state *s = a->client;
+    const q2_client_state *s = a->client;
     saved.present = true;
-    saved.value = *s;
-    if (!copy_arrays(s, &saved.value, e))
+    saved.value.rule = s->rule;
+    saved.value.bot = s->player->bot;
+    q2_player_source_info_read(g, s, &saved.value.info);
+    if (!copy_arrays(&s->rule, &saved.value.rule, e))
         goto fail;
     if (!q2_save_reference(g, s->info.chase_target, &saved.chase_target, e) ||
-        !q2_save_reference(g, s->noise[0], &saved.noise[0], e) ||
-        !q2_save_reference(g, s->noise[1], &saved.noise[1], e) ||
-        !q2_save_reference(g, s->sphere_camera, &saved.sphere_camera, e) ||
-        !q2_save_reference(g, s->pending_landmark.player, &saved.landmark_player, e))
+        !q2_save_reference(g, s->rule.noise[0], &saved.noise[0], e) ||
+        !q2_save_reference(g, s->rule.noise[1], &saved.noise[1], e) ||
+        !q2_save_reference(g, s->rule.sphere_camera, &saved.sphere_camera, e) ||
+        !q2_save_reference(g, s->rule.pending_landmark.player, &saved.landmark_player, e))
         goto fail;
     saved.value.info.chase_target = (qa_actor_id){0};
-    saved.value.noise[0] = saved.value.noise[1] = saved.value.sphere_camera = (qa_actor_id){0};
-    saved.value.pending_landmark.player = (qa_actor_id){0};
+    saved.value.rule.noise[0] = saved.value.rule.noise[1] = saved.value.rule.sphere_camera = (qa_actor_id){0};
+    saved.value.rule.pending_landmark.player = (qa_actor_id){0};
     *out = saved;
     return true;
 fail:
@@ -63,59 +65,59 @@ fail:
     return false;
 }
 static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e) {
-    const float values[] = {s->info.view_height,   s->fov,
-                            s->damage_blood,       s->damage_armor,
-                            s->damage_power,       s->damage_knockback,
-                            s->damage_alpha,       s->bonus_alpha,
-                            s->damage_pitch,       s->damage_roll,
-                            s->fall_value,         s->bob_time,
-                            s->bob_move,           s->killer_yaw,
-                            s->fog_transition,     s->coop.health,
-                            s->coop.maximum_health};
+    const float values[] = {s->info.view_height,   s->rule.fov,
+                            s->rule.damage_blood,       s->rule.damage_armor,
+                            s->rule.damage_power,       s->rule.damage_knockback,
+                            s->rule.damage_alpha,       s->rule.bonus_alpha,
+                            s->rule.damage_pitch,       s->rule.damage_roll,
+                            s->rule.fall_value,         s->rule.bob_time,
+                            s->rule.bob_move,           s->rule.killer_yaw,
+                            s->rule.fog_transition,     s->rule.coop.health,
+                            s->rule.coop.maximum_health};
     for (size_t i = 0; i < sizeof(values) / sizeof(*values); i++)
         if (!isfinite(values[i]))
             return false;
-    const qa_vec3 vectors[] = {s->damage_from,     s->damage_blend,     s->old_velocity,
-                               s->old_view_angles, s->slow_view_angles, s->help_location,
-                               s->squad_origin,    s->squad_angles};
+    const qa_vec3 vectors[] = {s->rule.damage_from,     s->rule.damage_blend,     s->rule.old_velocity,
+                               s->rule.old_view_angles, s->rule.slow_view_angles, s->rule.help_location,
+                               s->rule.squad_origin,    s->rule.squad_angles};
     for (size_t i = 0; i < sizeof(vectors) / sizeof(*vectors); i++)
         if (!qa_vec_finite(vectors[i]))
             return false;
     const struct {
         const char *text;
         size_t size;
-    } strings[] = {{s->userinfo, sizeof(s->userinfo)},
-                   {s->social_id, sizeof(s->social_id)},
-                   {s->dogtag, sizeof(s->dogtag)},
+    } strings[] = {{s->rule.userinfo, sizeof(s->rule.userinfo)},
+                   {s->rule.social_id, sizeof(s->rule.social_id)},
+                   {s->rule.dogtag, sizeof(s->rule.dogtag)},
                    {s->info.name, sizeof(s->info.name)},
                    {s->info.skin, sizeof(s->info.skin)}};
     for (size_t i = 0; i < sizeof(strings) / sizeof(*strings); i++)
         if (!memchr(strings[i].text, 0, strings[i].size))
             return false;
-    if (s->info.chase_target.registry || s->noise[0].registry || s->noise[1].registry ||
-        s->sphere_camera.registry || !q2_saved_landmark(g, &s->pending_landmark) ||
-        (unsigned)s->hand > QA_Q2_CENTER_HAND || s->gender < 0 || s->gender > 2 ||
-        s->old_water < 0 || s->old_water > 3 || s->flood_count > 10 ||
-        (s->help_count && !s->help_points) || s->help_count > SIZE_MAX / sizeof(qa_vec3) ||
-        !q2_saved_visual(g, &s->visual) || !q2_saved_fog(&s->fog) ||
-        !q2_saved_fog(&s->wanted_fog) || !q2_saved_resource(g, s->loop_sound) ||
-        !q2_saved_resource(g, s->help_image) || !q2_saved_resource(g, s->info.selected_item) ||
-        !q2_saved_resource(g, s->coop.selected_item) ||
-        (unsigned)s->coop.weapon >= QA_Q2_WEAPON_COUNT ||
-        !q2_saved_inventory(g, s->coop.inventory, s->coop.count, e) ||
-        !q2_saved_inventory(g, s->spawn_inventory, s->spawn_count, e))
+    if (s->info.chase_target.registry || s->rule.noise[0].registry || s->rule.noise[1].registry ||
+        s->rule.sphere_camera.registry || !q2_saved_landmark(g, &s->rule.pending_landmark) ||
+        (unsigned)s->rule.hand > QA_Q2_CENTER_HAND || s->rule.gender < 0 || s->rule.gender > 2 ||
+        s->rule.old_water < 0 || s->rule.old_water > 3 || s->rule.flood_count > 10 ||
+        (s->rule.help_count && !s->rule.help_points) || s->rule.help_count > SIZE_MAX / sizeof(qa_vec3) ||
+        !q2_saved_visual(g, &s->rule.visual) || !q2_saved_fog(&s->rule.fog) ||
+        !q2_saved_fog(&s->rule.wanted_fog) || !q2_saved_resource(g, s->rule.loop_sound) ||
+        !q2_saved_resource(g, s->rule.help_image) || !q2_saved_resource(g, s->info.selected_item) ||
+        !q2_saved_resource(g, s->rule.coop.selected_item) ||
+        (unsigned)s->rule.coop.weapon >= QA_Q2_WEAPON_COUNT ||
+        !q2_saved_inventory(g, s->rule.coop.inventory, s->rule.coop.count, e) ||
+        !q2_saved_inventory(g, s->rule.spawn_inventory, s->rule.spawn_count, e))
         return false;
-    const qa_armor *armor = &s->coop.armor;
-    if (s->character_configured) {
+    const qa_armor *armor = &s->rule.coop.armor;
+    if (s->rule.character_configured) {
         const char *model = qa_strings_cstr(qa_session_strings(g->services.session),
-                                            s->character_model);
-        if (!model || !*model || s->character_skin < 0 || s->corpse ||
-            !s->info.connected || s->awaiting_respawn)
+                                            s->rule.character_model);
+        if (!model || !*model || s->rule.character_skin < 0 || s->rule.corpse ||
+            !s->info.connected || s->rule.awaiting_respawn)
             return false;
-    } else if (s->character_model || s->character_skin)
+    } else if (s->rule.character_model || s->rule.character_skin)
         return false;
-    if (s->hit_marker_damage < INT16_MIN || s->hit_marker_damage > INT16_MAX ||
-        (g->options.edition != QA_Q2_RERELEASE && s->hit_marker_damage)) return false;
+    if (s->rule.hit_marker_damage < INT16_MIN || s->rule.hit_marker_damage > INT16_MAX ||
+        (g->options.edition != QA_Q2_RERELEASE && s->rule.hit_marker_damage)) return false;
     if (!qa_armor_validate(armor, e) || !q2_saved_resource(g, armor->powered.source_owner))
         return false;
     if ((unsigned)armor->regular.kind > QA_ARMOR_SOURCE ||
@@ -130,8 +132,8 @@ static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e)
         return false;
     if (armor->regular.kind == QA_ARMOR_Q3 && !isfinite(armor->regular.protection.q3_protection))
         return false;
-    for (size_t i = 0; i < s->help_count; i++)
-        if (!qa_vec_finite(s->help_points[i]))
+    for (size_t i = 0; i < s->rule.help_count; i++)
+        if (!qa_vec_finite(s->rule.help_points[i]))
             return false;
     return true;
 }
@@ -157,13 +159,52 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 player state");
         return false;
     }
-    *state = saved->value;
-    if (!copy_arrays(&saved->value, state, e) ||
+    state->rule = saved->value.rule;
+    state->player = qa_actors_player(qa_world_actors(g->services.world), id);
+    const qa_q2_player_info *info = &saved->value.info;
+    state->info = (q2_player_source_info){
+        .slot = info->slot,
+        .seat = info->seat,
+        .score = info->score,
+        .lives = info->lives,
+        .chase_target = info->chase_target,
+        .selected_item = info->selected_item,
+        .view_height = info->view_height,
+        .connected = info->connected,
+        .spectator = info->spectator,
+        .dead = info->dead,
+        .god = info->god,
+        .notarget = info->notarget,
+        .noclip = info->noclip,
+        .flashlight = info->flashlight,
+    };
+    qa_strings *strings = qa_session_strings(g->services.session);
+    if (!qa_strings_intern_cstr(strings, info->name, &state->source_name, e) ||
+        !qa_strings_intern_cstr(strings, info->skin, &state->source_skin, e)) {
+        free(state); return false;
+    }
+    /* Shared identity is restored by the actor checkpoint. Standalone/legacy
+     * source imports admit that component through their saved projection. */
+    if (!state->rule.corpse && !state->player->present) {
+        char name[32];
+        bool named = q2_player_userinfo_value(state->rule.userinfo, "name", name,
+            g->options.edition == QA_Q2_RERELEASE ? sizeof(name) : 16u);
+        state->player->name = state->source_name;
+        if (named && !qa_strings_intern_cstr(strings, name, &state->player->name, e)) {
+            free(state); return false;
+        }
+        state->player->skin = state->source_skin;
+        state->player->ping = info->ping;
+        state->player->bot = saved->value.bot;
+        state->player->spectator = info->spectator;
+        state->player->present = true;
+    }
+    if (!copy_arrays(&saved->value.rule, &state->rule, e) ||
         !q2_resolve_reference(g, saved->chase_target, &state->info.chase_target, e) ||
-        !q2_resolve_reference(g, saved->noise[0], &state->noise[0], e) ||
-        !q2_resolve_reference(g, saved->noise[1], &state->noise[1], e) ||
-        !q2_resolve_reference(g, saved->sphere_camera, &state->sphere_camera, e) ||
-        !q2_resolve_reference(g, saved->landmark_player, &state->pending_landmark.player, e)) {
+        !q2_resolve_reference(g, saved->noise[0], &state->rule.noise[0], e) ||
+        !q2_resolve_reference(g, saved->noise[1], &state->rule.noise[1], e) ||
+        !q2_resolve_reference(g, saved->sphere_camera, &state->rule.sphere_camera, e) ||
+        !q2_resolve_reference(g, saved->landmark_player, &state->rule.pending_landmark.player, e)) {
         q2_actor temporary = {.client = state};
         q2_client_release_state(&temporary);
         return false;

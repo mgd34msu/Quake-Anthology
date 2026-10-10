@@ -93,6 +93,21 @@ typedef struct qa_q2_player_pm_rules {
     uint64_t frame, time_ns, source_sequence, pending_sequence;
     bool command_seen, command_pending;
 } qa_q2_player_pm_rules;
+typedef struct q2_player_source_info {
+    uint32_t slot, seat;
+    int score, lives;
+    qa_actor_id chase_target;
+    qa_item_id selected_item;
+    float view_height;
+    bool connected, spectator, dead, god, notarget, noclip, flashlight;
+} q2_player_source_info;
+typedef struct q2_client_state {
+    q2_player_source_info info;
+    qa_q2_player_rule_tail rule;
+    qa_string_id source_name, source_skin;
+    qa_actor_player *player;
+} q2_client_state;
+
 typedef struct q2_actor {
     struct q2_actor *all_next, *free_next;
     struct q2_actor *live_next, *live_previous;
@@ -131,7 +146,7 @@ typedef struct q2_actor {
     struct qa_q2_monster *monster;
     struct q2_item_state *item;
     struct q2_power_state *powers;
-    struct qa_q2_player_state *client;
+    q2_client_state *client;
     struct qa_q2_entity_state *entity;
     qa_q2_game *entity_game;
     struct qa_targets *entity_targets;
@@ -467,4 +482,8 @@ static inline uint64_t q2_duration(double seconds) {
     double ns = seconds * 1e9;
     return !isfinite(ns) || ns >= (double)UINT64_MAX ? UINT64_MAX : (uint64_t)(ns + 0.5);
 }
+void q2_player_source_info_read(qa_q2_game *, const q2_client_state *, qa_q2_player_info *);
+bool q2_player_userinfo_value(const char *, const char *, char *, size_t);
+const char *q2_player_source_name(const qa_q2_game *, const q2_client_state *);
+const char *q2_player_source_skin(const qa_q2_game *, const q2_client_state *);
 #endif
