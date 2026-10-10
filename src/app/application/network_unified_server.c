@@ -128,7 +128,7 @@ bool application_unified_server_create(qa_application *app, qa_network_runtime *
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified Source peer");
     *owner = (application_unified_server){.application = app, .runtime = runtime,
         .seat = seat, .application_seat = application_seat, .acknowledged = -1};
-    owner->recipient_pool = qa_unified_frame_pool_create(0, error);
+    owner->recipient_pool = qa_unified_frame_pool_create(0,0, error);
     if (!owner->recipient_pool || !application_unified_server_offer(owner, epoch, sidecars, count, offer, error)) {
         qa_unified_frame_pool_destroy(&owner->recipient_pool); free(owner); return false;
     }

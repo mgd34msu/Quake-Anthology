@@ -1,5 +1,6 @@
 #include "qa/arena.h"
 #include "qa/allocation_gate.h"
+#include "qa/pool.h"
 
 #include <stdlib.h>
 
@@ -9,6 +10,7 @@ struct qa_arena_block {
     qa_arena_block *next;
     size_t capacity;
     size_t used;
+    size_t slot, pages;
     uint8_t data[];
 };
 
@@ -17,6 +19,11 @@ void qa_arena_init(qa_arena *arena, size_t block_size)
     if (arena != NULL) {
         *arena = (qa_arena){.block_size = block_size};
     }
+}
+
+void qa_arena_init_pool(qa_arena *arena, qa_pool *pages)
+{
+    *arena=(qa_arena){.sealed=true,.pages=pages};
 }
 
 static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
@@ -35,7 +42,7 @@ static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
 static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
                                     qa_arena_block *last, qa_error *error)
 {
-    if (arena->sealed) {
+    if (arena->sealed && !arena->pages) {
         if (arena->overflow_count != SIZE_MAX) ++arena->overflow_count;
         qa_allocation_gate_capacity_exhausted();
         qa_error_set(error, QA_ERROR_MEMORY, 0, "sealed arena capacity exhausted");
@@ -45,7 +52,15 @@ static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "arena block size overflow");
         return NULL;
     }
-    qa_arena_block *block = malloc(sizeof(*block) + capacity);
+    qa_arena_block *block;
+    size_t slot=0, pages=0;
+    if(arena->pages) {
+        size_t bytes=sizeof(*block)+capacity;
+        pages=bytes/arena->pages->stride+(bytes%arena->pages->stride!=0);
+        block=qa_pool_take_run(arena->pages,pages,&slot);
+        if(block) capacity=pages*arena->pages->stride-sizeof(*block);
+        else if(arena->overflow_count!=SIZE_MAX) ++arena->overflow_count;
+    } else block=malloc(sizeof(*block)+capacity);
     if (block == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate %zu-byte arena block", capacity);
         return NULL;
@@ -53,6 +68,7 @@ static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
     block->next = NULL;
     block->capacity = capacity;
     block->used = 0;
+    block->slot=slot; block->pages=pages;
     if (last != NULL) last->next = block;
     else arena->first = block;
     if (arena->current == NULL) arena->current = block;
@@ -113,6 +129,16 @@ void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *e
 void qa_arena_reset(qa_arena *arena)
 {
     if (arena != NULL) {
+        if(arena->pages) {
+            qa_arena_block *block=arena->first;
+            while(block) {
+                qa_arena_block *next=block->next;
+                qa_pool_release_run(arena->pages,block->slot,block->pages);
+                block=next;
+            }
+            arena->first=arena->current=NULL;
+            return;
+        }
         for (qa_arena_block *block = arena->first; block != NULL; block = block->next) {
             block->used = 0;
         }
@@ -126,7 +152,8 @@ void qa_arena_destroy(qa_arena *arena)
         qa_arena_block *block = arena->first;
         while (block != NULL) {
             qa_arena_block *next = block->next;
-            free(block);
+            if(arena->pages) qa_pool_release_run(arena->pages,block->slot,block->pages);
+            else free(block);
             block = next;
         }
         *arena = (qa_arena){0};

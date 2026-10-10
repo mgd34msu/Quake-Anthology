@@ -316,7 +316,7 @@ bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect
     if (s->limits.queued_reliable_bytes > SIZE_MAX - s->limits.message_bytes) {
         qa_strings_destroy(s->strings); free(s); return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production holding capacity exceeds storage");
     }
-    s->frame_pool=qa_unified_frame_pool_create(0,e);
+    s->frame_pool=qa_unified_frame_pool_create(0,0,e);
     if (!s->frame_pool || !qa_unified_channel_create(token, &s->limits, &s->channel, e)) {
         qa_unified_session_release(s); return false;
     }

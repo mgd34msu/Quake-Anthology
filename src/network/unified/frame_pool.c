@@ -4,64 +4,73 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/pool.h"
+
+#define FRAME_PAGE_BYTES (64u*1024u)
+#define FRAME_POOL_BYTES (96u*1024u*1024u)
+
 struct qa_unified_frame_pool {
-    qa_unified_frame_lease *available;
-    size_t references, block_size;
+    qa_arena storage;
+    qa_pool leases, pages;
+    size_t references;
     bool retired;
 };
 struct qa_unified_frame_lease {
     qa_unified_frame_pool *pool;
-    qa_unified_frame_lease *next;
     qa_arena arena;
-    size_t references, used;
+    size_t references, used, slot;
 };
-
-qa_unified_frame_pool *qa_unified_frame_pool_create(size_t block_size, qa_error *error)
+static void pool_release(qa_unified_frame_pool *pool)
 {
-    qa_unified_frame_pool *pool=malloc(sizeof(*pool));
-    if (!pool) {
+    if(--pool->references) return;
+    qa_arena_destroy(&pool->storage);
+    free(pool);
+}
+
+qa_unified_frame_pool *qa_unified_frame_pool_create(size_t bytes,size_t leases,qa_error *error)
+{
+    qa_unified_frame_pool *pool=calloc(1,sizeof(*pool));
+    if(!pool) {
         qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Unified frame pool");
         return NULL;
     }
-    *pool=(qa_unified_frame_pool){.references=1,.block_size=block_size};
+    pool->references=1;
+    if(!bytes) bytes=FRAME_POOL_BYTES;
+    if(!leases) leases=128;
+    size_t pages=bytes/FRAME_PAGE_BYTES+(bytes%FRAME_PAGE_BYTES!=0);
+    if(!qa_pool_prepare(&pool->leases,&pool->storage,leases,sizeof(qa_unified_frame_lease),
+        _Alignof(qa_unified_frame_lease),error) ||
+        !qa_pool_prepare(&pool->pages,&pool->storage,pages,FRAME_PAGE_BYTES,
+        _Alignof(max_align_t),error)) {
+        pool_release(pool);return NULL;
+    }
+    qa_arena_seal(&pool->storage);
     return pool;
 }
 
 void qa_unified_frame_pool_destroy(qa_unified_frame_pool **owner)
 {
-    if (!owner || !*owner) return;
+    if(!owner || !*owner) return;
     qa_unified_frame_pool *pool=*owner;
-    *owner=NULL; pool->retired=true;
-    while (pool->available) {
-        qa_unified_frame_lease *lease=pool->available;
-        pool->available=lease->next;
-        qa_arena_destroy(&lease->arena); free(lease);
-    }
-    if (!--pool->references) free(pool);
+    *owner=NULL;pool->retired=true;
+    pool_release(pool);
 }
 
 qa_unified_frame_lease *qa_unified_frame_lease_acquire(qa_unified_frame_pool *pool,
     qa_error *error)
 {
-    if (!pool || pool->retired) {
+    if(!pool || pool->retired) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Unified frame lease requires a live pool owner");
         return NULL;
     }
-    if (pool->references==SIZE_MAX) {
-        qa_error_set(error,QA_ERROR_MEMORY,0,"Unified frame pool reference capacity exhausted");
+    size_t slot;
+    qa_unified_frame_lease *lease=qa_pool_take(&pool->leases,&slot);
+    if(!lease) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Unified frame lease capacity exhausted");
         return NULL;
     }
-    qa_unified_frame_lease *lease=pool->available;
-    if (lease) pool->available=lease->next;
-    else {
-        lease=malloc(sizeof(*lease));
-        if (!lease) {
-            qa_error_set(error,QA_ERROR_MEMORY,0,"Cannot allocate Unified frame lease");
-            return NULL;
-        }
-        qa_arena_init(&lease->arena,pool->block_size);
-    }
-    lease->pool=pool; lease->next=NULL; lease->references=1; lease->used=0;
+    *lease=(qa_unified_frame_lease){.pool=pool,.references=1,.slot=slot};
+    qa_arena_init_pool(&lease->arena,&pool->pages);
     ++pool->references;
     return lease;
 }
@@ -84,13 +93,9 @@ void qa_unified_frame_lease_release(qa_unified_frame_lease *lease)
 {
     if (!lease || --lease->references) return;
     qa_unified_frame_pool *pool=lease->pool;
-    if (pool->retired) { qa_arena_destroy(&lease->arena); free(lease); }
-    else {
-        qa_arena_reset(&lease->arena);
-        lease->used=0;
-        lease->next=pool->available; pool->available=lease;
-    }
-    if (!--pool->references) free(pool);
+    qa_arena_destroy(&lease->arena);
+    qa_pool_release(&pool->leases,lease->slot);
+    pool_release(pool);
 }
 
 size_t qa_unified_frame_lease_used(const qa_unified_frame_lease *lease)

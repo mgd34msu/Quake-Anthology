@@ -4,6 +4,7 @@
 #include "qa/common.h"
 
 typedef struct qa_arena_block qa_arena_block;
+struct qa_pool;
 
 /* Zero initialization is valid. Arena ownership cannot be copied. */
 typedef struct qa_arena {
@@ -12,10 +13,14 @@ typedef struct qa_arena {
     size_t block_size;
     size_t overflow_count;
     bool sealed;
+    struct qa_pool *pages;
 } qa_arena;
 
 /* Initialize an unused arena. A zero block size selects the default. */
 void qa_arena_init(qa_arena *arena, size_t block_size);
+/* A load-sized common pool supplies pages; no heap fallback. Pool ownership
+ * outlives the arena. Reset returns its pages for other live arenas to reuse. */
+void qa_arena_init_pool(qa_arena *arena, struct qa_pool *pages);
 /* Reserve a reusable block during load, then forbid later heap growth. Reset
  * preserves the reservation, seal and overflow count. */
 bool qa_arena_reserve(qa_arena *arena, size_t capacity, qa_error *error);

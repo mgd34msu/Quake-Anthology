@@ -254,7 +254,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restore lacks its actual candidate connection");
     qa_unified_session *s = calloc(1, sizeof(*s));
     if (!s) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring complete production session");
-    s->frame_pool=qa_unified_frame_pool_create(0,e);
+    s->frame_pool=qa_unified_frame_pool_create(0,0,e);
     if (!s->frame_pool) { qa_unified_session_release(s); return false; }
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     s->strings=hooks->strings; qa_strings_retain(s->strings);

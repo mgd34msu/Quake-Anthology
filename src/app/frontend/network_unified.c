@@ -290,7 +290,7 @@ bool frontend_network_unified_create(const frontend_network_unified_options *opt
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual Unified Network controller");
     owner->options = *options; owner->epoch = 1; owner->source = source;
     if (options->server) {
-        owner->world_frames = qa_unified_frame_pool_create(0, error);
+        owner->world_frames = qa_unified_frame_pool_create(0,0, error);
         if (!owner->world_frames) { free(owner); return false; }
     }
     qa_unified_bootstrap_options bootstrap = {.server = options->server, .max_clients = capacity,

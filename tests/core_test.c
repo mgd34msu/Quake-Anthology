@@ -3,6 +3,8 @@
 #endif
 
 #include "qa/arena.h"
+#include "qa/pool.h"
+#include "qa/network_unified_frame_pool.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
@@ -187,6 +189,37 @@ static void test_arena(void)
     qa_arena_destroy(NULL);
     qa_arena_reset(NULL);
     qa_arena_init(NULL, 0);
+
+    qa_arena backing={0},left={0},right={0};
+    qa_pool pages={0};
+    CHECK(qa_pool_prepare(&pages,&backing,8,4096,64,&error));
+    qa_arena_seal(&backing);
+    qa_arena_init_pool(&left,&pages);qa_arena_init_pool(&right,&pages);
+    uint8_t *held=qa_arena_alloc(&left,7000,64,&error);
+    CHECK(held && (uintptr_t)held%64==0);
+    memset(held,0x37,7000);
+    CHECK(qa_arena_alloc(&right,17000,64,&error));
+    CHECK(!qa_arena_alloc(&right,9000,64,&error));
+    CHECK(pages.overflow==1 && held[6999]==0x37);
+    qa_arena_reset(&right);
+    CHECK(qa_arena_alloc(&right,20000,64,&error));
+    CHECK(held[0]==0x37 && held[6999]==0x37);
+    qa_arena_destroy(&right);qa_arena_destroy(&left);
+    CHECK(pages.active==0);
+    qa_arena_destroy(&backing);
+
+    qa_unified_frame_pool *frames=qa_unified_frame_pool_create(128*1024,2,&error);
+    CHECK(frames);
+    qa_unified_frame_lease *a=qa_unified_frame_lease_acquire(frames,&error);
+    qa_unified_frame_lease *b=qa_unified_frame_lease_acquire(frames,&error);
+    CHECK(a && b && !qa_unified_frame_lease_acquire(frames,&error));
+    held=qa_unified_frame_lease_alloc(a,80000,1,64,&error);
+    CHECK(held);memset(held,0x62,80000);
+    CHECK(!qa_unified_frame_lease_alloc(b,80000,1,64,&error));
+    qa_unified_frame_lease_release(b);
+    qa_unified_frame_pool_destroy(&frames);
+    CHECK(!frames && held[79999]==0x62);
+    qa_unified_frame_lease_release(a);
 }
 
 static void test_files(void)
