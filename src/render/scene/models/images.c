@@ -12,18 +12,8 @@ static char *copy_name(const char *name, qa_error *error) {
 }
 
 /* Embedded ../ records are resolved within the content root before VFS lookup. */
-char *qa_scene_model_image_path(const char *name, qa_error *error) {
-    if (!name) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model image path is absent");
-        return NULL;
-    }
-    size_t length = strlen(name);
-    char *out = malloc(length + 1);
-    if (!out) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "model image path allocation failed");
-        return NULL;
-    }
-    size_t used = 0, begin = 0;
+static bool image_path_write(const char *name, char *out, qa_error *error) {
+    size_t length = strlen(name), used = 0, begin = 0;
     if (!length || (isalpha((unsigned char)name[0]) && name[1] == ':')) goto invalid;
     for (size_t i = 0; i <= length; ++i) {
         if (i != length && name[i] != '/' && name[i] != '\\') continue;
@@ -41,11 +31,24 @@ char *qa_scene_model_image_path(const char *name, qa_error *error) {
     }
     if (!used) goto invalid;
     out[used] = 0;
-    return out;
+    return true;
 invalid:
-    free(out);
     qa_error_set(error, QA_ERROR_FORMAT, 0, "model image path escapes content root or has an empty component");
-    return NULL;
+    return false;
+}
+
+char *qa_scene_model_image_path(const char *name, qa_error *error) {
+    if (!name) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model image path is absent");
+        return NULL;
+    }
+    char *out = malloc(strlen(name) + 1);
+    if (!out) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "model image path allocation failed");
+        return NULL;
+    }
+    if (!image_path_write(name, out, error)) { free(out); return NULL; }
+    return out;
 }
 
 static scene_model_image *image_entry(qa_scene_model *model, const char *name, qa_error *error) {
@@ -62,15 +65,18 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
 }
 
 bool scene_model_external_material(qa_scene_model *model, qa_material_library *materials,
-    const char *name, const qa_material **out, qa_error *error) {
-    char *owned = NULL;
+    const char *name, qa_scene_frame *frame, const qa_material **out, qa_error *error) {
     const char *path = name;
-    if (!qa_material_library_has_source_profile(materials))
-        path = owned = qa_scene_model_image_path(name, error);
-    if (!path) return false;
-    bool ok = qa_material_register(materials, path, &model->options, false, out, error);
-    free(owned);
-    return ok;
+    if (!qa_material_library_has_source_profile(materials)) {
+        if (!name) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model image path is absent");
+            return false;
+        }
+        char *scratch = qa_arena_alloc(&frame->storage, strlen(name) + 1, 1, error);
+        if (!scratch || !image_path_write(name, scratch, error)) return false;
+        path = scratch;
+    }
+    return qa_material_register(materials, path, &model->options, false, out, error);
 }
 
 bool scene_model_external(qa_scene_model *model, const char *name, scene_model_image **out,

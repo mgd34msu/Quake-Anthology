@@ -796,7 +796,7 @@ static void repair_frames(const qa_scene_model *model, qa_scene_model_input *inp
 }
 
 static bool select_image(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
-                          scene_model_image *external, scene_model_image **out, qa_error *error) {
+                          scene_model_image *external, qa_scene_frame *frame, scene_model_image **out, qa_error *error) {
     const qa_model_mesh *mesh = &model->source->meshes[index];
     *out = NULL;
     if (input->indexed_skin && model->source->format == QA_MODEL_MDL)
@@ -818,7 +818,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                 }
                 if (input->material_library) {
                     if (!scene_model_external_material(model, input->material_library,
-                        input->custom_skin->mappings[i].shader, &external->material, error)) return false;
+                        input->custom_skin->mappings[i].shader, frame, &external->material, error)) return false;
                     *out = external; return true;
                 }
                 return scene_model_external(model, input->custom_skin->mappings[i].shader, out, error);
@@ -841,8 +841,8 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         if (input->material_library) {
             scene_model_image *registered = model->meshes[index].shaders[skin];
             if (!registered) return true;
-            if (!scene_model_external_material(model, input->material_library,
-                registered->name, &external->material, error)) return false;
+            if (!qa_material_register(input->material_library, registered->name, &model->options,
+                false, &external->material, error)) return false;
             if (qa_material_library_has_source_profile(input->material_library) && external->material->default_shader &&
                 (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
                 external->material = qa_material_find(input->material_library, "*default");
@@ -1614,7 +1614,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!deferred_mesh && !mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
             }
             if (!mesh_visible) continue;
-            if (!select_image(model, &input, i, &external, &image, error)) return false;
+            if (!select_image(model, &input, i, &external, frame, &image, error)) return false;
             if (deferred_mesh) {
                 if (image && image->material && !scene_model_has_shell(&input)) {
                     if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
