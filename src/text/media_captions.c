@@ -2,6 +2,7 @@
 #include "qa/media_captions_save.h"
 #include "qa/media_caption_prepare.h"
 #include "save_private.h"
+#include "qa/pool.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@ typedef struct sound_catalog {
 } sound_catalog;
 typedef struct caption_voice {
     struct caption_voice *next;
+    size_t slot;
     uint64_t id;
     qa_audio_asset *asset;
     sound_catalog *catalog;
@@ -32,6 +34,8 @@ typedef struct caption_voice {
 } caption_voice;
 struct qa_sound_captions {
     qa_sound_caption_options options;
+    qa_arena voice_storage;
+    qa_pool voice_records;
     char *platform;
     caption_voice *voices;
     sound_catalog *catalogs;
@@ -174,6 +178,12 @@ qa_sound_captions *qa_sound_captions_create(const qa_sound_caption_options *opti
     captions->options = *options;
     captions->options.captions.kind = QA_CAPTION_SOUND;
     qa_localization_retain(options->captions.override_catalog);
+    if (!qa_pool_prepare(&captions->voice_records, &captions->voice_storage,
+            options->voice_capacity ? options->voice_capacity : 1024,
+            sizeof(caption_voice), _Alignof(caption_voice), e)) {
+        qa_sound_captions_destroy(captions); return NULL;
+    }
+    qa_arena_seal(&captions->voice_storage);
     if (options->captions.localization.platform) {
         captions->platform = copy_text(options->captions.localization.platform, e);
         if (!captions->platform) {
@@ -184,16 +194,22 @@ qa_sound_captions *qa_sound_captions_create(const qa_sound_caption_options *opti
     }
     return captions;
 }
-static void voice_free(caption_voice *voice) {
+static caption_voice *voice_take(qa_sound_captions *captions, qa_error *e) {
+    size_t slot;
+    caption_voice *voice = qa_pool_take(&captions->voice_records, &slot);
+    if (!voice) { fail(e, QA_ERROR_CAPACITY, "Sound caption voice storage is full"); return NULL; }
+    *voice = (caption_voice){.slot = slot}; return voice;
+}
+static void voice_free(qa_sound_captions *captions, caption_voice *voice) {
     qa_audio_asset_release(voice->asset);
-    free(voice);
+    qa_pool_release(&captions->voice_records, voice->slot);
 }
 void qa_sound_captions_clear(qa_sound_captions *captions) {
     if (!captions || captions->visiting || captions->language_ticket)
         return;
     while (captions->voices) {
         caption_voice *next = captions->voices->next;
-        voice_free(captions->voices);
+        voice_free(captions, captions->voices);
         captions->voices = next;
     }
     while (captions->catalogs) {
@@ -211,6 +227,7 @@ void qa_sound_captions_destroy(qa_sound_captions *captions) {
     qa_sound_captions_clear(captions);
     qa_localization_release(captions->options.captions.override_catalog);
     free(captions->platform);
+    qa_arena_destroy(&captions->voice_storage);
     free(captions);
 }
 bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_event *event,
@@ -233,15 +250,14 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
         if (*link) {
             caption_voice *old = *link;
             *link = old->next;
-            voice_free(old);
+            voice_free(captions, old);
         }
         return true;
     }
     if (!event->sample_rate || !isfinite(event->source_offset_seconds))
         return fail(e, QA_ERROR_ARGUMENT, "Invalid caption voice clock");
-    caption_voice *voice = calloc(1, sizeof(*voice));
-    if (!voice)
-        return fail(e, QA_ERROR_MEMORY, "Allocating caption voice");
+    caption_voice *voice = voice_take(captions, e);
+    if (!voice) return false;
     voice->id = event->voice_id;
     voice->asset = qa_audio_asset_retain(event->asset);
     voice->start = event->output_frame;
@@ -256,7 +272,7 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
             !(catalog->view = qa_vfs_clone(source, e)) ||
             !(catalog->captions = qa_media_captions_create(&captions->options.captions, e))) {
             if (catalog) { qa_vfs_destroy(catalog->view); qa_media_captions_destroy(catalog->captions); free(catalog); }
-            voice_free(voice);
+            voice_free(captions, voice);
             if (e && e->code != QA_OK) return false;
             return fail(e, QA_ERROR_MEMORY, "Retaining original sound caption content");
         }
@@ -268,7 +284,7 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
         caption_voice *old = *link;
         voice->next = old->next;
         *link = voice;
-        voice_free(old);
+        voice_free(captions, old);
     } else
         *link = voice;
     return true;
@@ -286,7 +302,7 @@ bool qa_sound_captions_prepare(qa_sound_captions *captions, const char *language
         caption_voice *voice = *link;
         if (voice->stopping && frame >= voice->stop) {
             *link = voice->next;
-            voice_free(voice);
+            voice_free(captions, voice);
             continue;
         }
         sound_catalog *catalog = voice->catalog;
@@ -459,9 +475,10 @@ static bool sound_clone(const qa_sound_captions *source,qa_sound_captions *candi
     }
     caption_voice **voice_link=&candidate->voices;
     for (const caption_voice *voice=source->voices;voice;voice=voice->next) {
-        caption_voice *copy=calloc(1,sizeof(*copy));
-        if (!copy) return fail(e,QA_ERROR_MEMORY,"Copying actual caption voice clock");
-        *copy=*voice; copy->next=NULL; copy->asset=qa_audio_asset_retain(voice->asset); copy->catalog=NULL;
+        caption_voice *copy=voice_take(candidate,e);
+        if (!copy) return false;
+        size_t slot=copy->slot;
+        *copy=*voice; copy->slot=slot; copy->next=NULL; copy->asset=qa_audio_asset_retain(voice->asset); copy->catalog=NULL;
         *voice_link=copy; voice_link=&copy->next;
         const sound_catalog *old=source->catalogs;
         sound_catalog *replacement=candidate->catalogs;
@@ -500,6 +517,10 @@ void qa_sound_caption_language_publish(qa_sound_caption_language *ticket)
     caption_voice *voices=ticket->owner->voices;
     sound_catalog *catalogs=ticket->owner->catalogs;
     ticket->owner->voices=ticket->candidate->voices; ticket->owner->catalogs=ticket->candidate->catalogs;
+    qa_pool records=ticket->owner->voice_records;
+    ticket->owner->voice_records=ticket->candidate->voice_records; ticket->candidate->voice_records=records;
+    qa_arena storage=ticket->owner->voice_storage;
+    ticket->owner->voice_storage=ticket->candidate->voice_storage; ticket->candidate->voice_storage=storage;
     ticket->candidate->voices=voices; ticket->candidate->catalogs=catalogs; ticket->published=true;
 }
 void qa_sound_caption_language_commit(qa_sound_caption_language *ticket)

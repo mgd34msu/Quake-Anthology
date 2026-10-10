@@ -31,6 +31,7 @@ bool qa_media_captions_visit(qa_media_captions *, const char *source, double sou
 typedef struct qa_sound_captions qa_sound_captions;
 typedef struct qa_sound_caption_options {
     qa_media_caption_options captions;
+    size_t voice_capacity; /* Load-sized; zero selects 1024 records. */
     void *context;
     /* Resolve the sound's original content view, not the currently viewed map.
      * The returned view is borrowed for the preparation call. */
