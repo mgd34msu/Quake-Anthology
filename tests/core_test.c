@@ -20,6 +20,9 @@
 #include "qa/movement.h"
 #include "qa/q1_save.h"
 #include "qa/scene.h"
+#include "qa/render_cpu.h"
+#include "../src/render/scene/world/internal.h"
+#include "../src/render/scene/world/q3/patch.h"
 #include "qa/tools.h"
 #include "qa/input.h"
 #include "qa/platform_events.h"
@@ -988,6 +991,129 @@ static void test_source_nonmipped_transparency(void)
     qa_scene_resources_destroy(resources);
 }
 
+static void test_cached_world_surface(void)
+{
+    qa_error error = {0};
+    qa_scene_resources *resources = qa_scene_resources_create(NULL, &error);
+    CHECK(resources);
+    uint8_t base_pixels[16 * 16 * 4], light_pixels[16];
+    for (size_t i = 0; i < 16 * 16; ++i) {
+        base_pixels[i * 4] = 64; base_pixels[i * 4 + 1] = 128;
+        base_pixels[i * 4 + 2] = 192; base_pixels[i * 4 + 3] = 255;
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        memset(light_pixels + i * 4, 128, 3); light_pixels[i * 4 + 3] = 255;
+    }
+    qa_scene_image_level base_level = {16, 16, base_pixels, sizeof(base_pixels)}, light_level = {2, 2, light_pixels, sizeof(light_pixels)};
+    qa_scene_image *base = NULL, *light = NULL;
+    CHECK(qa_scene_image_create(resources, "cached-base", QA_SCENE_RGBA8, &base_level, 1,
+        QA_SCENE_REPEAT, QA_SCENE_NEAREST, (qa_vec4){0}, &base, &error));
+    CHECK(qa_scene_image_create(resources, "cached-light", QA_SCENE_RGBA8, &light_level, 1,
+        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0}, &light, &error));
+    qa_scene_vertex *vertices = calloc(4, sizeof(*vertices));
+    uint32_t *indices = malloc(6 * sizeof(*indices));
+    CHECK(vertices && indices);
+    const qa_vec3 positions[4] = {{-.75f,-.75f,.2f},{.75f,-.75f,.2f},{.75f,.75f,.2f},{-.75f,.75f,.2f}};
+    const qa_vec2 uv[4] = {{0,0},{1,0},{1,1},{0,1}};
+    const uint32_t triangles[6] = {0,1,2,0,2,3};
+    memcpy(indices, triangles, sizeof(triangles));
+    for (size_t i = 0; i < 4; ++i) {
+        vertices[i] = (qa_scene_vertex){.position = positions[i], .normal = {0,0,1},
+            .texcoord = uv[i], .lightmap = {uv[i].x * .5f + .25f, uv[i].y * .5f + .25f}, .color = {1,1,1,1}};
+    }
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){
+        .vertices = vertices, .vertex_count = 4, .indices = indices, .index_count = 6}, &error);
+    CHECK(geometry);
+    qa_scene_mesh mesh = {.vertices = vertices, .vertex_count = 4, .indices = indices, .index_count = 6,
+        .geometry = geometry, .identity = qa_scene_identity(), .revision = 1, .primitive = QA_SCENE_TRIANGLES};
+    qaw_brush_geometry brush = {0};
+    CHECK(qaw_brush_prepare(&mesh, light, &brush, &error));
+    CHECK(brush.draw.present && brush.draw.polygon_vertices == 4 && !brush.draw.part_count);
+    qa_cpu_options options; qa_cpu_options_default(&options);
+    options.width = options.height = 64; options.owner = 97;
+    qa_cpu_renderer *renderer = qa_cpu_create(&options, &error);
+    CHECK(renderer && qa_cpu_statistics_enable(renderer, true, &error));
+    qa_scene_frame frame;
+    CHECK(qa_scene_frame_init(&frame, 97, 1024 * 1024, &error));
+    qa_scene_matrix identity; qa_scene_matrix_identity(&identity);
+    qa_scene_draw draw = {.mesh = mesh, .model = identity, .mvp = identity,
+        .textures = {base, light}, .texture_count = 2, .environment = QA_TEXTURE_MODULATE, .lighting = QA_LIGHT_VERTEX,
+        .vertex_inputs = {.constant_color = true, .color = {1,1,1,1}}, .single_coverage = true};
+    qa_scene_state_default(&draw.state); draw.state.cull = QA_CULL_NONE;
+    uint8_t reference[64 * 64 * 4];
+    for (unsigned pass = 0; pass < 3; ++pass) {
+        qa_scene_frame_reset(&frame, pass + 1);
+        qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = {
+            .viewport = {0,0,64,64}, .projection = identity,
+            .clear_color = true, .clear_depth = true, .depth = 1}};
+        CHECK(qa_scene_frame_emit(&frame, &view, &error));
+        if (pass) draw.brush = brush.draw;
+        CHECK(qa_scene_frame_draw(&frame, &draw, &error));
+        CHECK(qa_cpu_execute(renderer, &frame, &error));
+        qa_bytes pixels = qa_cpu_pixels(renderer);
+        CHECK(pixels.size == sizeof(reference));
+        if (!pass) memcpy(reference, pixels.data, sizeof(reference));
+        else for (size_t i = 0; i < sizeof(reference); ++i)
+            CHECK(abs((int)pixels.data[i] - reference[i]) <= 1);
+    }
+    CHECK(reference[(32 * 64 + 32) * 4] == 32);
+    qa_cpu_statistics statistics;
+    CHECK(qa_cpu_statistics_read(renderer, &statistics, &error));
+    CHECK(statistics.brush_written && statistics.surface_builds == 1);
+    qa_scene_frame_destroy(&frame);
+    qaw_brush_destroy(&brush);
+    qa_cpu_destroy(renderer);
+    qa_scene_geometry_release(geometry);
+    qa_scene_image_release(base); qa_scene_image_release(light);
+    qa_scene_resources_destroy(resources);
+}
+
+static void test_retained_patch_levels(void)
+{
+    qa_error error = {0};
+    qa_scene_vertex *vertices = calloc(9, sizeof(*vertices));
+    uint32_t *indices = malloc(24 * sizeof(*indices));
+    CHECK(vertices && indices);
+    for (unsigned y = 0; y < 3; ++y) for (unsigned x = 0; x < 3; ++x)
+        vertices[y * 3 + x] = (qa_scene_vertex){.position = {(float)x, (float)y, x == 1 ? .5f : 0},
+            .normal = {0,0,1}, .texcoord = {(float)x * .5f, (float)y * .5f}, .color = {1,1,1,1}};
+    size_t at = 0;
+    for (unsigned y = 0; y < 2; ++y) for (unsigned x = 0; x < 2; ++x) {
+        uint32_t a = y * 3 + x, b = a + 3;
+        indices[at++] = a; indices[at++] = b; indices[at++] = a + 1;
+        indices[at++] = a + 1; indices[at++] = b; indices[at++] = b + 1;
+    }
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){.vertices = vertices,
+        .vertex_count = 9, .indices = indices, .index_count = 24}, &error);
+    CHECK(geometry);
+    qaw_surface surface = {.vertices = vertices, .indices = indices, .mesh = {.vertices = vertices,
+        .indices = indices, .vertex_count = 9, .index_count = 24, .geometry = geometry,
+        .identity = qa_scene_identity(), .revision = 1, .primitive = QA_SCENE_TRIANGLES}};
+    surface.patch = calloc(1, sizeof(*surface.patch)); CHECK(surface.patch);
+    surface.patch->width = surface.patch->height = 3;
+    surface.patch->width_error[1] = .25f; surface.patch->height_error[1] = .5f;
+    surface.patch->stitched = surface.patch->fixed = true;
+    qa_scene_world world = {.surface_count = 1, .surfaces = &surface};
+    CHECK(qaw_patch_prepare(&world, &error));
+    CHECK(surface.patch->level_count == 3);
+    qa_material_context context = {0}; qa_scene_matrix_identity(&context.model);
+    context.view.axis[0] = (qa_vec3){1,0,0};
+    const float errors[3] = {0,.25f,.5f};
+    for (size_t i = 0; i < 3; ++i) {
+        qa_scene_mesh first, second;
+        qaw_patch_lod(&surface, &context, errors[i], &first);
+        CHECK(first.vertex_count == (i == 0 ? 4 : i == 1 ? 6 : 9));
+        CHECK(context.source_grid_columns == (i == 0 ? 2 : 3));
+        CHECK(context.source_grid_rows == (i < 2 ? 2 : 3));
+        CHECK(context.brush && context.brush->present);
+        qaw_patch_lod(&surface, &context, errors[i], &second);
+        CHECK(first.geometry == second.geometry && first.vertices == second.vertices && first.indices == second.indices);
+        CHECK(first.identity == second.identity && first.identity != 0);
+    }
+    qaw_patch_destroy(surface.patch);
+    qa_scene_geometry_release(geometry);
+}
+
 static void test_shared_cvar_archive(void)
 {
     qa_error error={0};
@@ -1608,6 +1734,8 @@ int main(int argc, char **argv)
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();
+    test_cached_world_surface();
+    test_retained_patch_levels();
     test_json_caller_storage();
     test_binary();
     test_spans();

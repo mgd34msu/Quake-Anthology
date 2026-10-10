@@ -295,6 +295,8 @@ static bool synchronize(qaw_surface *source, qaw_surface *target) {
     return touched;
 }
 
+static bool prepare_levels(qaw_surface *, qa_error *);
+
 bool qaw_patch_prepare(qa_scene_world *world, qa_error *error) {
     bool visited;
     do {
@@ -336,33 +338,36 @@ bool qaw_patch_prepare(qa_scene_world *world, qa_error *error) {
             }
         }
     }
-    free(stack); return true;
+    free(stack);
+    for (size_t i = 0; i < world->surface_count; ++i)
+        if (world->surfaces[i].patch && !prepare_levels(world->surfaces + i, error)) return false;
+    return true;
 }
 
-bool qaw_patch_lod(const qaw_surface *surface, qa_material_context *context, float curve_error,
-                   qa_scene_frame *frame, qa_scene_mesh *mesh, qa_error *error) {
+static bool build_level(const qaw_surface *surface, qaw_patch_level *level, qa_error *error) {
     const qaw_patch *p = surface->patch;
-    qa_vec4 transformed = qa_scene_matrix_point(context->model, p->lod_origin);
-    qa_vec3 origin = qa_v3(transformed.x, transformed.y, transformed.z);
-    float distance = fabsf(qa_vec_dot(qa_vec_sub(origin, context->view.origin), context->view.axis[0])) - p->lod_radius;
-    float threshold = curve_error < 0 ? 0 : curve_error / fmaxf(1, distance);
     unsigned columns[QAW_PATCH_LIMIT], rows[QAW_PATCH_LIMIT], column_count = 1, row_count = 1;
     columns[0] = rows[0] = 0;
-    for (unsigned x = 1; x + 1 < p->width; ++x) if (p->width_error[x] <= threshold) columns[column_count++] = x;
-    for (unsigned y = 1; y + 1 < p->height; ++y) if (p->height_error[y] <= threshold) rows[row_count++] = y;
+    for (unsigned x = 1; x + 1 < p->width; ++x) if (p->width_error[x] <= level->threshold) columns[column_count++] = x;
+    for (unsigned y = 1; y + 1 < p->height; ++y) if (p->height_error[y] <= level->threshold) rows[row_count++] = y;
     columns[column_count++] = p->width - 1; rows[row_count++] = p->height - 1;
-    context->source_grid_columns = column_count; context->source_grid_rows = row_count;
-    *mesh = surface->mesh;
-    if (column_count == p->width && row_count == p->height) return true;
+    level->columns = column_count; level->rows = row_count;
+    if (column_count == p->width && row_count == p->height) {
+        level->mesh = surface->mesh;
+        qa_scene_geometry_retain(level->mesh.geometry);
+        return qaw_brush_prepare(&level->mesh, surface->lightmap, &level->brush, error);
+    }
     size_t count = (size_t)(column_count - 1) * (row_count - 1) * 6;
     size_t vertex_count = (size_t)column_count * row_count;
-    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, vertex_count * sizeof(*vertices),
-                                              _Alignof(qa_scene_vertex), error);
-    if (!vertices) return false;
+    qa_scene_vertex *vertices = malloc(vertex_count * sizeof(*vertices));
+    uint32_t *indices = malloc(count * sizeof(*indices));
+    if (!vertices || !indices) {
+        free(vertices); free(indices);
+        qa_error_set(error, QA_ERROR_MEMORY, surface->source_index, "Allocating retained Q3 patch LOD");
+        return false;
+    }
     for (unsigned y = 0; y < row_count; ++y) for (unsigned x = 0; x < column_count; ++x)
         vertices[y * column_count + x] = surface->vertices[rows[y] * p->width + columns[x]];
-    uint32_t *indices = qa_arena_alloc(&frame->storage, count * sizeof(*indices), _Alignof(uint32_t), error);
-    if (!indices) return false;
     size_t cursor = 0;
     for (unsigned y = 0; y + 1 < row_count; ++y) for (unsigned x = 0; x + 1 < column_count; ++x) {
         uint32_t a = y * column_count + x, b = a + column_count;
@@ -370,8 +375,71 @@ bool qaw_patch_lod(const qaw_surface *surface, qa_material_context *context, flo
         indices[cursor++] = a; indices[cursor++] = b; indices[cursor++] = c;
         indices[cursor++] = c; indices[cursor++] = b; indices[cursor++] = d;
     }
-    mesh->identity = mesh->revision = 0;
-    mesh->vertices = vertices; mesh->vertex_count = vertex_count;
-    mesh->indices = indices; mesh->index_count = count;
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(&(qa_scene_geometry_input){.vertices = vertices,
+        .vertex_count = vertex_count, .indices = indices, .index_count = count}, error);
+    if (!geometry) { free(vertices); free(indices); return false; }
+    level->mesh = surface->mesh;
+    level->mesh.identity = qa_scene_identity(); level->mesh.revision = 1;
+    level->mesh.geometry = geometry;
+    level->mesh.vertices = vertices; level->mesh.vertex_count = vertex_count;
+    level->mesh.indices = indices; level->mesh.index_count = count;
+    return qaw_brush_prepare(&level->mesh, surface->lightmap, &level->brush, error);
+}
+
+static int threshold_order(const void *a, const void *b) {
+    float x = *(const float *)a, y = *(const float *)b;
+    return x < y ? -1 : x > y;
+}
+
+static bool prepare_levels(qaw_surface *surface, qa_error *error) {
+    qaw_patch *patch = surface->patch;
+    float thresholds[2 * QAW_PATCH_LIMIT] = {0};
+    size_t count = 1;
+    for (unsigned x = 1; x + 1 < patch->width; ++x)
+        if (patch->width_error[x] > 0) thresholds[count++] = patch->width_error[x];
+    for (unsigned y = 1; y + 1 < patch->height; ++y)
+        if (patch->height_error[y] > 0) thresholds[count++] = patch->height_error[y];
+    qsort(thresholds, count, sizeof(*thresholds), threshold_order);
+    size_t unique = 1;
+    for (size_t i = 1; i < count; ++i)
+        if (thresholds[i] != thresholds[unique - 1]) thresholds[unique++] = thresholds[i];
+    patch->levels = calloc(unique, sizeof(*patch->levels));
+    if (!patch->levels) {
+        qa_error_set(error, QA_ERROR_MEMORY, surface->source_index, "Allocating Q3 patch LOD table");
+        return false;
+    }
+    for (size_t i = 0; i < unique; ++i) {
+        patch->levels[i].threshold = thresholds[i];
+        ++patch->level_count;
+        if (!build_level(surface, patch->levels + i, error)) return false;
+    }
     return true;
+}
+
+void qaw_patch_lod(const qaw_surface *surface, qa_material_context *context, float curve_error,
+                   qa_scene_mesh *mesh) {
+    const qaw_patch *patch = surface->patch;
+    qa_vec4 transformed = qa_scene_matrix_point(context->model, patch->lod_origin);
+    qa_vec3 origin = qa_v3(transformed.x, transformed.y, transformed.z);
+    float distance = fabsf(qa_vec_dot(qa_vec_sub(origin, context->view.origin), context->view.axis[0])) - patch->lod_radius;
+    float threshold = curve_error < 0 ? 0 : curve_error / fmaxf(1, distance);
+    size_t lower = 0, upper = patch->level_count;
+    while (lower + 1 < upper) {
+        size_t middle = lower + (upper - lower) / 2;
+        if (patch->levels[middle].threshold <= threshold) lower = middle;
+        else upper = middle;
+    }
+    const qaw_patch_level *level = patch->levels + lower;
+    context->source_grid_columns = level->columns; context->source_grid_rows = level->rows;
+    context->brush = &level->brush.draw;
+    *mesh = level->mesh;
+}
+
+void qaw_patch_destroy(qaw_patch *patch) {
+    if (!patch) return;
+    for (size_t i = 0; i < patch->level_count; ++i) {
+        qaw_brush_destroy(&patch->levels[i].brush);
+        qa_scene_geometry_release(patch->levels[i].mesh.geometry);
+    }
+    free(patch->levels); free(patch);
 }
