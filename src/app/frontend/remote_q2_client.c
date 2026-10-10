@@ -445,13 +445,13 @@ static bool hook_sent(void *context, qa_net_client_id id, qa_net_seat_id seat, u
     row->last_sent = sequence; row->sent_set = true;
     return remote_q2_prediction_replay(row, error);
 }
-static bool hook_command(void *context, const qa_network_command *source, qa_q2_usercmd *out, qa_error *error)
+static bool hook_command(void *context, const qa_usercmd *source, qa_q2_usercmd *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!source || !out || !hook_current(row, source->client, error) ||
         source->epoch != row->options.domain.epoch || source->seat.owner != row->options.domain.seat.owner ||
         source->seat.index != row->options.domain.seat.index) return false;
-    const qa_movement_command *command = &source->movement;
+    const qa_usercmd *command = source;
     *out = (qa_q2_usercmd){.server_frame = row->frame.valid ? row->frame.server_frame : -1,
         .msec = command->milliseconds > 255 ? 255 : (uint8_t)command->milliseconds,
         .buttons = (uint8_t)command->buttons, .impulse = command->impulse, .lightlevel = command->light_level,

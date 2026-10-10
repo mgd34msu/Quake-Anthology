@@ -19,7 +19,7 @@ typedef struct guest_client_scope {
     uint32_t slot, player, movement, milliseconds;
     qa_q3_equipment_motion equipment;
     bool equipment_active;
-    qa_movement_command application_command;
+    qa_usercmd application_command;
     bool weapon_slice, weapon_reached;
     bool spawning, input_active;
 } guest_client_scope;
@@ -35,9 +35,9 @@ typedef struct application_guest_input {
     guest_client_scope *scope;
     qa_actor_id applying;
     qa_actor_id command_actor;
-    const qa_movement_command *command;
+    const qa_usercmd *command;
     const application_control_external_stage *stage;
-    qa_movement_command applied_command;
+    qa_usercmd applied_command;
     qa_q3_usercmd projected_command;
     bool command_projected;
     bool input_applied;
@@ -174,7 +174,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
     uint32_t remaining = scope->milliseconds;
-    qa_movement_command raw = {.kind = QA_RULESET_Q3,
+    qa_usercmd raw = {.kind = QA_RULESET_Q3,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = remaining, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
@@ -191,7 +191,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     } else if (to.kind == QA_RULESET_Q2_RERELEASE) {
         to.relative = true; to.delta_angles = control.state.data.q2r.delta_angles;
     }
-    qa_movement_command command;
+    qa_usercmd command;
     qa_input_command_convert(&raw, NULL, &from, &to, (qa_input_axis_rule){0}, &command);
     if (command.kind == QA_RULESET_Q3) command.buttons = (uint32_t)source.buttons;
     else if (command.kind == QA_RULESET_Q2_RERELEASE) {
@@ -208,7 +208,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         command.buttons = (command.buttons & ~2u) | (input->applied_command.buttons & 2u);
     }
     qa_actor_id previous = input->applying; input->applying = scope->actor;
-    qa_movement_command applied = command;
+    qa_usercmd applied = command;
     bool ok = input->stage ? input->stage->current(input->stage) &&
         input->stage->locomotion(input->stage, &command, &applied, error) :
         application_control_frames_apply_nested(app, scope->actor, &command, &applied, error);
@@ -229,7 +229,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     }
     qa_input_command_basis source_to = {.kind = QA_RULESET_Q3, .words = true, .relative = true};
     memcpy(source_to.delta_words, player.deltaAngles, sizeof(source_to.delta_words));
-    qa_movement_command projected;
+    qa_usercmd projected;
     qa_input_command_convert(&applied, NULL, &applied_from, &source_to,
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
             .minimum = -128, .maximum = 127, .float_product = true}, &projected);
@@ -331,7 +331,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_movement_state state = qa_movement_state_default(QA_RULESET_Q3,
         qa_v3(player.origin[0], player.origin[1], player.origin[2]));
     memcpy(state.data.q3.delta_angle_words, player.deltaAngles, sizeof(player.deltaAngles));
-    qa_movement_command command = {.kind = QA_RULESET_Q3,
+    qa_usercmd command = {.kind = QA_RULESET_Q3,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = milliseconds, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
@@ -356,7 +356,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     memcpy(updated.angles, command.angle_words, sizeof(updated.angles));
     updated.buttons = (int32_t)command.buttons; updated.weapon = command.weapon;
     qa_input_command_basis basis = {.kind = QA_RULESET_Q3, .words = true};
-    qa_movement_command projected;
+    qa_usercmd projected;
     qa_input_command_convert(&command, NULL, &basis, &basis,
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
             .minimum = -128, .maximum = 127, .float_product = true}, &projected);
@@ -493,7 +493,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     bool previous_active = scope->input_active;
     qa_q3_equipment_motion previous_equipment = scope->equipment;
     bool previous_equipment_active = scope->equipment_active;
-    qa_movement_command previous_application = scope->application_command;
+    qa_usercmd previous_application = scope->application_command;
     bool previous_weapon_slice = scope->weapon_slice, previous_weapon_reached = scope->weapon_reached;
     scope->movement = (uint32_t)movement;
     uint64_t end = (uint64_t)scope->movement + 28;
@@ -725,7 +725,7 @@ static bool input_checkpoint_idle(q3g_role *role, qa_error *error)
     return application_guest_input_descriptors(role, descriptors, &count, error);
 }
 
-static bool input_command_fields(qa_source_save_io *io, qa_movement_command *value)
+static bool input_command_fields(qa_source_save_io *io, qa_usercmd *value)
 {
     uint32_t kind = value->kind;
     if (!qa_source_save_u32(io, &kind)) return false;
@@ -998,7 +998,7 @@ bool application_arsenal_guest_crouched(application_provider *provider, qa_actor
 }
 
 static bool guest_command(application_guest_input *input, qa_actor_id actor, uint32_t slot,
-    const qa_q3_usercmd *source, const qa_movement_command *command,
+    const qa_q3_usercmd *source, const qa_usercmd *command,
     const application_control_external_stage *stage, qa_error *error)
 {
     application_provider *guest = input->role->engine->provider;
@@ -1056,7 +1056,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         ok = qa_q3_host_source_player(input->role->host, slot, &player, error);
         if (ok && engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
             qa_actor_id_equal(engine->clients[slot].actor, actor)) {
-            qa_movement_command applied = input->input_applied ? input->applied_command : *command;
+            qa_usercmd applied = input->input_applied ? input->applied_command : *command;
             uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
             if (elapsed > INT32_MAX) elapsed = 0;
             applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
@@ -1080,7 +1080,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
 }
 
 bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id actor,
-    const qa_movement_command *command, qa_error *error)
+    const qa_usercmd *command, qa_error *error)
 {
     application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
     const application_control_context *context = application_control_frame_current(app, actor);
@@ -1110,7 +1110,7 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
 }
 
 static bool guest_move(qa_application *app, qa_actor_id actor,
-                                     const qa_movement_command *command, bool *handled,
+                                     const qa_usercmd *command, bool *handled,
                                      const application_control_external_stage *stage, qa_error *error)
 {
     *handled = false;
@@ -1154,7 +1154,7 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
         from.relative = true; from.delta_angles = control.state.data.q2r.delta_angles;
     }
     memcpy(to.delta_words, player.deltaAngles, sizeof(to.delta_words));
-    qa_movement_command projected;
+    qa_usercmd projected;
     qa_input_command_convert(command, NULL, &from, &to,
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST, .clamp = true,
             .minimum = -127, .maximum = 127, .float_product = true}, &projected);
@@ -1174,11 +1174,11 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
 }
 
 bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
-    const qa_movement_command *command, bool *handled, qa_error *error)
+    const qa_usercmd *command, bool *handled, qa_error *error)
 { return guest_move(app, actor, command, handled, NULL, error); }
 
 bool application_arsenal_guest_stage_move(qa_application *app, qa_actor_id actor,
-    const qa_movement_command *command, const application_control_external_stage *stage,
+    const qa_usercmd *command, const application_control_external_stage *stage,
     bool *handled, qa_error *error)
 {
     if (!stage || stage->application != app || !qa_actor_id_equal(stage->actor, actor) ||

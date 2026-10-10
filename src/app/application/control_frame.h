@@ -34,13 +34,13 @@ typedef struct application_control_context {
     bool unified_has_impulse;
     uint8_t unified_impulse;
     bool command_only;
-    qa_source_command command;
+    qa_usercmd command;
     uint64_t source_elapsed_ns;
     bool source_usercmd;
     bool source_holdable;
     bool source_guestcmd;
     bool source_qwcmd, source_nqcmd, source_q2cmd, source_input_applied;
-    qa_movement_command source_command;
+    qa_usercmd source_command;
 } application_control_context;
 static inline qa_actor_owner application_control_provider(const application_control_context *context)
 { return context->command_only ? context->command.provider : context->frame.provider; }
@@ -75,12 +75,12 @@ typedef struct application_control_external_stage {
     void *state;
     bool (*current)(const struct application_control_external_stage *);
     bool (*input)(const struct application_control_external_stage *, qa_movement_state *,
-        qa_movement_command *, const qa_vec3 *, struct application_source_input_scope *,
+        qa_usercmd *, const qa_vec3 *, struct application_source_input_scope *,
         bool before, bool slice, uint64_t elapsed_ns, qa_error *);
     bool (*locomotion)(const struct application_control_external_stage *,
-        const qa_movement_command *, qa_movement_command *, qa_error *);
+        const qa_usercmd *, qa_usercmd *, qa_error *);
     bool (*complete)(const struct application_control_external_stage *,
-        const qa_movement_command *, const qa_q3_player *, qa_error *);
+        const qa_usercmd *, const qa_q3_player *, qa_error *);
 } application_control_external_stage;
 bool application_arsenal_guest_stage_ready(qa_application *, qa_actor_id);
 bool application_qc_input_park(application_provider *, qa_actor_id, struct application_qc_parked_input **, qa_error *);
@@ -94,10 +94,10 @@ bool application_player_bot(const qa_application *, qa_actor_id);
 bool application_control_q1_world_begin(application_provider *, qa_q1_game_operation *, qa_error *);
 void application_control_frames_consume_impulse(qa_application *, qa_actor_id, uint64_t);
 bool application_control_q1_source_prethink(qa_application *, qa_actor_id,
-    const qa_movement_command *, qa_error *);
+    const qa_usercmd *, qa_error *);
 bool application_control_frames_q1_prepared(const qa_application *, qa_actor_id, qa_actor_owner);
 bool application_control_frames_q1_command_ready(const qa_application *, qa_actor_id,
-    qa_actor_owner, const qa_movement_command *);
+    qa_actor_owner, const qa_usercmd *);
 bool application_control_frames_q1_complete(qa_application *, qa_actor_id, qa_actor_owner, qa_error *);
 bool application_arsenal_prepare_frame(qa_application *, const qa_source_frame *, size_t, qa_error *);
 
@@ -107,21 +107,21 @@ bool application_control_frames_idle(const qa_application *);
 bool application_control_frames_abort(qa_application *, qa_error *);
 void application_control_frames_release(qa_application *, qa_actor_id);
 bool application_control_frames_receive(qa_application *, qa_actor_id,
-                                         const qa_movement_command *, size_t, qa_error *);
+                                         const qa_usercmd *, size_t, qa_error *);
 bool application_control_frames_receive_bot(qa_application *, qa_actor_id,
-                                             const qa_movement_command *, qa_actor_owner, qa_item_id, qa_error *);
+                                             const qa_usercmd *, qa_actor_owner, qa_item_id, qa_error *);
 bool application_bot_weapon_apply(qa_application *, qa_actor_id, qa_actor_owner, qa_item_id, qa_error *);
 bool application_bots_frame_at(qa_application *, const qa_source_frame *, size_t, uint64_t, qa_error *);
 bool application_control_frames_sequence(const qa_application *, qa_actor_id, bool *, uint64_t *);
 const application_control_context *application_control_frame_current(const qa_application *, qa_actor_id);
 bool application_control_frames_owns(const qa_application *, qa_actor_id);
 bool application_control_frames_apply_nested(qa_application *, qa_actor_id,
-                                              const qa_movement_command *, qa_movement_command *, qa_error *);
+                                              const qa_usercmd *, qa_usercmd *, qa_error *);
 bool application_control_last_qw_command(const qa_application *, qa_actor_id,
-    qa_movement_command *, uint64_t *, bool *, qa_error *);
+    qa_usercmd *, uint64_t *, bool *, qa_error *);
 bool application_control_q3_flags(application_provider *, qa_actor_id, uint32_t, uint32_t, qa_error *);
-application_control_outcome application_control_frames_q3_move(qa_application *, const qa_source_command *,
-    const qa_movement_command *, bool use_holdable, qa_error *);
+application_control_outcome application_control_frames_q3_move(qa_application *, const qa_usercmd *,
+    const qa_usercmd *, bool use_holdable, qa_error *);
 bool application_guest_input_interval(const qa_application *, qa_actor_id, uint64_t *);
 void application_control_frames_state(qa_application *, qa_actor_id, qa_movement_state *);
 qa_movement_state *application_control_frames_state_current(const qa_application *, qa_actor_id);
@@ -132,10 +132,10 @@ bool application_control_q3_policy(application_provider *, qa_actor_id, uint8_t,
 const qa_movement_result *application_control_q3_result(application_provider *, qa_actor_id, qa_error *);
 bool application_arsenal_guest_output_admit(application_provider *, uint8_t, qa_error *);
 bool application_arsenal_guest_source_command(qa_application *, qa_actor_id,
-    const qa_movement_command *, qa_error *);
+    const qa_usercmd *, qa_error *);
 /* Only an entered original Q2 weapon decision can lend this synchronous turn. */
 bool application_control_native_q2_weapon_step(application_provider *, qa_actor_id,
-    const qa_movement_command *, uint64_t source_time_ns, qa_error *);
+    const qa_usercmd *, uint64_t source_time_ns, qa_error *);
 bool application_control_group_touch_once(qa_application *, qa_actor_id, qa_actor_id, bool *, qa_error *);
 bool application_control_frames_prepare(void *, qa_session *, const qa_source_frame *, size_t,
                                          uint64_t, qa_error *);
@@ -149,7 +149,7 @@ bool application_control_frames_fields(qa_source_save_io *, qa_application *,
                                         const application_control_record *,
                                         struct application_control_frames **, qa_error *);
 
-application_control_outcome application_control_stage_move(qa_application *, qa_actor_id, const qa_movement_command *,
+application_control_outcome application_control_stage_move(qa_application *, qa_actor_id, const qa_usercmd *,
                                      struct application_control_turn **, qa_error *);
 application_control_outcome application_control_finish(qa_application *, qa_actor_id,
     application_control_outcome, const char *site, qa_error *);

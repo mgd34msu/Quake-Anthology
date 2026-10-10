@@ -106,12 +106,12 @@ void frontend_remote_prediction_clear(frontend_remote_prediction *);
 /* The real initial zero usercmd is appended before any physical receipt.
  * Admission associates the retained cold constructor continuation with it. */
 bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *,
-    const qa_movement_command *actual_zero_source, qa_error *);
+    const qa_usercmd *actual_zero_source, qa_error *);
 /* These are paired products of one physical receipt. The selected command
  * keeps its own axes; the independent raw Q3 command supplies source timing. */
 bool frontend_remote_prediction_submit(frontend_remote_prediction *,
-    const qa_movement_command *selected, frontend_remote_prediction_angle_space,
-    const qa_movement_command *source, qa_error *);
+    const qa_usercmd *selected, frontend_remote_prediction_angle_space,
+    const qa_usercmd *source, qa_error *);
 /* Receives an actual decoded snapshot and replays private state with pure
  * collision queries. No source program, body write or GAME frame is invoked. */
 bool frontend_remote_prediction_replay(frontend_remote_prediction *,

@@ -184,7 +184,7 @@ static bool replay(frontend_remote_q1 *row,qa_error *error)
         input.time_ns=entry->sent_ns; input.elapsed_ns=(uint64_t)entry->command.msec*1000000;
         input.standing.bounds=input.crouched.bounds=input.dead.bounds=(qa_bounds){qa_v3(-16,-16,-24),qa_v3(16,16,32)};
         input.standing.view_height=input.crouched.view_height=input.dead.view_height=p->view_height;
-        input.command=(qa_movement_command){.kind=QA_RULESET_QUAKEWORLD,.sequence=entry->sequence,
+        input.command=(qa_usercmd){.kind=QA_RULESET_QUAKEWORLD,.sequence=entry->sequence,
             .milliseconds=entry->command.msec,.angles=vector(entry->command.angles),
             .forward_move=entry->command.forward,.side_move=entry->command.side,.up_move=entry->command.up,
             .buttons=entry->command.buttons,.impulse=entry->command.impulse};

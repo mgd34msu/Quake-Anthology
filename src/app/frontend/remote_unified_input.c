@@ -171,14 +171,14 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         !frontend_unified_command_build(&next,&tuning,sample,&frame,p->retained_elapsed,&input.command,e) ||
         !current(p,e)) return false;
     input.has_arsenal=true;
-    input.arsenal=(qa_unified_arsenal){
+    input.arsenal=(qa_usercmd_arsenal){
         .provider={(const unsigned char *)p->arsenal->selection.instance,strlen(p->arsenal->selection.instance)},
         .has_impulse=sample->impulse!=0,.impulse=sample->impulse,
         .use_holdable=sample->game_focus &&
             (sample->buttons[QA_INPUT_USE].active || sample->buttons[QA_INPUT_USE].pressed ||
              sample->buttons[QA_INPUT_BUTTON2].active || sample->buttons[QA_INPUT_BUTTON2].pressed)};
     if(input.command.kind==QA_RULESET_Q3) {
-        qa_movement_command actual;
+        qa_usercmd actual;
         if(!qa_application_control_project_unified(&input.command,&snapshot.state,input.sequence,&actual,e)) return false;
         if(p->q3_command_count==64) {
             memmove(p->q3_commands,p->q3_commands+1,63*sizeof(*p->q3_commands));
@@ -212,7 +212,7 @@ bool frontend_unified_input_command_values(frontend_unified_input *p,int32_t wea
         return fail(e,"Unified command values cannot change its retained sampled prefix");
     p->q3_weapon=weapon; p->q3_sensitivity=sensitivity; p->has_q3_values=true; return true;
 }
-bool frontend_unified_input_oldest_q3(const frontend_unified_input *p,qa_movement_command *out,bool *available,qa_error *e)
+bool frontend_unified_input_oldest_q3(const frontend_unified_input *p,qa_usercmd *out,bool *available,qa_error *e)
 {
     if(!p||!out||!available||p->busy||!current(p,e))
         return fail(e,"Q3 command history requires its actual returned input owner");

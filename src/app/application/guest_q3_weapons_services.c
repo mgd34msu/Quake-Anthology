@@ -285,7 +285,7 @@ bool application_q3_weapons_services_request_completed(application_q3_weapons_se
 void application_q3_weapons_services_actor_released(application_q3_weapons_services *s, qa_actor_record actor)
 { if (s) request_remove(s, request_index(s, actor.id)); }
 bool application_q3_weapons_services_slice_finish(q3g_role *role, qa_actor_id actor,
-    const qa_movement_command *command, const qa_q3_player *player, bool reached, qa_error *error)
+    const qa_usercmd *command, const qa_q3_player *player, bool reached, qa_error *error)
 {
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
     q3_weapon_actor source;

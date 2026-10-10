@@ -341,7 +341,7 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         if (!owner->admitted || !packet)
             return application_fail(error,QA_ERROR_ARGUMENT,"Source command has no admitted physical recipient");
         const qa_unified_source_command_control *source=&packet->value.source_command;
-        qa_unified_source_command command={.instance=source->instance,.publication=source->publication,
+        qa_module_console_call command={.instance=source->instance,.publication=source->publication,
             .map_revision=source->map_revision,.arguments=(const char *const *)source->arguments.values,
             .argument_count=source->arguments.count};
         bool okay=application_unified_source_command(owner->application,client,owner->seat,&command,error);

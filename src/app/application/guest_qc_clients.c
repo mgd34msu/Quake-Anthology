@@ -586,7 +586,7 @@ bool application_qc_change_parms(application_provider *provider, qa_error *error
     return true;
 }
 bool application_qc_player_receive(application_provider *provider, qa_actor_id actor,
-                                    uint64_t ordinal, qa_movement_command *command, qa_error *error)
+                                    uint64_t ordinal, qa_usercmd *command, qa_error *error)
 {
     struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ?
         provider->state.qc.engine : NULL;
@@ -614,7 +614,7 @@ bool application_qc_player_receive(application_provider *provider, qa_actor_id a
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC receipt has no admitted physical source client");
 }
 bool application_qc_player_command(application_provider *provider, qa_actor_id actor,
-                                    const qa_movement_command *command, qa_error *error)
+                                    const qa_usercmd *command, qa_error *error)
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine == NULL || command == NULL)

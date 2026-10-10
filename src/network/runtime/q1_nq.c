@@ -171,7 +171,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     return qa_nq_channel_next(peer->native.channel.nq, now, &present, &packet, error) &&
         (!present || qa_q1_peer_send(&peer->native, packet, error));
 }
-static bool command(void *context, const qa_network_command *value, qa_error *error)
+static bool command(void *context, const qa_usercmd *value, qa_error *error)
 { (void)context; (void)value; return qa_network_fail(error, "NetQuake server cannot submit local client movement"); }
 static bool restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *error)
 {

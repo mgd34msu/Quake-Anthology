@@ -75,7 +75,7 @@ typedef struct qa_application_network_qw_client {
     double weapon_frame;
     uint16_t stat_mask;
     double stats[16];
-    qa_movement_command command;
+    qa_usercmd command;
     uint64_t command_time_ns;
     bool command_present;
 } qa_application_network_qw_client;

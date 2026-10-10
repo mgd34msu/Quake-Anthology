@@ -112,7 +112,7 @@ bool application_bot_source_weapon(application_bots *,qa_actor_id,int32_t *,int3
 bool application_bot_entity(void *,qa_actor_id,qa_bot_entity *,qa_error *);
 bool application_bot_arsenal(void *,qa_actor_id,const qa_bot_weapon_knowledge **,size_t *,void **,qa_error *);
 void application_bot_arsenal_end(void *,void *);
-bool application_bot_submit(void *,qa_actor_id,const qa_bot_input *,const qa_movement_command *,qa_error *);
+bool application_bot_submit(void *,qa_actor_id,const qa_bot_input *,const qa_usercmd *,qa_error *);
 bool application_bot_weapon_apply(qa_application *,qa_actor_id,qa_actor_owner,qa_item_id,qa_error *);
 bool application_bot_navigation_bind(application_bots *,application_bot_seat *,qa_error *);
 bool application_bot_navigation_prepare(application_bots *,qa_error *);

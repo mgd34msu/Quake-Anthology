@@ -632,17 +632,17 @@ bool qa_application_network_controlled(qa_application *application, qa_net_clien
     return true;
 }
 
-bool qa_application_network_command(qa_application *application, const qa_network_command *command,
+bool qa_application_network_command(qa_application *application, const qa_usercmd *command,
                                      qa_error *error)
 {
     if (!command || !qa_application_network_controlled(application, command->client, command->seat,
-        command->actor, command->movement.kind,
+        command->actor, command->kind,
         command->has_arsenal ? command->arsenal.provider : (qa_bytes){0}, error)) return false;
     /* Typed arsenal selection is an application owner contract. Until that
      * producer exists, reject intent rather than discarding it after ACK. */
     if (command->has_arsenal && (command->arsenal.weapon.size || command->arsenal.use_holdable))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Application arsenal intent producer is unavailable");
-    return qa_application_control_move(application, command->actor, &command->movement, error);
+    return qa_application_control_move(application, command->actor, command, error);
 }
 
 bool qa_application_network_detach(qa_application *application, const qa_net_client *client, qa_error *error)

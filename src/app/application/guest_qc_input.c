@@ -23,7 +23,7 @@ struct application_qc_parked_input {
     struct application_qc_parked_input *next;
     struct application_qc_input_scope *head, *tail, *parent;
 };
-float application_qc_input_scalar(const qa_movement_command *command, application_qc_input_id input)
+float application_qc_input_scalar(const qa_usercmd *command, application_qc_input_id input)
 {
     switch (input) {
     case QC_INPUT_ATTACK: return (command->buttons & 1u) ? 1.0f : 0.0f;
@@ -38,7 +38,7 @@ float application_qc_input_scalar(const qa_movement_command *command, applicatio
     default: return 0;
     }
 }
-static bool set_input(qa_movement_command *command, application_qc_input_id input, float value, qa_error *error)
+static bool set_input(qa_usercmd *command, application_qc_input_id input, float value, qa_error *error)
 {
     if (!isfinite(value)) return application_fail(error, QA_ERROR_FORMAT, "QC input output is nonfinite");
     switch (input) {
@@ -259,7 +259,7 @@ bool application_qc_input_abort(application_provider *provider, qa_actor_id acto
     if (!scope) return true;
     return close_through(engine, scope, true, error);
 }
-bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_movement_command *command,
+bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_usercmd *command,
                             bool before, bool movement_slice, uint64_t elapsed_ns, qa_error *error)
 {
     struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
@@ -267,7 +267,7 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
     if (!engine || !command) return application_fail(error, QA_ERROR_ARGUMENT, "QC input application is absent");
     if (!profile) {
         if (!before) return true;
-        qa_movement_command source = *command;
+        qa_usercmd source = *command;
         bool jump = application_qc_input_scalar(command, QC_INPUT_JUMP) != 0;
         source.buttons = (command->buttons & 1u) | (jump ? 2u : 0u);
         if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {

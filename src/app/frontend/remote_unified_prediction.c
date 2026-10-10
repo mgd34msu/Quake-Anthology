@@ -203,7 +203,7 @@ bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction
 {
     if(!p || p->busy || !p->received || !input || !isfinite(time_ms) || input->sequence>QA_UNIFIED_SAFE_INTEGER ||
         input->command.kind!=p->snapshot.input.state.kind || !current(p,e)) return false;
-    qa_movement_command probe;
+    qa_usercmd probe;
     if(!qa_application_control_project_unified(&input->command,&p->snapshot.input.state,input->sequence,&probe,e)) return false;
     for(size_t i=0;i<p->command_count;++i) if(input->sequence==p->commands[i].sequence)
         return (same_number(time_ms,p->commands[i].time_ms) && same_command(&input->command,&p->commands[i].raw)) ||
@@ -242,7 +242,7 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
     if(disabled) {
         *status=FRONTEND_UNIFIED_PREDICTION_DISABLED;
         if(p->command_count) {
-            qa_movement_command command;
+            qa_usercmd command;
             const prediction_command *last=p->commands+p->command_count-1;
             if(!qa_application_control_project_unified(&last->raw,&s->input.state,last->sequence,&command,e)) return false;
             if(command.kind==QA_RULESET_Q2_CLASSIC) {

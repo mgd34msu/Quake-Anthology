@@ -51,15 +51,15 @@ static bool client_flush(void *context, qa_network_runtime *runtime, qa_net_clie
     return client_settings(p, client, time, &ready, &send, error) &&
         (!qa_q3_client_peer_ready(p->source, &ready) || qa_q3_client_peer_send(p->source, &send, error));
 }
-static bool client_command(void *context, const qa_network_command *command, qa_error *error)
+static bool client_command(void *context, const qa_usercmd *command, qa_error *error)
 {
     q3_runtime_client *p = context;
-    if (command->movement.kind != QA_RULESET_Q3 || command->has_arsenal ||
-        command->movement.forward_move < -127 || command->movement.forward_move > 127 ||
-        command->movement.side_move < -127 || command->movement.side_move > 127 ||
-        command->movement.up_move < -127 || command->movement.up_move > 127)
+    if (command->kind != QA_RULESET_Q3 || command->has_arsenal ||
+        command->forward_move < -127 || command->forward_move > 127 ||
+        command->side_move < -127 || command->side_move > 127 ||
+        command->up_move < -127 || command->up_move > 127)
         return qa_network_fail(error, "Q3 source command requires its original movement and weapon fields");
-    const qa_movement_command *move = &command->movement;
+    const qa_usercmd *move = command;
     qa_q3_usercmd value = {.serverTime = move->server_time_ms, .buttons = (int32_t)move->buttons,
         .weapon = move->weapon, .forwardmove = (int8_t)move->forward_move,
         .rightmove = (int8_t)move->side_move, .upmove = (int8_t)move->up_move};
@@ -309,7 +309,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     (void)runtime; (void)id; (void)now_ns;
     return qa_q3_server_peer_fragment(p->source, &sent, error);
 }
-static bool local_command(void *context, const qa_network_command *command, qa_error *error)
+static bool local_command(void *context, const qa_usercmd *command, qa_error *error)
 {
     (void)context; (void)command;
     return qa_network_fail(error, "A Q3 server peer cannot submit client movement");

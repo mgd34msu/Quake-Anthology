@@ -1828,11 +1828,11 @@ static const qa_unified_field input_movement_fields[] = {
 };
 static const qa_unified_record_layout input_movement_layout = QA_UNIFIED_LAYOUT(qa_unified_movement, input_movement_fields);
 static const qa_unified_field input_arsenal_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_arsenal, use_holdable, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_arsenal, has_impulse, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_arsenal, impulse, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_usercmd_arsenal, use_holdable, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_usercmd_arsenal, has_impulse, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_usercmd_arsenal, impulse, QA_UNIFIED_FIELD_U8),
 };
-static const qa_unified_record_layout input_arsenal_layout = QA_UNIFIED_LAYOUT(qa_unified_arsenal, input_arsenal_fields);
+static const qa_unified_record_layout input_arsenal_layout = QA_UNIFIED_LAYOUT(qa_usercmd_arsenal, input_arsenal_fields);
 static const qa_unified_field input_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_input, sequence, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_RECORD(qa_unified_input, command, input_movement_layout),
@@ -2197,10 +2197,10 @@ static const qa_unified_field component_identity_fields[] = {
 };
 static const qa_unified_record_layout component_identity_layout = QA_UNIFIED_LAYOUT(qa_unified_component_identity, component_identity_fields);
 static const qa_unified_field component_command_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_component_command, sequence, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_component_command, arguments, control_arguments_layout),
+    QA_UNIFIED_FIELD(qa_module_server_command, sequence, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_module_server_command, arguments, control_arguments_layout),
 };
-static const qa_unified_record_layout component_command_layout = QA_UNIFIED_LAYOUT(qa_unified_component_command, component_command_fields);
+static const qa_unified_record_layout component_command_layout = QA_UNIFIED_LAYOUT(qa_module_server_command, component_command_fields);
 static const qa_unified_field component_q3_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_component_q3, owner, qa_unified_component_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_component_q3, identity, component_identity_layout),

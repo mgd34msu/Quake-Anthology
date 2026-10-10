@@ -14,15 +14,6 @@ uint32_t qa_network_protocol_seat_capacity(qa_net_protocol_id protocol);
 typedef struct qa_network_runtime qa_network_runtime;
 bool qa_network_udp_policy_read(const qa_network_runtime *, qa_net_udp_policy *, bool *present, qa_error *);
 typedef struct qa_unified_input qa_unified_input;
-typedef struct qa_network_command {
-    qa_net_client_id client;
-    qa_net_seat_id seat;
-    qa_actor_id actor;
-    uint64_t epoch;
-    qa_movement_command movement;
-    bool has_arsenal;
-    qa_unified_arsenal arsenal;
-} qa_network_command;
 /* One recovered QuakeWorld packet retains one source sequence. The movement
  * owner receives all raw commands together and owns recursive msec splitting. */
 typedef struct qa_network_command_group {
@@ -31,7 +22,7 @@ typedef struct qa_network_command_group {
     qa_actor_id actor;
     uint64_t epoch;
     qa_ruleset_id movement;
-    const qa_movement_command *commands;
+    const qa_usercmd *commands;
     size_t count;
 } qa_network_command_group;
 /* Original Q3 words remain intact until the actual source input owner adapts
@@ -70,11 +61,11 @@ typedef struct qa_network_hooks {
     qa_net_admit_fn admit;
     bool (*controlled)(void *, qa_net_client_id, qa_net_seat_id,
                        qa_actor_id, qa_ruleset_id, qa_bytes arsenal, qa_error *);
-    bool (*command)(void *, const qa_network_command *, qa_error *);
+    bool (*command)(void *, const qa_usercmd *, qa_error *);
     /* Restore every prediction-owned component together before replay. replay
      * must use the selected movement kernel and prediction effects policy. */
     bool (*restore)(void *, const qa_network_snapshot *, qa_error *);
-    bool (*replay)(void *, const qa_network_command *, qa_error *);
+    bool (*replay)(void *, const qa_usercmd *, qa_error *);
     void (*disconnected)(void *, qa_net_client_id, const char *reason);
     bool (*connectionless)(void *, qa_network_runtime *, const qa_net_datagram *, qa_error *);
     /* Must authenticate retained identity before changing its endpoint. */
@@ -93,7 +84,7 @@ typedef struct qa_network_peer_ops {
     bool (*receive)(void *, qa_network_runtime *, qa_net_client_id,
                     const qa_net_datagram *, qa_error *);
     bool (*flush)(void *, qa_network_runtime *, qa_net_client_id, uint64_t now_ns, qa_error *);
-    bool (*command)(void *, const qa_network_command *, qa_error *);
+    bool (*command)(void *, const qa_usercmd *, qa_error *);
     /* Queue signon/travel through source reliability, retire stale wire deltas.
      * Failure after restart faults this connection and disconnects it. */
     bool (*restart)(void *, uint64_t epoch, const uint64_t *, qa_error *);
@@ -140,8 +131,8 @@ uint64_t qa_network_epoch(const qa_network_runtime *, qa_net_client_id);
 /* submit records a local command and invokes the dialect's encoder. accept
  * invokes gameplay once for an authenticated remote command. Duplicate source
  * sequences are ignored. Rejection never advances the accepted sequence. */
-bool qa_network_submit(qa_network_runtime *, const qa_network_command *, qa_error *);
-bool qa_network_accept(qa_network_runtime *, const qa_network_command *, qa_error *);
+bool qa_network_submit(qa_network_runtime *, const qa_usercmd *, qa_error *);
+bool qa_network_accept(qa_network_runtime *, const qa_usercmd *, qa_error *);
 /* Validate and admit the complete QW group once. Its accepted source sequence
  * advances only after the command owner has accepted every retained command. */
 bool qa_network_accept_commands(qa_network_runtime *, const qa_network_command_group *, qa_error *);

@@ -137,7 +137,7 @@ typedef struct qa_network_q2_client_hooks {
      * retry. The callback must accept the same receipt without replaying input. */
     bool (*sent)(void *, qa_net_client_id, qa_net_seat_id, uint32_t packet_sequence, uint64_t command_number,
         const qa_q2_usercmd *, uint64_t, qa_error *);
-    bool (*command)(void *, const qa_network_command *, qa_q2_usercmd *, qa_error *);
+    bool (*command)(void *, const qa_usercmd *, qa_q2_usercmd *, qa_error *);
     /* Remaining stufftext reaches the actual client Source command owner.
      * source_seat retains the service marker (0 broadcast, 1..N recipients). */
     bool (*server_command)(void *, qa_net_client_id, uint8_t source_seat, const char *, qa_error *);

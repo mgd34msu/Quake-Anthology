@@ -10,7 +10,7 @@ struct qa_recovery {
 
 static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
 {
-    qa_movement_command *command = &input->command;
+    qa_usercmd *command = &input->command;
     uint32_t kind = command->kind;
     bool ok = qa_source_save_u32(io, &input->seat) &&
         qa_source_save_u32(io, &kind) && kind <= QA_RULESET_Q3 &&

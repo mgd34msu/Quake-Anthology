@@ -20,7 +20,7 @@ bool frontend_network_client_predictor_read(qa_frontend *, frontend_remote_predi
 bool frontend_network_client_predictor_finish_restore(qa_frontend *, qa_error *);
 bool frontend_network_client_predictor_admit(qa_frontend *, frontend_remote_prediction *, qa_error *);
 bool frontend_network_client_sample(qa_frontend *, uint32_t physical_seat, qa_actor_id,
-    const qa_movement_command *selected, frontend_remote_prediction_angle_space,
+    const qa_usercmd *selected, frontend_remote_prediction_angle_space,
     const qa_seat_input_sample *, double source_frame_ms, qa_error *);
 
 /* These observations retain the actual transport ring and source-input owner.

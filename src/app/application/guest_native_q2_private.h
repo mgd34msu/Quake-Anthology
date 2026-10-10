@@ -33,7 +33,7 @@ typedef struct application_native_q2_client {
 
 struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
-    const qa_movement_command *input_command;
+    const qa_usercmd *input_command;
     const struct application_native_callback_inputs *raw_inputs;
     bool input_arsenal, input_arsenal_committed;
     const qa_json_document *raw_input_document;
@@ -135,10 +135,10 @@ qa_native_host_engine_services application_native_q2_services(struct application
 bool application_native_q2_resources_reconnect(struct application_native_q2 *, qa_error *);
 qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
 bool application_native_q2_move(application_provider *, qa_actor_id,
-    const qa_movement_command *, bool *, qa_error *);
+    const qa_usercmd *, bool *, qa_error *);
 struct application_control_external_stage;
 bool application_native_q2_stage_move(application_provider *, qa_actor_id,
-    const qa_movement_command *, const struct application_control_external_stage *, bool *, qa_error *);
+    const qa_usercmd *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_native_q2_draw_hud(application_provider *, uint32_t, uint32_t, qa_error *);
 struct application_native_q2 *application_native_q2_hud_source(struct application_native_q2 *,
     uint32_t *, qa_error *);

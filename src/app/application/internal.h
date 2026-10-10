@@ -519,11 +519,11 @@ bool application_qc_change_parms(application_provider *, qa_error *);
 bool application_qc_client_userinfo(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_disconnect_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_player_command(application_provider *, qa_actor_id,
-                                    const qa_movement_command *, qa_error *);
+                                    const qa_usercmd *, qa_error *);
 bool application_qc_qualify(application_provider *, qa_error *);
 void application_qc_release_qualification(application_provider *);
 bool application_qc_input(application_provider *, qa_actor_id,
-                           qa_movement_command *, bool before,
+                           qa_usercmd *, bool before,
                            bool movement_slice, uint64_t elapsed_ns, qa_error *);
 bool application_qc_input_abort(application_provider *, qa_actor_id,
                                 bool movement_slice, qa_error *);

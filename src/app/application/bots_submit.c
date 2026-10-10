@@ -33,7 +33,7 @@ bool application_bot_weapon_apply(qa_application *application,qa_actor_id actor,
 }
 
 bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *input,
-                            const qa_movement_command *source,qa_error *error) {
+                            const qa_usercmd *source,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
     if(!bots->producing || bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot movement requires its active source-stage producer");
@@ -61,7 +61,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     if(!application_control_frames_sequence(application,actor,&seen,&sequence))
         return application_fail(error,QA_ERROR_ARGUMENT,"bot movement has no actual command admission owner");
     if(seen && sequence==UINT64_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot command sequence exhausted");
-    qa_movement_command command;
+    qa_usercmd command;
     if (view.state.kind == QA_RULESET_Q3) {
         /* Already built by the common path, including stock paused angles. */
         command = *source;
@@ -78,10 +78,9 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
             for (unsigned i = 0; i < 3; ++i) frame.delta_angle_words[i] = view.state.data.q2.delta_angle_shorts[i];
         else if (view.state.kind == QA_RULESET_Q2_RERELEASE)
             frame.delta_angles = view.state.data.q2r.delta_angles;
-        qa_input_usercmd built;
-        qa_input_usercmd_build(&intent, &frame, (double)admitted.elapsed_ns / 1000000.0,
-            QA_INPUT_COMMAND_NATIVE, &built);
-        qa_input_usercmd_project(&built, &command);
+        qa_usercmd built;
+        qa_usercmd_build(&intent, &frame, (double)admitted.elapsed_ns / 1000000.0, &built);
+        command = built;
     }
     if(!application_control_frames_receive_bot(application,actor,&command,requested_owner,requested_item,error)) return false;
     return true;

@@ -12,7 +12,7 @@ typedef struct application_native_q2_input_stage {
     bool (*current)(void *, qa_actor_id);
     bool (*move)(void *, const qa_movement_input *, const qa_movement_services *,
         qa_movement_result *, qa_error *);
-    bool (*arsenal)(void *, qa_actor_id, const qa_movement_command *, uint64_t, qa_error *);
+    bool (*arsenal)(void *, qa_actor_id, const qa_usercmd *, uint64_t, qa_error *);
 } application_native_q2_input_stage;
 
 /* Membership uses restored Engine custody and never reads SDK storage. */
@@ -25,5 +25,5 @@ bool application_native_q2_declared_input_read(application_provider *,qa_actor_i
 bool application_native_q2_input_read(application_provider *, qa_actor_id,
     qa_movement_result *, qa_vec3 *command_angles, qa_error *);
 bool application_native_q2_input_think(application_provider *, qa_actor_id,
-    const qa_movement_command *, const application_native_q2_input_stage *, qa_error *);
+    const qa_usercmd *, const application_native_q2_input_stage *, qa_error *);
 #endif

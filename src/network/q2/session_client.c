@@ -377,7 +377,7 @@ bool qa_network_q2_client_usercmds(qa_network_runtime *runtime, qa_net_client_id
     q2_session *session = q2_get(runtime, id, false, error);
     return session && qa_network_callbacks_idle(runtime) && queue_commands(session, commands, seats, error);
 }
-bool q2_client_submit(q2_session *session, const qa_network_command *command, qa_error *error)
+bool q2_client_submit(q2_session *session, const qa_usercmd *command, qa_error *error)
 {
     if (session->seats != 1) return q2_fail(error, QA_ERROR_ARGUMENT, "Split Q2 Source input requires its complete admitted command group");
     qa_q2_usercmd wire;

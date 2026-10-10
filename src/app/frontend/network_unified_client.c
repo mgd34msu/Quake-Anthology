@@ -306,7 +306,7 @@ static bool source_command(void *context,const frontend_remote_unified_domain *d
         !qa_unified_session_find(d->runtime,d->client,&session,e)) return false;
     const char *arguments[128];
     for(size_t i=0;i<tokens->count;++i) arguments[i]=tokens->values[i];
-    const qa_unified_source_command command={.instance=instance,.publication=publication,
+    const qa_module_console_call command={.instance=instance,.publication=publication,
         .map_revision=map_revision,.arguments=arguments,.argument_count=tokens->count};
     return qa_unified_session_source_command(session,&command,e)&&
         domain_current(o,d,e)&&connection(o,&physical.source)&&

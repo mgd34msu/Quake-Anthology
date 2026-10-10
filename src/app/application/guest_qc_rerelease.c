@@ -265,7 +265,7 @@ static bool prompt_import(struct application_qc_state *engine,qa_qc_instance *vm
     return true;
 }
 bool application_qc_rerelease_command(application_provider *provider,qa_actor_id actor,
-    qa_movement_command *command,qa_error *error)
+    qa_usercmd *command,qa_error *error)
 {
     struct application_qc_state *engine=provider && provider->kind==APPLICATION_PROVIDER_QC?provider->state.qc.engine:NULL;
     if (!engine || !command) return application_fail(error,QA_ERROR_ARGUMENT,"Rerelease command has no actual source owner");

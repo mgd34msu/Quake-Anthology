@@ -156,7 +156,7 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
     input.state.data.q2r=(qa_q2r_movement_state){.type=qa_load_i32le(bytes),.origin=load_vector(bytes+4),
         .velocity=load_vector(bytes+16),.flags=qa_load_u16le(bytes+28),.time_ms=qa_load_u16le(bytes+30),
         .gravity=(int16_t)qa_load_u16le(bytes+32),.delta_angles=load_vector(bytes+36),.view_height=(float)(int8_t)bytes[48]};
-    input.command=(qa_movement_command){.kind=QA_RULESET_Q2_RERELEASE,.milliseconds=bytes[52],.buttons=bytes[53],
+    input.command=(qa_usercmd){.kind=QA_RULESET_Q2_RERELEASE,.milliseconds=bytes[52],.buttons=bytes[53],
         .angles=load_vector(bytes+56),.forward_move=qa_load_f32le(bytes+68),.side_move=qa_load_f32le(bytes+72),
         .server_frame=(int32_t)qa_load_u32le(bytes+76)};
     input.snap_initial=bytes[80]!=0; input.current_bounds=frame->accepted; input.has_current_bounds=true;

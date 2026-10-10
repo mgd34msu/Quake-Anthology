@@ -57,7 +57,7 @@ bool qa_unified_session_frame_retain(qa_unified_session *, uint32_t, const qa_un
 bool qa_unified_session_frame_decode(const qa_unified_session *, qa_bytes, qa_unified_document **,
     bool *missing_baseline, qa_error *);
 bool qa_unified_session_queue_control(qa_unified_session *, const qa_unified_document *, qa_error *);
-bool qa_unified_session_command(void *, const qa_network_command *, qa_error *);
+bool qa_unified_session_command(void *, const qa_usercmd *, qa_error *);
 bool qa_unified_session_queue_inputs(qa_unified_session *, qa_error *);
 bool qa_unified_session_receive_resume(qa_unified_session *, qa_error *);
 void qa_unified_session_ack(qa_unified_session *, int64_t);

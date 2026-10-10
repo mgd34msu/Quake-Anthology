@@ -11,7 +11,7 @@ void qa_q3_command_history_init(qa_q3_command_history *history) {
     memset(history,0,sizeof(*history));
     for (size_t i=0;i<64;i++) history->commands[i].kind=QA_RULESET_Q3;
 }
-bool qa_q3_command_history_append(qa_q3_command_history *history, const qa_movement_command *command, uint32_t *number, qa_error *error) {
+bool qa_q3_command_history_append(qa_q3_command_history *history, const qa_usercmd *command, uint32_t *number, qa_error *error) {
     if (!history||!command||command->kind!=QA_RULESET_Q3) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 command history requires a Q3 command"); return false;
     }
@@ -20,7 +20,7 @@ bool qa_q3_command_history_append(qa_q3_command_history *history, const qa_movem
     if (number) *number=history->current_number;
     return true;
 }
-bool qa_q3_command_history_read(const qa_q3_command_history *history, uint32_t number, qa_movement_command *out, bool *available, qa_error *error) {
+bool qa_q3_command_history_read(const qa_q3_command_history *history, uint32_t number, qa_usercmd *out, bool *available, qa_error *error) {
     if (!history||!out||!available) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Q3 command history output"); return false; }
     uint32_t distance=history->current_number-number;
     if (distance>INT32_MAX) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 command number is newer than the current command"); return false; }
@@ -39,7 +39,7 @@ void qa_q3_prediction_free(qa_q3_prediction *prediction) {
     qa_movement_result_free(&prediction->scratch);
     memset(prediction,0,sizeof(*prediction));
 }
-bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_movement_command *command, qa_error *error) {
+bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_usercmd *command, qa_error *error) {
     if (!state||!command||state->kind!=QA_RULESET_Q3||command->kind!=QA_RULESET_Q3) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction view requires Q3 state and command"); return false;
     }
@@ -53,7 +53,7 @@ void qa_movement_q3_finish_jump_pads(qa_movement_state *state) {
         state->data.q3.jump_pad=(qa_actor_id){0}; state->data.q3.jump_pad_frame=0;
     }
 }
-static bool required_command(const qa_q3_prediction_host *host, uint32_t number, qa_movement_command *out, qa_error *error) {
+static bool required_command(const qa_q3_prediction_host *host, uint32_t number, qa_usercmd *out, qa_error *error) {
     bool available;
     if (!qa_q3_command_history_read(host->commands,number,out,&available,error)) return false;
     if (!available) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction command is outside CMD_BACKUP"); return false; }
@@ -67,7 +67,7 @@ static float lerp_angle(float a, float b, float fraction) {
 static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, const qa_q3_prediction_frame *frame, bool angles, qa_error *error) {
     p->predicted=frame->snapshot->movement;
     if (angles) {
-        qa_movement_command command;
+        qa_usercmd command;
         if (!required_command(host,host->commands->current_number,&command,error)||!qa_q3_prediction_view(&p->predicted,frame->health,&command,error)) return false;
     }
     const qa_q3_prediction_snapshot *next=frame->next_snapshot;
@@ -110,7 +110,7 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
     if (!host->restore||!host->movement_input) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 replay requires owner restore and movement input callbacks"); return false; }
     qa_movement_state old=p->predicted;
     uint32_t current=host->commands->current_number;
-    qa_movement_command oldest,latest;
+    qa_usercmd oldest,latest;
     if (!required_command(host,current-63u,&oldest,error)||!required_command(host,current,&latest,error)) return false;
     if (oldest.server_time_ms>frame->snapshot->movement.data.q3.command_time_ms&&oldest.server_time_ms<frame->time_ms) {
         warn(host,settings,"exceeded PACKET_BACKUP on commands\n");

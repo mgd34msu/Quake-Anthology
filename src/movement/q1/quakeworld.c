@@ -129,7 +129,7 @@ static void qw_accelerate(qw_move *m, qa_vec3 direction, float speed, float acce
 }
 
 static qa_vec3 qw_wish_velocity(const qw_move *m) {
-    const qa_movement_command *command = &m->base.c->command;
+    const qa_usercmd *command = &m->base.c->command;
     return qa_vec_add(qa_vec_scale(m->forward, q1_speed(&m->base, (float)command->forward_move)),
                         qa_vec_scale(m->right, q1_speed(&m->base, (float)command->side_move)));
 }
@@ -364,7 +364,7 @@ static bool qw_step_physics(qw_move *m) {
     return true;
 }
 
-static bool qw_step(qw_move *m, qa_movement_command command) {
+static bool qw_step(qw_move *m, qa_usercmd command) {
     qa_move_context *c = m->base.c;
     c->command = command;
     c->milliseconds = command.milliseconds;
@@ -384,7 +384,7 @@ static bool qw_step(qw_move *m, qa_movement_command command) {
     return !q1_stopped(&m->base);
 }
 
-static bool qw_run_command(qw_move *m, qa_movement_command command, uint32_t maximum) {
+static bool qw_run_command(qw_move *m, qa_usercmd command, uint32_t maximum) {
     if (command.milliseconds > maximum) {
         command.milliseconds /= 2;
         if (!qw_run_command(m, command, maximum)) return false;
@@ -402,7 +402,7 @@ bool qa_move_qw(qa_move_context *c) {
         c->failed = true;
         return false;
     }
-    qa_movement_command command = c->command;
+    qa_usercmd command = c->command;
     float dt = c->dt;
     uint32_t milliseconds = c->milliseconds;
     qw_move move = { .water_type = Q1_CONTENTS_EMPTY };

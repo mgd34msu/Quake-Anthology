@@ -24,7 +24,7 @@ enum {
 typedef struct q2_classic_move {
     qa_move_context *context;
     qa_q2_movement_state *state;
-    qa_movement_command command;
+    qa_usercmd command;
     qa_vec3 origin, velocity, forward, right, up;
     qa_vec3 angles;
     qa_bounds character, bounds;

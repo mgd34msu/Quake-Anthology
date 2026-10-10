@@ -2,6 +2,7 @@
 #define QA_MOVEMENT_H
 
 #include "qa/ruleset.h"
+#include "qa/usercmd.h"
 #include "qa/world.h"
 
 typedef enum qa_q1_edition { QA_Q1_CLASSIC, QA_Q1_RERELEASE, QA_Q1_QUAKE64 } qa_q1_edition;
@@ -32,18 +33,6 @@ typedef struct qa_movement_ground {
  * degrees for NQ, QW and Q2 rerelease. side_move is Q3 rightmove.
  * Axes retain Q2 rerelease fractions. Input and protocol adapters apply the
  * integer encoding of classic commands; signed byte/short values fit exactly. */
-typedef struct qa_movement_command {
-    qa_ruleset_id kind;
-    uint64_t sequence;
-    uint32_t milliseconds;
-    int32_t server_time_ms, server_frame;
-    double acknowledged_server_seconds;
-    qa_vec3 angles;
-    int32_t angle_words[3];
-    float forward_move, side_move, up_move;
-    uint32_t buttons;
-    uint8_t impulse, light_level, weapon;
-} qa_movement_command;
 
 typedef struct qa_nq_movement_state {
     qa_vec3 origin, velocity, angles, old_origin, angular_velocity;
@@ -193,7 +182,7 @@ typedef struct qa_movement_environment {
 typedef struct qa_movement_input {
     qa_actor_id actor;
     qa_movement_state state;
-    qa_movement_command command;
+    qa_usercmd command;
     qa_movement_profile profile;
     qa_trace_shape shape;
     qa_bounds current_bounds;
@@ -268,7 +257,7 @@ typedef struct qa_movement_effect {
 typedef struct qa_movement_call {
     qa_actor_id actor;
     qa_movement_state *state;
-    qa_movement_command *command;
+    qa_usercmd *command;
     qa_bounds *bounds;
     qa_vec3 *view_angles;
     qa_movement_ground *ground;
@@ -359,12 +348,12 @@ bool qa_move_q2r_fix_stuck(qa_q2r_slide *, qa_q2r_stuck_result *, qa_error *);
 /* The zeroed source command ring survives map_restart. Unsigned sequence
  * arithmetic keeps its 64-command window valid across source-number wrap. */
 typedef struct qa_q3_command_history {
-    qa_movement_command commands[64];
+    qa_usercmd commands[64];
     uint32_t current_number;
 } qa_q3_command_history;
 void qa_q3_command_history_init(qa_q3_command_history *);
-bool qa_q3_command_history_append(qa_q3_command_history *, const qa_movement_command *, uint32_t *number, qa_error *);
-bool qa_q3_command_history_read(const qa_q3_command_history *, uint32_t number, qa_movement_command *, bool *available, qa_error *);
+bool qa_q3_command_history_append(qa_q3_command_history *, const qa_usercmd *, uint32_t *number, qa_error *);
+bool qa_q3_command_history_read(const qa_q3_command_history *, uint32_t number, qa_usercmd *, bool *available, qa_error *);
 
 typedef struct qa_q3_prediction_snapshot {
     int32_t server_time_ms;
@@ -403,7 +392,7 @@ typedef struct qa_q3_prediction {
     qa_movement_result scratch;
     bool initialized;
     qa_movement_state predicted;
-    qa_movement_command command;
+    qa_usercmd command;
     qa_vec3 error;
     int32_t error_time_ms;
 } qa_q3_prediction;
@@ -415,7 +404,7 @@ typedef struct qa_q3_prediction_host {
      * replaces every prediction-owned provider with the selected snapshot. */
     bool (*before_replay)(void *, qa_error *);
     bool (*restore)(void *, const qa_q3_prediction_snapshot *, qa_error *);
-    bool (*movement_input)(void *, const qa_movement_state *, const qa_movement_command *,
+    bool (*movement_input)(void *, const qa_movement_state *, const qa_usercmd *,
                             uint32_t command_number, int32_t physics_time_ms, qa_movement_input *, qa_error *);
     qa_movement_control (*touch_triggers)(void *, qa_movement_state *, qa_bounds,
                                           int32_t physics_time_ms, bool *hyperspace, qa_error *);
@@ -426,7 +415,7 @@ typedef struct qa_q3_prediction_host {
 } qa_q3_prediction_host;
 void qa_q3_prediction_init(qa_q3_prediction *);
 void qa_q3_prediction_free(qa_q3_prediction *);
-bool qa_q3_prediction_view(qa_movement_state *, int32_t health, const qa_movement_command *, qa_error *);
+bool qa_q3_prediction_view(qa_movement_state *, int32_t health, const qa_usercmd *, qa_error *);
 /* Uses qa_movement_move and the host's ordinary prediction trigger services.
  * Ordered effects go through movement_services.effect; no second actor world
  * or arsenal/animation authority is created by the predictor. */

@@ -216,25 +216,11 @@ typedef struct qa_input_command_intent {
     bool directional, walking, game_focus, any_key_down;
     uint8_t impulse;
 } qa_input_command_intent;
-typedef enum qa_input_command_encoding {
-    QA_INPUT_COMMAND_NATIVE, QA_INPUT_COMMAND_UNIFIED, QA_INPUT_COMMAND_SOURCE_Q3
-} qa_input_command_encoding;
-typedef struct qa_input_usercmd {
-    qa_ruleset_id kind;
-    uint64_t sequence;
-    qa_vec3 angles, move;
-    int32_t angle_words[3];
-    uint32_t buttons;
-    double milliseconds, server_time_ms, server_frame, acknowledged_server_seconds;
-    double light_level, weapon;
-    uint8_t impulse;
-} qa_input_usercmd;
 bool qa_input_command_sample(qa_input_command_builder *, const qa_input_command_tuning *,
     const qa_seat_input_sample *, const qa_input_command_frame *, double source_frame_ms,
     qa_input_command_intent *, qa_error *);
-void qa_input_usercmd_build(const qa_input_command_intent *, const qa_input_command_frame *,
-    double source_frame_ms, qa_input_command_encoding, qa_input_usercmd *);
-void qa_input_usercmd_project(const qa_input_usercmd *, qa_movement_command *);
+void qa_usercmd_build(const qa_input_command_intent *, const qa_input_command_frame *,
+    double source_frame_ms, qa_usercmd *);
 
 typedef struct qa_input_command_basis {
     qa_ruleset_id kind;
@@ -252,8 +238,8 @@ typedef struct qa_input_axis_rule {
     bool clamp, ratio_first, float_product;
 } qa_input_axis_rule;
 float qa_input_command_units(qa_ruleset_id);
-void qa_input_command_convert(const qa_movement_command *, const qa_input_move_intent *,
-    const qa_input_command_basis *, const qa_input_command_basis *, qa_input_axis_rule, qa_movement_command *);
+void qa_input_command_convert(const qa_usercmd *, const qa_input_move_intent *,
+    const qa_input_command_basis *, const qa_input_command_basis *, qa_input_axis_rule, qa_usercmd *);
 
 qa_input_command_tuning qa_input_command_defaults(qa_ruleset_id);
 void qa_input_command_clear(qa_input_command_builder *);
@@ -265,7 +251,7 @@ void qa_input_command_center(qa_input_command_builder *, float delta_pitch);
  * A failed build leaves both builder and output unchanged. */
 bool qa_input_command_build(qa_input_command_builder *, const qa_input_command_tuning *,
                             const qa_seat_input_sample *, const qa_input_command_frame *,
-                            double source_frame_ms, qa_movement_command *out, qa_error *);
+                            double source_frame_ms, qa_usercmd *out, qa_error *);
 
 enum qa_key_code {
     QA_KEY_TAB = 9,

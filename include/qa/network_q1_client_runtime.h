@@ -27,8 +27,8 @@ typedef struct qa_network_q1_client_hooks {
         const char *const *, size_t, uint32_t *map_checksum, qa_error *);
     bool (*qw_skins)(void *, qa_net_client_id, bool *ready, qa_error *);
     bool (*end)(void *, qa_net_client_id, uint64_t received_ns, qa_error *);
-    bool (*command_nq)(void *, const qa_network_command *, qa_q1_command *, qa_error *);
-    bool (*command_qw)(void *, const qa_network_command *, uint64_t now_ns, qa_qw_command *, qa_error *);
+    bool (*command_nq)(void *, const qa_usercmd *, qa_q1_command *, qa_error *);
+    bool (*command_qw)(void *, const qa_usercmd *, uint64_t now_ns, qa_qw_command *, qa_error *);
     /* The actual camera owner supplies its pending spectator teleport after
      * command_qw. This native coordinate service enters the reliable FIFO. */
     bool (*qw_teleport)(void *, qa_net_client_id, qa_vec3 *, bool *present, qa_error *);
@@ -79,7 +79,7 @@ bool qa_network_q1_client_move_nq(qa_network_runtime *, qa_net_client_id, const 
 bool qa_network_q1_client_move_qw(qa_network_runtime *, qa_net_client_id, const qa_qw_command *, qa_error *);
 /* The genuine Source owns its input ordinal and native sent/ack history.
  * Qualifies the admitted full actor/seat without generic snapshot replay. */
-bool qa_network_q1_client_submit(qa_network_runtime *, const qa_network_command *, qa_error *);
+bool qa_network_q1_client_submit(qa_network_runtime *, const qa_usercmd *, qa_error *);
 bool qa_network_q1_client_state_read(qa_network_runtime *, qa_net_client_id,
     qa_network_q1_client_state *, qa_error *);
 const qa_nq_decoder *qa_network_q1_client_nq_decoder(qa_network_runtime *, qa_net_client_id);

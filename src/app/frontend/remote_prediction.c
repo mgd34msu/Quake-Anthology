@@ -17,8 +17,8 @@ typedef struct prediction_player {
     int32_t requested_weapon;
 } prediction_player;
 typedef struct prediction_command {
-    qa_movement_command selected;
-    qa_movement_command source;
+    qa_usercmd selected;
+    qa_usercmd source;
     frontend_remote_prediction_angle_space angle_space;
     uint64_t source_sequence;
     uint64_t receipt_time_ns;
@@ -212,7 +212,7 @@ static void finish_change(prediction_player *player, int32_t requested, bool ani
 }
 /* PM_Weapon operates on the copied native PS and private fractional/slot
  * continuation. It never reaches GAME inventory, events or holdable code. */
-static bool weapon(replay_context *context, const qa_movement_command *command,
+static bool weapon(replay_context *context, const qa_usercmd *command,
     uint32_t elapsed, qa_error *error)
 {
     prediction_player *player = context->player;
@@ -477,10 +477,10 @@ static bool seed(frontend_remote_prediction *owner,
         out->view.sequence = source->acknowledged_sequence;
     return true;
 }
-static qa_movement_command relative_command(const prediction_command *entry,
+static qa_usercmd relative_command(const prediction_command *entry,
     const qa_movement_state *state)
 {
-    qa_movement_command command = entry->selected;
+    qa_usercmd command = entry->selected;
     if (entry->angle_space != FRONTEND_REMOTE_PREDICTION_ABSOLUTE) return command;
     if (state->kind == QA_RULESET_Q3 || state->kind == QA_RULESET_Q2_CLASSIC) {
         for (unsigned i = 0; i < 3; ++i) {
@@ -527,7 +527,7 @@ static bool write_player(frontend_remote_prediction *owner, prediction_player *p
 static bool update_angles(prediction_player *player, const prediction_command *entry, qa_error *error)
 {
     qa_movement_state *state = &player->view.movement;
-    qa_movement_command command = state->kind == QA_RULESET_Q3 ? entry->source : relative_command(entry, state);
+    qa_usercmd command = state->kind == QA_RULESET_Q3 ? entry->source : relative_command(entry, state);
     switch (state->kind) {
     case QA_RULESET_NETQUAKE:
         player->view.view_angles = state->data.nq.fix_angle ? state->data.nq.view_angles : command.angles;
@@ -956,7 +956,7 @@ void frontend_remote_prediction_clear(frontend_remote_prediction *owner)
     memset(&owner->state, 0, sizeof(owner->state));
 }
 bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *owner,
-    const qa_movement_command *command, qa_error *error)
+    const qa_usercmd *command, qa_error *error)
 {
     if (!owner || owner->busy || owner->state.initialized || !command || command->kind != QA_RULESET_Q3 ||
         !command->sequence || command->server_time_ms || command->forward_move != 0 || command->side_move != 0 ||
@@ -987,7 +987,7 @@ bool frontend_remote_prediction_admit_initial(frontend_remote_prediction *owner,
     owner->state = state;
     return true;
 }
-static bool command_valid(const qa_movement_command *command)
+static bool command_valid(const qa_usercmd *command)
 {
     if (!command || command->kind > QA_RULESET_Q3 || command->kind < QA_RULESET_NETQUAKE ||
         !command->sequence || !qa_vec_finite(command->angles) || !isfinite(command->acknowledged_server_seconds) ||
@@ -1012,8 +1012,8 @@ static const prediction_command *selected_receipt(const prediction_state *state,
     return selected;
 }
 bool frontend_remote_prediction_submit(frontend_remote_prediction *owner,
-    const qa_movement_command *selected, frontend_remote_prediction_angle_space angle_space,
-    const qa_movement_command *source_command, qa_error *error)
+    const qa_usercmd *selected, frontend_remote_prediction_angle_space angle_space,
+    const qa_usercmd *source_command, qa_error *error)
 {
     if (!owner || owner->busy || !owner->state.initialized || !command_valid(selected) ||
         !command_valid(source_command) || source_command->kind != QA_RULESET_Q3 ||
@@ -1300,7 +1300,7 @@ static bool environment_fields(qa_source_save_io *io, qa_movement_environment *v
     return isfinite(v->health) && isfinite(v->gravity_multiplier) && v->gravity_multiplier >= 0 &&
         isfinite(v->speed_multiplier) && v->speed_multiplier >= 0 && isfinite(v->pose.view_height);
 }
-static bool command_fields(qa_source_save_io *io, qa_movement_command *v)
+static bool command_fields(qa_source_save_io *io, qa_usercmd *v)
 {
     uint32_t kind = v->kind;
     if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3 ||

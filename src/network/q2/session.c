@@ -180,7 +180,7 @@ static bool flush(void *state, qa_network_runtime *runtime, qa_net_client_id id,
     if (!session->server) return session->state.client.policy.messages.demo || q2_client_send(session, now, error);
     return !qa_q2_channel_should_update(session->channel, now) || q2_send(session, (qa_bytes){0}, now, NULL, error);
 }
-static bool command(void *state, const qa_network_command *command, qa_error *error)
+static bool command(void *state, const qa_usercmd *command, qa_error *error)
 {
     q2_session *session = state;
     return !session->server ? (session->state.client.policy.messages.demo || q2_client_submit(session, command, error)) :

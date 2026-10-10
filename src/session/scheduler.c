@@ -408,7 +408,7 @@ bool qa_scheduler_run_once(qa_scheduler *scheduler, qa_actor_id actor,
 { return scheduler_run(scheduler, actor, frame, boundary, true, out, error); }
 
 bool qa_scheduler_run_command_once(qa_scheduler *scheduler, qa_actor_id actor,
-    const qa_source_command *command, uint64_t source_time_ns, uint64_t source_elapsed_ns,
+    const qa_usercmd *command, uint64_t source_time_ns, uint64_t source_elapsed_ns,
     qa_think_boundary boundary,
     qa_think_result *out, qa_error *error)
 {

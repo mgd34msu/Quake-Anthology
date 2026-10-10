@@ -215,7 +215,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         input.standing.bounds = (qa_bounds){qa_v3(-16, -16, -24), qa_v3(16, 16, 32)};
         input.crouched.bounds = input.dead.bounds = (qa_bounds){qa_v3(-16, -16, -24), qa_v3(16, 16, 4)};
         input.standing.view_height = 22; input.crouched.view_height = input.dead.view_height = -2;
-        input.command = (qa_movement_command){.kind = kind, .sequence = number, .milliseconds = command->msec,
+        input.command = (qa_usercmd){.kind = kind, .sequence = number, .milliseconds = command->msec,
             .server_frame = command->server_frame, .forward_move = command->forwardmove,
             .side_move = command->sidemove, .up_move = command->upmove, .buttons = command->buttons,
             .impulse = command->impulse, .light_level = command->lightlevel};

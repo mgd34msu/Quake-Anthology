@@ -106,7 +106,7 @@ struct application_qc_state {
 static inline bool application_qc_has_source_admission(const struct application_qc_state *engine)
 {
     qa_source_frame frame;
-    qa_source_command command;
+    qa_usercmd command;
     return qa_session_active_frame(engine->services.session, engine->provider->owner, &frame) ||
         qa_session_active_command(engine->services.session, engine->provider->owner, &command);
 }
@@ -154,7 +154,7 @@ bool application_qc_source_client_released(struct application_qc_state *, qa_act
 bool application_qc_control_source_client(const application_provider *, qa_actor_id, bool *, qa_error *);
 bool application_qc_player_source_actor(application_provider *, uint32_t, qa_actor_id *, qa_error *);
 bool application_qc_client_colors(application_provider *, qa_actor_id, int32_t top, int32_t bottom, qa_error *);
-bool application_qc_player_receive(application_provider *, qa_actor_id, uint64_t ordinal, qa_movement_command *, qa_error *);
+bool application_qc_player_receive(application_provider *, qa_actor_id, uint64_t ordinal, qa_usercmd *, qa_error *);
 struct qa_application_qc_weapon_ui_binding;
 bool application_qc_weapon_binding_at(struct application_qc_state *,size_t,
     struct qa_application_qc_weapon_ui_binding *,uint32_t *,qa_error *);

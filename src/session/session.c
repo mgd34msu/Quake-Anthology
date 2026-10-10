@@ -15,7 +15,7 @@ typedef struct component_state {
     bool retiring;
     bool in_frame;
     bool in_command;
-    qa_source_command command;
+    qa_usercmd command;
     qa_component_admission *reservation;
 } component_state;
 static bool next_frame(const component_state *, uint64_t *, uint64_t *, bool *, qa_error *);
@@ -271,7 +271,7 @@ static bool dispatch_think(void *context, qa_think_fn callback, void *callback_c
 {
     qa_session *session = context;
     if (scope->kind == QA_THINK_SOURCE_COMMAND) {
-        qa_source_command active;
+        qa_usercmd active;
         if (!qa_session_active_command(session, scope->source.command.provider, &active) ||
             !qa_actor_id_equal(active.actor, actor) ||
             active.kind != scope->source.command.kind || active.phase != scope->source.command.phase ||
@@ -685,7 +685,7 @@ bool qa_session_pending_frame(const qa_session *session, qa_actor_owner owner, u
     return true;
 }
 
-bool qa_session_active_command(const qa_session *session, qa_actor_owner owner, qa_source_command *out)
+bool qa_session_active_command(const qa_session *session, qa_actor_owner owner, qa_usercmd *out)
 {
     if (session == NULL || out == NULL || !session->stepping) return false;
     component_state *entry = component(session, owner);
@@ -735,13 +735,15 @@ bool qa_session_command_call(qa_session *session, qa_actor_owner owner, qa_actor
     bool stepping = session->stepping;
     uint64_t previous_host = session->frame_host_ns;
     if (!stepping) session->frame_host_ns = session->elapsed_ns;
-    entry->command = (qa_source_command){actor, owner, entry->component.clock.kind, QA_CLIENT_COMMAND,
-        entry->clock.frame_number - (entry->in_frame ? 1u : 0u), time, elapsed_ns,
-        session->advancing ? session->advance_elapsed_ns : elapsed_ns};
+    entry->command = (qa_usercmd){.actor = actor, .provider = owner,
+        .kind = entry->component.clock.kind, .phase = QA_CLIENT_COMMAND,
+        .completed_frame_number = entry->clock.frame_number - (entry->in_frame ? 1u : 0u),
+        .time_ns = time, .elapsed_ns = elapsed_ns,
+        .host_elapsed_ns = session->advancing ? session->advance_elapsed_ns : elapsed_ns};
     entry->in_command = true; session->stepping = true;
     command_invocation call = {entry, callback, state};
     bool ok = qa_session_invoke(session, actor, QA_INVOKE_PHYSICS, invoke_command, &call, error);
-    entry->in_command = false; entry->command = (qa_source_command){0};
+    entry->in_command = false; entry->command = (qa_usercmd){0};
     session->stepping = stepping; session->frame_host_ns = previous_host;
     if (session->faulted && error) *error = session->error;
     return ok && !session->faulted;

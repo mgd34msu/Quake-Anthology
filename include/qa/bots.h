@@ -130,7 +130,7 @@ typedef struct qa_bot_services {
     /* Submit to normal actor command admission, which interprets actions using
      * the selected movement/arsenal. Source Q3 command is supplied as well for
      * its exact byte/angle semantics; foreign providers use semantic input. */
-    bool (*submit)(void *, qa_actor_id, const qa_bot_input *, const qa_movement_command *, qa_error *);
+    bool (*submit)(void *, qa_actor_id, const qa_bot_input *, const qa_usercmd *, qa_error *);
     bool (*console)(void *, qa_actor_id, char *text, size_t, bool *found, qa_error *);
     /* Source service identities differ from the shared library namespace. */
     bool (*source_client)(void *, qa_actor_id, int32_t *, qa_error *);

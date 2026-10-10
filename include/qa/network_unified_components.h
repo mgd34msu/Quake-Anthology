@@ -16,10 +16,10 @@ typedef struct qa_unified_control_arguments {
     char **values;
     size_t count;
 } qa_unified_control_arguments;
-typedef struct qa_unified_component_command {
+typedef struct qa_module_server_command {
     int32_t sequence;
     qa_unified_control_arguments arguments;
-} qa_unified_component_command;
+} qa_module_server_command;
 typedef struct qa_unified_component_q3 {
     qa_unified_component_owner owner;
     qa_unified_component_identity identity;
@@ -29,7 +29,7 @@ typedef struct qa_unified_component_q3 {
     int64_t game_state_revision;
     qa_q3_gamestate *game_state;
     int32_t command_base;
-    qa_unified_component_command *commands;
+    qa_module_server_command *commands;
     size_t command_count;
 } qa_unified_component_q3;
 typedef enum qa_unified_component_hud {

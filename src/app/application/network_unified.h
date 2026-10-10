@@ -45,7 +45,7 @@ bool application_unified_component_command(qa_application *, qa_net_client_id, q
     const qa_unified_component_owner *owner, const char *const *arguments,
     size_t count, qa_error *);
 bool application_unified_source_command(qa_application *,qa_net_client_id,qa_net_seat_id,
-    const qa_unified_source_command *,qa_error *);
+    const qa_module_console_call *,qa_error *);
 bool application_unified_player_input(qa_application *, qa_net_client_id, qa_net_seat_id,
     qa_actor_id, const qa_unified_input *, qa_error *);
 bool application_unified_player_disconnect(qa_application *, qa_net_client_id, qa_net_seat_id,

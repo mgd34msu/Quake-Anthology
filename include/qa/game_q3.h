@@ -396,7 +396,7 @@ typedef struct qa_q3_arsenal_source {
  * health. Only the selected arsenal changes; no source or body motion is replayed. */
 bool qa_q3_arsenal_source_step(qa_q3_game *, qa_actor_id, const qa_q3_controls *,
     float elapsed_ms, const qa_q3_arsenal_source *, qa_error *);
-bool qa_q3_player_command(qa_q3_game *, qa_actor_id, const qa_movement_command *, float elapsed_ms,
+bool qa_q3_player_command(qa_q3_game *, qa_actor_id, const qa_usercmd *, float elapsed_ms,
                           qa_error *);
 bool qa_q3_player_timers(qa_q3_game *, qa_actor_id, int32_t elapsed_ms, qa_error *);
 bool qa_q3_player_effects(qa_q3_game *, qa_actor_id, int32_t elapsed_ms, int32_t water_level,

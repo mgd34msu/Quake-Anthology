@@ -381,7 +381,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 (float)delta[1]*(360.f/65536.f),(float)delta[2]*(360.f/65536.f));
         } else if (kind==QA_RULESET_Q2_RERELEASE)
             frame.delta_angles=state.state.data.q2r.delta_angles;
-        qa_movement_command command;
+        qa_usercmd command;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error)) return false;
         if (!frontend_network_client_sample(frontend,i,actor,&command,
             FRONTEND_REMOTE_PREDICTION_ABSOLUTE,&sample,duration,error)) return false;
@@ -431,7 +431,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             }
             break;
         case QA_PLATFORM_EVENT_USERCMD: {
-            qa_movement_command command;
+            qa_usercmd command;
             memcpy(&command,payload.data,sizeof(command));
             qa_actor_id actor; uint32_t ordinal;
             uint32_t seat=(uint32_t)event.value;

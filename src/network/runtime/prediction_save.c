@@ -2,13 +2,13 @@
 #include "qa/network_save.h"
 #include "../q3/save_fields.h"
 
-static bool movement_valid(const qa_movement_command *m)
+static bool movement_valid(const qa_usercmd *m)
 {
     return (unsigned)m->kind <= QA_RULESET_Q3 && isfinite(m->acknowledged_server_seconds) &&
         isfinite(m->angles.x) && isfinite(m->angles.y) && isfinite(m->angles.z) &&
         isfinite(m->forward_move) && isfinite(m->side_move) && isfinite(m->up_move);
 }
-static bool put_movement(qa_net_writer *w, const qa_movement_command *m)
+static bool put_movement(qa_net_writer *w, const qa_usercmd *m)
 {
     if (!movement_valid(m)) return qa_net_writer_fail(w, "Invalid retained network movement command");
     return qa_net_write_u32(w, m->kind) && qa_net_write_u64(w, m->sequence) &&
@@ -19,7 +19,7 @@ static bool put_movement(qa_net_writer *w, const qa_movement_command *m)
         qa_net_write_f32(w, m->side_move) && qa_net_write_f32(w, m->up_move) && qa_net_write_u32(w, m->buttons) &&
         qa_net_write_u8(w, m->impulse) && qa_net_write_u8(w, m->light_level) && qa_net_write_u8(w, m->weapon);
 }
-static bool get_movement(qa_net_reader *r, qa_movement_command *m)
+static bool get_movement(qa_net_reader *r, qa_usercmd *m)
 {
     m->kind = (qa_ruleset_id)qa_net_read_u32(r); m->sequence = qa_net_read_u64(r);
     m->milliseconds = qa_net_read_u32(r); m->server_time_ms = qa_net_read_i32(r); m->server_frame = qa_net_read_i32(r);
@@ -39,12 +39,12 @@ static bool history_valid(const qa_network_peer *peer, const qa_network_seat *s,
     for (size_t i = 0; i < QA_NETWORK_COMMAND_BACKUP; ++i) {
         const qa_network_history_entry *entry = &s->history[i];
         if (!entry->valid) continue;
-        const qa_network_command *c = &entry->command;
+        const qa_usercmd *c = &entry->command;
         if (!s->has_submitted || !qa_net_client_id_equal(c->client, peer->id) ||
             c->seat.owner != s->id.owner || c->seat.index != s->id.index || c->epoch != peer->epoch ||
-            !c->actor.registry || !c->actor.generation || !movement_valid(&c->movement) ||
-            !c->movement.sequence || c->movement.sequence <= s->acknowledged || c->movement.sequence > s->submitted ||
-            c->movement.sequence % QA_NETWORK_COMMAND_BACKUP != i) goto invalid;
+            !c->actor.registry || !c->actor.generation || !movement_valid(c) ||
+            !c->sequence || c->sequence <= s->acknowledged || c->sequence > s->submitted ||
+            c->sequence % QA_NETWORK_COMMAND_BACKUP != i) goto invalid;
         if (c->has_arsenal && (!c->arsenal.provider.size || c->arsenal.weapon.size > SIZE_MAX - c->arsenal.provider.size ||
             entry->arsenal.size != c->arsenal.provider.size + c->arsenal.weapon.size ||
             !entry->arsenal.data || c->arsenal.provider.data != entry->arsenal.data ||
@@ -54,7 +54,7 @@ static bool history_valid(const qa_network_peer *peer, const qa_network_seat *s,
     for (uint64_t i = 1; i <= s->submitted - s->acknowledged; ++i) {
         uint64_t sequence = s->acknowledged + i;
         const qa_network_history_entry *entry = &s->history[sequence % QA_NETWORK_COMMAND_BACKUP];
-        if (!entry->valid || entry->command.movement.sequence != sequence) goto invalid;
+        if (!entry->valid || entry->command.sequence != sequence) goto invalid;
     }
     return true;
 invalid:
@@ -99,10 +99,10 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
             for (size_t k = 0; ok && k < QA_NETWORK_COMMAND_BACKUP; ++k) {
                 const qa_network_history_entry *entry = &s->history[k];
                 ok = qa_net_write_u8(&w, entry->valid); if (!ok || !entry->valid) continue;
-                const qa_network_command *c = &entry->command; qa_saved_actor_id actor;
+                const qa_usercmd *c = &entry->command; qa_saved_actor_id actor;
                 ok = refs->save_actor(refs->context, c->actor, &actor, error) &&
                     qa_net_write_u64(&w, actor.generation) && qa_net_write_u32(&w, actor.slot) &&
-                    put_movement(&w, &c->movement) && qa_net_write_u8(&w, c->has_arsenal);
+                    put_movement(&w, c) && qa_net_write_u8(&w, c->has_arsenal);
                 if (ok && c->has_arsenal)
                     ok = qa_net_write_u64(&w, c->arsenal.provider.size) && qa_net_write_u64(&w, c->arsenal.weapon.size) &&
                         qa_net_write_u8(&w, c->arsenal.use_holdable) &&
@@ -149,11 +149,11 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
             for (size_t k = 0; ok && k < QA_NETWORK_COMMAND_BACKUP; ++k) {
                 qa_network_history_entry *entry = &s->history[k]; entry->valid = q3_save_bool(&r);
                 if (r.failed) { ok = false; break; } if (!entry->valid) continue;
-                qa_network_command *c = &entry->command;
+                qa_usercmd *c = &entry->command;
                 qa_saved_actor_id actor;
                 actor.generation = qa_net_read_u64(&r); actor.slot = qa_net_read_u32(&r);
                 c->client = peer->id; c->seat = s->id; c->epoch = peer->epoch;
-                ok = !r.failed && refs->restore_actor(refs->context, actor, &c->actor, error) && get_movement(&r, &c->movement);
+                ok = !r.failed && refs->restore_actor(refs->context, actor, &c->actor, error) && get_movement(&r, c);
                 if (!ok) break;
                 c->has_arsenal = q3_save_bool(&r);
                 if (c->has_arsenal) {
@@ -175,7 +175,7 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
                     bool previous_callback = runtime->callback;
                     runtime->callback = true; peer->seats[j].applying = true;
                     ok = runtime->options.hooks.controlled(runtime->options.hooks.context, c->client,
-                        c->seat, c->actor, c->movement.kind,
+                        c->seat, c->actor, c->kind,
                         c->has_arsenal ? c->arsenal.provider : (qa_bytes){0}, error);
                     peer->seats[j].applying = false; runtime->callback = previous_callback;
                 }

@@ -87,12 +87,6 @@ typedef struct qa_unified_movement {
                  double forward, right, up; } q3;
     } data;
 } qa_unified_movement;
-typedef struct qa_unified_arsenal {
-    qa_bytes provider, weapon; /* UTF-8; weapon.size == 0 means no selection. */
-    bool use_holdable;
-    bool has_impulse;
-    uint8_t impulse;
-} qa_unified_arsenal;
 typedef struct qa_unified_composition {
     qa_buffer canonical;
 } qa_unified_composition;

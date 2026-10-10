@@ -970,7 +970,7 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
         !settings.ready || settings.kind!=o->input.kind || settings.physical_seat!=physical ||
         settings.client!=source.physical.source.context.cvars || !frontend_neutral_config_current(&settings)) return false;
     qa_input_command_builder next=o->input;
-    qa_input_command_tuning tuning; qa_movement_command movement;
+    qa_input_command_tuning tuning; qa_usercmd movement;
     qa_input_command_frame frame={.kind=next.kind,.sequence=o->input_sequence+1,
         .acknowledged_server_seconds=received.seconds,.has_pitch_drift=true,
         .grounded=player.grounded,.ideal_pitch=player.ideal_pitch,.drift_disabled=player.pitch_drift_disabled};
@@ -980,8 +980,8 @@ bool frontend_network_q1_client_input(frontend_network_q1_client *o,uint32_t phy
     if(!qa_input_command_build(&next,&tuning,sample,&frame,source_frame_ms,&movement,error) ||
         !frontend_remote_q1_current(&received) || !frontend_remote_q1_source_current(&source) ||
         !frontend_neutral_config_current(&settings)) return false;
-    qa_network_command command={.client=o->client,.seat=o->binding.seat,.actor=player.actor,
-        .epoch=o->epoch,.movement=movement};
+    qa_usercmd command=movement;
+    command.client=o->client; command.seat=o->binding.seat; command.actor=player.actor; command.epoch=o->epoch;
     ++o->calls;
     bool ok=qa_network_q1_client_submit(o->options.runtime,&command,error);
     --o->calls;

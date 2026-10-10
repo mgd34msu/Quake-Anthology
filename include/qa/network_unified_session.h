@@ -8,7 +8,7 @@ typedef struct qa_unified_input {
     uint64_t sequence;
     qa_unified_movement command;
     bool has_arsenal;
-    qa_unified_arsenal arsenal;
+    qa_usercmd_arsenal arsenal;
 } qa_unified_input;
 typedef struct qa_unified_input_batch {
     uint32_t epoch;
@@ -100,13 +100,13 @@ bool qa_unified_session_client_disconnect_pending(const qa_unified_session *, qa
 bool qa_unified_session_control(qa_unified_session *, const qa_unified_document *, qa_error *);
 /* Native compiled Source commands preserve their received activation and
  * lexical tokens; the server resolves that actual provider instance. */
-typedef struct qa_unified_source_command {
+typedef struct qa_module_console_call {
     const char *instance;
     uint64_t publication, map_revision;
     const char *const *arguments;
     size_t argument_count;
-} qa_unified_source_command;
-bool qa_unified_session_source_command(qa_unified_session *, const qa_unified_source_command *, qa_error *);
+} qa_module_console_call;
+bool qa_unified_session_source_command(qa_unified_session *, const qa_module_console_call *, qa_error *);
 bool qa_unified_session_frame(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_input(qa_unified_session *, const qa_unified_input *, qa_error *);
 /* Retains a real local close request, including from the actual Source

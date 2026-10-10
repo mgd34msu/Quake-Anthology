@@ -94,7 +94,7 @@ static bool commands(application_q3_mod_capture *c, input_command *command, bool
             if (before.angles[0]==after.angles[0] && before.angles[1]==after.angles[1] && before.angles[2]==after.angles[2]) continue;
             qa_q3_player player;
             if (!c->owner->services.player_state(c->owner->services.context,c->application->actor,&player,e) || !q3mod_current(c->owner,e)) return false;
-            qa_movement_command source = {.kind = QA_RULESET_Q3}, projected;
+            qa_usercmd source = {.kind = QA_RULESET_Q3}, projected;
             memcpy(source.angle_words, after.angles, sizeof(source.angle_words));
             qa_input_command_basis from = {.kind = QA_RULESET_Q3,
                 .words = true, .relative = true, .wrap_words = true};

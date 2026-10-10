@@ -92,7 +92,7 @@ static bool command_values(void *context,int32_t weapon,float sensitivity,qa_err
         frontend_unified_input_command_values(input,weapon,sensitivity,e) && frontend_unified_q3_runtime_factory_current(o); }
 static bool oldest(void *context,const q3n_frame *f,int32_t *time,bool *available,qa_error *e)
 {
-    frontend_unified_q3_runtime_factory *o=context;qa_movement_command command;frontend_unified_input *input=NULL;
+    frontend_unified_q3_runtime_factory *o=context;qa_usercmd command;frontend_unified_input *input=NULL;
     if(!time || !available || !cut(o,f,e) || !o->options.input_read(o->options.context,o->options.replica,&input,e) ||
        !input || !cut(o,f,e) || !frontend_unified_input_oldest_q3(input,&command,available,e))return false;
     if(*available)*time=command.server_time_ms;

@@ -788,7 +788,7 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
 }
 
 bool application_unified_source_command(qa_application *app,qa_net_client_id client,
-    qa_net_seat_id seat,const qa_unified_source_command *value,qa_error *error)
+    qa_net_seat_id seat,const qa_module_console_call *value,qa_error *error)
 {
     application_unified_source source;
     qa_unified_session_player player;

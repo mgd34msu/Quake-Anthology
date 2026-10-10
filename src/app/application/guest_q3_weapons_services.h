@@ -30,7 +30,7 @@ bool application_q3_weapons_services_request(application_q3_weapons_services *, 
 bool application_q3_weapons_services_request_completed(application_q3_weapons_services *,
     qa_actor_id, qa_error *);
 bool application_q3_weapons_services_slice_finish(struct q3g_role *, qa_actor_id,
-    const qa_movement_command *, const qa_q3_player *, bool reached, qa_error *);
+    const qa_usercmd *, const qa_q3_player *, bool reached, qa_error *);
 bool application_q3_weapons_services_match_admit(application_q3_weapons_services *, qa_actor_id, qa_error *);
 /* Restored modes obtain the actual callback descriptor before creating their
  * own lease. The core retains and saves that lease's sole serial. */

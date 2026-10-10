@@ -130,7 +130,7 @@ struct application_qc_profile {
 };
 typedef struct application_qc_inputs {
     qa_actor_id self, other, activator, attacker, inflictor;
-    const qa_movement_command *command;
+    const qa_usercmd *command;
     const qa_command_invocation *console;
     uint64_t time_ns, elapsed_ns;
     float result;
@@ -172,7 +172,7 @@ bool application_qc_authored_map_ready(const application_provider *, qa_error *)
 bool application_qc_initialize_declared(struct application_qc_state *, qa_error *);
 bool application_qc_initialize_addition(application_provider *, qa_error *);
 bool application_qc_entered(void *, qa_qc_instance *, const qa_qc_call_event *, qa_error *);
-float application_qc_input_scalar(const qa_movement_command *, application_qc_input_id);
+float application_qc_input_scalar(const qa_usercmd *, application_qc_input_id);
 bool application_qc_load_declared_map(struct application_qc_state *, const qa_bsp_view *,
                                         const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_qc_client_think(struct application_qc_state *, qa_actor_id,

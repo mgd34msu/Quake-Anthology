@@ -13,7 +13,7 @@ struct frontend_unified_input {
     qa_executable_recipe *recipe;
     const qa_recipe_provider *movement, *arsenal;
     frontend_unified_command_builder builder, pending_builder;
-    qa_movement_command q3_commands[64];
+    qa_usercmd q3_commands[64];
     size_t q3_command_count;
     qa_unified_input pending;
     qa_seat_input_sample retained_sample;

@@ -33,7 +33,7 @@ typedef struct rr_touches {
 typedef struct rr_move {
     qa_move_context *move;
     qa_q2r_movement_state *state;
-    qa_movement_command command;
+    qa_usercmd command;
     qa_movement_result *result;
     qa_vec3 local_origin, *origin, velocity, previous_origin, start_velocity, forward, right, up;
     qa_q2r_slide *generic;
@@ -330,7 +330,7 @@ static qa_vec3 rr_current(int32_t contents)
 
 static void rr_add_currents(rr_move *p, qa_vec3 *wish)
 {
-    const qa_movement_command *cmd = &p->command;
+    const qa_usercmd *cmd = &p->command;
     if (p->state->flags & RR_LADDER) {
         if (cmd->buttons & (RR_JUMP_BUTTON | RR_CROUCH_BUTTON)) {
             float speed = p->result->water_level >= 2 ? p->max_speed : 200.0f;
@@ -380,7 +380,7 @@ static qa_vec3 rr_wish(rr_move *p)
 static void rr_water_move(rr_move *p)
 {
     qa_vec3 wish = rr_wish(p);
-    const qa_movement_command *cmd = &p->command;
+    const qa_usercmd *cmd = &p->command;
     if (cmd->forward_move == 0 && cmd->side_move == 0 && !(cmd->buttons & (RR_JUMP_BUTTON | RR_CROUCH_BUTTON))) {
         if (!rr_grounded(p)) wish.z -= 60.0f;
     } else if (cmd->buttons & RR_CROUCH_BUTTON) wish.z -= 200.0f * p->speed;

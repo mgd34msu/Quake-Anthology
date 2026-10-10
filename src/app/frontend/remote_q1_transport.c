@@ -45,7 +45,7 @@ static int16_t source_short(float input)
     uint16_t word = (uint16_t)(uint32_t)qa_source_float_to_i32(input);
     int16_t result; memcpy(&result, &word, sizeof(result)); return result;
 }
-static bool command(frontend_remote_q1 *row, const qa_network_command *source, qa_error *error)
+static bool command(frontend_remote_q1 *row, const qa_usercmd *source, qa_error *error)
 {
     if (!source || !current(row, source->client, error) || source->seat.owner != row->options.domain.seat.owner ||
         source->seat.index != row->options.domain.seat.index || source->epoch != row->options.domain.epoch ||
@@ -62,24 +62,24 @@ static bool command(frontend_remote_q1 *row, const qa_network_command *source, q
         }
         if (!same && !selected(row, requested, error)) return false;
     }
-    row->view_angles = source->movement.angles; ++row->revision; return true;
+    row->view_angles = source->angles; ++row->revision; return true;
 }
-static bool nq_command(void *context, const qa_network_command *source, qa_q1_command *out, qa_error *error)
+static bool nq_command(void *context, const qa_usercmd *source, qa_q1_command *out, qa_error *error)
 {
     frontend_remote_q1 *row = context;
-    if (!out || !source || source->movement.kind != QA_RULESET_NETQUAKE || !command(row, source, error)) return false;
-    const qa_movement_command *m = &source->movement;
+    if (!out || !source || source->kind != QA_RULESET_NETQUAKE || !command(row, source, error)) return false;
+    const qa_usercmd *m = source;
     *out = (qa_q1_command){.time = (float)m->acknowledged_server_seconds,
         .angles = {m->angles.x, m->angles.y, m->angles.z}, .forward = source_short(m->forward_move),
         .side = source_short(m->side_move), .up = source_short(m->up_move), .buttons = (uint8_t)m->buttons,
         .impulse = m->impulse ? m->impulse : row->pending_impulse};
     row->pending_impulse = 0; return true;
 }
-static bool qw_command(void *context, const qa_network_command *source, uint64_t now, qa_qw_command *out, qa_error *error)
+static bool qw_command(void *context, const qa_usercmd *source, uint64_t now, qa_qw_command *out, qa_error *error)
 {
     frontend_remote_q1 *row = context;
-    if (!out || !source || source->movement.kind != QA_RULESET_QUAKEWORLD || !command(row, source, error)) return false;
-    const qa_movement_command *m = &source->movement;
+    if (!out || !source || source->kind != QA_RULESET_QUAKEWORLD || !command(row, source, error)) return false;
+    const qa_usercmd *m = source;
     *out = (qa_qw_command){.angles = {m->angles.x, m->angles.y, m->angles.z},
         .forward = source_short(m->forward_move), .side = source_short(m->side_move), .up = source_short(m->up_move),
         .msec = (uint8_t)m->milliseconds, .buttons = (uint8_t)m->buttons,

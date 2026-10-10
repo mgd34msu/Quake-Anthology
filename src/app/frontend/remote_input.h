@@ -45,7 +45,7 @@ void frontend_remote_input_clear(frontend_remote_input *);
 /* Consumes an already sampled physical receipt. This owner neither samples
  * input nor sends packets. Failure leaves the builder and output unchanged. */
 bool frontend_remote_input_build(frontend_remote_input *, const qa_seat_input_sample *,
-    double source_frame_ms, qa_movement_command *, bool *present, qa_error *);
+    double source_frame_ms, qa_usercmd *, bool *present, qa_error *);
 /* Exact logical builder continuation; no source read, clock or callback. The
  * enclosing network codec reconstructs its actual candidate bindings. */
 

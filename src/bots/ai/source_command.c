@@ -2,6 +2,7 @@
 #include "source_alias.h"
 #include "source_player.h"
 #include "source_view.h"
+#include "qa/text.h"
 
 static bool bytes(qa_bots *bots, bot_ai_state *state, uint8_t **out, qa_error *error) {
     if (!state || (!state->source_span.data && !bot_ai_source_alias_bind(bots, state, error)))
@@ -15,11 +16,11 @@ static bool bytes(qa_bots *bots, bot_ai_state *state, uint8_t **out, qa_error *e
 }
 
 bool bot_ai_source_command_read(qa_bots *bots, bot_ai_state *state,
-                                 qa_movement_command *out, qa_error *error) {
+                                 qa_usercmd *out, qa_error *error) {
     uint8_t *command;
     if (!out || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
-    *out = (qa_movement_command){.kind = QA_RULESET_Q3,
+    *out = (qa_usercmd){.kind = QA_RULESET_Q3,
         .server_time_ms = bot_source_i32_read(command),
         .buttons = bot_source_word_read(command + 16), .weapon = command[20]};
     for (uint32_t axis = 0; axis < 3; ++axis)
@@ -31,15 +32,23 @@ bool bot_ai_source_command_read(qa_bots *bots, bot_ai_state *state,
 }
 
 bool bot_ai_source_command_write(qa_bots *bots, bot_ai_state *state,
-                                  const qa_movement_command *value, qa_error *error) {
+                                  qa_usercmd *value, qa_error *error) {
     uint8_t *command;
     if (!value || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
     bot_source_i32_write(command, value->server_time_ms);
     bot_source_word_write(command + 16, value->buttons);
     command[20] = value->weapon;
-    for (uint32_t axis = 0; axis < 3; ++axis)
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+        uint32_t word = (uint32_t)value->angle_words[axis] & 65535u;
+        value->angle_words[axis] = word >= 32768u ? (int32_t)word - 65536 : (int32_t)word;
         bot_source_i32_write(command + 4 + axis * 4, value->angle_words[axis]);
+    }
+    float *moves[] = {&value->forward_move, &value->side_move, &value->up_move};
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        uint32_t byte = (uint32_t)qa_source_float_to_i32(*moves[axis]) & 255u;
+        *moves[axis] = (float)(byte >= 128u ? (int32_t)byte - 256 : (int32_t)byte);
+    }
     command[21] = (uint8_t)(int32_t)value->forward_move;
     command[22] = (uint8_t)(int32_t)value->side_move;
     command[23] = (uint8_t)(int32_t)value->up_move;

@@ -66,7 +66,7 @@ static bool connected(qa_bots *b, bot_ai_state *s) {
         bot_ai_live(b, s->view.actor) && info.connected;
 }
 static bool submit(qa_bots *b, bot_ai_state *s, const qa_bot_input *input,
-                     qa_movement_command *command, qa_error *e) {
+                     qa_usercmd *command, qa_error *e) {
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
     if (s->command_sequence == UINT64_MAX) return bot_ai_fail(e, "bot command sequence exhausted");
     command->sequence = ++s->command_sequence;
@@ -91,7 +91,7 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
     qa_bot_input input;
-    qa_movement_command command;
+    qa_usercmd command;
     if(!bot_ai_source_action_view(b,s,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!bot_ai_source_action_input(b,s,(float)time/1000,&input,e)) return false;
@@ -107,9 +107,9 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
         qa_input_command_frame frame = {.kind = QA_RULESET_Q3, .server_time_ms = time,
             .weapon = input.weapon, .attack_allowed = true};
         memcpy(frame.delta_angle_words, delta, sizeof(delta));
-        qa_input_usercmd built;
-        qa_input_usercmd_build(&intent, &frame, 0, QA_INPUT_COMMAND_SOURCE_Q3, &built);
-        qa_input_usercmd_project(&built, &command);
+        qa_usercmd built;
+        qa_usercmd_build(&intent, &frame, 0, &built);
+        command = built;
         ok = bot_ai_source_command_write(b, s, &command, e);
     }
     if(!ok) return false;
@@ -269,7 +269,7 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         for (uint32_t i = 0; i < 64; ++i) {
             bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
             if (!s || !connected(b, s)) continue;
-            qa_movement_command command;
+            qa_usercmd command;
             if (!bot_ai_source_command_pause(b, s, time, e) ||
                 !bot_ai_source_command_read(b, s, &command, e)) return false;
             qa_bot_input input = {.view_angles = bot_ai_view_angles(s), .weapon = command.weapon};

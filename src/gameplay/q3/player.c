@@ -35,7 +35,7 @@ bool qa_q3_selected_client_effects_publish(qa_q3_game *game, qa_actor_id actor,
 }
 
 static bool source_command_active(const qa_q3_game *game, qa_actor_id actor) {
-    qa_source_command command;
+    qa_usercmd command;
     uint32_t slot;
     return qa_session_active_command(game->options.services.session, game->options.owner, &command) &&
         qa_actor_id_equal(command.actor, actor) &&
@@ -341,7 +341,7 @@ static int32_t q3_angle_word(float angle) {
     float scaled = ((angle * 65536.0f) / 360.0f);
     return (int32_t)((uint32_t)q3_source_float_to_int(scaled) & 65535u);
 }
-static void q3_cutscene_movement(qa_movement_state *state, qa_movement_command *command,
+static void q3_cutscene_movement(qa_movement_state *state, qa_usercmd *command,
                                  const qa_q3_cutscene_state *cutscene) {
     qa_q3_movement_state *movement = &state->data.q3;
     movement->movement_type = 4;
@@ -1110,7 +1110,7 @@ source_done:
     --game->observation_depth;
     return okay;
 }
-bool qa_q3_player_command(qa_q3_game *game, qa_actor_id actor, const qa_movement_command *command,
+bool qa_q3_player_command(qa_q3_game *game, qa_actor_id actor, const qa_usercmd *command,
                           float elapsed_ms, qa_error *error) {
     if (!command || command->kind != QA_RULESET_Q3)
         return q3_fail(error, "Q3 command wrapper requires the Q3 input dialect");

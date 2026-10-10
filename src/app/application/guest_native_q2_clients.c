@@ -261,7 +261,7 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared native Source lacks its admitted raw ClientThink recipe");
     if(application_provider_for(app,actor,QA_ROLE_ARSENAL,NULL)!=provider)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"Declared raw Source lacks its reached isolated foreign arsenal capability");
-    const qa_movement_command *raw=engine->input_command;
+    const qa_usercmd *raw=engine->input_command;
     qa_movement_state physical;
     if(!application_native_q2_declared_input_read(provider,actor,&physical,error)) return false;
     qa_vec3 aim;
@@ -297,7 +297,7 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
 }
 
 bool application_native_q2_input_think(application_provider *provider, qa_actor_id actor,
-    const qa_movement_command *command, const application_native_q2_input_stage *stage, qa_error *error)
+    const qa_usercmd *command, const application_native_q2_input_stage *stage, qa_error *error)
 {
     uint32_t slot = source_client_slot(provider, actor);
     struct application_native_q2 *engine = slot ? provider->state.native.q2_engine : NULL;
@@ -354,7 +354,7 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
 }
 
 static bool native_move(application_provider *provider, qa_actor_id actor,
-    const qa_movement_command *command, const application_control_external_stage *stage,
+    const qa_usercmd *command, const application_control_external_stage *stage,
     bool *handled, qa_error *error)
 {
     if (!handled || !command) return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement request is missing");
@@ -442,11 +442,11 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
 }
 
 bool application_native_q2_move(application_provider *provider, qa_actor_id actor,
-    const qa_movement_command *command, bool *handled, qa_error *error)
+    const qa_usercmd *command, bool *handled, qa_error *error)
 { return native_move(provider, actor, command, NULL, handled, error); }
 
 bool application_native_q2_stage_move(application_provider *provider, qa_actor_id actor,
-    const qa_movement_command *command, const application_control_external_stage *stage,
+    const qa_usercmd *command, const application_control_external_stage *stage,
     bool *handled, qa_error *error)
 {
     if (!provider || !stage || stage->application != provider->application ||

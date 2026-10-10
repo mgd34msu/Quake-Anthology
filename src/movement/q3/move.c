@@ -51,7 +51,7 @@ static void q3_accelerate(qa_q3_step *step, qa_vec3 direction, float speed, floa
 }
 
 static float q3_command_scale(qa_q3_step *step) {
-    const qa_movement_command *command = &step->context->command;
+    const qa_usercmd *command = &step->context->command;
     float forward = (float)command->forward_move;
     float right = (float)command->side_move;
     float up = (float)command->up_move;
@@ -73,7 +73,7 @@ static void q3_direction(qa_q3_step *step) {
 
 static bool q3_jump(qa_q3_step *step) {
     qa_q3_movement_state *state = q3_state(step);
-    qa_movement_command *command = &step->context->command;
+    qa_usercmd *command = &step->context->command;
     if ((state->movement_flags & Q3_RESPAWNED) || command->up_move < 10) return false;
     if (state->movement_flags & Q3_JUMP_HELD) {
         command->up_move = 0;
@@ -117,7 +117,7 @@ static void q3_water_jump_move(qa_q3_step *step) {
 }
 
 static qa_vec3 q3_wish(qa_q3_step *step, float scale) {
-    const qa_movement_command *command = &step->context->command;
+    const qa_usercmd *command = &step->context->command;
     qa_vec3 wish = qa_vec_add(
         qa_vec_scale(qa_vec_scale(step->forward, scale), (float)command->forward_move),
         qa_vec_scale(qa_vec_scale(step->right, scale), (float)command->side_move));
@@ -413,7 +413,7 @@ static void q3_duck(qa_q3_step *step) {
 
 static void q3_footsteps(qa_q3_step *step) {
     qa_q3_movement_state *state = q3_state(step);
-    qa_movement_command *command = &step->context->command;
+    qa_usercmd *command = &step->context->command;
     step->horizontal_speed = sqrtf(state->velocity.x * state->velocity.x + state->velocity.y * state->velocity.y);
     if (state->ground.hit == QA_TRACE_HIT_NONE) {
         if (step->context->input->environment.invulnerable) q3_legs(step, Q3_LEGS_IDLECR, false);
@@ -480,7 +480,7 @@ static float q3_snap(float value) {
 static void q3_run_step(qa_q3_step *step) {
     qa_move_context *context = step->context;
     qa_q3_movement_state *state = q3_state(step);
-    qa_movement_command *command = &context->command;
+    qa_usercmd *command = &context->command;
     if (command->forward_move > 64 || command->forward_move < -64 ||
         command->side_move > 64 || command->side_move < -64) command->buttons &= ~(uint32_t)Q3_WALKING;
     if (command->buttons & Q3_TALK) state->flags |= 0x1000;

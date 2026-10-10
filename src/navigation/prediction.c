@@ -134,7 +134,7 @@ static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t millisecond
     int32_t word = (int32_t)floorf(yaw * (65536.0f / 360.0f) + 0.5f) & 65535;
     input->elapsed_ns = elapsed;
     input->time_ns += input->elapsed_ns;
-    qa_movement_command c = {.kind = input->profile.kind,
+    qa_usercmd c = {.kind = input->profile.kind,
                              .sequence = p->sequence++,
                              .milliseconds = milliseconds,
                              .angles = {0, yaw, 0},
@@ -222,7 +222,7 @@ static bool same_q2_prediction(const qa_movement_result *a, const qa_movement_re
         a->impact_delta == b->impact_delta && a->step_clip == b->step_clip &&
         a->jump_sound == b->jump_sound;
 }
-static bool same_q2_command(const qa_movement_command *a, const qa_movement_command *b) {
+static bool same_q2_command(const qa_usercmd *a, const qa_usercmd *b) {
     if (a->kind != b->kind || a->milliseconds != b->milliseconds ||
         !same_vector(a->angles, b->angles) || a->forward_move != b->forward_move ||
         a->side_move != b->side_move || a->up_move != b->up_move ||
@@ -267,7 +267,7 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
     float seconds = 0;
     for (unsigned index = 0; index < 512 && seconds < 8; ++index) {
         qa_movement_result previous = p->result;
-        qa_movement_command previous_command = p->input.command;
+        qa_usercmd previous_command = p->input.command;
         if (!command(p, to, mode, e))
             return false;
         qa_movement_result *result = &p->result;

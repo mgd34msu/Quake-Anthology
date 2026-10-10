@@ -34,7 +34,7 @@ typedef struct qa_recovery qa_recovery;
  * state, input bindings and presentation are reconstructed normally. */
 typedef struct qa_recovery_input {
     uint32_t seat;
-    qa_movement_command command;
+    qa_usercmd command;
 } qa_recovery_input;
 bool qa_recovery_input_decode(qa_bytes, qa_recovery_input *, qa_error *);
 /* Missing and cleanly closed journals are not recovery candidates. A corrupt

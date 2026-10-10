@@ -498,7 +498,7 @@ static int16_t source_short(float value)
     return result;
 }
 
-static qa_vec3 source_command_angles(const qa_movement_command *command)
+static qa_vec3 source_command_angles(const qa_usercmd *command)
 {
     return command->kind == QA_RULESET_Q2_CLASSIC ?
         qa_v3((float)command->angle_words[0] * (360.f / 65536.f),
@@ -577,7 +577,7 @@ bool qa_q2_player_movement_read(const qa_q2_game *game, qa_actor_id id,
 }
 
 bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
-    const qa_movement_command *command, qa_movement_result *out,
+    const qa_usercmd *command, qa_movement_result *out,
     bool *run_pmove, qa_error *error)
 {
     if (!qa_q2_player_movement_read(g, id, out, NULL, error)) return false;
@@ -632,7 +632,7 @@ bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
 }
 
 bool qa_q2_player_movement_complete(qa_q2_game *g, qa_actor_id id,
-    const qa_movement_result *result, const qa_movement_command *command,
+    const qa_movement_result *result, const qa_usercmd *command,
     bool source_movement, bool was_grounded, qa_error *error)
 {
     q2_actor *a = q2_actor_get(g, id, false, error);

@@ -52,7 +52,7 @@ static bool commands(application_unified_component_capture *capture,qa_unified_c
 {
     target->command_base=base;
     target->commands=qa_unified_frame_lease_alloc(capture->lease,context->command_count,
-        sizeof(*target->commands),_Alignof(qa_unified_component_command),e);
+        sizeof(*target->commands),_Alignof(qa_module_server_command),e);
     if (context->command_count && !target->commands) return false;
     int32_t previous=base;
     for (size_t i=0;i<context->command_count;++i) {
@@ -64,7 +64,7 @@ static bool commands(application_unified_component_capture *capture,qa_unified_c
         if (source->addressed && !qa_q3_tokenize(source->text,&tokens,e)) return false;
         if (tokens.truncated || tokens.count>128)
             return application_fail(e,QA_ERROR_FORMAT,"Component command exceeds its authentic argument extent");
-        qa_unified_component_command *row=target->commands+target->command_count++;
+        qa_module_server_command *row=target->commands+target->command_count++;
         row->sequence=source->sequence; row->arguments.count=tokens.count;
         row->arguments.values=qa_unified_frame_lease_alloc(capture->lease,tokens.count,
             sizeof(*row->arguments.values),_Alignof(char *),e);

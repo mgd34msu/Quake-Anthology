@@ -206,8 +206,8 @@ static bool source_input(void *context, qa_net_client_id id, const qa_qw_command
     qw_frontend_peer *peer = context; qa_actor_id actor; qa_player_state selected;
     if (!qa_net_client_id_equal(id, peer->client) || !commands || !count || count > 20 ||
         !peer_actor(peer, &actor, error) || !qa_application_control_read(peer->host->frontend->application, actor, &selected)) return false;
-    qa_movement_command raw[20];
-    for (size_t i = 0; i < count; ++i) raw[i] = (qa_movement_command){.kind = QA_RULESET_QUAKEWORLD,
+    qa_usercmd raw[20];
+    for (size_t i = 0; i < count; ++i) raw[i] = (qa_usercmd){.kind = QA_RULESET_QUAKEWORLD,
         .sequence = sequence, .milliseconds = commands[i].msec,
         .angles = qa_v3(commands[i].angles[0], commands[i].angles[1], commands[i].angles[2]),
         .forward_move = commands[i].forward, .side_move = commands[i].side, .up_move = commands[i].up,

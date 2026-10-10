@@ -475,7 +475,7 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
     for(size_t i=0;i<(rerelease?2u:3u);++i)
         if(!isfinite(scaled_moves[i])||(!rerelease&&(scaled_moves[i]<INT16_MIN||scaled_moves[i]>INT16_MAX))||!isfinite((float)scaled_moves[i]))
             return application_fail(e,QA_ERROR_ARGUMENT,"Native user command movement exceeds its actual source ABI");
-    qa_movement_command input = {.kind = kind, .angles = v[Q3_MOD_VIEW_ANGLES].as.vector}, converted;
+    qa_usercmd input = {.kind = kind, .angles = v[Q3_MOD_VIEW_ANGLES].as.vector}, converted;
     qa_input_command_basis from = {.kind = kind, .units = 1}, to = {.kind = kind, .words = !rerelease};
     qa_input_command_convert(&input, &moves, &from, &to,
         (qa_input_axis_rule){.quantization = rerelease ? QA_INPUT_AXIS_EXACT : QA_INPUT_AXIS_TRUNCATE}, &converted);

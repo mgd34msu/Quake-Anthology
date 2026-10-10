@@ -93,9 +93,9 @@ bool qa_q2_wire_lightstyle_read(const qa_q2_game *, uint32_t,
 bool qa_q2_player_movement_read(const qa_q2_game *, qa_actor_id,
     qa_movement_result *, qa_vec3 *command_angles, qa_error *);
 bool qa_q2_player_movement_prepare(qa_q2_game *, qa_actor_id,
-    const qa_movement_command *, qa_movement_result *, bool *run_pmove, qa_error *);
+    const qa_usercmd *, qa_movement_result *, bool *run_pmove, qa_error *);
 bool qa_q2_player_movement_complete(qa_q2_game *, qa_actor_id,
-    const qa_movement_result *, const qa_movement_command *, bool source_movement,
+    const qa_movement_result *, const qa_usercmd *, bool source_movement,
     bool was_grounded, qa_error *);
 bool qa_q2_player_movement_restore(qa_q2_game *, qa_actor_id, const qa_body_state *,
     const qa_movement_result *, const qa_vec3 *command_angles, qa_error *);

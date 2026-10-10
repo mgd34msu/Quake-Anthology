@@ -271,7 +271,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     if (peer->retiring) return retire(peer, peer->retirement.reason, peer->retirement.notify, error);
     return qa_qw_signon_spawned(peer->signon) || send(peer, (qa_bytes){0}, NULL, error);
 }
-static bool command(void *context, const qa_network_command *value, qa_error *error)
+static bool command(void *context, const qa_usercmd *value, qa_error *error)
 { (void)context; (void)value; return qa_network_fail(error, "QuakeWorld server cannot submit local client movement"); }
 static bool restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *error)
 {

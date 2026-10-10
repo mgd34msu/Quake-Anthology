@@ -2,6 +2,7 @@
 #define QA_NETWORK_H
 
 #include "qa/binary.h"
+#include "qa/network_ids.h"
 #include "qa/actors.h"
 #include "qa/hash.h"
 
@@ -270,8 +271,6 @@ bool qa_net_fragments_receive(qa_net_fragments *, const qa_net_fragment *,
 bool qa_net_fragments_accept(qa_net_fragments *, uint32_t sequence);
 
 typedef struct qa_net_connections qa_net_connections;
-typedef struct qa_net_client_id { uint64_t owner, generation; uint32_t slot; } qa_net_client_id;
-typedef struct qa_net_seat_id { uint64_t owner; uint32_t index; } qa_net_seat_id;
 typedef struct qa_net_seat_binding { qa_net_seat_id seat; uint32_t remote_index; } qa_net_seat_binding;
 typedef enum qa_net_attachment { QA_NET_LOCAL_SEAT, QA_NET_REMOTE, QA_NET_HEADLESS } qa_net_attachment;
 typedef enum qa_net_phase { QA_NET_CONNECTED, QA_NET_PRIMED, QA_NET_ACTIVE } qa_net_phase;

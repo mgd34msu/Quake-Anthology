@@ -101,7 +101,7 @@ bool q2_server_record(void *, const qa_q2_client_record *, qa_error *);
 bool q2_server_restart(q2_session *, qa_error *);
 bool q2_server_drop_progress(q2_session *, uint64_t, bool *complete, qa_error *);
 void q2_server_clear(q2_server *);
-bool q2_client_submit(q2_session *, const qa_network_command *, qa_error *);
+bool q2_client_submit(q2_session *, const qa_usercmd *, qa_error *);
 bool q2_client_send(q2_session *, uint64_t, qa_error *);
 bool q2_client_restart(q2_session *, qa_error *);
 bool q2_client_receive(q2_session *, qa_bytes, uint32_t, uint64_t, qa_error *);

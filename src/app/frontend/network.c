@@ -1285,7 +1285,7 @@ static bool q1_controlled(frontend_network_q1_client *owner, qa_net_client_id cl
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 input authority differs from its real received CLIENT player");
     return true;
 }
-static bool remote_command(void *context, const qa_network_command *command, qa_error *error)
+static bool remote_command(void *context, const qa_usercmd *command, qa_error *error)
 { return qa_application_network_command(((qa_frontend_network *)context)->frontend->application, command, error); }
 static bool remote_q3_command(void *context, const qa_network_q3_source_command *command, qa_error *error)
 { return qa_application_network_q3_command(((qa_frontend_network *)context)->frontend->application, command, error); }
@@ -6433,7 +6433,7 @@ static bool client_predictor_initial(frontend_q3_client *n, bool *ready, qa_erro
         zero->serverTime || zero->buttons || zero->weapon || zero->forwardmove || zero->rightmove || zero->upmove ||
         zero->angles[0] || zero->angles[1] || zero->angles[2])
         return frontend_fail(error,QA_ERROR_FORMAT,"Prediction lost its genuine zero reset receipt before physical input");
-    qa_movement_command command={.kind=QA_RULESET_Q3,.sequence=number};
+    qa_usercmd command={.kind=QA_RULESET_Q3,.sequence=number};
     if(!frontend_remote_prediction_admit_initial(prediction,&command,error)) return false;
     n->q3_predictor_zero_sequence=0; n->q3_predictor_zero_pending=false;
     *ready=true; return true;
@@ -6451,7 +6451,7 @@ bool frontend_network_client_predictor_admit(qa_frontend *f, frontend_remote_pre
     return false;
 }
 bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id actor,
-    const qa_movement_command *selected, frontend_remote_prediction_angle_space angle_space,
+    const qa_usercmd *selected, frontend_remote_prediction_angle_space angle_space,
     const qa_seat_input_sample *sample, double duration, qa_error *error)
 {
     frontend_q3_client *n=q3_client_physical(f,seat); qa_actor_id actual;
@@ -6467,7 +6467,7 @@ bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id a
         if(!client_predictor_initial(n,&ready,error)) return false;
         if(!ready) return true;
     }
-    qa_movement_command raw; bool present=false;
+    qa_usercmd raw; bool present=false;
     if(!frontend_remote_input_build(n->q3_input,sample,duration,&raw,&present,error)) return false;
     if(!present) return true;
     const qa_q3_client_peer *peer=q3_view(n);

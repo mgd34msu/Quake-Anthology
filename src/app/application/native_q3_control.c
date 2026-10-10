@@ -245,12 +245,12 @@ static bool touch_triggers(application_provider *provider, qa_actor_id actor, qa
 }
 
 static bool selected_command(native_q3_think_call *call,
-    qa_movement_command *out, qa_error *error)
+    qa_usercmd *out, qa_error *error)
 {
     qa_application *app = call->provider->application;
     application_control_record *record = &app->controls[call->actor.slot];
     const qa_q3_usercmd *raw = &call->movement;
-    *out = (qa_movement_command){.kind = record->player.state.kind,
+    *out = (qa_usercmd){.kind = record->player.state.kind,
         .sequence = record->player.command_sequence,
         .milliseconds = call->movement_milliseconds,
         .server_time_ms = raw->serverTime, .buttons = (uint32_t)raw->buttons,
@@ -318,7 +318,7 @@ static bool movement_command(native_q3_think_call *call, bool spectator, qa_erro
 }
 
 static bool client_think_body(void *opaque, qa_session *session,
-    const qa_source_command *admission, qa_error *error)
+    const qa_usercmd *admission, qa_error *error)
 {
     native_q3_think_call *call = opaque;
     application_provider *provider = call->provider;
@@ -354,7 +354,7 @@ static bool client_think_body(void *opaque, qa_session *session,
     if (!live(app, call->actor)) return true;
     if (!movement_command(call, spectator, error)) return false;
     {
-        qa_movement_command selected;
+        qa_usercmd selected;
         if (!selected_command(call, &selected, error)) return false;
         application_control_outcome outcome = application_control_frames_q3_move(app, admission, &selected,
             (call->movement.buttons & 4) != 0, error);
@@ -440,7 +440,7 @@ static bool client_think_body(void *opaque, qa_session *session,
 }
 
 static bool client_think(void *opaque, qa_session *session,
-    const qa_source_command *admission, qa_error *error)
+    const qa_usercmd *admission, qa_error *error)
 {
     native_q3_think_call *call = opaque;
     if (!client_think_body(opaque, session, admission, error))
@@ -481,7 +481,7 @@ application_control_outcome application_control_q3_client_think(application_prov
             int64_t movement = (int64_t)call.accepted.serverTime - command_time;
             call.movement_milliseconds = movement <= 0 ? 0u : movement > 200 ? 200u : (uint32_t)movement;
             uint64_t elapsed = (uint64_t)call.movement_milliseconds * UINT64_C(1000000);
-            qa_source_command active;
+            qa_usercmd active;
             if (qa_session_active_command(app->session, provider->owner, &active) &&
                 active.provider == provider->owner && active.kind == QA_RULESET_Q3 &&
                 active.phase == QA_CLIENT_COMMAND && qa_actor_id_equal(active.actor, actor))

@@ -9,7 +9,7 @@ typedef struct qa_move_context {
     const qa_movement_services *services;
     qa_movement_result *result;
     qa_movement_state *state;
-    qa_movement_command command;
+    qa_usercmd command;
     qa_error *error;
     uint32_t substep, milliseconds;
     uint64_t time_ns;
@@ -24,7 +24,7 @@ bool qa_move_qw(qa_move_context *);
 bool qa_move_q2(qa_move_context *);
 bool qa_move_q2r(qa_move_context *);
 bool qa_move_q3(qa_move_context *);
-static inline void qa_move_q3_view(qa_q3_movement_state *state, const qa_movement_command *command) {
+static inline void qa_move_q3_view(qa_q3_movement_state *state, const qa_usercmd *command) {
     int32_t angles[3];
     for (unsigned i = 0; i < 3; ++i) {
         uint32_t word = ((uint32_t)command->angle_words[i] + (uint32_t)state->delta_angle_words[i]) & 65535;

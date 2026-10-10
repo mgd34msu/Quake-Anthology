@@ -42,7 +42,7 @@ static bool input(void *context,qa_net_client_id id,qa_net_seat_id seat,
     qa_application_network_q2_host source;
     if(!qa_application_network_q2_host_source(peer->host->options.frontend->application,
         peer->admission.connection.protocol,&source,error)) return false;
-    qa_movement_command raw={.kind=source.source.edition==QA_Q2_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC,
+    qa_usercmd raw={.kind=source.source.edition==QA_Q2_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC,
         .sequence=sequence,.server_frame=wire->server_frame,.milliseconds=wire->msec,.buttons=wire->buttons,
         .impulse=wire->impulse,.light_level=wire->lightlevel,
         .forward_move=wire->forwardmove,.side_move=wire->sidemove,.up_move=wire->upmove};

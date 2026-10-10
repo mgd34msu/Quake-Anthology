@@ -533,23 +533,23 @@ bool qa_application_q2_visual_read(const qa_application *, qa_actor_id,
 bool qa_application_control_admit(qa_application *, qa_actor_id,
                                   qa_vec3 view_angles, qa_error *);
 bool qa_application_control_move(qa_application *, qa_actor_id,
-                                 const qa_movement_command *, qa_error *);
+                                 const qa_usercmd *, qa_error *);
 /* A QuakeWorld packet's commands retain one packet sequence and their source
  * order. The next packet must advance that sequence. */
 bool qa_application_control_commands(qa_application *, qa_actor_id,
-    const qa_movement_command *, size_t count, qa_error *);
+    const qa_usercmd *, size_t count, qa_error *);
 bool qa_application_control_qw_commands(qa_application *, qa_actor_id,
-    const qa_movement_command *, size_t count, qa_error *);
+    const qa_usercmd *, size_t count, qa_error *);
 /* Retain the physical NetQuake command until its genuine source actor turn. */
 bool qa_application_control_nq_command(qa_application *, qa_actor_id,
     uint64_t tick_sequence, const qa_q1_command *, qa_error *);
 /* Retain literal physical Q2 input independently of selected movement. */
 bool qa_application_control_q2_command(qa_application *, qa_actor_id,
-    uint64_t transport_sequence, const qa_movement_command *, qa_error *);
+    uint64_t transport_sequence, const qa_usercmd *, qa_error *);
 struct qa_unified_input;
 struct qa_unified_movement;
 bool qa_application_control_project_unified(const struct qa_unified_movement *,
-    const qa_movement_state *, uint64_t sequence, qa_movement_command *, qa_error *);
+    const qa_movement_state *, uint64_t sequence, qa_usercmd *, qa_error *);
 bool qa_application_control_unified_command(qa_application *, qa_actor_id,
     const struct qa_unified_input *, qa_error *);
 /* Preserve the received Q3 words independently of the transport sequence and

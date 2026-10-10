@@ -41,7 +41,7 @@ bool qa_q3_source_current_origin_read(const qa_q3_game *game, qa_actor_id actor,
 bool qa_q3_client_current_origin(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
                                   qa_error *error) {
     uint32_t slot;
-    qa_source_command command;
+    qa_usercmd command;
     if (!game || !qa_vec_finite(origin) || !q3_client_actor(game, actor, error) ||
         !qa_q3_native_client_slot(game, actor, &slot, error) ||
         !qa_session_active_command(game->options.services.session, game->options.owner, &command) ||

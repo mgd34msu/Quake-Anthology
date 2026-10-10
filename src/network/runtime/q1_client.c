@@ -273,7 +273,7 @@ static bool enqueue_move(q1_runtime_client *c, const qa_q1_command *nq, const qa
     else c->commands[c->command_count].command.nq = *nq;
     ++c->command_count; return true;
 }
-static bool command(void *context, const qa_network_command *value, qa_error *e)
+static bool command(void *context, const qa_usercmd *value, qa_error *e)
 {
     q1_runtime_client *c = context; qa_q1_command nq; qa_qw_command qw;
     if (!c->active || c->command_count == c->policy.pending_commands || !current(c, e))

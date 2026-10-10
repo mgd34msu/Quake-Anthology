@@ -10,7 +10,7 @@ static bool bytes_equal(qa_bytes a, qa_bytes b)
     return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
 }
 
-bool qa_unified_session_source_command(qa_unified_session *s, const qa_unified_source_command *command, qa_error *e)
+bool qa_unified_session_source_command(qa_unified_session *s, const qa_module_console_call *command, qa_error *e)
 {
     if (!qa_unified_session_idle(s) || !s->bound_source || s->server || !s->admitted ||
         !s->epoch || s->timeout_pending || s->closing || s->disconnected || !command || !command->instance ||
@@ -163,7 +163,7 @@ bool qa_unified_session_queue_inputs(qa_unified_session *s, qa_error *e)
         qa_unified_channel_frame(s->channel,(qa_bytes){s->frame_wire.data,s->frame_wire.size},0,e);
 }
 
-static qa_unified_movement command_movement(const qa_movement_command *command)
+static qa_unified_movement command_movement(const qa_usercmd *command)
 {
     qa_unified_movement movement = {.kind = command->kind};
     qa_unified_vec3 angles = {command->angles.x, command->angles.y, command->angles.z};
@@ -204,7 +204,7 @@ static qa_unified_movement command_movement(const qa_movement_command *command)
     return movement;
 }
 
-bool qa_unified_session_command(void *state, const qa_network_command *command, qa_error *e)
+bool qa_unified_session_command(void *state, const qa_usercmd *command, qa_error *e)
 {
     qa_unified_session *s = state;
     if (!command || s->entered || s->processing || !qa_net_client_id_equal(command->client, s->id) ||
@@ -215,7 +215,7 @@ bool qa_unified_session_command(void *state, const qa_network_command *command, 
     if (!qa_unified_session_player_read(s, &player, e)) return false;
     if (!qa_actor_id_equal(player.actor, command->actor))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production native command changes its actual canonical actor");
-    qa_unified_input input = {.sequence = command->movement.sequence, .command = command_movement(&command->movement),
+    qa_unified_input input = {.sequence = command->sequence, .command = command_movement(command),
         .has_arsenal = command->has_arsenal, .arsenal = command->arsenal};
     return retain_input(s, &input, e);
 }

@@ -411,7 +411,7 @@ static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *ev
     if (!engine->provider->state.qc.qualified && !application_qc_project_body_store(engine, vm, event, error)) return false;
     if (event->kind != QA_QC_STORE_ENTITY || event->entity_reference == 0) return true;
     if (!engine->has_frame) {
-        qa_source_command command;
+        qa_usercmd command;
         if (!qa_session_active_command(engine->services.session, engine->provider->owner, &command)) return true;
     }
     const qa_qc_definition *next = qa_qc_program_find_field(engine->provider->state.qc.program, "nextthink");
@@ -766,13 +766,13 @@ static bool control_transition(struct application_qc_state *engine, int32_t refe
     return control_scalar(engine, reference, actor, "flags", &value, error) &&
         control_integer(value, flags, error) && control_vector(engine, reference, actor, "velocity", velocity, error);
 }
-static bool control_jump(const qa_movement_command *command)
+static bool control_jump(const qa_usercmd *command)
 {
     return command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD ?
         (command->buttons & 2u) != 0 : command->kind == QA_RULESET_Q2_RERELEASE ?
         (command->buttons & 8u) != 0 : command->up_move >= 10;
 }
-static void control_consume_jump(qa_movement_command *command)
+static void control_consume_jump(qa_usercmd *command)
 {
     if (command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD)
         command->buttons &= ~2u;
@@ -787,7 +787,7 @@ static bool control_clear_ground(struct application_qc_state *engine, qa_actor_i
     return qa_world_body_write(engine->world, actor, &body, error);
 }
 static bool control_qw_input(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
-                               const qa_movement_command *command, qa_error *error)
+                               const qa_usercmd *command, qa_error *error)
 {
     float fix, health;
     if(command->impulse) application_qc_weapon_command(engine,actor);
@@ -898,8 +898,8 @@ static bool control_run_think(struct application_qc_state *engine, qa_actor_id a
 static bool control_command_think(struct application_qc_state *engine, qa_actor_id actor,
                                     const application_control_context *context, uint64_t elapsed_ns, qa_error *error)
 {
-    const qa_source_command *command = context ? &context->command : NULL;
-    qa_source_command active; bool member;
+    const qa_usercmd *command = context ? &context->command : NULL;
+    qa_usercmd active; bool member;
     if (!command || !qa_session_active_command(engine->services.session, engine->provider->owner, &active) ||
         !qa_actor_id_equal(command->actor, actor) || !qa_actor_id_equal(active.actor, actor) ||
         command->provider != engine->provider->owner || active.provider != command->provider ||
@@ -984,7 +984,7 @@ bool application_qc_control_phase(application_provider *provider, qa_actor_id ac
             (path == APPLICATION_CONTROL_NQ_TURN && context->source_nqcmd && call->state->kind != QA_RULESET_NETQUAKE);
         if (mixed && !control_transition(engine, reference, actor, &before_flags, &before_velocity, error)) return false;
         if (path == APPLICATION_CONTROL_QW_GROUP) {
-            const qa_movement_command *source_command = context->source_qwcmd &&
+            const qa_usercmd *source_command = context->source_qwcmd &&
                 call->state->kind != QA_RULESET_QUAKEWORLD ? &context->source_command : call->command;
             if (!control_qw_input(engine, reference, actor, source_command, error)) return false;
             if (spectator) goto refreshed;

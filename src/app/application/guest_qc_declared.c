@@ -32,7 +32,7 @@ static bool resolve(const application_qc_value *value, const application_qc_inpu
         }
         *result = out; return true;
     }
-    const qa_movement_command *command = inputs->command;
+    const qa_usercmd *command = inputs->command;
     switch (value->source) {
     case QC_INPUT_SELF: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->self; break;
     case QC_INPUT_OTHER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->other; break;

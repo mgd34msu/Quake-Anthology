@@ -390,7 +390,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         .server_time_ms = client_time(row),
         .acknowledged_server_seconds = (double)row->frame.server_frame * row->frame_ms * 0.001,
         .delta_angles = delta, .sensitivity = 1, .attack_allowed = true};
-    qa_movement_command command;
+    qa_usercmd command;
     if (!qa_input_command_build(&row->input, &tuning, sample, &basis, sample->frame_ms, &command, error)) return false;
     bool kex = row->options.domain.protocol.kind == QA_NET_Q2KEX_2023 ||
         row->options.domain.protocol.kind == QA_NET_Q2KEX_DEMO_2022;

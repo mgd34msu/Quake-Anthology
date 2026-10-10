@@ -220,17 +220,13 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
 static bool action(const qa_input_command_intent *intent, qa_input_action value) {
     return (intent->actions & (UINT64_C(1) << value)) != 0;
 }
-static int32_t signed_byte(int32_t value) {
-    uint32_t byte = (uint32_t)value & 255;
-    return byte >= 128 ? (int32_t)byte - 256 : (int32_t)byte;
-}
 static int32_t signed_word(uint32_t value) {
     uint32_t word = value & 65535;
     return word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
 }
-void qa_input_usercmd_build(const qa_input_command_intent *intent,
-    const qa_input_command_frame *frame, double elapsed, qa_input_command_encoding encoding,
-    qa_input_usercmd *out) {
+void qa_usercmd_build(const qa_input_command_intent *intent,
+    const qa_input_command_frame *frame, double elapsed,
+    qa_usercmd *out) {
     qa_ruleset_id kind = frame->kind;
     bool q1 = kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD;
     bool q3 = kind == QA_RULESET_Q3;
@@ -241,19 +237,12 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
     if (intent->directional) {
         float speed = intent->speed * scale / stock[kind].source_speed;
         move = qa_vec_scale(intent->direction, speed);
-        bool byte = q3 && encoding == QA_INPUT_COMMAND_SOURCE_Q3;
-        if (byte) move = qa_v3((float)signed_byte(qa_source_float_to_i32(move.x)),
-                              (float)signed_byte(qa_source_float_to_i32(move.y)),
-                              (float)signed_byte(qa_source_float_to_i32(move.z)));
         if (action(intent, QA_INPUT_FORWARD)) move.x += scale;
         if (action(intent, QA_INPUT_BACK)) move.x -= scale;
         if (action(intent, QA_INPUT_MOVE_RIGHT)) move.y += scale;
         if (action(intent, QA_INPUT_MOVE_LEFT)) move.y -= scale;
         if (action(intent, QA_INPUT_JUMP) || action(intent, QA_INPUT_MOVE_UP)) move.z += scale;
         if (action(intent, QA_INPUT_CROUCH) || action(intent, QA_INPUT_MOVE_DOWN)) move.z -= scale;
-        if (byte) move = qa_v3((float)signed_byte(qa_source_float_to_i32(move.x)),
-                              (float)signed_byte(qa_source_float_to_i32(move.y)),
-                              (float)signed_byte(qa_source_float_to_i32(move.z)));
     }
     uint32_t buttons = 0;
     if (q3) {
@@ -274,16 +263,17 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
             if (action(intent, QA_INPUT_CROUCH) || action(intent, QA_INPUT_MOVE_DOWN)) buttons |= 16;
         }
     }
-    qa_input_usercmd command = {.kind = kind, .sequence = frame->sequence,
-        .angles = intent->angles, .milliseconds = trunc(elapsed > 250 ? 100 : elapsed),
-        .buttons = buttons, .server_time_ms = q3 ? frame->server_time_ms : 0,
-        .server_frame = kind == QA_RULESET_Q2_RERELEASE ? frame->server_frame : 0,
+    qa_usercmd command = {.kind = kind, .sequence = frame->sequence,
+        .angles = intent->angles, .milliseconds = (uint32_t)trunc(elapsed > 250 ? 100 : elapsed),
+        .duration_ns = (uint64_t)(elapsed * 1000000.0),
+        .buttons = buttons, .server_time_ms = q3 ? (int32_t)frame->server_time_ms : 0,
+        .server_frame = kind == QA_RULESET_Q2_RERELEASE ? (int32_t)frame->server_frame : 0,
         .acknowledged_server_seconds = kind == QA_RULESET_NETQUAKE ? frame->acknowledged_server_seconds : 0,
-        .weapon = q3 ? frame->weapon : 0, .light_level = kind == QA_RULESET_Q2_CLASSIC ? frame->light_level : 0,
+        .weapon = q3 ? (uint8_t)(int32_t)frame->weapon : 0, .light_level = kind == QA_RULESET_Q2_CLASSIC ? (uint8_t)(int32_t)frame->light_level : 0,
         .impulse = kind == QA_RULESET_Q2_RERELEASE || q3 ? 0 : intent->impulse};
     if (q3 || kind == QA_RULESET_Q2_CLASSIC ||
         (kind == QA_RULESET_Q2_RERELEASE && intent->directional)) {
-        qa_movement_command source = {.kind = kind, .angles = intent->angles}, converted;
+        qa_usercmd source = {.kind = kind, .angles = intent->angles}, converted;
         qa_input_command_basis from = {.kind = kind}, to = {.kind = kind,
             .words = q3 || kind == QA_RULESET_Q2_CLASSIC, .relative = intent->directional,
             .wrap_words = true, .delta_angles = frame->delta_angles};
@@ -294,15 +284,13 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
             float *angles[] = {&command.angles.x, &command.angles.y, &command.angles.z};
             for (unsigned i = 0; i < 3; ++i) {
                 uint32_t word = (uint32_t)converted.angle_words[i];
-                command.angle_words[i] = encoding == QA_INPUT_COMMAND_SOURCE_Q3 ||
-                    (kind == QA_RULESET_Q2_CLASSIC && encoding == QA_INPUT_COMMAND_NATIVE)
-                    ? signed_word(word) : (int32_t)word;
+                command.angle_words[i] = (int32_t)word;
                 if (intent->directional && kind == QA_RULESET_Q2_CLASSIC)
                     *angles[i] = (float)signed_word(word) * (360.0f / 65536.0f);
             }
         }
     }
-    if (q3 && encoding != QA_INPUT_COMMAND_SOURCE_Q3) {
+    if (q3 && !intent->directional) {
         move.x = clamp(move.x, -scale, scale); move.y = clamp(move.y, -scale, scale);
         move.z = clamp(move.z, -scale, scale);
     } else if (kind == QA_RULESET_Q2_CLASSIC || kind == QA_RULESET_Q2_RERELEASE) {
@@ -310,17 +298,17 @@ void qa_input_usercmd_build(const qa_input_command_intent *intent,
     }
     if (kind == QA_RULESET_Q2_RERELEASE) move.z = 0;
     else move = qa_v3(truncf(move.x), truncf(move.y), truncf(move.z));
-    command.move = move;
+    command.forward_move = move.x; command.side_move = move.y; command.up_move = move.z;
     *out = command;
 }
 float qa_input_command_units(qa_ruleset_id kind) {
     return kind == QA_RULESET_Q3 ? 127.0f :
         kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD ? 320.0f : 200.0f;
 }
-void qa_input_command_convert(const qa_movement_command *source, const qa_input_move_intent *precise,
+void qa_input_command_convert(const qa_usercmd *source, const qa_input_move_intent *precise,
     const qa_input_command_basis *from, const qa_input_command_basis *to,
-    qa_input_axis_rule rule, qa_movement_command *out) {
-    qa_movement_command result = *source;
+    qa_input_axis_rule rule, qa_usercmd *out) {
+    qa_usercmd result = *source;
     result.kind = to->kind;
     double input_units = from->units != 0 ? from->units : qa_input_command_units(from->kind);
     double output_units = to->units != 0 ? to->units : qa_input_command_units(to->kind);
@@ -376,18 +364,9 @@ void qa_input_command_convert(const qa_movement_command *source, const qa_input_
     }
     *out = result;
 }
-void qa_input_usercmd_project(const qa_input_usercmd *source, qa_movement_command *out) {
-    *out = (qa_movement_command){.kind = source->kind, .sequence = source->sequence,
-        .milliseconds = (uint32_t)source->milliseconds, .server_time_ms = (int32_t)source->server_time_ms,
-        .server_frame = (int32_t)source->server_frame, .acknowledged_server_seconds = source->acknowledged_server_seconds,
-        .angles = source->angles, .forward_move = source->move.x, .side_move = source->move.y,
-        .up_move = source->move.z, .buttons = source->buttons, .impulse = source->impulse,
-        .weapon = (uint8_t)(int32_t)source->weapon, .light_level = (uint8_t)(int32_t)source->light_level};
-    for (unsigned i = 0; i < 3; ++i) out->angle_words[i] = source->angle_words[i];
-}
 bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_command_tuning *tuning,
     const qa_seat_input_sample *sample, const qa_input_command_frame *frame, double elapsed,
-    qa_movement_command *out, qa_error *error) {
+    qa_usercmd *out, qa_error *error) {
     if (!out || !builder) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input command frame or settings");
         return false;
@@ -395,9 +374,9 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
     qa_input_command_builder next = *builder;
     qa_input_command_intent intent;
     if (!qa_input_command_sample(&next, tuning, sample, frame, elapsed, &intent, error)) return false;
-    qa_input_usercmd command;
-    qa_input_usercmd_build(&intent, frame, elapsed, QA_INPUT_COMMAND_NATIVE, &command);
-    qa_input_usercmd_project(&command, out);
+    qa_usercmd command;
+    qa_usercmd_build(&intent, frame, elapsed, &command);
+    *out = command;
     *builder = next;
     return true;
 }

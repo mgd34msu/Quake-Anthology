@@ -3,7 +3,7 @@
 #include "qa/network_runtime.h"
 
 typedef struct qa_network_history_entry {
-    qa_network_command command;
+    qa_usercmd command;
     qa_buffer arsenal;
     bool valid;
 } qa_network_history_entry;

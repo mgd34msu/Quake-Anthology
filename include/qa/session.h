@@ -33,7 +33,7 @@ typedef bool (*qa_component_frame_fn)(void *state, qa_session *session,
 typedef bool (*qa_component_actor_fn)(void *state, qa_session *session,
                                       qa_actor_id actor, const qa_source_frame *frame,
                                       qa_error *error);
-typedef bool (*qa_component_command_fn)(void *, qa_session *, const qa_source_command *, qa_error *);
+typedef bool (*qa_component_command_fn)(void *, qa_session *, const qa_usercmd *, qa_error *);
 typedef bool (*qa_component_command_actor_fn)(void *, qa_session *, qa_actor_id);
 typedef void (*qa_component_release_fn)(void *state, qa_session *session,
                                         qa_actor_record released);
@@ -145,7 +145,7 @@ bool qa_session_frame_pending(const qa_session *, qa_actor_owner);
  * clock or preventing independently selected Sources from advancing. */
 bool qa_session_pending_frame(const qa_session *, qa_actor_owner, uint64_t host_ns,
     bool *accepted, uint64_t *duration_ns, uint64_t *source_host_ns, qa_error *);
-bool qa_session_active_command(const qa_session *, qa_actor_owner, qa_source_command *);
+bool qa_session_active_command(const qa_session *, qa_actor_owner, qa_usercmd *);
 /* Admit the real source usercmd at its literal current time. Safe idle entry
  * and source boundary hooks are supported, including a separate command
  * admission while that source has a world frame in progress. A component's
