@@ -115,11 +115,15 @@ static bool create(frontend_remote_unified *replica,bool importing,
     uint32_t capacity=qa_actors_capacity(registry);
     p->pending_rows=calloc(capacity,sizeof(*p->pending_rows));
     p->pending_used=calloc(capacity,sizeof(*p->pending_used));
-    if(!p->pending_rows || !p->pending_used) {
+    p->movement.contact_capacity=(size_t)capacity+1;
+    p->movement.contacts=calloc(p->movement.contact_capacity,sizeof(*p->movement.contacts));
+    if(!p->pending_rows || !p->pending_used || !p->movement.contacts) {
+        qa_movement_result_free(&p->movement);
         free(p->pending_rows); free(p->pending_used); free(p);
         return fail(e,QA_ERROR_MEMORY,"Allocating private prediction collision rows");
     }
     if(!qa_world_create(registry,geometry,NULL,1,&p->scene,e)) {
+        qa_movement_result_free(&p->movement);
         free(p->pending_rows); free(p->pending_used); free(p); return false;
     }
     *out=p; return true;
@@ -235,7 +239,7 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
     uint64_t last=p->command_count?p->commands[p->command_count-1].sequence:0;
     if(p->discarded>s->sequence || (p->command_count && (double)last-(double)s->sequence>=63)) { *status=FRONTEND_UNIFIED_PREDICTION_EXHAUSTED; return true; }
     qa_movement_services services={.context=p,.trace=trace,.point_contents=contents,.firing=firing,.is_bsp=brush};
-    qa_movement_result result={0};
+    qa_movement_result *result=&p->movement;
     bool ok=true;
     for(size_t i=0;ok && i<p->command_count;++i) {
         const prediction_command *entry=p->commands+i;
@@ -255,19 +259,18 @@ static bool replay(frontend_remote_unified_prediction *p, prediction_snapshot *s
         bool boundary=prior_command_time&&in.state.kind==QA_RULESET_Q3&&
             in.state.data.q3.command_time_ms==*prior_command_time&&
             in.command.server_time_ms>in.state.data.q3.command_time_ms;
-        ok=qa_movement_move(&in,&services,&result,e);
-        if(ok && result.status!=QA_MOVEMENT_ACTIVE) ok=fail(e,QA_ERROR_FORMAT,"Private movement cannot retire an authoritative actor");
+        ok=qa_movement_move(&in,&services,result,e);
+        if(ok && result->status!=QA_MOVEMENT_ACTIVE) ok=fail(e,QA_ERROR_FORMAT,"Private movement cannot retire an authoritative actor");
         if(ok) {
-            if(boundary&&result.state.kind==QA_RULESET_Q3&&
-                result.state.data.q3.command_time_ms!=in.state.data.q3.command_time_ms&&matched) *matched=true;
-            s->input.state=result.state; s->input.current_bounds=result.bounds;
-            s->angles=result.view_angles; s->height=result.view_height;
-            s->ground=result.ground; s->water_level=result.water_level; s->water_type=result.water_type;
+            if(boundary&&result->state.kind==QA_RULESET_Q3&&
+                result->state.data.q3.command_time_ms!=in.state.data.q3.command_time_ms&&matched) *matched=true;
+            s->input.state=result->state; s->input.current_bounds=result->bounds;
+            s->angles=result->view_angles; s->height=result->view_height;
+            s->ground=result->ground; s->water_level=result->water_level; s->water_type=result->water_type;
             s->sequence=(int64_t)entry->sequence; s->time_ms=entry->time_ms;
             *status=FRONTEND_UNIFIED_PREDICTION_ACTIVE;
         }
     }
-    qa_movement_result_free(&result);
     return ok;
 }
 static bool read_prediction(frontend_remote_unified_prediction *p,frontend_unified_prediction_view *out,
@@ -445,6 +448,7 @@ bool frontend_remote_unified_prediction_destroy(frontend_remote_unified_predicti
     if(!frontend_remote_unified_prediction_idle(p)) return fail(e,QA_ERROR_ARGUMENT,"Private prediction is entered during teardown");
     if(p->scene && !qa_world_destroy(p->scene,e)) return false;
     qa_unified_document_destroy(p->snapshot_document);
+    qa_movement_result_free(&p->movement);
     free(p->pending_rows); free(p->pending_used);
     free(p); *owned=NULL; return true;
 }

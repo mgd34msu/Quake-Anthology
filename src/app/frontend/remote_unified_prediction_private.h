@@ -26,6 +26,7 @@ struct frontend_remote_unified_prediction {
     size_t pending_count;
     qa_unified_document *snapshot_document;
     prediction_snapshot snapshot;
+    qa_movement_result movement;
     prediction_command commands[64];
     size_t command_count;
     int64_t discarded;
