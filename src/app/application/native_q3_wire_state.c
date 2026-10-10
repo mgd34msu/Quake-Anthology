@@ -55,6 +55,7 @@ typedef struct native_q3_wire_client {
     size_t big_configstring_length;
     bool admitted, begun, bot, command_received, has_snapshot;
     bool drop_pending, drop_delivered;
+    bool drop_reason_static;
     bool bot_snapshot_ready;
     qa_error drop_failure;
 } native_q3_wire_client;
@@ -247,7 +248,7 @@ static void clients_clear(struct application_native_q3_wire *wire)
 {
     for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
         free(wire->clients[i].userinfo);
-        free(wire->clients[i].drop_reason);
+        if (!wire->clients[i].drop_reason_static) free(wire->clients[i].drop_reason);
         free(wire->clients[i].gamestate);
         free(wire->clients[i].big_configstring);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
@@ -409,7 +410,7 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
     native_q3_wire_client *client = &wire->clients[slot];
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     free(client->userinfo);
-    free(client->drop_reason);
+    if (!client->drop_reason_static) free(client->drop_reason);
     *client = (native_q3_wire_client){.actor = actor, .seat = seat,
         .userinfo = copy, .admitted = true, .bot = bot, .sensitivity = 1,
         .entered_ns = qa_session_elapsed(provider->application->session)};
@@ -444,7 +445,7 @@ bool application_native_q3_wire_disconnect(application_provider *provider, uint3
     native_q3_wire_client *client = &wire->clients[slot];
     char *userinfo = client->userinfo;
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
-    free(client->drop_reason);
+    if (!client->drop_reason_static) free(client->drop_reason);
     client_world_clear(client);
     *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo, .sensitivity = 1};
     snapshots_bind(client,snapshots);
@@ -1001,7 +1002,6 @@ static bool send_command_transport(application_provider *provider, int32_t slot,
         slot >= (int32_t)wire->max_clients || wire->calls == SIZE_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 server command recipient is invalid");
     uint64_t recipients = 0, retain = 0, overflow = 0;
-    char *drop_reasons[QA_Q3_SOURCE_CLIENTS] = {0};
     uint64_t revisions[QA_Q3_SOURCE_CLIENTS] = {0};
     qa_actor_id actors[QA_Q3_SOURCE_CLIENTS] = {0};
     qa_q3_game *game = provider->state.q3;
@@ -1028,17 +1028,7 @@ static bool send_command_transport(application_provider *provider, int32_t slot,
         retain |= UINT64_C(1) << i;
         if (outstanding == QA_Q3_RELIABLE) overflow |= UINT64_C(1) << i;
     }
-    char *retained = copy_text(text, error);
-    if (!retained) return false;
-    for (uint32_t i = 0; i < maximum; ++i) {
-        if (!(overflow & (UINT64_C(1) << i))) continue;
-        drop_reasons[i] = copy_text("Server command overflow", error);
-        if (!drop_reasons[i]) {
-            for (uint32_t j = 0; j < maximum; ++j) free(drop_reasons[j]);
-            free(retained);
-            return false;
-        }
-    }
+    char retained[QA_Q3_COMMAND_CHARS];memcpy(retained,text,strlen(text)+1);
     text = retained;
     ++wire->calls;
     bool ok = true;
@@ -1050,8 +1040,8 @@ static bool send_command_transport(application_provider *provider, int32_t slot,
         qa_error current = {0};
         bool added = qa_q3_reliable_add(&client->reliable, QA_Q3_SERVER, text, &current);
         if (!added && (overflow & (UINT64_C(1) << i))) {
-            client->drop_reason = drop_reasons[i];
-            drop_reasons[i] = NULL;
+            client->drop_reason = "Server command overflow";
+            client->drop_reason_static=true;
             client->drop_pending = true;
         } else if (!added) {
             if (error) *error = current;
@@ -1074,8 +1064,6 @@ static bool send_command_transport(application_provider *provider, int32_t slot,
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 reliable callback changed its retained recipient");
     }
     --wire->calls;
-    for (uint32_t i = 0; i < maximum; ++i) free(drop_reasons[i]);
-    free(retained);
     return ok;
 }
 
