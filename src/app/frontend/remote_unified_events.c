@@ -34,6 +34,7 @@ struct frontend_unified_events {
     frontend_unified_media *media;
     frontend_unified_event_options options;
     qa_strings *strings;
+    char *message_line;
     qa_event_ring *records;
     unified_received_event *retained;
     uint64_t presentation_cursor, simulation_cursor;
@@ -187,11 +188,12 @@ static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified 
         !opts->audio_actor || !opts->presentation_validate || !opts->simulation_validate || !frontend_remote_unified_domain_read(r)) {
         frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified events need their actual media and audio route"); return NULL;
     }
-    frontend_unified_events *o=calloc(1,sizeof(*o));
+    const qa_unified_limits *limits=qa_unified_session_limits(r->session);
+    frontend_unified_events *o=calloc(1,sizeof(*o)+limits->message_bytes+2);
     if (!o) { frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating private unified event ledger"); return NULL; }
     o->frontend=f; o->replica=r; o->media=m; o->options=*opts;
     o->strings=r->strings;
-    const qa_unified_limits *limits=qa_unified_session_limits(r->session);
+    o->message_line=(char *)(o+1);
     o->records=qa_event_ring_create(limits->queued_reliable_bytes,16384,
         r->options.identity_capacity, e);
     if (!o->records) { free(o); return NULL; }
@@ -399,17 +401,15 @@ static bool mirrored(frontend_unified_events *o,uint64_t sequence)
 }
 static bool message(frontend_unified_events *o,const char *text_value,qa_error *e)
 {
+    if (!current(o,e)) return false;
+    /* Decoded text fits the negotiated message envelope. Keep the newline in
+     * the same print call so notify, wrapping and redirects keep their policy. */
     size_t length=strlen(text_value);
-    if (length>SIZE_MAX-2) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Source print extent overflow");
-    char *line=malloc(length+2);
-    if (!line) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining source print newline");
-    memcpy(line,text_value,length); line[length]='\n'; line[length+1]=0;
-    bool okay=current(o,e);
-    if (okay) {
-        const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-        qa_console_emit(domain->console,&domain->command_context,line);
-    }
-    free(line); return okay;
+    memcpy(o->message_line,text_value,length);
+    o->message_line[length]='\n'; o->message_line[length+1]=0;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    qa_console_emit(domain->console,&domain->command_context,o->message_line);
+    return true;
 }
 static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event,double ms,qa_error *e)
 {
