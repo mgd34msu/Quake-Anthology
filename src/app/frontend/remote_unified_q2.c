@@ -90,6 +90,8 @@ typedef struct q2_bank {
     q2_activation *activation;
     frontend_remote_q2_effects_profile profile;
     double frame_milliseconds;
+    const qa_scene_light *sampled_lights;
+    size_t sampled_light_count;
     char *source_provider;
     q2_model *models;
     q2_native_picture *native_pictures;
@@ -182,7 +184,7 @@ struct frontend_unified_q2 {
     double seconds, prepared_seconds;
     uint64_t frame_number, prepared_number;
     qa_scene_light *lights;
-    size_t light_count, light_capacity;
+    size_t light_count;
     qa_vec3 sampled_styles[256];
     q2_muzzle_receipt *muzzles;
     size_t muzzle_count;
@@ -1734,14 +1736,19 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
         if (n>SIZE_MAX-o->light_count || o->light_count+n>SIZE_MAX/sizeof(*o->lights)) {
             okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Unified Q2 light span overflow"); break;
         }
-        size_t needed=o->light_count+n;
-        if (needed>o->light_capacity) {
-            void *light_rows=realloc(o->lights,needed*sizeof(*o->lights));
-            if (!light_rows) { okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 CLIENT light span"); break; }
-            o->lights=light_rows; o->light_capacity=needed;
+        b->sampled_lights=lights;b->sampled_light_count=n;o->light_count+=n;
+    }
+    o->lights=NULL;
+    if (okay && o->light_count) {
+        o->lights=qa_arena_alloc(&o->frontend->frame.storage,o->light_count*sizeof(*o->lights),
+            _Alignof(qa_scene_light),e);
+        okay=o->lights!=NULL;
+        size_t offset=0;
+        for (q2_bank *b=o->banks;okay && b;b=b->next) if (b->effects) {
+            if (b->sampled_light_count) memcpy(o->lights+offset,b->sampled_lights,
+                b->sampled_light_count*sizeof(*o->lights));
+            offset+=b->sampled_light_count;
         }
-        if (n) memcpy(o->lights+o->light_count,lights,n*sizeof(*lights));
-        o->light_count=needed;
     }
     --o->busy; if (okay) { *out=o->lights; *count=o->light_count; } return okay;
 }
@@ -1910,7 +1917,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
-    free(o->layout); free(o->lights); free(o->muzzles); free(o); *slot=NULL; return true;
+    free(o->layout); free(o->muzzles); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
