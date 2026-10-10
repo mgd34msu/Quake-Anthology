@@ -237,9 +237,12 @@ static sound_catalog *sound_catalog_read(qa_sound_captions *captions, qa_audio_a
     if (catalog) return catalog;
     qa_vfs *source = NULL;
     catalog = calloc(1, sizeof(*catalog));
-    if (!catalog || !captions->options.content_view(captions->options.context, asset, &source, e) || !source ||
-        !(catalog->view = qa_vfs_clone(source, e)) ||
-        !(catalog->captions = qa_media_captions_create(&captions->options.captions, e))) {
+    if(catalog && captions->options.content_view(captions->options.context,asset,&source,e) &&
+        source && qa_vfs_retain(source,e)) {
+        catalog->view=source;
+        catalog->captions=qa_media_captions_create(&captions->options.captions,e);
+    }
+    if (!catalog || !catalog->captions) {
         if (catalog) { qa_vfs_destroy(catalog->view); qa_media_captions_destroy(catalog->captions); free(catalog); }
         if (!e || e->code == QA_OK) fail(e, QA_ERROR_MEMORY, "Retaining original sound caption content");
         return NULL;
@@ -477,7 +480,8 @@ static bool sound_clone(const qa_sound_captions *source,qa_sound_captions *candi
         if (!copy) return fail(e,QA_ERROR_MEMORY,"Copying retained caption catalog");
         *link=copy; link=&copy->next;
         copy->asset=qa_audio_asset_retain(row->asset);
-        copy->view=qa_vfs_clone(row->view,e);
+        if(!qa_vfs_retain(row->view,e))return false;
+        copy->view=row->view;
         copy->captions=qa_media_captions_create(&candidate->options.captions,e);
         if (!copy->view || !copy->captions) return false;
         qa_buffer saved={0};
