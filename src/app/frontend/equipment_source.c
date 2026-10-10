@@ -55,7 +55,6 @@ struct frontend_equipment_source {
     qa_application_q3_client_context client;
     qa_application_equipment_view selection;
     qa_application_equipment_view hud;
-    char *hud_label;
     qa_application_q3_equipment_draw draw;
     frontend_equipment_media *view_media;
     frontend_equipment_q3_presenter *q3_presenter;
@@ -230,7 +229,7 @@ static void clear_world(frontend_equipment_source *owner)
     while (row) {
         equipment_world_packet *next = row->next;
         frontend_equipment_gear_world_destroy(row->output);
-        free(row); row = next;
+        row = next;
     }
     owner->world_packets = NULL; owner->world_ready = false;
 }
@@ -244,7 +243,7 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
         frontend_equipment_held_output_destroy(row->output);
         frontend_equipment_q3_output_destroy(row->q3_output);
         frontend_equipment_gear_output_destroy(row->gear_output);
-        free(row); row = next;
+        row = next;
     }
     owner->packets = owner->tail = NULL;
     clear_world(owner);
@@ -255,8 +254,8 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
     free(owner->source_polygons); owner->source_polygons = NULL; owner->source_polygon_count = 0;
     free(owner->source_lights); owner->source_lights = NULL; owner->source_light_count = 0;
     free(owner->source_weapons); owner->source_weapons = NULL; owner->source_weapon_count = 0;
-    free(owner->view_lights); owner->view_lights = NULL;
-    free(owner->view_projected_lights); owner->view_projected_lights = NULL;
+    owner->view_lights = NULL;
+    owner->view_projected_lights = NULL;
 }
 
 static bool source_scene_current(const frontend_equipment_source *owner,
@@ -469,7 +468,6 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
     owner->draw = (qa_application_q3_equipment_draw){.view_visible = true};
     owner->selection = (qa_application_equipment_view){0};
     owner->hud = (qa_application_equipment_view){0};
-    free(owner->hud_label); owner->hud_label = NULL;
     owner->client = (qa_application_q3_client_context){0};
     owner->original_q3_view = false;
     owner->companion_selected = false;
@@ -530,11 +528,11 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment preparation retired its actual receiver or source");
     if (owner->draw.selected) {
         const qa_application_equipment_view *source = &owner->selection;
+        const char *label=NULL;
         if (source->label) {
-            size_t length = strlen(source->label) + 1;
-            owner->hud_label = malloc(length);
-            if (!owner->hud_label) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual selected equipment HUD label");
-            memcpy(owner->hud_label, source->label, length);
+            qa_strings *strings=qa_session_strings(owner->client.session);qa_string_id id;
+            if (!qa_strings_intern_cstr(strings,source->label,&id,error)) return false;
+            label=qa_strings_cstr(strings,id);
         }
         owner->hud = (qa_application_equipment_view){.actor=source->actor,.provider=source->provider,
             .primary=source->primary,.family=source->family,.item=source->item,.ammo=source->ammo,
@@ -544,7 +542,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
             .source_generation=source->source_generation,.view_content=source->view_content,
             .pending=source->pending,.pending_provider=source->pending_provider,
             .source_icon=source->source_icon,.source_held=source->source_held,
-            .label=owner->hud_label,.ammo_count=source->ammo_count,.warning=source->warning,
+            .label=label,.ammo_count=source->ammo_count,.warning=source->warning,
             .selected=source->selected,.visible=source->visible,.has_weapon_status=source->has_weapon_status,
             .finite_ammo=source->finite_ammo,.has_ammo_to_start=source->has_ammo_to_start,
             .low_ammo=source->low_ammo,.has_start_requirement=source->has_start_requirement};
@@ -633,8 +631,10 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
         }
     }
     if (source.selected && source.original_qvm && companion_held(owner, actor)) {
-        equipment_packet *packet = calloc(1, sizeof(*packet));
+        equipment_packet *packet=qa_arena_alloc(&owner->options.frontend->frame.storage,
+            sizeof(*packet),_Alignof(equipment_packet),error);
         if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining captured Source held replacement");
+        *packet=(equipment_packet){0};
         packet->companion = true; packet->next = owner->active; owner->active = packet;
         *token = packet; *selected = true;
         return true;
@@ -643,15 +643,19 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
         frontend_equipment_media *media=NULL;bool authored=false;
         if(!frontend_equipment_media_prepare_source_held(owner->options.frontend,&source,&media,&authored,error))return false;
         if(!authored)return true;
-        equipment_packet *packet=calloc(1,sizeof(*packet));
+        equipment_packet *packet=qa_arena_alloc(&owner->options.frontend->frame.storage,
+            sizeof(*packet),_Alignof(equipment_packet),error);
         if(!packet)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source held invocation");
+        *packet=(equipment_packet){0};
         if(!frontend_equipment_held_output_create_from(owner->options.frontend,&source,media,
-            parent_assets,owner->options.assets,parent,&packet->output,error)) {free(packet);return false;}
+            parent_assets,owner->options.assets,parent,&packet->output,error)) return false;
         packet->next=owner->active;owner->active=packet;*token=packet;*selected=true;return true;
     }
     if (!source.selected || !qa_strings_text(qa_session_strings(qa_application_session(owner->options.frontend->application)), source.view_model).size) return true;
-    equipment_packet *packet = calloc(1, sizeof(*packet));
+    equipment_packet *packet=qa_arena_alloc(&owner->options.frontend->frame.storage,
+        sizeof(*packet),_Alignof(equipment_packet),error);
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held source invocation");
+    *packet=(equipment_packet){0};
     bool okay;
     if (source.family == QA_GAME_Q3) {
         frontend_equipment_media *media = NULL; bool authored = false;
@@ -679,7 +683,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
     if (!okay) {
         frontend_equipment_held_output_destroy(packet->output);
         frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output); free(packet); return false;
+        frontend_equipment_gear_output_destroy(packet->gear_output); return false;
     }
     packet->next = owner->active; owner->active = packet;
     *token = packet; *selected = true;
@@ -739,7 +743,7 @@ static void held_release(void *context, void *token)
     } else {
         frontend_equipment_held_output_destroy(packet->output);
         frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output); free(packet);
+        frontend_equipment_gear_output_destroy(packet->gear_output);
     }
 }
 
@@ -777,15 +781,17 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
     if (!frontend_equipment_media_prepare_q3_held(owner->options.frontend, &source,
             &media, authored, error)) return false;
     if (*authored) return true;
-    equipment_packet *packet = calloc(1, sizeof(*packet));
+    equipment_packet *packet=qa_arena_alloc(&owner->options.frontend->frame.storage,
+        sizeof(*packet),_Alignof(equipment_packet),error);
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining native selected held output");
+    *packet=(equipment_packet){0};
     bool okay = source.equipment_slot ? gear_held_output(owner, &source, parent_assets, parent,
         powerups, personal_model, &packet->gear_output, submitted, error) :
         q3_held_output(owner, &source, parent_assets, parent, powerups, personal_model,
             &packet->q3_output, submitted, error);
     if (!okay || !*submitted) {
         frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output); free(packet); return okay;
+        frontend_equipment_gear_output_destroy(packet->gear_output); return okay;
     }
     packet->committed = true;
     if (owner->tail) owner->tail->next = packet; else owner->packets = packet;
@@ -840,7 +846,7 @@ bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_erro
     free(owner->companion_refs); free(owner->source_actors); free(owner->source_polygons);
     free(owner->source_lights); free(owner->companion_lights); free(owner->companion_polygons);
     free(owner->source_weapons); free(owner->companion_weapons);
-    free(owner->view_lights); free(owner->view_projected_lights); free(owner->hud_label); free(owner);
+    free(owner);
     return true;
 }
 
@@ -974,13 +980,14 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
         application_equipment_gear_world_view source; bool visible = false;
         okay = application_equipment_gear_world_read(application, actor, &source, &visible, error);
         if (okay && visible) {
-            equipment_world_packet *row = calloc(1, sizeof(*row));
+            equipment_world_packet *row=qa_arena_alloc(&owner->options.frontend->frame.storage,
+                sizeof(*row),_Alignof(equipment_world_packet),error);
             if (!row) okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual world gear output roster");
             else {
+                *row=(equipment_world_packet){0};
                 okay = frontend_equipment_gear_world_prepare(owner->options.frontend, &source,
                     owner->client.source_actor, owner, current_preparation, &row->output, error);
                 if (okay) { *tail = row; tail = &row->next; }
-                else free(row);
             }
         }
         if (okay && (!current_owner(owner) || qa_actors_revision(actors) != revision))
@@ -1020,12 +1027,12 @@ static bool companion_lights_prepare(frontend_equipment_source *owner,
         options->world.light_count > SIZE_MAX / sizeof(*owner->view_lights) - count)
         return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon lights leave the actual recipient span");
     size_t total = options->world.light_count + count;
-    qa_scene_light *lights = malloc(total * sizeof(*lights));
+    qa_arena *storage=&owner->options.frontend->frame.storage;
+    qa_scene_light *lights=qa_arena_alloc(storage,total*sizeof(*lights),_Alignof(qa_scene_light),error);
     size_t projected = options->world.projected_light_count;
     size_t added = count < 32 - projected ? count : 32 - projected;
-    qa_scene_light *projected_lights = added ? malloc((projected + added) * sizeof(*projected_lights)) : NULL;
+    qa_scene_light *projected_lights=added?qa_arena_alloc(storage,(projected+added)*sizeof(*projected_lights),_Alignof(qa_scene_light),error):NULL;
     if (!lights || (added && !projected_lights)) {
-        free(lights); free(projected_lights);
         return frontend_fail(error, QA_ERROR_MEMORY, "Combining genuine Source weapon lights");
     }
     if (options->world.light_count)
@@ -1043,11 +1050,10 @@ static bool companion_lights_prepare(frontend_equipment_source *owner,
         ++emitted;
     }
     if (!frontend_source_companion_current(owner->options.frontend, &owner->companion)) {
-        free(lights); free(projected_lights);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon lights retired their completed Draw receipt");
     }
-    free(owner->view_lights); owner->view_lights = lights;
-    free(owner->view_projected_lights); owner->view_projected_lights = projected_lights;
+    owner->view_lights = lights;
+    owner->view_projected_lights = projected_lights;
     options->world.lights = lights; options->world.light_count = total;
     if (added) { options->world.projected_lights = projected_lights; options->world.projected_light_count = projected + added; }
     return true;
@@ -1117,7 +1123,8 @@ static bool companion_submit(frontend_equipment_source *owner,
         if (captured->view && !owner->companion_view_requested) continue;
         qa_scene_vertex *vertices = captured->vertices, *transformed = NULL;
         if (captured->view && captured->polygon.count) {
-            transformed = malloc(captured->polygon.count * sizeof(*transformed));
+            transformed=qa_arena_alloc(&frame->storage,captured->polygon.count*sizeof(*transformed),
+                _Alignof(qa_scene_vertex),error);
             if (!transformed) return frontend_fail(error, QA_ERROR_MEMORY, "Transforming genuine Source view weapon polygon");
             memcpy(transformed, vertices, captured->polygon.count * sizeof(*transformed));
             for (size_t j = 0; j < captured->polygon.count; ++j)
@@ -1128,7 +1135,6 @@ static bool companion_submit(frontend_equipment_source *owner,
             qa_q3_presentation_source_component_poly(owner->options.presentation, owner->companion.assets,
                 captured->polygon.shader, vertices, captured->polygon.count, &captured->polygon.fog,
                 captured->definition.time, options, frame, error);
-        free(transformed);
         if (!okay) return false;
     }
     return true;
