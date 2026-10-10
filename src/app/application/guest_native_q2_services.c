@@ -287,11 +287,16 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         application_native_q2_delivery_dispose(&delivery.audience); return false;
     }
     if (duplicate) { application_native_q2_delivery_dispose(&delivery.audience); return true; }
-    qa_actor_id *recipients = engine->platform.sound && delivery.audience.count ?
-        malloc(delivery.audience.count * sizeof(*recipients)) : NULL;
-    if (engine->platform.sound && delivery.audience.count && !recipients) {
-        application_native_q2_delivery_dispose(&delivery.audience);
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 sound recipients");
+    qa_unified_frame_lease *sound_storage = NULL;
+    qa_actor_id *recipients = NULL;
+    if (engine->platform.sound && delivery.audience.count) {
+        sound_storage = application_control_storage_acquire(engine->provider->application, error);
+        if (sound_storage) recipients = qa_unified_frame_lease_alloc(sound_storage, delivery.audience.count,
+            sizeof(*recipients), _Alignof(qa_actor_id), error);
+        if (!recipients) {
+            qa_unified_frame_lease_release(sound_storage);
+            application_native_q2_delivery_dispose(&delivery.audience); return false;
+        }
     }
     for (size_t i = 0; recipients && i < delivery.audience.count; ++i) recipients[i] = delivery.audience.recipients[i].actor;
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
@@ -303,7 +308,7 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     if (ok && named.audience_captured && engine->platform.sound)
         ok = engine->platform.sound(engine->platform.context, &named, error);
-    free(recipients); application_native_q2_delivery_dispose(&delivery.audience);
+    qa_unified_frame_lease_release(sound_storage); application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }
 
