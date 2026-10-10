@@ -400,9 +400,9 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
             .start = target->body.origin, .end = qa_vec_scale(up, 48),
             .shape = {.kind = QA_SHAPE_BOX, .bounds = target->body.bounds},
             .pass_actor = c->actor->id,
-            .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+            .policy = qa_collision_default_policy(QA_GAME_Q2),
         };
-        query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK, QA_COLLISION_Q2);
+        query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(c->game->services.world, &query, &trace, error))
             return false;
@@ -424,9 +424,9 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
                                  .end = target->body.origin,
                                  .shape = {.kind = QA_SHAPE_BOX, .bounds = expanded},
                                  .pass_actor = target_id,
-                                 .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                                 .policy = qa_collision_default_policy(QA_GAME_Q2)};
         query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK |
-                                     (rerelease(c) ? Q2_PLAYER_CONTENTS : 0), QA_COLLISION_Q2);
+                                     (rerelease(c) ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(c->game->services.world, &query, &trace, error))
             return false;
@@ -622,8 +622,8 @@ static bool cable(q2m_context *c, qa_error *error) {
     }
     qa_trace_query query = {.start = start, .end = target.body.origin,
                              .pass_actor = c->actor->id,
-                             .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(rogue(c) ? 3u : Q2M_ATTACK_MASK, QA_COLLISION_Q2);
+                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(rogue(c) ? 3u : Q2M_ATTACK_MASK, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(c->game->services.world, &query, &trace, error))
         return false;
@@ -943,7 +943,7 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
       return false;
     if (!q2m_alive(c))
       return true;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                      .shape = QA_SHAPE_BOX,
                                      .contents = qa_collision_q2_source_contents(2, 2,
                                          c->game->options.edition == QA_Q2_RERELEASE),

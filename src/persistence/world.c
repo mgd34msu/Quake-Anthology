@@ -106,7 +106,7 @@ static uint8_t collision_flags(qa_actor_collision v)
 
 static void collision_fields(qa_actor_collision v, uint32_t fields[7])
 {
-    uint32_t value[7] = {(uint32_t)v.family, (uint32_t)v.shape, v.model,
+    uint32_t value[7] = {qa_persistence_family_tag(v.family), (uint32_t)v.shape, v.model,
         (uint32_t)qa_collision_contents_export(v.contents, v.family, v.q1_opaque_token),
         (uint32_t)v.role, (uint32_t)v.q3_entity_number, (uint32_t)v.q3_owner_number};
     memcpy(fields, value, sizeof(value));
@@ -133,8 +133,8 @@ static qa_actor_collision read_collision(qa_net_reader *r, qa_actor_collision ba
         if (mask & (1u << i)) fields[i] = qa_net_read_u32(r);
     uint8_t flags = mask & 128u ? qa_net_read_u8(r) : collision_flags(base);
     if (flags & ~31u) qa_net_reader_fail(r, "Unknown saved collision flags");
-    qa_collision_terminal decoded = qa_persistence_contents_import((int32_t)fields[3], (qa_collision_family)fields[0]);
-    return (qa_actor_collision){.family = (qa_collision_family)fields[0], .shape = (qa_shape_kind)fields[1],
+    qa_collision_terminal decoded = qa_persistence_contents_import((int32_t)fields[3], qa_persistence_family_from_tag(fields[0]));
+    return (qa_actor_collision){.family = qa_persistence_family_from_tag(fields[0]), .shape = (qa_shape_kind)fields[1],
         .model = fields[2], .contents = decoded.bits, .q1_opaque_token = decoded.opaque_token,
         .role = (qa_collision_role)fields[4],
         .q3_entity_number = (int32_t)fields[5], .q3_owner_number = (int32_t)fields[6],

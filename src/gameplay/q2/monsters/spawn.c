@@ -26,11 +26,11 @@ static bool trace_box(qa_q2_game *game, qa_vec3 start, qa_vec3 end,
       .start = start,
       .end = end,
       .shape = {.kind = bounds == NULL ? QA_SHAPE_POINT : QA_SHAPE_BOX},
-      .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+      .policy = qa_collision_default_policy(QA_GAME_Q2),
   };
   if (bounds != NULL)
     query.shape.bounds = *bounds;
-  query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q2);
+  query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
   return qa_world_trace(game->services.world, &query, out, error);
 }
 
@@ -109,7 +109,7 @@ bool qa_q2_rogue_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
                  &trace, error))
     return false;
   if (trace.fraction >= 1.0f ||
-      ((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & spawn_mask(game)) == 0)
+      ((uint32_t)qa_collision_contents_export(trace.contents, QA_GAME_Q2, trace.q1_opaque_token) & spawn_mask(game)) == 0)
     return true;
 
   qa_vec3 minimum = qa_vec_add(trace.end, bounds.mins);
@@ -125,13 +125,13 @@ bool qa_q2_rogue_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
     qa_point_query point = {
         .point = qa_v3(corners[i].x, corners[i].y,
                        gravity > 0.0f ? maximum.z + 1.0f : minimum.z - 1.0f),
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .policy = qa_collision_default_policy(QA_GAME_Q2),
     };
     qa_point_contents contents;
     if (!qa_world_point_contents(game->services.world, &point, &contents,
                                  error))
       return false;
-    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token) != 1) {
+    if (qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token) != 1) {
       all_solid = false;
       break;
     }
@@ -234,11 +234,11 @@ bool q2m_rerelease_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
     for (unsigned j = 0; j < 2; ++j) {
       qa_point_query query = {
           .point = {x[i], y[j], bottom - 1.0f},
-          .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+          .policy = qa_collision_default_policy(QA_GAME_Q2)};
       qa_point_contents contents;
       if (!qa_world_point_contents(game->services.world, &query, &contents, error))
         return false;
-      if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token) != 1) {
+      if (qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token) != 1) {
         fast = false;
         break;
       }

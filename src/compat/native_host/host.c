@@ -67,7 +67,7 @@ static void entity_changed(void *context, qa_native_instance *instance,
             if (event->address && (address >= event->address + event->bytes ||
                 event->address >= address + host->q2_references.stride)) continue;
             host->q2_fields[slot].body = (qa_entity_body_fields){0};
-            host->q2_fields[slot].collision = (qa_entity_collision_fields){.family = QA_COLLISION_Q2};
+            host->q2_fields[slot].collision = (qa_entity_collision_fields){.family = QA_GAME_Q2};
             host->q2_fields_invalidated = true;
         }
         if (!event->address) host->q2_references = (qa_entity_references){0};
@@ -77,7 +77,7 @@ static void entity_changed(void *context, qa_native_instance *instance,
         if (ok && event->change == QA_NATIVE_ENTITIES_SLOT &&
             event->slot < host->q2_field_capacity) {
             host->q2_fields[event->slot] = (native_host_q2_fields){0};
-            host->q2_fields[event->slot].collision.family = QA_COLLISION_Q2;
+            host->q2_fields[event->slot].collision.family = QA_GAME_Q2;
             ok = native_host_fields_bind(host, event->slot, &error);
         }
         if (!ok && !host->q2_fields_reported && host->engine.print) {

@@ -116,8 +116,8 @@ bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
     qa_trace_query query = {.start = segment ? point : context->body.origin,
         .end = segment ? target_body.origin : point,
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_COLLISION_Q2);
+        .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
       return false;
@@ -322,9 +322,9 @@ bool q2m_predict_from(q2m_context *context, qa_vec3 start, float speed,
         .start = start,
         .end = initial_target,
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .policy = qa_collision_default_policy(QA_GAME_Q2),
     };
-    query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_COLLISION_Q2);
+    query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;
@@ -354,9 +354,9 @@ bool q2m_predict_from(q2m_context *context, qa_vec3 start, float speed,
       qa_trace_query query = {
           .start = start,
           .end = target,
-          .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+          .policy = qa_collision_default_policy(QA_GAME_Q2),
       };
-      query.policy.contents_mask = qa_collision_contents_mask(3u, QA_COLLISION_Q2);
+      query.policy.contents_mask = qa_collision_contents_mask(3u, QA_GAME_Q2);
       qa_trace_result trace;
       if (!qa_world_trace(context->game->services.world, &query, &trace,
                           error))
@@ -650,9 +650,9 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
           .start = start,
           .end = qa_vec_add(start, initial),
           .pass_actor = context->actor->id,
-          .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+          .policy = qa_collision_default_policy(QA_GAME_Q2),
       };
-      query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x4200001b), QA_COLLISION_Q2);
+      query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x4200001b), QA_GAME_Q2);
       qa_trace_result trace;
       if (!qa_world_trace(context->game->services.world, &query, &trace, error))
         return false;
@@ -676,9 +676,9 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
         qa_trace_query query = {
             .start = start,
             .end = target,
-            .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+            .policy = qa_collision_default_policy(QA_GAME_Q2),
         };
-        query.policy.contents_mask = qa_collision_contents_mask(3u, QA_COLLISION_Q2);
+        query.policy.contents_mask = qa_collision_contents_mask(3u, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(context->game->services.world, &query, &trace,
                             error))
@@ -3047,7 +3047,7 @@ bool q2m_kamikaze(q2m_context *context, qa_error *error) {
       .knockback_scale = 1.0f,
       .ignore = context->actor->id,
       .visibility_pass = context->actor->id,
-      .trace = qa_collision_default_policy(QA_COLLISION_Q2),
+      .trace = qa_collision_default_policy(QA_GAME_Q2),
       .distance = QA_RADIUS_CENTER,
       .check_visibility = true,
       .context = context->game,
@@ -3118,8 +3118,8 @@ static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
     if (traits.player && !qa_actor_reference_present(body.ground))
       continue;
 
-    qa_trace_policy visibility = qa_collision_default_policy(QA_COLLISION_Q2);
-    visibility.contents_mask = qa_collision_contents_mask(1u, QA_COLLISION_Q2);
+    qa_trace_policy visibility = qa_collision_default_policy(QA_GAME_Q2);
+    visibility.contents_mask = qa_collision_contents_mask(1u, QA_GAME_Q2);
     bool visible = false;
     if (!qa_builtin_can_damage(&context->game->services, context->body.origin,
                                target, context->actor->id, visibility, false,
@@ -3179,9 +3179,9 @@ bool q2m_berserk_land(q2m_context *context, qa_error *error) {
       .start = context->body.origin,
       .end = impact,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+      .policy = qa_collision_default_policy(QA_GAME_Q2),
   };
-  query.policy.contents_mask = qa_collision_contents_mask(3u, QA_COLLISION_Q2);
+  query.policy.contents_mask = qa_collision_contents_mask(3u, QA_GAME_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
     return false;

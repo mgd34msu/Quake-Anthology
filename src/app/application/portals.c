@@ -1,3 +1,4 @@
+#include "qa/persistence_fields.h"
 #include "portals.h"
 #include "guest_q3_private.h"
 #include "qa/source_save.h"
@@ -6,7 +7,7 @@ typedef struct application_portal_claim {
     qa_actor_owner provider;
     uint64_t source_serial;
     uint64_t map_identity;
-    qa_collision_family family;
+    qa_game_family family;
     uint32_t first, second, portal, contributions;
 } application_portal_claim;
 
@@ -33,14 +34,14 @@ static bool claim_valid(qa_application *app, const application_portal_claim *c,
         c->family != qa_collision_geometry_family(app->geometry))
         return application_fail(error, QA_ERROR_FORMAT,
                                 "Native portal claim has no admitted map/source identity");
-    if (c->family == QA_COLLISION_Q2) {
+    if (c->family == QA_GAME_Q2) {
         bool primary;
         uint32_t count;
         if (p->kind != APPLICATION_PROVIDER_Q2 || c->first || c->second)
             return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q2 portal owner");
         return qa_collision_portal_state(app->geometry, c->portal, &primary, &count, error);
     }
-    if (c->family != QA_COLLISION_Q3 || p->kind != APPLICATION_PROVIDER_Q3 ||
+    if (c->family != QA_GAME_Q3 || p->kind != APPLICATION_PROVIDER_Q3 ||
         c->portal || c->first >= c->second ||
         c->second >= qa_collision_area_count(app->geometry) ||
         c->second > INT32_MAX || c->contributions > INT32_MAX)
@@ -72,7 +73,7 @@ static bool change(application_provider *provider, application_portal_claim key,
         ++index;
     uint32_t before = owner && index < owner->count ? owner->claims[index].contributions : 0;
     uint32_t after;
-    if (key.family == QA_COLLISION_Q2) {
+    if (key.family == QA_GAME_Q2) {
         /* Q2 SetAreaPortalState assigns a boolean; repeated sets are legal. */
         after = open ? 1u : 0u;
         if (before == after) return true;
@@ -97,7 +98,7 @@ static bool change(application_provider *provider, application_portal_claim key,
         owner->claims = next;
         owner->capacity = capacity;
     }
-    bool ok = key.family == QA_COLLISION_Q2
+    bool ok = key.family == QA_GAME_Q2
         ? qa_collision_adjust_portal(app->geometry, key.portal, (int)after - (int)before, error)
         : qa_collision_adjust_area_pair(app->geometry, (int32_t)key.first,
                                          (int32_t)key.second, open, error);
@@ -112,14 +113,14 @@ static bool change(application_provider *provider, application_portal_claim key,
 bool application_portal_q2(application_provider *provider, uint32_t portal,
                             bool open, qa_error *error)
 {
-    return change(provider, (application_portal_claim){.family = QA_COLLISION_Q2,
+    return change(provider, (application_portal_claim){.family = QA_GAME_Q2,
                                                       .portal = portal}, open, error);
 }
 
 bool application_portal_q3(application_provider *provider, uint32_t first,
                             uint32_t second, bool open, qa_error *error)
 {
-    return change(provider, (application_portal_claim){.family = QA_COLLISION_Q3,
+    return change(provider, (application_portal_claim){.family = QA_GAME_Q3,
         .first = first < second ? first : second,
         .second = first < second ? second : first}, open, error);
 }
@@ -131,7 +132,7 @@ static bool target(const qa_collision_portal_checkpoint *shared,
     if (claim->family != shared->family || claim->map_identity != shared->map_identity ||
         claim->contributions > UINT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Portal claim differs from shared map identity or range");
-    if (shared->family == QA_COLLISION_Q2) {
+    if (shared->family == QA_GAME_Q2) {
         size_t low = 0, high = shared->portal_count;
         while (low < high) {
             size_t middle = low + (high - low) / 2;
@@ -145,7 +146,7 @@ static bool target(const qa_collision_portal_checkpoint *shared,
         *index = low;
         return true;
     }
-    if (shared->family != QA_COLLISION_Q3 || claim->first >= claim->second ||
+    if (shared->family != QA_GAME_Q3 || claim->first >= claim->second ||
         claim->second >= shared->area_count)
         return application_fail(error, QA_ERROR_FORMAT, "Portal claim names an invalid Q3 area pair");
     *index = (size_t)claim->first * shared->area_count + claim->second;
@@ -182,14 +183,14 @@ bool application_portals_close(qa_application *app, qa_actor_owner provider,
         ok = claim_valid(app, c, error) && target(&shared, &claim, &index, error);
         if (!ok)
             break;
-        uint32_t *count = shared.family == QA_COLLISION_Q2
+        uint32_t *count = shared.family == QA_GAME_Q2
             ? &shared.portals[index].contributions : shared.area_pairs + index;
         if (*count < c->contributions) {
             ok = application_fail(error, QA_ERROR_FORMAT, "Native portal close exceeds its shared count");
             break;
         }
         *count -= c->contributions;
-        if (shared.family == QA_COLLISION_Q3)
+        if (shared.family == QA_GAME_Q3)
             shared.area_pairs[(size_t)c->second * shared.area_count + c->first] = *count;
     }
     if (ok)
@@ -225,7 +226,7 @@ static bool add_claim(const qa_collision_portal_checkpoint *shared, uint32_t *su
     if (claim->contributions > UINT32_MAX - sums[index])
         return application_fail(error, QA_ERROR_FORMAT, "Collective portal contributions overflow");
     sums[index] += (uint32_t)claim->contributions;
-    if (shared->family == QA_COLLISION_Q3)
+    if (shared->family == QA_GAME_Q3)
         sums[(size_t)claim->second * shared->area_count + claim->first] = sums[index];
     return true;
 }
@@ -247,7 +248,7 @@ static bool collect(qa_application *app,
                     const qa_collision_portal_checkpoint *shared,
                     uint32_t **out, qa_error *error)
 {
-    size_t count = shared->family == QA_COLLISION_Q2 ? shared->portal_count : shared->area_pair_count;
+    size_t count = shared->family == QA_GAME_Q2 ? shared->portal_count : shared->area_pair_count;
     uint32_t *sums = count ? calloc(count, sizeof(*sums)) : NULL;
     bool ok = !count || sums != NULL;
     if (!ok)
@@ -283,9 +284,9 @@ static bool shared_state(qa_application *app, bool reconnect, qa_error *error)
         return false;
     uint32_t *sums = NULL;
     bool ok = collect(app, &shared, &sums, error);
-    size_t count = shared.family == QA_COLLISION_Q2 ? shared.portal_count : shared.area_pair_count;
+    size_t count = shared.family == QA_GAME_Q2 ? shared.portal_count : shared.area_pair_count;
     for (size_t i = 0; ok && i < count; ++i) {
-        uint32_t *actual = shared.family == QA_COLLISION_Q2
+        uint32_t *actual = shared.family == QA_GAME_Q2
             ? &shared.portals[i].contributions : shared.area_pairs + i;
         if (reconnect)
             *actual = sums[i];
@@ -316,19 +317,19 @@ bool application_portals_reconnect(qa_application *app, qa_error *error)
 static bool row_fields(qa_source_save_io *io, qa_application *app,
                          application_portal_claim *c)
 {
-    uint32_t family = (uint32_t)c->family;
+    uint32_t family = qa_persistence_family_tag(c->family);
     if (!qa_source_save_string(io, &c->provider) ||
         !qa_source_save_u64(io, &c->map_identity) || !qa_source_save_u32(io, &family) ||
         !qa_source_save_u32(io, &c->first) || !qa_source_save_u32(io, &c->second) ||
         !qa_source_save_u32(io, &c->portal) || !qa_source_save_u32(io, &c->contributions))
         return false;
-    c->family = (qa_collision_family)family;
+    c->family = qa_persistence_family_from_tag(family);
     if (io->direction == QA_SOURCE_SAVE_READ) {
         application_provider *provider = claim_provider(app, c->provider);
         if (!provider || !provider->launch)
             return application_fail(io->error, QA_ERROR_FORMAT, "Saved portal source owner is absent");
         c->source_serial = provider->launch->identity;
-        if (c->family == QA_COLLISION_Q2)
+        if (c->family == QA_GAME_Q2)
             c->contributions = c->contributions != 0;
     }
     return claim_valid(app, c, io->error);

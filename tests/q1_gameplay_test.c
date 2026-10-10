@@ -620,7 +620,7 @@ static void exiting_body_over_world_hit(void)
     GAME_CHECK(qa_world_body_create(world, actor, &body, &error));
     uint8_t solid[4];
     qa_store_u32le(solid, 2);
-    qa_entity_collision_fields fields = {.family = QA_COLLISION_Q2,
+    qa_entity_collision_fields fields = {.family = QA_GAME_Q2,
         .solid = {solid, QA_ENTITY_U32_LE}};
     qa_collision_binding binding = {.context = solid, .fields = &fields};
     GAME_CHECK(qa_world_collision_bind(world, actor, &binding, &error));
@@ -630,22 +630,22 @@ static void exiting_body_over_world_hit(void)
     uint64_t link_count = linked.link_count;
     qa_store_u32le(solid, 0);
     qa_trace_query live_query = {.start = {0, 0, 24}, .end = {0, 0, -24},
-        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_GAME_Q2)};
     qa_trace_result live_hit;
     GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
     GAME_CHECK(live_hit.hit == QA_TRACE_HIT_WORLD && !live_hit.start_solid && live_hit.fraction < .5f);
     GAME_CHECK(qa_world_linked(world, actor, &linked) && linked.link_count == link_count);
     qa_store_u32le(solid, 2);
     for (unsigned caller = 0; caller < 4; ++caller) {
-        qa_collision_family family = caller == 0 ? QA_COLLISION_Q1 :
-            caller == 3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
+        qa_game_family family = caller == 0 ? QA_GAME_Q1 :
+            caller == 3 ? QA_GAME_Q3 : QA_GAME_Q2;
         qa_trace_query query = {.start = {0, 0, 24}, .end = {0, 0, -24},
             .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(family)};
         query.policy.q2_merged_contents = caller == 2;
         qa_trace_result hit;
         GAME_CHECK(qa_world_trace(world, &query, &hit, &error));
         GAME_CHECK(hit.start_solid && !hit.all_solid);
-        if (family == QA_COLLISION_Q3) {
+        if (family == QA_GAME_Q3) {
             GAME_CHECK(hit.hit == QA_TRACE_HIT_WORLD && hit.fraction < .5f);
         } else {
             GAME_CHECK(hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(hit.actor, actor));
@@ -689,7 +689,7 @@ static void retained_external_brush(void)
         [1] = {.model = 0, .geometry = external.geometry, .present = true},
         [2] = {.model = 0, .geometry = map.geometry, .present = true}};
     qa_entity_model_fields models = {.entries = model_entries, .count = 3};
-    qa_entity_collision_fields fields = {.family = QA_COLLISION_Q1,
+    qa_entity_collision_fields fields = {.family = QA_GAME_Q1,
         .solid = {solid, QA_ENTITY_F32_LE}, .model = {model_index, QA_ENTITY_F32_LE},
         .models = &models};
     qa_collision_binding binding = {.context = model_index, .fields = &fields};
@@ -699,7 +699,7 @@ static void retained_external_brush(void)
     GAME_CHECK(qa_world_linked(world, actor, &linked));
     uint64_t link_count = linked.link_count;
     qa_trace_query live_query = {.start = {0, 0, 200}, .end = {0, 0, 160},
-        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_trace_result live_hit;
     GAME_CHECK(qa_world_trace(world, &live_query, &live_hit, &error));
     GAME_CHECK(live_hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(live_hit.actor, actor));
@@ -725,7 +725,7 @@ static void retained_external_brush(void)
     model_entries[1].geometry = replacement;
     GAME_CHECK(qa_world_prepare_trace_geometry(world,replacement,&error));
     GAME_CHECK(qa_world_checkpoint_restore(world, &checkpoint, NULL, NULL, &error));
-    for (qa_collision_family family = QA_COLLISION_Q1; family <= QA_COLLISION_Q3; ++family) {
+    for (qa_game_family family = QA_GAME_Q1; family <= QA_GAME_Q3; ++family) {
         qa_trace_query query = {.start = {0, 0, 200}, .end = {0, 0, 160},
             .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(family)};
         qa_trace_result hit;
@@ -733,9 +733,9 @@ static void retained_external_brush(void)
         GAME_CHECK(hit.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(hit.actor, actor));
         /* Stock caller clipping: Q3 SURFACE_CLIP_EPSILON is 1/8,
          * Q1/Q2 DIST_EPSILON is 1/32, independent of the restored brush format. */
-        float expected_end = family == QA_COLLISION_Q3 ? 192.125f : 192.03125f;
+        float expected_end = family == QA_GAME_Q3 ? 192.125f : 192.03125f;
         GAME_CHECK(fabsf(hit.end.z - expected_end) < .0001f);
-        if (family != QA_COLLISION_Q1) {
+        if (family != QA_GAME_Q1) {
             qa_point_query point = {.point = {0, 0, 180}, .policy = query.policy};
             qa_point_contents contents;
             GAME_CHECK(qa_world_point_contents(world, &point, &contents, &error));

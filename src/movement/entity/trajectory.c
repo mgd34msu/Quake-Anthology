@@ -127,13 +127,13 @@ bool qa_physics_q3_missile_move(qa_physics *physics, qa_actor_id actor,
     qa_physics_properties properties;
     int read = ph_read(physics, actor, &body, &properties, error);
     if (read <= 0) {
-        if (read == 0) *out = (qa_trace_result){.family = QA_COLLISION_Q3, .fraction = 1, .end = destination};
+        if (read == 0) *out = (qa_trace_result){.family = QA_GAME_Q3, .fraction = 1, .end = destination};
         return read == 0;
     }
     qa_trace_query query = {.start = body.origin, .end = destination,
         .shape = {QA_SHAPE_BOX, body.bounds}, .pass_actor = pass,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask(properties.clip_mask,QA_COLLISION_Q3);
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask(properties.clip_mask,QA_GAME_Q3);
     qa_trace_result trace;
     if (!qa_world_trace(physics->world, &query, &trace, error)) return false;
     if (trace.start_solid || trace.all_solid) {
@@ -157,7 +157,7 @@ bool qa_physics_q3_missile_move(qa_physics *physics, qa_actor_id actor,
 bool qa_physics_q3_bounce(qa_physics *physics, qa_actor_id actor, qa_trajectory *trajectory,
                           const qa_trace_result *trace, int32_t previous, int32_t now,
                           bool half, bool *stopped, qa_error *error) {
-    if (!physics || !physics->world || !trace || !stopped || trace->family != QA_COLLISION_Q3 ||
+    if (!physics || !physics->world || !trace || !stopped || trace->family != QA_GAME_Q3 ||
         !isfinite(trace->fraction) || trace->fraction < 0 || trace->fraction > 1) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 missile bounce context");
         return false;

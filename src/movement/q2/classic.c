@@ -73,7 +73,7 @@ static bool q2_trace_bounds(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
             mask &= ~(UINT32_C(1) << 25);
         if (!(pm->state->flags & (UINT32_C(1) << 7))) mask |= UINT32_C(1) << 30;
     }
-    return qa_move_trace(pm->context, start, end, bounds, qa_collision_contents_mask(mask,QA_COLLISION_Q2),
+    return qa_move_trace(pm->context, start, end, bounds, qa_collision_contents_mask(mask,QA_GAME_Q2),
                          false, trace);
 }
 
@@ -190,7 +190,7 @@ static void q2_friction(q2_classic_move *pm)
     }
     float drop = 0;
     if ((q2_grounded(pm) && pm->ground_trace.has_surface &&
-         !(qa_collision_surface_export(pm->ground_trace.surface.flags,QA_COLLISION_Q2) & Q2_SLICK)) || pm->ladder)
+         !(qa_collision_surface_export(pm->ground_trace.surface.flags,QA_GAME_Q2) & Q2_SLICK)) || pm->ladder)
         drop += fmaxf(speed, 100.0f) * 6.0f * pm->dt;
     if (pm->water_level && !pm->ladder)
         drop += speed * (float)pm->water_level * pm->dt;
@@ -233,7 +233,7 @@ static qa_vec3 q2_add_currents(q2_classic_move *pm, qa_vec3 wish)
         wish = q2_advance(wish, water_speed, q2_current(pm->water_type));
     }
     if (q2_grounded(pm)) wish = q2_advance(wish, 100.0f,
-        q2_current(qa_collision_contents_export(pm->ground_trace.contents,QA_COLLISION_Q2,pm->ground_trace.q1_opaque_token)));
+        q2_current(qa_collision_contents_export(pm->ground_trace.contents,QA_GAME_Q2,pm->ground_trace.q1_opaque_token)));
     return wish;
 }
 
@@ -367,7 +367,7 @@ static bool q2_check_special(q2_classic_move *pm)
     qa_trace_result trace;
     if (!q2_trace(pm, pm->origin, qa_vec_add(pm->origin, flat), &trace)) return false;
     pm->ladder = trace.fraction < 1.0f &&
-        (qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token) & Q2_LADDER) != 0;
+        (qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token) & Q2_LADDER) != 0;
     if (pm->water_level != 2) return true;
     qa_vec3 spot = q2_advance(pm->origin, 30.0f, flat);
     spot.z += 4.0f;

@@ -438,7 +438,7 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
                 }
             }
         }
-        if (qa_collision_bits_overlap(trace.contents, qa_collision_contents_mask(1, QA_COLLISION_Q3)))
+        if (qa_collision_bits_overlap(trace.contents, qa_collision_contents_mask(1, QA_GAME_Q3)))
             break;
         if (qa_actors_get(qa_session_actors(game->options.services.session), trace.actor)) {
             uint32_t source_slot;

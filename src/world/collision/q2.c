@@ -299,8 +299,8 @@ static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa
         child = node->children[distance < 0 ? 1 : 0];
     }
     const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
-    *out = (qa_point_contents){.family = QA_COLLISION_Q2,
-        .contents = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents ? leaf->merged : leaf->stored,
+    *out = (qa_point_contents){.family = QA_GAME_Q2,
+        .contents = query->policy.family != QA_GAME_Q2 || query->policy.q2_merged_contents ? leaf->merged : leaf->stored,
         .stored = leaf->stored, .merged = leaf->merged};
     return true;
 }
@@ -549,12 +549,12 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
         scratch->expanded_bounds = work.bounds;
     }
     work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
-    work.merged = query->policy.family != QA_COLLISION_Q2 || query->policy.q2_merged_contents;
+    work.merged = query->policy.family != QA_GAME_Q2 || query->policy.q2_merged_contents;
     work.mask = query->policy.contents_mask;
     work.extents = qa_v3(fmaxf(-work.bounds.mins.x, work.bounds.maxs.x),
                          fmaxf(-work.bounds.mins.y, work.bounds.maxs.y),
                          fmaxf(-work.bounds.mins.z, work.bounds.maxs.z));
-    work.result = qa_collision_empty_trace(query, QA_COLLISION_Q2);
+    work.result = qa_collision_empty_trace(query, QA_GAME_Q2);
     int32_t headnode = collision->headnodes[model];
     qa_stamp_set_begin(&scratch->trace_marks);
     if (work.stationary) q2_position_test(&work, headnode);
@@ -569,7 +569,7 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
     work.result.contact = work.result.fraction < 1 && !work.result.all_solid;
     work.result.contact_plane = work.result.plane;
     work.result.hit = work.result.fraction < 1 || work.result.start_solid ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
-    if (query->policy.family == QA_COLLISION_Q1) q2_trace_media(&work, headnode);
+    if (query->policy.family == QA_GAME_Q1) q2_trace_media(&work, headnode);
     *out = work.result;
     return true;
 }
@@ -655,7 +655,7 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
         if (length >= sizeof(surface->name)) length = sizeof(surface->name) - 1;
         if (length != 0) memcpy(surface->name, texture.name.data, length);
         surface->name[length] = '\0';
-        surface->flags = qa_collision_surface_decode(texture.flags, QA_COLLISION_Q2);
+        surface->flags = qa_collision_surface_decode(texture.flags, QA_GAME_Q2);
         surface->value = texture.value;
     }
     for (size_t i = 0; i < collision->side_count; ++i) {
@@ -676,7 +676,7 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
             goto fail;
         }
         collision->brushes[i] = (q2_brush){brush.sides,
-            qa_collision_contents_decode(brush.contents, QA_COLLISION_Q2)};
+            qa_collision_contents_decode(brush.contents, QA_GAME_Q2)};
     }
     for (size_t i = 0; i < collision->leaf_brush_count; ++i) {
         int64_t index;
@@ -694,7 +694,7 @@ bool qa_q2_collision_create(const qa_bsp_view *map, const qa_collision_topology 
             q2_bad_reference(error, "leaf", i);
             goto fail;
         }
-        qa_collision_bits stored = qa_collision_contents_decode(leaf.contents, QA_COLLISION_Q2);
+        qa_collision_bits stored = qa_collision_contents_decode(leaf.contents, QA_GAME_Q2);
         qa_collision_bits merged = stored;
         /* Q2 rerelease merges brush flags into every leaf except solid leaf 0. */
         if (i != 0) {

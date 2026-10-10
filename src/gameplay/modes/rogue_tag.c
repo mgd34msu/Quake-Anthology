@@ -24,7 +24,7 @@ static bool floor_token(qa_modes *m, mode_object *o, bool *landed, qa_error *e) 
         .start = body.origin,
         .end = qa_vec_add(body.origin, qa_v3(0, 0, -256)),
         .shape = {QA_SHAPE_BOX, body.bounds},
-        .policy = {.family = QA_COLLISION_Q1, .contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q1), .q1_hull = -1},
+        .policy = {.family = QA_GAME_Q1, .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q1), .q1_hull = -1},
         .pass_actor = o->actor};
     qa_trace_result result;
     if (!qa_world_trace(m->options.services.world, &query, &result, e))

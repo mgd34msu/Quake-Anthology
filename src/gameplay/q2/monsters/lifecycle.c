@@ -81,9 +81,9 @@ static bool drop_to_floor(q2m_context *context, qa_error *error) {
                            .end = context->body.origin,
                            .shape = {.kind = QA_SHAPE_BOX, .bounds = context->body.bounds},
                            .pass_actor = context->actor->id,
-                           .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                           .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK |
-        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_COLLISION_Q2);
+        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
     qa_trace_result hit;
     bool offset = context->game->options.edition == QA_Q2_CLASSIC;
     if (!offset) {
@@ -299,7 +299,7 @@ static bool activate_body(q2m_context *context, qa_error *error) {
     context->monster->air_ns = q2m_after(context->game->now_ns, 12);
     context->actor->physics.solid = QA_PHYSICS_BOX;
     context->actor->physics.motion = QA_PHYSICS_STEP;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+    qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
         .contents = qa_collision_q2_source_contents(2, 4, context->game->options.edition == QA_Q2_RERELEASE),
         .role = QA_COLLISION_SOLID, .monster = true};
     return q2m_damageable(context, true, error) && (!q2m_alive(context) ||

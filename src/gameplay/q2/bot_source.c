@@ -166,7 +166,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Q2 ballistic observation lost its actual physics owner");
             return false;
         }
-        qa_physics_properties properties = qa_physics_properties_default(QA_COLLISION_Q2);
+        qa_physics_properties properties = qa_physics_properties_default(QA_GAME_Q2);
         out->gravity_acceleration = game->services.physics->gravity * properties.gravity_scale;
         out->extra_z_velocity = out->deployable ?
             q2_mine_lift(spec.kind, call.rerelease, call.input.gravity, 0) :

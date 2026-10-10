@@ -738,7 +738,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
         if (row->number > 0 && row->number <= g->wire_clients) continue;
         q2_actor *actor = q2_actor_get(g, g->wire_actors[row->number], false, NULL);
         if (!actor) return level_error(error, row->number, "Original Q2 restored Source edict disappeared");
-        qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+        qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
             .role = actor->physics.solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
             .monster = (actor->physics.flags & QA_PHYSICS_MONSTER) != 0,
             .dead_monster = (actor->physics.flags & QA_PHYSICS_DEAD) != 0};

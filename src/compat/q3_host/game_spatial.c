@@ -29,8 +29,8 @@ static bool actor_vector(q3_call *call, uint32_t number, qa_actor_id actor,
 
 static qa_trace_policy policy(qa_q3_host *host, uint32_t contents)
 {
-    qa_trace_policy result = qa_collision_default_policy(QA_COLLISION_Q3);
-    result.contents_mask = qa_collision_contents_mask(contents, QA_COLLISION_Q3);
+    qa_trace_policy result = qa_collision_default_policy(QA_GAME_Q3);
+    result.contents_mask = qa_collision_contents_mask(contents, QA_GAME_Q3);
     const qa_cvar_view *curves = qa_cvars_read(host->options.cvars, host->no_curves);
     const qa_cvar_view *player = qa_cvars_read(host->options.cvars, host->player_curve_clip);
     result.curves = !curves || curves->number == 0;
@@ -65,13 +65,13 @@ static bool trace(q3_call *call, bool capsule, qa_error *error)
 
 static bool point_contents(q3_call *call, int32_t *result, qa_error *error)
 {
-    qa_point_query query = {.policy = qa_collision_default_policy(QA_COLLISION_Q3), .q3_server_entities = true};
+    qa_point_query query = {.policy = qa_collision_default_policy(QA_GAME_Q3), .q3_server_entities = true};
     if (!q3_vector(call, call->arguments[0], &query.point, error)) return false;
     int32_t excluded = q3_integer(call, 1);
     if (excluded >= 0 && excluded < 1022) query.pass_actor = call->host->game->slots[excluded].actor;
     qa_point_contents contents;
     if (!qa_world_point_contents(call->host->options.world, &query, &contents, error)) return false;
-    *result = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q3, contents.q1_opaque_token); return true;
+    *result = qa_collision_point_contents_export(contents.contents, QA_GAME_Q3, contents.q1_opaque_token); return true;
 }
 
 static bool contact(q3_call *call, bool capsule, int32_t *result, qa_error *error)

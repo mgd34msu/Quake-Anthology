@@ -58,7 +58,7 @@ bool qa_application_acoustics_trace(qa_application_acoustics *owner,qa_actor_id 
         (pass.registry && !qa_actors_get(qa_world_actors(owner->view.world),pass)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Acoustic trace requires its live scene and full listener actor");
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_POINT},
-        .policy={.family=QA_COLLISION_Q2,.contents_mask=qa_collision_contents_mask(3, QA_COLLISION_Q2),.q2_merged_contents=true},
+        .policy={.family=QA_GAME_Q2,.contents_mask=qa_collision_contents_mask(3, QA_GAME_Q2),.q2_merged_contents=true},
         .pass_actor=pass};
     owner->readers++;
     qa_trace_result result;

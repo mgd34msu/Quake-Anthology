@@ -301,7 +301,7 @@ static bool slot_fields(q3_entity_slot *slot, qa_error *error)
     qa_qvm_abi abi = host->options.abi; uint64_t entity, player;
     if (!indexed(game->entities, game->entity_stride, slot->number, &entity, error)) return false;
     qa_entity_body_fields body = {.references = &game->references};
-    qa_entity_collision_fields collision = {.family = QA_COLLISION_Q3,
+    qa_entity_collision_fields collision = {.family = QA_GAME_Q3,
         .entity_number = (int32_t)slot->number, .references = &game->references};
     qa_entity_vector_field player_origin = {0};
     if (!live_vector(host, entity + q3_shared_offset(abi, 488), &body.pose[QA_ENTITY_CLIP_POSE].origin, error) ||

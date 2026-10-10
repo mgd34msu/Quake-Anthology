@@ -127,15 +127,15 @@ static bool surface(frontend_q2_footsteps *owner, const frontend_q2_footstep_sou
     qa_bounds box = sample->trace_bounds;
     box.mins.z = box.maxs.z = 0;
     qa_trace_query query = {.start = qa_vec_add(sample->pose.origin, qa_v3(0,0,1)),
-        .shape = {QA_SHAPE_BOX, box}, .policy = {.family = QA_COLLISION_Q2,
-            .contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2)}, .pass_actor = sample->pose.actor};
+        .shape = {QA_SHAPE_BOX, box}, .policy = {.family = QA_GAME_Q2,
+            .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2)}, .pass_actor = sample->pose.actor};
     query.end = qa_vec_add(query.start, qa_v3(0,0,sample->bottom - 9)); qa_trace_result trace;
     if (!source->trace(source->context, &query, &trace, error)) return false;
     if (trace.fraction == 1 || !trace.has_surface) return true;
     memcpy(material, trace.surface.material, 16);
     query.end = qa_vec_add(trace.end, qa_v3(0,0,1));
     query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask,
-        qa_collision_contents_mask(56, QA_COLLISION_Q2));
+        qa_collision_contents_mask(56, QA_GAME_Q2));
     if (!source->trace(source->context, &query, &trace, error)) return false;
     if (trace.has_surface) memcpy(material, trace.surface.material, 16);
     material[15] = 0; return true;

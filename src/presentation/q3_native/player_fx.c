@@ -191,7 +191,7 @@ static bool dust(player_fx *p,qa_error *e)
     if(cent->dust_trail_time<f->time)cent->dust_trail_time=f->time;
     qa_vec3 origin=q3ne_array(p->state->pos.base); qa_trace_result tr;
     if(!q3n_events_trace(f,origin,q3ne_sum(origin,qa_v3(0,0,-64)),(qa_bounds){0},p->state->number,FX_PLAYERSOLID,&tr,e) || !current(p,e))return false;
-    if(!((uint32_t)qa_collision_surface_export(tr.surface_flags,QA_COLLISION_Q3)&0x40000))return true;
+    if(!((uint32_t)qa_collision_surface_export(tr.surface_flags,QA_GAME_Q3)&0x40000))return true;
     q3n_smoke smoke={.origin=q3ne_sum(origin,qa_v3(0,0,-16)),.velocity={0,0,-30},.radius=24,
         .color={0.8f,0.8f,0.7f,0.33f},.duration=500,.start_time=f->time,.shader=p->media->graphics[Q3N_G_DUST_PUFF]};
     q3n_effect_smoke(f,&smoke); return true;

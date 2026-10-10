@@ -962,7 +962,7 @@ static bool shotgun_pattern(const q3n_frame *f,qa_vec3 muzzle,qa_vec3 direction,
             qa_trace_result water;
             if (!q3n_events_trace(f,muzzle,end,bounds,-1,32,&water,e) || !q3n_effect_bubbles(f,trace.end,water.end,32,e)) return false;
         }
-        uint32_t surface_flags=(uint32_t)qa_collision_surface_export(trace.surface_flags,QA_COLLISION_Q3);
+        uint32_t surface_flags=(uint32_t)qa_collision_surface_export(trace.surface_flags,QA_GAME_Q3);
         if (surface_flags&16) continue;
         if (f->unified_effects) {
             if (trace.hit==QA_TRACE_HIT_ACTOR) q3n_effect_bleed(f,trace.end,-1);

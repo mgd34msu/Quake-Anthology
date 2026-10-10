@@ -573,9 +573,9 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             return false;
         entry = q3_actor_get(game, actor);
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
-        qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+        qa_actor_collision collision = {.family = QA_GAME_Q3,
                                         .shape = QA_SHAPE_BOX,
-                                        .contents = qa_collision_contents_decode(Q3_CONTENTS_BODY, QA_COLLISION_Q3),
+                                        .contents = qa_collision_contents_decode(Q3_CONTENTS_BODY, QA_GAME_Q3),
                                         .role = QA_COLLISION_SOLID};
         if (!qa_world_set_collision(game->options.services.world, actor, &collision, error))
             return false;
@@ -1332,9 +1332,9 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return false;
     body.angles.x = body.angles.z = 0;
     body.bounds.maxs.z = -8;
-    qa_actor_collision corpse_collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision corpse_collision = {.family = QA_GAME_Q3,
                                            .shape = QA_SHAPE_BOX,
-                                           .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_COLLISION_Q3),
+                                           .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_GAME_Q3),
                                            .role = QA_COLLISION_SOLID};
     if (!native_client && !q3_death_rewards(game, actor, &outcome->request, error))
         return false;
@@ -1348,7 +1348,7 @@ bool qa_q3_damage_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return true;
     player = &entry->state.player;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &query, &contents, error))
         return false;

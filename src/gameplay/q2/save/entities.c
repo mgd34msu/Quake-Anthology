@@ -6,7 +6,7 @@ static bool collision(q2_save_io *io, qa_actor_collision *s) {
         qa_collision_contents_export(s->contents, s->family, s->q1_opaque_token);
     if (!q2_save_i32(io, &native_contents)) return false;
     if (io->reading) {
-        qa_collision_terminal terminal = s->family == QA_COLLISION_Q1
+        qa_collision_terminal terminal = s->family == QA_GAME_Q1
             ? qa_collision_q1_terminal(native_contents)
             : (qa_collision_terminal){qa_collision_contents_decode(native_contents, s->family), 0};
         s->contents = terminal.bits;

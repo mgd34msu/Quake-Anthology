@@ -110,8 +110,8 @@ static bool spawn_podium(qa_q3_game *game, qa_actor_id *out, qa_error *error)
 {
     qa_string_id classname;
     if (!qa_builtin_resource(&game->options.services, "podium", &classname, error)) return false;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3, .shape = QA_SHAPE_BOX,
-        .contents = qa_collision_contents_decode(1, QA_COLLISION_Q3), .role = QA_COLLISION_SOLID};
+    qa_actor_collision collision = {.family = QA_GAME_Q3, .shape = QA_SHAPE_BOX,
+        .contents = qa_collision_contents_decode(1, QA_GAME_Q3), .role = QA_COLLISION_SOLID};
     qa_actor_id actor;
     if (!q3_spawn_raw_actor(game, classname, &actor, error)) return false;
     uint32_t slot;
@@ -165,9 +165,9 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
         !qa_q3_wire_client_source_body_read(game, client, &body_source, error))
         return q3_rollback_spawn(game, actor, error);
     qa_q3_source_binding source = game->source_entities[client];
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
         .shape = body_source.model_shape == QA_SHAPE_CAPSULE ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
-        .contents = qa_collision_contents_decode(Q3_CONTENTS_BODY, QA_COLLISION_Q3), .role = QA_COLLISION_SOLID,
+        .contents = qa_collision_contents_decode(Q3_CONTENTS_BODY, QA_GAME_Q3), .role = QA_COLLISION_SOLID,
         .has_q3_owner = true, .q3_owner_number = source.owner_number};
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
@@ -378,8 +378,8 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
             ? game->source_entities[owner_number].actor : (qa_actor_id){0};
     qa_trace_query query = {.start = body.origin, .end = destination, .pass_actor = owner,
         .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x10001), QA_COLLISION_Q3);
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x10001), QA_GAME_Q3);
     qa_trace_result trace;
     if (!qa_world_trace(game->options.services.world, &query, &trace, error)) return false;
     if (!q3_actor_get(game, actor)) return true;
@@ -390,7 +390,7 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     if (!entry || entry->kind != Q3_ACTOR_VICTORY_MODEL) return true;
     float fraction = trace.start_solid || trace.all_solid ? 0 : trace.fraction;
     if (fraction == 1) return true;
-    qa_point_query point = {.point = body.origin, .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+    qa_point_query point = {.point = body.origin, .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error)) return false;
     if (qa_collision_bits_overlap(contents.contents, qa_collision_bit(QA_CONTENT_NODROP)))

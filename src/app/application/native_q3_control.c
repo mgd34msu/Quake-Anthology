@@ -151,10 +151,10 @@ static bool contact_actor(qa_application *app, qa_bounds bounds,
     if (!qa_world_body_read(app->world, actor, &body, error)) return false;
     if (!live(app, actor)) return true;
     qa_trace_query query = {.shape = {QA_SHAPE_BOX, bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3),
+        .policy = qa_collision_default_policy(QA_GAME_Q3),
         .target = {.inline_model = collision.inline_model, .model = collision.model,
             .origin = body.origin, .angles = body.angles}};
-    query.policy.contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_COLLISION_Q3);
+    query.policy.contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q3);
     qa_trace_result trace;
     qa_collision_geometry *geometry = collision.model_geometry ? collision.model_geometry : qa_world_geometry(app->world);
     bool ok = collision.inline_model

@@ -225,12 +225,12 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_point_query point = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &point, &contents, error))
         return false;
-    bool sky = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6 ||
-               (contact && contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q1) & 4));
+    bool sky = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token) == -6 ||
+               (contact && contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_GAME_Q1) & 4));
     if (projectile.kind != Q1_GRENADE && projectile.kind != Q1_OGRE_GRENADE &&
         projectile.kind != Q1_ZOMBIE_GRENADE && sky)
         return q1_remove(g, entity, error);

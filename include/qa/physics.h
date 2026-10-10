@@ -35,7 +35,7 @@ typedef struct qa_q1_pusher_clock {
  * clocks remain owned by the shared world and session. Defaults are explicit;
  * a zero clip_mask is significant for NEW_TOSS. */
 typedef struct qa_physics_properties {
-    qa_collision_family family;
+    qa_game_family family;
     qa_physics_motion motion;
     qa_physics_solid solid;
     bool q2_rerelease;
@@ -117,7 +117,7 @@ typedef struct qa_physics_result {
     uint32_t collisions;
 } qa_physics_result;
 
-qa_physics_properties qa_physics_properties_default(qa_collision_family);
+qa_physics_properties qa_physics_properties_default(qa_game_family);
 /* Initialize fresh storage; dispose retained scratch before reinitializing. */
 bool qa_physics_init(qa_physics *, qa_world *, qa_actor_id world_actor,
                      const qa_physics_services *, qa_error *);
@@ -148,7 +148,7 @@ bool qa_physics_touch_triggers(qa_physics *, qa_actor_id, qa_error *);
 /* Source relinking uses its own trigger traversal even when the actor has a
  * different selected movement family. */
 bool qa_physics_touch_triggers_source(qa_physics *, qa_actor_id,
-                                       qa_collision_family, qa_error *);
+                                       qa_game_family, qa_error *);
 bool qa_physics_impact(qa_physics *, qa_actor_id, const qa_trace_result *, qa_error *);
 bool qa_physics_water_transition(qa_physics *, qa_actor_id, qa_vec3 previous_origin,
                                  qa_error *);

@@ -11,7 +11,7 @@ typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
 typedef enum qa_q1_move_kind { QA_Q1_MOVE_NORMAL, QA_Q1_MOVE_NO_MONSTERS, QA_Q1_MOVE_MISSILE } qa_q1_move_kind;
 typedef struct qa_trace_policy {
-    qa_collision_family family;
+    qa_game_family family;
     qa_collision_bits contents_mask;
     qa_q1_move_kind q1_move;
     int32_t q1_hull; /* -1 selects the Q1 box hull from its X width. */
@@ -36,7 +36,7 @@ typedef struct qa_collision_plane { qa_vec3 normal; float distance; int32_t type
 typedef struct qa_collision_surface { char name[64]; qa_collision_bits flags; int32_t value; char material[16]; } qa_collision_surface;
 typedef enum qa_trace_hit { QA_TRACE_HIT_NONE, QA_TRACE_HIT_WORLD, QA_TRACE_HIT_ACTOR } qa_trace_hit;
 typedef struct qa_trace_result {
-    qa_collision_family family;
+    qa_game_family family;
     float fraction;
     qa_vec3 end;
     bool start_solid, all_solid, in_open, in_water, contact;
@@ -64,7 +64,7 @@ typedef struct qa_point_query {
     bool q3_server_entities;
 } qa_point_query;
 typedef struct qa_point_contents {
-    qa_collision_family family;
+    qa_game_family family;
     qa_collision_bits contents, stored, merged;
     int32_t q1_opaque_token;
 } qa_point_contents;
@@ -97,7 +97,7 @@ bool qa_collision_retain(qa_collision_geometry *, qa_error *);
 bool qa_collision_bind_resource(qa_collision_geometry *, struct qa_resource *, qa_error *);
 const struct qa_resource *qa_collision_resource(const qa_collision_geometry *);
 const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *);
-qa_collision_family qa_collision_geometry_family(const qa_collision_geometry *);
+qa_game_family qa_collision_geometry_family(const qa_collision_geometry *);
 uint64_t qa_collision_map_identity(const qa_collision_geometry *);
 size_t qa_collision_model_count(const qa_collision_geometry *);
 bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa_bounds *, qa_error *);
@@ -107,7 +107,7 @@ bool qa_collision_set_surface_material(qa_collision_geometry *, uint32_t texinfo
 bool qa_collision_trace(const qa_collision_geometry *, qa_trace_scratch *, const qa_trace_query *, qa_trace_result *, qa_error *);
 /* Sweeps against one temporary body without requiring spatial publication.
  * Hosts use this for source APIs that explicitly name an entity to clip. */
-bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family,
+bool qa_collision_trace_body(const qa_trace_query *, qa_game_family actor_family,
                              qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin,
                              qa_collision_bits contents, qa_trace_result *, qa_error *);
 /* Source Q3 capsule handle: target supplies the optional origin/angles. The
@@ -156,7 +156,7 @@ typedef struct qa_collision_saved_portal {
     bool primary;
 } qa_collision_saved_portal;
 typedef struct qa_collision_portal_checkpoint {
-    qa_collision_family family;
+    qa_game_family family;
     qa_bsp_format format;
     uint64_t map_identity; /* Stable fingerprint of the immutable BSP bytes. */
     uint32_t area_count;
@@ -173,8 +173,8 @@ void qa_collision_portal_checkpoint_free(qa_collision_portal_checkpoint *);
 bool qa_collision_restore_portals(qa_collision_geometry *, const qa_collision_portal_checkpoint *, qa_error *);
 /* Applies source contact conventions without converting canonical fields. */
 void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
-qa_trace_policy qa_collision_default_policy(qa_collision_family);
-qa_ruleset_id qa_collision_source_rules(qa_collision_family);
+qa_trace_policy qa_collision_default_policy(qa_game_family);
+qa_ruleset_id qa_collision_source_rules(qa_game_family);
 /* Source link expansion only; loaded BSP model bounds and explicit host bounds stay separate. */
 qa_bounds qa_collision_link_bounds(qa_bounds, qa_vec3 origin, qa_vec3 angles,
     bool rotated_brush, qa_vec3 padding, qa_ruleset_id);

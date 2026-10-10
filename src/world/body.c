@@ -471,7 +471,7 @@ bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *
 
 static bool valid_collision(qa_world *world,const qa_actor_collision *collision,qa_status code,qa_error *error)
 {
-    if(collision!=NULL && (collision->family<QA_COLLISION_Q1 || collision->family>QA_COLLISION_Q3
+    if(collision!=NULL && (collision->family<QA_GAME_Q1 || collision->family>QA_GAME_Q3
         || (!collision->inline_model && (collision->model_geometry ||
             collision->shape<QA_SHAPE_BOX || collision->shape>QA_SHAPE_CAPSULE))
         || collision->owner.kind<QA_ACTOR_REFERENCE_NONE || collision->owner.kind>QA_ACTOR_REFERENCE_SOURCE
@@ -523,8 +523,8 @@ bool qa_world_collision_bind(qa_world *world,qa_actor_id actor,const qa_collisio
 {
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
-    if(binding!=NULL && (binding->fields==NULL || binding->fields->family<QA_COLLISION_Q1 ||
-        binding->fields->family>QA_COLLISION_Q3))
+    if(binding!=NULL && (binding->fields==NULL || binding->fields->family<QA_GAME_Q1 ||
+        binding->fields->family>QA_GAME_Q3))
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding needs fields");
     if(binding!=NULL && binding->fields->models!=NULL) {
         const qa_entity_model_fields *models=binding->fields->models;
@@ -754,7 +754,7 @@ bool qa_world_leaf_visibility(qa_world *world,qa_actor_id actor,const qa_bounds 
     qa_world_leaf_cache *cache=world->leaf_cache+actor.slot;
     qa_bounds bounds=explicit_bounds?*explicit_bounds:qa_actors_link(world->actors->links,body->actor.slot)->bounds;
     if(!qa_bounds_valid(bounds) || !world->geometry ||
-        (policy==QA_WORLD_LEAVES_Q1_TOUCHED && qa_collision_geometry_family(world->geometry)!=QA_COLLISION_Q1))
+        (policy==QA_WORLD_LEAVES_Q1_TOUCHED && qa_collision_geometry_family(world->geometry)!=QA_GAME_Q1))
         return fail(error,QA_ERROR_ARGUMENT,"Leaf membership lost its actual geometry or Source policy");
     if(cache->leaf_geometry!=world->geometry || cache->leaf_storage!=body->storage_serial) {
         cache->leaf_box_ready=false; cache->leaf_q1_ready=false;
@@ -801,7 +801,7 @@ bool qa_world_q1_visible(qa_world *world,qa_actor_id actor,const qa_bounds *boun
     qa_bytes pvs,bool *out,qa_error *error)
 {
     qa_collision_geometry *geometry=qa_world_geometry(world);
-    if(!geometry || qa_collision_geometry_family(geometry)!=QA_COLLISION_Q1 || !out ||
+    if(!geometry || qa_collision_geometry_family(geometry)!=QA_GAME_Q1 || !out ||
         (bounds && !qa_bounds_valid(*bounds)) || pvs.size!=qa_collision_q1_pvs_bytes(geometry) ||
         (pvs.size && !pvs.data))
         return fail(error,QA_ERROR_ARGUMENT,"Q1 entity visibility requires its actual fat-PVS and source bounds");

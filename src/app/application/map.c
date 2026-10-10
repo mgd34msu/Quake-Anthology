@@ -1363,7 +1363,7 @@ static bool monster_trace(monster_placement_query *query, qa_vec3 start, qa_vec3
     qa_bounds bounds, bool point, bool route, qa_trace_result *out, qa_error *error)
 {
     qa_trace_policy policy = query->policy;
-    if (route && policy.family == QA_COLLISION_Q1) policy.q1_move = QA_Q1_MOVE_NO_MONSTERS;
+    if (route && policy.family == QA_GAME_Q1) policy.q1_move = QA_Q1_MOVE_NO_MONSTERS;
     if (!qa_world_trace_excluding(query->map->application->world,
         &(qa_trace_query){.start = start, .end = end,
             .shape = {.kind = point ? QA_SHAPE_POINT : QA_SHAPE_BOX, .bounds = bounds},
@@ -1570,8 +1570,8 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         !app->physics->services.read(app->physics->services.context, actor, &query.movement))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected monster has no physical Source body");
     query.policy = qa_collision_default_policy(query.movement.family);
-    if (query.policy.family == QA_COLLISION_Q2)
-        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
+    if (query.policy.family == QA_GAME_Q2)
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
     qa_trace_result trace;
     if (!monster_trace(&query, query.body.origin, query.body.origin, query.body.bounds,
         false, false, &trace, error)) return false;

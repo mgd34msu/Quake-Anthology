@@ -32,7 +32,7 @@ static bool point(q3_call *call, qa_collision_geometry *geometry, qa_trace_scrat
 {
     if (!transformed && !nodes) { *result = 0; return true; }
     int32_t handle = q3_integer(call, 1);
-    qa_point_query query = {.policy = qa_collision_default_policy(QA_COLLISION_Q3),
+    qa_point_query query = {.policy = qa_collision_default_policy(QA_GAME_Q3),
         .target.pose_rules = QA_RULESET_Q3};
     if (!q3_vector(call, call->arguments[0], &query.point, error)) return false;
     if (transformed) {
@@ -56,7 +56,7 @@ static bool point(q3_call *call, qa_collision_geometry *geometry, qa_trace_scrat
     query.target.model = (uint32_t)handle;
     qa_point_contents contents;
     if (!qa_collision_point_contents(geometry, scratch, &query, &contents, error)) return false;
-    *result = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q3, contents.q1_opaque_token); return true;
+    *result = qa_collision_point_contents_export(contents.contents, QA_GAME_Q3, contents.q1_opaque_token); return true;
 }
 
 static bool trace(q3_call *call, qa_collision_geometry *geometry, qa_trace_scratch *scratch, bool nodes,
@@ -66,15 +66,15 @@ static bool trace(q3_call *call, qa_collision_geometry *geometry, qa_trace_scrat
     if (!q3_record_open(call, call->arguments[0], 56, &output, error)) return false;
     int32_t handle = q3_integer(call, 5);
     bool temporary;
-    qa_trace_result result = {.family = QA_COLLISION_Q3, .fraction = 1};
+    qa_trace_result result = {.family = QA_GAME_Q3, .fraction = 1};
     if (!transformed && !nodes) {
         if (!resolve(geometry, handle, &temporary, error)) return false;
         return qa_q3_abi_write_trace(&output.abi, 0, &result, 0, error);
     }
-    qa_trace_query query = {.policy = qa_collision_default_policy(QA_COLLISION_Q3),
+    qa_trace_query query = {.policy = qa_collision_default_policy(QA_GAME_Q3),
         .shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
         .target.pose_rules = QA_RULESET_Q3};
-    query.policy.contents_mask = qa_collision_contents_mask((uint32_t)q3_integer(call, 6), QA_COLLISION_Q3);
+    query.policy.contents_mask = qa_collision_contents_mask((uint32_t)q3_integer(call, 6), QA_GAME_Q3);
     if (!q3_vector(call, call->arguments[1], &query.start, error) ||
         !q3_vector(call, call->arguments[2], &query.end, error) ||
         !bounds_vector(call, call->arguments[3], &query.shape.bounds.mins, error) ||

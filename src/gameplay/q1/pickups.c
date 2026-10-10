@@ -1339,7 +1339,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_trace_query query = {.start = qa_vec_add(body.origin, qa_v3(0, 0, 6)),
                                 .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                                 .pass_actor = entity->id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                                .policy = qa_collision_default_policy(QA_GAME_Q1)};
         query.end = qa_vec_add(query.start, qa_v3(0, 0, -256));
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, error))

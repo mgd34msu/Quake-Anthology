@@ -11,10 +11,10 @@ static bool brush_trigger(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->direction = q3_map_direction(state->angles);
         state->angles = qa_v3(0, 0, 0);
     }
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .inline_model = true,
                                     .model = state->inline_model,
-                                    .contents = qa_collision_contents_decode(-1, QA_COLLISION_Q3),
+                                    .contents = qa_collision_contents_decode(-1, QA_GAME_Q3),
                                     .role = QA_COLLISION_SOLID};
     q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
     if (!wire)
@@ -28,7 +28,7 @@ static bool brush_trigger(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->actor = (qa_actor_id){0};
         return true;
     }
-    collision.contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3);
+    collision.contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_GAME_Q3);
     collision.role = QA_COLLISION_TRIGGER;
     return qa_world_set_collision(game->options.services.world, state->actor, &collision, error);
 }

@@ -36,7 +36,7 @@ static bool floor_drop(qa_q1_game *g, q1_actor *e, bool *placed, qa_error *error
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 6));
     qa_trace_query query = {.start = start, .end = qa_vec_sub(start, qa_v3(0, 0, 256)),
         .pass_actor = actor, .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_trace_result hit;
     if (!qa_world_trace(g->services.world, &query, &hit, error) ||
         !current(g, actor, e, error)) return false;
@@ -216,7 +216,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 6));
     qa_trace_query query = {.start = start, .end = qa_vec_sub(start, qa_v3(0, 0, 256)),
         .pass_actor = base_actor, .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_trace_result hit;
     if (!qa_world_trace(g->services.world, &query, &hit, error) ||
         q1_entity(g, actor) != e || q1_entity(g, base_actor) != base) return false;

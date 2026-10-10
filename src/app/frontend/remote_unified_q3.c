@@ -161,7 +161,7 @@ static bool trace(void *context, const q3n_frame *f, qa_vec3 start, qa_vec3 end,
     if (f->unified_effects != &b->source || !effect_current(&b->source))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q3 trace lost its entered CLIENT");
     qa_trace_query q = {.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_COLLISION_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3),.curves=true},.pass_actor=b->source.actor};
+        .policy={.family=QA_GAME_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
     return g && qa_collision_trace(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,out,e) && effect_current(&b->source);
 }
@@ -170,10 +170,10 @@ static bool contents(void *context, const q3n_frame *f, qa_vec3 point, int32_t p
     unified_q3_bank *b = context; (void)pass;
     if (f->unified_effects != &b->source || !effect_current(&b->source)) return false;
     qa_point_contents result; qa_point_query q = {.point=point,
-        .policy={.family=QA_COLLISION_Q3,.curves=true},.pass_actor=b->source.actor};
+        .policy={.family=QA_GAME_Q3,.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
     if (!g || !qa_collision_point_contents(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,&result,e) || !effect_current(&b->source)) return false;
-    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token); return true;
+    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_GAME_Q3,result.q1_opaque_token); return true;
 }
 static bool fragments(void *context, const q3n_frame *f, const qa_vec3 *points, size_t count,
     qa_vec3 projection, qa_vec3 *output, size_t capacity, q3n_mark_fragment *out,
@@ -1090,8 +1090,8 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         o->sampled_view.clip_plane.distance!=view->clip_plane.distance ||
         o->sampled_view.origin.x!=view->origin.x || o->sampled_view.origin.y!=view->origin.y ||
         o->sampled_view.origin.z!=view->origin.z || !enter(o,(qa_actor_id){0},e)) return false;
-    qa_collision_family family=qa_collision_geometry_family(frontend_remote_unified_geometry(o->replica));
-    qa_q3_scene_options options={.world=*world,.world_family=family==QA_COLLISION_Q1?QA_GAME_Q1:family==QA_COLLISION_Q2?QA_GAME_Q2:QA_GAME_Q3,.lod_scale=5,
+    qa_game_family family=qa_collision_geometry_family(frontend_remote_unified_geometry(o->replica));
+    qa_q3_scene_options options={.world=*world,.world_family=family==QA_GAME_Q1?QA_GAME_Q1:family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3,.lod_scale=5,
         .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};
     qa_scene_state_default(&options.state); bool okay=true;
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)

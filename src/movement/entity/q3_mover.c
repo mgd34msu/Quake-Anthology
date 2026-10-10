@@ -79,7 +79,7 @@ static bool q3_trace_query(q3_mover_transaction *transaction, const qa_trace_que
         ? transaction->services->trace(transaction->services->context, query, trace, transaction->error)
         : qa_world_trace(transaction->physics->world, query, trace, transaction->error);
     if (!success) return false;
-    if (trace->family != QA_COLLISION_Q3 || !isfinite(trace->fraction) ||
+    if (trace->family != QA_GAME_Q3 || !isfinite(trace->fraction) ||
         trace->fraction < 0 || trace->fraction > 1 || !qa_vec_finite(trace->end)) {
         qa_error_set(transaction->error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 mover trace result");
         return false;
@@ -98,9 +98,9 @@ static bool q3_position_blocked(q3_mover_transaction *transaction, qa_actor_id a
     qa_vec3 start = q3_test_origin(&record);
     qa_trace_query query = {.start = start, .end = start,
         .shape = {QA_SHAPE_BOX, record.body.bounds}, .pass_actor = actor,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
     query.policy.contents_mask = qa_collision_contents_mask(
-        record.properties.clip_mask ? record.properties.clip_mask : 1,QA_COLLISION_Q3);
+        record.properties.clip_mask ? record.properties.clip_mask : 1,QA_GAME_Q3);
     qa_trace_result trace;
     if (!q3_trace_query(transaction, &query, &trace)) return false;
     *blocked = ph_live(transaction->physics, actor) && (trace.start_solid || trace.all_solid);
@@ -245,8 +245,8 @@ static bool q3_proximity_clear(q3_mover_transaction *transaction, qa_actor_id ac
         .start = qa_vec_add(mine.source.position.base, qa_vec_scale(mine.source.proximity_direction, 0.125f)),
         .end = qa_vec_add(mine.source.position.base, qa_vec_scale(mine.source.proximity_direction, 2)),
         .shape = {.kind = QA_SHAPE_POINT}, .pass_actor = actor,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask(1,QA_COLLISION_Q3);
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask(1,QA_GAME_Q3);
     qa_trace_result trace;
     if (!q3_trace_query(transaction, &query, &trace)) return false;
     *clear = !ph_live(transaction->physics, actor) ||

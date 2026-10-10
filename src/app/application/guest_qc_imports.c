@@ -179,7 +179,7 @@ static bool aim_trace(struct application_qc_state *engine, qa_actor_id shooter,
                        qa_vec3 start, qa_vec3 end, qa_trace_result *out, qa_error *error)
 {
     qa_trace_query query = {.start = start, .end = end, .shape = {.kind = QA_SHAPE_POINT},
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1), .pass_actor = shooter};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1), .pass_actor = shooter};
     return qa_world_trace(engine->world, &query, out, error);
 }
 static bool aim(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)

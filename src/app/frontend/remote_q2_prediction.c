@@ -76,7 +76,7 @@ bool remote_q2_prediction_publish(frontend_remote_q2 *row, qa_error *error)
         if (!entity->solid) continue;
         uint32_t model = 0;
         qa_body_state state = {.origin = vector(entity->origin)};
-        qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+        qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
             .role = QA_COLLISION_SOLID};
         if (entity->solid == 31) {
             if (entity->modelindex >= row->layout.max_models ||

@@ -9,7 +9,7 @@ bool q1_monster_drop_floor(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, -256)),
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                             .pass_actor = entity->id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     query.policy.q1_move = QA_Q1_MOVE_NO_MONSTERS;
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, error))
@@ -27,11 +27,11 @@ static bool eel_pitch(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) != -3)
+    if (qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token) != -3)
         return q1_monster_drop_floor(g, entity, error) &&
                q1_damage(g, entity->id, entity->id, (qa_actor_id){0}, 6, QA_Q1_WEAPON_COUNT, error);
     if (g->time < entity->delay)

@@ -202,11 +202,11 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         player_angles = qa_v3(player_source.apos.base[0], player_source.apos.base[1],
                                player_source.apos.base[2]);
     }
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_contents_decode(
                                         INT32_C(0x04000000) | (source ? Q3_CONTENTS_TRIGGER : 0),
-                                        QA_COLLISION_Q3),
+                                        QA_GAME_Q3),
                                     .role = source ? QA_COLLISION_BOTH : QA_COLLISION_SOLID};
     qa_combat_state combat = {.health = 200, .mass = 200, .can_take_damage = true};
     body.origin = qa_physics_q3_snap(player_origin);

@@ -201,7 +201,7 @@ bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *erro
          !fields_scalar(host, address + row->ground_offset, host->pointer_bytes,
              host->pointer_bytes == 4 ? QA_ENTITY_U32_LE : QA_ENTITY_U64_LE,
              &body.ground, error))) return false;
-    qa_entity_collision_fields collision = {.family = QA_COLLISION_Q2,
+    qa_entity_collision_fields collision = {.family = QA_GAME_Q2,
         .rerelease = host->profile == QA_NATIVE_Q2_GAME_API2023,
         .references = &host->q2_references, .models = &host->models};
     bool classic = host->profile == QA_NATIVE_Q2_GAME_API3;
@@ -878,7 +878,7 @@ static native_host_surface *surface_address(qa_native_host *host,
     if (length > name_bytes - 1u)
         length = name_bytes - 1u;
     memcpy(bytes, surface->name, length);
-    qa_store_u32le(bytes + name_bytes, (uint32_t)qa_collision_surface_export(surface->flags,QA_COLLISION_Q2));
+    qa_store_u32le(bytes + name_bytes, (uint32_t)qa_collision_surface_export(surface->flags,QA_GAME_Q2));
     qa_store_u32le(bytes + name_bytes + 4u, (uint32_t)surface->value);
     if (host->profile != QA_NATIVE_Q2_GAME_API3) {
         size_t material = strlen(surface->material);
@@ -963,7 +963,7 @@ static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
             !native_host_store_pointer(host, bytes + host->classic->trace.entity,
                                        entity, error))
             return false;
-        qa_store_u32le(bytes + host->classic->trace.contents, (uint32_t)qa_collision_contents_export(trace->contents,QA_COLLISION_Q2,trace->q1_opaque_token));
+        qa_store_u32le(bytes + host->classic->trace.contents, (uint32_t)qa_collision_contents_export(trace->contents,QA_GAME_Q2,trace->q1_opaque_token));
     } else {
         bytes[0] = trace->all_solid ? 1u : 0u;
         bytes[1] = trace->start_solid ? 1u : 0u;
@@ -978,7 +978,7 @@ static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
         bytes[36] = (uint8_t)trace->plane.type;
         bytes[37] = trace->plane.signbits;
         qa_store_u64le(bytes + 40, surface);
-        qa_store_u32le(bytes + 48, (uint32_t)qa_collision_contents_export(trace->contents,QA_COLLISION_Q2,trace->q1_opaque_token));
+        qa_store_u32le(bytes + 48, (uint32_t)qa_collision_contents_export(trace->contents,QA_GAME_Q2,trace->q1_opaque_token));
         qa_store_u64le(bytes + 56, entity);
         if (trace->has_secondary) {
             store_f32(bytes + 64, trace->secondary_plane.normal.x);
@@ -1050,7 +1050,7 @@ bool qa_native_host_source_touch_prepare(qa_native_host *host,bool rerelease,
             size_t length=0;
             while(length<16&&contact->surface.name[length]) ++length;
             memcpy(bytes+20,contact->surface.name,length);
-            qa_store_u32le(bytes+36,(uint32_t)qa_collision_surface_export(contact->surface.flags,QA_COLLISION_Q2));
+            qa_store_u32le(bytes+36,(uint32_t)qa_collision_surface_export(contact->surface.flags,QA_GAME_Q2));
             qa_store_u32le(bytes+40,(uint32_t)contact->surface.value);
         }
     }
@@ -1111,9 +1111,9 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
         .end = end,
         .shape = {.kind = mins_address ? QA_SHAPE_BOX : QA_SHAPE_POINT,
                   .bounds = {mins, maxs}},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .policy = qa_collision_default_policy(QA_GAME_Q2),
         .pass_actor = pass};
-    query.policy.contents_mask = qa_collision_contents_mask(mask,QA_COLLISION_Q2);
+    query.policy.contents_mask = qa_collision_contents_mask(mask,QA_GAME_Q2);
     query.policy.q2_merged_contents = host->profile != QA_NATIVE_Q2_GAME_API3;
     qa_trace_result trace;
     qa_native_address forced_entity = 0;

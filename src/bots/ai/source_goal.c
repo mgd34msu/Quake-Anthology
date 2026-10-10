@@ -109,10 +109,10 @@ static bool observation(qa_bots *b,int32_t client,qa_bot_entity_info *out,qa_err
 }
 bool bot_ai_source_point_contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_error *e) {
     qa_point_query query={.point=point,.pass_actor=pass,.q3_server_entities=true,
-        .policy={.family=QA_COLLISION_Q3,.q1_hull=-1}};
+        .policy={.family=QA_GAME_Q3,.q1_hull=-1}};
     qa_point_contents result;
     if(!qa_world_point_contents(b->services.shared.world,&query,&result,e)) return false;
-    *out=qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token);return true;
+    *out=qa_collision_point_contents_export(result.contents,QA_GAME_Q3,result.q1_opaque_token);return true;
 }
 
 bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,

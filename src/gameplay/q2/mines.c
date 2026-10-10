@@ -12,11 +12,11 @@ static uint64_t mine_life(float multiplier) {
            Q2_NS;
 }
 static bool contents_at(qa_q2_game *g, qa_vec3 point, uint32_t *out, qa_error *e) {
-    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_GAME_Q2)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, e))
         return false;
-    *out = (uint32_t)qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token);
+    *out = (uint32_t)qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token);
     return true;
 }
 static bool visible(qa_q2_game *g, qa_actor_id from, qa_vec3 start, qa_actor_id target, qa_error *e,
@@ -30,8 +30,8 @@ static bool visible(qa_q2_game *g, qa_actor_id from, qa_vec3 start, qa_actor_id 
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, traits.view_height)),
                             .pass_actor = from,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(25, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -150,7 +150,7 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     if (!qa_builtin_resource(&g->services, kind == Q2_PROX_FIELD ? "prox_field" : "tesla trigger",
                              &definition, e))
         return false;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(1, 0,
                                         g->options.edition == QA_Q2_RERELEASE),
@@ -170,7 +170,7 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     child->projectile = (q2_projectile){.kind = kind,
         .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
     child->physics_bound = true;
-    child->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    child->physics = qa_physics_properties_default(QA_GAME_Q2);
     child->physics.motion = QA_PHYSICS_STATIONARY;
     child->physics.solid = QA_PHYSICS_TRIGGER;
     mine->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
@@ -342,9 +342,9 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         qa_trace_query query = {.start = start,
                                 .end = body.origin,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
         query.policy.contents_mask =
-            qa_collision_contents_mask(g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_COLLISION_Q2);
+            qa_collision_contents_mask(g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
@@ -410,7 +410,7 @@ static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_
         gib->projectile =
             (q2_projectile){.kind = Q2_TRAP_GIB, .expire_ns = q2_deadline(g->now_ns, 100 * Q2_MS)};
         gib->physics_bound = true;
-        gib->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+        gib->physics = qa_physics_properties_default(QA_GAME_Q2);
         gib->physics.motion = QA_PHYSICS_TOSS;
         gib->physics.solid = QA_PHYSICS_NOT_SOLID;
         gib->projectile.effects = (a->projectile.gekk ? 26u : 1u) | 2u;
@@ -752,7 +752,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     }
     if (p->kind != Q2_PROX || p->phase != MINE_FLIGHT)
         return true;
-    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4) != 0)
+    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 4) != 0)
         return qa_session_release(g->services.session, a->id, e);
     if (contact->has_plane) {
         if (!contents_at(g, qa_vec_add(body.origin, qa_vec_scale(contact->plane.normal, -10)),
@@ -863,7 +863,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                   : kind == Q2_TESLA ? (qa_bounds){qa_v3(-12, -12, 0), qa_v3(12, 12, 20)}
                                      : (qa_bounds){qa_v3(-4, -4, 0), qa_v3(4, 4, 8)}};
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2,
                                         c->rerelease && kind == Q2_PROX ? 128u : 0u, c->rerelease),
@@ -913,7 +913,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                                    : kind == Q2_TESLA ? 3 * Q2_NS
                                                       : Q2_NS)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = c->rerelease;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;
@@ -1036,7 +1036,7 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
     if (!qa_builtin_resource(&g->services, "bad_area", &definition, e))
         return false;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(1, 0,
                                         g->options.edition == QA_Q2_RERELEASE),
@@ -1060,7 +1060,7 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
                         .owner = owner_reference,
                         .expire_ns = lifespan == 0 ? 0 : q2_deadline(g->now_ns, lifespan)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.motion = QA_PHYSICS_STATIONARY;
     a->physics.solid = QA_PHYSICS_TRIGGER;
     *out = id;

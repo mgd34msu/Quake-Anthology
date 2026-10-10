@@ -797,7 +797,7 @@ bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
             ok = qa_world_link(g->services.world, actor, NULL, error);
             if (ok && q1_alive(g, actor))
                 ok = qa_physics_touch_triggers_source(g->services.physics, actor,
-                                                       QA_COLLISION_Q1, error);
+                                                       QA_GAME_Q1, error);
         }
     }
     return operation_finish(&operation, ok, error);
@@ -965,7 +965,7 @@ static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind ki
     entity->classname = name;
     entity->kind = kind;
     entity->native = true;
-    entity->physics = qa_physics_properties_default(QA_COLLISION_Q1);
+    entity->physics = qa_physics_properties_default(QA_GAME_Q1);
     if (!q1_map_bind_target(g, entity, error)) {
         (void)q1_remove(g, entity, NULL);
         return false;
@@ -988,9 +988,9 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->kind == Q1_PICKUP && !entity->pickup_observation.serial &&
         !q1_pickup_observe(g, entity, error))
         return false;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q1,
+    qa_actor_collision collision = {.family = QA_GAME_Q1,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = qa_collision_contents_decode(-2, QA_COLLISION_Q1),
+                                    .contents = qa_collision_contents_decode(-2, QA_GAME_Q1),
                                     .owner = entity->owner,
                                     .monster = (entity->physics.flags & QA_PHYSICS_MONSTER) != 0,
                                     .q1_corpse = entity->physics.solid == QA_PHYSICS_CORPSE,
@@ -1247,7 +1247,7 @@ bool q1_trace(qa_q1_game *g, qa_vec3 start, qa_vec3 end, qa_actor_id pass, bool 
                             .end = end,
                             .shape.kind = QA_SHAPE_POINT,
                             .pass_actor = pass,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     query.policy.q1_move = monsters ? QA_Q1_MOVE_NORMAL : QA_Q1_MOVE_NO_MONSTERS;
     return qa_world_trace(g->services.world, &query, out, error);
 }
@@ -1349,7 +1349,7 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
                                 .knockback_scale = 1,
                                 .ignore = ignore,
                                 .visibility_pass = inflictor,
-                                .trace = qa_collision_default_policy(QA_COLLISION_Q1),
+                                .trace = qa_collision_default_policy(QA_GAME_Q1),
                                 .check_visibility = true,
                                 .context = g,
                                 .adjust = radius_adjust,
@@ -1373,7 +1373,7 @@ bool q1_can_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id from, bool *ou
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, from, &body, error))
         return false;
-    qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q1);
+    qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q1);
     policy.q1_move = QA_Q1_MOVE_NO_MONSTERS;
     return qa_builtin_can_damage(&g->services, body.origin, target, from, policy, false, out,
                                  error);
@@ -1432,7 +1432,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     entity->classname = name;
     entity->native = true;
     entity->initial_angles = spawn->angles;
-    entity->physics = qa_physics_properties_default(QA_COLLISION_Q1);
+    entity->physics = qa_physics_properties_default(QA_GAME_Q1);
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
     entity->max_health = spawn->health;
@@ -1898,7 +1898,7 @@ bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *err
     if (!q1_entity(g, actor))
         return true;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
@@ -1907,7 +1907,7 @@ bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *err
         return true;
     /* The native Q1 host exposes its six material names, unlike QC's raw
      * contents interface. Unknown source values become empty here. */
-    int32_t value = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
+    int32_t value = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token);
     if (value > -2 || value < -6) value = -1;
     qa_q1_water_transition_result transition =
         qa_q1_water_transition(entity->physics.water_type, value);

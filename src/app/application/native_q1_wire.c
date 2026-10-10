@@ -511,7 +511,7 @@ bool application_native_q1_wire_qw_begin(qa_application *app,
         options.quakeworld && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC &&
         out->receipt.client_slots == 32 && out->receipt.entity_slots >= 33 &&
         out->receipt.entity_slots <= 768 && geometry &&
-        qa_collision_geometry_family(geometry) == QA_COLLISION_Q1 &&
+        qa_collision_geometry_family(geometry) == QA_GAME_Q1 &&
         qa_session_clock(app->session, out->provider->owner, &clock) &&
         clock.frame.provider == out->provider->owner && clock.frame.kind == QA_RULESET_QUAKEWORLD &&
         clock.frame.phase == QA_FRAME_EXIT;

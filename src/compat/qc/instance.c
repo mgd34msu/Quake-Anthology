@@ -1072,7 +1072,7 @@ bool qa_qc_entity_collision_fields(const qa_qc_instance *instance, uint32_t slot
         !live_field(instance, slot, resolved->owner, QA_QC_ENTITY, 1, &owner, error) ||
         !live_field(instance, slot, resolved->modelindex, QA_QC_FLOAT, 1, &model, error))
         return false;
-    *out = (qa_entity_collision_fields){.family = QA_COLLISION_Q1,
+    *out = (qa_entity_collision_fields){.family = QA_GAME_Q1,
         .rerelease = instance->options.profile == QA_QC_RERELEASE,
         .solid = {solid, QA_ENTITY_F32_LE}, .flags = {flags, QA_ENTITY_F32_LE},
         .owner = {owner, QA_ENTITY_I32_LE},
@@ -1385,7 +1385,7 @@ static bool traceline(qa_qc_instance *instance, qa_error *error)
         && !qa_qc_reference_actor(instance, pass_reference, &pass, error)) return false;
     qa_trace_query query = {.start = start, .end = end,
         .shape = {QA_SHAPE_POINT, {qa_v3(0,0,0), qa_v3(0,0,0)}},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1),
+        .policy = qa_collision_default_policy(QA_GAME_Q1),
         .pass_actor = pass};
     float mode = truncf(no_monsters);
     query.policy.q1_move = mode == 2.0f ? QA_Q1_MOVE_MISSILE
@@ -1413,10 +1413,10 @@ static bool pointcontents(qa_qc_instance *instance, qa_error *error)
     qa_vec3 point;
     if (!qa_qc_arg_vector(instance, 0, &point, error)) return false;
     qa_point_query query = {.point = point,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(instance->options.host.world, &query, &contents, error)) return false;
-    int32_t value = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
+    int32_t value = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token);
     return qa_qc_return_float(instance, (float)value, error);
 }
 
@@ -1572,7 +1572,7 @@ static bool droptofloor(qa_qc_instance *instance, qa_error *error)
     qa_trace_query query = {.start = body.origin,
         .end = qa_vec_add(body.origin, qa_v3(0,0,-256)),
         .shape = {QA_SHAPE_BOX, body.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1),
+        .policy = qa_collision_default_policy(QA_GAME_Q1),
         .pass_actor = binding.actor};
     qa_trace_result trace;
     if (!qa_world_trace(instance->options.host.world, &query, &trace, error)) return false;

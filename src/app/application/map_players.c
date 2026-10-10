@@ -2566,11 +2566,11 @@ bool application_players_native_q1_respawn(qa_application *app,
         if (!qa_q2_character_respawned(character->state.q2, actor, error)) return false;
     } else if (!native_q1_character_spawn(character, source, actor, NULL, 0, error)) return false;
     if (!q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    qa_collision_family family = app->controls[actor.slot].player.state.kind == QA_RULESET_Q3
-        ? QA_COLLISION_Q3 : app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_CLASSIC ||
-          app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
+    qa_game_family family = app->controls[actor.slot].player.state.kind == QA_RULESET_Q3
+        ? QA_GAME_Q3 : app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_CLASSIC ||
+          app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1;
     qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-        .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
+        .contents = qa_collision_contents_decode(family == QA_GAME_Q1 ? -2 : 0x2000000, family),
         .role = QA_COLLISION_SOLID};
     if (!qa_world_set_collision(app->world, actor, &collision, error) ||
         !qa_world_link(app->world, actor, NULL, error)) return false;
@@ -3123,11 +3123,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             ? character->component.clock.kind == QA_RULESET_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE
             : movement_kind, actor).standing.bounds;
         if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_reference){0};
-        qa_collision_family family = movement_kind == QA_RULESET_Q3 ? QA_COLLISION_Q3
+        qa_game_family family = movement_kind == QA_RULESET_Q3 ? QA_GAME_Q3
             : movement_kind == QA_RULESET_Q2_CLASSIC || movement_kind == QA_RULESET_Q2_RERELEASE
-                ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
+                ? QA_GAME_Q2 : QA_GAME_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-            .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
+            .contents = qa_collision_contents_decode(family == QA_GAME_Q1 ? -2 : 0x2000000, family),
             .role = QA_COLLISION_SOLID};
         if (record->source_begin_pending && character->kind == APPLICATION_PROVIDER_QC) found = false;
         if (!qa_world_body_write(application->world, actor, &body, error) ||
@@ -3568,11 +3568,11 @@ bool application_players_advance(qa_application *application, qa_error *error)
         application_provider *movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
         if (!movement)
             return application_fail(error, QA_ERROR_ARGUMENT, "Deferred spawn lost its selected movement owner");
-        qa_collision_family family = movement->component.clock.kind == QA_RULESET_Q3 ? QA_COLLISION_Q3
+        qa_game_family family = movement->component.clock.kind == QA_RULESET_Q3 ? QA_GAME_Q3
             : movement->component.clock.kind == QA_RULESET_Q2_CLASSIC || movement->component.clock.kind == QA_RULESET_Q2_RERELEASE
-                ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
+                ? QA_GAME_Q2 : QA_GAME_Q1;
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
-            .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
+            .contents = qa_collision_contents_decode(family == QA_GAME_Q1 ? -2 : 0x2000000, family),
             .role = QA_COLLISION_SOLID};
         qa_combat_state traits;
         if (!qa_combat_read_traits(application->combat, actor, &traits, error)) return false;

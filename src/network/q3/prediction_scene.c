@@ -146,7 +146,7 @@ bool qa_q3_prediction_scene_project(qa_q3_prediction_scene *s, qa_actor_owner ow
             e->fields.pose[QA_ENTITY_CLIP_POSE].origin=qa_entity_vector_bytes(&e->origin);
             e->fields.pose[QA_ENTITY_CLIP_POSE].angles=qa_entity_vector_bytes(&zero);
         }
-        qa_actor_collision collision={.family=QA_COLLISION_Q3,.shape=QA_SHAPE_BOX,
+        qa_actor_collision collision={.family=QA_GAME_Q3,.shape=QA_SHAPE_BOX,
             .inline_model=brush,.model=brush?(uint32_t)row->modelindex:0,
             .contents=brush?(qa_collision_bits){UINT64_MAX,UINT64_MAX}:qa_collision_bit(QA_CONTENT_BODY),
             .role=QA_COLLISION_SOLID,.has_q3_owner=true,.q3_entity_number=row->number,.q3_owner_number=QA_Q3_ENTITY_NONE};
@@ -428,14 +428,14 @@ bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *s,
     const qa_q3_prediction_scene_entity_view *retained, qa_vec3 origin, qa_bounds bounds,
     bool *out, qa_error *error)
 {
-    if (!out || !geometry || qa_collision_geometry_family(geometry) != QA_COLLISION_Q3 ||
+    if (!out || !geometry || qa_collision_geometry_family(geometry) != QA_GAME_Q3 ||
         !qa_q3_prediction_scene_entity_current(s, v, retained))
         return fail(error, QA_ERROR_ARGUMENT, "Q3 trigger query lost its actual scene or map");
     const qa_q3_entity *row = retained->entity; *out = false;
     if ((row->eType != 8 && row->eType != 9) || row->solid != 0xffffff || row->modelindex == 0) return true;
     if (row->modelindex < 0) return fail(error, QA_ERROR_FORMAT, "Negative Q3 trigger inline model");
     qa_trace_query query = {.start = origin, .end = origin, .shape = {QA_SHAPE_BOX, bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_trace_result trace;
     if (!qa_collision_trace_q3_model(geometry, scratch, &query, (uint32_t)row->modelindex, false, &trace, error)) return false;
     *out = trace.start_solid || trace.all_solid;
@@ -462,7 +462,7 @@ static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_
     const qa_trace_query *query, qa_trace_result *out, int32_t *number, qa_error *error)
 {
     if (!query || !out || !s || !s->world || !qa_q3_prediction_scene_current(s,v)) return false;
-    qa_trace_query q=*query; q.target=(qa_collision_target){0}; q.policy.family=QA_COLLISION_Q3;
+    qa_trace_query q=*query; q.target=(qa_collision_target){0}; q.policy.family=QA_GAME_Q3;
     q.pass_source=pass_source(s,q.pass_actor,q.pass_source);
     if (!qa_world_trace(s->world,&q,out,error)) return false;
     *number=out->fraction!=1?QA_Q3_ENTITY_WORLD:QA_Q3_ENTITY_NONE;

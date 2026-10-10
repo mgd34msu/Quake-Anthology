@@ -245,7 +245,7 @@ bool q1_source_flag_think(qa_q1_game *game, q1_actor *entity, q1_think_kind kind
         qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 6));
         qa_trace_query query = {.start = start, .end = qa_vec_sub(start, qa_v3(0, 0, 256)),
             .pass_actor = actor, .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+            .policy = qa_collision_default_policy(QA_GAME_Q1)};
         qa_trace_result floor;
         if (!qa_world_trace(game->services.world, &query, &floor, error) ||
             !current(game, actor, entity, error)) return false;

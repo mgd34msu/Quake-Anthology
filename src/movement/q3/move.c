@@ -284,9 +284,9 @@ static void q3_ground_trace(qa_q3_step *step) {
         }
     }
     step->ground_surface_flags = qa_collision_surface_export(
-        trace.family == QA_COLLISION_Q3 ? trace.surface_flags :
-        trace.family == QA_COLLISION_Q2 && trace.has_surface ? trace.surface.flags : (qa_collision_bits){0},
-        QA_COLLISION_Q3);
+        trace.family == QA_GAME_Q3 ? trace.surface_flags :
+        trace.family == QA_GAME_Q2 && trace.has_surface ? trace.surface.flags : (qa_collision_bits){0},
+        QA_GAME_Q3);
     if (trace.fraction == 1) {
         if (state->ground.hit != QA_TRACE_HIT_NONE) {
             qa_trace_result farther;
@@ -605,9 +605,9 @@ bool qa_move_q3(qa_move_context *context) {
         step.mask = context->input->has_trace_policy ? context->input->trace_policy.contents_mask :
             qa_collision_contents_mask(UINT32_C(0x10001) |
                 (context->input->state.data.q3.movement_type == Q3_SPECTATOR ? 0 : (uint32_t)Q3_CONTENTS_BODY),
-                QA_COLLISION_Q3);
+                QA_GAME_Q3);
         if (context->input->environment.health <= 0) {
-            qa_collision_bits body = qa_collision_contents_mask(Q3_CONTENTS_BODY,QA_COLLISION_Q3);
+            qa_collision_bits body = qa_collision_contents_mask(Q3_CONTENTS_BODY,QA_GAME_Q3);
             step.mask.lo &= ~body.lo;
             step.mask.hi &= ~body.hi;
         }

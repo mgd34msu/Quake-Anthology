@@ -411,7 +411,7 @@ bool q2_entity_solid(qa_q2_game *g, q2_actor *a, qa_physics_solid solid, qa_erro
     q2_entity_state *s = a->entity;
     a->physics_bound = true;
     a->physics.solid = solid;
-    s->collision.family = QA_COLLISION_Q2;
+    s->collision.family = QA_GAME_Q2;
     s->collision.shape = QA_SHAPE_BOX;
     s->collision.role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID;
     s->collision.inline_model = solid == QA_PHYSICS_BRUSH;
@@ -449,7 +449,7 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
     a->entity->kind = kind;
     a->entity->visual.scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1;
     a->entity->visual.alpha = 1;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
     if (!q2_entity_bind(g, a, e)) {
         qa_session_release(g->services.session, id, NULL);
@@ -621,7 +621,7 @@ bool q2_entity_radius(qa_q2_game *g, q2_actor *a, qa_actor_id credit, float amou
         .distance_scale = .5f,
         .self_scale = .5f,
         .knockback_scale = 1,
-        .trace = {.family = QA_COLLISION_Q2, .contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2)},
+        .trace = {.family = QA_GAME_Q2, .contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2)},
         .check_visibility = true};
     r.context = g;
     r.prepare = q2_prepare_radius_damage;

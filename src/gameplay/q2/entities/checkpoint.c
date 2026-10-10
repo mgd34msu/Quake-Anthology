@@ -119,7 +119,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
         (unsigned)s->team_next.kind > QA_ACTOR_REFERENCE_SOURCE || (unsigned)s->collision.owner.kind > QA_ACTOR_REFERENCE_SOURCE ||
         (unsigned)s->collision.role > QA_COLLISION_BOTH ||
         (unsigned)s->collision.shape > QA_SHAPE_CAPSULE ||
-        (s->collision.family && s->collision.family != QA_COLLISION_Q2) || !s->classname ||
+        (s->collision.family && s->collision.family != QA_GAME_Q2) || !s->classname ||
         !q2_saved_visual(g, &s->visual) || !qa_vec_finite(s->direction) ||
         !qa_vec_finite(s->beam_end) || !qa_vec_finite(s->multicast_origin) ||
         (s->field_count && !s->fields) ||

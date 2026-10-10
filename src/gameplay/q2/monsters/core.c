@@ -1451,7 +1451,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   }
   if (!q2m_alive(&context))
     return true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.q2_rerelease = game->options.edition == QA_Q2_RERELEASE;
   actor->physics.motion = monster->definition->locomotion == Q2M_STATIONARY
                               ? QA_PHYSICS_STATIONARY
@@ -1851,7 +1851,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   if (!q2m_alive(&context))
     return true;
   qa_actor_collision collision = {
-      .family = QA_COLLISION_Q2,
+      .family = QA_GAME_Q2,
       .shape = QA_SHAPE_BOX,
       .contents = qa_collision_q2_source_contents(2, 4, game->options.edition == QA_Q2_RERELEASE),
       .role = QA_COLLISION_SOLID,
@@ -2204,10 +2204,10 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
         .start = shot.origin,
         .end = qa_vec_add(shot.origin, shot.velocity),
         .shape = {.kind = QA_SHAPE_BOX, .bounds = shot.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .policy = qa_collision_default_policy(QA_GAME_Q2),
         .pass_actor = shot_actor->id,
     };
-    query.policy.contents_mask = qa_collision_contents_mask(shot_actor->physics.clip_mask, QA_COLLISION_Q2);
+    query.policy.contents_mask = qa_collision_contents_mask(shot_actor->physics.clip_mask, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(context->game->services.world, &query, &trace, error))
       return false;

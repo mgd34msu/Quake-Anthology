@@ -218,7 +218,7 @@ static bool bounds_valid(qa_bounds b) {
            b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
 }
 static bool physics_valid(qa_modes *m, const qa_physics_properties *p) {
-    return p->family >= QA_COLLISION_Q1 && p->family <= QA_COLLISION_Q3 &&
+    return p->family >= QA_GAME_Q1 && p->family <= QA_GAME_Q3 &&
            p->motion >= QA_PHYSICS_STATIONARY && p->motion <= QA_PHYSICS_STEP &&
            p->solid >= QA_PHYSICS_NOT_SOLID && p->solid <= QA_PHYSICS_CORPSE &&
            qa_vec_finite(p->angular_velocity) && qa_vec_finite(p->gravity_direction) &&
@@ -584,8 +584,8 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
             !qa_vec_finite(o->home) || !qa_vec_finite(o->spec.origin) ||
             !qa_vec_finite(o->spec.angles) || !qa_vec_finite(o->spec.direction) ||
             !isfinite(o->spec.value) || (o->spec.has_bounds && !bounds_valid(o->spec.bounds)) ||
-            !physics_valid(m, &o->physics) || o->collision.family < QA_COLLISION_Q1 ||
-            o->collision.family > QA_COLLISION_Q3 || o->collision.role < QA_COLLISION_SOLID ||
+            !physics_valid(m, &o->physics) || o->collision.family < QA_GAME_Q1 ||
+            o->collision.family > QA_GAME_Q3 || o->collision.role < QA_COLLISION_SOLID ||
             o->collision.role > QA_COLLISION_BOTH || !reference(m, o->value.carrier) ||
             !reference(m, o->value.previous_owner) || !reference(m, o->base) ||
             !reference(m, o->dropped_actor))

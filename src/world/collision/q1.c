@@ -171,7 +171,7 @@ static q1hull model_hull(const q1state *state,size_t model,unsigned index) {
 }
 static bool same_vec(qa_vec3 a,qa_vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; }
 static void native_result(const qa_trace_query *query,const native_trace *trace,qa_vec3 origin,const qa_vec3 basis[3],qa_trace_result *out) {
-    qa_trace_result result=qa_collision_empty_trace(query,QA_COLLISION_Q1);
+    qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=trace->fraction;
     result.end=trace->fraction==1?query->end:qa_vec_add(qa_collision_from_local(trace->end,basis),origin);
     result.start_solid=trace->start_solid; result.all_solid=trace->all_solid;
@@ -460,13 +460,13 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     bool all_solid=start_solid && covered>=1;
     if(all_solid && (rules.zero_all_solid || (rules.zero_stationary && same_vec(query->start,query->end)))) fraction=0;
     reached=qa_vec_lerp(query->start,query->end,(float)fraction);
-    qa_trace_result result=qa_collision_empty_trace(query,QA_COLLISION_Q1);
+    qa_trace_result result=qa_collision_empty_trace(query,QA_GAME_Q1);
     result.fraction=(float)fraction; result.end=fraction==1?query->end:reached;
     result.start_solid=start_solid; result.all_solid=all_solid;
     result.in_open=environment.in_open; result.in_water=environment.in_water;
     result.plane=qa_collision_make_plane(qa_collision_pose_normal(qto(plane.normal),&query->target,query->target.inline_model,basis),(float)plane.distance,3);
     result.contact_plane=result.plane; result.contact_plane.distance+=qa_vec_dot(result.plane.normal,origin);
-    result.contact=fraction<1 && (query->policy.family==QA_COLLISION_Q1 || !all_solid);
+    result.contact=fraction<1 && (query->policy.family==QA_GAME_Q1 || !all_solid);
     result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     result.contents=contents.bits; result.q1_opaque_token=contents.opaque_token; *out=result; return true;
 }
@@ -524,7 +524,7 @@ static bool q1_trace(const void *opaque,void *workspace,const qa_trace_query *qu
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     qa_bounds bounds=query->shape.kind==QA_SHAPE_POINT?hull_bounds[0]:query->shape.bounds;
     int32_t hull_index=query->shape.kind==QA_SHAPE_POINT?0:-1;
-    if(query->policy.family==QA_COLLISION_Q1) {
+    if(query->policy.family==QA_GAME_Q1) {
         if(query->policy.q1_hull>=0) hull_index=query->policy.q1_hull;
         else if(query->shape.kind==QA_SHAPE_BOX) {
             float width=bounds.maxs.x-bounds.mins.x;
@@ -552,7 +552,7 @@ static bool q1_point_contents(const void *opaque,void *workspace,const qa_point_
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     q1hull hull=model_hull(state,model,0); qa_collision_terminal contents;
     if(!hull_contents(&hull,qa_collision_to_local(qa_vec_sub(query->point,origin),basis),hull.root,&contents,error)) return false;
-    *out=(qa_point_contents){.family=QA_COLLISION_Q1,.contents=contents.bits,.stored=contents.bits,.merged=contents.bits,
+    *out=(qa_point_contents){.family=QA_GAME_Q1,.contents=contents.bits,.stored=contents.bits,.merged=contents.bits,
         .q1_opaque_token=contents.opaque_token}; return true;
 }
 static void q1_destroy(void *opaque) {

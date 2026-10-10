@@ -101,7 +101,7 @@ static bool capture_portals(qa_application *app,qa_q2_save_level *level,qa_error
 {
     qa_collision_portal_checkpoint portals={0};
     if (!qa_collision_capture_portals(app->geometry,&portals,error)) return false;
-    bool ok=portals.family==QA_COLLISION_Q2 ||
+    bool ok=portals.family==QA_GAME_Q2 ||
         application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 capture requires actual Q2 area portals");
     for (size_t i=0;ok && i<portals.portal_count;++i) {
         const qa_collision_saved_portal *row=portals.portals+i;
@@ -350,7 +350,7 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
     if (provider->kind==APPLICATION_PROVIDER_Q2 &&
         !application_portals_close(app,provider->owner,error)) return false;
     if (!qa_collision_capture_portals(app->geometry,&portals,error)) return false;
-    bool ok=portals.family==QA_COLLISION_Q2 ||
+    bool ok=portals.family==QA_GAME_Q2 ||
         application_fail(error,QA_ERROR_FORMAT,"Original Q2 level has no Q2 collision owner");
     for (size_t i=0;ok && i<portals.portal_count;++i) {
         uint32_t index=portals.portals[i].portal;

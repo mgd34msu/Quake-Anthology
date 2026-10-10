@@ -27,11 +27,11 @@ static qa_vec3 growth_angles(qa_q2_game *g) {
     return angles;
 }
 static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_error *e) {
-    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_GAME_Q2)};
     qa_point_contents result;
     if (!qa_world_point_contents(g->services.world, &query, &result, e))
         return false;
-    *contents = qa_collision_point_contents_export(result.contents, QA_COLLISION_Q2, result.q1_opaque_token);
+    *contents = qa_collision_point_contents_export(result.contents, QA_GAME_Q2, result.q1_opaque_token);
     return true;
 }
 bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float damage,
@@ -137,7 +137,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         .expire_ns = q2_deadline(g->now_ns, lifetime)};
     a->character_no_damage_effects = rr;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = rr;
     a->physics.motion = metal ? QA_PHYSICS_BOUNCE : QA_PHYSICS_TOSS;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -181,7 +181,7 @@ static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float s
     if (a == NULL)
         return false;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -329,8 +329,8 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_trace_query query = {.start = body.origin,
                                 .end = qa_vec_sub(owner.origin, rotated),
                                 .pass_actor = a->id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
@@ -373,7 +373,7 @@ bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) 
                         .next_ns = q2_deadline(g->now_ns, 100 * Q2_MS),
                         .expire_ns = UINT64_MAX};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.motion = QA_PHYSICS_STATIONARY;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     return qa_world_link(g->services.world, id, NULL, e) &&

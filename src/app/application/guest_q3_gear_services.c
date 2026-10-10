@@ -212,8 +212,8 @@ static bool spatial_trace(application_q3_gear *gear, const qa_qvm_call *call,
     int32_t words[7];
     for (size_t i = 0; i < 7; ++i) if (!argument(call, i, &words[i], error)) return false;
     qa_trace_query query = {.shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask((uint32_t)words[6], QA_COLLISION_Q3);
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask((uint32_t)words[6], QA_GAME_Q3);
     const qa_cvar_view *curves = qa_cvars_read(gear->cvars, gear->no_curves);
     const qa_cvar_view *clip = qa_cvars_read(gear->cvars, gear->player_curve_clip);
     query.policy.curves = !curves || curves->number == 0;

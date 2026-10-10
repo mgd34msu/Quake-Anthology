@@ -50,7 +50,7 @@ bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *creature, bool *pla
     }
     if (!live(g, id))
         return true;
-    *player = ((uint32_t)qa_collision_contents_export(collision.contents, QA_COLLISION_Q2, collision.q1_opaque_token) & Q2_PLAYER_CONTENTS) != 0;
+    *player = ((uint32_t)qa_collision_contents_export(collision.contents, QA_GAME_Q2, collision.q1_opaque_token) & Q2_PLAYER_CONTENTS) != 0;
     *creature = collision.monster || *player;
     return true;
 }
@@ -144,8 +144,8 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(Q2_SHOT_MASK, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(Q2_SHOT_MASK, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -185,10 +185,10 @@ bool q2_projectile_radius(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
                                  .distance = QA_RADIUS_CENTER,
                                  .visibility_pass = id,
                                  .check_visibility = true,
-                                 .trace = qa_collision_default_policy(QA_COLLISION_Q2),
+                                 .trace = qa_collision_default_policy(QA_GAME_Q2),
                                  .context = g,
                                  .prepare = q2_prepare_radius_damage};
-    request.trace.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
+    request.trace.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
     size_t count;
     return q2_radius_damage(g, &request, &count, e);
 }
@@ -223,11 +223,11 @@ static bool grenade_explode(qa_q2_game *g, qa_actor_id id, qa_actor_id direct, q
     if (!live(g, id))
         return true;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
     qa_point_contents water;
     if (!qa_world_point_contents(g->services.world, &query, &water, e))
         return false;
-    bool wet = ((uint32_t)qa_collision_point_contents_export(water.contents, QA_COLLISION_Q2, water.q1_opaque_token) & Q2_WATER_MASK) != 0;
+    bool wet = ((uint32_t)qa_collision_point_contents_export(water.contents, QA_GAME_Q2, water.q1_opaque_token) & Q2_WATER_MASK) != 0;
     const char *effect = !qa_actor_reference_present(body.ground)
                              ? (wet ? "q2:rocket-explosion-water" : "q2:rocket-explosion")
                              : (wet ? "q2:grenade-explosion-water" : "q2:grenade-explosion");
@@ -274,8 +274,8 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
             body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
         float distance = qa_vec_length(qa_vec_sub(origin, center));
         bool visible;
-        qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q2);
-        policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
+        qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q2);
+        policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
         if (!qa_builtin_can_damage(&g->services, origin, target, id, policy, false, &visible, e))
             return false;
         if (!visible)
@@ -361,10 +361,10 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         qa_trace_query query = {.start = origin,
                                 .end = center,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
         qa_trace_result trace;
         if (g->options.edition == QA_Q2_RERELEASE) {
-            query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+            query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
             query.pass_actor = (qa_actor_id){0};
             if (!qa_world_trace(g->services.world, &query, &trace, e))
                 return false;
@@ -374,7 +374,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         query.pass_actor = id;
         query.end = qa_vec_add(origin, qa_vec_scale(direction, 2048));
         query.policy.contents_mask =
-            qa_collision_contents_mask(UINT32_C(0x06000001) | (g->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_COLLISION_Q2);
+            qa_collision_contents_mask(UINT32_C(0x06000001) | (g->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
         size_t count = 0, limit = g->options.edition == QA_Q2_RERELEASE ? 16 : g->capacity;
         for (;;) {
             if (!qa_world_trace_excluding(g->services.world, &query, excluded, count, &trace, e))
@@ -448,8 +448,8 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
     qa_trace_query query = {.start = origin,
                             .end = qa_vec_add(origin, qa_vec_scale(direction, 256)),
                             .pass_actor = id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(25, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -481,7 +481,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
     uint32_t skin = UINT32_C(0xd0d0d0d0);
     memcpy(&laser->projectile.skin, &skin, sizeof(skin));
     laser->physics_bound = true;
-    laser->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    laser->physics = qa_physics_properties_default(QA_GAME_Q2);
     laser->physics.q2_rerelease = true;
     laser->physics.motion = QA_PHYSICS_STATIONARY;
     laser->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -532,7 +532,7 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_refer
     a->projectile.next_ns =
         g->options.edition == QA_Q2_RERELEASE ? g->now_ns : q2_deadline(g->now_ns, interval);
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.motion = QA_PHYSICS_STATIONARY;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     return true;
@@ -743,7 +743,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     }
     if (qa_actor_id_equal(contact->other, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner)))
         return true;
-    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4) != 0)
+    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 4) != 0)
         return qa_session_release(g->services.session, id, e);
     if (p.kind == Q2_GREEN_BOLT)
         return q2_green_touch(g, g->actors[id.slot], contact, e);
@@ -792,7 +792,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
             return true;
     }
     if (!hurt && (p.kind == Q2_ROCKET || p.kind == Q2_HEAT_ROCKET) && !g->options.deathmatch &&
-        !g->options.cooperative && contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 120u) == 0) {
+        !g->options.cooperative && contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 120u) == 0) {
         int count = (int)(q2_random(g) * 5);
         for (int i = 0; i < count; ++i) {
             if (!q2_spawn_debris(g, id, e))
@@ -855,12 +855,12 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
                          ? qa_vec_add(body.origin, qa_vec_scale(body.velocity, -0.02f))
                          : qa_vec_add(body.origin, normal);
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
     qa_point_contents content;
     if (!qa_world_point_contents(g->services.world, &query, &content, e))
         return false;
     const char *effect = p.kind == Q2_PLASMA                       ? "q2:plasma-explosion"
-                         : ((uint32_t)qa_collision_point_contents_export(content.contents, QA_COLLISION_Q2, content.q1_opaque_token) & 56u) != 0 ? "q2:rocket-explosion-water"
+                         : ((uint32_t)qa_collision_point_contents_export(content.contents, QA_GAME_Q2, content.q1_opaque_token) & 56u) != 0 ? "q2:rocket-explosion-water"
                                                                    : "q2:rocket-explosion";
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0, origin, normal, e) &&
            (!live(g, id) || qa_session_release(g->services.session, id, e));
@@ -897,11 +897,11 @@ bool q2_tracker_target(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, qa_a
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.contents_mask =
         qa_collision_contents_mask(c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
-                     : Q2_SHOT_MASK, QA_COLLISION_Q2);
+                     : Q2_SHOT_MASK, QA_GAME_Q2);
     bool lag = c->rerelease && g->hooks.lag_begin != NULL;
     if (lag && !g->hooks.lag_begin(g->hooks.context, c->actor->id, start, direction, e))
         return false;
@@ -1048,7 +1048,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (!qa_builtin_resource(&g->services, name, &definition, e))
         return false;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2,
                                         c->rerelease ? (kind == Q2_LOOGIE ? 0u : 128u)
@@ -1127,7 +1127,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (kind == Q2_GRENADE && c->rerelease && monster && !hand)
         a->projectile.effects |= UINT64_C(1) << 37;
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = c->rerelease;
     a->physics.motion = kind == Q2_GRENADE ? QA_PHYSICS_BOUNCE
                         : kind == Q2_ION   ? QA_PHYSICS_WALL_BOUNCE
@@ -1259,8 +1259,8 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         qa_trace_query query = {.start = owner_body.origin,
                                 .end = start,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = qa_collision_contents_mask(a->physics.clip_mask, QA_COLLISION_Q2);
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        query.policy.contents_mask = qa_collision_contents_mask(a->physics.clip_mask, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;

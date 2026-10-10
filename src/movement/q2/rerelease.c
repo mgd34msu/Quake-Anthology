@@ -69,7 +69,7 @@ static qa_trace_result rr_trace(rr_move *p, qa_vec3 start, qa_vec3 end,
     if (p->generic) {
         if (!p->generic->trace(p->generic->context, start, end, bounds, &trace, p->move->error))
             p->move->failed = true;
-        else if (trace.family != QA_COLLISION_Q2 || !isfinite(trace.fraction) ||
+        else if (trace.family != QA_GAME_Q2 || !isfinite(trace.fraction) ||
                  trace.fraction < 0.0f || trace.fraction > 1.0f || !qa_vec_finite(trace.end)) {
             qa_error_set(p->move->error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 rerelease trace result");
             p->move->failed = true;
@@ -83,7 +83,7 @@ static qa_trace_result rr_trace(rr_move *p, qa_vec3 start, qa_vec3 end,
             ? RR_MASK_DEAD : RR_MASK_PLAYER;
         if (p->state->flags & RR_IGNORE_PLAYERS) mask &= ~(uint32_t)RR_PLAYER;
     }
-    qa_move_trace(p->move, start, end, bounds, qa_collision_contents_mask(mask,QA_COLLISION_Q2), world_only, &trace);
+    qa_move_trace(p->move, start, end, bounds, qa_collision_contents_mask(mask,QA_GAME_Q2), world_only, &trace);
     return trace;
 }
 
@@ -351,7 +351,7 @@ static void rr_add_currents(rr_move *p, qa_vec3 *wish)
                 qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                                  p->bounds, RR_CONTENTS_LADDER);
                 if (trace.fraction != 1.0f &&
-                    (qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER)) {
+                    (qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER)) {
                     qa_vec3 right = qa_vec_cross(trace.plane.normal, qa_v3(0,0,1));
                     wish->x = wish->y = 0.0f;
                     *wish = qa_vec_add(*wish, qa_vec_scale(right, -speed));
@@ -458,8 +458,8 @@ static void rr_categorize(rr_move *p)
         if (p->move->failed) return;
         p->ground_plane = trace.plane;
         p->ground_surface = trace.has_surface;
-        p->ground_surface_flags = qa_collision_surface_export(trace.surface.flags,QA_COLLISION_Q2);
-        p->ground_contents = qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token);
+        p->ground_surface_flags = qa_collision_surface_export(trace.surface.flags,QA_GAME_Q2);
+        p->ground_contents = qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token);
         bool slanted = trace.fraction < 1.0f && trace.plane.normal.z < 0.7f;
         if (slanted) {
             qa_trace_result slant = rr_trace(p, *p->origin,
@@ -521,7 +521,7 @@ static void rr_special(rr_move *p)
     qa_trace_result trace = rr_trace(p, *p->origin, qa_vec_add(*p->origin, flat),
                                      p->bounds, RR_CONTENTS_LADDER);
     if (trace.fraction < 1.0f &&
-        (qa_collision_contents_export(trace.contents,QA_COLLISION_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER) &&
+        (qa_collision_contents_export(trace.contents,QA_GAME_Q2,trace.q1_opaque_token) & RR_CONTENTS_LADDER) &&
         p->result->water_level < 2)
         p->state->flags |= RR_LADDER;
     if (p->state->gravity == 0 ||

@@ -169,7 +169,7 @@ static bool movement(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     qa_physics_properties properties;
     if (!physics->services.read(physics->services.context, actor, &properties) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
-        properties.family != QA_COLLISION_Q1)
+        properties.family != QA_GAME_Q1)
         return qc_game_fail(error, QA_ERROR_UNSUPPORTED, "QC movement source properties are unavailable");
     if (builtin == QA_QC_BUILTIN_CHANGEYAW)
         return qa_physics_change_yaw(physics, actor, 0.1f, error);

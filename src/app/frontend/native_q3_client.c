@@ -503,7 +503,7 @@ static bool trace_policy(frontend_native_q3 *row,qa_trace_policy *policy,qa_erro
 {
     qa_native_q3_wire_basis basis;
     if(!qa_native_q3_wire_reader_basis(row->view.reader,&basis,e))return false;
-    *policy=qa_collision_default_policy(QA_COLLISION_Q3);
+    *policy=qa_collision_default_policy(QA_GAME_Q3);
     const qa_cvar_view *curves=qa_cvars_read(basis.source_cvars,row->no_curves);
     const qa_cvar_view *players=qa_cvars_read(basis.source_cvars,row->player_curve_clip);
     if(!curves || !players)return frontend_fail(e,QA_ERROR_FORMAT,"Native trace lacks actual source collision controls");
@@ -514,7 +514,7 @@ static bool trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_
 {
     frontend_native_q3 *row=context; qa_trace_query query={.start=start,.end=end,.shape={QA_SHAPE_BOX,bounds}};
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e))return false;
-    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3);
+    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3);
     if(skip>=0 && skip<1022) { bool present; if(!qa_native_q3_wire_reader_actor(row->view.reader,(uint32_t)skip,&query.pass_actor,&present,e))return false; }
     return qa_world_trace(qa_application_world(f->application),&query,out,e) && frontend_native_q3_cut(row,f,e);
 }
@@ -524,7 +524,7 @@ static bool point_contents(void *context,const q3n_frame *f,qa_vec3 point,int32_
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e))return false;
     if(pass>=0 && pass<1022) { bool present; if(!qa_native_q3_wire_reader_actor(row->view.reader,(uint32_t)pass,&query.pass_actor,&present,e))return false; }
     if(!qa_world_point_contents(qa_application_world(f->application),&query,&result,e) || !frontend_native_q3_cut(row,f,e))return false;
-    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token); return true;
+    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_GAME_Q3,result.q1_opaque_token); return true;
 }
 static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_bounds bounds,
     uint32_t mask,qa_trace_result *out,qa_error *e)
@@ -533,7 +533,7 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 e
     qa_trace_query query={.start=start,.end=end,.shape={QA_SHAPE_BOX,bounds}};
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e) ||
         !qa_q3_presentation_binding_read(f->presentation,&binding,e) || !binding.geometry)return false;
-    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_COLLISION_Q3);
+    query.policy.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3);
     return qa_collision_trace(binding.geometry,qa_world_trace_scratch(qa_application_world(row->frontend->application),binding.geometry),&query,out,e) && frontend_native_q3_cut(row,f,e);
 }
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
@@ -543,7 +543,7 @@ static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32
     if(!frontend_native_q3_cut(row,f,e) || !trace_policy(row,&query.policy,e) ||
         !qa_q3_presentation_binding_read(f->presentation,&binding,e) || !binding.geometry ||
         !qa_collision_point_contents(binding.geometry,qa_world_trace_scratch(qa_application_world(row->frontend->application),binding.geometry),&query,&result,e) || !frontend_native_q3_cut(row,f,e))return false;
-    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_COLLISION_Q3,result.q1_opaque_token); return true;
+    *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_GAME_Q3,result.q1_opaque_token); return true;
 }
 static bool mark_fragments(void *context,const q3n_frame *f,const qa_vec3 *points,size_t count,
     qa_vec3 projection,qa_vec3 *output,size_t point_capacity,q3n_mark_fragment *fragments,

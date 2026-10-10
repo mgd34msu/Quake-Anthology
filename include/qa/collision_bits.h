@@ -3,7 +3,7 @@
 
 #include "qa/common.h"
 
-typedef enum qa_collision_family { QA_COLLISION_Q1 = 1, QA_COLLISION_Q2, QA_COLLISION_Q3 } qa_collision_family;
+#include "qa/ruleset.h"
 
 /* Native contents and surface words enter this domain once at a boundary.
  * Reserved native bits have stable extension slots, with no guessed meaning. */
@@ -214,16 +214,16 @@ typedef struct qa_collision_terminal {
 
 qa_collision_terminal qa_collision_q1_terminal(int32_t token);
 /* Q1 opaque contents use qa_collision_q1_terminal to retain their provenance. */
-qa_collision_bits qa_collision_contents_decode(int32_t native, qa_collision_family);
-int32_t qa_collision_contents_export(qa_collision_bits, qa_collision_family, int32_t opaque_q1_token);
+qa_collision_bits qa_collision_contents_decode(int32_t native, qa_game_family);
+int32_t qa_collision_contents_export(qa_collision_bits, qa_game_family, int32_t opaque_q1_token);
 /* Ordinary Q1 point contents folds current terminals to WATER as SV_PointContents. */
-int32_t qa_collision_point_contents_export(qa_collision_bits, qa_collision_family, int32_t opaque_q1_token);
+int32_t qa_collision_point_contents_export(qa_collision_bits, qa_game_family, int32_t opaque_q1_token);
 /* Original Q1 solid/liquid precedence used by mixed Q2/Q3 hull walkers. */
 int32_t qa_collision_q1_medium_class(qa_collision_bits);
 /* A source mask accepts every canonical bit whose source projection matches.
  * Q1 accepts SOLID terminal projections and ignores the native mask argument. */
-qa_collision_bits qa_collision_contents_mask(uint32_t native_mask, qa_collision_family);
-qa_collision_bits qa_collision_surface_decode(int32_t native, qa_collision_family);
-int32_t qa_collision_surface_export(qa_collision_bits, qa_collision_family);
+qa_collision_bits qa_collision_contents_mask(uint32_t native_mask, qa_game_family);
+qa_collision_bits qa_collision_surface_decode(int32_t native, qa_game_family);
+int32_t qa_collision_surface_export(qa_collision_bits, qa_game_family);
 
 #endif

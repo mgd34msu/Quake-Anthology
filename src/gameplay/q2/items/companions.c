@@ -103,8 +103,8 @@ static bool sight(qa_q2_game *g, q2_actor *a, qa_actor_id target, bool *visible,
                             .end = to.origin,
                             .shape = {.kind = QA_SHAPE_POINT},
                             .pass_actor = a->id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(25, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;
@@ -156,7 +156,7 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
          !qa_builtin_resource(&g->services, "models/items/shell/tris.md2",
                               &a->item->visual.models[1], e)))
         goto fail;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics_bound = true;
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_FLY_MISSILE;
@@ -294,7 +294,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     a->item->owner = owner_reference;
     a->item->visible = false;
     a->item->visual = (qa_entity_visual){.render_flags = 0x8000, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1};
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics_bound = true;
     a->physics.motion = QA_PHYSICS_TOSS;
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
@@ -539,7 +539,7 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     if (c->kind == Q2_SPHERE_HUNTER &&
         qa_actor_id_equal(contact->other, g->services.physics->world_actor))
         return true;
-    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4))
+    if (contact->has_surface && (qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 4))
         return qa_session_release(g->services.session, a->id, e);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))

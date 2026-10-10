@@ -11,10 +11,10 @@ bool q3_game_portal_reference(qa_q3_host *host, uint32_t first, uint32_t second,
 {
     qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
     if (first >= second || second >= qa_collision_area_count(geometry) ||
-        qa_collision_geometry_family(geometry) == QA_COLLISION_Q1)
+        qa_collision_geometry_family(geometry) == QA_GAME_Q1)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 portal reference has no area pair in this map");
     q3_portal_reference entry = {.first = first, .second = second};
-    if (qa_collision_geometry_family(geometry) == QA_COLLISION_Q3) { *out = entry; return true; }
+    if (qa_collision_geometry_family(geometry) == QA_GAME_Q3) { *out = entry; return true; }
     const qa_bsp_view *bsp = qa_collision_bsp(geometry);
     qa_bsp_area area;
     if (!qa_bsp_read_area(bsp, first, &area, error)) return false;
@@ -44,7 +44,7 @@ bool q3_game_portal_reference(qa_q3_host *host, uint32_t first, uint32_t second,
 static bool apply_pair(qa_q3_host *host, const q3_portal_reference *entry, bool open, qa_error *error)
 {
     qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
-    if (qa_collision_geometry_family(geometry) == QA_COLLISION_Q3)
+    if (qa_collision_geometry_family(geometry) == QA_GAME_Q3)
         return qa_collision_adjust_area_pair(geometry, (int32_t)entry->first, (int32_t)entry->second, open, error);
     for (size_t i = 0; i < entry->target_count; ++i) {
         q3_portal_target target = entry->targets[i]; bool primary; uint32_t count;
@@ -65,7 +65,7 @@ bool q3_game_portal(qa_q3_host *host, int32_t first, int32_t second, bool open, 
     if (!host || host->retired || host->restore_pending || !host->game)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 portal operation requires a game host");
     if (first < 0 || second < 0 || first == second ||
-        qa_collision_geometry_family(qa_world_geometry(host->options.world)) == QA_COLLISION_Q1) return true;
+        qa_collision_geometry_family(qa_world_geometry(host->options.world)) == QA_GAME_Q1) return true;
     q3_game_data *game = host->game;
     uint32_t a = (uint32_t)(first < second ? first : second), b = (uint32_t)(first < second ? second : first);
     size_t index = 0;
@@ -109,7 +109,7 @@ bool q3_game_close_portals(qa_q3_host *host, qa_error *error)
 size_t qa_q3_host_portal_claim_count(const qa_q3_host *host)
 {
     if (!host || host->retired || !host->game) return 0;
-    bool native = qa_collision_geometry_family(qa_world_geometry(host->options.world)) == QA_COLLISION_Q3;
+    bool native = qa_collision_geometry_family(qa_world_geometry(host->options.world)) == QA_GAME_Q3;
     size_t count = 0;
     for (size_t i = 0; i < host->game->portal_count; ++i)
         if (host->game->portals[i].count) count += native ? 1 : host->game->portals[i].target_count;
@@ -120,15 +120,15 @@ bool qa_q3_host_portal_claim_at(const qa_q3_host *host, size_t index, qa_q3_host
 {
     if (!host || host->retired || !host->game || !out) return false;
     qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
-    qa_collision_family family = qa_collision_geometry_family(geometry);
+    qa_game_family family = qa_collision_geometry_family(geometry);
     for (size_t i = 0; i < host->game->portal_count; ++i) {
         const q3_portal_reference *entry = host->game->portals + i;
         if (!entry->count) continue;
-        size_t count = family == QA_COLLISION_Q3 ? 1 : entry->target_count;
+        size_t count = family == QA_GAME_Q3 ? 1 : entry->target_count;
         if (index >= count) { index -= count; continue; }
         *out = (qa_q3_host_portal_claim){.map_identity = qa_collision_map_identity(geometry), .family = family,
             .first = entry->first, .second = entry->second, .contributions = entry->count};
-        if (family == QA_COLLISION_Q2) {
+        if (family == QA_GAME_Q2) {
             out->portal = entry->targets[index].portal;
             out->contributions *= entry->targets[index].multiplicity;
         }

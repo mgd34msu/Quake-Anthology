@@ -237,11 +237,11 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
         return true;
     }
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, error))
         return false;
-    if (qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token) == -6)
+    if (qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token) == -6)
         return q1_remove(g, entity, error);
     if (p->kind == Q1_MULTI_ROCKET)
         return rocket_explode(g, entity, other, error);

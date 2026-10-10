@@ -150,7 +150,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         || (target_kind == QA_SHAPE_CAPSULE && !qa_bounds_valid(target_bounds))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 temporary collision query"); return false;
     }
-    qa_trace_result result = qa_collision_empty_trace(query, QA_COLLISION_Q3);
+    qa_trace_result result = qa_collision_empty_trace(query, QA_GAME_Q3);
     qa_vec3 center, basis[3];
     qa_q3_shape shape = q3_prepare_shape(query->shape, &center);
     float moving_halfheight = shape.extents.z;
@@ -214,7 +214,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
     }
     if (rotated && result.fraction != 1)
         result.plane.normal = qa_collision_pose_normal(result.plane.normal, &query->target, true, basis);
-    if(query->policy.family!=QA_COLLISION_Q3 && result.start_solid) {
+    if(query->policy.family!=QA_GAME_Q3 && result.start_solid) {
         bool blocked=result.all_solid && (rules.zero_all_solid || (stationary && rules.zero_stationary));
         result.fraction=blocked?0.0f:1.0f;
         result.plane=(qa_collision_plane){0};

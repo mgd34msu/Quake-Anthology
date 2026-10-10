@@ -874,14 +874,14 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
         qa_trace_query query = {.start = start, .end = end,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = {qa_v3(box ? body.bounds.mins.x : 0, box ? body.bounds.mins.y : 0, 0),
                 qa_v3(box ? body.bounds.maxs.x : 0, box ? body.bounds.maxs.y : 0, 0)}},
-            .policy = qa_collision_default_policy(QA_COLLISION_Q2), .pass_actor = event->actor};
-        query.policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q2);
+            .policy = qa_collision_default_policy(QA_GAME_Q2), .pass_actor = event->actor};
+        query.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
         qa_trace_result hit;
         if (!qa_world_trace(world, &query, &hit, error)) return false;
         if (hit.fraction < 1 && hit.has_surface) {
             memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0;
             query.end = hit.end; query.end.z += 1;
-            query.policy.contents_mask = qa_collision_contents_mask(1 | 8 | 16 | 32, QA_COLLISION_Q2);
+            query.policy.contents_mask = qa_collision_contents_mask(1 | 8 | 16 | 32, QA_GAME_Q2);
             if (!qa_world_trace(world, &query, &hit, error)) return false;
             if (hit.has_surface) { memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0; }
         }
@@ -1062,7 +1062,7 @@ bool frontend_audio_actor_position(qa_frontend *frontend, qa_actor_id actor, uin
         qa_vec_add(body->origin, qa_vec_scale(qa_vec_add(body->bounds.mins, body->bounds.maxs), .5f)) :
         body->origin;
     if (!qa_audio_engine_position(frontend->audio, identity, *origin, error)) return false;
-    if (!present || !collision.inline_model || collision.family != QA_COLLISION_Q2) return true;
+    if (!present || !collision.inline_model || collision.family != QA_GAME_Q2) return true;
     const qa_actor_record *record = qa_actors_get(qa_world_actors(world), actor);
     qa_q2_edition edition;
     bool found;

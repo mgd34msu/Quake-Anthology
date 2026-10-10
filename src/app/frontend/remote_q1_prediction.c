@@ -83,7 +83,7 @@ static bool publish_body(frontend_remote_q1 *row,const qa_q1_entity *entity,
     const qa_entity_model_field *model,qa_error *error)
 {
     qa_body_state state={.origin=vector(entity->origin)};
-    qa_actor_collision collision={.family=QA_COLLISION_Q1,.shape=QA_SHAPE_BOX,
+    qa_actor_collision collision={.family=QA_GAME_Q1,.shape=QA_SHAPE_BOX,
         .contents=qa_collision_bit(QA_CONTENT_SOLID),.role=QA_COLLISION_SOLID};
     if(model) {
         if(!model->present)
@@ -145,7 +145,7 @@ bool remote_q1_prediction_camera_trace(frontend_remote_q1 *row,qa_vec3 start,qa_
         !retain(row,error)) return false;
     qa_trace_query query={.start=start,.end=end,
         .shape={QA_SHAPE_BOX,{qa_v3(-16,-16,-24),qa_v3(16,16,32)}},
-        .policy=qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy=qa_collision_default_policy(QA_GAME_Q1)};
     query.policy.q1_move=QA_Q1_MOVE_NO_MONSTERS;
     query.policy.q1_hull=1;
     ++row->busy;

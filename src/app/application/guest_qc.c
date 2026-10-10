@@ -1561,14 +1561,14 @@ bool application_qc_water_transition(application_provider *provider, qa_actor_id
     if (!application_qc_reference(engine, actor, &reference, error) ||
         !qa_world_body_read(engine->world, actor, &body, error)) return false;
     qa_point_query query = {.point = body.origin, .pass_actor = actor,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_point_contents contents;
     if (!qa_world_point_contents(engine->world, &query, &contents, error)) return false;
-    if (contents.family != QA_COLLISION_Q1)
+    if (contents.family != QA_GAME_Q1)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC water transition needs source Q1 contents");
     if (qa_actors_get(actors, actor) == NULL) return true;
     if (!application_qc_float(engine, reference, "watertype", &previous, error)) return false;
-    int32_t native_contents = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token);
+    int32_t native_contents = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token);
     bool splash = previous != 0 && (native_contents <= -3 ? previous == -1 : previous != -1);
     float water_type = previous == 0 || native_contents <= -3 ? (float)native_contents : -1;
     float water_level = previous == 0 || native_contents <= -3 ? 1 : (float)native_contents;

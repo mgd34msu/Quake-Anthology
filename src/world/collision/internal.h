@@ -87,7 +87,7 @@ static inline qa_collision_plane qa_collision_make_plane(qa_vec3 n, float distan
     return (qa_collision_plane){n,distance,type,(uint8_t)((n.x<0.0f?1u:0u)|(n.y<0.0f?2u:0u)|(n.z<0.0f?4u:0u))};
 }
 static inline qa_collision_plane qa_collision_bsp_plane(qa_bsp_plane p) { return qa_collision_make_plane(qa_bsp_to_vec(p.normal),p.distance,p.type); }
-static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, qa_collision_family family) {
+static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, qa_game_family family) {
     qa_trace_result result={0}; result.family=family; result.fraction=1.0f; result.end=q->end;
     result.contents=(qa_collision_bits){0}; result.model=q->target.inline_model?q->target.model:0; return result;
 }

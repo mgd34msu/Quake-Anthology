@@ -251,8 +251,8 @@ static bool think(qa_q2_game *game, q2_actor *tip, qa_error *error) {
         qa_vec3 previous = body.origin;
         body.origin = qa_vec_add(target.origin, p->movedir);
         qa_trace_query query = {.start = from, .end = body.origin,
-                               .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+                               .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(game->services.world, &query, &trace, error))
             return false;
@@ -336,7 +336,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         !qa_builtin_resource(&game->services, segment ? "models/monsters/parasite/segment/tris.md2" : "models/monsters/parasite/tip/tris.md2", &model, error))
         return false;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, owner);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+    qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2, 128, true), .owner = owner_reference, .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = classname,
@@ -360,7 +360,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
                     .cause = qa_q2_damage_cause(game->options.edition, game->options.product, 0, 0)}};
     actor->character_no_damage_effects = !segment;
     actor->physics_bound = true;
-    actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
     actor->physics.q2_rerelease = true;
     actor->physics.motion = segment ? QA_PHYSICS_STATIONARY : QA_PHYSICS_FLY_MISSILE;
     actor->physics.solid = segment ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BOX;
@@ -403,8 +403,8 @@ static bool fire(q2m_context *context, qa_error *error) {
     context->monster->proboscis = tip->id;
     qa_trace_query query = {.start = from,
         .end = qa_vec_add(from, qa_vec_scale(direction, 1250 * (float)((double)game->frame_ns / Q2_NS))),
-        .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(tip->physics.clip_mask, QA_COLLISION_Q2);
+        .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(tip->physics.clip_mask, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
         return false;

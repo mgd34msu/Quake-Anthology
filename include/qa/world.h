@@ -50,7 +50,7 @@ typedef enum qa_body_follow { QA_BODY_FOLLOW_TRANSLATION, QA_BODY_FOLLOW_CENTER,
 typedef struct qa_body_attachment { qa_actor_id anchor; qa_body_follow follow; qa_vec3 offset; } qa_body_attachment;
 typedef enum qa_collision_role { QA_COLLISION_SOLID, QA_COLLISION_TRIGGER, QA_COLLISION_BOTH } qa_collision_role;
 typedef struct qa_actor_collision {
-    qa_collision_family family;
+    qa_game_family family;
     qa_shape_kind shape; /* BOX or CAPSULE for temporary bodies; ignored for inline models. */
     bool inline_model;
     uint32_t model;
@@ -114,7 +114,7 @@ typedef struct qa_entity_model_fields {
     uint32_t count;
 } qa_entity_model_fields;
 typedef struct qa_entity_collision_fields {
-    qa_collision_family family;
+    qa_game_family family;
     bool rerelease;
     int32_t entity_number;
     qa_entity_scalar_field solid, flags, model, owner, contents, brush_model;
@@ -350,7 +350,7 @@ typedef void (*qa_world_touch_fn)(void *, qa_world *, const qa_touch_contact *);
 typedef bool (*qa_world_is_trigger_fn)(void *, qa_actor_id);
 /* Q1 traverses live sector links; Q2/Q3 snapshot candidate IDs before callbacks.
  * All families recheck generations and current overlap after nested mutation. */
-bool qa_world_touch_triggers(qa_world *, qa_actor_id, qa_collision_family, qa_world_is_trigger_fn, qa_world_touch_fn, void *, qa_error *);
+bool qa_world_touch_triggers(qa_world *, qa_actor_id, qa_game_family, qa_world_is_trigger_fn, qa_world_touch_fn, void *, qa_error *);
 qa_collision_bits qa_world_actor_contents(const qa_actor_collision *);
 
 #endif

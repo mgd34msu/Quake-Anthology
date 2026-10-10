@@ -45,7 +45,7 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         .distance = QA_RADIUS_BOUNDS,
         .ignore = ignore,
         .check_visibility = true,
-        .trace = qa_collision_default_policy(QA_COLLISION_Q3),
+        .trace = qa_collision_default_policy(QA_GAME_Q3),
         .has_candidates = true,
         .candidates = frame->snapshot.ids,
         .candidate_count = frame->snapshot.count,
@@ -70,7 +70,7 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         qa_builtin_snapshot_release(frame);
         return false;
     }
-    attack.trace.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q3);
+    attack.trace.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
     bool ok = qa_builtin_radius_damage(&game->options.services, &attack, NULL, error);
     qa_builtin_snapshot_release(frame);
     if (accuracy)
@@ -158,7 +158,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                                              : qa_vec_scale(direction, speed);
     velocity = qa_physics_q3_snap(velocity);
     const qa_actor_record *owner_record = qa_actors_get(qa_session_actors(game->options.services.session), owner);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
                                         qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(owner),
@@ -561,7 +561,7 @@ static bool stick_mine(qa_q3_game *game, qa_actor_id actor, const qa_trace_resul
                 (double)(float)sqrt((double)((normal.x * normal.x) + (normal.y * normal.y)))) * 180) / Q3_PI);
         if (pitch < 0) pitch = (pitch + 360);
         source->authored_angles = qa_v3((-pitch + 90), yaw, 0);
-        if (!q3_wire_add_event(game, actor, 66, qa_collision_surface_export(trace->surface_flags, QA_COLLISION_Q3), error))
+        if (!q3_wire_add_event(game, actor, 66, qa_collision_surface_export(trace->surface_flags, QA_GAME_Q3), error))
             return false;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
@@ -571,7 +571,7 @@ static bool stick_mine(qa_q3_game *game, qa_actor_id actor, const qa_trace_resul
             !qa_q3_wire_link(game, actor, NULL, error))
             return false;
     }
-    return q3_event(game, actor, trace->actor, QA_BUILTIN_IMPACT, 66, qa_collision_surface_export(trace->surface_flags, QA_COLLISION_Q3),
+    return q3_event(game, actor, trace->actor, QA_BUILTIN_IMPACT, 66, qa_collision_surface_export(trace->surface_flags, QA_GAME_Q3),
                     trace->end, qa_v3(0, 0, 0), trace->contact_plane.normal, error);
 }
 static bool missile_impact(qa_q3_game *game, qa_actor_id actor, const qa_trace_result *trace,
@@ -647,7 +647,7 @@ static bool missile_impact(qa_q3_game *game, qa_actor_id actor, const qa_trace_r
         return attach_hook(game, actor, trace, error);
     if (missile.weapon == QA_Q3_W_PROX)
         return stick_mine(game, actor, trace, error);
-    if (!impact_event(game, actor, trace->actor, trace->contact_plane.normal, qa_collision_surface_export(trace->surface_flags, QA_COLLISION_Q3),
+    if (!impact_event(game, actor, trace->actor, trace->contact_plane.normal, qa_collision_surface_export(trace->surface_flags, QA_GAME_Q3),
                       error))
         return false;
     entry = q3_actor_get(game, actor);
@@ -706,9 +706,9 @@ static bool activate_mine(qa_q3_game *game, qa_actor_id actor, qa_error *error) 
         return true;
     entry->state.missile.loop_sound = resource;
     float radius = entry->state.missile.radius;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3),
+                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_GAME_Q3),
                                     .role = QA_COLLISION_TRIGGER};
     qa_builtin_spawn spawn = {
         .owner = game->options.owner,
@@ -783,8 +783,8 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
     if (qa_vec_length(qa_vec_sub(body.origin, origin)) > entry->state.missile.radius ||
         (qa_game_type_has_allies(game->options.rules.game_type) && entry->state.missile.team == (qa_team_id)team))
         return true;
-    qa_trace_policy policy = qa_collision_default_policy(QA_COLLISION_Q3);
-    policy.contents_mask = qa_collision_contents_mask(1, QA_COLLISION_Q3);
+    qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q3);
+    policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
     bool visible;
     if (!qa_builtin_can_damage(&game->options.services, origin, player, (qa_actor_id){0},
                                policy, false, &visible, error))
@@ -825,8 +825,8 @@ static bool missile_move(qa_q3_game *game, qa_actor_id actor,
         return true;
     qa_trace_query query = {.start = body.origin, .end = destination,
         .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds}, .pass_actor = pass,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask(Q3_MASK_SHOT, QA_COLLISION_Q3);
+        .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask(Q3_MASK_SHOT, QA_GAME_Q3);
     qa_trace_result trace;
     if (!qa_world_trace(game->options.services.world, &query, &trace, error))
         return false;
@@ -1033,8 +1033,8 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         qa_trace_result overlap;
         qa_trace_query query = {.start = body.origin, .end = body.origin,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-        query.policy.contents_mask = qa_collision_contents_mask(Q3_MASK_SHOT, QA_COLLISION_Q3);
+            .policy = qa_collision_default_policy(QA_GAME_Q3)};
+        query.policy.contents_mask = qa_collision_contents_mask(Q3_MASK_SHOT, QA_GAME_Q3);
         if (!qa_world_trace(game->options.services.world, &query, &overlap, error))
             return false;
         entry = q3_actor_get(game, actor);

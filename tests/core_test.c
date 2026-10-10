@@ -13,6 +13,7 @@
 #include "qa/json.h"
 #include "qa/campaign.h"
 #include "qa/recovery.h"
+#include "qa/persistence_fields.h"
 #include "qa/localization.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
@@ -521,6 +522,13 @@ static void test_localization_lookup_generation(void)
 
 static void test_retained_movement_result(void)
 {
+    for (qa_game_family family = QA_GAME_Q1; family <= QA_GAME_Q3; ++family) {
+        uint32_t tag = (uint32_t)family + 1u;
+        CHECK(qa_persistence_family_tag(family) == tag);
+        CHECK(qa_persistence_family_from_tag(tag) == family);
+    }
+    CHECK(qa_persistence_family_tag(qa_persistence_family_from_tag(0)) == 0);
+
     qa_error error = {0}; qa_movement_contact contacts[32] = {0};
     contacts[0].trace.fraction = 0.25f; contacts[0].substep = 7;
     qa_movement_result source = {.status = QA_MOVEMENT_ACTIVE,

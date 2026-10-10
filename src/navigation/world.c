@@ -6,9 +6,9 @@ bool nav_profile_valid(const qa_nav_profile *p, qa_error *e) {
         p->maximum_drop < 0 || !isfinite(p->minimum_floor_normal) || p->minimum_floor_normal <= 0 ||
         p->minimum_floor_normal > 1)
         goto invalid;
-    qa_collision_family family = p->movement.kind <= QA_RULESET_QUAKEWORLD     ? QA_COLLISION_Q1
-                                 : p->movement.kind <= QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2
-                                                                                : QA_COLLISION_Q3;
+    qa_game_family family = p->movement.kind <= QA_RULESET_QUAKEWORLD     ? QA_GAME_Q1
+                                 : p->movement.kind <= QA_RULESET_Q2_RERELEASE ? QA_GAME_Q2
+                                                                                : QA_GAME_Q3;
     if (p->policy.family != family)
         goto invalid;
     const qa_trace_shape *shapes[] = {&p->shape, &p->crouched_shape};
@@ -72,9 +72,9 @@ bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_a
     } else if (!qa_world_point_contents(s->world, &q, &sample, e))
         return false;
     int32_t contents=qa_collision_point_contents_export(
-        sample.family==QA_COLLISION_Q2?sample.merged:sample.contents,
+        sample.family==QA_GAME_Q2?sample.merged:sample.contents,
         sample.family,sample.q1_opaque_token);
-    if (sample.family == QA_COLLISION_Q1) {
+    if (sample.family == QA_GAME_Q1) {
         *out = contents == -3   ? QA_NAV_WATER
                : contents == -4 ? QA_NAV_SLIME
                : contents == -5 ? QA_NAV_LAVA
@@ -83,7 +83,7 @@ bool nav_contents(const qa_navigation_services *s, const qa_nav_profile *p, qa_a
         uint32_t value = (uint32_t)contents;
         *out = ((value & 32) != 0 ? QA_NAV_WATER : 0) | ((value & 16) != 0 ? QA_NAV_SLIME : 0) |
                ((value & 8) != 0 ? QA_NAV_LAVA : 0) |
-               (sample.family == QA_COLLISION_Q2 && (value & UINT32_C(0x20000000)) != 0
+               (sample.family == QA_GAME_Q2 && (value & UINT32_C(0x20000000)) != 0
                     ? QA_NAV_CONTENTS_LADDER
                     : 0);
     }

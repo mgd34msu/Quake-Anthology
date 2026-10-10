@@ -261,7 +261,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
             snprintf(model, sizeof(model), "players/%.*s/tris.md2", (int)length, q2_player_source_skin(g, s));
         if (!qa_builtin_resource(&g->services, model, &s->rule.visual.models[0], e))
             return false;
-        a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+        a->physics = qa_physics_properties_default(QA_GAME_Q2);
         a->physics_bound = true;
         a->physics.q2_rerelease = rr;
         a->physics.motion = QA_PHYSICS_STATIONARY;

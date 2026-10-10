@@ -1,9 +1,9 @@
 #include "internal.h"
 
-static qa_collision_family family(mode_instance *v) {
-    return v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_COLLISION_Q1
-           : v->value.rules.source < QA_MODE_Q3      ? QA_COLLISION_Q2
-                                                     : QA_COLLISION_Q3;
+static qa_game_family family(mode_instance *v) {
+    return v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
+           : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
+                                                     : QA_GAME_Q3;
 }
 static bool native_objective_read(void *context, qa_objective_state *out, qa_error *e) {
     mode_object *o = context;
@@ -210,9 +210,9 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         body.bounds = (qa_bounds){{-8, -8, 0}, {8, 8, 8}};
     else if (spec->kind == QA_MODE_OBJECT_OBELISK)
         body.bounds = (qa_bounds){{-15, -15, 0}, {15, 15, 87}};
-    else if (spec->kind == QA_MODE_OBJECT_RELIC && family(v) == QA_COLLISION_Q1)
+    else if (spec->kind == QA_MODE_OBJECT_RELIC && family(v) == QA_GAME_Q1)
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
-    else if (spec->kind == QA_MODE_OBJECT_FLAG && family(v) == QA_COLLISION_Q1)
+    else if (spec->kind == QA_MODE_OBJECT_FLAG && family(v) == QA_GAME_Q1)
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 74}};
     else if (spec->kind == QA_MODE_OBJECT_FLAG && v->value.rules.source == QA_MODE_LMCTF)
         body.bounds.maxs.z = 33;
@@ -323,7 +323,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
     o->physics.q2_rerelease = v->value.rules.q2_rerelease;
     o->physics.motion =
         spec->kind == QA_MODE_OBJECT_BALL ? QA_PHYSICS_NEW_TOSS : QA_PHYSICS_STATIONARY;
-    o->physics.clip_mask = family(v) == QA_COLLISION_Q3 ? 1 : 3;
+    o->physics.clip_mask = family(v) == QA_GAME_Q3 ? 1 : 3;
     if (spec->kind == QA_MODE_OBJECT_BALL)
         o->physics.clip_mask =
             UINT32_C(0x2020003) | (v->value.rules.q2_rerelease ? UINT32_C(0x40000000) : 0);
@@ -339,9 +339,9 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         goto rollback;
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
         o->value.skin = team > 0 ? team : 0;
-        o->value.frame = family(v) == QA_COLLISION_Q2 ? 173 : 0;
-        o->value.effects = family(v) == QA_COLLISION_Q1   ? (team == 0 ? 32u : 16u)
-                           : family(v) == QA_COLLISION_Q2 ? (team == 0 ? 0x40000u : 0x80000u)
+        o->value.frame = family(v) == QA_GAME_Q2 ? 173 : 0;
+        o->value.effects = family(v) == QA_GAME_Q1   ? (team == 0 ? 32u : 16u)
+                           : family(v) == QA_GAME_Q2 ? (team == 0 ? 0x40000u : 0x80000u)
                                                           : 0;
     }
     if (spec->kind == QA_MODE_OBJECT_OBELISK) {
@@ -386,15 +386,15 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                                 .shape = {QA_SHAPE_BOX, body.bounds},
                                 .policy = {.family = family(v), .contents_mask = qa_collision_contents_mask(3, family(v)), .q1_hull = -1},
                                 .pass_actor = actor};
-        trace.start.z += family(v) == QA_COLLISION_Q1 ? 6 : 1;
+        trace.start.z += family(v) == QA_GAME_Q1 ? 6 : 1;
         trace.end = trace.start;
         trace.end.z -= spec->kind == QA_MODE_OBJECT_OBELISK ? 4096
-                       : family(v) == QA_COLLISION_Q1       ? 256
+                       : family(v) == QA_GAME_Q1       ? 256
                                                             : 128;
         qa_trace_result result;
         if (!qa_world_trace(m->options.services.world, &trace, &result, e))
             goto rollback;
-        if (family(v) == QA_COLLISION_Q1 && (result.all_solid || result.fraction == 1)) {
+        if (family(v) == QA_GAME_Q1 && (result.all_solid || result.fraction == 1)) {
             omitted = true;
             goto rollback;
         }
@@ -410,7 +410,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                 goto rollback;
         }
     }
-    if (family(v) == QA_COLLISION_Q1 &&
+    if (family(v) == QA_GAME_Q1 &&
         (spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_FLAG_BASE))
         o->physics.motion = QA_PHYSICS_TOSS;
     if (authored && qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) {
@@ -672,7 +672,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
     qa_vec3 origin = qa_vec_add(player.origin, qa_vec_scale(forward, 24));
     origin.z -= 16;
-    if (family(v) == QA_COLLISION_Q1) {
+    if (family(v) == QA_GAME_Q1) {
         origin = player.origin;
         origin.z -= 24;
     }
@@ -688,9 +688,9 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     body.velocity = qa_vec_scale(forward, v->value.rules.source == QA_MODE_LMCTF ? 200 : 100);
     body.velocity.z = 300;
     body.ground = (qa_actor_reference){0};
-    if (o->spec.kind == QA_MODE_OBJECT_FLAG && family(v) == QA_COLLISION_Q1)
+    if (o->spec.kind == QA_MODE_OBJECT_FLAG && family(v) == QA_GAME_Q1)
         body.velocity = qa_v3(0, 0, 300);
-    if (o->spec.kind == QA_MODE_OBJECT_RELIC && family(v) == QA_COLLISION_Q1) {
+    if (o->spec.kind == QA_MODE_OBJECT_RELIC && family(v) == QA_GAME_Q1) {
         body.velocity.x = (mode_random_float(m) - .5f) * 1000;
         body.velocity.y = (mode_random_float(m) - .5f) * 1000;
         body.velocity.z = 400;
@@ -717,7 +717,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         v->value.time_ns + (v->value.rules.source == QA_MODE_Q2_CTF ? 2 : 1) * MODE_SECOND;
     o->value.deadline_ns =
         v->value.time_ns + (o->spec.kind == QA_MODE_OBJECT_RELIC
-                                ? (family(v) == QA_COLLISION_Q1              ? 120
+                                ? (family(v) == QA_GAME_Q1              ? 120
                                    : v->value.rules.source == QA_MODE_Q2_CTF ? 60
                                                                              : 30)
                                 : 30) *
@@ -831,7 +831,7 @@ bool mode_object_relocate(qa_modes *m, mode_instance *v, mode_object *o, bool fa
     o->physics.motion = QA_PHYSICS_TOSS;
     o->dropped = false;
     o->expire_ns = o->spec.kind == QA_MODE_OBJECT_RELIC
-                       ? v->value.time_ns + (family(v) == QA_COLLISION_Q1              ? 120
+                       ? v->value.time_ns + (family(v) == QA_GAME_Q1              ? 120
                                              : v->value.rules.source == QA_MODE_Q2_CTF ? 60
                                                                                        : 30) *
                                                 MODE_SECOND
@@ -895,7 +895,7 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
             if (!qa_world_body_read(m->options.services.world, actor, &body, e))
                 return false;
             qa_point_query query = {
-                .point = body.origin, .policy = {.family = QA_COLLISION_Q2}, .pass_actor = actor};
+                .point = body.origin, .policy = {.family = QA_GAME_Q2}, .pass_actor = actor};
             if (!qa_world_point_contents(m->options.services.world, &query, &contents, e))
                 return false;
             o->next_ns = 0;
@@ -909,7 +909,7 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
                         return false;
                 } else if (!mode_object_relocate(m, v, o, false, e))
                     return false;
-            } else if (family(v) == QA_COLLISION_Q1 && o->spec.kind == QA_MODE_OBJECT_FLAG &&
+            } else if (family(v) == QA_GAME_Q1 && o->spec.kind == QA_MODE_OBJECT_FLAG &&
                        v->value.time_ns >= o->animation_ns && !follow_flag(m, v, o, e))
                 return false;
             continue;
@@ -954,7 +954,7 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
             o->next_ns = v->value.time_ns + v->value.rules.obelisk_regen_ns;
         }
         if (o->value.visible && o->spec.kind == QA_MODE_OBJECT_FLAG &&
-            family(v) == QA_COLLISION_Q2 && v->value.time_ns >= o->animation_ns) {
+            family(v) == QA_GAME_Q2 && v->value.time_ns >= o->animation_ns) {
             o->value.frame = 173 + (o->value.frame - 173 + 1) % 16;
             o->animation_ns = v->value.time_ns + MODE_SECOND / 10;
         }

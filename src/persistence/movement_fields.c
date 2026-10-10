@@ -147,7 +147,7 @@ bool qa_persistence_movement_profile(qa_source_save_io *io, qa_movement_profile 
 static bool plane(qa_source_save_io *io, qa_collision_plane *value)
 { V(value->normal); F(value->distance); I(value->type); FIELD(u8, value->signbits); return true; }
 
-static bool surface(qa_source_save_io *io, qa_collision_surface *value, qa_collision_family family)
+static bool surface(qa_source_save_io *io, qa_collision_surface *value, qa_game_family family)
 {
     int32_t flags = io->direction == QA_SOURCE_SAVE_READ ? 0 : qa_collision_surface_export(value->flags, family);
     if (!qa_source_save_bytes(io, value->name, sizeof(value->name))) return false;
@@ -169,14 +169,14 @@ static bool trace(qa_source_save_io *io, qa_trace_result *value)
         if (value->has_secondary && value->secondary_has_surface &&
             !qa_persistence_surface_compact(value->secondary_surface.flags, value->family, &word)) extensions |= 8;
     }
-    uint32_t family = reading ? 0 : (uint32_t)value->family | (extensions ? canonical_tag : 0);
+    uint32_t family = reading ? 0 : qa_persistence_family_tag(value->family) | (extensions ? canonical_tag : 0);
     uint32_t hit = reading ? 0 : (uint32_t)value->hit;
     if (!qa_source_save_u32(io, &family)) return false;
     bool extended = (family & canonical_tag) != 0;
     family &= ~canonical_tag;
-    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3)
+    if (family < 1u || family > 3u)
         return fail(io, "Invalid movement contact family");
-    value->family = (qa_collision_family)family;
+    value->family = qa_persistence_family_from_tag(family);
     F(value->fraction); V(value->end); B(value->start_solid); B(value->all_solid); B(value->in_open); B(value->in_water); B(value->contact);
     if (!plane(io, &value->plane) || !plane(io, &value->contact_plane) || !qa_source_save_u32(io, &hit) || hit > QA_TRACE_HIT_ACTOR)
         return fail(io, "Invalid movement contact hit");

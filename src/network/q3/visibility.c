@@ -14,7 +14,7 @@ bool qa_q3_leaf_visibility(qa_world *world,qa_actor_id actor,const qa_bounds *bo
     }
     const qa_world_leaf_visibility_result *r;
     if(!qa_world_leaf_visibility(world,actor,bounds,QA_WORLD_LEAVES_BOX,scratch,&r,error)) return false;
-    bool native=qa_collision_geometry_family(geometry)==QA_COLLISION_Q3;
+    bool native=qa_collision_geometry_family(geometry)==QA_GAME_Q3;
     if(native?r->prefix_invalid:r->all_invalid) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 link visibility exceeds source indices"); return false;
     }

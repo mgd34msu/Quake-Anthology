@@ -107,20 +107,26 @@ bool qa_source_save_actor_reference(qa_source_save_io *io, qa_actor_reference *v
     return actor_payload(io, kind == QA_ACTOR_REFERENCE_LIFETIME, &value->value.actor);
 }
 
+/* Existing continuation tags are 1..3; the common family uses 0..2. */
+uint32_t qa_persistence_family_tag(qa_game_family family)
+{ return family == ((qa_game_family)-1) ? 0 : (uint32_t)family + 1u; }
+qa_game_family qa_persistence_family_from_tag(uint32_t tag)
+{ return tag >= 1u && tag <= 3u ? (qa_game_family)(tag - 1u) : ((qa_game_family)-1); }
+
 bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
 {
     if (!io || !value) return persistence_io_fail(io, QA_ERROR_ARGUMENT, "missing physics continuation field");
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t family = reading ? 0 : (uint32_t)value->family;
+    uint32_t family = reading ? 0 : qa_persistence_family_tag(value->family);
     uint32_t motion = reading ? 0 : (uint32_t)value->motion;
     uint32_t solid = reading ? 0 : (uint32_t)value->solid;
     if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &motion) ||
         !qa_source_save_u32(io, &solid)) return false;
-    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3 ||
+    if (family < 1u || family > 3u ||
         motion > QA_PHYSICS_STEP || solid > QA_PHYSICS_CORPSE)
         return persistence_io_fail(io, QA_ERROR_FORMAT, "invalid physics continuation enum");
     if (reading) {
-        value->family = (qa_collision_family)family; value->motion = (qa_physics_motion)motion;
+        value->family = qa_persistence_family_from_tag(family); value->motion = (qa_physics_motion)motion;
         value->solid = (qa_physics_solid)solid;
     }
     return qa_source_save_bool(io, &value->q2_rerelease) &&
@@ -134,13 +140,13 @@ bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
         qa_source_save_f64(io, &value->q1_pusher.next_think_seconds);
 }
 
-qa_collision_terminal qa_persistence_contents_import(int32_t word, qa_collision_family family)
+qa_collision_terminal qa_persistence_contents_import(int32_t word, qa_game_family family)
 {
-    return family == QA_COLLISION_Q1 ? qa_collision_q1_terminal(word) :
+    return family == QA_GAME_Q1 ? qa_collision_q1_terminal(word) :
         (qa_collision_terminal){qa_collision_contents_decode(word, family), 0};
 }
 
-bool qa_persistence_contents_compact(qa_collision_bits contents, qa_collision_family family,
+bool qa_persistence_contents_compact(qa_collision_bits contents, qa_game_family family,
     int32_t opaque_token, int32_t *word)
 {
     *word = qa_collision_contents_export(contents, family, opaque_token);
@@ -148,7 +154,7 @@ bool qa_persistence_contents_compact(qa_collision_bits contents, qa_collision_fa
     return qa_collision_bits_equal(contents, decoded.bits) && opaque_token == decoded.opaque_token;
 }
 
-bool qa_persistence_surface_compact(qa_collision_bits flags, qa_collision_family family, int32_t *word)
+bool qa_persistence_surface_compact(qa_collision_bits flags, qa_game_family family, int32_t *word)
 {
     *word = qa_collision_surface_export(flags, family);
     return qa_collision_bits_equal(flags, qa_collision_surface_decode(*word, family));
@@ -162,18 +168,18 @@ bool qa_persistence_collision(qa_source_save_io *io, qa_actor_collision *value)
     int32_t contents = 0;
     bool extended = !reading && !qa_persistence_contents_compact(value->contents, value->family,
         value->q1_opaque_token, &contents);
-    uint32_t family = reading ? 0 : (uint32_t)value->family | (extended ? canonical_tag : 0);
+    uint32_t family = reading ? 0 : qa_persistence_family_tag(value->family) | (extended ? canonical_tag : 0);
     uint32_t shape = reading ? 0 : (uint32_t)value->shape;
     uint32_t role = reading ? 0 : (uint32_t)value->role;
     if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &shape) ||
         !qa_source_save_u32(io, &role)) return false;
     extended = (family & canonical_tag) != 0;
     family &= ~canonical_tag;
-    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3 ||
+    if (family < 1u || family > 3u ||
         shape > QA_SHAPE_CAPSULE || role > QA_COLLISION_BOTH)
         return persistence_io_fail(io, QA_ERROR_FORMAT, "invalid collision continuation enum");
     if (reading) {
-        value->family = (qa_collision_family)family; value->shape = (qa_shape_kind)shape;
+        value->family = qa_persistence_family_from_tag(family); value->shape = (qa_shape_kind)shape;
         value->role = (qa_collision_role)role;
     }
     if (!qa_source_save_bool(io, &value->inline_model) || !qa_source_save_u32(io, &value->model) ||

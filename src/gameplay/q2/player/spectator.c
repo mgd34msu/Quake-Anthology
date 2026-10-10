@@ -127,10 +127,10 @@ static bool hazard(qa_q2_game *g, qa_actor_id id, qa_vec3 point, uint32_t mask, 
             g->services.world,
             &(qa_point_query){.point = point,
                               .pass_actor = id,
-                              .policy = {.family = QA_COLLISION_Q2, .q2_merged_contents = true}},
+                              .policy = {.family = QA_GAME_Q2, .q2_merged_contents = true}},
             &contents, e))
         return false;
-    *value = (qa_collision_point_contents_export(contents.merged, QA_COLLISION_Q2, contents.q1_opaque_token) & (int32_t)mask) != 0;
+    *value = (qa_collision_point_contents_export(contents.merged, QA_GAME_Q2, contents.q1_opaque_token) & (int32_t)mask) != 0;
     return true;
 }
 static bool squad_spot(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m, qa_vec3 *out,

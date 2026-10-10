@@ -51,7 +51,7 @@ static bool actual(application_bots_npc *owner,qa_actor_id actor,qa_body_state *
     bool physical;
     if(!application_npc_physics_read(owner->source,actor,properties,&physical,error)) return false;
     if(!physical) return true;
-    if(!(properties->flags&QA_PHYSICS_MONSTER) || properties->family!=QA_COLLISION_Q1) return true;
+    if(!(properties->flags&QA_PHYSICS_MONSTER) || properties->family!=QA_GAME_Q1) return true;
     if(!qa_world_body_read(owner->world,actor,body,error)) return false;
     *found=true;return true;
 }
@@ -276,7 +276,7 @@ static bool graph_resource(application_bots_npc *owner,npc_graph *graph,qa_error
 bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,qa_error *error)
 {
     qa_nav_profile profile={.movement=owner->movement,.shape={QA_SHAPE_BOX,graph->bounds},
-        .policy={.family=QA_COLLISION_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
+        .policy={.family=QA_GAME_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
         .maximum_drop=18,.monster=true,.capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|
             QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)};
     qa_navigation_services services=application_npc_services(owner);

@@ -100,18 +100,18 @@ bool qa_builtin_can_damage(const qa_builtin_services *s, qa_vec3 origin, qa_acto
     if (local.code != QA_OK) { if (error) *error = local; return false; }
     qa_vec3 center =
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
-    qa_vec3 destination = policy.family == QA_COLLISION_Q3 || brush ? center : body.origin;
+    qa_vec3 destination = policy.family == QA_GAME_Q3 || brush ? center : body.origin;
     bool visible;
     if (!visible_point(s, origin, destination, target, pass, policy, &visible, error))
         return false;
-    if (visible || (brush && policy.family != QA_COLLISION_Q3)) {
+    if (visible || (brush && policy.family != QA_GAME_Q3)) {
         *out = visible;
         return true;
     }
     for (unsigned i = 0; i < (corners ? 8u : 4u); ++i) {
         qa_vec3 offset = qa_v3((i & 1u) ? 15.0f : -15.0f, (i & 2u) ? 15.0f : -15.0f,
                                corners ? ((i & 4u) ? 15.0f : -15.0f) : 0.0f);
-        qa_actor_id accepted_target = policy.family == QA_COLLISION_Q3 ? (qa_actor_id){0} : target;
+        qa_actor_id accepted_target = policy.family == QA_GAME_Q3 ? (qa_actor_id){0} : target;
         if (!visible_point(s, origin, qa_vec_add(destination, offset), accepted_target, pass,
                            policy, &visible, error))
             return false;

@@ -1130,7 +1130,7 @@ static bool replay(frontend_remote_prediction *owner,
     uint32_t source_trace_mask = UINT32_C(1) | UINT32_C(0x10000) | UINT32_C(0x2000000);
     if (old.view.player.pmType == 3 || current->player.persistant[3] == 3)
         source_trace_mask &= ~UINT32_C(0x2000000);
-    qa_collision_bits trace_mask = qa_collision_contents_mask(source_trace_mask, QA_COLLISION_Q3);
+    qa_collision_bits trace_mask = qa_collision_contents_mask(source_trace_mask, QA_GAME_Q3);
     bool ok = seed(owner, &source, &base, &next.baseline, error);
     if (ok) {
         set_receipt(&next, &source);
@@ -1343,7 +1343,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
 {
     qa_movement_input *in = &v->input;
     uint32_t shape = in->shape.kind, solid = in->q1_solid;
-    uint32_t family = in->trace_policy.family, move = in->trace_policy.q1_move;
+    uint32_t family = qa_persistence_family_tag(in->trace_policy.family), move = in->trace_policy.q1_move;
     uint32_t clock = v->clock.kind, rounding = v->numeric.rounding;
     uint32_t prediction_rounding = v->prediction_numeric.rounding;
     if (in->q2r_pml_origin || !qa_source_save_string(io, &v->movement) ||
@@ -1374,8 +1374,8 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_bool(io, &in->prediction) || !qa_source_save_bool(io, &in->snap_initial) ||
         !qa_source_save_vec3(io, &in->view_offset) || !qa_source_save_bool(io, &in->has_source_punch_angles) ||
         !qa_source_save_vec3(io, &in->source_punch_angles) || !qa_source_save_u32(io, &solid) ||
-        solid > QA_Q1_SOLID_CORPSE || !qa_source_save_u32(io, &family) || family < QA_COLLISION_Q1 ||
-        family > QA_COLLISION_Q3 || !qa_source_save_u64(io, &in->trace_policy.contents_mask.lo) ||
+        solid > QA_Q1_SOLID_CORPSE || !qa_source_save_u32(io, &family) || family < 1u ||
+        family > 3u || !qa_source_save_u64(io, &in->trace_policy.contents_mask.lo) ||
         !qa_source_save_u64(io, &in->trace_policy.contents_mask.hi) ||
         !qa_source_save_u32(io, &move) || move > QA_Q1_MOVE_MISSILE ||
         !qa_source_save_i32(io, &in->trace_policy.q1_hull) ||
@@ -1395,7 +1395,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     v->numeric.rounding = (qa_numeric_rounding)rounding;
     v->prediction_numeric.rounding = (qa_numeric_rounding)prediction_rounding;
     in->shape.kind = (qa_shape_kind)shape; in->q1_solid = (qa_q1_solid)solid;
-    in->trace_policy.family = (qa_collision_family)family;
+    in->trace_policy.family = qa_persistence_family_from_tag(family);
     in->trace_policy.q1_move = (qa_q1_move_kind)move;
     return v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
         v->prediction_numeric.native_c && v->prediction_numeric.id &&

@@ -2,6 +2,7 @@
 #include "qa/executable_recipe_save.h"
 #include "qa/map_sidecars.h"
 #include "qa/source_save.h"
+#include "qa/persistence_fields.h"
 
 static bool text(qa_source_save_io *io, qa_executable_recipe *recipe, const char **value)
 {
@@ -54,13 +55,13 @@ static bool acquisition(qa_source_save_io *io, qa_vfs *files, qa_vfs_acquisition
 static bool portal_fields(qa_source_save_io *io, qa_collision_portal_checkpoint *state)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t family = state->family, format = state->format;
-    if (!qa_source_save_u32(io, &family) || family > QA_COLLISION_Q3 ||
+    uint32_t family = qa_persistence_family_tag(state->family), format = state->format;
+    if (!qa_source_save_u32(io, &family) || family > 3u ||
         !qa_source_save_u32(io, &format) || !qa_source_save_u64(io, &state->map_identity) ||
         !qa_source_save_u32(io, &state->area_count) || !qa_source_save_bool(io, &state->no_areas) ||
         !qa_source_save_count(io, &state->portal_count, reading ?
             (io->input.size - io->offset) / 9 : SIZE_MAX / sizeof(*state->portals))) return false;
-    state->family = (qa_collision_family)family; state->format = (qa_bsp_format)format;
+    state->family = qa_persistence_family_from_tag(family); state->format = (qa_bsp_format)format;
     if (reading && state->portal_count) {
         state->portals = calloc(state->portal_count, sizeof(*state->portals));
         if (!state->portals) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring recipe portal contributions"); return false; }

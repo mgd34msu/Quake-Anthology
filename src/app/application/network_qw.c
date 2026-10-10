@@ -85,7 +85,7 @@ static struct application_qc_state *qw_source(qa_application *app,
         engine->profile != QA_QC_QUAKEWORLD || engine->protocol.kind != QA_NET_QW28 ||
         engine->protocol.flags || engine->protocol.revision || engine->max_clients != 32 ||
         !engine->clients || !engine->cvars || count < 33 || count > 512 || !geometry ||
-        qa_collision_geometry_family(geometry) != QA_COLLISION_Q1 ||
+        qa_collision_geometry_family(geometry) != QA_GAME_Q1 ||
         !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
         !qa_world_idle(app->world) || !qa_qc_idle(provider->state.qc.instance) ||
         !application_qc_input_idle(provider) ||

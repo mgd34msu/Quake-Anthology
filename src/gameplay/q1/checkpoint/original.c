@@ -1654,7 +1654,7 @@ static bool original_mover_completion(q1_map_kind kind,q1_map_action action) {
 static bool admit_entity(original_admission *admission,qa_q1_program program,
     size_t slot,qa_error *error) {
     const qa_q1_save_record *record=admission->record;
-    qa_body_state body={0};qa_physics_properties physics=qa_physics_properties_default(QA_COLLISION_Q1);
+    qa_body_state body={0};qa_physics_properties physics=qa_physics_properties_default(QA_GAME_Q1);
     uint32_t flags;
     if (!ADMIT_FIELDS(admission,&body,body_fields,error) ||
         !ADMIT_FIELDS(admission,&physics,physics_fields,error) ||
@@ -1901,7 +1901,7 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     qa_actor_id id = player ? player->id : entity->id;
     qa_body_state body;
     qa_combat_state combat;
-    qa_physics_properties physics = entity ? entity->physics : qa_physics_properties_default(QA_COLLISION_Q1);
+    qa_physics_properties physics = entity ? entity->physics : qa_physics_properties_default(QA_GAME_Q1);
     uint32_t flags;
     if (!qa_world_body_read(game->services.world, id, &body, error) ||
         !qa_combat_read_traits(game->services.combat, id, &combat, error) ||

@@ -55,7 +55,7 @@ static bool drop_floor(qa_q1_game *game, q1_actor *source, bool *placed,
         !current(game, actor, source, error)) return false;
     qa_trace_query query = {.start = body.origin, .end = qa_vec_sub(body.origin, qa_v3(0, 0, 256)),
         .pass_actor = actor, .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-        .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        .policy = qa_collision_default_policy(QA_GAME_Q1)};
     qa_trace_result hit;
     if (!qa_world_trace(game->services.world, &query, &hit, error) ||
         !current(game, actor, source, error)) return false;

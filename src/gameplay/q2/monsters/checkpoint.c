@@ -503,7 +503,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     struct qa_q2_monster *previous = actor->monster;
     actor->monster = monster;
     actor->physics_bound = true;
-    actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
     actor->physics.motion = QA_PHYSICS_STATIONARY;
     actor->physics.solid = QA_PHYSICS_NOT_SOLID;
     actor->physics.clip_mask = 0;

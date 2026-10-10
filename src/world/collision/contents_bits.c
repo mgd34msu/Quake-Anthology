@@ -64,10 +64,10 @@ qa_collision_terminal qa_collision_q1_terminal(int32_t token)
     }
 }
 
-qa_collision_bits qa_collision_contents_decode(int32_t native, qa_collision_family family)
+qa_collision_bits qa_collision_contents_decode(int32_t native, qa_game_family family)
 {
-    if (family == QA_COLLISION_Q1) return qa_collision_q1_terminal(native).bits;
-    if (family == QA_COLLISION_Q2) return (qa_collision_bits){(uint32_t)native, 0};
+    if (family == QA_GAME_Q1) return qa_collision_q1_terminal(native).bits;
+    if (family == QA_GAME_Q2) return (qa_collision_bits){(uint32_t)native, 0};
     return q3_contents((uint32_t)native);
 }
 
@@ -80,10 +80,10 @@ int32_t qa_collision_q1_medium_class(qa_collision_bits bits)
     return -1;
 }
 
-int32_t qa_collision_contents_export(qa_collision_bits bits, qa_collision_family family, int32_t opaque_q1_token)
+int32_t qa_collision_contents_export(qa_collision_bits bits, qa_game_family family, int32_t opaque_q1_token)
 {
     uint64_t lo = bits.lo;
-    if (family == QA_COLLISION_Q1) {
+    if (family == QA_GAME_Q1) {
         int32_t medium = qa_collision_q1_medium_class(bits);
         if (medium == -3 && (lo & Q1_CURRENT_BITS) != 0)
             return 47 - (int32_t)first_bit(lo & Q1_CURRENT_BITS);
@@ -93,7 +93,7 @@ int32_t qa_collision_contents_export(qa_collision_bits bits, qa_collision_family
         if ((bits.hi & (BIT(QA_CONTENT_Q1_OPAQUE - 64))) != 0) return opaque_q1_token;
         return -1;
     }
-    if (family == QA_COLLISION_Q2) {
+    if (family == QA_GAME_Q2) {
         uint32_t word = (uint32_t)lo;
         if ((lo & BIT(QA_CONTENT_FOG)) != 0) word |= 64;
         if ((lo & BIT(QA_CONTENT_BODY)) != 0) word |= UINT32_C(0x42000000);
@@ -116,16 +116,16 @@ int32_t qa_collision_contents_export(qa_collision_bits bits, qa_collision_family
     return signed_word(word);
 }
 
-int32_t qa_collision_point_contents_export(qa_collision_bits bits, qa_collision_family family, int32_t opaque_q1_token)
+int32_t qa_collision_point_contents_export(qa_collision_bits bits, qa_game_family family, int32_t opaque_q1_token)
 {
     int32_t value = qa_collision_contents_export(bits, family, opaque_q1_token);
-    return family == QA_COLLISION_Q1 && value <= -9 && value >= -14 ? -3 : value;
+    return family == QA_GAME_Q1 && value <= -9 && value >= -14 ? -3 : value;
 }
 
-qa_collision_bits qa_collision_contents_mask(uint32_t native_mask, qa_collision_family family)
+qa_collision_bits qa_collision_contents_mask(uint32_t native_mask, qa_game_family family)
 {
-    if (family == QA_COLLISION_Q1) return (qa_collision_bits){Q1_SOLID_BITS, 0};
-    if (family == QA_COLLISION_Q2) {
+    if (family == QA_GAME_Q1) return (qa_collision_bits){Q1_SOLID_BITS, 0};
+    if (family == QA_GAME_Q2) {
         uint64_t lo = native_mask;
         if ((native_mask & 64) != 0) lo |= BIT(QA_CONTENT_FOG);
         if ((native_mask & UINT32_C(0x42000000)) != 0) lo |= BIT(QA_CONTENT_BODY);
@@ -142,22 +142,22 @@ qa_collision_bits qa_collision_contents_mask(uint32_t native_mask, qa_collision_
     return mask;
 }
 
-qa_collision_bits qa_collision_surface_decode(int32_t native, qa_collision_family family)
+qa_collision_bits qa_collision_surface_decode(int32_t native, qa_game_family family)
 {
     uint32_t word = (uint32_t)native;
-    if (family == QA_COLLISION_Q1) return (qa_collision_bits){0, word};
-    if (family == QA_COLLISION_Q2) return (qa_collision_bits){word, 0};
+    if (family == QA_GAME_Q1) return (qa_collision_bits){0, word};
+    if (family == QA_GAME_Q2) return (qa_collision_bits){word, 0};
     return (qa_collision_bits){(word & UINT32_C(0x82)) |
         ((uint64_t)(word & 1) << 32) |
         ((uint64_t)(word & UINT32_C(0x7c)) << 31) |
         ((uint64_t)(word & UINT32_C(0xffffff00)) << 30), 0};
 }
 
-int32_t qa_collision_surface_export(qa_collision_bits bits, qa_collision_family family)
+int32_t qa_collision_surface_export(qa_collision_bits bits, qa_game_family family)
 {
-    if (family == QA_COLLISION_Q1) return signed_word((uint32_t)bits.hi);
+    if (family == QA_GAME_Q1) return signed_word((uint32_t)bits.hi);
     uint64_t lo = bits.lo;
-    if (family == QA_COLLISION_Q2)
+    if (family == QA_GAME_Q2)
         return signed_word((uint32_t)lo | ((lo & BIT(QA_SURFACE_SKY)) != 0 ? 4 : 0));
     uint32_t word = (uint32_t)lo & UINT32_C(0x86);
     word |= (uint32_t)((lo >> 32) & 1) |

@@ -429,7 +429,7 @@ bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collis
         eye.y - axes[0].y * (float)settings->back + axes[1].y * (float)settings->right, eye.z);
     destination.z = eye.z + (float)settings->up;
     qa_trace_query query = {.start=eye,.end=qa_vec_add(eye,qa_vec_scale(axes[0],4096)),
-        .shape={.kind=QA_SHAPE_POINT},.policy=qa_collision_default_policy(QA_COLLISION_Q1)};
+        .shape={.kind=QA_SHAPE_POINT},.policy=qa_collision_default_policy(QA_GAME_Q1)};
     query.policy.q1_hull=0;
     qa_trace_result hit;
     if (!qa_collision_trace(geometry, scratch, &query, &hit, error)) return false;

@@ -80,7 +80,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   if (!q2_actor_live(game, source)) return true;
   qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, source);
   qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
-  qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+  qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
       .contents = qa_collision_q2_source_contents(2, 0,
           game->options.edition == QA_Q2_RERELEASE), .owner = owner_reference, .role = QA_COLLISION_SOLID};
   qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition,
@@ -102,7 +102,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
                    (sized ? Q2_GIB_WIDOW_SIZED : 0) |
                    (hit_sound ? Q2_GIB_WIDOW_HIT_SOUND : 0)};
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.q2_rerelease = game->options.edition == QA_Q2_RERELEASE;
   actor->physics.motion = organic ? QA_PHYSICS_TOSS : QA_PHYSICS_BOUNCE;
   actor->physics.solid = sized ? QA_PHYSICS_BOX : QA_PHYSICS_NOT_SOLID;
@@ -152,7 +152,7 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
       .gib_flags = Q2_GIB_WIDOW_LEGS,
       .next_ns = q2_deadline(context->game->now_ns, 100 * Q2_MS), .expire_ns = UINT64_MAX};
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;

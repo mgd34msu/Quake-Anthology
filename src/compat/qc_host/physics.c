@@ -45,7 +45,7 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
     int32_t reference;
     if (!qa_qc_actor_reference(game->vm, actor, false, &reference, error)) return false;
     float motion, solid, flags, health, water_level, water_type, local, next;
-    qa_physics_properties value = {.family = QA_COLLISION_Q1, .clip_mask = 3,
+    qa_physics_properties value = {.family = QA_GAME_Q1, .clip_mask = 3,
         .gravity_direction = {0, 0, -1}, .gravity_scale = 1};
     if (!scalar(game, reference, game->fields->movetype, 0, false, &motion, error) ||
         !scalar(game, reference, game->fields->solid, 0, false, &solid, error) ||
@@ -111,7 +111,7 @@ static bool store_scalar(qa_qc_game *game, int32_t reference, qa_actor_id actor,
 }
 bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
                               const qa_physics_properties *value, qa_error *error) {
-    if (!game || !value || value->family != QA_COLLISION_Q1 || !isfinite(value->ideal_yaw) ||
+    if (!game || !value || value->family != QA_GAME_Q1 || !isfinite(value->ideal_yaw) ||
         !isfinite(value->yaw_speed) || !qa_vec_finite(value->angular_velocity))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "Invalid QC physics store");
     int32_t reference;

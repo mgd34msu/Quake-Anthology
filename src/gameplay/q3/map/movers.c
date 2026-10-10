@@ -167,10 +167,10 @@ static bool ensure_damageable(qa_q3_game *game, qa_q3_map_actor_state *state,
 static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
                        qa_q3_mover_definition *definition, qa_error *error) {
     definition->loop_sound = state->noise;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .inline_model = true,
                                     .model = state->inline_model,
-                                    .contents = qa_collision_contents_decode(-1, QA_COLLISION_Q3),
+                                    .contents = qa_collision_contents_decode(-1, QA_GAME_Q3),
                                     .role = QA_COLLISION_SOLID};
     q3_wire_entity_source *wire = q3_wire_entity(game, state->actor);
     if (!wire)
@@ -320,9 +320,9 @@ static bool spawn_trigger(qa_q3_game *game, qa_q3_map_kind kind, qa_actor_id par
                                      .count = axis,
                                      .active = true,
                                      .touchable = true};
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_COLLISION_Q3),
+                                    .contents = qa_collision_contents_decode(Q3_CONTENTS_TRIGGER, QA_GAME_Q3),
                                     .role = QA_COLLISION_TRIGGER};
     if (!q3_map_allocate(game, &trigger, &collision, true, error))
         return false;

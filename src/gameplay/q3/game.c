@@ -216,7 +216,7 @@ static bool physics_read(void *context, qa_actor_id actor, qa_physics_properties
     qa_q3_game *game = context;
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return false;
-    *out = qa_physics_properties_default(QA_COLLISION_Q3);
+    *out = qa_physics_properties_default(QA_GAME_Q3);
     out->clip_mask = Q3_MASK_SHOT;
     q3_actor *entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER)
@@ -511,8 +511,8 @@ bool q3_trace(qa_q3_game *game, qa_vec3 start, qa_vec3 end, qa_actor_id pass, ui
                             .end = end,
                             .shape = {.kind = QA_SHAPE_POINT},
                             .pass_actor = pass,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_COLLISION_Q3);
+                            .policy = qa_collision_default_policy(QA_GAME_Q3)};
+    query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q3);
     return qa_world_trace(game->options.services.world, &query, trace, error);
 }
 bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {

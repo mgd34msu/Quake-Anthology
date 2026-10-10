@@ -245,14 +245,14 @@ bool q2_project(q2_weapon_call *c, qa_vec3 angles, qa_vec3 offset, qa_vec3 *star
         return true;
     qa_trace_query query = {
         .start = eye, .end = qa_vec_add(eye, qa_vec_scale(f, 8192)), .pass_actor = c->actor->id};
-    query.policy = qa_collision_default_policy(QA_COLLISION_Q2);
+    query.policy = qa_collision_default_policy(QA_GAME_Q2);
     query.policy.contents_mask =
         qa_collision_contents_mask((c->input.players_collide ? Q2_PROJECTILE_MASK : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS) &
-        ~UINT32_C(0x04000000), QA_COLLISION_Q2);
+        ~UINT32_C(0x04000000), QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(c->game->services.world, &query, &trace, e))
         return false;
-    bool close = ((uint32_t)qa_collision_contents_export(trace.contents, QA_COLLISION_Q2, trace.q1_opaque_token) & (UINT32_C(0x02000000) | Q2_PLAYER_CONTENTS)) != 0 &&
+    bool close = ((uint32_t)qa_collision_contents_export(trace.contents, QA_GAME_Q2, trace.q1_opaque_token) & (UINT32_C(0x02000000) | Q2_PLAYER_CONTENTS)) != 0 &&
                  trace.fraction * 8192 < 128;
     if (!trace.start_solid && !close)
         *direction = qa_vec_normalize(qa_vec_sub(trace.end, *start));

@@ -125,11 +125,11 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, bool damage, qa_error *
         .start = start,
         .end = end,
         .pass_actor = ignored_actor,
-        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .policy = qa_collision_default_policy(QA_GAME_Q2),
     };
-    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000001), QA_COLLISION_Q2);
+    query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000001), QA_GAME_Q2);
     if (game->options.edition == QA_Q2_RERELEASE)
-      query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_COLLISION_Q2));
+      query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
       return false;
@@ -223,7 +223,7 @@ static bool spawn_beam(q2m_context *context, qa_actor_id target,
   beam->initialized = true;
   actor->monster = beam;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
@@ -423,8 +423,8 @@ static bool guardian_trace(qa_q2_game *game, q2_actor *actor, bool damage,
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
   qa_trace_query query = {.start = body.origin,
       .end = qa_vec_add(body.origin, qa_vec_scale(beam->controller_direction, 2048.0f)),
-      .pass_actor = actor->id, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-  query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000001), QA_COLLISION_Q2);
+      .pass_actor = actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+  query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000001), QA_GAME_Q2);
   qa_actor_id excluded[16];
   size_t count = 0;
   qa_trace_result trace;
@@ -594,7 +594,7 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
   controller->initialized = true;
   actor->monster = controller;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
@@ -677,7 +677,7 @@ bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
   controller->initialized = true;
   actor->monster = controller;
   actor->physics_bound = true;
-  actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+  actor->physics = qa_physics_properties_default(QA_GAME_Q2);
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
@@ -908,8 +908,8 @@ bool q2m_turret_lasersight(q2m_context *context, qa_error *error) {
   qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
   qa_trace_query query = {.start = context->body.origin,
     .end = qa_vec_add(context->body.origin, qa_vec_scale(forward, 8192)),
-    .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-  query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+    .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+  query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
     return false;

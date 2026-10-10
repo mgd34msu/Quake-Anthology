@@ -220,12 +220,12 @@ static bool point_contents(qa_native_host *host, qa_native_address address,
     if (!native_host_read_vec3(host, address, &point, error))
         return false;
     qa_point_query query = {.point = point,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.q2_merged_contents = host->profile != QA_NATIVE_Q2_GAME_API3;
     qa_point_contents contents;
     if (!qa_world_point_contents(host->world.world, &query, &contents, error))
         return false;
-    *out = (uint32_t)qa_collision_point_contents_export(contents.contents,QA_COLLISION_Q2,contents.q1_opaque_token);
+    *out = (uint32_t)qa_collision_point_contents_export(contents.contents,QA_GAME_Q2,contents.q1_opaque_token);
     return true;
 }
 

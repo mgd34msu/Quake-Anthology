@@ -150,7 +150,7 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
                                 .end = qa_vec_sub(body.origin, qa_v3(0, 0, 256)),
                                 .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                                 .pass_actor = actor,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+                                .policy = qa_collision_default_policy(QA_GAME_Q1)};
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, error))
             return false;

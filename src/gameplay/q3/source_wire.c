@@ -872,7 +872,7 @@ static void link_write(qa_q3_game *game, uint32_t slot, const qa_body_state *bod
                         const qa_q3_wire_visibility *membership, uint64_t link_count) {
     q3_wire_row *record = &game->wire->rows[slot];
     uint32_t solid = collision->inline_model ? UINT32_C(0xffffff)
-        : !qa_collision_bits_overlap(collision->contents, qa_collision_contents_mask(UINT32_C(0x02000001), QA_COLLISION_Q3)) ? 0u
+        : !qa_collision_bits_overlap(collision->contents, qa_collision_contents_mask(UINT32_C(0x02000001), QA_GAME_Q3)) ? 0u
         : (solid_byte((body->bounds.maxs.z + 32)) << 16) |
           (solid_byte(-body->bounds.mins.z) << 8) | solid_byte(body->bounds.maxs.x);
     qa_q3_entity *temporary = q3_wire_temporary(game, record->actor);
@@ -1219,7 +1219,7 @@ bool qa_q3_source_contents_read(const qa_q3_game *game, uint32_t slot,
         !game->source_entities[slot].in_use || !game->source_entities[slot].body_attached ||
         !game->wire->rows[slot].initialized || storage != qa_world_body_storage_serial(world, actor)))
         okay = q3_fail(error, "Q3 contents owner changed during its actual collision observation");
-    if (okay) *out = present ? qa_collision_contents_export(collision.contents, QA_COLLISION_Q3, 0) : 0;
+    if (okay) *out = present ? qa_collision_contents_export(collision.contents, QA_GAME_Q3, 0) : 0;
     --retained->observation_depth;
     return okay;
 }

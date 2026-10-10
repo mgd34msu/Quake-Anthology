@@ -276,8 +276,9 @@ returns the body in the actor page, rather than a world-owned body array.
 The code check finds no secondary world body owner, heap-allocated area-link
 node or actor-revision-driven whole-capacity target rebuild in these paths.
 Foreign edicts and source slot numbers are module boundaries, not another
-engine identity owner. The collision-family policy enum remains the explicit
-THE-3177 follow-up; it does not own entity identity or liveness.
+engine identity owner. THE-3177 removes the duplicate collision-family enum; native contents
+annotations use the common game-family type. Caller trace rules are the
+remaining policy step and do not own identity or liveness.
 
 The existing normal build/core suites pass. The THE-2859 census and repeat on
 e1m1, base1 and q3dm1 also record zero frame heap calls and pool overflows after
@@ -445,5 +446,12 @@ binds its per-tick source handles; its named rule projection helpers are
 called by configuration and cvar-change operations.
 
 The normal build and seven core suites pass for this slice. No live external
-packet round trip or additional census is claimed. The collision-family enum
-in `include/qa/collision_bits.h:6` remains the next implementation step.
+packet round trip or additional census is claimed. The duplicate collision-family enum and all its type/token callers are
+deleted from C headers, source and tests. Native contents/surface boundaries
+use the one `qa_game_family` type. `qa_bsp_family` remains a file format.
+Existing continuation tags stay 1..3 through the one boundary codec in
+`src/persistence/source_io.c:111`; physics, contacts, world collisions,
+portal claims, recipe portals and remote prediction use that codec. The
+existing movement-result core check protects those stable tag values.
+Caller trace behavior is the remaining policy step; this section does not
+yet claim that step is complete.

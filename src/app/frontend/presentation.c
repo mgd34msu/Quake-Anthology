@@ -284,7 +284,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(qa_world_geometry(qa_application_world(f->application)),
         scene->origin,QA_LEAF_Q1,&leaf,error)) return false;
-    int32_t contents=qa_collision_contents_export(leaf.contents,QA_COLLISION_Q1,leaf.q1_opaque_token);
+    int32_t contents=qa_collision_contents_export(leaf.contents,QA_GAME_Q1,leaf.q1_opaque_token);
     seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,items);
     return true;
 }

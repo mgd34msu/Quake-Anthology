@@ -88,7 +88,7 @@ bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid
         return false;
     a->physics_bound = true;
     a->physics.solid = solid;
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(
                                         (uint32_t)(solid == QA_PHYSICS_CORPSE ? QA_PHYSICS_BOX : solid),
@@ -252,7 +252,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
         item->visual.effects |= 2;
     if (!qa_builtin_resource(&g->services, d->model, &item->visual.models[0], e))
         return false;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = rr;
     a->physics_bound = true;
     if (d->kind == QA_Q2_ITEM_FOOD)
@@ -372,8 +372,8 @@ static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, -128)),
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                             .pass_actor = a->id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;

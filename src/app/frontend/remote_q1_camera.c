@@ -222,7 +222,7 @@ bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view
         !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(row->collision,view->origin,QA_LEAF_Q1,&leaf,error)) return false;
-    int32_t contents=qa_collision_contents_export(leaf.contents,QA_COLLISION_Q1,leaf.q1_opaque_token);
+    int32_t contents=qa_collision_contents_export(leaf.contents,QA_GAME_Q1,leaf.q1_opaque_token);
     bool quakeworld=qa_q1_is_qw(row->options.domain.protocol);
     frontend_q1_motion_settings settings;
     if (!frontend_view_settings_q1_motion_sample(&row->motion_refs,quakeworld,&settings,error)) return false;

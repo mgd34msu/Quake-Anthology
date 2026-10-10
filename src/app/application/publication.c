@@ -574,7 +574,7 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     qa_vec3 pad = found && (flags & UINT32_C(256)) ? (qa_vec3){15, 15, 0} : (qa_vec3){1, 1, 1};
     qa_bounds bounds = qa_collision_link_bounds(state->bounds, state->origin, state->angles,
         has_collision && collision.inline_model && collision.role != QA_COLLISION_TRIGGER,
-        pad, qa_collision_source_rules(has_collision ? collision.family : QA_COLLISION_Q1));
+        pad, qa_collision_source_rules(has_collision ? collision.family : QA_GAME_Q1));
     if (!qa_vec_finite(bounds.mins) || !qa_vec_finite(bounds.maxs) ||
         bounds.mins.x > bounds.maxs.x || bounds.mins.y > bounds.maxs.y ||
         bounds.mins.z > bounds.maxs.z)

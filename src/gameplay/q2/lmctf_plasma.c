@@ -70,7 +70,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         }
         qa_vec3 velocity = qa_vec_scale(forward, spec.speed);
         qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
-        qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+        qa_actor_collision collision = {.family = QA_GAME_Q2,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = qa_collision_q2_source_contents(2, 2, c->rerelease),
                                         .owner = owner_reference,
@@ -105,7 +105,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
                             .scale = 1,
                             .visible = true};
         a->physics_bound = true;
-        a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+        a->physics = qa_physics_properties_default(QA_GAME_Q2);
         a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
         a->physics.motion = bounce ? QA_PHYSICS_WALL_BOUNCE : QA_PHYSICS_FLY_MISSILE;
         a->physics.solid = QA_PHYSICS_BOX;
@@ -216,7 +216,7 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     q2_projectile p = a->projectile;
     if (p.phase != 0)
         return true;
-    if (contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4u) != 0)
+    if (contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 4u) != 0)
         return qa_session_release(g->services.session, a->id, e);
     bool bounce = p.kind == Q2_LMCTF_PLASMA_BOUNCE;
     if (!bounce && contact->other.slot < g->capacity) {

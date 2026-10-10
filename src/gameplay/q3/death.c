@@ -343,7 +343,7 @@ static bool player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &query, &contents, error))
         return false;
@@ -440,7 +440,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (native_client && !player_source)
         return q3_fail(error, "Q3 body copy lost its retained source origin");
     qa_point_query point = {.point = player_source ? player_source->authored_origin : body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error))
         return false;
@@ -467,9 +467,9 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     const qa_actor_record *owner_record = qa_actors_get(qa_session_actors(game->options.services.session), actor);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q3,
+    qa_actor_collision collision = {.family = QA_GAME_Q3,
                                     .shape = QA_SHAPE_BOX,
-                                    .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_COLLISION_Q3),
+                                    .contents = qa_collision_contents_decode(INT32_C(0x04000000), QA_GAME_Q3),
                                     .role = QA_COLLISION_SOLID,
                                     .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
                                         qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(actor)};
@@ -572,8 +572,8 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                                 .end = destination,
                                 .pass_actor = actor,
                                 .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
-        query.policy.contents_mask = qa_collision_contents_mask(0x10001u, QA_COLLISION_Q3);
+                                .policy = qa_collision_default_policy(QA_GAME_Q3)};
+        query.policy.contents_mask = qa_collision_contents_mask(0x10001u, QA_GAME_Q3);
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return false;
         entry = q3_actor_get(game, actor);
@@ -602,7 +602,7 @@ bool q3_corpse_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!moved || (trace.fraction == 1 && !trace.start_solid && !trace.all_solid))
         return true;
     qa_point_query point = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
+                            .policy = qa_collision_default_policy(QA_GAME_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error))
         return false;

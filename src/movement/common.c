@@ -18,9 +18,9 @@ static bool valid_origin(const qa_movement_state *state) {
     }
     return qa_vec_finite(qa_movement_origin(state));
 }
-static qa_collision_family family(qa_ruleset_id kind) {
-    return kind <= QA_RULESET_QUAKEWORLD ? QA_COLLISION_Q1 :
-        kind == QA_RULESET_Q3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
+static qa_game_family family(qa_ruleset_id kind) {
+    return kind <= QA_RULESET_QUAKEWORLD ? QA_GAME_Q1 :
+        kind == QA_RULESET_Q3 ? QA_GAME_Q3 : QA_GAME_Q2;
 }
 
 float qa_move_component(qa_vec3 v, unsigned axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; }
@@ -169,10 +169,10 @@ bool qa_move_same_ground(qa_movement_ground a, qa_movement_ground b) {
         (a.hit==QA_TRACE_HIT_WORLD?a.model==b.model:qa_actor_id_equal(a.actor,b.actor)));
 }
 static qa_trace_policy policy(qa_move_context *c, qa_collision_bits mask) {
-    qa_collision_family f=family(c->state->kind);
+    qa_game_family f=family(c->state->kind);
     qa_trace_policy p=c->input->has_trace_policy?c->input->trace_policy:qa_collision_default_policy(f);
     p.family=f; p.contents_mask=mask;
-    if (f==QA_COLLISION_Q2) p.q2_merged_contents=c->state->kind==QA_RULESET_Q2_RERELEASE;
+    if (f==QA_GAME_Q2) p.q2_merged_contents=c->state->kind==QA_RULESET_Q2_RERELEASE;
     return p;
 }
 static bool trace_query(qa_move_context *c, const qa_trace_query *q, qa_trace_result *out) {
@@ -191,7 +191,7 @@ bool qa_move_trace(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_bounds bou
 }
 bool qa_move_trace_q1(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_trace_shape shape, qa_q1_move_kind move, qa_trace_result *out) {
     qa_trace_query q={.start=start,.end=end,.shape=shape,
-        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,QA_COLLISION_Q1)),.pass_actor=c->input->actor};
+        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,QA_GAME_Q1)),.pass_actor=c->input->actor};
     q.policy.q1_move=move; q.policy.q1_hull=-1;
     return trace_query(c,&q,out);
 }
@@ -202,7 +202,7 @@ bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
     qa_point_contents result;
     if (!c->services->point_contents(c->services->context,&q,&result,c->error)) { c->failed=true; return false; }
     if (result.family!=q.policy.family) return fail(c,"Movement contents returned another collision family");
-    qa_collision_bits selected=result.family==QA_COLLISION_Q2?
+    qa_collision_bits selected=result.family==QA_GAME_Q2?
         (q.policy.q2_merged_contents?result.merged:result.stored):result.contents;
     *out=qa_collision_point_contents_export(selected,result.family,result.q1_opaque_token);
     return true;

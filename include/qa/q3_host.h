@@ -391,7 +391,7 @@ bool qa_q3_host_visibility_read(qa_q3_host *, uint32_t slot,
 bool qa_q3_host_set_entity_text(qa_q3_host *, qa_bytes, qa_error *);
 typedef struct qa_q3_host_portal_claim {
     uint64_t map_identity, contributions;
-    qa_collision_family family;
+    qa_game_family family;
     uint32_t first, second, portal;
 } qa_q3_host_portal_claim;
 /* Candidate admission sums claims from every provider before publishing the

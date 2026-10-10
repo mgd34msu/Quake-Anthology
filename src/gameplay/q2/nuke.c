@@ -109,8 +109,8 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         qa_trace_query query = {.start = body.origin,
                                 .end = other.origin,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-        query.policy.contents_mask = qa_collision_contents_mask(3, QA_COLLISION_Q2);
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
@@ -232,11 +232,11 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
         qa_point_query query = {.point = body.origin,
-                                .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
         qa_point_contents contents;
         if (!qa_world_point_contents(g->services.world, &query, &contents, e))
             return false;
-        if (((uint32_t)qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q2, contents.q1_opaque_token) & 24u) != 0)
+        if (((uint32_t)qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token) & 24u) != 0)
             return nuke_explode(g, a, e);
         qa_actor_collision collision;
         qa_error observed = {0};
@@ -310,7 +310,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
     qa_builtin_angle_vectors(angles, NULL, &right, &up);
     float lift = 200 + q2_crandom(g) * 10, side = q2_crandom(g) * 10;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .role = QA_COLLISION_SOLID,
                                     .contents = qa_collision_q2_source_contents(2, 0, g->options.edition == QA_Q2_RERELEASE),
@@ -357,7 +357,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                                     .expire_ns = q2_deadline(g->now_ns, 10 * Q2_NS),
                                     .next_ns = q2_deadline(g->now_ns, g->frame_ns)};
     a->physics_bound = true;
-    a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;

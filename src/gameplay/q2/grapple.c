@@ -315,7 +315,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     }
     if (!q2_actor_live(g, hook_id))
         return true;
-    if ((contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_COLLISION_Q2) & 4u) != 0) ||
+    if ((contact->has_surface && ((uint32_t)qa_collision_surface_export(contact->surface.flags, QA_GAME_Q2) & 4u) != 0) ||
         (lm && (classification == ANCHOR_NONE || classification == ANCHOR_BOX ||
                 dead(g, contact->other) ||
                 (g->hooks.grapple_can_attach != NULL &&
@@ -457,7 +457,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         return false;
     direction = qa_vec_normalize(direction);
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner->id);
-    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+    qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2, 0, rr),
                                     .owner = owner_reference,
@@ -502,7 +502,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                        .next_ns = lm ? q2_deadline(g->now_ns, Q2_NS) : UINT64_MAX};
     hook->character_no_damage_effects = rr;
     hook->physics_bound = true;
-    hook->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    hook->physics = qa_physics_properties_default(QA_GAME_Q2);
     hook->physics.motion = QA_PHYSICS_FLY_MISSILE;
     hook->physics.solid = QA_PHYSICS_BOX;
     hook->physics.q2_rerelease = rr;
@@ -535,8 +535,8 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     qa_trace_query query = {.start = player.origin,
                             .end = body.origin,
                             .pass_actor = lm ? owner->id : id,
-                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
-    query.policy.contents_mask = qa_collision_contents_mask(hook->physics.clip_mask, QA_COLLISION_Q2);
+                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    query.policy.contents_mask = qa_collision_contents_mask(hook->physics.clip_mask, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
         return false;

@@ -20,7 +20,7 @@ struct qa_collision_geometry {
     size_t references;
     qa_resource *resource;
     qa_bsp_view bsp;
-    qa_collision_family family;
+    qa_game_family family;
     qa_collision_kernel kernel;
     qa_collision_plane *planes;
     qa_collision_node *nodes;
@@ -79,7 +79,7 @@ bool qa_trace_scratch_create(const qa_collision_geometry *geometry,
     if(scratch->visibility_capacity && !scratch->visibility_pending) goto failed;
     scratch->nodes = geometry_array(geometry->node_count + 1, sizeof(*scratch->nodes), error);
     if (!scratch->nodes) goto failed;
-    size_t leaves = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count : 0;
+    size_t leaves = geometry->family == QA_GAME_Q1 ? geometry->leaf_count : 0;
     uint32_t *marks = geometry_array(leaves, sizeof(*marks), error);
     if (leaves && !marks) goto failed;
     qa_stamp_set_init(&scratch->leaves, marks, leaves);
@@ -127,7 +127,7 @@ static void flood_areas(qa_collision_geometry *geometry)
     if (geometry->area_count == 0) return;
     memset(geometry->flood, 0, (size_t)geometry->area_count * sizeof(*geometry->flood));
     uint32_t next_flood = 0;
-    uint32_t first = geometry->family == QA_COLLISION_Q2 ? 1u : 0u;
+    uint32_t first = geometry->family == QA_GAME_Q2 ? 1u : 0u;
     for (uint32_t area = first; area < geometry->area_count; ++area) {
         if (geometry->flood[area] != 0) continue;
         ++next_flood;
@@ -136,7 +136,7 @@ static void flood_areas(qa_collision_geometry *geometry)
         geometry->flood[area] = next_flood;
         while (count != 0) {
             uint32_t current = geometry->area_stack[--count];
-            if (geometry->family == QA_COLLISION_Q2) {
+            if (geometry->family == QA_GAME_Q2) {
                 qa_bsp_range range = geometry->areas[current].portals;
                 for (size_t i = 0; i < (size_t)range.count; ++i) {
                     qa_bsp_area_portal edge = geometry->area_portals[(size_t)range.first + i];
@@ -144,7 +144,7 @@ static void flood_areas(qa_collision_geometry *geometry)
                     geometry->flood[edge.other_area] = next_flood;
                     geometry->area_stack[count++] = edge.other_area;
                 }
-            } else if (geometry->family == QA_COLLISION_Q3) {
+            } else if (geometry->family == QA_GAME_Q3) {
                 for (uint32_t other = geometry->area_count; other != 0;) {
                     --other;
                     if (geometry->area_pairs[(size_t)current * geometry->area_count + other] == 0
@@ -225,7 +225,7 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
         qa_bsp_plane plane;
         if (!qa_bsp_read_plane(bsp, i, &plane, error)) return false;
         geometry->planes[i] = qa_collision_bsp_plane(plane);
-        if (geometry->family == QA_COLLISION_Q3)
+        if (geometry->family == QA_GAME_Q3)
             geometry->planes[i].type = plane.normal.x == 1 ? 0 : plane.normal.y == 1 ? 1 : plane.normal.z == 1 ? 2 : 3;
     }
     for (size_t i = 0; i < geometry->node_count; ++i) {
@@ -238,11 +238,11 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
         qa_bsp_leaf leaf;
         if (!qa_bsp_read_leaf(bsp, i, &leaf, error)) return false;
         int64_t cluster = leaf.cluster, area = leaf.area;
-        if (geometry->family == QA_COLLISION_Q1) {
+        if (geometry->family == QA_GAME_Q1) {
             cluster = i == 0 ? -1 : (int64_t)i - 1;
             area = 0;
-        } else if (geometry->family == QA_COLLISION_Q2 && vis.size == 0 && cluster != -1) cluster = 0;
-        qa_collision_terminal terminal = geometry->family == QA_COLLISION_Q1 ?
+        } else if (geometry->family == QA_GAME_Q2 && vis.size == 0 && cluster != -1) cluster = 0;
+        qa_collision_terminal terminal = geometry->family == QA_GAME_Q1 ?
             qa_collision_q1_terminal(leaf.contents) : (qa_collision_terminal){
                 qa_collision_contents_decode(leaf.contents, geometry->family), 0};
         geometry->leaves[i] = (qa_collision_leaf){(uint32_t)i, cluster, area,
@@ -252,7 +252,7 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
                 return geometry_fail(error, QA_ERROR_FORMAT, "BSP cluster count exceeds the collision range");
             geometry->cluster_count = (uint32_t)cluster + 1u;
         }
-        if (geometry->family == QA_COLLISION_Q3 && area >= 0 && (uint64_t)area + 1u > geometry->area_count) {
+        if (geometry->family == QA_GAME_Q3 && area >= 0 && (uint64_t)area + 1u > geometry->area_count) {
             if ((uint64_t)area >= UINT32_MAX)
                 return geometry_fail(error, QA_ERROR_FORMAT, "BSP area count exceeds the collision range");
             geometry->area_count = (uint32_t)area + 1u;
@@ -268,18 +268,18 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
             return geometry_fail(error, QA_ERROR_FORMAT, "Invalid collision model bounds");
         geometry->model_bounds[i] = bounds;
         if (i == 0) {
-            geometry->root = geometry->family == QA_COLLISION_Q3
+            geometry->root = geometry->family == QA_GAME_Q3
                 ? (geometry->node_count == 0 ? -1 : 0) : model.headnodes[0];
-            if (geometry->family == QA_COLLISION_Q1) geometry->visibility_bytes = bit_bytes((uint32_t)model.visible_leaves);
+            if (geometry->family == QA_GAME_Q1) geometry->visibility_bytes = bit_bytes((uint32_t)model.visible_leaves);
         }
     }
-    if (geometry->family != QA_COLLISION_Q1) {
+    if (geometry->family != QA_GAME_Q1) {
         if (vis.size != 0) geometry->cluster_count = qa_load_u32le(vis.data);
         geometry->visibility_bytes = bit_bytes(geometry->cluster_count);
     }
-    geometry->visibility_slots = geometry->family == QA_COLLISION_Q1 ? geometry->leaf_count : geometry->cluster_count;
+    geometry->visibility_slots = geometry->family == QA_GAME_Q1 ? geometry->leaf_count : geometry->cluster_count;
     if (geometry->visibility_slots != 0 && geometry->visibility_bytes != 0) {
-        if (geometry->family != QA_COLLISION_Q3) {
+        if (geometry->family != QA_GAME_Q3) {
             geometry->pvs = geometry_array(geometry->visibility_slots, sizeof(*geometry->pvs), error);
             if (geometry->pvs == NULL) return false;
         }
@@ -291,8 +291,8 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
 
 static bool load_areas(qa_collision_geometry *geometry, qa_error *error)
 {
-    if (geometry->family == QA_COLLISION_Q1) geometry->area_count = 1;
-    if (geometry->family == QA_COLLISION_Q2) {
+    if (geometry->family == QA_GAME_Q1) geometry->area_count = 1;
+    if (geometry->family == QA_GAME_Q2) {
         size_t area_count = qa_bsp_record_count(&geometry->bsp, QA_BSP_AREAS);
         if (area_count > UINT32_MAX) return geometry_fail(error, QA_ERROR_FORMAT, "Too many Q2 collision areas");
         geometry->area_count = (uint32_t)area_count;
@@ -309,7 +309,7 @@ static bool load_areas(qa_collision_geometry *geometry, qa_error *error)
             geometry_portal *portal = &geometry->portals[geometry->area_portals[i].portal];
             if (!portal->known) { portal->known = true; ++geometry->known_portal_count; }
         }
-    } else if (geometry->family == QA_COLLISION_Q3) {
+    } else if (geometry->family == QA_GAME_Q3) {
         size_t count = geometry->area_count;
         if (count != 0 && count > SIZE_MAX / count)
             return geometry_fail(error, QA_ERROR_MEMORY, "Q3 area-pair table is too large");
@@ -333,7 +333,7 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     if (geometry == NULL) return geometry_fail(error, QA_ERROR_MEMORY, "Cannot allocate collision geometry");
     geometry->references = 1;
     geometry->bsp = *bsp;
-    geometry->family = bsp->family == QA_BSP_Q1 ? QA_COLLISION_Q1 : bsp->family == QA_BSP_Q2 ? QA_COLLISION_Q2 : QA_COLLISION_Q3;
+    geometry->family = bsp->family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp->family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     geometry->map_identity = UINT64_C(14695981039346656037);
     for (size_t i = 0; i < bsp->source.size; ++i) {
         geometry->map_identity ^= bsp->source.data[i];
@@ -342,8 +342,8 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     if (!load_topology(geometry, error) || !load_areas(geometry, error)) goto fail;
     const qa_collision_topology topology = {geometry->planes, geometry->nodes,
         geometry->plane_count, geometry->node_count};
-    bool created = geometry->family == QA_COLLISION_Q1 ? qa_q1_collision_create(bsp, &topology, &geometry->kernel, error)
-        : geometry->family == QA_COLLISION_Q2 ? qa_q2_collision_create(bsp, &topology, &geometry->kernel, error)
+    bool created = geometry->family == QA_GAME_Q1 ? qa_q1_collision_create(bsp, &topology, &geometry->kernel, error)
+        : geometry->family == QA_GAME_Q2 ? qa_q2_collision_create(bsp, &topology, &geometry->kernel, error)
         : qa_q3_collision_create(bsp, &topology, &geometry->kernel, error);
     if (!created || !load_visibility_rows(geometry, error)) goto fail;
     *out = geometry;
@@ -358,9 +358,9 @@ const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *geometry)
     return geometry == NULL ? NULL : &geometry->bsp;
 }
 
-qa_collision_family qa_collision_geometry_family(const qa_collision_geometry *geometry)
+qa_game_family qa_collision_geometry_family(const qa_collision_geometry *geometry)
 {
-    return geometry == NULL ? (qa_collision_family)0 : geometry->family;
+    return geometry == NULL ? ((qa_game_family)-1) : geometry->family;
 }
 
 uint64_t qa_collision_map_identity(const qa_collision_geometry *geometry)
@@ -383,15 +383,15 @@ bool qa_collision_model_bounds(const qa_collision_geometry *geometry, uint32_t m
 
 bool qa_collision_set_surface_material(qa_collision_geometry *geometry, uint32_t texinfo, qa_bytes bytes, qa_error *error)
 {
-    if (geometry == NULL || geometry->family != QA_COLLISION_Q2)
+    if (geometry == NULL || geometry->family != QA_GAME_Q2)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Material sidecars require Q2 collision geometry");
     return qa_q2_collision_set_material(geometry->kernel.state, texinfo, bytes, error);
 }
 
 static bool valid_policy(const qa_trace_policy *policy)
 {
-    return policy->family >= QA_COLLISION_Q1 && policy->family <= QA_COLLISION_Q3
-        && (policy->family != QA_COLLISION_Q1 || ((unsigned)policy->q1_move <= (unsigned)QA_Q1_MOVE_MISSILE
+    return policy->family >= QA_GAME_Q1 && policy->family <= QA_GAME_Q3
+        && (policy->family != QA_GAME_Q1 || ((unsigned)policy->q1_move <= (unsigned)QA_Q1_MOVE_MISSILE
             && policy->q1_hull >= -1 && policy->q1_hull < 3));
 }
 
@@ -427,7 +427,7 @@ bool qa_collision_point_contents(const qa_collision_geometry *geometry, qa_trace
     qa_point_contents result;
     if (!geometry->kernel.ops->point_contents(geometry->kernel.state, scratch->kernel, query, &result, error)) return false;
     qa_collision_adapt_point(&result, &query->policy);
-    if (result.family == QA_COLLISION_Q2) result.contents = query->policy.q2_merged_contents ? result.merged : result.stored;
+    if (result.family == QA_GAME_Q2) result.contents = query->policy.q2_merged_contents ? result.merged : result.stored;
     *out = result;
     return true;
 }
@@ -436,10 +436,10 @@ bool qa_collision_trace_q3_capsule(const qa_collision_geometry *geometry, qa_tra
                                    qa_bounds bounds, bool transformed,
                                    qa_trace_result *out, qa_error *error)
 {
-    if (geometry == NULL || query == NULL || out == NULL || query->policy.family != QA_COLLISION_Q3
+    if (geometry == NULL || query == NULL || out == NULL || query->policy.family != QA_GAME_Q3
         || !valid_policy(&query->policy))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 capsule trace query");
-    void *replacement = geometry->family == QA_COLLISION_Q3 && geometry->model_count > 255
+    void *replacement = geometry->family == QA_GAME_Q3 && geometry->model_count > 255
                             ? geometry->kernel.state : NULL;
     qa_trace_query local = *query;
     local.target.pose_rules = QA_RULESET_Q3;
@@ -450,7 +450,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
                                  uint32_t model, bool transformed, qa_trace_result *out, qa_error *error)
 {
     if (geometry == NULL || query == NULL || out == NULL || model >= geometry->model_count
-        || query->policy.family != QA_COLLISION_Q3 || !valid_policy(&query->policy)
+        || query->policy.family != QA_GAME_Q3 || !valid_policy(&query->policy)
         || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
         || (transformed && (!qa_vec_finite(query->target.origin) || !qa_vec_finite(query->target.angles)))
         || (unsigned)query->shape.kind > QA_SHAPE_CAPSULE
@@ -461,7 +461,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
     local.target.model = model;
     local.target.pose_rules = QA_RULESET_Q3;
     if (!transformed) local.target.origin = local.target.angles = qa_v3(0, 0, 0);
-    if (geometry->family != QA_COLLISION_Q3) return qa_collision_trace(geometry, scratch, &local, out, error);
+    if (geometry->family != QA_GAME_Q3) return qa_collision_trace(geometry, scratch, &local, out, error);
     qa_trace_result result;
     if (!qa_q3_trace_model_source(geometry->kernel.state, scratch->kernel, &local, model, transformed, &result, error)) return false;
     qa_collision_adapt_trace(&result, &local.policy);
@@ -472,7 +472,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
 bool qa_collision_trace_q3_box(const qa_trace_query *query, qa_bounds bounds, bool transformed,
                                qa_trace_result *out, qa_error *error)
 {
-    if (query == NULL || out == NULL || query->policy.family != QA_COLLISION_Q3 || !valid_policy(&query->policy))
+    if (query == NULL || out == NULL || query->policy.family != QA_GAME_Q3 || !valid_policy(&query->policy))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 box trace query");
     return qa_q3_trace_box_source(query, bounds, transformed, out, error);
 }
@@ -493,7 +493,7 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
     while (child >= 0) {
         const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
-        float projection = rule == QA_LEAF_COLLISION && geometry->family == QA_COLLISION_Q3 && plane->type < 3
+        float projection = rule == QA_LEAF_COLLISION && geometry->family == QA_GAME_Q3 && plane->type < 3
             ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal);
         float distance = projection - plane->distance;
         child = node->children[rule == QA_LEAF_Q1 ? (distance > 0 ? 0 : 1) : (distance < 0 ? 1 : 0)];
@@ -505,14 +505,14 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
 static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds,
     const qa_collision_plane *plane, bool q1_touched)
 {
-    if (geometry->family == QA_COLLISION_Q1 && !q1_touched) {
+    if (geometry->family == QA_GAME_Q1 && !q1_touched) {
         qa_vec3 center = qa_vec_scale(qa_vec_add(bounds.mins, bounds.maxs), 0.5f);
         qa_vec3 extents = qa_vec_scale(qa_vec_sub(bounds.maxs, bounds.mins), 0.5f);
         float distance = qa_vec_dot(center, plane->normal) - plane->distance;
         float radius = fabsf(plane->normal.x) * extents.x + fabsf(plane->normal.y) * extents.y + fabsf(plane->normal.z) * extents.z;
         return distance >= radius ? 1u : distance < -radius ? 2u : 3u;
     }
-    if ((q1_touched || geometry->family == QA_COLLISION_Q3) && plane->type < 3) {
+    if ((q1_touched || geometry->family == QA_GAME_Q3) && plane->type < 3) {
         unsigned axis = (unsigned)plane->type;
         return plane->distance <= qa_vec_component(bounds.mins, axis) ? 1u
             : plane->distance >= qa_vec_component(bounds.maxs, axis) ? 2u : 3u;
@@ -531,7 +531,7 @@ static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds
 bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_bounds bounds, bool q1_touched,
     qa_leaf_visit_fn visit, void *context, qa_leaf_list *out, qa_error *error)
 {
-    if (!q1_touched && geometry->family == QA_COLLISION_Q1)
+    if (!q1_touched && geometry->family == QA_GAME_Q1)
         qa_stamp_set_begin(&scratch->leaves);
     qa_leaf_list result = {.topnode = -1};
     size_t count = 1;
@@ -542,10 +542,10 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_sc
             size_t leaf = leaf_index(child);
             if (q1_touched) {
                 if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
-            } else if (geometry->family == QA_COLLISION_Q1) {
+            } else if (geometry->family == QA_GAME_Q1) {
                 if (leaf == 0 || !qa_stamp_set_mark(&scratch->leaves, leaf)) continue;
             }
-            if (geometry->family == QA_COLLISION_Q3 && geometry->leaves[leaf].cluster != -1)
+            if (geometry->family == QA_GAME_Q3 && geometry->leaves[leaf].cluster != -1)
                 result.last_leaf = (uint32_t)leaf;
             ++result.count;
             qa_leaf_visit next = visit(context, &geometry->leaves[leaf], error);
@@ -555,8 +555,8 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_sc
         }
         const qa_collision_node *node = &geometry->nodes[(size_t)child];
         unsigned side = box_side(geometry, bounds, &geometry->planes[node->plane], q1_touched);
-        if ((side == 3 || (geometry->family == QA_COLLISION_Q3 && side == 0)) && result.topnode == -1) result.topnode = child;
-        if (geometry->family == QA_COLLISION_Q3) {
+        if ((side == 3 || (geometry->family == QA_GAME_Q3 && side == 0)) && result.topnode == -1) result.topnode = child;
+        if (geometry->family == QA_GAME_Q3) {
             if (side != 1) scratch->nodes[count++] = node->children[1];
             if (side != 2) scratch->nodes[count++] = node->children[0];
         } else {
@@ -596,11 +596,11 @@ static bool load_visibility_rows(qa_collision_geometry *geometry, qa_error *erro
 {
     size_t slots = geometry->visibility_slots, width = geometry->visibility_bytes;
     if (!width || !slots) return true;
-    if (geometry->family == QA_COLLISION_Q3 &&
+    if (geometry->family == QA_GAME_Q3 &&
         !geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes.size) return true;
     geometry->phs_rows = geometry_array(slots, width, error);
     if (!geometry->phs_rows) return false;
-    if (geometry->family != QA_COLLISION_Q3) {
+    if (geometry->family != QA_GAME_Q3) {
         geometry->pvs_rows = geometry_array(slots, width, error);
         if (!geometry->pvs_rows) return false;
         for (size_t i = 0; i < slots; ++i) {
@@ -612,22 +612,22 @@ static bool load_visibility_rows(qa_collision_geometry *geometry, qa_error *erro
     }
     for (size_t i = 0; i < slots; ++i) {
         uint8_t *row = geometry->phs[i] = geometry->phs_rows + i * width;
-        if (geometry->family == QA_COLLISION_Q2) {
+        if (geometry->family == QA_GAME_Q2) {
             size_t written;
             if (!qa_bsp_visibility(&geometry->bsp, (int32_t)i, true,
                 geometry->cluster_count, row, width, &written, error)) return false;
         } else {
             qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-            size_t stride = geometry->family == QA_COLLISION_Q3 ? qa_load_u32le(vis.data + 4) : width;
-            const uint8_t *pvs = geometry->family == QA_COLLISION_Q3 ?
+            size_t stride = geometry->family == QA_GAME_Q3 ? qa_load_u32le(vis.data + 4) : width;
+            const uint8_t *pvs = geometry->family == QA_GAME_Q3 ?
                 vis.data + 8 + i * stride : geometry->pvs[i];
             memcpy(row, pvs, width);
-            size_t neighbors = geometry->family == QA_COLLISION_Q1 ?
+            size_t neighbors = geometry->family == QA_GAME_Q1 ?
                 geometry->leaf_count - 1 : geometry->cluster_count;
             for (size_t neighbor = 0; neighbor < neighbors; ++neighbor) {
                 if (!bit_test((qa_bytes){pvs, width}, neighbor)) continue;
-                size_t index = geometry->family == QA_COLLISION_Q1 ? neighbor + 1 : neighbor;
-                const uint8_t *adjacent = geometry->family == QA_COLLISION_Q3 ?
+                size_t index = geometry->family == QA_GAME_Q1 ? neighbor + 1 : neighbor;
+                const uint8_t *adjacent = geometry->family == QA_GAME_Q3 ?
                     vis.data + 8 + index * stride : geometry->pvs[index];
                 for (size_t byte = 0; byte < width; ++byte) row[byte] |= adjacent[byte];
             }
@@ -641,7 +641,7 @@ static bool visibility_row(const qa_collision_geometry *geometry, size_t index,
 {
     (void)error;
     if (!geometry->visibility_bytes) { *out = (qa_bytes){0}; return true; }
-    if (geometry->family == QA_COLLISION_Q3 && !phs) {
+    if (geometry->family == QA_GAME_Q3 && !phs) {
         qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
         size_t width = qa_load_u32le(vis.data + 4);
         *out = (qa_bytes){vis.data + 8 + index * width, width};
@@ -653,12 +653,12 @@ static bool visibility_row(const qa_collision_geometry *geometry, size_t index,
 }
 
 size_t qa_collision_q1_pvs_bytes(const qa_collision_geometry *geometry)
-{ return geometry && geometry->family == QA_COLLISION_Q1 ? geometry->visibility_bytes : 0; }
+{ return geometry && geometry->family == QA_GAME_Q1 ? geometry->visibility_bytes : 0; }
 
 bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_vec3 eye,
     uint8_t *bytes, size_t capacity, qa_error *error)
 {
-    if (!geometry || geometry->family != QA_COLLISION_Q1 || !qa_vec_finite(eye) ||
+    if (!geometry || geometry->family != QA_GAME_Q1 || !qa_vec_finite(eye) ||
         capacity < geometry->visibility_bytes || (geometry->visibility_bytes && !bytes))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 fat-PVS requires its actual geometry and complete row storage");
     if (geometry->visibility_bytes) memset(bytes, 0, geometry->visibility_bytes);
@@ -695,11 +695,11 @@ static bool visibility_target_row(const qa_collision_geometry *geometry,int32_t 
     if(to<0) return true;
     qa_bytes vis=geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
     size_t index;
-    if(geometry->family==QA_COLLISION_Q1) {
+    if(geometry->family==QA_GAME_Q1) {
         if(from<0) { *answer=VISIBILITY_ALL; return true; }
         index=(size_t)(uint32_t)from+1u;
         if(index>=geometry->leaf_count) return geometry_fail(error,QA_ERROR_ARGUMENT,"Invalid Q1 visibility leaf");
-    } else if(geometry->family==QA_COLLISION_Q2) {
+    } else if(geometry->family==QA_GAME_Q2) {
         if(vis.size==0) { *answer=VISIBILITY_ALL; return true; }
         if(from<0 || (uint32_t)from>=geometry->cluster_count || (uint32_t)to>=geometry->cluster_count) return true;
         index=(size_t)(uint32_t)from;
@@ -728,7 +728,7 @@ bool qa_collision_clusters_visible(const qa_collision_geometry *geometry,qa_trac
     size_t count=targets.size<scratch->visibility_capacity?targets.size:scratch->visibility_capacity;
     uint8_t *pending=scratch->visibility_pending;
     if(count) memcpy(pending,targets.data,count);
-    if(count && geometry->family!=QA_COLLISION_Q1 && count==bit_bytes(geometry->cluster_count) && geometry->cluster_count%8u)
+    if(count && geometry->family!=QA_GAME_Q1 && count==bit_bytes(geometry->cluster_count) && geometry->cluster_count%8u)
         pending[count-1]&=(uint8_t)((1u<<(geometry->cluster_count%8u))-1u);
     for(size_t source=0;source<from_count;++source) {
         size_t first=0;
@@ -767,8 +767,8 @@ bool qa_collision_areas_connected(const qa_collision_geometry *geometry, int32_t
                                   bool *out, qa_error *error)
 {
     if (geometry == NULL || out == NULL) return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid area connectivity query");
-    if (geometry->family == QA_COLLISION_Q1) { *out = first == 0 && second == 0; return true; }
-    if (geometry->family == QA_COLLISION_Q3) {
+    if (geometry->family == QA_GAME_Q1) { *out = first == 0 && second == 0; return true; }
+    if (geometry->family == QA_GAME_Q3) {
         if (geometry->no_areas) { *out = true; return true; }
         if (first < 0 || second < 0) { *out = false; return true; }
     }
@@ -786,8 +786,8 @@ bool qa_collision_area_bits(const qa_collision_geometry *geometry, int32_t area,
     size_t bytes = bit_bytes(geometry->area_count);
     *written = bytes;
     if (capacity < bytes) return geometry_fail(error, QA_ERROR_ARGUMENT, "Area-bit output is too small");
-    if (geometry->family == QA_COLLISION_Q1) { output[0] = 1; return true; }
-    bool all = geometry->family == QA_COLLISION_Q3 && (geometry->no_areas || area == -1);
+    if (geometry->family == QA_GAME_Q1) { output[0] = 1; return true; }
+    bool all = geometry->family == QA_GAME_Q3 && (geometry->no_areas || area == -1);
     if (!all && (area < 0 || (uint32_t)area >= geometry->area_count))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Area-bit index is outside the map");
     if (bytes == 0) return true;
@@ -795,7 +795,7 @@ bool qa_collision_area_bits(const qa_collision_geometry *geometry, int32_t area,
     if (all) return true;
     uint32_t flood = geometry->flood[(uint32_t)area];
     for (uint32_t other = 0; other < geometry->area_count; ++other) {
-        if ((geometry->family == QA_COLLISION_Q2 && area == 0) || geometry->flood[other] == flood)
+        if ((geometry->family == QA_GAME_Q2 && area == 0) || geometry->flood[other] == flood)
             output[other / 8u] |= (uint8_t)(1u << (other % 8u));
     }
     return true;
@@ -803,7 +803,7 @@ bool qa_collision_area_bits(const qa_collision_geometry *geometry, int32_t area,
 
 static bool valid_portal(const qa_collision_geometry *geometry, uint32_t portal, qa_error *error)
 {
-    if (geometry == NULL || geometry->family != QA_COLLISION_Q2)
+    if (geometry == NULL || geometry->family != QA_GAME_Q2)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Numbered area portals require Q2 geometry");
     if ((size_t)portal >= geometry->area_portal_count || !geometry->portals[portal].known)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Unknown Q2 area portal");
@@ -846,7 +846,7 @@ bool qa_collision_portal_state(const qa_collision_geometry *geometry, uint32_t p
 
 bool qa_collision_adjust_area_pair(qa_collision_geometry *geometry, int32_t first, int32_t second, bool open, qa_error *error)
 {
-    if (geometry == NULL || geometry->family != QA_COLLISION_Q3)
+    if (geometry == NULL || geometry->family != QA_GAME_Q3)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 area-pair portal");
     if (first < 0 || second < 0) return true;
     if ((uint32_t)first >= geometry->area_count || (uint32_t)second >= geometry->area_count)
@@ -911,7 +911,7 @@ bool qa_collision_restore_portals(qa_collision_geometry *geometry, const qa_coll
         if (checkpoint->portals[index++].portal != portal)
             return geometry_fail(error, QA_ERROR_FORMAT, "Portal checkpoint IDs do not match the map");
     }
-    if (geometry->family == QA_COLLISION_Q3) {
+    if (geometry->family == QA_GAME_Q3) {
         for (uint32_t first = 0; first < geometry->area_count; ++first) {
             for (uint32_t second = first; second < geometry->area_count; ++second) {
                 uint32_t count = checkpoint->area_pairs[(size_t)first * geometry->area_count + second];

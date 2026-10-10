@@ -102,7 +102,7 @@ static bool admit_part(qa_q2_game *game, const char *classname, qa_body_state bo
     actor->projectile.classname = definition;
     actor->projectile.visible = true;
     actor->projectile.alpha = 1;
-    actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    actor->physics = qa_physics_properties_default(QA_GAME_Q2);
     actor->physics.q2_rerelease = true;
     actor->physics.motion = QA_PHYSICS_STATIONARY;
     actor->physics.solid = QA_PHYSICS_NOT_SOLID;

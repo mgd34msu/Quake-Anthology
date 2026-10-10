@@ -254,11 +254,11 @@ void application_control_publish_motion(application_control_record *control,
     control->player.water_type = result->water_type;
 }
 
-static qa_collision_family movement_family(qa_ruleset_id kind)
+static qa_game_family movement_family(qa_ruleset_id kind)
 {
     if (kind == QA_RULESET_NETQUAKE || kind == QA_RULESET_QUAKEWORLD)
-        return QA_COLLISION_Q1;
-    return kind == QA_RULESET_Q3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
+        return QA_GAME_Q1;
+    return kind == QA_RULESET_Q3 ? QA_GAME_Q3 : QA_GAME_Q2;
 }
 
 static const qa_launch_snapshot *active_snapshot(const qa_application *application)
@@ -2156,11 +2156,11 @@ static bool prepare_input(application_move_call *move,
         input->profile.data.q3.fixed_ms = !spectator && (fixed || client.rule.pmove_fixed) ? (uint32_t)step : 0;
         input->profile.data.q3.no_footsteps = !spectator && ((uint32_t)dmflags & 32u);
         input->has_trace_policy = true;
-        input->trace_policy = qa_collision_default_policy(QA_COLLISION_Q3);
+        input->trace_policy = qa_collision_default_policy(QA_GAME_Q3);
         uint32_t native_mask = input->state.data.q3.movement_type == 2 ||
             input->state.data.q3.movement_type == 3 ? UINT32_C(0x10001) :
             flags & 8u ? UINT32_C(0x6010001) : UINT32_C(0x2010001);
-        input->trace_policy.contents_mask = qa_collision_contents_mask(native_mask, QA_COLLISION_Q3);
+        input->trace_policy.contents_mask = qa_collision_contents_mask(native_mask, QA_GAME_Q3);
     }
     application_client_outputs outputs;
     if (!application_control_outputs(application, record->player.actor, &outputs, error) ||
@@ -2581,7 +2581,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         qa_vec3 point = qa_movement_origin(&physical.state);
         point.z += physical.bounds.mins.z + 1;
         qa_point_query query = {.point = point, .pass_actor = actor,
-            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+            .policy = qa_collision_default_policy(QA_GAME_Q1)};
         qa_point_contents contents;
         if (!qa_world_point_contents(app->world, &query, &contents, error) ||
             !native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
@@ -2590,7 +2590,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
             (uint64_t)applied.milliseconds * UINT64_C(1000000), &operation, error)) return false;
         qa_q1_input input = {.view_angles = physical.view_angles, .attack = attack,
             .water_level = (uint8_t)(physical.water_level < 0 ? 0 : physical.water_level > 3 ? 3 : physical.water_level),
-            .water_type = qa_collision_point_contents_export(contents.contents, QA_COLLISION_Q1, contents.q1_opaque_token)};
+            .water_type = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token)};
         okay = qa_q1_player_input(arsenal->state.q1, actor, &input, error) &&
             (!live(app, actor) || qa_q1_player_postthink(arsenal->state.q1, actor, error));
         if (okay && !qa_q1_game_operation_live(&operation))
