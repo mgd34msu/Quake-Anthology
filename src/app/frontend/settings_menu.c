@@ -138,7 +138,7 @@ static bool match_command(frontend_seat *seat,match_operation operation,qa_error
     if(qa_command_separator(text,used,command.dialect)!=used)
         return frontend_fail(error,QA_ERROR_FORMAT,"Match text cannot contain a Source command separator");
     qa_command_tokens tokens;
-    if(!qa_command_tokenize(text,command.dialect,command.console_text,&tokens,error)) return false;
+    if(!qa_command_tokenize(text,command.dialect,command.console_text,&tokens, NULL, NULL,error)) return false;
     bool exact=tokens.count==count+1 && !strcmp(tokens.values[0],name);
     for(size_t i=0;exact && i<count;++i) exact=!strcmp(tokens.values[i+1],arguments[i]);
     qa_command_tokens_free(&tokens);

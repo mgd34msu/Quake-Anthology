@@ -41,7 +41,8 @@ typedef struct qa_command_tokens {
 } qa_command_tokens;
 
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
-                          bool console_text, qa_command_tokens *out, qa_error *error);
+    bool console_text, qa_command_tokens *out,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error);
 void qa_command_tokens_free(qa_command_tokens *tokens);
 /* Copy literal tokens without reparsing. A supplied allocator owns the backing
  * until its enclosing frame retires; NULL retains independent heap storage. */

@@ -714,7 +714,7 @@ bool application_q3_guest_console_command(application_provider *provider, const 
         engine->round.phase != Q3G_ROUND_NONE || !text || !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console command requires initialized game");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
     qa_command_tokens prior = engine->arguments; engine->arguments = next;
     int32_t result;
     bool ok = q3g_call(engine->game, 9, NULL, 0, &result, error);
@@ -732,7 +732,7 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
     if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
     qa_command_tokens prior = role->arguments; role->arguments = next;
     bool prior_scope = role->arguments_scoped; role->arguments_scoped = true;
     int32_t result;

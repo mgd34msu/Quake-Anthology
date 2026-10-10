@@ -48,7 +48,7 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     if (!text) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating validated console line"); return false; }
     memcpy(text, line.data, line.size); text[line.size] = 0;
     qa_command_tokens tokens = {0}; bool ok = false;
-    if (!qa_command_tokenize(text, b->context->dialect, false, &tokens, error)) goto done;
+    if (!qa_command_tokenize(text, b->context->dialect, false, &tokens, NULL, NULL, error)) goto done;
     if (!tokens.count || (b->context->dialect != QA_RULESET_Q3 && tokens.count >= 80)) { llm_fail(error, "a command has no name or too many arguments"); goto done; }
     const char *name = tokens.values[0];
     if (llm_command_indirect(name)) { llm_fail(error, "llm_exec requires literal commands without scripts, bindings, waits or LLM calls"); goto done; }

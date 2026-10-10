@@ -298,7 +298,7 @@ bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char 
         if (!line) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 client command");
         memcpy(line, at, size); line[size] = 0;
         qa_command_tokens tokens = {0};
-        bool okay = qa_command_tokenize(line, QA_RULESET_NETQUAKE, false, &tokens, error);
+        bool okay = qa_command_tokenize(line, QA_RULESET_NETQUAKE, false, &tokens, NULL, NULL, error);
         if (okay && tokens.count && strlen(tokens.values[0]) == 2 &&
             (tokens.values[0][0] == 'b' || tokens.values[0][0] == 'B') &&
             (tokens.values[0][1] == 'f' || tokens.values[0][1] == 'F'))

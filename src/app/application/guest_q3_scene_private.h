@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_SCENE_PRIVATE_H
 #include "guest_q3_scene.h"
 #include "qa/binary.h"
+#include "qa/network_unified_frame_pool.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,7 +11,12 @@ typedef struct q3scene_snapshot {
     qa_q3_snapshot value;
     qa_q3_entity *entities;
 } q3scene_snapshot;
-typedef struct q3scene_command { int32_t sequence; qa_command_tokens tokens; } q3scene_command;
+typedef struct q3scene_command {
+    int32_t sequence;
+    bool addressed;
+    qa_command_tokens tokens;
+    qa_unified_frame_lease *lease;
+} q3scene_command;
 struct application_q3_scene {
     application_q3_scene_options options;
     qa_q3_host *host;
@@ -23,6 +29,9 @@ struct application_q3_scene {
     qa_q3_gamestate *game_state;
     qa_actor_id *players;
     application_q3_scene_actor *actors;
+    qa_q3_entity *snapshot_entities;
+    qa_unified_frame_pool *command_storage;
+    qa_unified_frame_lease *reached_lease;
     size_t actor_count;
     qa_buffer defaults;
     q3scene_snapshot snapshots[32];

@@ -4,6 +4,9 @@ static qa_command_result declared_command(void *,const qa_command_invocation *,q
 #include "qa/builtin.h"
 #include <limits.h>
 
+static void *command_allocate(void *context, size_t size, size_t alignment, qa_error *error)
+{ return qa_unified_frame_lease_alloc(context, size, 1, alignment, error); }
+
 bool q3scene_fail(qa_error *e, qa_status code, const char *text)
 { qa_error_set(e, code, 0, "%s", text); return false; }
 bool q3scene_current(const application_q3_scene *s)
@@ -94,8 +97,9 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
         if (!argument(call, 0, &seq, e)) return false;
         q3scene_command *row = seq >= 0 ? s->commands + (uint32_t)seq % 64 : NULL;
         if (!row || row->sequence != seq) return q3scene_fail(e, QA_ERROR_FORMAT, "Component requested an unavailable source command");
-        qa_command_tokens_free(&s->reached);
-        if (!qa_command_tokens_copy(&row->tokens, &s->reached, NULL, NULL, e)) return false;
+        if (!qa_unified_frame_lease_retain(row->lease, e)) return false;
+        qa_command_tokens_free(&s->reached); qa_unified_frame_lease_release(s->reached_lease);
+        s->reached = row->tokens; s->reached_lease = row->lease;
         *result = s->reached.count != 0; return true;
     }
     if (code >= 7 && code <= 9) {
@@ -145,6 +149,13 @@ bool application_q3_scene_create(const application_q3_scene_options *options,
     s->game_state = calloc(1, sizeof(*s->game_state));
     s->players = calloc(options->profile->capacity, sizeof(*s->players));
     if (!s->game_state || !s->players) return q3scene_fail(e, QA_ERROR_MEMORY, "Retaining component source context");
+    if (!options->profile->player_events) {
+        s->actors = calloc(options->profile->capacity, sizeof(*s->actors));
+        s->snapshot_entities = calloc((size_t)options->profile->capacity * 32, sizeof(*s->snapshot_entities));
+        s->command_storage = qa_unified_frame_pool_create(16u * 1024u * 1024u, 128, e);
+        if (!s->actors || !s->snapshot_entities || !s->command_storage)
+            return q3scene_fail(e, QA_ERROR_MEMORY, "Reserving component scene history");
+    }
     qa_q3_host_options host = options->host;
     host.console_command=declared_command; host.console_command_context=s;
     if(!options->profile->player_events) { host.source_entity = source_entity; host.source_entity_context = s; }
@@ -279,24 +290,24 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
     if(p->player_events) {
         if(s->snapshot_number==INT32_MAX) return q3scene_fail(e,QA_ERROR_FORMAT,"Component source snapshot counter exhausted");
         int32_t number=s->snapshot_number+1; q3scene_snapshot *row=s->snapshots+(uint32_t)number%32;
-        free(row->entities);
         *row=(q3scene_snapshot){.number=number,.value={.valid=true,.server_time=c->snapshot->server_time,.player=c->snapshot->player}};
         s->snapshot_number=number; s->scene_revision=c->revision;
         return true;
     }
-    application_q3_scene_actor *actors=c->actor_count?calloc(c->actor_count,sizeof(*actors)):NULL;
-    if (c->actor_count&&!actors) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining component scene actors");
+    if (c->actor_count > p->capacity || c->snapshot->entity_count > p->capacity)
+        return q3scene_fail(e, QA_ERROR_FORMAT, "Component scene leaves declared centities");
     for (size_t i=0;i<c->actor_count;++i) {
-        actors[i]=c->actors[i]; uint32_t slot=actors[i].slot;
-        if (slot>=p->capacity || !actors[i].actor.registry) { free(actors); return q3scene_fail(e,QA_ERROR_FORMAT,"Component actor leaves declared centities"); }
-        for (size_t j=0;j<i;++j) if (actors[j].slot==slot) { free(actors); return q3scene_fail(e,QA_ERROR_FORMAT,"Component scene repeats an actor slot"); }
-        if (!qa_actor_id_equal(s->players[slot],actors[i].actor)) {
+        uint32_t slot=c->actors[i].slot;
+        if (slot>=p->capacity || !c->actors[i].actor.registry) return q3scene_fail(e,QA_ERROR_FORMAT,"Component actor leaves declared centities");
+        for (size_t j=0;j<i;++j) if (c->actors[j].slot==slot) return q3scene_fail(e,QA_ERROR_FORMAT,"Component scene repeats an actor slot");
+        if (!qa_actor_id_equal(s->players[slot],c->actors[i].actor)) {
             if (!qa_qvm_write(s->vm,p->entities+slot*p->stride,
-                (qa_bytes){s->defaults.data+(size_t)slot*p->stride,p->stride},e)) { free(actors); return false; }
-            s->players[slot]=actors[i].actor;
+                (qa_bytes){s->defaults.data+(size_t)slot*p->stride,p->stride},e)) return false;
+            s->players[slot]=c->actors[i].actor;
         }
     }
-    free(s->actors); s->actors=actors; s->actor_count=c->actor_count;
+    if (c->actor_count) memcpy(s->actors,c->actors,c->actor_count*sizeof(*s->actors));
+    s->actor_count=c->actor_count;
     if (baseline&&!p->player_events) for (size_t i=0;i<c->snapshot->entity_count;++i) {
         const qa_q3_entity *entity=c->snapshot->entities+i;
         if (entity->number<0 || (uint32_t)entity->number>=p->capacity) return q3scene_fail(e,QA_ERROR_FORMAT,"Component baseline leaves centities");
@@ -309,23 +320,29 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         const application_q3_scene_command *command=c->commands+i;
         if (command->sequence<0 || command->sequence>latest || !command->text) return q3scene_fail(e,QA_ERROR_FORMAT,"Component reliable sequence is invalid");
         if ((int64_t)command->sequence<=(int64_t)latest-64) continue;
-        qa_command_tokens t={0};
-        if (command->addressed&&command->arguments) {
-            if(!qa_command_tokens_copy(command->arguments,&t,NULL,NULL,e)) return false;
-        } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,&t,e)) return false;
         q3scene_command *row=s->commands+(uint32_t)command->sequence%64;
-        qa_command_tokens_free(&row->tokens); *row=(q3scene_command){command->sequence,t};
+        if (row->sequence==command->sequence && row->addressed==command->addressed) continue;
+        qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(s->command_storage,e);
+        if (!lease) return false;
+        qa_command_tokens t={0};
+        bool okay;
+        if (command->addressed&&command->arguments) {
+            okay=qa_command_tokens_copy(command->arguments,&t,command_allocate,lease,e);
+        } else okay=qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,&t,command_allocate,lease,e);
+        if (!okay) { qa_unified_frame_lease_release(lease); return false; }
+        qa_command_tokens_free(&row->tokens); qa_unified_frame_lease_release(row->lease);
+        *row=(q3scene_command){.sequence=command->sequence,.addressed=command->addressed,.tokens=t,.lease=lease};
     }
     for (size_t i=0;i<64;++i) if (s->commands[i].sequence>=0 &&
         (int64_t)s->commands[i].sequence<=(int64_t)latest-64) {
-        qa_command_tokens_free(&s->commands[i].tokens); s->commands[i].sequence=-1;
+        qa_command_tokens_free(&s->commands[i].tokens); qa_unified_frame_lease_release(s->commands[i].lease);
+        s->commands[i]=(q3scene_command){.sequence=-1};
     }
     if (s->snapshot_number==INT32_MAX) return q3scene_fail(e,QA_ERROR_FORMAT,"Component source snapshot counter exhausted");
     int32_t number=s->snapshot_number+1; q3scene_snapshot *row=s->snapshots+(uint32_t)number%32;
-    qa_q3_entity *entities=c->snapshot->entity_count?malloc(c->snapshot->entity_count*sizeof(*entities)):NULL;
-    if (c->snapshot->entity_count&&!entities) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining component snapshot entities");
-    if (entities) memcpy(entities,c->snapshot->entities,c->snapshot->entity_count*sizeof(*entities));
-    free(row->entities); *row=(q3scene_snapshot){.number=number,.value=*c->snapshot,.entities=entities}; row->value.entities=entities;
+    qa_q3_entity *entities=s->snapshot_entities+(uint32_t)number%32*p->capacity;
+    if (c->snapshot->entity_count) memcpy(entities,c->snapshot->entities,c->snapshot->entity_count*sizeof(*entities));
+    *row=(q3scene_snapshot){.number=number,.value=*c->snapshot,.entities=entities}; row->value.entities=entities;
     s->snapshot_number=number; s->scene_revision=c->revision;
     return true;
 }
@@ -424,15 +441,13 @@ bool application_q3_scene_console(application_q3_scene *s,const qa_command_invoc
 {
     if (!application_q3_scene_idle(s)||!s->initialized||!command||!handled||s->failed)
         return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component console requires its genuine lexical invocation");
-    qa_command_tokens tokens={.count=command->argc,.args_text=(char *)command->args_text};
-    tokens.values=tokens.count?calloc(tokens.count,sizeof(*tokens.values)):NULL;
-    if(tokens.count&&!tokens.values) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining actual component console arguments");
-    for(size_t i=0;i<tokens.count;++i) tokens.values[i]=(char *)command->argv[i];
+    qa_command_tokens tokens={.count=command->argc,.args_text=(char *)command->args_text,
+        .values=(char **)command->argv,.borrowed=true};
     s->busy=true; bool ok=acquire(s,false,e); int32_t args[]={2},result=0;
     if (ok) { s->lexical=&tokens; ok=qa_qvm_invoke(s->vm,0,args,1,&result,e)&&q3scene_current(s); s->lexical=NULL; }
     ok=finish_output(s,ok,e);
     if (!ok) s->failed=true; else *handled=result!=0;
-    release(s); s->busy=false; free(tokens.values); return ok;
+    release(s); s->busy=false; return ok;
 }
 
 static qa_command_result declared_command(void *context,const qa_command_invocation *command,qa_error *error)
@@ -451,8 +466,12 @@ static qa_command_result declared_command(void *context,const qa_command_invocat
 
 void q3scene_history_clear(application_q3_scene *s)
 {
-    for(size_t i=0;i<32;++i) free(s->snapshots[i].entities);
-    for(size_t i=0;i<64;++i) qa_command_tokens_free(&s->commands[i].tokens);
+    free(s->snapshot_entities);
+    for(size_t i=0;i<64;++i) {
+        qa_command_tokens_free(&s->commands[i].tokens); qa_unified_frame_lease_release(s->commands[i].lease);
+    }
+    qa_unified_frame_lease_release(s->reached_lease);
+    qa_unified_frame_pool_destroy(&s->command_storage);
     qa_command_tokens_free(&s->reached); free(s->actors); free(s->players); free(s->game_state); qa_buffer_free(&s->defaults);
 }
 bool application_q3_scene_destroy(application_q3_scene **owner,qa_error *e)

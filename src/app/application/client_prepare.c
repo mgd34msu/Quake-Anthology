@@ -160,7 +160,7 @@ static bool variables(qa_application_client_preparation *p,bool initial,qa_error
     for (size_t i=0;i<qa_application_startup_command_count(p->application);++i) {
         const char *text=qa_application_startup_command(p->application,i);
         qa_command_tokens tokens={0};
-        if (!text || !qa_command_tokenize(text,dialect,false,&tokens,e)) { free(early); return false; }
+        if (!text || !qa_command_tokenize(text,dialect,false,&tokens, NULL, NULL,e)) { free(early); return false; }
         bool ok=true;
         if (tokens.count && !strcmp(tokens.values[0],"set")) {
             if (dialect==QA_RULESET_Q3)

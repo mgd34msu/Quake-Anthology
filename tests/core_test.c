@@ -257,6 +257,17 @@ static void test_literal_tokens(void)
     qa_unified_frame_pool *pool=qa_unified_frame_pool_create(128*1024,2,&error); CHECK(pool);
     qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error); CHECK(lease);
     CHECK(qa_command_tokens_copy(&literal,&pooled,tokens_frame_allocate,lease,&error));
+    for (qa_ruleset_id dialect=QA_RULESET_NETQUAKE;dialect<=QA_RULESET_Q3;++dialect) {
+        qa_command_tokens heap={0},frame={0};
+        CHECK(qa_command_tokenize("say \"hello world\" next",dialect,false,&heap,NULL,NULL,&error));
+        CHECK(qa_command_tokenize("say \"hello world\" next",dialect,false,&frame,tokens_frame_allocate,lease,&error));
+        CHECK(heap.count==3 && frame.count==3 && frame.borrowed);
+        for (size_t i=0;i<heap.count;++i) CHECK(!strcmp(heap.values[i],frame.values[i]));
+        CHECK(!strcmp(frame.values[1],"hello world"));
+        CHECK(!strcmp(frame.args_text,dialect==QA_RULESET_Q3?"hello world next":"\"hello world\" next"));
+        CHECK(!strcmp(frame.args_text,heap.args_text));
+        qa_command_tokens_free(&heap); qa_command_tokens_free(&frame);
+    }
     second[0]='X'; qa_unified_frame_pool_destroy(&pool);
     CHECK(owned.count==2 && pooled.count==2);
     CHECK(!strcmp(owned.values[1],"quoted; text") && !strcmp(pooled.values[1],owned.values[1]));

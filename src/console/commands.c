@@ -1293,7 +1293,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         if (expanded == NULL) return false;
     }
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens, error)) { free(expanded); return false; }
+    if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens, NULL, NULL, error)) { free(expanded); return false; }
     free(expanded);
     if (tokens.count == 0) { qa_command_tokens_free(&tokens); return true; }
     qa_command_invocation command = {console, *context, tokens.count,

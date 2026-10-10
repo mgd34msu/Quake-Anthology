@@ -594,7 +594,7 @@ static bool q3_send_client(void *context,frontend_unified_q3_client *client,
     if (!p->replica->options.source_command)
         return frontend_unified_fail(error,QA_ERROR_UNSUPPORTED,"Compiled Source command channel has no installed scoped emitter");
     qa_command_tokens arguments={0};
-    if (!qa_command_tokenize(text,QA_RULESET_Q3,false,&arguments,error)) return false;
+    if (!qa_command_tokenize(text,QA_RULESET_Q3,false,&arguments, NULL, NULL,error)) return false;
     bool okay=p->replica->options.source_command(p->replica->options.context,
         &p->replica->options.domain,source.instance,source.publication,source.map_revision,origin,&arguments,error);
     qa_command_tokens_free(&arguments);

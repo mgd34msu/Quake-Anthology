@@ -168,19 +168,22 @@ bool qac_parse_token(const char *text, size_t length, size_t start,
 }
 
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
-                          bool console_text, qa_command_tokens *out, qa_error *error)
+    bool console_text, qa_command_tokens *out,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
     if (text == NULL || out == NULL || !qac_dialect_valid(dialect))
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command tokenizer arguments");
-    *out = (qa_command_tokens){0};
+    *out = (qa_command_tokens){.borrowed = allocate != NULL};
     size_t length = strlen(text);
     if (length > (SIZE_MAX - 1) / 2)
         return qac_fail(error, QA_ERROR_MEMORY, "command tokenizer input is too large");
     size_t maximum = dialect == QA_RULESET_Q3 ? 1024 : 80;
     size_t capacity = length < maximum ? length + 1 : maximum;
-    out->values = calloc(capacity, sizeof(*out->values));
-    out->storage = malloc(length * 2 + 1);
-    if (out->values == NULL || out->storage == NULL) {
+    out->values = allocate ? allocate(context, capacity * sizeof(*out->values), _Alignof(char *), error) :
+        calloc(capacity, sizeof(*out->values));
+    out->storage = allocate ? allocate(context, length * 2 + 1, 1, error) : malloc(length * 2 + 1);
+    out->args_text = allocate ? allocate(context, length + 1, 1, error) : malloc(length + 1);
+    if (out->values == NULL || out->storage == NULL || out->args_text == NULL) {
         qac_fail(error, QA_ERROR_MEMORY, "allocating command tokens");
         goto fail;
     }
@@ -209,21 +212,18 @@ bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
         if (dialect == QA_RULESET_Q3 && out->count == maximum) break;
     }
     if (dialect == QA_RULESET_Q3) {
-        qac_text args = {0};
+        size_t args_used = 0;
         for (size_t i = 1; i < out->count; ++i) {
-            if ((i > 1 && !qac_text_add(&args, " ", 1, error)) ||
-                !qac_text_string(&args, out->values[i], error)) {
-                free(args.data);
-                goto fail;
-            }
+            if (i > 1) out->args_text[args_used++] = ' ';
+            size_t size = strlen(out->values[i]);
+            memcpy(out->args_text + args_used, out->values[i], size); args_used += size;
         }
-        if (!qac_text_add(&args, "", 0, error)) { free(args.data); goto fail; }
-        out->args_text = args.data;
+        out->args_text[args_used] = 0;
     } else {
         size_t end = length;
         if (qac_q2(dialect)) while (end > args_start && (unsigned char)text[end - 1] <= 32) --end;
-        out->args_text = qac_copy_n(text + args_start, end - args_start, error);
-        if (out->args_text == NULL) goto fail;
+        memcpy(out->args_text, text + args_start, end - args_start);
+        out->args_text[end - args_start] = 0;
     }
     return true;
 fail:

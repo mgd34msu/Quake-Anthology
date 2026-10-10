@@ -833,7 +833,7 @@ bool application_native_q2_console_command(application_provider *provider, qa_ac
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 console export requires an idle initialized game");
     *handled = false;
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens, NULL, NULL, error)) return false;
     qa_command_context context = engine->command_context;
     context.actor = actor;
     if (!qa_application_capture_command_context(provider->application, &context, &context, error)) {

@@ -271,7 +271,7 @@ bool application_q3_guest_client_command(application_provider *provider, uint32_
     if (!client || !client->connected || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 command requires a connected client");
     qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
     qa_command_tokens prior = engine->arguments; engine->arguments = next;
     int32_t argument = (int32_t)slot, result;
     bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
@@ -430,7 +430,7 @@ static bool server_command(void *context, int32_t number, bool *present, qa_erro
     const char *text = qa_q3_reliable_lookup(&client->reliable, number);
 rescan: ;
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error)) return false;
     qa_command_tokens_free(&role->arguments); role->arguments = tokens;
     if (tokens.count && !strcmp(tokens.values[0], "disconnect")) {
         const char *reason = tokens.count >= 2 ? tokens.values[1] : "Server disconnected";
@@ -484,7 +484,7 @@ rescan: ;
             client->pending_system_info = false;
         }
         qa_command_tokens restored = {0};
-        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &restored, error)) return false;
+        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &restored, NULL, NULL, error)) return false;
         qa_command_tokens_free(&role->arguments); role->arguments = restored;
     }
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "map_restart") &&

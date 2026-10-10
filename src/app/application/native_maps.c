@@ -417,7 +417,7 @@ static bool map_plan(qa_application *app, qa_mode_id mode, const char *command,
         parser.pending -= consumed;
         qa_command_tokens tokens = {0};
         ok = qa_command_tokenize(line, parser.plan.context.dialect,
-                                 parser.plan.context.console_text, &tokens, error);
+                                 parser.plan.context.console_text, &tokens, NULL, NULL, error);
         free(line);
         if (ok) ok = parse_command(&parser, &tokens, error);
         qa_command_tokens_free(&tokens);
@@ -491,7 +491,7 @@ bool application_native_config_plan(qa_application *app, qa_mode_id mode,
         memcpy(line, text, copied); line[copied] = 0;
         offset += consumed;
         qa_command_tokens tokens = {0};
-        okay = qa_command_tokenize(line, parser.plan.context.dialect, parser.plan.context.console_text, &tokens, error);
+        okay = qa_command_tokenize(line, parser.plan.context.dialect, parser.plan.context.console_text, &tokens, NULL, NULL, error);
         free(line);
         if (okay && tokens.count) {
             qa_cvars *cvars = qa_console_cvar_owner(parser.console, &parser.plan.context, tokens.values[0]);
@@ -611,7 +611,7 @@ bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
         if (!line) okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source restart command");
         else {
             memcpy(line, bytes.data, copied); line[copied] = 0;
-            okay = qa_command_tokenize(line, QA_RULESET_Q3, false, &tokens, error);
+            okay = qa_command_tokenize(line, QA_RULESET_Q3, false, &tokens, NULL, NULL, error);
             free(line);
         }
         /* Enqueued source intents retain one actual engine command. Subsequent

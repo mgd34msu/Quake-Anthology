@@ -196,7 +196,7 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
         if (!line) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 signon command");
         memcpy(line, at, length); line[length] = 0;
         qa_command_tokens tokens = {0};
-        bool ok = qa_command_tokenize(line, QA_RULESET_Q2_CLASSIC, false, &tokens, error);
+        bool ok = qa_command_tokenize(line, QA_RULESET_Q2_CLASSIC, false, &tokens, NULL, NULL, error);
         const char *name = tokens.count ? tokens.values[0] : "";
         if (ok && !strcmp(name, "cmd") && tokens.count >= 2 &&
             (!strcmp(tokens.values[1], "configstrings") || !strcmp(tokens.values[1], "baselines"))) {

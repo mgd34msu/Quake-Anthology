@@ -1331,7 +1331,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
     if (!text)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q3 server command predates its source gamestate");
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error)) return false;
     qa_command_tokens_free(lease->arguments);
     *lease->arguments = tokens;
     if (tokens.count && !strcmp(tokens.values[0], "disconnect")) {
@@ -1364,7 +1364,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
             client->big_configstring[client->big_configstring_length++] = '"';
             client->big_configstring[client->big_configstring_length] = 0;
             qa_command_tokens complete = {0};
-            bool ok = qa_command_tokenize(client->big_configstring, QA_RULESET_Q3, false, &complete, error);
+            bool ok = qa_command_tokenize(client->big_configstring, QA_RULESET_Q3, false, &complete, NULL, NULL, error);
             if (!ok) return false;
             qa_command_tokens_free(lease->arguments);
             *lease->arguments = complete;
@@ -1392,7 +1392,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
         bool okay = !(changed && index == 1) || leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
             qa_q3_configstring(client->gamestate, 1), error);
         qa_command_tokens restored = {0};
-        if (okay) okay = qa_command_tokenize(command_text, QA_RULESET_Q3, false, &restored, error);
+        if (okay) okay = qa_command_tokenize(command_text, QA_RULESET_Q3, false, &restored, NULL, NULL, error);
         free(command_text);
         if (!okay) return false;
         qa_command_tokens_free(lease->arguments);

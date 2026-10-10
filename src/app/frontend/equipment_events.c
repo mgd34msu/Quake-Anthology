@@ -90,7 +90,7 @@ static bool destination(const frontend_equipment_events *owner, const qa_applica
 static bool command(frontend_equipment_events *owner, const qa_application_equipment_event *event, qa_error *error)
 {
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(event->text, QA_RULESET_Q3, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(event->text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error)) return false;
     bool okay = true;
     if (tokens.count >= 2) {
         const char *name = tokens.values[0], *text = tokens.values[1];

@@ -828,7 +828,7 @@ static bool q1_service_message(qa_frontend_network *n,const qa_application_clien
         char *line=malloc(offset+1); qa_command_tokens tokens={0};
         if(!line) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining received Source command diagnostic");
         memcpy(line,pending,offset); line[offset]=0;
-        bool ok=qa_command_tokenize(line,QA_RULESET_NETQUAKE,false,&tokens,error);
+        bool ok=qa_command_tokenize(line,QA_RULESET_NETQUAKE,false,&tokens, NULL, NULL,error);
         const char *trimmed=line;
         while(*trimmed && (unsigned char)*trimmed<=32) ++trimmed;
         size_t trimmed_length=strlen(trimmed);

@@ -138,7 +138,7 @@ static bool command(void *context, qa_net_client_id id, qa_net_seat_id seat,
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL)
         return application_native_q2_console_command(provider, actor, text, &handled, error);
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, invocation.dialect, false, &tokens, error)) return false;
+    if (!qa_command_tokenize(text, invocation.dialect, false, &tokens, NULL, NULL, error)) return false;
     qa_command_invocation call = {.console = source, .context = invocation,
         .argc = tokens.count, .argv = (const char *const *)tokens.values,
         .args_text = tokens.args_text, .raw = text};

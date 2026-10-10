@@ -42,7 +42,7 @@ static const char *weapon_item(const char *command,const qa_input_weapon_binding
 {
     if (!count || strpbrk(command,";\r\n\\") || strstr(command,"//") || strstr(command,"/*")) return NULL;
     qa_command_tokens tokens={0};
-    if (!qa_command_tokenize(command,QA_RULESET_Q3,false,&tokens,NULL)) return NULL;
+    if (!qa_command_tokenize(command,QA_RULESET_Q3,false,&tokens, NULL, NULL,NULL)) return NULL;
     const qa_input_weapon_binding *item=NULL;
     if (tokens.count==2) item=qa_input_weapon_resolve(tokens.values[0],tokens.values[1],items,count);
     else if (tokens.count>2) {
