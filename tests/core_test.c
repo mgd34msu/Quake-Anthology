@@ -196,6 +196,18 @@ static void test_arena(void)
     qa_arena_reset(NULL);
     qa_arena_init(NULL, 0);
 
+    uint8_t local[1024];
+    CHECK(qa_arena_init_buffer(&arena,local+1,sizeof(local)-1,&error));
+    uint8_t *borrowed=qa_arena_alloc(&arena,256,64,&error);
+    CHECK(borrowed && (uintptr_t)borrowed%64==0);
+    memset(borrowed,0x42,256);
+    CHECK(!qa_arena_alloc(&arena,sizeof(local),1,&error));
+    CHECK(arena.overflow_count==1 && borrowed[255]==0x42);
+    qa_arena_reset(&arena);
+    CHECK(qa_arena_alloc(&arena,256,64,&error)==borrowed);
+    qa_arena_destroy(&arena);
+    CHECK(borrowed[255]==0x42);
+
     qa_arena backing={0},left={0},right={0};
     qa_pool pages={0};
     CHECK(qa_pool_prepare(&pages,&backing,8,4096,64,&error));

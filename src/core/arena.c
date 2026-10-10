@@ -21,6 +21,19 @@ void qa_arena_init(qa_arena *arena, size_t block_size)
     }
 }
 
+bool qa_arena_init_buffer(qa_arena *arena,void *data,size_t size,qa_error *error)
+{
+    size_t padding=(size_t)(-(uintptr_t)data)&(_Alignof(qa_arena_block)-1);
+    if(!arena || !data || padding>=size || size-padding<=sizeof(qa_arena_block)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"arena buffer requires writable block storage");
+        return false;
+    }
+    qa_arena_block *block=(qa_arena_block *)((uint8_t *)data+padding);
+    *block=(qa_arena_block){.capacity=size-padding-sizeof(*block)};
+    *arena=(qa_arena){.first=block,.current=block,.sealed=true,.borrowed=true};
+    return true;
+}
+
 void qa_arena_init_pool(qa_arena *arena, qa_pool *pages)
 {
     *arena=(qa_arena){.sealed=true,.pages=pages,
@@ -154,7 +167,7 @@ void qa_arena_destroy(qa_arena *arena)
         while (block != NULL) {
             qa_arena_block *next = block->next;
             if(arena->pages) qa_pool_release_run(arena->pages,block->slot,block->pages);
-            else free(block);
+            else if(!arena->borrowed)free(block);
             block = next;
         }
         *arena = (qa_arena){0};

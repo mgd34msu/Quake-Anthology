@@ -12,12 +12,15 @@ typedef struct qa_arena {
     qa_arena_block *current;
     size_t block_size;
     size_t overflow_count;
-    bool sealed;
+    bool sealed, borrowed;
     struct qa_pool *pages;
 } qa_arena;
 
 /* Initialize an unused arena. A zero block size selects the default. */
 void qa_arena_init(qa_arena *arena, size_t block_size);
+/* Caller-owned writable storage, including stack memory. Initialization seals
+ * the arena; reset reuses it and destroy never frees the backing buffer. */
+bool qa_arena_init_buffer(qa_arena *, void *, size_t, qa_error *);
 /* A load-sized common pool supplies pages; no heap fallback. Pool ownership
  * outlives the arena. Reset returns its pages for other live arenas to reuse. */
 void qa_arena_init_pool(qa_arena *arena, struct qa_pool *pages);
