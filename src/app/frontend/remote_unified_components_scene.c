@@ -279,7 +279,8 @@ bool q3remote_component_retire(remote_component *row,qa_error *error)
     if(row->frontend.owner&&(!row->frontend.retire||!row->frontend.retire(row->frontend.owner,error)))
         return error&&error->code!=QA_OK?false:q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component registry lacks its real service retirement owner");
     if(!console_retire(row,error)) return false;
-    while(row->events) { remote_component_event *next=row->events->next; free(row->events); row->events=next; }
+    while(row->events) { remote_component_event *next=row->events->next;
+        qa_pool_release(&row->parent->event_records,row->events->slot); row->events=next; }
     q3remote_component_admissions_clear(row); return true;
 }
 bool q3remote_component_close(remote_component **slot,qa_error *e)
@@ -301,7 +302,8 @@ bool q3remote_component_close(remote_component **slot,qa_error *e)
     if(r->frame!=r->baseline) q3remote_component_frame_free(r->frame);
     q3remote_component_frame_free(r->baseline); q3remote_component_state_free(&r->state);
     q3remote_component_admissions_clear(r);
-    while(r->events) { remote_component_event *next=r->events->next; free(r->events); r->events=next; }
+    while(r->events) { remote_component_event *next=r->events->next;
+        qa_pool_release(&r->parent->event_records,r->events->slot); r->events=next; }
     free(r); *slot=NULL; return true;
 }
 bool frontend_unified_components_prepare_draw(frontend_unified_components *o,const qa_scene_view *view,uint64_t sequence,
@@ -325,7 +327,7 @@ bool frontend_unified_components_prepare_draw(frontend_unified_components *o,con
             while(ok&&r->events) {
                 remote_component_event *event=r->events;
                 ok=application_q3_scene_consume(r->scene,&event->value,event->sequence,e);
-                if(ok) { r->events=event->next; free(event); }
+                if(ok) { r->events=event->next; qa_pool_release(&r->parent->event_records,event->slot); }
             }
             if(ok) ok=application_q3_scene_advance(r->scene,sequence,e);
             if(ok) {

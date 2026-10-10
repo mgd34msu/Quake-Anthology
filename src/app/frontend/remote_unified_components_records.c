@@ -217,9 +217,10 @@ bool frontend_unified_components_player_event(frontend_unified_components *o,con
     remote_component *target=NULL; remote_component_event event={0};
     if(!player_event_read(o,row,&target,&event,handled,e)) return false;
     if(!target||(target->event_present&&event.sequence<=target->event_sequence)) return true;
-    remote_component_event *owned=malloc(sizeof(*owned));
+    size_t slot;
+    remote_component_event *owned=qa_pool_take(&o->event_records,&slot);
     if(!owned) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining reached original component player event");
-    *owned=event; remote_component_event **tail=&target->events;
+    *owned=event; owned->slot=slot; remote_component_event **tail=&target->events;
     while(*tail) tail=&(*tail)->next;
     *tail=owned; target->event_sequence=event.sequence; target->event_present=true; return true;
 }

@@ -7,6 +7,7 @@
 #include "remote_unified_events.h"
 #include "component_scene.h"
 #include "qa/network_unified_control.h"
+#include "qa/pool.h"
 
 typedef struct remote_component_state {
     qa_unified_component_identity identity;
@@ -37,6 +38,7 @@ typedef struct remote_component_frame {
 typedef struct remote_component_event {
     application_q3_scene_player_event value;
     uint64_t sequence;
+    size_t slot;
     struct remote_component_event *next;
 } remote_component_event;
 typedef struct remote_component_polygon_admission {
@@ -99,6 +101,8 @@ struct frontend_unified_components {
     frontend_unified_media *media;
     qa_executable_recipe *recipe;
     frontend_unified_events *events;
+    qa_arena event_storage;
+    qa_pool event_records;
     remote_component **rows;
     size_t count;
     remote_component *retired;

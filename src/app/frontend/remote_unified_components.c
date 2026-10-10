@@ -105,6 +105,13 @@ bool frontend_unified_components_create(qa_frontend *f,frontend_remote_unified *
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Remote component collection requires its admitted replica and media");
     frontend_unified_components *o=calloc(1,sizeof(*o));
     if(!o) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real remote component collection");
+    size_t capacity=(size_t)qa_actors_capacity(frontend_remote_unified_registry(replica))*2;
+    qa_arena_init(&o->event_storage,0);
+    if(!qa_pool_prepare(&o->event_records,&o->event_storage,capacity,
+        sizeof(remote_component_event),_Alignof(remote_component_event),e)) {
+        qa_arena_destroy(&o->event_storage); free(o); return false;
+    }
+    qa_arena_seal(&o->event_storage);
     o->frontend=f; o->replica=replica; o->media=media; o->recipe=frontend_remote_unified_recipe(replica); *out=o; return true;
 }
 bool frontend_unified_components_checkpoint_ready(const frontend_unified_components *o)
@@ -284,7 +291,7 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
         if(!q3remote_component_close(&row,e)) return false;
         o->retired=next;
     }
-    free(o->rows); free(o); *slot=NULL; return true;
+    free(o->rows); qa_arena_destroy(&o->event_storage); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_components_visit(const frontend_unified_components *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
