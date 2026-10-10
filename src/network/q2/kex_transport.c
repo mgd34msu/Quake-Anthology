@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 
-static bool raw_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *e)
+static qa_net_send_result raw_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!o->raw || !o->raw_owned) {
@@ -81,7 +81,7 @@ static bool enter(qa_kex_transport *o, qa_error *e)
     return true;
 }
 
-static bool game_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *e)
+static qa_net_send_result game_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *e)
 {
     qa_kex_transport *o = context;
     if (!enter(o, e)) return false;
@@ -245,7 +245,7 @@ bool qa_kex_transport_send_connectionless(qa_kex_transport *o,
     if (!o || !o->published || !o->raw_owned || !o->raw) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "KEX connectionless send requires its actual published raw socket"); return false;
     }
-    return qa_net_transport_send(o->raw, to, bytes, e);
+    return qa_net_transport_send(o->raw, to, bytes, e) == QA_NET_SEND_ACCEPTED;
 }
 
 bool qa_kex_transport_bind(qa_kex_transport *o, qa_net_transport *raw, qa_error *e)

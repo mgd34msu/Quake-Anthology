@@ -4666,7 +4666,7 @@ bool frontend_network_rebuild_ready(const qa_frontend *candidate,const qa_fronte
         frontend_network_q2_host_publication_ready(next->q2_host,error);
 }
 
-static bool detached_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
+static qa_net_send_result detached_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     (void)context; (void)to; (void)bytes;
     return frontend_fail(error, QA_ERROR_ARGUMENT, "detached network candidate has no published transport");

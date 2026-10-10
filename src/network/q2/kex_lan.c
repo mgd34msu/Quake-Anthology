@@ -83,7 +83,7 @@ static bool text_attribute(struct attributes*a,qa_bytes b,bool player,qa_error*e
 }
 bool qa_kex_lan_emit(void*user,qa_bytes b,qa_error*e) {
     struct peer*p=user;
-    return qa_net_transport_send(p->owner->transport,&p->address,b,e);
+    return qa_net_transport_send(p->owner->transport,&p->address,b,e) == QA_NET_SEND_ACCEPTED;
 }
 static struct peer*find_peer(const qa_kex_lan*l,const qa_net_address*a) {
     for(size_t i=0;i<l->peer_count;i++)if(qa_net_address_equal(&l->peers[i]->address,a,true))return l->peers[i];
@@ -489,7 +489,7 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
         }
         bool ok=!w.failed&&qa_net_transport_send(l->transport,&p->address,(qa_bytes) {
             data,qa_net_writer_size(&w)
-        },e);
+        },e) == QA_NET_SEND_ACCEPTED;
         free(data);
         return ok;
     }

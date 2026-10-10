@@ -101,7 +101,7 @@ static bool dosbox_udp_packet(qa_net_dosbox *network, const qa_net_ipx_packet *p
     qa_net_writer_init(&writer, buffer, sizeof(buffer), error);
     if (!qa_net_ipx_encode(packet, &writer)) return false;
     return qa_net_transport_send(network->udp, &network->server,
-                                 (qa_bytes){buffer, qa_net_writer_size(&writer)}, error);
+                                 (qa_bytes){buffer, qa_net_writer_size(&writer)}, error) == QA_NET_SEND_ACCEPTED;
 }
 
 static void dosbox_deliver(qa_net_dosbox *network, const qa_net_ipx_packet *packet,
@@ -212,7 +212,7 @@ static void dosbox_queue_local(qa_net_dosbox *network, const qa_net_ipx_packet *
     if (socket) dosbox_accept(socket, packet, network->now_ns);
 }
 
-static bool dosbox_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
+static qa_net_send_result dosbox_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
     dosbox_socket *socket = opaque;
     qa_net_dosbox *network = socket->network;
     if (!dosbox_ready(network, error)) return false;

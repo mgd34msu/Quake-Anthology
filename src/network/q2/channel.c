@@ -293,9 +293,9 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
             qa_net_write_u32(&w,0x80000000u);
             qa_net_write_u32(&w,0x80000000u);
             qa_net_write_data(&w,c->queued,c->queued_size);
-            if(w.failed||!qa_net_transport_send(t,to,(qa_bytes) {
+            if(w.failed||qa_net_transport_send(t,to,(qa_bytes) {
                 bytes,qa_net_writer_size(&w)
-            },e))return false;
+            },e) != QA_NET_SEND_ACCEPTED)return false;
             qa_network_reliable_receipt receipt;
             if(qa_net_transport_reliable_receipt(t,to,&receipt))
                 c->reliable_submitted=receipt.queued;
@@ -311,9 +311,9 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
             qa_net_write_u32(&w,c->outgoing&0x7fffffffu);
             qa_net_write_u32(&w,c->incoming&0x7fffffffu);
             qa_net_write_data(&w,unreliable.data,unreliable.size);
-            if(w.failed||!qa_net_transport_send(t,to,(qa_bytes) {
+            if(w.failed||qa_net_transport_send(t,to,(qa_bytes) {
                 bytes,qa_net_writer_size(&w)
-            },e))return false;
+            },e) != QA_NET_SEND_ACCEPTED)return false;
             c->outgoing++; *included=true;
             c->sent_ns=now;
         } else *included=true;
@@ -324,7 +324,7 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
     bool ok=qa_q2_channel_transmit(c,unreliable,now,&w,included);
     if(ok)ok=qa_net_transport_send(t,to,(qa_bytes) {
         bytes,qa_net_writer_size(&w)
-    },e);
+    },e) == QA_NET_SEND_ACCEPTED;
     if(!ok) { *c=before; *included=false; }
     else if(c->receipt.inflight)c->reliable_submitted=c->receipt.inflight;
     return ok;

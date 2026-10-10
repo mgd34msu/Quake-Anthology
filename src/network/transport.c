@@ -312,7 +312,7 @@ bool qa_net_transport_ready(const qa_net_transport *transport)
 {
     return transport != NULL && (transport->ops.ready == NULL || transport->ops.ready(transport->state));
 }
-bool qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to, qa_bytes payload, qa_error *error)
+qa_net_send_result qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to, qa_bytes payload, qa_error *error)
 {
     if (transport == NULL || !valid_address(to) || (payload.size != 0 && payload.data == NULL) ||
         payload.size > transport->limits.datagram_bytes || (to->kind != QA_NET_LOOPBACK && to->port == 0))
@@ -369,7 +369,7 @@ typedef struct host_state {
     unsigned collect_next, dispatch_next;
 } host_state;
 
-static bool host_send(void *context, const qa_net_address *to, qa_bytes payload, qa_error *error)
+static qa_net_send_result host_send(void *context, const qa_net_address *to, qa_bytes payload, qa_error *error)
 {
     host_state *state = context;
     return qa_net_transport_send(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0],
@@ -475,7 +475,7 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
 
 typedef struct udp_state { int fd; uint8_t *bytes; size_t capacity; bool ipv6, ipv6_only; } udp_state;
 
-static bool udp_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
+static qa_net_send_result udp_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     udp_state *state = context;
     struct sockaddr_storage destination;
@@ -640,7 +640,7 @@ static void loop_clear(loop_endpoint *endpoint)
     endpoint->dropped = false;
 }
 
-static bool loop_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
+static qa_net_send_result loop_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     loop_endpoint *endpoint = context;
     if (endpoint->closed || endpoint->hub->closed) return fail(error, QA_ERROR_IO, "Loopback endpoint is closed");

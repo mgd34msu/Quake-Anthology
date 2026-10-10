@@ -179,7 +179,7 @@ static bool socks_maintenance(void *opaque, uint64_t now_ns, qa_error *error) {
     return qa_net_transport_maintenance(socks->udp, now_ns, error);
 }
 
-static bool socks_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
+static qa_net_send_result socks_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
     socks_transport *socks = opaque;
     if (socks->phase == SOCKS_FAILED) return socks_fail(socks, socks->failure, error);
     if (socks->phase != SOCKS_READY) {

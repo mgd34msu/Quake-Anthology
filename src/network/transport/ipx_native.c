@@ -60,7 +60,7 @@ static qa_net_address ipx_native_from(const struct sockaddr_ipx *native) {
     return address;
 }
 
-static bool ipx_native_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
+static qa_net_send_result ipx_native_send(void *opaque, const qa_net_address *to, qa_bytes bytes, qa_error *error) {
     ipx_native *ipx = opaque;
     if (!to || to->kind != QA_NET_IPX || !to->port || bytes.size > ipx->limit ||
         (bytes.size && !bytes.data)) {

@@ -100,7 +100,7 @@ static ipx_peer *ipx_find_peer(qa_net_ipx_tunnel *tunnel, const qa_net_address *
     return NULL;
 }
 
-static bool ipx_tunnel_send(void *opaque, const qa_net_address *to, qa_bytes payload,
+static qa_net_send_result ipx_tunnel_send(void *opaque, const qa_net_address *to, qa_bytes payload,
                             qa_error *error) {
     qa_net_ipx_tunnel *tunnel = opaque;
     if (!to || to->kind != QA_NET_IPX || !to->port || payload.size > tunnel->payload_limit ||
@@ -137,7 +137,7 @@ static bool ipx_tunnel_send(void *opaque, const qa_net_address *to, qa_bytes pay
         ipx_peer *peer = &tunnel->peers[i];
         if (to->host.ipx.network && to->host.ipx.network != peer->ipx.host.ipx.network) continue;
         qa_error send_error = {0};
-        if (qa_net_transport_send(tunnel->udp, &peer->udp, wire, &send_error)) sent = true;
+        if (qa_net_transport_send(tunnel->udp, &peer->udp, wire, &send_error) == QA_NET_SEND_ACCEPTED) sent = true;
         else if (!attempted) first_error = send_error;
         attempted = true;
     }
@@ -303,7 +303,7 @@ typedef struct ipx_game {
     uint32_t sequence;
 } ipx_game;
 
-static bool ipx_game_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
+static qa_net_send_result ipx_game_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
     ipx_game *game = opaque;
     if (!to || to->kind != QA_NET_IPX || !to->port || payload.size > game->payload_limit ||
         (payload.size && !payload.data)) {

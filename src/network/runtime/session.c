@@ -79,7 +79,7 @@ bool qa_network_callbacks_idle(const qa_network_runtime *runtime) {
 bool qa_network_send_address(qa_network_runtime *runtime, const qa_net_address *address,
                               qa_bytes bytes, qa_error *error) {
     if (!runtime || !address) return qa_network_fail(error, "Missing connectionless transport address");
-    return qa_net_transport_send(runtime->transport, address, bytes, error);
+    return qa_net_transport_send(runtime->transport, address, bytes, error) == QA_NET_SEND_ACCEPTED;
 }
 bool qa_network_attach(qa_network_runtime *runtime, const qa_net_connect *request,
                         const qa_network_peer_ops *ops, void *state, uint64_t now,
@@ -136,7 +136,7 @@ bool qa_network_connection_incomplete(const qa_network_runtime *runtime,qa_net_c
 bool qa_network_send(qa_network_runtime *runtime, qa_net_client_id id, qa_bytes bytes, qa_error *error) {
     const qa_net_client *client = runtime ? qa_net_connections_get(runtime->connections, id) : NULL;
     if (!client) return qa_network_fail(error, "Cannot send to stale connection");
-    return qa_net_transport_send(runtime->transport, &client->endpoint, bytes, error);
+    return qa_net_transport_send(runtime->transport, &client->endpoint, bytes, error) == QA_NET_SEND_ACCEPTED;
 }
 bool qa_network_received(qa_network_runtime *runtime, qa_net_client_id id, uint64_t now, qa_error *error) {
     return runtime && qa_net_connections_received(runtime->connections, id, now, error);

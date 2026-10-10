@@ -125,8 +125,11 @@ typedef struct qa_net_transport_event {
 typedef struct qa_network_reliable_receipt {
     uint64_t queued, inflight, acknowledged;
 } qa_network_reliable_receipt;
+typedef enum qa_net_send_result {
+    QA_NET_SEND_FAILED, QA_NET_SEND_ACCEPTED, QA_NET_SEND_FULL
+} qa_net_send_result;
 typedef struct qa_net_transport_ops {
-    bool (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
+    qa_net_send_result (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
     bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
     void (*close)(void *);
     bool (*ready)(const void *);
@@ -161,7 +164,9 @@ void qa_net_loopback_close(qa_net_loopback *);
 const qa_net_address *qa_net_transport_address(const qa_net_transport *);
 size_t qa_net_transport_limit(const qa_net_transport *);
 bool qa_net_transport_ready(const qa_net_transport *);
-bool qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);
+/* Admission is distinct from remote acknowledgement. Full leaves the
+ * prepared datagram owned by its sender; neither false success nor IO error. */
+qa_net_send_result qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);
 bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_transport_event *, qa_error *);
 bool qa_net_transport_dispatch(qa_net_transport *, const qa_net_transport_event *, qa_net_datagram *, bool *, qa_error *);
 bool qa_net_transport_maintenance(qa_net_transport *, uint64_t, qa_error *);
