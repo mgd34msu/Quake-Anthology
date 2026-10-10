@@ -82,6 +82,13 @@ typedef struct source_companion {
     source_companion_packet *first,*last;
     bool entered,completed;
 } source_companion;
+struct source_render_scope {
+    frontend_source_lease *lease;
+    const qa_q3_host *host;
+    const qa_qvm_call *call;
+    const qa_q3_refdef *definition;
+    frontend_source_effects *effects;
+};
 struct frontend_source {
     frontend_source *next;
     qa_frontend *frontend;
@@ -94,6 +101,7 @@ struct frontend_source {
     frontend_source_lease *lease_list;
     frontend_source_lease *retired_leases;
     source_render_scope *render_scope;
+    source_render_scope scope;
     qa_q3_registry_retirement *world_retirement;
     source_companion *companion;
     frontend_source_role_identity *restore_roles;
@@ -151,13 +159,6 @@ struct frontend_source_lease {
     bool status_visible;
     bool disconnect_pending;
     bool released;
-};
-struct source_render_scope {
-    frontend_source_lease *lease;
-    const qa_q3_host *host;
-    const qa_qvm_call *call;
-    const qa_q3_refdef *definition;
-    frontend_source_effects *effects;
 };
 static bool render_enter(void *,const qa_q3_host *,const qa_qvm_call *,
     const qa_q3_refdef *,void **,qa_error *);
@@ -1557,6 +1558,7 @@ typedef struct source_body_component {
     qa_application_q3_component_bodies bodies;
 } source_body_component;
 typedef struct source_body_ref {
+    struct source_body_ref *next;
     qa_actor_id actor;
     qa_application_q3_body_part part;
     uint32_t helper;
@@ -1569,10 +1571,9 @@ struct source_body_draw {
     qa_application_q3_body_entry entry;
     source_body_component *components;
     size_t count;
-    source_body_ref *refs;
+    source_body_ref *refs,*last_ref;
     size_t ref_count;
     uint32_t first_order,component_order;
-    qa_scene_light *lights,*projected_lights;
     bool components_submitted;
 };
 static bool body_current(void *context,const qa_application_q3_body_draw *view)
@@ -1595,9 +1596,10 @@ static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
         receiver!=source->owner || seat!=source->launch_seat || source->frontend->capture || source->frontend->resource_inventory ||
         lease->time_busy==SIZE_MAX || source->role_operations==SIZE_MAX)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body Draw requires its actual retained CGAME role");
-    source_body_draw *draw=calloc(1,sizeof(*draw));
+    qa_arena *storage=&source->frontend->frame.storage;
+    source_body_draw *draw=qa_arena_alloc(storage,sizeof(*draw),_Alignof(source_body_draw),error);
     if (!draw) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual Source body Draw");
-    draw->lease=lease; lease->body_draw=draw; out->token=draw;
+    *draw=(source_body_draw){.lease=lease}; lease->body_draw=draw; out->token=draw;
     ++lease->time_busy; ++source->role_operations;
     if (!qa_application_q3_body_entry_read(source->application,receiver,seat,&draw->entry,error) ||
         draw->entry.context.frontend_lifetime!=lease || draw->entry.context.service_owner!=lease->service_owner)
@@ -1611,8 +1613,9 @@ static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
             draw->entry.source.source_frame.elapsed_ns/UINT64_C(1000000)>INT32_MAX ||
             count>SIZE_MAX/sizeof(*draw->components))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Component Draw lacks its actual source viewer camera and clock");
-        draw->components=calloc(count,sizeof(*draw->components));
+        draw->components=qa_arena_alloc(storage,count*sizeof(*draw->components),_Alignof(source_body_component),error);
         if (!draw->components) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component Draw roster");
+        memset(draw->components,0,count*sizeof(*draw->components));
         qa_vec3 origin=qa_vec_add(camera.origin,camera.view_offset),axis[3];
         frontend_camera_axes(camera.angles,axis);
         for (size_t i=0;i<count;++i) {
@@ -1657,9 +1660,12 @@ static bool body_submit(void *context,const qa_application_q3_body_draw *view,qa
             QA_Q3_MODEL_PRIMARY_OPENING,&opening,error)) return false;
     if (draw->ref_count==SIZE_MAX/sizeof(*draw->refs))
         return frontend_fail(error,QA_ERROR_MEMORY,"Source body capture extent overflow");
-    source_body_ref *refs=realloc(draw->refs,(draw->ref_count+1)*sizeof(*refs));
-    if (!refs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual primary body pose");
-    draw->refs=refs; refs[draw->ref_count++]=(source_body_ref){actor,part,helper,*ref,opening.resource,base};
+    source_body_ref *record=qa_arena_alloc(&draw->lease->source->frontend->frame.storage,
+        sizeof(*record),_Alignof(source_body_ref),error);
+    if (!record) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual primary body pose");
+    *record=(source_body_ref){.actor=actor,.part=part,.helper=helper,.ref=*ref,.resource=opening.resource,.base=base};
+    if (draw->last_ref) draw->last_ref->next=record; else draw->refs=record;
+    draw->last_ref=record; ++draw->ref_count;
     *handled=true; return body_current(context,view);
 }
 static void body_release(void *context,qa_application_q3_body_draw *view)
@@ -1668,12 +1674,15 @@ static void body_release(void *context,qa_application_q3_body_draw *view)
     if (!draw) return;
     for (size_t i=draw->count;i;--i) qa_application_q3_component_bodies_return(&draw->components[i-1].lease);
     if (lease->body_draw==draw) lease->body_draw=NULL;
-    free(draw->components); free(draw->refs); free(draw->lights); free(draw->projected_lights); free(draw); view->token=NULL;
+    view->token=NULL;
     time_leave(lease);
 }
 static void body_scene_clear(frontend_source_lease *lease)
 {
-    if (lease->body_draw) lease->body_draw->ref_count=0;
+    if (lease->body_draw) {
+        lease->body_draw->refs=lease->body_draw->last_ref=NULL;
+        lease->body_draw->ref_count=0;
+    }
 }
 static void body_scene_completed(frontend_source_lease *lease)
 { if (lease->body_draw) lease->body_draw->components_submitted=true; }
@@ -1700,32 +1709,32 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
         }
     }
     if (entities>1022-options->first_entity || lights>SIZE_MAX-options->world.light_count ||
-        lights+options->world.light_count>SIZE_MAX/sizeof(*draw->lights))
+        lights+options->world.light_count>SIZE_MAX/sizeof(qa_scene_light))
         return frontend_fail(error,QA_ERROR_MEMORY,"Component scene leaves primary submission limits");
     options->first_entity+=(uint32_t)entities;
     if (!lights) return true;
     size_t count=options->world.light_count+lights;
-    qa_scene_light *merged=malloc(count*sizeof(*merged));
-    qa_scene_light *projected=malloc(32*sizeof(*projected));
-    if (!merged || !projected) { free(merged); free(projected); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining component light submission"); }
+    qa_arena *storage=&lease->source->frontend->frame.storage;
+    qa_scene_light *merged=qa_arena_alloc(storage,count*sizeof(*merged),_Alignof(qa_scene_light),error);
+    qa_scene_light *projected=qa_arena_alloc(storage,32*sizeof(*projected),_Alignof(qa_scene_light),error);
+    if (!merged || !projected) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining component light submission");
     size_t used=options->world.light_count;
     if (used) memcpy(merged,options->world.lights,used*sizeof(*merged));
     size_t projected_count=options->world.projected_light_count;
-    if (projected_count>32) { free(merged); free(projected); return frontend_fail(error,QA_ERROR_FORMAT,"Primary projected lights exceed Source limit"); }
+    if (projected_count>32) return frontend_fail(error,QA_ERROR_FORMAT,"Primary projected lights exceed Source limit");
     if (projected_count) memcpy(projected,options->world.projected_lights,projected_count*sizeof(*projected));
     for (size_t i=0;i<draw->count;++i) {
         const qa_application_q3_component_draw *child=&draw->components[i].draw;
         size_t packets;
-        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) { free(merged); free(projected); return false; }
+        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) return false;
         for (size_t j=0;j<packets;++j) {
             frontend_component_scene_packet packet;
-            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) { free(merged); free(projected); return false; }
+            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) return false;
             if (packet.light_count) memcpy(merged+used,packet.lights,packet.light_count*sizeof(*merged));
             used+=packet.light_count;
             for (size_t k=0;k<packet.light_count && projected_count<32;++k) projected[projected_count++]=packet.lights[k];
         }
     }
-    free(draw->lights); free(draw->projected_lights); draw->lights=merged; draw->projected_lights=projected;
     options->world.lights=merged; options->world.light_count=count;
     options->world.projected_lights=projected; options->world.projected_light_count=projected_count;
     return body_current(lease,&view);
@@ -1736,8 +1745,8 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
     if (!draw) return true;
     qa_application_q3_body_draw view={.token=draw};
     if (!body_current(lease,&view)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene lost its retained component receipts");
-    for (size_t i=0;i<draw->ref_count;++i) {
-        const source_body_ref *primary=draw->refs+i;
+    uint32_t ordinal=0;
+    for (const source_body_ref *primary=draw->refs;primary;primary=primary->next,++ordinal) {
         bool visible=true;
         for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
             qa_application_q3_component_actor body;
@@ -1748,14 +1757,14 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                 if ((primary->part==QA_APPLICATION_Q3_BODY || body.parts[m].part==QA_APPLICATION_Q3_BODY ||
                     body.parts[m].part==primary->part) && !body.parts[m].base) visible=false;
         }
-        uint32_t order=draw->first_order+(uint32_t)i;
+        uint32_t order=draw->first_order+ordinal;
         if ((!primary->base || visible) && !qa_q3_presentation_source_body_pass(lease->source->presentation,
             &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
             options,order,frame,error)) return false;
         bool posed=false;
-        for (size_t j=0;j<i;++j)
-            if (qa_actor_id_equal(draw->refs[j].actor,primary->actor) && draw->refs[j].part==primary->part &&
-                draw->refs[j].resource==primary->resource) { posed=true; break; }
+        for (const source_body_ref *prior=draw->refs;prior!=primary;prior=prior->next)
+            if (qa_actor_id_equal(prior->actor,primary->actor) && prior->part==primary->part &&
+                prior->resource==primary->resource) { posed=true; break; }
         if (posed) continue;
         for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
             qa_application_q3_component_actor body;
@@ -1848,8 +1857,7 @@ static bool render_enter(void *context,const qa_q3_host *host,const qa_qvm_call 
     for (frontend_source_lease *row=source->lease_list;row;row=row->next)
         if (row==lease) { linked=true; break; }
     if (!linked) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source rendering lost its linked role owner");
-    source_render_scope *scope=calloc(1,sizeof(*scope));
-    if (!scope) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining entered source renderer scope");
+    source_render_scope *scope=&source->scope;
     *scope=(source_render_scope){lease,host,call,definition,NULL};
     ++lease->time_busy; ++source->role_operations;
     source->render_scope=scope; *out=scope;
@@ -1871,7 +1879,7 @@ static void render_leave(void *context,void *token,bool rendered)
     if (!scope) return;
     frontend_source_effects_end(scope->effects);
     lease->source->render_scope=NULL;
-    free(scope); time_leave(lease);
+    *scope=(source_render_scope){0}; time_leave(lease);
 }
 static bool equipment_borrow(void *context,qa_application_q3_client_context *out,qa_error *error)
 {
