@@ -14,6 +14,7 @@
 #include "native_q2_protocol_resources.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
+#include "qa/network_q1_qw.h"
 #include "qa/qc_observation.h"
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
@@ -865,6 +866,56 @@ static bool retain_nq_message(qa_application *app, qa_application_protocol_event
     }
 }
 
+static bool retain_qw_service(qa_application *app, qa_application_protocol_event *event, qa_error *error)
+{
+    if (!event->qw) return true;
+    qa_qw_service *service = application_event_stream_alloc(app, sizeof(*service), _Alignof(qa_qw_service), error);
+    if (!service) return false;
+    *service = *event->qw;
+    event->qw = service;
+    switch (service->kind) {
+    case QA_QW_PRINT: case QA_QW_STUFFTEXT: case QA_QW_CENTER_PRINT: case QA_QW_FINALE:
+        return retain_protocol_text(app, &service->data.text.value, error);
+    case QA_QW_LIGHT_STYLE:
+        return retain_protocol_text(app, &service->data.light_style.value, error);
+    case QA_QW_USERINFO:
+        return retain_protocol_text(app, &service->data.userinfo.value, error);
+    case QA_QW_SERVER_DATA:
+        return retain_protocol_text(app, &service->data.server.game_directory, error) &&
+            retain_protocol_text(app, &service->data.server.level, error);
+    case QA_QW_SET_INFO: case QA_QW_SERVER_INFO:
+        return retain_protocol_text(app, &service->data.info.key, error) &&
+            retain_protocol_text(app, &service->data.info.value, error);
+    case QA_QW_MODEL_LIST: case QA_QW_SOUND_LIST:
+        return retain_protocol_names(app, &service->data.list.names, service->data.list.count, error);
+    case QA_QW_PACKET_ENTITIES: {
+        qa_qw_frame *frame = application_event_stream_alloc(app, sizeof(*frame), _Alignof(qa_qw_frame), error);
+        if (!frame) return false;
+        *frame = *service->data.packet.frame;
+        service->data.packet.frame = frame;
+        return true;
+    }
+    case QA_QW_NAILS: {
+        qa_qw_nail *nails = service->data.nails.count ? application_event_stream_alloc(app,
+            service->data.nails.count * sizeof(*nails), _Alignof(qa_qw_nail), error) : NULL;
+        if (service->data.nails.count && !nails) return false;
+        if (service->data.nails.count)
+            memcpy(nails, service->data.nails.items, service->data.nails.count * sizeof(*nails));
+        service->data.nails.items = nails;
+        return true;
+    }
+    case QA_QW_DOWNLOAD: {
+        qa_bytes bytes = service->data.download.bytes;
+        uint8_t *copy = bytes.size ? application_event_stream_alloc(app, bytes.size, 1, error) : NULL;
+        if (bytes.size && !copy) return false;
+        if (bytes.size) memcpy(copy, bytes.data, bytes.size);
+        service->data.download.bytes = (qa_bytes){copy, bytes.size};
+        return true;
+    }
+    default: return true;
+    }
+}
+
 static bool retain_q2_service(qa_application *app, qa_application_protocol_event *event, qa_error *error)
 {
     if (!event->q2) return true;
@@ -887,6 +938,8 @@ bool qa_application_protocol_event_encode(qa_application_protocol_event *event, 
     if (event->nq) {
         if (!qa_nq_write(writer, event->encoding_protocol, (qa_nq_options){.standard_quake = event->standard_quake},
                 event->nq, NULL, 0)) return false;
+    } else if (event->qw) {
+        if (!qa_qw_service_write(writer, event->encoding_protocol, event->qw, NULL)) return false;
     } else if (event->q2) {
         qa_q2_codec codec;
         if (!qa_q2_codec_init(&codec, event->encoding_protocol, writer->error) ||
@@ -911,7 +964,7 @@ static bool emit_protocol(application_provider *provider,
         (event->resource_count && !event->resources) ||
         event->resource_count > SIZE_MAX / sizeof(*event->resources))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid source protocol event");
-    for (size_t i = 0; !event->nq && !event->q2 && i < event->reference_count; ++i)
+    for (size_t i = 0; !event->nq && !event->qw && !event->q2 && i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
     if (source) for (size_t i = 0; i < source->reference_count; ++i)
@@ -940,7 +993,8 @@ static bool emit_protocol(application_provider *provider,
     if (event->payload.size && !payload) goto abort;
     if (event->payload.size) memcpy(payload, event->payload.data, event->payload.size);
     qa_application_protocol_event copied = *event;
-    if (!retain_nq_message(application, &copied, error) || !retain_q2_service(application, &copied, error)) goto abort;
+    if (!retain_nq_message(application, &copied, error) || !retain_qw_service(application, &copied, error) ||
+        !retain_q2_service(application, &copied, error)) goto abort;
     qa_q2_server_record typed_record;
     if (typed) {
         typed_record = *typed;

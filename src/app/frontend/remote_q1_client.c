@@ -137,7 +137,7 @@ bool frontend_remote_q1_demo_seed(frontend_remote_q1 *row, const frontend_demo_s
         if (!decoder || !qa_network_q1_client_state_read(row->options.domain.runtime, row->options.domain.client, &state, error)) return false;
         const qa_qw_frame *frame = qa_qw_decoder_frame(decoder, state.last_frame);
         if (!frame) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "QWD seed lacks its actual complete entity frame");
-        qa_qw_service service = {.kind = QA_QW_PACKET_ENTITIES, .data.packet = {.frame = *frame}};
+        qa_qw_service service = {.kind = QA_QW_PACKET_ENTITIES, .data.packet = {.frame = frame}};
         if (!demo_qw_message(row, sink, &service, decoder, incoming, outgoing, error)) return false;
         for (size_t i = 0; i < 32; ++i) if (row->qw_player_valid[i]) {
             service = (qa_qw_service){.kind = QA_QW_PLAYER, .data.player = row->qw_players[i]};

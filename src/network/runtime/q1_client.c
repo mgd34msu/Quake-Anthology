@@ -91,6 +91,10 @@ bool q1_client_decode_batch(q1_runtime_client *c, qa_bytes bytes, uint32_t seque
         if (qw) {
             qa_qw_service *m = &record->service.qw;
             if (!qa_qw_service_read(&reader, c->qw, sequence, m)) goto fail;
+            if (m->kind == QA_QW_PACKET_ENTITIES) record->qw_payload.frame = *m->data.packet.frame;
+            else if (m->kind == QA_QW_NAILS)
+                memcpy(record->qw_payload.nails, m->data.nails.items,
+                    m->data.nails.count * sizeof(*m->data.nails.items));
             record->protocol = qa_qw_decoder_protocol(c->qw);
             if (!qa_q1_is_qw(record->protocol)) goto protocol_fail;
             if (m->kind == QA_QW_MODEL_LIST || m->kind == QA_QW_SOUND_LIST) {
@@ -111,6 +115,13 @@ bool q1_client_decode_batch(q1_runtime_client *c, qa_bytes bytes, uint32_t seque
         }
     }
     if (!qa_net_reader_finish(&reader)) goto fail;
+    if (qw) for (size_t i = 0; i < c->record_count; ++i) {
+        q1_client_record *record = c->records + i;
+        if (record->service.qw.kind == QA_QW_PACKET_ENTITIES)
+            record->service.qw.data.packet.frame = &record->qw_payload.frame;
+        else if (record->service.qw.kind == QA_QW_NAILS)
+            record->service.qw.data.nails.items = record->qw_payload.nails;
+    }
     c->protocol = qw ? qa_qw_decoder_protocol(c->qw) : qa_nq_decoder_protocol(c->nq);
     c->sequence = sequence; c->acknowledged = acknowledged; c->received_ns = received;
     c->held = true; return true;
@@ -498,7 +509,7 @@ static bool protocol_service(q1_runtime_client *c, q1_client_record *record, qa_
         }
     }
     if (m->kind == QA_QW_PACKET_ENTITIES) {
-        c->last_frame = m->data.packet.frame.sequence; c->has_delta = true;
+        c->last_frame = m->data.packet.frame->sequence; c->has_delta = true;
         if (!c->active) { if (!qa_network_phase(c->runtime, c->id, QA_NET_ACTIVE, e)) return false; c->active = true; }
     } else if (m->kind == QA_QW_INVALID_DELTA) c->has_delta = false;
     else if (m->kind == QA_QW_DISCONNECT) c->retiring = true;

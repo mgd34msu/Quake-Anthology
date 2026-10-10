@@ -57,9 +57,9 @@ typedef struct qa_qw_service {
         struct { uint8_t slot; int32_t user_id; const char *value; } userinfo;
         struct { bool missing; uint8_t percent; qa_bytes bytes; } download;
         qa_qw_player player;
-        struct { size_t count; qa_qw_nail items[QA_QW_MAX_NAILS]; } nails;
+        struct { size_t count; const qa_qw_nail *items; } nails;
         struct { uint32_t first, next; size_t count; const char *const *names; } list;
-        struct { qa_qw_frame frame; bool delta; uint32_t from_sequence; } packet;
+        struct { const qa_qw_frame *frame; bool delta; uint32_t from_sequence; } packet;
         struct { uint32_t sequence; uint8_t requested; } invalid_delta;
         float scalar;
         struct { uint8_t slot; const char *key, *value; } info;
@@ -82,7 +82,8 @@ bool qa_qw_decoder_store_frame(qa_qw_decoder *, const qa_qw_frame *, qa_error *)
 void qa_qw_decoder_delta_request(qa_qw_decoder *, uint32_t command_sequence,
                                 bool has_base, uint32_t base_sequence);
 /* Read one service at the current cursor. Strings/downloads borrow packet
- * bytes; list pointer storage lasts until the next service read or reset.
+ * bytes; list and nail storage lasts until the next service read or reset.
+ * Packet frames borrow decoder history until its slot is replaced or reset.
  * Missing delta history produces QA_QW_INVALID_DELTA after consuming its wire
  * payload. A failed cursor must be discarded. Successful earlier services
  * remain applied; no partial failing service is committed to history. */

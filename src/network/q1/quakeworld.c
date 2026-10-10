@@ -27,6 +27,7 @@ struct qa_qw_decoder {
     delta_request requests[QA_QW_UPDATE_BACKUP];
     const char **names;
     size_t names_capacity;
+    qa_qw_nail nails[QA_QW_MAX_NAILS];
 };
 static bool profile_valid(qa_net_protocol_id p)
 { return qa_q1_is_qw(p) && qa_q1_profile_valid(p,NULL); }
@@ -318,7 +319,7 @@ static bool read_entities(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence,
 {
     uint8_t requested=delta ? qa_net_read_u8(r) : 0;
     const qa_qw_frame *previous=delta ? delta_frame(d,sequence,requested) : NULL;
-    qa_qw_frame *f=&m->data.packet.frame;
+    qa_qw_frame frame; qa_qw_frame *f=&frame;
     memset(f,0,sizeof(*f)); f->sequence=sequence; uint32_t last=0;
     size_t old=0,old_count=previous ? previous->count : 0;
     for (;;) {
@@ -357,11 +358,12 @@ static bool read_entities(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence,
     m->kind=QA_QW_PACKET_ENTITIES; m->data.packet.delta=delta;
     m->data.packet.from_sequence=previous ? previous->sequence : 0;
     if (!qa_qw_decoder_store_frame(d,f,r->error)) { r->failed=true; return false; }
+    m->data.packet.frame=qa_qw_decoder_frame(d,sequence);
     return true;
 }
 static bool write_entities(qa_net_writer *w, qa_net_protocol_id p, const qa_qw_service *m, const qa_qw_decoder *d)
 {
-    const qa_qw_frame *to=&m->data.packet.frame;
+    const qa_qw_frame *to=m->data.packet.frame;
     if (!frame_valid(p,to)) return qa_net_writer_fail(w,"Invalid QuakeWorld output frame");
     if (d && (d->protocol.kind!=p.kind || d->protocol.flags!=p.flags))
         return qa_net_writer_fail(w,"QuakeWorld frame context protocol mismatch");
@@ -512,9 +514,10 @@ bool qa_qw_service_read(qa_net_reader *r, qa_qw_decoder *d, uint32_t sequence, q
     case 42: m.kind=QA_QW_PLAYER; qa_qw_read_player(r,p,d->player_model,&m.data.player); break;
     case 43:
         m.kind=QA_QW_NAILS; m.data.nails.count=qa_net_read_u8(r);
+        m.data.nails.items=d->nails;
         for (size_t i=0;i<m.data.nails.count;++i) {
             uint8_t b[6]; if (!qa_net_read_data(r,b,sizeof(b))) return false;
-            qa_qw_nail *n=&m.data.nails.items[i];
+            qa_qw_nail *n=d->nails+i;
             n->origin[0]=(float)(((b[0]|((b[1]&15)<<8))<<1)-4096);
             n->origin[1]=(float)((((b[1]>>4)|(b[2]<<4))<<1)-4096);
             n->origin[2]=(float)(((b[3]|((b[4]&15)<<8))<<1)-4096);
@@ -556,7 +559,8 @@ static bool attenuation_byte(qa_net_writer *w, float attenuation, uint8_t *out)
 }
 static bool write_nails(qa_net_writer *w, const qa_qw_service *m)
 {
-    if (m->data.nails.count>QA_QW_MAX_NAILS) return qa_net_writer_fail(w,"Too many QuakeWorld nails");
+    if (m->data.nails.count>QA_QW_MAX_NAILS || (m->data.nails.count && !m->data.nails.items))
+        return qa_net_writer_fail(w,"Invalid QuakeWorld nails");
     for (size_t i=0;i<m->data.nails.count;++i) {
         const qa_qw_nail *n=&m->data.nails.items[i];
         if (!finite3(n->origin) || !isfinite(n->pitch) || !isfinite(n->yaw))

@@ -454,7 +454,10 @@ static bool capture_factory(frontend_qw_host *host, qa_error *error)
     if (!qa_application_network_qw_signon_count(host->frontend->application, &count, error)) return false;
     for (size_t i = 0; i < count; ++i) {
         qa_application_protocol_event event;
-        if (!qa_application_network_qw_signon_at(host->frontend->application, i, &event, error) || !add_signon(host, event.payload, error)) return false;
+        uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+        if (!qa_application_network_qw_signon_at(host->frontend->application, i, &event, error) ||
+            !qa_application_protocol_event_encode(&event, &writer) || !add_signon(host, event.payload, error)) return false;
     }
     host->signon_views = calloc(host->signon_count, sizeof(*host->signon_views));
     if (host->signon_count && !host->signon_views) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable signon views");
@@ -857,6 +860,9 @@ static bool flush_events(frontend_qw_host *host, qa_net_writer *datagram,
         qa_application_protocol_event event;
         for (size_t projection = 0; qa_application_protocol_event_at(app, i, projection, &event); ++projection) {
             if (event.provider != host->owner || event.signon) continue;
+            uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+            qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+            if (!qa_application_protocol_event_encode(&event, &writer)) return false;
             for (size_t j = 0; j < QW_CLIENTS; ++j) {
                 qw_frontend_peer *peer = host->peers + j;
                 if (!peer->occupied || peer->retiring || (only && only != peer) ||

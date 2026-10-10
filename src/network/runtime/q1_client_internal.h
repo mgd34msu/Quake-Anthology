@@ -15,6 +15,7 @@ typedef struct q1_client_pending {
 typedef struct q1_client_record {
     qa_net_protocol_id protocol;
     union { qa_nq_message nq; qa_qw_service qw; } service;
+    union { qa_qw_frame frame; qa_qw_nail nails[QA_QW_MAX_NAILS]; } qw_payload;
     const char **names;
 } q1_client_record;
 typedef struct q1_client_move {

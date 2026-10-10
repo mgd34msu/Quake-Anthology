@@ -164,8 +164,8 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
     }
     case QA_QW_PACKET_ENTITIES:
         row->qw_entities.count = 0;
-        for (size_t i = 0; i < service->data.packet.frame.count; ++i)
-            if (!remote_q1_entity_set(&row->qw_entities, service->data.packet.frame.entities + i, error)) return false;
+        for (size_t i = 0; i < service->data.packet.frame->count; ++i)
+            if (!remote_q1_entity_set(&row->qw_entities, service->data.packet.frame->entities + i, error)) return false;
         row->qw_frame = true; return true;
     case QA_QW_NAILS: {
         uint32_t model = 0;

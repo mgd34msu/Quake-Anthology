@@ -523,11 +523,9 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     }
     default:return application_fail(error,QA_ERROR_UNSUPPORTED,"Native QuakeWorld event has no actual source service");
     }
-    uint8_t bytes[8192];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
-    if (!qa_qw_service_write(&writer,(qa_net_protocol_id){.kind=QA_NET_QW28},&service,NULL)) return false;
     qa_application_protocol_event output={.provider=p->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=event->time_ns,
         .recipient=recipient,.origin=event->kind==QA_BUILTIN_IMPACT && event->flags&QA_Q1_IMPACT_GROUPED?
-            event->end:event->origin,.payload={bytes,qa_net_writer_size(&writer)},
+            event->end:event->origin,.qw=&service,.encoding_protocol={.kind=QA_NET_QW28},
         .references=ref,.reference_count=ref?1:0,.destination=destination,.reliable=reliable,.signon=signon,.multicast=multicast};
     return application_emit_protocol(p,&output,error);
 }
