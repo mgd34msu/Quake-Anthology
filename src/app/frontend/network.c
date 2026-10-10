@@ -1242,6 +1242,8 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
         if (recognized) return true;
     }
     if (n->q2_host) {
+        if (!qa_application_network_output_complete(n->frontend->application, request->protocol.kind))
+            return frontend_fail(error, QA_ERROR_MEMORY, "Server output baseline is incomplete");
         bool recognized=false;
         bool ok=frontend_network_q2_host_importing(n->q2_host) ?
             frontend_network_q2_host_restore_admit(n->q2_host,request,&recognized,error) :
@@ -1251,6 +1253,9 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
     }
     if (request->composition != n->composition)
         return frontend_fail(error, QA_ERROR_FORMAT, "remote launch generation differs from the selected composition");
+    if (!frontend_network_remote(n->frontend) &&
+        !qa_application_network_output_complete(n->frontend->application, request->protocol.kind))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Server output baseline is incomplete");
     if (frontend_network_remote(n->frontend) && request->protocol.kind == QA_NET_Q3_68) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
         return remote_player(n->frontend->application, &actor, error) &&
@@ -1766,6 +1771,10 @@ static bool q3_client_command(void *context, const qa_q3_command *command, bool 
 static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char rejection[1024], qa_error *error)
 {
     qa_frontend_network *n = context;
+    if (!qa_application_network_output_complete(n->frontend->application, QA_NET_Q3_68)) {
+        snprintf(rejection, 1024, "Server output baseline is incomplete");
+        return true;
+    }
     qa_net_seat_id local_seat; uint32_t application_seat;
     bool local = frontend_network_local_seat(n->frontend, &request->address, &local_seat, &application_seat);
     if (request->slot >= 64) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 admission selected an invalid source slot");

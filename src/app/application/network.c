@@ -37,6 +37,9 @@ static qa_bytes selected_arsenal(qa_application *application, qa_actor_id actor)
     return instance ? (qa_bytes){(const uint8_t *)instance, strlen(instance)} : (qa_bytes){0};
 }
 
+bool qa_application_network_output_complete(const qa_application *application, qa_net_protocol protocol)
+{ return !(application->event_baseline_incomplete & (1u << protocol)); }
+
 bool qa_application_network_player_next(const qa_application *application, size_t *cursor,
     qa_application_network_player *out)
 {

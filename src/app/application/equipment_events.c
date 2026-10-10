@@ -51,7 +51,7 @@ static bool capacity(application_equipment_events *queue, const application_even
 {
     return event->recipient.registry ? application_event_stream_close_recipients(queue->application,
         write, event->recipient, NULL, QA_APPLICATION_OUTPUT_UNIFIED, error) :
-        application_event_stream_close_subscribers(queue->application, write, error);
+        application_event_stream_close_subscribers(queue->application, write, QA_APPLICATION_OUTPUT_UNIFIED, false, error);
 }
 
 bool application_equipment_events_publish(application_equipment_events *queue,

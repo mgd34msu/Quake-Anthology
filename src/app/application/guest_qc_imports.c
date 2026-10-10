@@ -281,8 +281,10 @@ static bool static_entity(struct application_qc_state *engine, qa_qc_instance *v
     } else {
         event.nq = &message;
     }
-    return application_emit_protocol(engine->provider, &event, error) &&
-           qa_actors_get(qa_session_actors(engine->services.session), actor) != NULL && qa_qc_remove_entity(vm, reference, error);
+    application_event_admission admission = application_emit_protocol(engine->provider, &event, error);
+    if (admission != APPLICATION_EVENT_APPENDED) return admission != APPLICATION_EVENT_FAILED;
+    return qa_actors_get(qa_session_actors(engine->services.session), actor) != NULL &&
+        qa_qc_remove_entity(vm, reference, error);
 }
 bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin builtin,
                             const char *name, qa_error *error)

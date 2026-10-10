@@ -259,7 +259,6 @@ bool application_event_stream_close_recipients(qa_application *app,
     bool captured = audience && audience->captured;
     if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING ||
         (!recipient.registry && !captured)) return false;
-    bool addressed = captured;
     for (size_t i = 0; app->players && i < app->players->count; ++i) {
         application_player_record *player = app->players->records + i;
         bool receives = !captured && qa_actor_id_equal(player->actor, recipient);
@@ -270,19 +269,18 @@ bool application_event_stream_close_recipients(qa_application *app,
         }
         if (receives) {
             player->output_incomplete |= channels;
-            addressed = true;
         }
     }
-    if (!addressed) return false;
     return reliable_capacity_report(app, error);
 }
 
 bool application_event_stream_close_subscribers(qa_application *app,
-    const application_event_write *write, qa_error *error)
+    const application_event_write *write, uint16_t channels, bool baseline, qa_error *error)
 {
-    if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
+    if (!write->transaction.blocked || (!baseline && app->state != QA_APPLICATION_RUNNING)) return false;
+    if (baseline) app->event_baseline_incomplete |= channels;
     for (size_t i = 0; app->players && i < app->players->count; ++i)
-        app->players->records[i].output_incomplete |= QA_APPLICATION_OUTPUT_UNIFIED;
+        app->players->records[i].output_incomplete |= channels;
     return reliable_capacity_report(app, error);
 }
 
@@ -336,7 +334,9 @@ static bool protocol_capacity(application_provider *provider,
     const application_event_write *write, qa_error *error)
 {
     qa_application *app = provider->application;
-    if (event->signon) return false;
+    if (event->signon)
+        return application_event_stream_close_subscribers(app, write,
+            protocol_channels(provider) | QA_APPLICATION_OUTPUT_UNIFIED, true, error);
     if (!event->reliable) return application_event_stream_decline(app, write, true, error);
     if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
     uint16_t channels = protocol_channels(provider);
@@ -344,8 +344,9 @@ static bool protocol_capacity(application_provider *provider,
         return application_event_stream_close_recipients(app, write,
             event->recipient, delivery ? &delivery->audience : NULL, channels, error);
     bool qw = provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD;
-    if ((event->multicast ? !qw || event->destination < 3 || event->destination > 5 : event->destination != 2) ||
-        (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC))
+    if (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC)
+        return application_event_stream_close_subscribers(app, write, channels, false, error);
+    if (event->multicast ? !qw || event->destination < 3 || event->destination > 5 : event->destination != 2)
         return false;
     for (size_t i = 0; app->players && i < app->players->count; ++i) {
         application_player_record *player = app->players->records + i;
@@ -651,8 +652,15 @@ static bool builtin_capacity(qa_application *app, const qa_builtin_event *event,
         return event->actor.registry || (audience && audience->captured) ?
             application_event_stream_close_recipients(app, write, event->actor, audience,
                 QA_APPLICATION_OUTPUT_UNIFIED, error) :
-            application_event_stream_close_subscribers(app, write, error);
-    default: return false;
+            application_event_stream_close_subscribers(app, write, QA_APPLICATION_OUTPUT_UNIFIED, false, error);
+    default: {
+        qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_BUILTIN,
+            .value.builtin = *event};
+        application_unified_event_record row = {.presentation = &payload};
+        application_persistent_key key; bool remove;
+        if (!application_unified_persistent_key(app, &row, &key, &remove, error)) return false;
+        return application_event_stream_close_subscribers(app, write, UINT16_MAX, key.domain != 0, error);
+    }
     }
 }
 
@@ -951,7 +959,7 @@ bool qa_application_protocol_event_encode(qa_application_protocol_event *event, 
     return true;
 }
 
-static bool emit_protocol(application_provider *provider,
+static application_event_admission emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
     const qa_native_host_message *source, const qa_q2_server_record *typed, qa_error *error)
@@ -989,7 +997,8 @@ static bool emit_protocol(application_provider *provider,
         application->event_write->envelope->kind == QA_APPLICATION_EVENT_BUILTIN;
     application_event_write *write = joined ? application->event_write : &own_write;
     if (!joined && !application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, write, error))
-        return protocol_capacity(provider, event, delivery, write, error);
+        return protocol_capacity(provider, event, delivery, write, error) ?
+            APPLICATION_EVENT_OMITTED : APPLICATION_EVENT_FAILED;
     uint8_t *payload = event->payload.size ? application_event_stream_alloc(application,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
@@ -1070,16 +1079,17 @@ static bool emit_protocol(application_provider *provider,
     write->envelope->last_protocol = retained;
     if (!application_unified_q2_protocol_event(provider, &retained->event,
             delivery ? &retained->q2 : NULL, typed, error)) goto abort;
-    if (joined) return true;
-    return application_event_stream_commit(application, write, error) ||
-        protocol_capacity(provider, event, delivery, write, error);
+    if (joined || application_event_stream_commit(application, write, error)) return APPLICATION_EVENT_APPENDED;
+    return protocol_capacity(provider, event, delivery, write, error) ?
+        APPLICATION_EVENT_OMITTED : APPLICATION_EVENT_FAILED;
 abort:
     if (joined) return false;
     application_event_stream_abort(application, write, error);
-    return protocol_capacity(provider, event, delivery, write, error);
+    return protocol_capacity(provider, event, delivery, write, error) ?
+        APPLICATION_EVENT_OMITTED : APPLICATION_EVENT_FAILED;
 }
 
-bool application_emit_protocol(application_provider *provider,
+application_event_admission application_emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event, qa_error *error)
 { return emit_protocol(provider, event, NULL, NULL, NULL, error); }
 

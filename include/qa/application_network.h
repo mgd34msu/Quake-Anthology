@@ -40,6 +40,7 @@ enum {
  * admits a player nor calls its source owner. The cursor is a physical row. */
 bool qa_application_network_player_next(const qa_application *, size_t *cursor,
     qa_application_network_player *);
+bool qa_application_network_output_complete(const qa_application *, qa_net_protocol);
 
 typedef struct qa_application_network_q1_host {
     qa_actor_owner owner;

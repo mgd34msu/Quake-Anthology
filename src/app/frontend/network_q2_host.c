@@ -110,7 +110,8 @@ static bool host_drop(void *context,qa_net_client_id id,const char *reason,qa_er
     return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 Source drop has no actual admitted owner");
 }
 static bool enabled(void *context,bool *out,qa_error *error)
-{ frontend_network_q2_host *host=context; if(!out || !current(host,error)) return false; *out=true; return true; }
+{ frontend_network_q2_host *host=context; if(!out || !current(host,error)) return false;
+  *out=qa_application_network_output_complete(host->options.frontend->application,host->options.protocol.kind); return true; }
 static bool rejects(void *context,const qa_net_address *address,bool *out,qa_error *error)
 {
     frontend_network_q2_host *host=context;

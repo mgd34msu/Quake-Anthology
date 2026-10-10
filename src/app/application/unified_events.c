@@ -786,22 +786,22 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
 abort:
     application_event_stream_abort(app, &write, error);
 capacity:
-    return application_event_stream_close_subscribers(app, &write, error) &&
+    return application_event_stream_close_subscribers(app, &write, QA_APPLICATION_OUTPUT_UNIFIED, false, error) &&
         application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
 }
 
 static bool unified_capacity(qa_application *app, const application_event_write *write,
     const application_unified_event_record *event, qa_error *error)
 {
-    if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
+    if (!write->transaction.blocked) return false;
     qa_actor_id recipient = event->presentation ? event->recipient : event->simulation_recipient;
     if (recipient.registry)
         return application_event_stream_close_recipients(app, write, recipient, NULL,
             QA_APPLICATION_OUTPUT_UNIFIED, error);
     application_persistent_key key;
     bool remove;
-    if (!application_unified_persistent_key(app, event, &key, &remove, error) || key.domain) return false;
-    return application_event_stream_close_subscribers(app, write, error);
+    if (!application_unified_persistent_key(app, event, &key, &remove, error)) return false;
+    return application_event_stream_close_subscribers(app, write, QA_APPLICATION_OUTPUT_UNIFIED, key.domain != 0, error);
 }
 
 bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,

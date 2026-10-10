@@ -1542,6 +1542,7 @@ static bool publish_travel(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
             "World publication retained an acoustic receipt after source shutdown");
     application_q1_signon_reset(application);
+    application->event_baseline_incomplete = 0;
     application->map_view_ready = false;
     publication->published = true;
     if (application->world == NULL) {

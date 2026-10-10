@@ -346,6 +346,7 @@ struct qa_application {
     application_event_write *event_write;
     uint64_t event_transient_declines;
     uint64_t event_reliable_declines;
+    uint16_t event_baseline_incomplete;
     uint64_t equipment_event_owner_next;
     uint64_t event_local_cursor, event_peer_cursor;
     uint64_t protocol_events_generation;
@@ -491,7 +492,10 @@ bool application_bots_destroy(qa_application *, qa_error *);
 bool application_bots_can_destroy(const qa_application *);
 bool application_native_q3_mode_frame_owned(qa_application *, qa_mode_id);
 bool application_emit_q2_player(application_provider *, const qa_q2_player_event *, qa_error *);
-bool application_emit_protocol(application_provider *, const qa_application_protocol_event *, qa_error *);
+typedef enum application_event_admission {
+    APPLICATION_EVENT_FAILED, APPLICATION_EVENT_APPENDED, APPLICATION_EVENT_OMITTED
+} application_event_admission;
+application_event_admission application_emit_protocol(application_provider *, const qa_application_protocol_event *, qa_error *);
 bool application_map_server_command(application_provider *, qa_string_id, qa_error *);
 bool application_guest_spawn_map(application_provider *, const qa_bsp_view *,
                                   const qa_entities *, qa_string_id, qa_string_id, qa_error *);

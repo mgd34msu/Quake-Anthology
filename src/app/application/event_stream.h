@@ -72,7 +72,8 @@ void application_event_stream_abort(qa_application *, application_event_write *,
 bool application_event_stream_decline(qa_application *, const application_event_write *, bool transient, qa_error *);
 bool application_event_stream_close_recipients(qa_application *, const application_event_write *,
     qa_actor_id recipient, const qa_application_q2_audience *, uint16_t channels, qa_error *);
-bool application_event_stream_close_subscribers(qa_application *, const application_event_write *, qa_error *);
+bool application_event_stream_close_subscribers(qa_application *, const application_event_write *,
+    uint16_t channels, bool baseline, qa_error *);
 struct application_provider;
 bool application_q1_multicast_receives(struct application_provider *, const qa_application_protocol_event *,
     qa_actor_id, uint32_t source_slot, bool *, qa_error *);
