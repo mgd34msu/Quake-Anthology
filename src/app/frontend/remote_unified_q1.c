@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9 };
+enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9, Q1_PROMPT_CHOICES=65536 };
 typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
@@ -39,6 +39,10 @@ typedef struct q1_event {
     bool actor_present,flag,muzzle;
     const qa_unified_presentation_event *row;
 } q1_event;
+typedef struct q1_continuation {
+    const qa_unified_presentation_event *row;
+    qa_unified_document *document;
+} q1_continuation;
 typedef struct q1_activation {
     struct q1_activation *next;
     char *provider;
@@ -122,7 +126,7 @@ struct frontend_unified_q1 {
     q1_group *groups;
     q1_activation *activations,*weapon_activation,*prompt_activation,*ctf_activation;
     q1_activation *power_activations[Q1_POWERS];
-    qa_unified_presentation_event *weapon,*prompt,*finale;
+    q1_continuation weapon,prompt,finale;
     qa_scene_image *finale_image;
     q1_activation *fog_activation,*finale_activation,*intermission_activation;
     struct {qa_vec3 previous,target;double previous_density,target_density,start,duration,sky_factor;bool active;} fog;
@@ -136,7 +140,7 @@ struct frontend_unified_q1 {
     double powers[Q1_POWERS];
     qa_hud_value ctf[4];
     qa_hud_value display_bars[6];
-    char *prompt_title,**prompt_lines;
+    const char *prompt_title,**prompt_lines;
     size_t prompt_count;
     uint32_t epoch;
     uint64_t frame,prepared_frame;
@@ -156,16 +160,10 @@ static const char *const powers[Q1_POWERS]={"quad","invulnerability","invisibili
     "hipnotic:wetsuit","hipnotic:empathy","rogue:shield","rogue:antigrav","mg3:lavasuit"};
 static bool fail(qa_error *e,const char *message)
 { return frontend_unified_fail(e,QA_ERROR_FORMAT,message); }
-static bool text_copy(const char *text,qa_buffer *out,qa_error *e)
-{
-    size_t length=text?strlen(text):0;
-    out->data=malloc(length+1);
-    if (!out->data) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source text");
-    if (length) memcpy(out->data,text,length);
-    out->data[length]=0; out->size=length; return true;
-}
-static void retained_free(qa_unified_presentation_event *row)
-{ if (row) { qa_unified_presentation_event_dispose(row); free(row); } }
+static void continuation_clear(q1_continuation *value)
+{ qa_unified_document_destroy(value->document); *value=(q1_continuation){0}; }
+static void continuation_replace(q1_continuation *destination,q1_continuation *source)
+{ continuation_clear(destination); *destination=*source; *source=(q1_continuation){0}; }
 static bool same_wire(qa_actor_id a,qa_actor_id b)
 { return qa_actor_id_equal(a,b); }
 const qa_unified_q1_world_state *frontend_unified_q1_world_read(const frontend_remote_unified *replica)
@@ -378,12 +376,11 @@ static bool music_play(q1_group *g,double track,qa_error *e)
     char cue[4];snprintf(cue,sizeof(cue),"%u",(unsigned)track);
     return frontend_received_music_play(g->music,cue,e);
 }
-static bool clone_row(const qa_unified_presentation_event *row,qa_unified_presentation_event **out,qa_error *e)
+static bool retain_row(frontend_unified_q1 *o,const qa_unified_presentation_event *row,
+    q1_continuation *out,qa_error *e)
 {
-    *out=calloc(1,sizeof(**out));
-    if (!*out) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source continuation");
-    if (qa_unified_presentation_event_clone(row,*out,e)) return true;
-    retained_free(*out); *out=NULL; return false;
+    if(!qa_unified_document_retain(frontend_unified_events_document(o->events),&out->document,e))return false;
+    out->row=row;return true;
 }
 static qa_scene_image_options model_options(void)
 { return (qa_scene_image_options){.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255}; }
@@ -480,10 +477,12 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
     frontend_unified_q1 *o=calloc(1,sizeof(*o));if(!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating Q1 CLIENT presentation");
     o->frontend=f;o->replica=r;o->media=m;o->options=*options;o->epoch=frontend_remote_unified_epoch(r);
     qa_builtin_random_seed(&o->random,1);
+    o->prompt_lines=calloc(Q1_PROMPT_CHOICES,sizeof(*o->prompt_lines));
+    if(!o->prompt_lines){free(o);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Reserving Q1 prompt labels");}
     o->localizations=qa_localization_pool_create(e);const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
     bool ok=o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o));
     if(ok)o->hud=f->seats[d->physical_seat].hud;
-    if(!ok) {qa_localization_pool_destroy(o->localizations);free(o);return false;}
+    if(!ok) {qa_localization_pool_destroy(o->localizations);free(o->prompt_lines);free(o);return false;}
     o->ctf[0].label="Red";o->ctf[1].label="Blue";o->ctf[2].label="Flags";o->ctf[3].label="Runes";*out=o;return true;
 }
 bool frontend_unified_q1_events(frontend_unified_q1 *o,frontend_unified_events *events,qa_error *e)
@@ -511,7 +510,7 @@ bool frontend_unified_q1_presentation_validate(frontend_unified_q1 *o,const qa_u
 bool frontend_unified_q1_simulation_validate(frontend_unified_q1 *o,const qa_unified_simulation_event *row,qa_error *e)
 { (void)o;(void)row;return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 child has no separate native simulation message consumer"); }
 static void prompt_clear(frontend_unified_q1 *o)
-{free(o->prompt_title);o->prompt_title=NULL;for(size_t i=0;i<o->prompt_count;++i) free(o->prompt_lines[i]);free(o->prompt_lines);o->prompt_lines=NULL;o->prompt_count=0;retained_free(o->prompt);o->prompt=NULL;o->prompt_activation=NULL;}
+{ o->prompt_title=NULL;o->prompt_count=0;continuation_clear(&o->prompt);o->prompt_activation=NULL; }
 static void group_free(q1_group *g)
 {
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(g->parent->replica);
@@ -552,27 +551,28 @@ bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_pr
     for(q1_group *g=o->groups;g;g=g->next)if(g->activation==owner && !frontend_received_music_destroy(&g->music,e))return false;
     q1_group **next=&o->groups;
     while(*next){q1_group *g=*next;if(g->activation==owner){*next=g->next;group_free(g);}else next=&g->next;}
-    if(o->weapon_activation==owner){retained_free(o->weapon);o->weapon=NULL;o->weapon_activation=NULL;}
+    if(o->weapon_activation==owner){continuation_clear(&o->weapon);o->weapon_activation=NULL;}
     if(o->prompt_activation==owner)prompt_clear(o);
     for(size_t i=0;i<Q1_POWERS;++i)if(o->power_activations[i]==owner){o->powers[i]=0;o->power_activations[i]=NULL;}
     if(o->ctf_activation==owner){o->ctf_present=false;o->capture_until=0;o->ctf_activation=NULL;}
     if(o->fog_activation==owner){o->fog.active=false;o->fog_activation=NULL;}
     if(o->intermission_activation==owner){o->intermission=false;o->intermission_activation=NULL;}
-    if(o->finale_activation==owner){retained_free(o->finale);o->finale=NULL;
+    if(o->finale_activation==owner){continuation_clear(&o->finale);
         qa_scene_image_release(o->finale_image);o->finale_image=NULL;o->finale_activation=NULL;qa_hud_clear_center(o->hud,NULL);}
     owner->retired=true;return mutable(o,e);
 }
 static bool prompt_set(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
     const qa_builtin_event *value=&p->row->payload.value.builtin;
-    size_t count=value->prompt_choice_count; char **lines=calloc(count?count:1,sizeof(*lines));
-    qa_unified_presentation_event *doc=NULL;
-    if (!lines) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source prompt");
-    bool okay=clone_row(p->row,&doc,e);
-    for (size_t i=0;okay && i<count;++i) { qa_buffer label={0};okay=text_copy(qa_strings_cstr(o->replica->strings,value->prompt_choices[i].label),&label,e);lines[i]=(char *)label.data; }
-    char *title=okay?malloc(p->text.size+1):NULL; if (okay && !title) okay=false;
-    if (!okay) {for(size_t i=0;i<count;++i)free(lines[i]);free(lines);retained_free(doc);return false;}
-    memcpy(title,p->text.data,p->text.size+1);prompt_clear(o);o->prompt=doc;o->prompt_title=title;o->prompt_lines=lines;o->prompt_count=count;return true;
+    q1_continuation next={0};
+    if(value->prompt_choice_count>Q1_PROMPT_CHOICES || !retain_row(o,p->row,&next,e))return false;
+    prompt_clear(o);o->prompt=next;o->prompt_title=(const char *)p->text.data;
+    o->prompt_count=value->prompt_choice_count;
+    for(size_t i=0;i<o->prompt_count;++i){
+        const char *label=qa_strings_cstr(o->replica->strings,value->prompt_choices[i].label);
+        o->prompt_lines[i]=label?label:"";
+    }
+    return true;
 }
 static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *out,qa_error *e)
 {
@@ -652,7 +652,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         ok=s && frontend_unified_media_model(o->media,g->content,(char *)p.text.data,QA_GAME_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
-    case Q1_WEAPON: {qa_unified_presentation_event *doc=NULL;ok=clone_row(row,&doc,e);if(ok) {retained_free(o->weapon);o->weapon=doc;o->weapon_activation=owner;}break;}
+    case Q1_WEAPON: {q1_continuation next={0};ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}break;}
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
         if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
@@ -687,14 +687,14 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_FINALE: {
         o->intermission=false;o->intermission_activation=NULL;
         if(p.a>4)break;
-        qa_unified_presentation_event *doc=NULL;qa_scene_image *image=NULL;qa_buffer text={0};
+        q1_continuation next={0};qa_scene_image *image=NULL;qa_buffer text={0};
         qa_scene_image_options options={.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent=true,.transparent_index=255};
-        ok=clone_row(row,&doc,e) && localized(o,g,&p,&text,e) && qa_scene_image_load_exact(g->images,"gfx/finale.lmp",&options,&image,e);
+        ok=retain_row(o,row,&next,e) && localized(o,g,&p,&text,e) && qa_scene_image_load_exact(g->images,"gfx/finale.lmp",&options,&image,e);
         if(ok && !image)ok=fail(e,"Q1 finale picture is absent from its actual Source content");
         if(ok)ok=qa_hud_clear_center(o->hud,e) && qa_hud_center_print(o->hud,(char *)text.data,ns(p.seconds),UINT64_MAX,(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(125000000),.initial_characters=1,.columns=40},e);
-        if(ok){retained_free(o->finale);o->finale=doc;doc=NULL;qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
+        if(ok){continuation_replace(&o->finale,&next);qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
             o->finale_banner=p.a>=4;o->finale_activation=owner;}
-        qa_scene_image_release(image);retained_free(doc);break;
+        qa_scene_image_release(image);continuation_clear(&next);break;
     }
     case Q1_ACTION:ok=fail(e,"Q1 action is not a native emitted presentation");break;
     case Q1_MUSIC:ok=music_play(g,p.a,e);break;
@@ -862,8 +862,8 @@ bool frontend_unified_q1_audio_detach(frontend_unified_q1 *o,qa_error *e)
 bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,const char *content,const char *path,qa_scene_model_input *input,qa_error *e)
 {
     if(!o || !content || !path || !input || !mutable(o,e))return false;
-    if(!o->weapon || !input->view_model || input->family!=QA_GAME_Q1)return true;
-    q1_event p={0};bool ok=parse(o,o->weapon,&p,e);qa_actor_id received;
+    if(!o->weapon.row || !input->view_model || input->family!=QA_GAME_Q1)return true;
+    q1_event p={0};bool ok=parse(o,o->weapon.row,&p,e);qa_actor_id received;
     if(ok)ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&received,e);
     if(ok && qa_actor_id_equal(actor,received) && !strcmp(content,(char *)p.content.data) && !strcmp(path,(char *)p.text.data))input->frame=(uint32_t)p.a;
     return ok;
@@ -1017,7 +1017,7 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
         }
     }
     o->busy=true;bool ok=true;
-    if(o->finale && o->finale_banner && o->finale_image){float scale=fminf((float)viewport.width/320,(float)viewport.height/200);
+    if(o->finale.row && o->finale_banner && o->finale_image){float scale=fminf((float)viewport.width/320,(float)viewport.height/200);
         uint32_t width=(uint32_t)((float)o->finale_image->logical_width*scale),height=(uint32_t)((float)o->finale_image->logical_height*scale);
         qa_scene_rect rectangle={.x=viewport.x+(int32_t)(((int64_t)viewport.width-width)/2),.y=viewport.y+(int32_t)(16*scale),.width=width,.height=height};
         ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_vec4){0,0,1,1},(qa_vec4){1,1,1,1},e);}
@@ -1049,6 +1049,6 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
-    prompt_clear(o);retained_free(o->weapon);retained_free(o->finale);qa_scene_image_release(o->finale_image);
-    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->scene_lights);free(o->scores);free(o);*slot=NULL;return true;
+    prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
+    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->scene_lights);free(o->scores);free(o->prompt_lines);free(o);*slot=NULL;return true;
 }
