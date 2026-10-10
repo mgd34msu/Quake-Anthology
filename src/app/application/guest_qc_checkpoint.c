@@ -561,6 +561,15 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC saved message destination");
     }
     if (ok) ok = qa_net_reader_finish(&reader);
+    for (size_t i = 0; ok && i < candidate.message_count;) {
+        const application_qc_message *message = candidate.messages + i;
+        bool connected = message->destination != 1;
+        for (uint32_t slot = 1; !connected && slot <= candidate.max_clients; ++slot)
+            connected = candidate.clients[slot].connected &&
+                qa_actor_id_equal(candidate.clients[slot].actor, message->recipient);
+        if (connected) ++i;
+        else application_qc_messages_release(&candidate, message->recipient);
+    }
     qa_buffer settings={0};
     if (ok && unit) {
         ok=qa_cvars_save_capture(unit->cvars,&settings,error);
