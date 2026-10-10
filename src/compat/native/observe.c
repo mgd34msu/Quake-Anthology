@@ -524,8 +524,11 @@ bool qa_native_write_scope_open(qa_native_instance *instance,const qa_native_wri
         !instance->guest->publication_depth||instance->guest->faulting||
         instance->guest->stopped_write_calls==UINT_MAX||!guest_mutable(instance->guest,error))
         return native_fail(error,QA_ERROR_ARGUMENT,0,"Source reaction requires its exact stopped committed-write event");
-    qa_native_write_scope *scope=calloc(1,sizeof(*scope));
-    if(!scope)return native_fail(error,QA_ERROR_MEMORY,0,"Retaining stopped Source write reaction");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(instance->observation_storage,error);
+    if(!storage)return false;
+    qa_native_write_scope *scope=qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),_Alignof(qa_native_write_scope),error);
+    if(!scope){qa_unified_frame_lease_release(storage);return false;}
+    scope->storage=storage;
     scope->instance=instance; scope->event=event; scope->depth=instance->write_depth;
     scope->invocation_depth=instance->active_depth; scope->previous=instance->write_scope;
     instance->write_scope=scope; ++instance->guest->stopped_write_calls; *out=scope;
@@ -660,7 +663,7 @@ bool qa_native_write_scope_close(qa_native_write_scope **out,qa_error *error)
         !instance->guest||!instance->guest->stopped_write_calls)
         return native_fail(error,QA_ERROR_ARGUMENT,0,"Stopped Source reaction still owns another invocation");
     instance->write_scope=scope->previous; --instance->guest->stopped_write_calls;
-    free(scope); *out=NULL; return true;
+    qa_unified_frame_lease_release(scope->storage); *out=NULL; return true;
 }
 
 bool native_process_write_commit(void *context, qa_native_guest *guest,
@@ -671,8 +674,11 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
     size_t count = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next) ++count;
     if (count > SIZE_MAX / sizeof(uint64_t)) return native_fail(error, QA_ERROR_MEMORY, count, "native write observer inventory overflows");
-    uint64_t *ids = count ? malloc(count * sizeof(*ids)) : NULL;
-    if (count && !ids) return native_fail(error, QA_ERROR_MEMORY, count, "retaining actual write publication subscriptions");
+    if (!count) return true;
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(instance->observation_storage,error);
+    if (!storage) return false;
+    uint64_t *ids=qa_unified_frame_lease_alloc(storage,count,sizeof(*ids),_Alignof(uint64_t),error);
+    if (!ids) { qa_unified_frame_lease_release(storage); return false; }
     size_t at = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next) ids[at++] = b->id;
     bool okay = true;
@@ -684,9 +690,10 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
         uint64_t end = commit->address + commit->bytes;
         if (end > binding->address + binding->size) end = binding->address + binding->size;
         if (begin < end) {
-            uint8_t *before = malloc(binding->size), *after = malloc(binding->size);
+            uint8_t *before=qa_unified_frame_lease_alloc(storage,binding->size,1,1,error);
+            uint8_t *after=qa_unified_frame_lease_alloc(storage,binding->size,1,1,error);
             if (!before || !after) {
-                free(before); free(after); okay = native_fail(error, QA_ERROR_MEMORY, binding->id, "owning committed watch before/after bytes"); break;
+                okay=false; break;
             }
             memcpy(before, binding->snapshot.data, binding->size);
             okay = qa_native_guest_read(guest, binding->address, after, binding->size, error);
@@ -701,7 +708,6 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
                 instance->active_write_event=previous;
                 --instance->write_depth; --instance->callback_depth; --binding->active_calls;
             }
-            free(before); free(after);
         }
     }
     bool cancelled=!okay&&guest_callback_failure(guest,error);
@@ -711,7 +717,7 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
             refreshed = qa_native_guest_read(guest, b->address, b->snapshot.data, b->size, error);
         if(!refreshed) okay=false;
     }
-    free(ids); return okay;
+    qa_unified_frame_lease_release(storage); return okay;
 }
 
 bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address address,

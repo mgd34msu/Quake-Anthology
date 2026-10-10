@@ -9,6 +9,7 @@
 #include "qa/native_process.h"
 #include "guest/abi.h"
 #include "qa/filesystem.h"
+#include "qa/network_unified_frame_pool.h"
 
 #include <limits.h>
 #include <stdarg.h>
@@ -123,6 +124,7 @@ struct qa_native_instance {
     qa_native_entry_observer *entry_observers;
     qa_native_entry_observer *pending_entry_observers;
     qa_native_write_observer *write_observers;
+    qa_unified_frame_pool *observation_storage;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, write_depth;
     const qa_native_write_event *active_write_event;
@@ -155,6 +157,7 @@ static inline void native_entity_changed(qa_native_instance *instance,
 struct qa_native_write_scope {
     struct qa_native_write_scope *previous;
     qa_native_instance *instance;
+    qa_unified_frame_lease *storage;
     const qa_native_write_event *event;
     uint32_t depth, invocation_depth;
 };

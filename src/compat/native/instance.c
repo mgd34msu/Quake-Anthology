@@ -57,6 +57,8 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     instance->module = module; instance->options = *options;
     instance->lifecycle = QA_NATIVE_LOADED;
     if (!native_instance_setup_identity(instance, options, error)) { free(instance); return false; }
+    instance->observation_storage=qa_unified_frame_pool_create(0,0,error);
+    if (!instance->observation_storage) { native_regions_destroy(instance); free(instance); return false; }
     qa_native_module_retain(module);
     qa_native_instance *previous = native_active_instance;
     native_active_instance = instance; instance->active_depth = 1;
@@ -86,6 +88,8 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     qa_buffer_free(&instance->process_host);
     native_profile_unbind(instance); free_allocations(instance);
     native_regions_destroy(instance);
+    native_observers_destroy(instance);
+    qa_unified_frame_pool_destroy(&instance->observation_storage);
     qa_native_module_release(module); free(instance->slots); free(instance); *out = NULL; return false;
 }
 
@@ -188,6 +192,7 @@ bool qa_native_destroy_owned(qa_native_instance **owner, qa_error *error) {
     native_regions_destroy(instance);
 
     native_observers_destroy(instance);
+    qa_unified_frame_pool_destroy(&instance->observation_storage);
     qa_buffer_free(&instance->process_host);
     memset(instance, 0, sizeof(*instance));
     free(instance);
