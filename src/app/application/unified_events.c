@@ -806,12 +806,16 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &borrowed.content, e)) return false;
     application_event_write write;
     bool own = app->event_write == NULL;
-    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
+    qa_actor_id output_recipient = presentation ? recipient : simulation_recipient;
+    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e))
+        return application_event_stream_close_recipients(app, &write, output_recipient, NULL, e);
     if (!application_unified_event_append(app, &borrowed, e)) {
-        if (own) application_event_stream_abort(app, &write, e);
-        return false;
+        if (!own) return false;
+        application_event_stream_abort(app, &write, e);
+        return application_event_stream_close_recipients(app, &write, output_recipient, NULL, e);
     }
-    return !own || application_event_stream_commit(app, &write, e);
+    return !own || application_event_stream_commit(app, &write, e) ||
+        application_event_stream_close_recipients(app, &write, output_recipient, NULL, e);
 }
 
 static double source_time(uint64_t ns, qa_ruleset_id clock, bool milliseconds)

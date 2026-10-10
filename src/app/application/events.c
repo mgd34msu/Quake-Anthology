@@ -533,13 +533,24 @@ static bool transient_event(const qa_builtin_event *event)
     }
 }
 
+static bool builtin_capacity(qa_application *app, const qa_builtin_event *event,
+    const qa_application_q2_audience *audience, const application_event_write *write, qa_error *error)
+{
+    if (application_event_stream_decline(app, write, transient_event(event), error)) return true;
+    switch (event->kind) {
+    case QA_BUILTIN_MESSAGE: case QA_BUILTIN_CENTERPRINT:
+    case QA_BUILTIN_SOURCE_PROMPT: case QA_BUILTIN_CLEAR_PROMPT:
+        return application_event_stream_close_recipients(app, write, event->actor, audience, error);
+    default: return false;
+    }
+}
+
 static bool emit_event(qa_application *application, const qa_builtin_event *event,
     const qa_application_q2_audience *audience, qa_error *error)
 {
-    bool transient=transient_event(event);
     application_event_write write;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_BUILTIN, &write, error))
-        return application_event_stream_decline(application,&write,transient,error);
+        return builtin_capacity(application,event,audience,&write,error);
     application_event_record *record = &write.envelope->raw.builtin;
     record->event = *event;
     if (event->argument_count) {
@@ -562,10 +573,10 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
     return application_event_stream_commit(application, &write, error) ||
-        application_event_stream_decline(application,&write,transient,error);
+        builtin_capacity(application,event,audience,&write,error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return application_event_stream_decline(application,&write,transient,error);
+    return builtin_capacity(application,event,audience,&write,error);
 }
 
 bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *error)
@@ -657,7 +668,9 @@ bool application_emit_q2_player(application_provider *provider,
         event->inventory_count > SIZE_MAX / sizeof(qa_inventory_entry))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     application_event_write write;
-    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error)) return false;
+    qa_actor_id recipient = event->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : event->actor;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
+        return application_event_stream_close_recipients(application, &write, recipient, NULL, error);
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
@@ -690,10 +703,11 @@ bool application_emit_q2_player(application_provider *provider,
     write.envelope->raw.q2_player = (qa_application_q2_player_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied, .recipients = recipients, .recipient_count = recipient_count};
-    return application_event_stream_commit(application, &write, error);
+    return application_event_stream_commit(application, &write, error) ||
+        application_event_stream_close_recipients(application, &write, recipient, NULL, error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return false;
+    return application_event_stream_close_recipients(application, &write, recipient, NULL, error);
 }
 
 static bool emit_protocol(application_provider *provider,
