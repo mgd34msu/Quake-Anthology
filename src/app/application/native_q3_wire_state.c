@@ -12,6 +12,7 @@
 #include "qa/application_startup_prepare.h"
 #include "unified_q3_events.h"
 #include "network_unified.h"
+#include "control_frame.h"
 
 #include <limits.h>
 #include <math.h>
@@ -718,9 +719,11 @@ bool application_native_q3_bot_snapshot_entity(application_provider *provider, q
     if (!client->bot_snapshot_ready) {
         if (wire->calls == SIZE_MAX)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 bot view source is already fully borrowed");
-        qa_q3_visible_entities *visible = malloc(sizeof(*visible));
-        if (!visible)
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 bot visibility selection");
+        qa_unified_frame_lease *storage=application_control_storage_acquire(provider->application,error);
+        if (!storage) return false;
+        qa_q3_visible_entities *visible=qa_unified_frame_lease_alloc(storage,1,sizeof(*visible),
+            _Alignof(qa_q3_visible_entities),error);
+        if (!visible) { qa_unified_frame_lease_release(storage);return false; }
         qa_q3_player player;
         ++wire->calls;
         bool ok = application_native_q3_wire_current_view(provider, slot, &player, visible, error);
@@ -734,7 +737,7 @@ bool application_native_q3_bot_snapshot_entity(application_provider *provider, q
             client->bot_snapshot_ready = true;
         }
         --wire->calls;
-        free(visible);
+        qa_unified_frame_lease_release(storage);
         if (!ok) return false;
     }
     if ((uint32_t)index < client->bot_entity_count) {
