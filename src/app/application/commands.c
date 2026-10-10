@@ -469,12 +469,8 @@ bool qa_application_actor_command(qa_application *application, qa_actor_id actor
         return application_fail(error, QA_ERROR_ARGUMENT, "actor command requires an admitted actor");
     application_provider *provider = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
     qa_ruleset_id dialect = QA_RULESET_Q3;
-    if (provider != NULL && provider->product != NULL) {
-        if (provider->product->family == QA_GAME_Q1)
-            dialect = provider->product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
-        else if (provider->product->family == QA_GAME_Q2)
-            dialect = provider->product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
-    }
+    if (provider != NULL && provider->product != NULL)
+        dialect = qa_product_ruleset(provider->product, QA_GAME_Q3);
     qa_command_context context = {.dialect = dialect, .origin = QA_COMMAND_REMOTE,
         .actor = actor};
     (void)qa_application_player_seat(application, actor, &context.seat);

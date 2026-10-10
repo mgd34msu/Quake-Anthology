@@ -114,7 +114,7 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
     if (!row->sound_bank || !name || !*name)
         return remote_q1_fail(error, QA_ERROR_FORMAT, "Received Q1 sound lacks its real precache bank");
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(row->sound_bank, name, QA_AUDIO_Q1, &asset, error)) return false;
+    if (!qa_audio_bank_register(row->sound_bank, name, QA_GAME_Q1, &asset, error)) return false;
     if (!asset) return !required || remote_q1_fail(error,QA_ERROR_IO,"Unresolved received NetQuake sound");
     uint64_t actor = QA_AUDIO_NO_ACTOR;
     if (number && !ambient) {
@@ -128,7 +128,7 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
     }
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name,
-        .family = QA_AUDIO_Q1, .actor = actor, .owner = row->options.domain.actor_owner,
+        .family = QA_GAME_Q1, .actor = actor, .owner = row->options.domain.actor_owner,
         .audience = row->options.domain.physical_seat, .origin_kind = QA_AUDIO_FIXED,
         .origin = origin, .channel = (int32_t)channel, .volume = volume,
         .attenuation = attenuation, .server_milliseconds = row->seconds * 1000,
@@ -226,7 +226,7 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
         uint64_t actor = frontend_audio_actor(row->frontend, source, error);
         if (actor == QA_AUDIO_NO_ACTOR) return false;
         qa_audio_engine_stop_channel(row->frontend->audio, actor, row->options.domain.actor_owner,
-            QA_AUDIO_Q1, message->data.stop_sound.channel);
+            QA_GAME_Q1, message->data.stop_sound.channel);
         return remote_q1_live(row, error);
     }
     case QA_NQ_PARTICLE:
@@ -393,7 +393,7 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
         float radius=value->radius-value->decay*(float)fmax(0,seconds-value->birth);
         if(!value->active || value->die<seconds || radius<=0) continue;
         fx->scene_lights[(*count)++]=(qa_scene_light){.origin=value->origin,.color=value->color,
-            .radius=radius,.minimum=value->minimum,.additive=true,.scale=1,.family=QA_SCENE_Q1,
+            .radius=radius,.minimum=value->minimum,.additive=true,.scale=1,.family=QA_GAME_Q1,
             .identity=value->identity,.revision=row->revision};
     }
     return true;
@@ -413,7 +413,7 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
     while(frontend_fx_q1_beam_next(&cursor,&row->effects->random,&transform)) {
         qa_vec3 point=qa_v3(transform.origin[0],transform.origin[1],transform.origin[2]);
         qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=point,.color={1,1,1,1},
-            .family=QA_SCENE_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
+            .family=QA_GAME_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
         if(!frontend_legacy_model_input(row->world,world,&input,error) ||
             !remote_q1_model_lighting(row,world,&input,error) ||
             !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
@@ -469,12 +469,12 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
             value->mixer=mixer; fx->audio=row->frontend->audio;
         }
     }
-    if(!fx->image && !qa_scene_particle_image(row->images,QA_SCENE_Q1,&fx->image,error)) return false;
+    if(!fx->image && !qa_scene_particle_image(row->images,QA_GAME_Q1,&fx->image,error)) return false;
     qa_bytes palette;
-    if(!qa_scene_resources_palette(row->images,QA_SCENE_Q1,&palette,error) || palette.size<768) return false;
+    if(!qa_scene_resources_palette(row->images,QA_GAME_Q1,&palette,error) || palette.size<768) return false;
     qa_scene_particle_sample *particles=qa_scene_particles_alloc(&row->frontend->frame,fx->particles.count,error);
     if(fx->particles.count && !particles) return false;
-    qa_scene_particle_batch batch={.view=*view,.family=QA_SCENE_Q1,.image=fx->image,.samples=particles};
+    qa_scene_particle_batch batch={.view=*view,.family=QA_GAME_Q1,.image=fx->image,.samples=particles};
     for(size_t i=fx->particles.count;i>0;--i) {
         qa_scene_q1_particle_state *p=fx->particles.values.q1+i-1;
         if(p->die<world->seconds) continue;

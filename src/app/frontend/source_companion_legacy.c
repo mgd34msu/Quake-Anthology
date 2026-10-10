@@ -39,11 +39,11 @@ void frontend_source_companion_legacy_dispose(frontend_source_companion_legacy *
     free((*slot)->lights); free((*slot)->projected); free(*slot); *slot=NULL;
 }
 bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,qa_actor_id actor,
-    qa_scene_world *world,qa_scene_family family,qa_scene_world_input *input,
+    qa_scene_world *world,qa_game_family family,qa_scene_world_input *input,
     frontend_source_companion_legacy **out,qa_error *error)
 {
     if (!f || !world || !input || !out || *out || input->view.seat!=physical ||
-        (family!=QA_SCENE_Q1 && family!=QA_SCENE_Q2))
+        (family!=QA_GAME_Q1 && family!=QA_GAME_Q2))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Legacy companion requires its actual recipient world and prepared view");
     frontend_source_companion_view capture; bool present=false;
     if (!frontend_source_companion_read(f,physical,actor,&capture,&present,error)) return false;

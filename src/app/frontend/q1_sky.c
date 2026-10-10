@@ -97,7 +97,7 @@ bool frontend_q1_sky_selection_load(frontend_q1_sky_selection *row, qa_scene_res
     if (length > SIZE_MAX - 16) return frontend_fail(error, QA_ERROR_MEMORY, "Q1 sky path exceeds storage");
     char *path = malloc(length + 16);
     if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q1 sky face request");
-    qa_scene_image_options options = {.family = QA_SCENE_Q1, .wrap = QA_SCENE_CLAMP,
+    qa_scene_image_options options = {.family = QA_GAME_Q1, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SKY, .transparent_index = -1};
     bool ok = true;
     for (unsigned i = 0; ok && i < 6; ++i) {

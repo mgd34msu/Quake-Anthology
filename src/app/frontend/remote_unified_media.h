@@ -32,7 +32,7 @@ typedef struct frontend_unified_bank_view {
 typedef struct frontend_unified_model_view {
     size_t bank;
     const char *path;
-    qa_scene_family family;
+    qa_game_family family;
     const qa_scene_image_options *options;
     const qa_resource *resource;
     const qa_vfs_acquisition *opening;
@@ -62,7 +62,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *, const char *cont
 bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const char *content,
     qa_q3_presentation_assets **);
 bool frontend_unified_media_model(frontend_unified_media *, const char *content,
-    const char *path, qa_scene_family, const qa_scene_image_options *,
+    const char *path, qa_game_family, const qa_scene_image_options *,
     frontend_unified_model *, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);

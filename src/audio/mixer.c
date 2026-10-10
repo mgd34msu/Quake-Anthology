@@ -95,8 +95,8 @@ static void debug_raw(qa_audio_mixer *mixer, const char *operation) {
     }
 }
 
-static bool family_valid(qa_audio_family family) {
-    return family == QA_AUDIO_Q1 || family == QA_AUDIO_Q2 || family == QA_AUDIO_Q3;
+static bool family_valid(qa_game_family family) {
+    return family == QA_GAME_Q1 || family == QA_GAME_Q2 || family == QA_GAME_Q3;
 }
 
 static bool selected(const qa_audio_mixer *mixer, uint32_t audience) {
@@ -108,7 +108,7 @@ static bool validate_play(const qa_audio_play *sound, qa_error *error) {
         sound->volume > 1 || !isfinite(sound->attenuation) || sound->attenuation < 0 ||
         !isfinite(sound->delay_seconds) ||
         (sound->has_server_time && !isfinite(sound->server_milliseconds)) ||
-        (sound->channel < 0 && !(sound->family == QA_AUDIO_Q1 && sound->channel == -1)))
+        (sound->channel < 0 && !(sound->family == QA_GAME_Q1 && sound->channel == -1)))
         return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid audio play policy");
     switch (sound->origin_kind) {
     case QA_AUDIO_LOCAL:
@@ -125,12 +125,12 @@ static bool validate_play(const qa_audio_play *sound, qa_error *error) {
     return mixer_error(error, QA_ERROR_ARGUMENT, "Invalid audio origin");
 }
 
-static uint64_t channel_name(qa_audio_family family, int32_t channel) {
+static uint64_t channel_name(qa_game_family family, int32_t channel) {
     if (channel <= 0)
         return 0;
-    if (family != QA_AUDIO_Q3 && channel <= 4)
+    if (family != QA_GAME_Q3 && channel <= 4)
         return (uint64_t)channel;
-    if (family == QA_AUDIO_Q3 && channel <= 7) {
+    if (family == QA_GAME_Q3 && channel <= 7) {
         static const uint8_t names[] = {5, 1, 2, 3, 4, 6, 7};
         return names[channel - 1];
     }
@@ -232,7 +232,7 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
     }
     qa_audio_sample *pcm = NULL;
     if (!qa_audio_resample_source(sample, mixer->options.sample_rate,
-                                  q3 ? QA_AUDIO_Q3 : QA_AUDIO_Q1, &pcm, error))
+                                  q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error))
         return NULL;
     if ((!q3 && !pcm->frame_count) || pcm->frame_count > INT64_MAX) {
         qa_audio_sample_release(pcm);
@@ -348,7 +348,7 @@ static qa_vec3 sound_position(const qa_audio_mixer *mixer, const qa_audio_play *
         return sound->origin;
     case QA_AUDIO_ACTOR:
         return actor_position(mixer, sound->origin_actor, sound->owner,
-                              sound->family == QA_AUDIO_Q3 && sound->owner != QA_AUDIO_NO_OWNER);
+                              sound->family == QA_GAME_Q3 && sound->owner != QA_AUDIO_NO_OWNER);
     }
     return qa_v3(0, 0, 0);
 }
@@ -848,10 +848,10 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
     if (!mixer->options.allocate_voice_id && mixer->next_voice == UINT64_MAX)
         return mixer_error(error, QA_ERROR_ARGUMENT, "Audio voice identity space is exhausted");
     qa_mixer_prepared *prepared =
-        prepare(mixer, sound->sample, sound->asset, sound->family == QA_AUDIO_Q3, error);
+        prepare(mixer, sound->sample, sound->asset, sound->family == QA_GAME_Q3, error);
     if (!prepared)
         return false;
-    if (sound->family == QA_AUDIO_Q3 && setting(mixer, "s_show") == 1) {
+    if (sound->family == QA_GAME_Q3 && setting(mixer, "s_show") == 1) {
         const char *name = sound->name    ? sound->name
                            : sound->asset ? qa_audio_asset_name(sound->asset)
                                           : "<unnamed>";
@@ -873,8 +873,8 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         log_message(mixer, message);
     }
     int32_t allocated_at =
-        sound->family == QA_AUDIO_Q3 ? allocation_time(mixer, milliseconds) : milliseconds;
-    if (sound->family == QA_AUDIO_Q3) {
+        sound->family == QA_GAME_Q3 ? allocation_time(mixer, milliseconds) : milliseconds;
+    if (sound->family == QA_GAME_Q3) {
         uint64_t actor =
             sound->origin_kind == QA_AUDIO_LOCAL ? mixer->listener.actor : sound->actor;
         size_t same = 0;
@@ -917,16 +917,16 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         .loop_start = prepared->pcm->loop_start,
         .allocated_at = allocated_at,
         .start = mixer->paint_time,
-        .volume = trunc((double)sound->volume * (sound->family == QA_AUDIO_Q3 ? 127 : 255)),
+        .volume = trunc((double)sound->volume * (sound->family == QA_GAME_Q3 ? 127 : 255)),
         .stereo_scale = 1};
     voice.sound.name = NULL;
     if (voice.sound.origin_kind == QA_AUDIO_LOCAL)
         voice.sound.actor = mixer->listener.actor;
-    if (sound->family == QA_AUDIO_Q3) {
+    if (sound->family == QA_GAME_Q3) {
         voice.state = QA_MIXER_PENDING;
         voice.loop_start = QA_AUDIO_NO_LOOP;
         voice.gain = (qa_mixer_gain){voice.volume, voice.volume};
-    } else if (sound->family == QA_AUDIO_Q1) {
+    } else if (sound->family == QA_GAME_Q1) {
         voice.attenuation = (double)sound->attenuation / 1000;
         for (size_t i = 0; i < mixer->voice_count; i++) {
             const qa_mixer_voice *other = &mixer->voices[i];
@@ -994,7 +994,7 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
     if (voice.state != QA_MIXER_SCHEDULED)
         replace_channel(mixer, voice.sound.actor, sound->owner, voice.channel, sound->channel == -1,
                         false, QA_AUDIO_REPLACED);
-    if (sound->family == QA_AUDIO_Q3 && mixer->free_head != SIZE_MAX)
+    if (sound->family == QA_GAME_Q3 && mixer->free_head != SIZE_MAX)
         voice.allocated_at = allocation_time(mixer, milliseconds);
     voice.id = voice_id(mixer);
     size_t index = insert_voice(mixer, voice);
@@ -1030,7 +1030,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
     if (!selected(mixer, request->sound.audience))
         return true;
     qa_mixer_prepared *prepared = prepare(mixer, request->sound.sample, request->sound.asset,
-                                          request->sound.family == QA_AUDIO_Q3, error);
+                                          request->sound.family == QA_GAME_Q3, error);
     if (!prepared)
         return false;
     if (!prepared->pcm->frame_count) {
@@ -1051,7 +1051,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
                           .old_doppler_scale = 1};
     loop.request.sound.name = NULL;
     qa_vec3 origin = sound_position(mixer, &request->sound);
-    if (request->sound.family == QA_AUDIO_Q3 && !request->persistent && mixer->doppler_enabled &&
+    if (request->sound.family == QA_GAME_Q3 && !request->persistent && mixer->doppler_enabled &&
         setting(mixer, "s_doppler") && qa_vec_dot(request->velocity, request->velocity) > 0) {
         qa_vec3 listener =
             request->sound.owner == QA_AUDIO_NO_OWNER &&
@@ -1087,7 +1087,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
         }
         mixer->loops = items;
     }
-    if (request->sound.family == QA_AUDIO_Q3 &&
+    if (request->sound.family == QA_GAME_Q3 &&
         !qa_audio_mixer_position_owner(mixer, request->sound.actor, request->sound.owner, origin,
                                        error)) {
         prepared_release(mixer, prepared);
@@ -1110,14 +1110,14 @@ static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
         if (!loop->active)
             continue;
         const qa_audio_play *sound = &loop->request.sound;
-        if (sound->family == QA_AUDIO_Q3) {
+        if (sound->family == QA_GAME_Q3) {
             double volume = trunc((double)sound->volume * (loop->request.persistent ? 90 : 127));
             if (!spatialize_q3(mixer,
                                        actor_position(mixer, sound->actor, sound->owner,
                                                       sound->owner != QA_AUDIO_NO_OWNER),
                                        volume, &loop->gain, error)) return false;
         } else {
-            bool q1 = sound->family == QA_AUDIO_Q1;
+            bool q1 = sound->family == QA_GAME_Q1;
             if (!spatialize_policy(mixer, sound, trunc((double)sound->volume * 255),
                                            sound->attenuation * (q1 ? 0.001 : 0.003), q1 ? 0 : 80,
                                            q1 ? 1 : 0.5, !q1, true, &loop->gain, error)) return false;
@@ -1127,14 +1127,14 @@ static bool collect_loop_mixes(qa_audio_mixer *mixer, qa_error *error) {
         qa_mixer_loop *loop = &mixer->loops[i];
         if (!loop->active || loop->merged)
             continue;
-        qa_audio_family family = loop->request.sound.family;
+        qa_game_family family = loop->request.sound.family;
         qa_mixer_gain gain = loop->gain;
-        if (family != QA_AUDIO_Q1) {
+        if (family != QA_GAME_Q1) {
             for (size_t j = i + 1; j < mixer->loop_count; j++) {
                 qa_mixer_loop *candidate = &mixer->loops[j];
                 if (!candidate->active || candidate->request.sound.family != family ||
                     candidate->prepared != loop->prepared ||
-                    (family == QA_AUDIO_Q3 && candidate->doppler))
+                    (family == QA_GAME_Q3 && candidate->doppler))
                     continue;
                 candidate->merged = true;
                 gain.left += candidate->gain.left;
@@ -1220,7 +1220,7 @@ void qa_audio_mixer_clear_seat_loops(qa_audio_mixer *mixer, uint64_t owner, bool
         return;
     for (size_t i = 0; i < mixer->loop_count; i++) {
         qa_mixer_loop *loop = &mixer->loops[i];
-        if (loop->request.sound.family == QA_AUDIO_Q3 &&
+        if (loop->request.sound.family == QA_GAME_Q3 &&
             loop->request.sound.audience != QA_AUDIO_WORLD && loop->request.sound.owner == owner &&
             (all || !loop->request.persistent))
             loop->active = false;
@@ -1232,7 +1232,7 @@ void qa_audio_mixer_stop_seat_loop(qa_audio_mixer *mixer, uint64_t actor, uint64
         return;
     for (size_t i = 0; i < mixer->loop_count; i++) {
         qa_mixer_loop *loop = &mixer->loops[i];
-        if (loop->request.sound.family == QA_AUDIO_Q3 &&
+        if (loop->request.sound.family == QA_GAME_Q3 &&
             loop->request.sound.audience != QA_AUDIO_WORLD && loop->request.sound.actor == actor &&
             loop->request.sound.owner == owner)
             loop->active = false;
@@ -1240,9 +1240,9 @@ void qa_audio_mixer_stop_seat_loop(qa_audio_mixer *mixer, uint64_t actor, uint64
 }
 
 void qa_audio_mixer_stop_channel(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
-                                 qa_audio_family family, int32_t channel) {
+                                 qa_game_family family, int32_t channel) {
     if (!mixer || mixer->callback_active || mixer->round_locked || !family_valid(family) ||
-        (channel < 0 && !(family == QA_AUDIO_Q1 && channel == -1)))
+        (channel < 0 && !(family == QA_GAME_Q1 && channel == -1)))
         return;
     if (channel == 0) {
         for (size_t i = 0; i < mixer->voice_count; i++) {
@@ -1339,7 +1339,7 @@ static bool mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample *s
                             .role = QA_MIXER_STATIC,
                             .prepared = prepared,
                             .sound = {.sample = sample,
-                                      .family = QA_AUDIO_Q1,
+                                      .family = QA_GAME_Q1,
                                       .actor = QA_AUDIO_NO_ACTOR,
                                       .owner = QA_AUDIO_NO_OWNER,
                                       .audience = mixer->listener.seat,
@@ -1450,7 +1450,7 @@ bool qa_audio_mixer_ambient(qa_audio_mixer *mixer, qa_audio_sample *sounds[2],
                                     .loop_start = 0,
                                     .start = mixer->paint_time,
                                     .sound = {.sample = sounds[key],
-                                              .family = QA_AUDIO_Q1,
+                                              .family = QA_GAME_Q1,
                                               .actor = QA_AUDIO_NO_ACTOR,
                                               .owner = QA_AUDIO_NO_OWNER,
                                               .audience = mixer->listener.seat,
@@ -1779,7 +1779,7 @@ static void paint_loop(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, siz
     size_t output = 0;
     while (output < frames) {
         int64_t absolute = mixer->paint_time + (int64_t)output;
-        if (absolute < 0 && loop->family != QA_AUDIO_Q3) {
+        if (absolute < 0 && loop->family != QA_GAME_Q3) {
             output++;
             continue;
         }

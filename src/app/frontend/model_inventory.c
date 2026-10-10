@@ -476,7 +476,7 @@ bool frontend_model_source_qualify(void *context, const qa_model *model, qa_scen
     qa_material_library *materials, const qa_scene_image_options *options, qa_error *error)
 {
     const frontend_model_inventory *inventory = context;
-    if (!inventory || inventory->owner_retired || !model || !images || !options || options->family > QA_SCENE_Q3 ||
+    if (!inventory || inventory->owner_retired || !model || !images || !options || options->family > QA_GAME_Q3 ||
         (materials && qa_material_library_resource_owner(materials) != images))
         return fail(error, QA_ERROR_ARGUMENT, "Scene model qualification requires actual content and resource owners");
     for (size_t i = 0; i < inventory->model_count; ++i) if (inventory->models[i].source.model == model) {

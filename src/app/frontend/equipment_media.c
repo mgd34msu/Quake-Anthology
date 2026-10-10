@@ -338,8 +338,8 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         if(ok){row->source_icon.size=view->source_icon.size;memcpy(row->source_icon.data,view->source_icon.data,view->source_icon.size);}
         else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source icon declaration");}
     row->view_path=calloc(1,1);
-    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family==QA_GAME_Q1?QA_SCENE_Q1:
-        view->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3};
+    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family==QA_GAME_Q1?QA_GAME_Q1:
+        view->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3};
     if(ok)row->owner.mounts=qa_vfs_clone(view->view_content,error);
     if(ok)row->owner.images=row->owner.mounts?qa_scene_resources_create(row->owner.mounts,error):NULL;
     if(ok)ok=row->view_path&&row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);
@@ -516,7 +516,7 @@ const qa_scene_image *frontend_equipment_media_q2_picture(const frontend_visual_
     else snprintf(path, size, "pics/%s.pcx", name);
     const qa_material *material = qa_material_find(media->materials, path);
     if (!material) {
-        qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+        qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
             .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE,
             .transparent = true, .transparent_index = 255};
         qa_scene_image *image = NULL;
@@ -541,7 +541,7 @@ static bool q1_hud_lump_prepare(qa_vfs *files, qa_scene_resources *images,
         "{\"kind\":\"wad-picture\",\"path\":\"gfx.wad\",\"lump\":\"%s\"}", lump);
     const qa_material *material = NULL; qa_resource *resource = NULL;
     bool okay = frontend_equipment_icon_load((qa_bytes){(const uint8_t *)declaration, strlen(declaration)},
-        QA_SCENE_Q1, files, images, materials, &material, &resource, error);
+        QA_GAME_Q1, files, images, materials, &material, &resource, error);
     qa_resource_release(resource); return okay;
 }
 bool frontend_q1_hud_prepare(qa_vfs *files, qa_scene_resources *images,
@@ -649,7 +649,7 @@ bool frontend_q1_team_face_read(qa_scene_resources *images,const qa_material_lib
     qa_bytes palette={0};
     const qa_scene_image *border=NULL;
     if (!frontend_q1_face_read(materials,"r_teambord",&border,error)) return false;
-    if (!qa_scene_resources_palette_read(images,QA_SCENE_Q1,&palette) || palette.size!=768)
+    if (!qa_scene_resources_palette_read(images,QA_GAME_Q1,&palette) || palette.size!=768)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Rogue team face lost its admitted Source palette");
     unsigned top=(colors&0xf0u)+8u,bottom=((colors&15u)<<4)+8u;
     *out=(qa_hud_team_face){.border=border,.score=score,.alternate_digits=top==8,

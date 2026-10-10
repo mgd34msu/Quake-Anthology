@@ -17,7 +17,7 @@ bool cpu_particles(qa_cpu_renderer *renderer, const qa_scene_particle_batch *bat
     double shrink = view->viewport.width > 6 ? (double)(view->viewport.width - 6) / view->viewport.width : 1;
     double pixel_aspect = fabs((double)view->viewport.height * view->projection.m[5] /
         ((double)view->viewport.width * view->projection.m[0]));
-    unsigned y_shift = batch->family == QA_SCENE_Q1 && pixel_aspect > 1.4 ? 1u : 0u;
+    unsigned y_shift = batch->family == QA_GAME_Q1 && pixel_aspect > 1.4 ? 1u : 0u;
     /* ldexp avoids undefined negative shifts at large modern resolutions. */
     double size_scale = ldexp(1, -shift);
     int64_t right = (int64_t)view->viewport.x + view->viewport.width - maximum;
@@ -51,7 +51,7 @@ bool cpu_particles(qa_cpu_renderer *renderer, const qa_scene_particle_batch *bat
         double sized = inverse_word * size_scale;
         int pixels = sized > maximum ? maximum : sized < minimum ? minimum : (int)sized;
         float depth = cpu_clamp((float)((clip[2] / clip[3] + 1) * .5));
-        unsigned blend = batch->family == QA_SCENE_Q1 || sample->color.w > .66f ? 3u :
+        unsigned blend = batch->family == QA_GAME_Q1 || sample->color.w > .66f ? 3u :
             sample->color.w > .33f ? 2u : 1u;
         uint8_t color[3] = {cpu_byte(sample->color.x), cpu_byte(sample->color.y), cpu_byte(sample->color.z)};
         if (renderer->preblend_gamma && renderer->gamma_enabled)

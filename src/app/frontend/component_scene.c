@@ -195,13 +195,13 @@ static int32_t frame_number(void *context)
         (int32_t)((uint64_t)view.revision&INT32_MAX):0;
 }
 static uint64_t audio_bus(void *context) { return ((struct frontend_component_scene *)context)->identity; }
-static qa_audio_family music_family(const struct frontend_component_scene *owner)
+static qa_game_family music_family(const struct frontend_component_scene *owner)
 {
     const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
     qa_product_id id=descriptor?descriptor->selection.product:owner->request.recipe_provider->selection.product;
     const qa_product *product=qa_catalog_product(owner->request.catalog,id);
-    return product && product->family==QA_GAME_Q1?QA_AUDIO_Q1:
-        product && product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+    return product && product->family==QA_GAME_Q1?QA_GAME_Q1:
+        product && product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
 }
 static bool music_published(const struct frontend_component_scene *owner)
 { return retained(owner) && owner->request.published && owner->request.published(owner->request.context); }
@@ -836,7 +836,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     owner->media=owner->images?qa_media_library_create(owner->images,e):NULL;
     if (!owner->files || !owner->images || !owner->materials || !owner->fonts || !owner->media ||
         !qa_audio_bank_create(owner->files,&owner->sounds,e)) return false;
-    qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
+    qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
     if (!request->restoring) {
         frontend_material_movie_source movie={.frontend=f,.files=owner->files,.images=owner->images,.materials=owner->materials,
             .media=owner->media,.context=owner,.current=movie_current};
@@ -847,7 +847,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
             !qa_material_library_load_scripts(owner->materials,owner->files,&images,e) ||
             !qa_material_library_source_shaders_initialize(owner->materials,&images,e)) return false;
     }
-    qa_q3_presentation_asset_options assets={.provider={owner->files,owner->images,owner->materials,QA_SCENE_Q3},
+    qa_q3_presentation_asset_options assets={.provider={owner->files,owner->images,owner->materials,QA_GAME_Q3},
         .sounds=owner->sounds,.movies=owner->media,.context=owner,.print=print,.model_initialize=model_initialize};
     if (!qa_q3_presentation_assets_create(&assets,&owner->assets,e)) return false;
     qa_q3_presentation_options options={.assets=owner->assets,.audio=f->audio,.clock={owner,milliseconds},

@@ -81,35 +81,35 @@ bool qa_scene_q2_particle_sample_at(const qa_scene_q2_particle_state *particle,
     return true;
 }
 
-bool qa_scene_particle_image(qa_scene_resources *resources, qa_scene_family family,
+bool qa_scene_particle_image(qa_scene_resources *resources, qa_game_family family,
                              qa_scene_image **out, qa_error *error)
 {
     static const char q1[8][9] = {"01100000", "11110000", "11110000", "01100000",
                                  "00000000", "00000000", "00000000", "00000000"};
     static const char q2[8][9] = {"00000000", "00110000", "01111000", "01111000",
                                  "00110000", "00000000", "00000000", "00000000"};
-    if (!resources || !out || (family != QA_SCENE_Q1 && family != QA_SCENE_Q2)) {
+    if (!resources || !out || (family != QA_GAME_Q1 && family != QA_GAME_Q2)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed particle image requires Q1 or Q2");
         return false;
     }
     uint8_t pixels[8 * 8 * 4];
-    const char (*pattern)[9] = family == QA_SCENE_Q1 ? q1 : q2;
+    const char (*pattern)[9] = family == QA_GAME_Q1 ? q1 : q2;
     for (size_t y = 0; y < 8; ++y) for (size_t x = 0; x < 8; ++x) {
         size_t offset = (y * 8 + x) * 4;
         pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = 255;
         pixels[offset + 3] = pattern[x][y] == '1' ? 255 : 0;
     }
     qa_scene_image_level level = {8, 8, pixels, sizeof(pixels)};
-    return qa_scene_image_create(resources, family == QA_SCENE_Q1 ? "*q1-particle" : "*q2-particle",
+    return qa_scene_image_create(resources, family == QA_GAME_Q1 ? "*q1-particle" : "*q2-particle",
                                  QA_SCENE_RGBA8, &level, 1, QA_SCENE_CLAMP, QA_SCENE_LINEAR,
                                  (qa_scene_vec4){0, 0, 0, 0}, out, error);
 }
 
-bool qa_scene_flags_cast_shadow(qa_scene_family family, uint32_t flags, float alpha,
+bool qa_scene_flags_cast_shadow(qa_game_family family, uint32_t flags, float alpha,
                                 bool view_model, bool sprite)
 {
     if (view_model || sprite) return false;
-    if (family == QA_SCENE_Q2) return (flags & (4u | 16u | 32u | 128u | 8192u | 0x00200000u)) == 0;
-    if (family == QA_SCENE_Q3 && (flags & (4u | 8u | 64u))) return false;
+    if (family == QA_GAME_Q2) return (flags & (4u | 16u | 32u | 128u | 8192u | 0x00200000u)) == 0;
+    if (family == QA_GAME_Q3 && (flags & (4u | 8u | 64u))) return false;
     return alpha >= 1;
 }

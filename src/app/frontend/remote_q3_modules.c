@@ -458,13 +458,13 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Module music lost its actual retained engine player");
     lease->music_attached = attached_player != NULL;
     bool retained_player = lease->music != NULL;
-    if (!lease->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_AUDIO_Q3, true, &lease->music, error)) return false;
+    if (!lease->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_GAME_Q3, true, &lease->music, error)) return false;
     frontend_music_origin origin = music_origin(lease);
     if (retained_player && !frontend_music_sources_explicit_selected(f->music_sources, &origin)) {
         if (attached_player || !qa_audio_music_idle(lease->music))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Unselected module soundtrack retains an actual engine bus");
         qa_audio_music *fresh = NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_AUDIO_Q3, true, &fresh, error)) return false;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_GAME_Q3, true, &fresh, error)) return false;
         qa_audio_music_destroy(lease->music); lease->music = fresh;
         free(lease->music_intro); free(lease->music_loop); lease->music_intro = lease->music_loop = NULL;
         lease->music_looping = false; origin = music_origin(lease);
@@ -493,12 +493,12 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
     memcpy(lease->music_intro, intro_name, a + 1); memcpy(lease->music_loop, requested_loop, b + 1);
     lease->music_looping = true;
     qa_audio_stream *intro = NULL, *loop = NULL;
-    if (!qa_audio_bank_music_cue(sounds(lease->owner), intro_name, QA_AUDIO_Q3, NULL, NULL, &intro, error)) return false;
+    if (!qa_audio_bank_music_cue(sounds(lease->owner), intro_name, QA_GAME_Q3, NULL, NULL, &intro, error)) return false;
     if (!intro) return frontend_music_sources_explicit(f->music_sources, &origin,
         intro_name, requested_loop, lease->music_looping, error);
     loop = intro;
     if (loop_name && *loop_name && strcmp(loop_name, intro_name) &&
-        !qa_audio_bank_music_cue(sounds(lease->owner), loop_name, QA_AUDIO_Q3, NULL, NULL, &loop, error)) {
+        !qa_audio_bank_music_cue(sounds(lease->owner), loop_name, QA_GAME_Q3, NULL, NULL, &loop, error)) {
         qa_audio_stream_close(intro); return false;
     }
     lease->music_looping = loop != NULL;
@@ -565,7 +565,7 @@ static bool prepare_view(void *context, const qa_q3_refdef *definition, qa_q3_sc
     remote_module_lease *lease = context;
     if (!render_current(lease) || definition != lease->render_definition || !options)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module view lost its actual entered RenderScene");
-    options->world_family = QA_SCENE_Q3;
+    options->world_family = QA_GAME_Q3;
     if (lease->owner->kind==REMOTE_MODULE_DECODED) {
         const frontend_remote_q3_resources *resources=&lease->owner->basis.decoded.view;
         options->world.scratch=resources->world_scratch.view;

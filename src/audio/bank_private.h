@@ -9,7 +9,7 @@ struct qa_audio_asset {
     qa_vfs *files;
     uint64_t resource_id;
     qa_mount_id mount;
-    qa_audio_family family;
+    qa_game_family family;
     qa_audio_wav_policy policy;
     char name[];
 };

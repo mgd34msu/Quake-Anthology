@@ -28,7 +28,7 @@ bool frontend_equipment_icon_key(const char *path, const char *lump, char *out,
     }
     return true;
 }
-bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa_vfs *files,
+bool frontend_equipment_icon_load(qa_bytes declaration,qa_game_family family,qa_vfs *files,
     qa_scene_resources *images,qa_material_library *library,const qa_material **out,
     qa_resource **source,qa_error *error)
 {
@@ -52,7 +52,7 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
         .usage=QA_IMAGE_USAGE_PICTURE,.transparent=true,.transparent_index=255};
     const qa_material *material=NULL;qa_scene_image *image=NULL;qa_resource *resource=NULL;
     if(okay&&shader)okay=qa_material_register_kind(library,name,&options,QA_MATERIAL_PICTURE,&material,error);
-    else if(okay&&family!=QA_SCENE_Q1) {
+    else if(okay&&family!=QA_GAME_Q1) {
         okay=qa_scene_image_load(images,name,&options,&image,error);
         if(okay)okay=qa_material_register_generated_picture(library,name,image,&material,error);
     } else if(okay) {
@@ -67,7 +67,7 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_scene_family family,qa
             if(okay&&!found){qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Declared item WAD picture is absent");okay=false;}
         }
         qa_image indexed={0},rgba={0};qa_bytes palette={0};
-        if(okay)okay=qa_image_decode_qpic(bytes,&indexed,error)&&qa_scene_resources_palette(images,QA_SCENE_Q1,&palette,error);
+        if(okay)okay=qa_image_decode_qpic(bytes,&indexed,error)&&qa_scene_resources_palette(images,QA_GAME_Q1,&palette,error);
         qa_indexed_level level={indexed.width,indexed.height,indexed.indices};
         qa_palette_options expand={.transparent_index=255,.fullbright_first=-1,.fullbright_last=-1,.layer=QA_PALETTE_COMBINED};
         if(okay)okay=qa_image_expand_indexed(&level,palette,&expand,&rgba,error);

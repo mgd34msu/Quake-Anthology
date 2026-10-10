@@ -42,14 +42,14 @@ typedef enum qa_audio_music_selection_kind {
 } qa_audio_music_selection_kind;
 typedef struct qa_audio_music_state {
     uint32_t output_rate;
-    qa_audio_family family;
+    qa_game_family family;
     uint64_t request, completions;
     unsigned cd_track;
     float target_volume;
     bool source_volume, enabled, paused, playing;
 } qa_audio_music_state;
 typedef struct qa_audio_music_source_profile {
-    qa_audio_family family;
+    qa_game_family family;
     bool source_volume;
 } qa_audio_music_source_profile;
 bool qa_audio_music_state_read(const qa_audio_music *, qa_audio_music_state *);

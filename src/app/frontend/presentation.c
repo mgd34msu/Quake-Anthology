@@ -499,7 +499,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation):NULL;
             if (okay && product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2))
                 okay=frontend_source_companion_legacy_prepare(frontend,i,actor,frontend->scene_world,
-                    product->family==QA_GAME_Q1?QA_SCENE_Q1:QA_SCENE_Q2,&world,&companion,error);
+                    product->family==QA_GAME_Q1?QA_GAME_Q1:QA_GAME_Q2,&world,&companion,error);
             if (okay) okay=frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error);
             if (okay) okay=frontend_source_companion_legacy_submit(companion,&frontend->frame,error);
             frontend_source_companion_legacy_dispose(&companion);

@@ -169,7 +169,7 @@ static bool player_blend_read(frontend_unified_render *r,qa_error *e)
 }
 static bool model_beam_read(unified_render_model *m, qa_error *e)
 {
-    m->input.model_beam = m->input.family == QA_SCENE_Q2 &&
+    m->input.model_beam = m->input.family == QA_GAME_Q2 &&
         qa_q2_model_beam(m->product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
             m->input.flags, m->media.scene != NULL);
     m->input.beam_segment_length = (float)m->input.frame;
@@ -183,7 +183,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
 {
     m->source=source;
     m->flat_beam=source->family==QA_GAME_Q2 && (source->render_flags&128u) && source->path && !*source->path;
-    qa_scene_family kind=source->family==QA_GAME_Q1?QA_SCENE_Q1:source->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+    qa_game_family kind=source->family==QA_GAME_Q1?QA_GAME_Q1:source->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
         frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
     m->origin=source->origin; m->angles=source->angles; m->scale=source->scale; m->visible=source->visible; m->effects=source->effects; m->q1_effects=source->q1_effects;
@@ -388,7 +388,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
     bool reflected=qa_scene_world_q1_mirror_scope(frontend_unified_media_world(r->media),world,frame);
     for (size_t i=0;okay && i<r->model_count;++i) {
         unified_render_model *m=r->models+i;
-        float scale=m->input.family==QA_SCENE_Q2 && m->scale==0?1:m->scale;
+        float scale=m->input.family==QA_GAME_Q2 && m->scale==0?1:m->scale;
         const qa_unified_frame *received=qa_unified_document_frame(r->frame);
         bool native_hidden=false;
         if (m->native_held_weapon && received->components)
@@ -422,7 +422,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
         if (predicting && qa_actor_id_equal(m->actor,player)) {
             position=qa_vec_add(position,predicted->origin_shift); previous=qa_vec_add(previous,predicted->origin_shift);
         }
-        if (input.view_model && input.family==QA_SCENE_Q1) { position.z+=2; previous.z+=2; }
+        if (input.view_model && input.family==QA_GAME_Q1) { position.z+=2; previous.z+=2; }
         qa_vec3 angles = input.view_model ? m->angles : frontend_legacy_entity_angles(input.family,
             m->product->edition, m->media.model, m->effects, m->angles, world->seconds, world->milliseconds);
         qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; frontend_camera_axes(angles,axes);
@@ -739,7 +739,7 @@ bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_
     *out=(frontend_unified_render_equipment){.actor=actor,.provider=selected->equipment_provider,
         .instance=selected->equipment_instance,.content=selected->product->identity,.path=selected->path,
         .slot=selected->equipment_slot,.visible=selected->visible && selected->input.color.w>0 &&
-            (selected->scale!=0 || selected->input.family==QA_SCENE_Q2),
+            (selected->scale!=0 || selected->input.family==QA_GAME_Q2),
         .binding=selected->media,.input=&selected->input,.source_frame=r->replica->frame_number,
         .scene_sequence=r->frontend->frame.sequence};
     *present=true; return true;

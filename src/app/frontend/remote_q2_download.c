@@ -242,7 +242,7 @@ static bool path_join(frontend_remote_q2 *row, const char *prefix, const char *n
 }
 typedef struct material_download {
     frontend_remote_q2 *row;
-    qa_scene_family family;
+    qa_game_family family;
     bool waiting;
 } material_download;
 static bool material_dependency(void *context, const qa_q2_material_dependency *dependency, qa_error *error)
@@ -257,8 +257,8 @@ static bool material_dependency(void *context, const qa_q2_material_dependency *
     static const char *q1[] = {".tga", ".lmp", ".jpg", ".png", ".jpeg", ".pcx", ".bmp", ".gif"};
     static const char *q2[] = {".tga", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".pcx"};
     static const char *q3[] = {".tga", ".jpg", ".png", ".jpeg", ".pcx", ".bmp", ".gif"};
-    const char *const *extensions = state->family == QA_SCENE_Q1 ? q1 : state->family == QA_SCENE_Q2 ? q2 : q3;
-    size_t count = state->family == QA_SCENE_Q1 ? 8 : 7;
+    const char *const *extensions = state->family == QA_GAME_Q1 ? q1 : state->family == QA_GAME_Q2 ? q2 : q3;
+    size_t count = state->family == QA_GAME_Q1 ? 8 : 7;
     for (size_t i = 0; i < 6 && !state->waiting; ++i) {
         bool present = false;
         for (size_t j = 0; j < count && !present; ++j) {

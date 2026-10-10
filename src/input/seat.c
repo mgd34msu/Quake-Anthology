@@ -811,9 +811,9 @@ bool qa_input_seat_sample(qa_input_seat *s, double now, double frame, qa_seat_in
     if (!qa_gamepad_sample_read(&s->gamepad, &s->options.gamepad, frame, &result.gamepad, error))
         return false;
     qa_ruleset_id dialect = s->options.context.dialect;
-    qa_button_timing timing = dialect <= QA_RULESET_QUAKEWORLD   ? QA_BUTTON_Q1
-                              : dialect == QA_RULESET_Q3 ? QA_BUTTON_Q3
-                                                         : QA_BUTTON_Q2;
+    const qa_ruleset_descriptor *rules = qa_ruleset_read(dialect);
+    qa_game_family timing = rules ? rules->family
+        : dialect <= QA_RULESET_QUAKEWORLD ? QA_GAME_Q1 : QA_GAME_Q2;
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i) {
         result.buttons[i].active = s->buttons[i].count != 0;
         result.buttons[i].pressed = s->buttons[i].pressed;

@@ -52,7 +52,7 @@ bool frontend_menu_art_q1_source(frontend_seat *seat,qa_scene_resources **out,qa
 bool frontend_menu_art_q1_help_page(qa_scene_resources *images,unsigned page,const qa_scene_image **out,qa_error *error)
 {
     char path[20];snprintf(path,sizeof(path),"gfx/help%u.lmp",page);
-    qa_scene_image_options options={.family=QA_SCENE_Q1,.usage=QA_IMAGE_USAGE_PICTURE,
+    qa_scene_image_options options={.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_PICTURE,
         .wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_NEAREST,.transparent_index=-1};
     qa_scene_image *image=NULL;
     if (!qa_scene_image_load_exact(images,path,&options,&image,error))return false;

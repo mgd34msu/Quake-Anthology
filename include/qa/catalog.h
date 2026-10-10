@@ -36,6 +36,7 @@ typedef struct qa_product {
     qa_program_kind program_kind;
     qa_product_id program_product;
 } qa_product;
+qa_ruleset_id qa_product_ruleset(const qa_product *, qa_game_family fallback);
 typedef struct qa_catalog_mount {
     /* Catalog identity; scoped VFS views have their own mount identities. */
     qa_mount_id id;

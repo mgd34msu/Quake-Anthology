@@ -169,7 +169,7 @@ static bool picture(frontend_native_q2 *source, const char *name,
     int length = name[0] == '/' || name[0] == '\\' ? snprintf(path, sizeof(path), "%s", name + 1) :
         snprintf(path, sizeof(path), "pics/%s", name);
     if (length < 0 || (size_t)length >= sizeof(path)) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 picture path exceeds source limit");
-    qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+    qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
     qa_scene_image *image = NULL;
     qa_error load_error = {0};
@@ -196,7 +196,7 @@ static bool source_font(frontend_native_q2 *source, qa_error *error)
     if (!source_files(source, error)) return false;
     if (!source->fonts) source->fonts = qa_font_library_create(source->mounts, source->images, error);
     if (!source->fonts) return false;
-    qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+    qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
     qa_scene_image *image = NULL;
     if (!qa_scene_image_load(source->images, "pics/conchars.pcx", &options, &image, error)) return false;
@@ -458,12 +458,12 @@ static bool platform_sound_body(void *context, const qa_native_host_sound *event
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound lost its captured full recipient identities");
     if (!source_files(source, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(source->sounds, event->name, QA_AUDIO_Q2, &asset, error)) return false;
+    if (!qa_audio_bank_register(source->sounds, event->name, QA_GAME_Q2, &asset, error)) return false;
     if (!asset) return true;
     uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
     if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR) { qa_audio_asset_release(asset); return false; }
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = event->name, .family = QA_AUDIO_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = event->name, .family = QA_GAME_Q2,
         .actor = actor, .owner = source->identity,
         .origin_kind = event->positioned ? QA_AUDIO_FIXED : QA_AUDIO_ACTOR,
         .origin_actor = actor, .origin = event->origin, .channel = event->channel,
@@ -551,7 +551,7 @@ static bool platform_resource_precache(void *context, qa_native_host_resource_ki
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 image precache path exceeds Source limit");
     qa_scene_image *image = NULL; qa_scene_image_load_receipt receipt = {0}; qa_error local = {0};
     if (ok) {
-        qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+        qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
             .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
         bool decoded = qa_scene_image_load_observed(source->images, path, &options, &image, &receipt, &local);
         if (!decoded && (local.code == QA_ERROR_MEMORY || (!receipt.source && local.code != QA_ERROR_NOT_FOUND))) {

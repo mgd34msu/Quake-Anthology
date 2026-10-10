@@ -148,7 +148,7 @@ static void static_models_free(frontend_static_model **models)
 struct frontend_visual_owner {
     frontend_visual_owner *next;
     qa_actor_owner owner;
-    qa_scene_family family;
+    qa_game_family family;
     qa_vfs *mounts;
     qa_scene_resources *images;
     qa_material_library *materials;
@@ -310,7 +310,7 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual admission is held by the actual resource transaction");
     qa_vfs *files = qa_application_provider_files(frontend->application,view->provider);
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "appearance owner has no active content view");
-    qa_scene_family family = view->family == QA_GAME_Q2 ? QA_SCENE_Q2 : view->family == QA_GAME_Q3 ? QA_SCENE_Q3 : QA_SCENE_Q1;
+    qa_game_family family = view->family == QA_GAME_Q2 ? QA_GAME_Q2 : view->family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1;
     for (frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next)
         if (owner->owner == view->provider && owner->family == family && qa_vfs_lookup_equal(owner->mounts,files)) {
             if (owner->construction_failed)
@@ -561,7 +561,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, cons
     memcpy(model->path, path, length + 1);
     qa_scene_image_options images = {.family = owner->family, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .usage = QA_IMAGE_USAGE_SKIN,
-        .transparent_index = owner->family == QA_SCENE_Q1 ? 255 : -1};
+        .transparent_index = owner->family == QA_GAME_Q1 ? 255 : -1};
     bool ok; qa_vfs_acquisition opening = {0};
     if (source) {
         ok = qa_resource_pool_find(qa_vfs_resources(owner->mounts), qa_resource_id(source)) == source;
@@ -763,12 +763,12 @@ bool frontend_visual_policy_abort(frontend_visual_policy **owner, qa_error *erro
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual cache abort requires its actual unpublished preparation");
     visual_policy_dispose(*owner); *owner = NULL; return true;
 }
-static bool model_opening_initialize(qa_frontend *f, qa_scene_family family, qa_vfs *files,
+static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
     const qa_resource *resource, const char *path, int64_t rank,
     const qa_model *native, qa_scene_model *root, qa_error *error)
 {
     if (!f || !f->application || f->capture || f->resource_inventory || f->source_restoring ||
-        !resource || !path || !*path || !files || (unsigned)family > QA_SCENE_Q3 || rank < -1 ||
+        !resource || !path || !*path || !files || (unsigned)family > QA_GAME_Q3 || rank < -1 ||
         !native || !root || qa_scene_model_source(root) != native ||
         qa_scene_resources_files(qa_scene_model_resource_owner(root)) != files ||
         qa_material_library_resource_owner(qa_scene_model_material_owner(root)) != qa_scene_model_resource_owner(root) ||
@@ -804,7 +804,7 @@ bool frontend_visual_registered_model_initialize(qa_frontend *f, const qa_q3_mod
     return model_opening_initialize(f, opening->provider.family, opening->provider.mounts,
         opening->resource, opening->receipt->path, opening->rank, native, root, error);
 }
-bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_scene_family family, qa_vfs *files,
+bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
     const qa_resource *resource, const qa_vfs_acquisition *receipt, const qa_model *native,
     qa_scene_model *root, qa_error *error)
 {
@@ -815,7 +815,7 @@ bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_scene_family fa
     if (!opening_rank(files, receipt, &rank, error)) return false;
     return model_opening_initialize(f, family, files, resource, receipt->path, rank, native, root, error);
 }
-static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_scene_family family,
+static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_game_family family,
     qa_vfs *files, const qa_resource *resource, const qa_vfs_acquisition *opening,
     const qa_model *native, const qa_scene_model *root,
     const frontend_visual_policy_binding *bindings, size_t count, bool *covered, qa_error *error)
@@ -924,7 +924,7 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
         for (size_t i = 0; ok && i < frontend_remote_q1_model_count(owner); ++i) {
             frontend_remote_q1_model_view model;
             ok = frontend_remote_q1_model_at(owner, i, &model, error);
-            if (ok && !model.world) ok = native_cache_policy_prepare(policy, QA_SCENE_Q1, view.content.mounts, model.resource,
+            if (ok && !model.world) ok = native_cache_policy_prepare(policy, QA_GAME_Q1, view.content.mounts, model.resource,
                 model.opening, model.model, model.scene, bindings, count, covered, error);
         }
     }
@@ -935,7 +935,7 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
         for (size_t i = 0; ok && i < frontend_remote_q2_model_count(owner); ++i) {
             frontend_remote_q2_model_view model;
             ok = frontend_remote_q2_model_at(owner, i, &model, error) &&
-                native_cache_policy_prepare(policy, QA_SCENE_Q2, view.content.mounts, model.resource,
+                native_cache_policy_prepare(policy, QA_GAME_Q2, view.content.mounts, model.resource,
                     model.opening, model.model, model.scene, bindings, count, covered, error);
         }
     }
@@ -958,8 +958,8 @@ static bool live_owner(qa_frontend *frontend, qa_actor_owner provider,
     qa_application_visual_view request = {.provider = provider, .family = family};
     frontend_visual_owner *owner;
     if (!visual_owner(frontend, &request, &owner, error)) return false;
-    qa_scene_family expected = family == QA_GAME_Q1 ? QA_SCENE_Q1
-        : family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+    qa_game_family expected = family == QA_GAME_Q1 ? QA_GAME_Q1
+        : family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     if (owner->family != expected)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission differs from its appearance owner");
     *out = owner; return true;
@@ -983,8 +983,8 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
         !qa_application_provider_instance(frontend->application, provider))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read requires its actual selected provider");
     const qa_vfs *files = qa_application_provider_files(frontend->application, provider);
-    qa_scene_family expected = family == QA_GAME_Q1 ? QA_SCENE_Q1 :
-        family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+    qa_game_family expected = family == QA_GAME_Q1 ? QA_GAME_Q1 :
+        family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     for (const frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next) {
         if (owner->owner != provider || owner->family != expected || !files ||
             !qa_vfs_lookup_equal(files, owner->mounts)) continue;
@@ -1032,8 +1032,8 @@ bool frontend_visual_model_admission(void *context, qa_application *application,
     const qa_scene_image_options *images = qa_scene_model_image_options(model->scene);
     if (!images) return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission lost its real scene constructor");
     qa_application_model_admission result = {.images = *images};
-    qa_scene_family family = model->model->format == QA_MODEL_MDL || model->model->format == QA_MODEL_SPR ?
-        QA_SCENE_Q1 : owner->family;
+    qa_game_family family = model->model->format == QA_MODEL_MDL || model->model->format == QA_MODEL_SPR ?
+        QA_GAME_Q1 : owner->family;
     if (images->palette_rgb.size) {
         if (!qa_scene_resources_palette_read(owner->images, family, &result.palette_rgb) ||
             !qa_scene_resources_palette_source_read(owner->images, family, &result.palette_source) ||
@@ -1063,7 +1063,7 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
         if (!frontend_particle_q2_client_time(frontend, view->provider, &seconds, &found, error)) return false;
         if (found) milliseconds = llround(seconds * 1000);
     }
-    *angles = frontend_legacy_entity_angles(view->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1,
+    *angles = frontend_legacy_entity_angles(view->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q1,
         product->edition, model, view->effects, *angles, seconds, milliseconds);
     return true;
 }
@@ -1104,7 +1104,7 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         return frontend_fail(error, QA_ERROR_FORMAT, "Q2 flare requires its genuine image receipt");
     if (world->legacy_policy.present && !world->legacy_policy.flares) return true;
     if (!visual_owner(frontend, view, &owner, error)) return false;
-    qa_scene_image_options sampling = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+    qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
     const char *path = view->q2_flare.image;
     qa_scene_image *image = NULL;
@@ -1205,7 +1205,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     uint32_t model_frame=q2_client_view_ready ? q2_client_view.gun_frame : weapon.frame>=0 ? (uint32_t)weapon.frame : 0;
     qa_scene_model_input input = {.view = world->view, .transform = placement,
         .previous_origin = origin, .color = {1, 1, 1, 1},
-        .family = weapon.family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2,
+        .family = weapon.family == QA_GAME_Q1 ? QA_GAME_Q1 : QA_GAME_Q2,
         .view_model = true, .flags = weapon.family == QA_GAME_Q2 ? 1 | 4 | 16 : 0,
         .frame=model_frame,.old_frame=q2_client_view_ready ? old_gun_frame : model_frame,
         .back_lerp=q2_back_lerp,
@@ -1338,7 +1338,7 @@ static bool static_source_submit(qa_frontend *frontend, qa_actor_owner provider,
         }
         qa_vec3 origin = qa_v3(row->baseline.origin[0], row->baseline.origin[1], row->baseline.origin[2]);
         qa_scene_model_input input = {.view = world->view, .transform = row->transform, .previous_origin = origin,
-            .color = {1, 1, 1, 1}, .family = QA_SCENE_Q1, .frame = row->baseline.frame,
+            .color = {1, 1, 1, 1}, .family = QA_GAME_Q1, .frame = row->baseline.frame,
             .old_frame = row->baseline.frame, .skin = row->baseline.skin,
             .identity_light = world->identity_light, .seconds = world->seconds,
             .ambient = {1, 1, 1}, .fog = world->fog, .source_path = row->model->path,

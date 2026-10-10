@@ -118,7 +118,7 @@ static bool viewer(void *context, qa_actor_id *out, qa_error *error)
 bool remote_q2_sound_asset(frontend_remote_q2 *row, const char *path, uint32_t entity,
     qa_audio_asset **out, qa_error *error)
 {
-    if (path[0] != '*') return qa_audio_bank_register(row->sounds, path, QA_AUDIO_Q2, out, error);
+    if (path[0] != '*') return qa_audio_bank_register(row->sounds, path, QA_GAME_Q2, out, error);
     const char *info = entity && entity <= 256 ?
         frontend_remote_q2_config(row, (uint16_t)(row->layout.players + entity - 1)) : "";
     const char *appearance = strchr(info, '\\');
@@ -145,7 +145,7 @@ bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_
     if (!remote_q2_sound_asset(row, path, (uint32_t)actor_number, &asset, error)) return false;
     if (!asset) return true;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = path, .family = QA_AUDIO_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = path, .family = QA_GAME_Q2,
         .actor = actor_number, .owner = row->identity, .audience = row->options.domain.physical_seat,
         .origin_kind = QA_AUDIO_FIXED, .origin = origin, .channel = channel, .volume = volume,
         .attenuation = attenuation, .delay_seconds = delay, .server_milliseconds = time, .has_server_time = true};

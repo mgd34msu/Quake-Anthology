@@ -1,6 +1,7 @@
 #ifndef QA_AUDIO_H
 #define QA_AUDIO_H
 
+#include "qa/ruleset.h"
 #include "qa/common.h"
 #include "qa/math.h"
 #include "qa/vfs.h"
@@ -12,7 +13,6 @@
 #define QA_AUDIO_NO_OWNER UINT64_MAX
 #define QA_AUDIO_RAW_CAPACITY 16384
 
-typedef enum qa_audio_family { QA_AUDIO_Q1, QA_AUDIO_Q2, QA_AUDIO_Q3 } qa_audio_family;
 typedef enum qa_audio_wav_policy { QA_WAV_FORMAT, QA_WAV_QUAKE, QA_WAV_Q3 } qa_audio_wav_policy;
 /* PCM storage is immutable after publication and shared by atomic references.
  * Voices may share a retained prepared resource; streams retain their source.
@@ -48,7 +48,7 @@ bool qa_audio_wavelet_encode(const int16_t *samples, size_t count, qa_buffer *ou
 int16_t qa_audio_mulaw_decode(uint8_t byte);
 uint8_t qa_audio_mulaw_encode(int16_t sample);
 bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rate,
-                              qa_audio_family family, qa_audio_sample **out, qa_error *error);
+                              qa_game_family family, qa_audio_sample **out, qa_error *error);
 
 typedef struct qa_audio_stream qa_audio_stream;
 /* Open from bytes borrows the input until close; callers retain mount
@@ -90,13 +90,13 @@ void qa_audio_bank_destroy(qa_audio_bank *bank);
 void qa_audio_bank_begin(qa_audio_bank *bank);
 void qa_audio_bank_end(qa_audio_bank *bank);
 void qa_audio_bank_clear(qa_audio_bank *bank);
-bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_audio_family family,
+bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_family family,
                             qa_audio_asset **out, qa_error *error);
 bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *model,
                          qa_audio_asset **out, qa_error *error);
 /* Borrowed cached entry, or NULL; acquiring ownership requires retain. */
 qa_audio_asset *qa_audio_bank_get(const qa_audio_bank *bank, uint64_t resource_id,
-                                  qa_audio_family family);
+                                  qa_game_family family);
 qa_audio_asset *qa_audio_asset_retain(qa_audio_asset *asset);
 void qa_audio_asset_release(qa_audio_asset *asset);
 qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset);
@@ -105,7 +105,7 @@ qa_resource *qa_audio_asset_resource(const qa_audio_asset *asset);
 const qa_vfs *qa_audio_asset_files(const qa_audio_asset *asset);
 qa_mount_id qa_audio_asset_mount(const qa_audio_asset *asset);
 const char *qa_audio_asset_name(const qa_audio_asset *asset);
-qa_audio_family qa_audio_asset_family(const qa_audio_asset *asset);
+qa_game_family qa_audio_asset_family(const qa_audio_asset *asset);
 /* accept checks the selected resource's mount after resolution, never changing
  * search precedence. NULL accepts all. Returned stream owns its resource lease.
  */
@@ -114,7 +114,7 @@ bool qa_audio_bank_music(qa_audio_bank *bank, const char *path, qa_vfs_accept_mo
 /* Authored cues normalize separators and default to music/. Explicit WAV/OGG
  * extensions select one path; otherwise Q3 tries WAV then OGG, Q1/Q2 reverse.
  * A present invalid source fails without trying another format. */
-bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_audio_family family,
+bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_game_family family,
                              qa_vfs_accept_mount accept, void *context,
                              qa_audio_stream **out, qa_error *error);
 
@@ -144,7 +144,7 @@ size_t qa_audio_raw_mix(qa_audio_raw_stream *stream, float *stereo, size_t frame
 typedef struct qa_audio_music qa_audio_music;
 typedef bool (*qa_audio_open_track_fn)(void *user, const char *path, qa_audio_stream **out,
                                        qa_error *error);
-bool qa_audio_music_create(uint32_t rate, qa_audio_family family, bool source_volume,
+bool qa_audio_music_create(uint32_t rate, qa_game_family family, bool source_volume,
                            qa_audio_music **out, qa_error *error);
 void qa_audio_music_destroy(qa_audio_music *music);
 /* Takes ownership of intro and loop; intro==loop is valid. */
@@ -159,7 +159,7 @@ bool qa_audio_music_playing(const qa_audio_music *music);
 uint32_t qa_audio_music_rate(const qa_audio_music *music);
 /* Pure format qualification; the serialized caller retains the music holder. */
 bool qa_audio_music_profile_is(const qa_audio_music *, uint32_t rate,
-                              qa_audio_family family, bool source_volume);
+                              qa_game_family family, bool source_volume);
 uint64_t qa_audio_music_completions(const qa_audio_music *music);
 bool qa_audio_music_remap(qa_audio_music *music, const uint8_t *tracks, size_t count,
                           qa_error *error);
@@ -185,7 +185,7 @@ typedef struct qa_audio_play {
     qa_audio_asset *asset; /* Optional retained provenance; its PCM must match sample. */
     uint64_t resource_id;  /* Optional shared resource identity for observers. */
     const char *name;      /* Optional diagnostic name, borrowed only during play. */
-    qa_audio_family family;
+    qa_game_family family;
     uint64_t actor, owner; /* owner isolates providers; NO_OWNER is shared/unowned. */
     uint32_t audience;     /* QA_AUDIO_WORLD or one listener seat. */
     qa_audio_origin_kind origin_kind;
@@ -279,7 +279,7 @@ void qa_audio_mixer_stop_loop(qa_audio_mixer *mixer, uint64_t actor, uint64_t ow
 void qa_audio_mixer_clear_seat_loops(qa_audio_mixer *mixer, uint64_t owner, bool all);
 void qa_audio_mixer_stop_seat_loop(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner);
 void qa_audio_mixer_stop_channel(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
-                                 qa_audio_family family, int32_t channel);
+                                 qa_game_family family, int32_t channel);
 void qa_audio_mixer_stop_actor(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner);
 void qa_audio_mixer_stop_owner(qa_audio_mixer *mixer, uint64_t owner);
 void qa_audio_mixer_stop_all(qa_audio_mixer *mixer);
@@ -472,7 +472,7 @@ bool qa_audio_engine_q3_submit(qa_audio_engine *, const qa_audio_q3_operation *,
 bool qa_audio_engine_q3_publish(qa_audio_engine *, qa_error *);
 void qa_audio_engine_clear_loops(qa_audio_engine *engine, bool all);
 void qa_audio_engine_stop_channel(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
-                                  qa_audio_family family, int32_t channel);
+                                  qa_game_family family, int32_t channel);
 bool qa_audio_engine_stop_actor(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
                                 qa_error *error);
 bool qa_audio_engine_stop_loop(qa_audio_engine *engine, uint64_t actor, uint64_t owner,

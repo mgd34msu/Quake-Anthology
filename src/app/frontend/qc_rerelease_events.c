@@ -120,7 +120,7 @@ static bool event_body(qa_frontend *f,const qa_builtin_event *event,qa_error *er
     }
     qa_scene_resources *images; qa_audio_bank *sounds; qa_bytes palette;
     if (!frontend_event_qc_resources(f,event->provider,&images,&sounds,error) ||
-        !qa_scene_resources_palette(images,QA_SCENE_Q1,&palette,error)) return false;
+        !qa_scene_resources_palette(images,QA_GAME_Q1,&palette,error)) return false;
     (void)sounds;
     unsigned color=(unsigned)values[0]*3;
     if (palette.size<color+3) return frontend_fail(error,QA_ERROR_FORMAT,"QC debug palette lacks its actual color");

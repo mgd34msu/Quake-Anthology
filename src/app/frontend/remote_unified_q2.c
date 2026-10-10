@@ -361,9 +361,9 @@ static bool model(void *ctx,const char *path,bool acquire,qa_scene_model **out,q
     if (!m->path) { free(m); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 model path"); }
     strcpy(m->path,path);
     frontend_unified_model actual;
-    qa_scene_image_options options={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
+    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
-    bool okay=frontend_unified_media_model(b->owner->media,b->content,path,QA_SCENE_Q2,&options,&actual,e);
+    bool okay=frontend_unified_media_model(b->owner->media,b->content,path,QA_GAME_Q2,&options,&actual,e);
     if (!okay) { free(m->path); free(m); return false; }
     m->scene=actual.scene; m->next=b->models; b->models=m; *out=m->scene; return true;
 }
@@ -389,7 +389,7 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
             p.scale=visual->model->payload.value.model.scale;
         }
         if (p.scale == 0) p.scale=1;
-        qa_scene_family family=row->family==QA_GAME_Q1?QA_SCENE_Q1:row->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+        qa_game_family family=row->family==QA_GAME_Q1?QA_GAME_Q1:row->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
         qa_scene_image_options options={.family=family,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
             .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
         frontend_unified_model m;
@@ -472,7 +472,7 @@ static bool hit(void *ctx,int32_t damage,qa_error *e)
     if (damage<=0 || !current(o,e)) return false;
     if (o->marker_set && o->marker_frame==o->frame_number) return true;
     if (!o->marker_image) {
-        qa_scene_image_options opts={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
+        qa_scene_image_options opts={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
             .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
         qa_error issue={0}; qa_scene_image *image=NULL;
         if (!qa_scene_image_load(b->images,"pics/marker.pcx",&opts,&image,&issue) && issue.code!=QA_ERROR_NOT_FOUND) {
@@ -777,7 +777,7 @@ static const qa_scene_image *native_picture(void *context,const char *name,qa_er
     char *path=malloc(length+11); q2_native_picture *p=calloc(1,sizeof(*p));
     if (!path || !p) { free(path); free(p); frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 picture"); return NULL; }
     if (direct) strcpy(path,name+(name[0]=='/' || name[0]=='\\')); else snprintf(path,length+11,"pics/%s.pcx",name);
-    qa_scene_image_options options={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
+    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
         .wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.transparent=true,.transparent_index=255};
     if (direct && name[0]!='/' && name[0]!='\\') {
         options.usage=!strncmp(name,"sprites/",8)?QA_IMAGE_USAGE_SPRITE:QA_IMAGE_USAGE_SKIN;
@@ -1155,7 +1155,7 @@ static bool sky_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     const char *name=event->resource?event->resource:"";size_t n=strlen(name);
     char *path=okay?malloc(n+7):NULL;if (okay && !path)return false;
     static const char *const suffixes[]={"rt","lf","bk","ft","up","dn"};
-    qa_scene_image_options options={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR,.transparent_index=-1};
+    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR,.transparent_index=-1};
     for (size_t i=0;okay && i<6;++i){snprintf(path,n+7,"env/%s%s",name,suffixes[i]);okay=qa_scene_image_load(b->images,path,&options,images+i,e);
         if (okay && !images[i]){images[i]=(qa_scene_image *)qa_scene_missing(b->images);qa_scene_image_retain(images[i]);}}
     free(path);
@@ -1275,7 +1275,7 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
     case QA_BUILTIN_ITEM:{if (v->code==1)return visual_apply(o,row,e);bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;
-        qa_scene_image *image=NULL;qa_scene_image_options opts={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
+        qa_scene_image *image=NULL;qa_scene_image_options opts={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
             .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
         bool okay=bank(o,row->content,NULL,NULL,0,false,&b,e);
         if (okay && v->resource && *v->resource)okay=qa_scene_image_load_exact(b->images,v->resource,&opts,&image,e);
@@ -1468,7 +1468,7 @@ bool frontend_unified_q2_entity_beam(frontend_unified_q2 *o,const char *content,
     if (!o || o->busy || !current(o,e)) return false;
     q2_bank *b=NULL; qa_bytes palette={0};
     if (!bank(o,content,NULL,NULL,0,false,&b,e) ||
-        !qa_scene_resources_palette(b->images,QA_SCENE_Q2,&palette,e)) return false;
+        !qa_scene_resources_palette(b->images,QA_GAME_Q2,&palette,e)) return false;
     ++o->busy;
     bool okay=frontend_q2_entity_beam(&b->entity_random,palette,qa_scene_white(b->images),
         view,start,end,colors,width,frame,e);
@@ -1478,7 +1478,7 @@ bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *
     qa_scene_model_input *input,qa_error *e)
 {
     if (!o || !input || !content || !path || !current(o,e)) return false;
-    if (input->family!=QA_SCENE_Q2 || input->view_model) return true;
+    if (input->family!=QA_GAME_Q2 || input->view_model) return true;
     q2_visual *v=visual_read(o,a);
     if (!v || !v->content || strcmp(v->content,content)) return true;
     if (!v->visible) { input->color.w=0; return true; }
@@ -1494,7 +1494,7 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const 
     const qa_scene_model_input *input,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || !content || !path || !input || !frame || !current(o,e)) return false;
-    if (input->family!=QA_SCENE_Q2) return true;
+    if (input->family!=QA_GAME_Q2) return true;
     if (input->view_model) {
         qa_actor_id viewer_actor; uint32_t number_id;
         if (!frontend_remote_unified_player(o->replica,&viewer_actor,&number_id) || !qa_actor_id_equal(a,viewer_actor))

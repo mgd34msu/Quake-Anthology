@@ -18,13 +18,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-static qa_scene_image_options image_options(qa_scene_family family, qa_scene_image_usage usage)
+static qa_scene_image_options image_options(qa_game_family family, qa_scene_image_usage usage)
 {
     return (qa_scene_image_options){.family = family, .usage = usage,
         .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap = true, .transparent_index = 255};
 }
-static qa_scene_world_options world_options(qa_scene_family family)
+static qa_scene_world_options world_options(qa_game_family family)
 {
     /* These are the actual generic renderer's authored construction defaults,
      * shared with frontend_scene_sync. Q3's reached ENGINE policy replaces its
@@ -63,8 +63,8 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
             frontend_q3_material_profile_initialize(owner->frontend, row->materials, error);
     if (okay) okay = frontend_unified_material_movies_create(owner, 0, error);
     if (okay) {
-        qa_scene_family family = row->product->family == QA_GAME_Q1 ? QA_SCENE_Q1 :
-            row->product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+        qa_game_family family = row->product->family == QA_GAME_Q1 ? QA_GAME_Q1 :
+            row->product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
         qa_scene_image_options images = image_options(family, QA_IMAGE_USAGE_WALL);
         okay = qa_material_library_load_scripts(row->materials, row->files, &images, error);
     }
@@ -103,7 +103,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char 
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 registry creation overlaps resource inventory");
         qa_q3_presentation_asset_options options = {.provider = {
             .mounts = row->files, .images = row->images, .materials = row->materials,
-            .family = QA_SCENE_Q3}, .sounds = row->sounds, .movies = row->media};
+            .family = QA_GAME_Q3}, .sounds = row->sounds, .movies = row->media};
         if (!qa_q3_presentation_assets_create(&options, &row->q3_assets, error)) return false;
     }
     *out = row->q3_assets; return true;
@@ -131,7 +131,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
     bool okay = product && map && bank(owner, product->identity, &owner->world_bank, error) &&
         qa_bsp_open(qa_resource_bytes(map), &bsp, error) && qa_bsp_validate(&bsp, error);
     if (okay) {
-        qa_scene_family family = bsp.family == QA_BSP_Q1 ? QA_SCENE_Q1 : bsp.family == QA_BSP_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+        qa_game_family family = bsp.family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp.family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
         qa_scene_world_options options = world_options(family);
         for (size_t i = 0; i < qa_executable_recipe_sidecar_count(recipe); ++i) {
             const qa_recipe_sidecar *sidecar = qa_executable_recipe_sidecar(recipe, i);
@@ -145,7 +145,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
                 options.has_external_entities = true;
             }
         }
-        okay = (family != QA_SCENE_Q3 || frontend_q3_world_policy_initialize(frontend, &options, error)) &&
+        okay = (family != QA_GAME_Q3 || frontend_q3_world_policy_initialize(frontend, &options, error)) &&
             qa_scene_world_create(&bsp, owner->world_bank->images, owner->world_bank->materials, &options, &owner->world, error) &&
             qa_scene_world_source_resource_bind(owner->world, map, error) &&
             frontend_world_scratch_create(owner->world,&owner->world_scratch,error);
@@ -169,10 +169,10 @@ static bool same_options(const qa_scene_image_options *a, const qa_scene_image_o
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *model)
 {
     const qa_scene_image_options *options = qa_scene_model_image_options(model);
-    return options && options->family == QA_SCENE_Q3 ? qa_scene_model_material_owner(model) : NULL;
+    return options && options->family == QA_GAME_Q3 ? qa_scene_model_material_owner(model) : NULL;
 }
 bool frontend_unified_media_model(frontend_unified_media *owner, const char *content,
-    const char *path, qa_scene_family family, const qa_scene_image_options *options,
+    const char *path, qa_game_family family, const qa_scene_image_options *options,
     frontend_unified_model *out, qa_error *error)
 {
     if (!owner || owner->importing || owner->busy || !path || !*path || !options || !out || options->family != family ||
@@ -222,7 +222,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
     if (okay && brush) {
         qa_bsp_view bsp; qa_scene_world_options world = world_options(family);
         okay = qa_bsp_open(qa_resource_bytes(row->resource), &bsp, error) && qa_bsp_validate(&bsp, error) &&
-            (family != QA_SCENE_Q3 || frontend_q3_world_policy_initialize(owner->frontend, &world, error)) &&
+            (family != QA_GAME_Q3 || frontend_q3_world_policy_initialize(owner->frontend, &world, error)) &&
             qa_scene_world_create(&bsp, files->images, files->materials, &world, &row->world, error) &&
             qa_scene_world_source_resource_bind(row->world, row->resource, error);
     } else if (okay) okay = qa_model_load(qa_resource_bytes(row->resource), &row->decoded, error) &&

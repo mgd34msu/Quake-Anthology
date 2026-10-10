@@ -20,7 +20,7 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
                              const qa_bsp_texture *source, qa_error *error)
 {
     if (!source->palette_rgb.size && !world->options.images.palette_rgb.size &&
-        !qa_scene_resources_palette(world->resources, QA_SCENE_Q1, &world->options.images.palette_rgb, error)) return false;
+        !qa_scene_resources_palette(world->resources, QA_GAME_Q1, &world->options.images.palette_rgb, error)) return false;
     qa_bytes palette = source->palette_rgb.size ? source->palette_rgb : world->options.images.palette_rgb;
     if (!palette.data || palette.size < 768) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Embedded brush textures require a 256-color palette");
@@ -158,7 +158,7 @@ bool qawl_textures_build(qa_scene_world *world, qa_error *error)
         if (!path) { qa_error_set(error, QA_ERROR_MEMORY, i, "Cannot allocate brush texture name"); return false; }
         snprintf(path, name_size + 10, "textures/%s", texture->name);
         qa_scene_image_options options = world->options.images;
-        options.family = q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
+        options.family = q1 ? QA_GAME_Q1 : QA_GAME_Q2;
         options.usage = QA_IMAGE_USAGE_WALL;
         options.wrap = QA_SCENE_REPEAT;
         options.mipmap = true;
@@ -196,7 +196,7 @@ bool qawl_textures_build(qa_scene_world *world, qa_error *error)
         char *path = malloc(length + 7);
         if (!path) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate sky texture path"); return false; }
         qa_scene_image_options options = world->options.images;
-        options.family = q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
+        options.family = q1 ? QA_GAME_Q1 : QA_GAME_Q2;
         options.usage = QA_IMAGE_USAGE_SKY;
         options.wrap = QA_SCENE_CLAMP; options.mipmap = false; options.transparent = false;
         options.fullbright_only = false; options.transparent_index = -1;

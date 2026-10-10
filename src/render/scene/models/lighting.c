@@ -9,7 +9,7 @@ uint8_t scene_model_normal_index(const float normal[3]) {
 }
 
 bool scene_model_has_shell(const qa_scene_model_input *input) {
-    return input->family == QA_SCENE_Q2 && (input->flags & (1024u | 2048u | 4096u | 65536u | 131072u)) != 0;
+    return input->family == QA_GAME_Q2 && (input->flags & (1024u | 2048u | 4096u | 65536u | 131072u)) != 0;
 }
 
 qa_vec3 scene_model_shell_color(uint32_t flags) {
@@ -24,7 +24,7 @@ qa_vec3 scene_model_shell_color(uint32_t flags) {
 
 qa_vec3 scene_model_alias_light(const qa_scene_model_input *input) {
     qa_vec3 light = input->ambient;
-    if (input->family == QA_SCENE_Q2) {
+    if (input->family == QA_GAME_Q2) {
         bool shell = scene_model_has_shell(input);
         if (shell) light = scene_model_shell_color(input->flags);
         else if (input->flags & 8) light = qa_v3(1, 1, 1);
@@ -41,7 +41,7 @@ qa_vec3 scene_model_alias_light(const qa_scene_model_input *input) {
             light.z = fmaxf(light.z * 0.8f, light.z + pulse);
         }
         if (input->infrared && (input->flags & 32768)) light = qa_v3(1, 0, 0);
-    } else if (input->family == QA_SCENE_Q1) {
+    } else if (input->family == QA_GAME_Q1) {
         float sampled[3] = {light.x, light.y, light.z};
         bool player = input->player || (input->source_path && !strcmp(input->source_path, "progs/player.mdl"));
         bool flame = input->source_path && (!strcmp(input->source_path, "progs/flame.mdl") || !strcmp(input->source_path, "progs/flame2.mdl"));

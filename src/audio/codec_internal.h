@@ -29,7 +29,7 @@ typedef struct qa_audio_source_layout {
     uint64_t step256;
 } qa_audio_source_layout;
 bool qa_audio_source_layout_compute(const qa_audio_sample *sample, uint32_t output_rate,
-                                    qa_audio_family family, qa_audio_source_layout *out,
+                                    qa_game_family family, qa_audio_source_layout *out,
                                     qa_error *error);
 static inline bool qa_audio_source_index(const qa_audio_source_layout *layout, uint64_t frame,
                                          uint64_t *out) {

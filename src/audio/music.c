@@ -18,7 +18,7 @@ struct qa_audio_music {
     qa_audio_stream *stream, *loop;
     qa_audio_raw_stream *pcm;
     uint32_t output_rate;
-    qa_audio_family family;
+    qa_game_family family;
     float target_volume, smoothed_volume;
     uint64_t completions, request;
     unsigned cd_track;
@@ -82,7 +82,7 @@ uint32_t qa_audio_music_rate(const qa_audio_music *music) {
 }
 
 bool qa_audio_music_profile_is(const qa_audio_music *music, uint32_t rate,
-                              qa_audio_family family, bool source_volume) {
+                              qa_game_family family, bool source_volume) {
     return music != NULL && music->output_rate == rate && music->family == family &&
         music->source_volume == source_volume;
 }
@@ -93,10 +93,10 @@ static void music_clear_pcm(qa_audio_music *music) {
     music->reset_pcm = true;
 }
 
-bool qa_audio_music_create(uint32_t rate, qa_audio_family family, bool source_volume,
+bool qa_audio_music_create(uint32_t rate, qa_game_family family, bool source_volume,
                            qa_audio_music **out, qa_error *error) {
     if (rate == 0 || out == NULL ||
-        (family != QA_AUDIO_Q1 && family != QA_AUDIO_Q2 && family != QA_AUDIO_Q3)) {
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid music format or destination");
         return false;
     }
@@ -226,7 +226,7 @@ bool qa_audio_music_target_mutation_ready(qa_audio_music *music, qa_error *error
 }
 
 void qa_audio_music_update(qa_audio_music *music) {
-    if (music == NULL || !music->controls || music->family != QA_AUDIO_Q3 || !music->source_volume ||
+    if (music == NULL || !music->controls || music->family != QA_GAME_Q3 || !music->source_volume ||
         music->stream == NULL || music->paused || !music->controls->enabled)
         return;
     if (!music_mutation(music, NULL)) return;
@@ -306,7 +306,7 @@ bool qa_audio_music_mix(qa_audio_music *music, float *stereo, size_t frames, qa_
     if (!music_mutation(music, error)) return false;
     if (!music->controls->enabled || music->paused || music->stream == NULL || frames == 0)
         return true;
-    float volume = music->family == QA_AUDIO_Q3 && music->source_volume ? music->smoothed_volume
+    float volume = music->family == QA_GAME_Q3 && music->source_volume ? music->smoothed_volume
                                                                         : music->target_volume;
     if (volume <= 0)
         return true;
@@ -456,7 +456,7 @@ bool qa_audio_music_selection_prepare(qa_audio_music *music, qa_audio_music_sele
     if (!out || *out || !qa_audio_music_idle(music) || cd_track > 255 ||
         (kind != QA_AUDIO_MUSIC_KEEP && kind != QA_AUDIO_MUSIC_START && kind != QA_AUDIO_MUSIC_STOP) ||
         (new_source && (kind == QA_AUDIO_MUSIC_KEEP ||
-            (new_source->family != QA_AUDIO_Q1 && new_source->family != QA_AUDIO_Q2 && new_source->family != QA_AUDIO_Q3))) ||
+            (new_source->family != QA_GAME_Q1 && new_source->family != QA_GAME_Q2 && new_source->family != QA_GAME_Q3))) ||
         (kind != QA_AUDIO_MUSIC_START && (intro || loop || cd_track)) ||
         (kind == QA_AUDIO_MUSIC_START && (!intro || !qa_audio_stream_rate(intro) ||
             (qa_audio_stream_channels(intro) != 1 && qa_audio_stream_channels(intro) != 2))) ||

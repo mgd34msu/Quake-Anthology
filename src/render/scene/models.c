@@ -90,7 +90,7 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
                            qa_material_library *materials, const qa_scene_image_options *options,
                            qa_scene_model **out, qa_error *error) {
     if (!source || !resources || !options || !out ||
-        (options->family == QA_SCENE_Q3 && !materials) ||
+        (options->family == QA_GAME_Q3 && !materials) ||
         (options->palette_rgb.size && (options->palette_rgb.size != 768 || !options->palette_rgb.data)) ||
         (options->translation.size && (options->translation.size != 256 || !options->translation.data))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid retained model services or palette options"); return false;
@@ -104,9 +104,9 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
     if (options->palette_rgb.size) {
         memcpy(model->palette, options->palette_rgb.data, sizeof(model->palette));
         model->options.palette_rgb = (qa_bytes){model->palette, sizeof(model->palette)};
-    } else if (source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR || options->family == QA_SCENE_Q2) {
+    } else if (source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR || options->family == QA_GAME_Q2) {
         qa_bytes palette;
-        qa_scene_family palette_family = source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR ? QA_SCENE_Q1 : options->family;
+        qa_game_family palette_family = source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR ? QA_GAME_Q1 : options->family;
         if (!qa_scene_resources_palette(resources, palette_family, &palette, error)) goto fail;
         if (palette.size != sizeof(model->palette)) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "model palette has the wrong size"); goto fail;
@@ -555,7 +555,7 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
     memcpy(node->images.translation, owner->translation, sizeof(owner->translation));
     node->images.resources = resources; node->images.materials = owner->materials;
     node->images.identity = owner->identity;
-    if (owner->options.family == QA_SCENE_Q3) return true;
+    if (owner->options.family == QA_GAME_Q3) return true;
     for (const scene_model_image *image = owner->images; image; image = image->next) {
         if (node->count == SIZE_MAX / sizeof(*node->bindings)) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Model image binding inventory overflows"); return false;
@@ -775,11 +775,11 @@ static void repair_frames(const qa_scene_model *model, qa_scene_model_input *inp
     if (source->format == QA_MODEL_MD5) count = input->animation ? input->animation->frame_count : 1;
     if (!count) count = 1;
     if (source->format == QA_MODEL_SP2 || (source->format == QA_MODEL_MD5 && !input->replacement) ||
-        (input->family == QA_SCENE_Q3 && (input->flags & 512))) {
+        (input->family == QA_GAME_Q3 && (input->flags & 512))) {
         input->frame %= count; input->old_frame %= count;
     }
     bool bad = input->frame >= count, old_bad = input->old_frame >= count;
-    if ((input->family == QA_SCENE_Q3 || source->format == QA_MODEL_MD2) && (bad || old_bad))
+    if ((input->family == QA_GAME_Q3 || source->format == QA_MODEL_MD2) && (bad || old_bad))
         input->frame = input->old_frame = 0;
     else { if (bad) input->frame = 0; if (old_bad) input->old_frame = 0; }
     if (input->frame == input->old_frame && source->format != QA_MODEL_MD2) input->back_lerp = 0;
@@ -855,8 +855,8 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
 
 static bool casts_shadow(const qa_scene_model *model, const qa_scene_model_input *input) {
     if (input->view_model || model->source->format == QA_MODEL_SPR || model->source->format == QA_MODEL_SP2) return false;
-    if (input->family == QA_SCENE_Q2) return !(input->flags & (4u | 16u | 32u | 128u | 8192u | 0x00200000u));
-    if (input->family == QA_SCENE_Q3 && (input->flags & (4u | 8u | 64u))) return false;
+    if (input->family == QA_GAME_Q2) return !(input->flags & (4u | 16u | 32u | 128u | 8192u | 0x00200000u));
+    if (input->family == QA_GAME_Q3 && (input->flags & (4u | 8u | 64u))) return false;
     return input->color.w >= 1;
 }
 
@@ -1079,7 +1079,7 @@ static bool md5_deferred_allowed(const qa_scene_model *model, const qa_scene_mod
     const qa_scene_model_input *original, unsigned depth)
 {
     if (model->source->format != QA_MODEL_MD5 || depth || model->active_submissions > 1 || original->pose ||
-        (input->family != QA_SCENE_Q1 && input->family != QA_SCENE_Q2) ||
+        (input->family != QA_GAME_Q1 && input->family != QA_GAME_Q2) ||
         !model->source_lease.context || !model->source_lease.release ||
         (input->animation && (!model->animation_lease.context || !model->animation_lease.release ||
             !model->replacement_source || input->animation != model->replacement_source->animation)) ||
@@ -1221,7 +1221,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         _Alignof(qa_scene_vertex), error);
     if (!vertices) return false;
     qa_scene_model_input lighting = *input;
-    if (input->family == QA_SCENE_Q3 && model->options.family != QA_SCENE_Q3) {
+    if (input->family == QA_GAME_Q3 && model->options.family != QA_GAME_Q3) {
         lighting.family = model->options.family;
         lighting.flags = 0;
     }
@@ -1229,7 +1229,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         input->alias_light : scene_model_alias_light(&lighting);
     scene_model_shading shading = {0};
     if (!input->shadow_only && input->alias_lighting != QA_ALIAS_Q3_DIFFUSE &&
-        lighting.family != QA_SCENE_Q3 && !shell)
+        lighting.family != QA_GAME_Q3 && !shell)
         shading = scene_model_shade_prepare(&lighting);
     out->bounds = model->source->format == QA_MODEL_MD5 ?
         shell ? sample->shell_bounds : sample->bounds : model_bounds_empty();
@@ -1256,10 +1256,10 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
             vertices[i].color.x *= color.x;
             vertices[i].color.y *= color.y;
             vertices[i].color.z *= color.z;
-        } else if (!input->shadow_only && lighting.family != QA_SCENE_Q3) {
+        } else if (!input->shadow_only && lighting.family != QA_GAME_Q3) {
             uint8_t normal = retained->normal_indices ? retained->normal_indices[(size_t)input->frame * source->vertex_count + source_index] : 255;
             float shade = shell ? 1 : scene_model_shade(&shading, point->normal, normal);
-            if (!shell && lighting.family == QA_SCENE_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
+            if (!shell && lighting.family == QA_GAME_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
                 size_t old_index = (size_t)input->old_frame * source->vertex_count + source_index;
                 shade = shade * (1 - input->back_lerp) + scene_model_shade(&shading,
                     source->vertices[old_index].normal, retained->normal_indices[old_index]) * input->back_lerp;
@@ -1503,7 +1503,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         (input.custom_skin && input.custom_skin->count && !input.custom_skin->mappings) ||
         (input.custom_skin_materials && (!input.custom_skin ||
             input.custom_skin_material_count != input.custom_skin->count)) ||
-        (input.material_library && model->options.family != QA_SCENE_Q3) ||
+        (input.material_library && model->options.family != QA_GAME_Q3) ||
         !qa_vec_finite(input.previous_origin) || !qa_vec_finite(input.ambient) ||
         !qa_vec_finite(input.directed) || !qa_vec_finite(input.light_direction) ||
         input.alias_lighting < QA_ALIAS_CONTENT_LIGHTING || input.alias_lighting > QA_ALIAS_PREPARED_LIGHT ||
@@ -1520,8 +1520,8 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
     }
     if (input.model_beam) return model_beam(model, &input, frame, depth, error);
     if (input.shadow_only && !casts_shadow(model, &input)) return true;
-    if (input.shadow_only && input.family == QA_SCENE_Q2) input.flags &= ~(1024u | 2048u | 4096u | 65536u | 131072u);
-    if (input.family == QA_SCENE_Q2 && (input.flags & 128)) {
+    if (input.shadow_only && input.family == QA_GAME_Q2) input.flags &= ~(1024u | 2048u | 4096u | 65536u | 131072u);
+    if (input.family == QA_GAME_Q2 && (input.flags & 128)) {
         if (model->options.palette_rgb.size != 768) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 beam requires its source palette"); return false;
         }
@@ -1576,11 +1576,11 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
     bool visible = true;
     bool source_md3 = input.source_order && model->source->format == QA_MODEL_MD3;
     if (!input.shadow_only) {
-        if (input.family == QA_SCENE_Q3 && !source_md4) {
+        if (input.family == QA_GAME_Q3 && !source_md4) {
             if ((input.flags & 2) && !input.view.clip_enabled && input.shadow_mode != 2 && input.shadow_mode != 3) visible = false;
             if ((input.flags & 4) && input.view.clip_enabled) visible = false;
         }
-        if (input.family == QA_SCENE_Q2 && (input.flags & 4) && input.left_hand == 2) visible = false;
+        if (input.family == QA_GAME_Q2 && (input.flags & 4) && input.left_hand == 2) visible = false;
     }
     if (source_md3 && !input.shadow_only && !source_md3_visible(model, &input)) visible = false;
     if (visible && (model->source->format == QA_MODEL_SPR || model->source->format == QA_MODEL_SP2)) {
@@ -1595,7 +1595,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
             bool mesh_visible = true;
-            bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
+            bool weapon = input.family == QA_GAME_Q2 && (input.view_model || (input.flags & 4));
             bool cull = !source_md3 && !input.no_cull && !input.shadow_only && !weapon;
             scene_model_source_pose *pose = NULL;
             const qa_scene_skinning *skinning = NULL;

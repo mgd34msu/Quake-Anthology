@@ -92,13 +92,13 @@ bool frontend_model_policy_read(const qa_frontend *frontend, frontend_model_poli
     return model_policy_rows(rows, out, error);
 }
 
-bool frontend_model_policy_load(const frontend_model_policy *policy, qa_scene_family family, const qa_model *model)
+bool frontend_model_policy_load(const frontend_model_policy *policy, qa_game_family family, const qa_model *model)
 {
-    return policy && model && ((family == QA_SCENE_Q1 && model->format == QA_MODEL_MDL && policy->q1_enhanced) ||
-        (family == QA_SCENE_Q2 && model->format == QA_MODEL_MD2 && policy->q2_load));
+    return policy && model && ((family == QA_GAME_Q1 && model->format == QA_MODEL_MDL && policy->q1_enhanced) ||
+        (family == QA_GAME_Q2 && model->format == QA_MODEL_MD2 && policy->q2_load));
 }
 
-bool frontend_model_policy_select(const frontend_model_policy *policy, qa_scene_family family, const qa_model *model,
+bool frontend_model_policy_select(const frontend_model_policy *policy, qa_game_family family, const qa_model *model,
     double distance, bool shadow)
 {
     if (!frontend_model_policy_load(policy, family, model) || (model->format == QA_MODEL_MD2 && !policy->q2_use)) return false;
@@ -120,8 +120,8 @@ static bool model_policy_sync(qa_frontend *f, const frontend_model_policy *polic
         if (!source || (source->format != QA_MODEL_MDL && source->format != QA_MODEL_MD2) ||
             qa_scene_model_replacement_description(model)) continue;
         const qa_scene_image_options *options = qa_scene_model_image_options(model);
-        if (!((options->family == QA_SCENE_Q1 && source->format == QA_MODEL_MDL) ||
-            (options->family == QA_SCENE_Q2 && source->format == QA_MODEL_MD2))) continue;
+        if (!((options->family == QA_GAME_Q1 && source->format == QA_MODEL_MDL) ||
+            (options->family == QA_GAME_Q2 && source->format == QA_MODEL_MD2))) continue;
         bool configured, enabled; double distance; const qa_scene_model *selected;
         if (!qa_scene_model_replacement_policy_read(model, &configured, &enabled, &distance, &selected)) {
             ok = policy_fail(error, "Model use refresh lost its actual replacement root"); break;
@@ -178,7 +178,7 @@ bool frontend_image_policy_initialize(qa_frontend *frontend, qa_scene_resources 
     if (!(edit ? frontend_image_policy_edit_read(edit, policies, error) :
         frontend_image_policy_read(frontend, policies, error))) return false;
     for (unsigned i = 0; i < 3; ++i)
-        if (!qa_scene_resources_set_image_policy(images, (qa_scene_family)i, policies + i, error)) return false;
+        if (!qa_scene_resources_set_image_policy(images, (qa_game_family)i, policies + i, error)) return false;
     return true;
 }
 

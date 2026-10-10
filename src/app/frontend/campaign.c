@@ -222,7 +222,7 @@ static bool campaign_music(qa_frontend *f,const qa_application_q3_campaign *view
     qa_audio_music *music=qa_audio_engine_bus_music(f->audio,QA_FRONTEND_COMMAND_OWNER);
     if (!owner->music_attached) {
         if (music) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign music would replace another actual frontend music owner");
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&music,error)) return false;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&music,error)) return false;
         if (!qa_audio_engine_music(f->audio,QA_FRONTEND_COMMAND_OWNER,QA_AUDIO_WORLD,1,music,error)) {
             qa_audio_music_destroy(music); return false;
         }
@@ -234,7 +234,7 @@ static bool campaign_music(qa_frontend *f,const qa_application_q3_campaign *view
     qa_audio_bank *bank=NULL; qa_audio_stream *intro=NULL;
     bool ok=qa_application_q3_campaign_current(f->application,view) &&
         qa_audio_bank_create(view->content,&bank,error) &&
-        qa_audio_bank_music_cue(bank,cue,QA_AUDIO_Q3,NULL,NULL,&intro,error) &&
+        qa_audio_bank_music_cue(bank,cue,QA_GAME_Q3,NULL,NULL,&intro,error) &&
         qa_application_q3_campaign_current(f->application,view);
     qa_audio_bank_destroy(bank);
     if (!ok) { qa_audio_stream_close(intro); return false; }

@@ -169,7 +169,7 @@ bool application_network_q2_dependency_of(const application_q2_held_resource *,
     const application_q2_held_resource *);
 bool application_network_q2_material_resource(qa_application_network_q2 *,
     const application_q2_held_resource *, const qa_material_script_view *, qa_bytes,
-    qa_scene_family, qa_bytes palette_rgb, const qa_scene_palette_source *,
+    qa_game_family, qa_bytes palette_rgb, const qa_scene_palette_source *,
     const size_t *, size_t, size_t *, qa_error *);
 bool application_network_q2_sky_dependencies(qa_application_network_q2 *,
     const application_q2_held_resource *, const char *, const char *const [6],

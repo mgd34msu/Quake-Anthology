@@ -20,7 +20,7 @@ typedef struct unified_event_resource {
     char *content, *path;
     const qa_resource *resource;
     qa_audio_asset *asset;
-    qa_audio_family family;
+    qa_game_family family;
 } unified_event_resource;
 typedef struct unified_event_link {
     uint64_t sequence;
@@ -198,7 +198,7 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
         else {
             memcpy(r->content,key->content,content_size); memcpy(r->path,key->path,path_size);
             strcpy(r->id,row->identity); r->resource=held.resource;
-            r->family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+            r->family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
             *out=r;
         }
     }
@@ -519,7 +519,7 @@ bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *c
     qa_vfs *files; const qa_product *product;
     if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||
         !frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&bank,e)) return false;
-    qa_audio_family family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+    qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
     if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;
     if (!asset) return true; /* Retains the genuine bank's optional-miss policy. */
@@ -607,7 +607,7 @@ bool frontend_unified_events_sound_loop_path(frontend_unified_events *o,const ch
     qa_vfs *files; const qa_product *product;
     if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||
         !frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&bank,e)) return false;
-    qa_audio_family family=product->family==QA_GAME_Q1?QA_AUDIO_Q1:product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+    qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
     if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;
     if (!asset) return true;

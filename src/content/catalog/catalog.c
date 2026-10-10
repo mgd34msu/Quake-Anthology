@@ -1,6 +1,15 @@
 #include "internal.h"
 #include <ctype.h>
 
+qa_ruleset_id qa_product_ruleset(const qa_product *product, qa_game_family fallback)
+{
+    qa_game_family family = product->family;
+    if ((unsigned)family > QA_GAME_Q3) family = fallback;
+    return family == QA_GAME_Q3 ? QA_RULESET_Q3 : family == QA_GAME_Q2
+        ? (product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)
+        : (product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE);
+}
+
 bool catalog_grow(void **data, size_t *capacity, size_t count, size_t size, qa_error *error)
 {
     if (count <= *capacity) return true;

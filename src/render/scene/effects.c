@@ -68,12 +68,12 @@ void qa_effect_draw(qa_scene_draw *draw, const qa_scene_view *view,
 }
 
 bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
-                              qa_scene_family family, bool quakeworld,
+                              qa_game_family family, bool quakeworld,
                               const qa_scene_light *lights, size_t count,
                               qa_scene_vec4 *blend, qa_error *error)
 {
     if (!frame || !view || !blend || (count && !lights) ||
-        (family != QA_SCENE_Q1 && family != QA_SCENE_Q2)) {
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Legacy light fans require their actual view and lights");
         return false;
     }
@@ -85,7 +85,7 @@ bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
         }
         if (light->radius == 0.0f) continue;
         float radius = light->radius * .35f;
-        if (family == QA_SCENE_Q1 && qa_vec_length(qa_vec_sub(light->origin, view->origin)) < radius) {
+        if (family == QA_GAME_Q1 && qa_vec_length(qa_vec_sub(light->origin, view->origin)) < radius) {
             float addition = light->radius * .0003f;
             blend->w = blend->w + addition * (1 - blend->w);
             float fraction = addition / blend->w;
@@ -100,7 +100,7 @@ bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
         uint32_t *indices;
         if (!qa_effect_mesh(frame, 18, 48, &mesh, &vertices, &indices, error)) return false;
         vertices[0].position = qa_vec_sub(light->origin, qa_vec_scale(view->axis[0], radius));
-        qa_vec3 center = family == QA_SCENE_Q2 ? qa_vec_scale(light->color, .2f) :
+        qa_vec3 center = family == QA_GAME_Q2 ? qa_vec_scale(light->color, .2f) :
             quakeworld ? light->color : qa_v3(.2f, .1f, 0);
         vertices[0].color = (qa_scene_vec4){center.x, center.y, center.z, 1};
         for (unsigned i = 0; i <= 16; ++i) {

@@ -280,7 +280,7 @@ static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_erro
     bool ok = remote_q2_sound_asset(row, name, event->entity, &asset, error);
     if (!ok || !asset) return ok;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_AUDIO_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_GAME_Q2,
         .actor = event->entity ? event->entity : QA_AUDIO_NO_ACTOR, .owner = row->identity,
         .audience = row->options.domain.physical_seat, .origin_kind = QA_AUDIO_FIXED, .origin = origin,
         .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation,
@@ -330,10 +330,10 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + entity->sound));
         if (!*name) continue;
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sounds, name, QA_AUDIO_Q2, &asset, error)) return false;
+        if (!qa_audio_bank_register(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
         if (!asset) continue;
         qa_audio_loop loop = {.sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-            .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_AUDIO_Q2,
+            .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_GAME_Q2,
             .actor = entity->number, .owner = row->identity, .audience = row->options.domain.physical_seat,
             .origin_kind = QA_AUDIO_FIXED, .origin = vector(entity->origin), .channel = 0,
             .volume = entity->loop_volume != 0 ? entity->loop_volume : 1,
@@ -442,7 +442,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
     }
     const qa_material *skin = NULL;
     if (skin_path && *skin_path) {
-        qa_scene_image_options options = {.family = QA_SCENE_Q2, .usage = QA_IMAGE_USAGE_SKIN,
+        qa_scene_image_options options = {.family = QA_GAME_Q2, .usage = QA_IMAGE_USAGE_SKIN,
             .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255};
         if (!qa_material_register(row->materials, skin_path, &options, false, &skin, error)) return false;
     }
@@ -452,12 +452,12 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         .model_beam = qa_q2_model_beam(remote_q2_rerelease_presentation(row) ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
             current->renderfx, current->modelindex > 1),
         .beam_segment_length = (float)current->frame,
-        .color = color, .family = QA_SCENE_Q2,
+        .color = color, .family = QA_GAME_Q2,
         .frame = current->frame, .old_frame = previous ? previous->frame : current->frame,
         .skin = current->modelindex == 255 ? 0 : current->skinnum, .flags = flags,
         .entity = current->number, .back_lerp = previous ? 1 - row->fraction : 0,
         .seconds = world->seconds, .view_model = view_model, .player = current->modelindex == 255,
-        .material_library = model_options && model_options->family == QA_SCENE_Q3 ? row->materials : NULL,
+        .material_library = model_options && model_options->family == QA_GAME_Q3 ? row->materials : NULL,
         .custom_material = skin, .source_path = path,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend};
     const qa_cvar_view *hand = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.hand);
@@ -660,7 +660,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         else if (current->effects & (UINT64_C(1) << 11)) packet.frame = 2 + (auto_frame & 1);
         else if (current->effects & (UINT64_C(1) << 12)) packet.frame = auto_frame;
         else if (current->effects & (UINT64_C(1) << 13)) packet.frame = (uint32_t)(milliseconds / 100);
-        if (current->effects & 1) direction = frontend_legacy_entity_angles(QA_SCENE_Q2,
+        if (current->effects & 1) direction = frontend_legacy_entity_angles(QA_GAME_Q2,
             remote_q2_rerelease_presentation(row) ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC,
             NULL, current->effects, direction, world.seconds, milliseconds);
         else if (current->effects & (UINT64_C(1) << 23)) direction = qa_v3(0, (float)fmod(time * .5, 360) + current->angles[1], 180);

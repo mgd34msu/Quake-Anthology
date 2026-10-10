@@ -212,6 +212,14 @@ invalid-input defaults and independently selected role clocks are preserved.
 This does not merge authored Q1/Q2/Q3 policy or close the remaining per-role
 selection audit.
 
+Scene, audio and buttons now use that same `qa_game_family`, deleting their
+three duplicate enums and every corresponding type/token caller. One
+`qa_product_ruleset` at `src/content/catalog/catalog.c:4` replaces eight
+intrinsic product mappings. Original role clocks, invalid-input fallbacks,
+button arithmetic, audio looping and structure/protocol/save numeric values
+remain unchanged. Component evidence and exact remaining scope are in
+`docs/playtests/2026-10-09-common-family-types.md`.
+
 ## Q1/QC and native cvar adoption: THE-2859
 
 Compiled Q1 binds 25 common handles before spawn in

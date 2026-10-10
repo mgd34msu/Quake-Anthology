@@ -37,7 +37,7 @@ bool frontend_visual_registered_model_initialize(qa_frontend *, const qa_q3_mode
     const qa_model *, qa_scene_model *, qa_error *);
 /* Native CLIENT caches retain this exact acquisition, parsed parent and scene
  * through destruction of its replacement children. No registry is synthesized. */
-bool frontend_visual_model_opening_initialize(qa_frontend *, qa_scene_family, qa_vfs *,
+bool frontend_visual_model_opening_initialize(qa_frontend *, qa_game_family, qa_vfs *,
     const qa_resource *, const qa_vfs_acquisition *, const qa_model *, qa_scene_model *, qa_error *);
 bool frontend_visual_policy_ready(frontend_visual_policy *, qa_error *);
 bool frontend_visual_policy_ready_is(const frontend_visual_policy *);

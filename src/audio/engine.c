@@ -14,12 +14,12 @@ bool qa_audio_q3_operation_valid(const qa_audio_q3_operation *operation)
 {
     if (!operation || (unsigned)operation->kind > QA_AUDIO_Q3_POSITION) return false;
     const qa_audio_play *sound = &operation->sound;
-    if (sound->family != QA_AUDIO_Q3 || !sound->owner || sound->owner == QA_AUDIO_NO_OWNER)
+    if (sound->family != QA_GAME_Q3 || !sound->owner || sound->owner == QA_AUDIO_NO_OWNER)
         return false;
     if (operation->kind == QA_AUDIO_Q3_PLAY || operation->kind == QA_AUDIO_Q3_LOOP) {
         if (!sound->asset || sound->sample != qa_audio_asset_sample(sound->asset) ||
             sound->name != qa_audio_asset_name(sound->asset) ||
-            qa_audio_asset_family(sound->asset) != QA_AUDIO_Q3 ||
+            qa_audio_asset_family(sound->asset) != QA_GAME_Q3 ||
             (unsigned)sound->origin_kind > QA_AUDIO_ACTOR || sound->channel < 0 ||
             !isfinite(sound->volume) || sound->volume < 0 || sound->volume > 1 ||
             !isfinite(sound->attenuation) || sound->attenuation < 0 ||
@@ -443,7 +443,7 @@ static bool end_loop_frame_impl(qa_audio_engine *engine, qa_error *error) {
     return true;
 }
 static void stop_channel_impl(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
-                              qa_audio_family family, int32_t channel) {
+                              qa_game_family family, int32_t channel) {
     if (engine)
         for (size_t i = 0; i < engine->seat_count; i++)
             qa_audio_mixer_stop_channel(engine->seats[i]->mixer, actor, owner, family, channel);
@@ -900,7 +900,7 @@ bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, i
     return result;
 }
 void qa_audio_engine_stop_channel(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
-                                  qa_audio_family family, int32_t channel) {
+                                  qa_game_family family, int32_t channel) {
     if (!enter(engine, false, NULL))
         return;
     stop_channel_impl(engine, actor, owner, family, channel);

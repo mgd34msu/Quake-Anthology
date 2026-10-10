@@ -88,9 +88,9 @@ failed: state_free(out); return false;
 static const qa_product *product(const music_source *source) {
     return qa_catalog_product(source->catalog, source->product);
 }
-static qa_audio_family family(const music_source *source) {
+static qa_game_family family(const music_source *source) {
     const qa_product *row = product(source);
-    return row->family == QA_GAME_Q1 ? QA_AUDIO_Q1 : row->family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q3;
+    return row->family == QA_GAME_Q1 ? QA_GAME_Q1 : row->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
 }
 static bool whitespace(const char *);
 static char *file_cue(const char *, qa_error *);
@@ -422,10 +422,10 @@ static bool prepare_track(frontend_music_policy *owner, music_state *state, cons
     qa_audio_stream **intro, qa_audio_stream **loop, unsigned *cd, qa_error *e) {
     music_source *source = owner->sources + state->source; unsigned value;
     *cd = 0;
-    if (digits(cue) && (family(source) != QA_AUDIO_Q3 || numbered) && !number(cue, &value))
+    if (digits(cue) && (family(source) != QA_GAME_Q3 || numbered) && !number(cue, &value))
         return fail(e, "Numbered soundtrack cue exceeds the actual CD track range");
-    if (number(cue, &value) && (family(source) != QA_AUDIO_Q3 || numbered)) {
-        if (family(source) == QA_AUDIO_Q2) {
+    if (number(cue, &value) && (family(source) != QA_GAME_Q3 || numbered)) {
+        if (family(source) == QA_GAME_Q2) {
             const qa_product *row = product(source);
             value = qa_audio_music_q2_track(value, row->campaign, row->edition == QA_EDITION_RERELEASE);
         }
@@ -560,7 +560,7 @@ static bool prepare_automatic(frontend_music_policy *owner, music_state *state, 
         if (!state->automatic) return true;
     } else if (!state->automatic || !player.enabled || player.paused) return true;
     music_source *source = owner->sources + state->source;
-    bool enabled = family(source) == QA_AUDIO_Q2 && shuffle && source->track_count;
+    bool enabled = family(source) == QA_GAME_Q2 && shuffle && source->track_count;
     if (*changed || enabled != state->shuffle || (enabled && state->completed != player.completions)) {
         *changed = true; state->shuffle = enabled; state->completed = player.completions;
         if (!player.enabled) return enabled ? next_track(owner, state, intro, loop, cd, e) : true;
@@ -746,8 +746,8 @@ static bool manual_track(frontend_music_policy *owner, const qa_command_invocati
     manual_state(&owner->state); owner->state.initialized = true;
     qa_audio_music_state player; qa_audio_music_state_read(owner->music, &player);
     if (!player.enabled) return true;
-    unsigned mapped = 0; bool numeric = number(cue, &mapped) && (family(owner->sources + owner->state.source) != QA_AUDIO_Q3 || numbered);
-    if (numeric && family(owner->sources + owner->state.source) == QA_AUDIO_Q2) {
+    unsigned mapped = 0; bool numeric = number(cue, &mapped) && (family(owner->sources + owner->state.source) != QA_GAME_Q3 || numbered);
+    if (numeric && family(owner->sources + owner->state.source) == QA_GAME_Q2) {
         const qa_product *row = product(owner->sources + owner->state.source);
         mapped = qa_audio_music_q2_track(mapped, row->campaign, row->edition == QA_EDITION_RERELEASE);
     }

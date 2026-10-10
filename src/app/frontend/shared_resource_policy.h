@@ -19,8 +19,8 @@ void frontend_shared_resource_policy_cvars_bind(qa_frontend *);
  * literal source-distance policy. No source-family registry substitutes. */
 bool frontend_model_policy_edit_read(const qa_cvars_edit *, frontend_model_policy *, qa_error *);
 bool frontend_model_policy_read(const qa_frontend *, frontend_model_policy *, qa_error *);
-bool frontend_model_policy_load(const frontend_model_policy *, qa_scene_family, const qa_model *);
-bool frontend_model_policy_select(const frontend_model_policy *, qa_scene_family, const qa_model *,
+bool frontend_model_policy_load(const frontend_model_policy *, qa_game_family, const qa_model *);
+bool frontend_model_policy_select(const frontend_model_policy *, qa_game_family, const qa_model *,
     double distance, bool shadow);
 double frontend_model_policy_distance(const frontend_model_policy *, const qa_model *);
 bool frontend_shared_resource_policy_live_sync(qa_frontend *, qa_error *);

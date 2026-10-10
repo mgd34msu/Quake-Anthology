@@ -179,7 +179,7 @@ static void model_lighting(qa_q3_presentation *p, const qa_q3_scene_options *opt
     float identity = options->world.identity_light;
     bool sample = !options->world.no_world &&
         qa_scene_world_sample_light_input(lighting_world(p), &options->world, point, &ambient, &directed, &direction, NULL);
-    if (sample && options->world_family == QA_SCENE_Q3) {
+    if (sample && options->world_family == QA_GAME_Q3) {
         ambient = qa_vec_scale(ambient, options->ambient_scale);
         directed = qa_vec_scale(directed, options->directed_scale);
     }
@@ -189,7 +189,7 @@ static void model_lighting(qa_q3_presentation *p, const qa_q3_scene_options *opt
         qa_vec3 sun;
         qa_material_library_sun(p->options.assets->options.provider.materials, &sun, &direction);
     }
-    if (options->world_family != QA_SCENE_Q3 && !options->world.no_world) {
+    if (options->world_family != QA_GAME_Q3 && !options->world.no_world) {
         ambient = qa_vec_add(ambient, directed); directed = qa_v3(0, 0, 0);
         for (size_t i = 0; i < options->world.light_count; ++i) {
             const qa_scene_light *light = &options->world.lights[i];
@@ -249,7 +249,7 @@ static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *
         .view = weapon_view(&options->world.view,
             options->split_screen && !options->world.no_world && (entity->flags & 4)),
         .transform = transform, .previous_origin = entity->old_origin,
-        .color = q3p_color(entity->color), .family = QA_SCENE_Q3,
+        .color = q3p_color(entity->color), .family = QA_GAME_Q3,
         .skin = (uint32_t)entity->skin, .flags = (uint32_t)entity->flags,
         .entity = order, .back_lerp = entity->back_lerp, .radius = entity->radius,
         .rotation = entity->rotation, .shadow_plane = entity->shadow_plane,
@@ -294,7 +294,7 @@ static void model_fog(qa_q3_presentation *p, const qa_q3_scene_options *options,
 }
 
 static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
-    qa_scene_family, const qa_q3_ref_entity *, qa_scene_model_input *);
+    qa_game_family, const qa_q3_ref_entity *, qa_scene_model_input *);
 static bool source_model_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
     const qa_q3_ref_entity *entity, qa_scene_model_input *input, bool calculate, qa_error *error)
 {
@@ -481,7 +481,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
             (int32_t)input.frame, (int32_t)input.old_frame))
             return q3p_fail(error, QA_ERROR_ARGUMENT, "Source frame repair lost its actual admitted entity cell");
     }
-    if (model->provider.family == QA_SCENE_Q3 || skin_assets != assets || shader_assets != assets)
+    if (model->provider.family == QA_GAME_Q3 || skin_assets != assets || shader_assets != assets)
         input.material_library = shader_assets->options.provider.materials;
     model_fog(p, options, entity, selected, &input, radius);
     if (source_order && (selected->format == QA_MODEL_MD3 || selected->format == QA_MODEL_MD4)) {
@@ -496,11 +496,11 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
 }
 
 static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
-    qa_scene_family content, const qa_q3_ref_entity *entity, qa_scene_model_input *input)
+    qa_game_family content, const qa_q3_ref_entity *entity, qa_scene_model_input *input)
 {
     model_lighting(p, options, entity, input);
-    if (content == QA_SCENE_Q3) return;
-    if (content == QA_SCENE_Q1 && options->world_family == QA_SCENE_Q3) {
+    if (content == QA_GAME_Q3) return;
+    if (content == QA_GAME_Q1 && options->world_family == QA_GAME_Q3) {
         input->alias_lighting = QA_ALIAS_Q3_DIFFUSE;
         return;
     }
@@ -513,12 +513,12 @@ static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *
         const qa_scene_light *light = &options->world.lights[i];
         float amount = light->radius - qa_vec_length(qa_vec_sub(entity->origin, light->origin));
         if (amount <= 0) continue;
-        if (content == QA_SCENE_Q1 && options->world_family != QA_SCENE_Q2)
+        if (content == QA_GAME_Q1 && options->world_family != QA_GAME_Q2)
             dynamic = qa_vec_add(dynamic, qa_v3(amount / 255, amount / 255, amount / 255));
         else dynamic = qa_vec_add(dynamic, qa_vec_scale(light->color, amount / 256));
     }
     input->alias_lighting = QA_ALIAS_PREPARED_LIGHT;
-    if (content == QA_SCENE_Q2 || (options->world_family == QA_SCENE_Q2 && !input->view_model)) {
+    if (content == QA_GAME_Q2 || (options->world_family == QA_GAME_Q2 && !input->view_model)) {
         input->alias_light = qa_vec_add(ambient, dynamic);
         return;
     }
@@ -548,18 +548,18 @@ static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
     if (!p || !scene || !source || !source_path || !source_path[0] || !transform || !entity || !options || !frame ||
         !p->busy || p->submission != options || p->frame != frame ||
         qa_scene_model_source(scene) != source || !images ||
-        images->family < QA_SCENE_Q1 || images->family > QA_SCENE_Q3 ||
+        images->family < QA_GAME_Q1 || images->family > QA_GAME_Q3 ||
         entity->kind != QA_Q3_REF_MODEL || order >= 1022 ||
         (view_lighting && (view_lighting->content != images->family ||
-            images->family == QA_SCENE_Q3 || !(entity->flags & 4) ||
-            (images->family == QA_SCENE_Q1 && view_lighting->flags) ||
-            (images->family == QA_SCENE_Q2 && (view_lighting->flags & ~(1u | 4u | 16u))))))
+            images->family == QA_GAME_Q3 || !(entity->flags & 4) ||
+            (images->family == QA_GAME_Q1 && view_lighting->flags) ||
+            (images->family == QA_GAME_Q2 && (view_lighting->flags & ~(1u | 4u | 16u))))))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected model requires its actual content and active Q3 view submission");
     if (options->no_entities) return true;
     qa_scene_model_input input;
     if (!model_input(p, p->options.assets, p->options.assets, options, entity, order, *transform, &input, error)) return false;
     input.source_path = source_path;
-    if (images->family == QA_SCENE_Q3)
+    if (images->family == QA_GAME_Q3)
         input.material_library = p->options.assets->options.provider.materials;
     float radius;
     model_frames(source, entity, &input, &radius);
@@ -572,7 +572,7 @@ static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
             transform->scale[i]);
     model_fog(p, options, &placed, source, &input, radius);
     selected_lighting(p, options, images->family, &placed, &input);
-    if (view_lighting && view_lighting->content == QA_SCENE_Q2 && (view_lighting->flags & 1) &&
+    if (view_lighting && view_lighting->content == QA_GAME_Q2 && (view_lighting->flags & 1) &&
         input.alias_light.x <= .1f && input.alias_light.y <= .1f && input.alias_light.z <= .1f)
         input.alias_light = qa_v3(.1f, .1f, .1f);
     return qa_scene_model_submit(scene, &input, frame, error);
@@ -1313,7 +1313,7 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
     uint8_t visible[32]; char rows[8][33]; const char *texts[8];
     for (size_t i = 0; i < 32; ++i) visible[i] = (uint8_t)~refdef->area_mask[i];
     for (size_t i = 0; i < 8; ++i) { memcpy(rows[i], refdef->text[i], 32); rows[i][32] = 0; texts[i] = rows[i]; }
-    qa_q3_scene_options options = {.world_family = QA_SCENE_Q3, .shadow_mode = p->options.shadow_mode,
+    qa_q3_scene_options options = {.world_family = QA_GAME_Q3, .shadow_mode = p->options.shadow_mode,
         .lod_scale = p->options.lod_scale, .lod_bias = p->options.lod_bias,
         .ambient_scale = .6f, .directed_scale = 1, .near_clip = p->options.near_clip,
         .rail = {.core_width = p->options.rail_core_width, .ring_width = p->options.rail_ring_width,

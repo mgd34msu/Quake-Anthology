@@ -30,7 +30,7 @@ typedef struct frontend_footsteps {
 typedef struct frontend_event_resources {
     struct frontend_event_resources *next;
     qa_actor_owner owner;
-    qa_audio_family family;
+    qa_game_family family;
     qa_vfs *files;
     qa_audio_bank *sounds;
     qa_scene_resources *images;
@@ -118,7 +118,7 @@ struct frontend_event_state {
 };
 typedef struct event_owner_plan {
     qa_actor_owner owner;
-    qa_audio_family family;
+    qa_game_family family;
     uint64_t view;
     bool sounds;
     bool gear;
@@ -126,7 +126,7 @@ typedef struct event_owner_plan {
 static bool gear_resources_bind(qa_application *app, frontend_event_resources *entry, qa_error *error)
 {
     qa_application_equipment_content source;
-    if (!entry->gear || entry->family != QA_AUDIO_Q3 ||
+    if (!entry->gear || entry->family != QA_GAME_Q3 ||
         !qa_application_equipment_content_read(app, entry->owner, &source, error) ||
         !qa_vfs_lookup_equal(entry->files, source.files))
         return frontend_fail(error, QA_ERROR_FORMAT, "Gear sound resources lost their actual retained content authority");
@@ -153,7 +153,7 @@ static bool resources_current(const qa_application *app, const frontend_event_re
     if (!entry->gear) return qa_application_provider_instance(app, entry->owner) != NULL;
     qa_application_equipment_content source;
     const qa_launch_instance *held = qa_launch_instance_lease_view(entry->descriptor);
-    return entry->family == QA_AUDIO_Q3 && held &&
+    return entry->family == QA_GAME_Q3 && held &&
         qa_application_equipment_content_read(app, entry->owner, &source, NULL) &&
         held->storage == source.descriptor->storage && entry->artifact == source.artifact &&
         entry->selected_owner == source.selected_owner && entry->service_owner == source.service_owner &&
@@ -168,7 +168,7 @@ bool frontend_event_q1_images_read(const qa_frontend *frontend, qa_actor_owner p
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 event images require their actual provider and borrowed outputs");
     for (const frontend_event_resources *entry = frontend->events ? frontend->events->resources : NULL;
         entry; entry = entry->next) {
-        if (entry->owner != provider || entry->family != QA_AUDIO_Q1) continue;
+        if (entry->owner != provider || entry->family != QA_GAME_Q1) continue;
         if (entry->gear || !entry->images || !entry->files ||
             qa_scene_resources_files(entry->images) != entry->files ||
             !resources_current(frontend->application, entry))
@@ -178,9 +178,9 @@ bool frontend_event_q1_images_read(const qa_frontend *frontend, qa_actor_owner p
     return frontend_fail(error, QA_ERROR_NOT_FOUND, "Q1 provider has no admitted event image bank");
 }
 
-static qa_audio_family audio_family(qa_game_family family)
+static qa_game_family audio_family(qa_game_family family)
 {
-    return family == QA_GAME_Q3 ? QA_AUDIO_Q3 : family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q1;
+    return family == QA_GAME_Q3 ? QA_GAME_Q3 : family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q1;
 }
 static void q1_fog_sample(const frontend_q1_fog *fog, uint64_t now, float *density, qa_vec3 *color)
 {
@@ -309,7 +309,7 @@ static bool audio_play(qa_frontend *frontend, frontend_event_state *state,
 }
 static bool audio_stop_channel(qa_frontend *frontend, frontend_event_state *state,
     qa_actor_id actor, uint64_t identity, qa_actor_owner owner,
-    qa_audio_family family, int32_t channel, qa_error *error)
+    qa_game_family family, int32_t channel, qa_error *error)
 {
     if (state->audio_deferred || state->audio_head) {
         qa_audio_play sound = {.actor = identity, .owner = owner, .family = family, .channel = channel};
@@ -345,7 +345,7 @@ static bool audio_projection_publish(qa_frontend *frontend, frontend_event_state
     }
     return true;
 }
-static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_audio_family family,
+static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
     frontend_event_resources **out, qa_error *error)
 {
     frontend_event_state *state;
@@ -359,7 +359,7 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_au
     qa_application_equipment_content source;
     bool gear = !qa_application_provider_instance(frontend->application, provider) &&
         qa_application_equipment_content_read(frontend->application, provider, &source, NULL);
-    if (gear && family != QA_AUDIO_Q3)
+    if (gear && family != QA_GAME_Q3)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear events require their actual Q3 sound family");
     const qa_vfs *files = gear ? source.files : qa_application_provider_files(frontend->application, provider);
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "presentation event owner has no active content view");
@@ -386,7 +386,7 @@ bool frontend_event_qc_resources(qa_frontend *frontend,qa_actor_owner owner,
         return frontend_fail(error,QA_ERROR_ARGUMENT,"QC event resources require their actual source owner");
     *images=NULL; *sounds=NULL;
     frontend_event_resources *resources;
-    if (!resources_read(frontend,owner,QA_AUDIO_Q1,&resources,error)) return false;
+    if (!resources_read(frontend,owner,QA_GAME_Q1,&resources,error)) return false;
     *images=resources->images; *sounds=resources->sounds; return true;
 }
 void frontend_event_reset_round(qa_frontend *frontend)
@@ -420,7 +420,7 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
     if (!state) return true;
     if (frontend->q1_sky)
         for (frontend_event_resources *entry = state->resources; entry; entry = entry->next)
-            if (entry->family == QA_AUDIO_Q1 &&
+            if (entry->family == QA_GAME_Q1 &&
                 !frontend_q1_sky_retire_provider(frontend->q1_sky, entry->owner, error)) return false;
     audio_projection_clear(state);
     while (state->sounds) {
@@ -581,13 +581,13 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             const char *name = qa_strings_cstr(strings, event->resource);
             if (!name) return frontend_fail(error, QA_ERROR_ARGUMENT, "sky event has no session name");
             frontend_event_resources *resources;
-            if (!resources_read(frontend, source.provider, QA_AUDIO_Q2, &resources, error)) return false;
+            if (!resources_read(frontend, source.provider, QA_GAME_Q2, &resources, error)) return false;
             size_t length = strlen(name);
             if (length > SIZE_MAX - 7) return frontend_fail(error, QA_ERROR_MEMORY, "sky path exceeds native storage");
             char *path = malloc(length + 7);
             if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "allocating authored sky path");
             static const char *const suffixes[6] = {"rt", "lf", "bk", "ft", "up", "dn"};
-            qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+            qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
                 .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SKY, .transparent_index = -1};
             bool ok = true;
             for (unsigned face = 0; face < 6 && ok; ++face) {
@@ -737,7 +737,7 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
         lights[used++] = (qa_scene_light){.origin = event->origin, .color = qa_vec_scale(event->color, intensity),
             .radius = event->radius, .scale = 1, .direction = event->direction,
             .spot = (event->flags & 1) != 0, .cos_half_angle = event->cone_cosine,
-            .identity = light->identity, .revision = light->revision, .family = QA_SCENE_Q2,
+            .identity = light->identity, .revision = light->revision, .family = QA_GAME_Q2,
             .shadow_resolution = event->resolution};
     }
     world->lights = lights; world->light_count = used;
@@ -751,8 +751,8 @@ bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_e
         if (!seat_receives(frontend, view->seat, entry->recipient) ||
             (entry->deadline ? now >= entry->deadline : entry->frame != frontend->frame_number)) continue;
         frontend_event_resources *resources; qa_bytes palette;
-        if (!resources_read(frontend, entry->owner, QA_AUDIO_Q1, &resources, error) ||
-            !qa_scene_resources_palette(resources->images, QA_SCENE_Q1, &palette, error)) return false;
+        if (!resources_read(frontend, entry->owner, QA_GAME_Q1, &resources, error) ||
+            !qa_scene_resources_palette(resources->images, QA_GAME_Q1, &palette, error)) return false;
         unsigned color = entry->color * 3;
         qa_scene_vec4 rgba = {palette.data[color] / 255.0f, palette.data[color + 1] / 255.0f, palette.data[color + 2] / 255.0f, 1};
         qa_debug_shape shape = {.kind = QA_DEBUG_BOUNDS, .data.bounds = entry->bounds};
@@ -809,7 +809,7 @@ static bool footsteps_read(frontend_event_resources *resources, const char *mate
         if (*material) snprintf(path, sizeof(path), "#sound/player/steps/%s%u.wav", material, i + 1);
         else snprintf(path, sizeof(path), "#sound/player/step%u.wav", i + 1);
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(resources->sounds, path, QA_AUDIO_Q2, &asset, error)) {
+        if (!qa_audio_bank_register(resources->sounds, path, QA_GAME_Q2, &asset, error)) {
             for (unsigned j = 0; j < entry->count; ++j) qa_audio_asset_release(entry->assets[j]);
             free(entry); return false;
         }
@@ -853,7 +853,7 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
         }
     }
     frontend_event_resources *resources; frontend_footsteps *steps;
-    if (!resources_read(frontend, event->provider, QA_AUDIO_Q2, &resources, error) ||
+    if (!resources_read(frontend, event->provider, QA_GAME_Q2, &resources, error) ||
         !footsteps_read(resources, material, &steps, error)) return false;
     if (!steps->count && !footsteps_read(resources, "", &steps, error)) return false;
     if (!steps->count) return true;
@@ -863,7 +863,7 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
     uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
     if (actor == QA_AUDIO_NO_ACTOR || !qa_audio_engine_position(frontend->audio, actor, body.origin, error)) return false;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .family = QA_AUDIO_Q2, .actor = actor, .owner = event->provider, .audience = QA_AUDIO_WORLD,
+        .family = QA_GAME_Q2, .actor = actor, .owner = event->provider, .audience = QA_AUDIO_WORLD,
         .origin_kind = QA_AUDIO_ACTOR, .origin_actor = actor, .origin = body.origin, .channel = 6,
         .volume = event->code == 2 ? 1 : .5f, .attenuation = event->code == 2 ? 1 : 2};
     if (!audio_play(frontend, state, event->actor, &sound, error)) return false;
@@ -881,7 +881,7 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     if (!frontend->audio || frontend_network_local_input_owned(frontend,seat)) return true;
     const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
     if (!name || !*name) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound has no source resource name");
-    qa_audio_family family=event->family==QA_GAME_Q1?QA_AUDIO_Q1:QA_AUDIO_Q2;
+    qa_game_family family=event->family==QA_GAME_Q1?QA_GAME_Q1:QA_GAME_Q2;
     frontend_event_state *state; frontend_event_resources *resources;
     if (!state_read(frontend, &state, error) ||
         !resources_read(frontend, event->provider, family, &resources, error)) return false;
@@ -933,9 +933,9 @@ static bool builtin_muzzle_sound(void *context, const char *name, int32_t channe
     qa_frontend *frontend=audio->frontend;
     const qa_builtin_event *event=audio->event;
     frontend_event_resources *resources;
-    if (!resources_read(frontend,event->provider,QA_AUDIO_Q2,&resources,error)) return false;
+    if (!resources_read(frontend,event->provider,QA_GAME_Q2,&resources,error)) return false;
     qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register(resources->sounds,name,QA_AUDIO_Q2,&asset,error)) return false;
+    if (!qa_audio_bank_register(resources->sounds,name,QA_GAME_Q2,&asset,error)) return false;
     if (!asset) return true;
     uint64_t actor=audio->message?frontend_audio_q2_protocol_actor(frontend,audio->message,event->actor,error):
         frontend_audio_actor(frontend,event->actor,error);
@@ -953,7 +953,7 @@ static bool builtin_muzzle_sound(void *context, const char *name, int32_t channe
         }
     }
     qa_audio_play sound={.sample=qa_audio_asset_sample(asset),.asset=asset,.name=name,
-        .family=QA_AUDIO_Q2,.actor=actor,.owner=event->provider,.audience=audio->seat,
+        .family=QA_GAME_Q2,.actor=actor,.owner=event->provider,.audience=audio->seat,
         .origin_kind=audio->fixed?QA_AUDIO_FIXED:QA_AUDIO_ACTOR,
         .origin_actor=actor,.origin=origin,.channel=channel,
         .volume=volume,.attenuation=attenuation,.delay_seconds=delay};
@@ -1075,7 +1075,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor))
         actor = frontend_audio_retained_event_actor(frontend, event, error);
     if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR) return false;
-    qa_audio_family family = audio_family(event->family);
+    qa_game_family family = audio_family(event->family);
     if (event->kind == QA_BUILTIN_STOP_SOUND) {
         frontend_retained_sound **link = &state->sounds;
         bool loop_stopped = false;
@@ -1108,7 +1108,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     frontend_event_resources *resources;
     if (!resources_read(frontend, event->provider, family, &resources, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (family == QA_AUDIO_Q2 && name[0] == '*') {
+    if (family == QA_GAME_Q2 && name[0] == '*') {
         qa_builtin_player_info player = {0};
         (void)qa_application_player_info_read(frontend->application, event->actor, &player);
         if (!qa_audio_bank_sexed(resources->sounds, name, player.skin ? player.skin : "", &asset, error))
@@ -1146,7 +1146,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         return ok && (!resources->gear || resources_current(frontend->application, resources) ||
             frontend_fail(error, QA_ERROR_ARGUMENT, "Gear sound source retired during playback"));
     }
-    bool ambient = family == QA_AUDIO_Q1 && !event->actor.registry;
+    bool ambient = family == QA_GAME_Q1 && !event->actor.registry;
     if ((!ambient && !live) || (ambient && sound.sample->loop_start == QA_AUDIO_NO_LOOP)) {
         qa_audio_asset_release(asset); return true;
     }
@@ -1299,7 +1299,7 @@ bool frontend_event_image_policy_prepare(qa_frontend *f, qa_scene_resource_polic
             frontend_fail(error, QA_ERROR_UNSUPPORTED, "Imported sky lacks its original authored request receipt"); goto failed;
         }
         frontend_event_resources *resources = ticket->resources;
-        while (resources && (resources->owner != view->sky_owner || resources->family != QA_AUDIO_Q2)) resources = resources->next;
+        while (resources && (resources->owner != view->sky_owner || resources->family != QA_GAME_Q2)) resources = resources->next;
         if (!resources) goto invalid;
         for (size_t i = 0; i < count; ++i)
             if (qa_scene_resource_policy_source(banks[i]) == resources->images) saved->bank = banks[i];
@@ -1308,7 +1308,7 @@ bool frontend_event_image_policy_prepare(qa_frontend *f, qa_scene_resource_polic
         if (!destination || length > SIZE_MAX - 7) goto invalid;
         char *path = malloc(length + 7);
         if (!path) { frontend_fail(error, QA_ERROR_MEMORY, "Preparing authored sky requests"); goto failed; }
-        qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP,
+        qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
             .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SKY, .transparent_index = -1};
         bool ok = true;
         for (unsigned face = 0; ok && face < 6; ++face) {

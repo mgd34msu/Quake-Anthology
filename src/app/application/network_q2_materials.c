@@ -91,10 +91,10 @@ static bool append(qa_buffer *buffer,qa_bytes bytes,qa_error *error)
 static bool text_append(qa_buffer *buffer,const char *text,qa_error *error)
 { return append(buffer,(qa_bytes){(const uint8_t*)text,strlen(text)},error); }
 
-static bool scope_write(qa_buffer *bytes,qa_scene_family family,qa_bytes palette,qa_error *error)
+static bool scope_write(qa_buffer *bytes,qa_game_family family,qa_bytes palette,qa_error *error)
 {
     static const char hex[]="0123456789abcdef";
-    const char *name=family==QA_SCENE_Q1?"q1":family==QA_SCENE_Q2?"q2":"q3";
+    const char *name=family==QA_GAME_Q1?"q1":family==QA_GAME_Q2?"q2":"q3";
     bool ok=text_append(bytes,"//qa-material 1 ",error) && text_append(bytes,name,error) && text_append(bytes," ",error);
     if (ok && !palette.size) ok=text_append(bytes,"-",error);
     else if (ok) {
@@ -162,7 +162,7 @@ static bool alias_decode(qa_bytes bytes,material_alias *row,qa_error *error)
         string_read(bytes,&at,row->logical_path) && string_read(bytes,&at,row->palette_path);
     for (size_t i=0;ok && i<14;++i) ok=natural_read(bytes,&at,v+i);
     if (!ok || !row->alias[0] || !row->source_alias[0] || !row->request[0] || !row->path[0] ||
-        (!!row->logical[0]!=!!row->logical_path[0]) || v[0]>QA_SCENE_Q3 || v[1]>QA_SCENE_CLAMP ||
+        (!!row->logical[0]!=!!row->logical_path[0]) || v[0]>QA_GAME_Q3 || v[1]>QA_SCENE_CLAMP ||
         v[2]>QA_SCENE_LINEAR_MIPMAP_LINEAR || v[3]>QA_IMAGE_USAGE_SKY ||
         v[4]>1 || v[5]>1 || v[6]>1 || v[8]>1 || v[9]>1 ||
         v[10]>QA_ERROR_NOT_FOUND || v[11]>QA_ERROR_NOT_FOUND ||
@@ -170,7 +170,7 @@ static bool alias_decode(qa_bytes bytes,material_alias *row,qa_error *error)
         (v[12] && v[12]!=768) || (v[13] && v[13]!=256) || bytes.size-at!=(size_t)v[12]+v[13])
         return application_fail(error,QA_ERROR_FORMAT,"Material image receipt is malformed");
     int32_t index; memcpy(&index,v+7,4);
-    row->options=(qa_scene_image_options){.family=(qa_scene_family)v[0],.wrap=(qa_scene_wrap)v[1],
+    row->options=(qa_scene_image_options){.family=(qa_game_family)v[0],.wrap=(qa_scene_wrap)v[1],
         .filter=(qa_scene_filter)v[2],.usage=(qa_scene_image_usage)v[3],.mipmap=v[4]!=0,
         .transparent=v[5]!=0,.fullbright_only=v[6]!=0,.transparent_index=index};
     row->missing=v[8]!=0; row->palette_attempted=v[9]!=0;
@@ -235,7 +235,7 @@ bool qa_q2_material_script_scope(qa_bytes bytes,qa_q2_material_scope *out,qa_err
     size_t at=sizeof(prefix)-1; uint8_t family=bytes.data[at++];
     if (family<'1' || family>'3' || bytes.data[at++]!=' ')
         return application_fail(error,QA_ERROR_FORMAT,"Material artifact Source family is invalid");
-    qa_q2_material_scope scope={.family=(qa_scene_family)(family-'1')};
+    qa_q2_material_scope scope={.family=(qa_game_family)(family-'1')};
     if (bytes.data[at]=='-') ++at;
     else {
         if (bytes.size-at<1537) return application_fail(error,QA_ERROR_FORMAT,"Material Source palette is truncated");
@@ -454,7 +454,7 @@ typedef struct closure_writer {
     qa_application_network_q2 *owner;
     const application_q2_held_resource *model;
     qa_scene_resources *images;
-    qa_scene_family family;
+    qa_game_family family;
     qa_bytes source;
     qa_buffer bytes;
     size_t position;
@@ -671,8 +671,8 @@ bool application_network_q2_materials_derive(qa_application_network_q2 *owner,
             provider=owner->app->providers[i];
         }
     if (!provider || !provider->product) { qa_model_free(&model); return application_fail(error,QA_ERROR_ARGUMENT,"MD3 catalog lost its genuine BODY Source"); }
-    qa_scene_family family=provider->product->family==QA_GAME_Q1?QA_SCENE_Q1:
-        provider->product->family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q3;
+    qa_game_family family=provider->product->family==QA_GAME_Q1?QA_GAME_Q1:
+        provider->product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_scene_resources *images=qa_scene_resources_create(held->view,error);
     qa_material_library *library=images?qa_material_library_create_detached(images,error):NULL;
     qa_scene_image_options options={.family=family};
@@ -750,7 +750,7 @@ static bool model_scope_fields(qa_source_save_io *io,qa_q2_material_model_scope 
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QAQPM\1",sizeof(magic)) ||
         !model_scope_text(io,row->model_alias) || !model_scope_text(io,row->companion_path) ||
         !model_scope_text(io,row->palette_alias) || !model_scope_text(io,row->palette_path) ||
-        !qa_source_save_u32(io,&family) || family>QA_SCENE_Q3 ||
+        !qa_source_save_u32(io,&family) || family>QA_GAME_Q3 ||
         !qa_source_save_u32(io,&wrap) || wrap>QA_SCENE_CLAMP ||
         !qa_source_save_u32(io,&filter) || filter>QA_SCENE_LINEAR_MIPMAP_LINEAR ||
         !qa_source_save_u32(io,&usage) || (usage!=QA_IMAGE_USAGE_SKIN && usage!=QA_IMAGE_USAGE_SPRITE) ||
@@ -761,7 +761,7 @@ static bool model_scope_fields(qa_source_save_io *io,qa_q2_material_model_scope 
         !qa_source_save_bytes(io,row->palette,sizeof(row->palette)) ||
         !qa_source_save_bool(io,&translation) ||
         (translation && !qa_source_save_bytes(io,row->translation,sizeof(row->translation)))) return false;
-    o->family=(qa_scene_family)family; o->wrap=(qa_scene_wrap)wrap;
+    o->family=(qa_game_family)family; o->wrap=(qa_scene_wrap)wrap;
     o->filter=(qa_scene_filter)filter; o->usage=(qa_scene_image_usage)usage;
     o->transparent_index=transparent_index; o->translation.size=translation?256:0;
     model_scope_spans(row);

@@ -81,7 +81,7 @@ bool scene_model_external(qa_scene_model *model, const char *name, scene_model_i
     scene_model_image *image = image_entry(model, path, error);
     free(path);
     if (!image) return false;
-    if (model->options.family == QA_SCENE_Q3) {
+    if (model->options.family == QA_GAME_Q3) {
         if (!qa_material_register(model->materials, image->name, &model->options, false,
                                   &image->material, error)) goto fail;
         if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
@@ -95,7 +95,7 @@ bool scene_model_external(qa_scene_model *model, const char *name, scene_model_i
             image->base = qa_scene_missing(model->resources);
             qa_scene_image_retain(image->base);
         } else image->base = base;
-        if (model->options.family == QA_SCENE_Q1 && base) {
+        if (model->options.family == QA_GAME_Q1 && base) {
             qa_scene_image_options fullbright = model->options;
             fullbright.fullbright_only = true;
             qa_scene_image *bright = NULL;
@@ -210,7 +210,7 @@ bool scene_model_indexed_override(qa_scene_model *model, const qa_scene_model_in
     if (!skin || !skin->name || !*skin->name || !skin->width || !skin->height ||
         skin->width > SIZE_MAX / skin->height || !skin->indices.data ||
         skin->indices.size != (size_t)skin->width * skin->height ||
-        model->source->format != QA_MODEL_MDL || model->options.family != QA_SCENE_Q1) {
+        model->source->format != QA_MODEL_MDL || model->options.family != QA_GAME_Q1) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed override requires an actual Q1 MDL skin");
         return false;
     }

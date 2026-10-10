@@ -174,7 +174,7 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
         if (!qa_q3_source_scene_bank_light_capacity(bank)) return q3p_end(p, true);
         if (radius <= 0) return q3p_end(p, true);
         qa_scene_light value = {.origin = origin, .radius = radius, .color = color,
-            .additive = additive, .family = QA_SCENE_Q3};
+            .additive = additive, .family = QA_GAME_Q3};
         bool admitted;
         return q3p_end(p, qa_q3_source_scene_bank_light(bank, p->options.assets, &value, &admitted, error));
     }
@@ -185,7 +185,7 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
         p->light_count + 1, sizeof(*p->lights), error);
     bool admitted = true;
     if (ok && admitted) p->lights[p->light_count++] = (qa_scene_light){.origin = origin, .radius = radius,
-        .color = color, .additive = additive, .family = QA_SCENE_Q3};
+        .color = color, .additive = additive, .family = QA_GAME_Q3};
     return q3p_end(p, ok);
 }
 

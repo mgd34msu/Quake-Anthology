@@ -15,7 +15,7 @@ static void light(frontend_q2_entity_effects *o,qa_vec3 origin,float radius,qa_v
 {
     if (radius>0) {
         qa_scene_light row={.origin=origin,.radius=radius,.color=color,.minimum=minimum,
-            .scale=1,.additive=true,.family=QA_SCENE_Q2};
+            .scale=1,.additive=true,.family=QA_GAME_Q2};
         o->light(o->context,&row);
     }
 }
@@ -213,7 +213,7 @@ bool frontend_q2_entity_effect(frontend_q2_entity_effects *o,const frontend_q2_e
                 if (self && s->hand!=2) point=qa_vec_add(point,qa_vec_scale(s->view.axis[1],s->hand==1?7:-7));
                 qa_scene_light spot={.origin=point,.color={2,2,2},.direction=forward,
                     .radius=512,.scale=1,.cos_half_angle=cosf(22*.017453292519943295f),.additive=true,
-                    .spot=true,.casts_shadow=true,.shadow_resolution=512,.family=QA_SCENE_Q2};
+                    .spot=true,.casts_shadow=true,.shadow_resolution=512,.family=QA_GAME_Q2};
                 o->light(o->context,&spot);
             } else {
                 light(o,qa_vec_lerp(query.start,query.end,flashlight_fraction),256,qa_v3(1,1,1),0);

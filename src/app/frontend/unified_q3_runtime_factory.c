@@ -181,13 +181,13 @@ static bool music(void *context,const char *intro,const char *loop,qa_error *e)
             if(bus || !qa_audio_music_idle(o->music))return fail(e,"Selecting compiled music retains an old player operation");
             qa_audio_music *fresh=NULL;
             qa_audio_music_controls *shared=frontend_music_sources_controls(f->music_sources);
-            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&fresh,e))return false;
+            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e))return false;
             if(!qa_audio_music_controls_bind(fresh,shared,e)){qa_audio_music_release(fresh);return false;}
             qa_audio_music_release(o->music);o->music=fresh;
             free(o->intro);free(o->loop);o->intro=o->loop=NULL;o->looping=false;
         }
     }
-    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&o->music,e))return false;
+    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&o->music,e))return false;
     qa_audio_music_controls *controls=frontend_music_sources_controls(f->music_sources);
     if(!controls || (!qa_audio_music_controls_is(o->music,controls) && !qa_audio_music_controls_bind(o->music,controls,e)))return false;
     frontend_music_origin origin=music_origin(o);
@@ -206,9 +206,9 @@ static bool music(void *context,const char *intro,const char *loop,qa_error *e)
     if(!qa_audio_engine_music(f->audio,o->options.audio_owner,origin.physical_seat,1,o->music,e)){
         qa_audio_music_release(o->music);return false;}
     qa_audio_stream *a=NULL,*b=NULL;
-    if(!qa_audio_bank_music_cue(o->sounds,first,QA_AUDIO_Q3,NULL,NULL,&a,e))return false;
+    if(!qa_audio_bank_music_cue(o->sounds,first,QA_GAME_Q3,NULL,NULL,&a,e))return false;
     if(!a)return music_returned(o,&origin,frame,first,tail,false,e);
-    b=a;if(*tail && strcmp(first,tail) && !qa_audio_bank_music_cue(o->sounds,tail,QA_AUDIO_Q3,NULL,NULL,&b,e)){qa_audio_stream_close(a);return false;}
+    b=a;if(*tail && strcmp(first,tail) && !qa_audio_bank_music_cue(o->sounds,tail,QA_GAME_Q3,NULL,NULL,&b,e)){qa_audio_stream_close(a);return false;}
     qa_audio_music_start(o->music,a,b);o->looping=b!=NULL;
     return music_returned(o,&origin,frame,first,tail,o->looping,e);
 }

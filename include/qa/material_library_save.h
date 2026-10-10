@@ -14,7 +14,7 @@ typedef struct qa_material_script_view {
     const qa_resource *resource;
     size_t source_offset, name_offset, name_size;
     bool dependency_scope;
-    qa_scene_family dependency_family;
+    qa_game_family dependency_family;
     qa_bytes dependency_palette;
 } qa_material_script_view;
 /* Borrow the actual admitted definition; no registration, parsing or lookup

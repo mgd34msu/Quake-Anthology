@@ -46,7 +46,7 @@ bool frontend_received_music_create(qa_frontend *f,const frontend_music_origin *
     const qa_product *product=qa_catalog_product(declaration->catalog,declaration->product);
     if(!product || (product->family!=QA_GAME_Q1 && product->family!=QA_GAME_Q2))
         return fail(e,"Received music has no actual Q1 or Q2 product declaration");
-    qa_audio_family family=product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q1;
+    qa_game_family family=product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q1;
     frontend_received_music *o=calloc(1,sizeof(*o));
     if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining received music player");
     o->frontend=f;o->engine=f->audio;o->slot=out;

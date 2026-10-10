@@ -23,7 +23,7 @@ typedef struct frontend_unified_render_entity_effects {
     qa_actor_id actor;
     const qa_product *product;
     const qa_model *model;
-    qa_scene_family family;
+    qa_game_family family;
     qa_vec3 origin, angles;
     uint64_t effects;
     uint32_t q1_effects;

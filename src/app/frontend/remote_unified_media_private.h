@@ -24,7 +24,7 @@ typedef struct unified_media_model {
     struct unified_media_model *next;
     unified_media_bank *bank;
     char *path;
-    qa_scene_family family;
+    qa_game_family family;
     qa_scene_image_options options;
     uint8_t *palette, *translation;
     qa_resource *resource;

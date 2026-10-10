@@ -681,8 +681,8 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
         .subdivisions = 4, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 2,
         .images = {.mipmap = true, .transparent_index = -1, .filter = QA_SCENE_LINEAR_MIPMAP_NEAREST}
     };
-    world->options.images.family = bsp->family == QA_BSP_Q1 ? QA_SCENE_Q1
-        : bsp->family == QA_BSP_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+    world->options.images.family = bsp->family == QA_BSP_Q1 ? QA_GAME_Q1
+        : bsp->family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     world->identity = qa_scene_identity();
     world->revision = 1;
     if (!world_copy(bsp->source, &world->bytes, error)

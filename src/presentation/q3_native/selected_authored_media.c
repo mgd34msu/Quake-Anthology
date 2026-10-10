@@ -40,7 +40,7 @@ bool q3n_selected_authored_create(const q3n_selected_authored_options *options,
         options->attachment_count > SIZE_MAX / sizeof(q3n_selected_authored_attachment) ||
         options->attachment_count > SIZE_MAX / sizeof(int32_t) ||
         options->assets->options.provider.mounts != options->content ||
-        options->assets->options.provider.family != QA_SCENE_Q3 || options->assets->options.select)
+        options->assets->options.provider.family != QA_GAME_Q3 || options->assets->options.select)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 media requires its genuine declaration and selected registry");
     for (size_t i = 0; i < options->attachment_count; ++i)
         if (!options->attachments[i].path || !*options->attachments[i].path ||
@@ -189,7 +189,7 @@ bool q3n_selected_authored_valid(const q3n_selected_authored_media *owner,
 {
     const qa_q3_presentation_assets *assets = owner ? owner->options.assets : NULL;
     if (!assets || assets->options.provider.mounts != owner->options.content ||
-        assets->options.provider.family != QA_SCENE_Q3 || assets->options.select || assets->codec_busy ||
+        assets->options.provider.family != QA_GAME_Q3 || assets->options.select || assets->codec_busy ||
         (assets->capturing || assets->busy != 0))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Authored Q3 qualification requires its real registry lease");
     if (owner->gun_ready) {

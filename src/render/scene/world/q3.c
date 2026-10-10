@@ -61,7 +61,7 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
             .offsets = {(uint64_t)(bytes.data + i * Q3_LIGHTMAP_BYTES - world->bytes.data)},
             .widths = {Q3_LIGHTMAP_EDGE}, .heights = {Q3_LIGHTMAP_EDGE},
             .overbright = world->options.q3_overbright,
-            .options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_LINEAR}};
+            .options = {.family = QA_GAME_Q3, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_LINEAR}};
         if (!scene_image_asset_copy(data->lightmaps[i], &recipe, error)) { free(pixels); return false; }
         if (source) {
             data->lightmaps[i]->source_mipmap=false;

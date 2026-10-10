@@ -522,11 +522,11 @@ static bool listener(void *context, const qa_audio_listener *value, qa_error *er
     source->has_listener = true;
     return true;
 }
-static qa_audio_family music_family(const frontend_source *source)
+static qa_game_family music_family(const frontend_source *source)
 {
     const qa_product *product=qa_catalog_product(source->music_catalog,source->music_product);
-    return product && product->family==QA_GAME_Q1?QA_AUDIO_Q1:
-        product && product->family==QA_GAME_Q2?QA_AUDIO_Q2:QA_AUDIO_Q3;
+    return product && product->family==QA_GAME_Q1?QA_GAME_Q1:
+        product && product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
 }
 static bool music_published(const frontend_source *source)
 {
@@ -680,13 +680,13 @@ bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *applica
     if (qa_application_map_read(application, &map)) {
         const qa_launch_snapshot *publication=qa_application_launch(application);
         const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(publication), map.geometry);
-        options->world_family = product && product->family == QA_GAME_Q2 ? QA_SCENE_Q2 :
-            product && product->family == QA_GAME_Q3 ? QA_SCENE_Q3 : QA_SCENE_Q1;
+        options->world_family = product && product->family == QA_GAME_Q2 ? QA_GAME_Q2 :
+            product && product->family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1;
     }
     options->split_screen = frontend->options.seats > 1;
     if (!frontend_tools_camera(frontend,seat,options->world.view.clip_enabled,&options->world.view,error) ||
         (!options->world.no_world && !frontend_event_world(frontend,seat,&options->world,error))) return false;
-    if (!options->world.no_world && options->world_family==QA_SCENE_Q3 && frontend->q1_sky) {
+    if (!options->world.no_world && options->world_family==QA_GAME_Q3 && frontend->q1_sky) {
         qa_actor_id recipient;
         if (frontend_seat_actor_read(frontend,seat,&recipient)) {
             frontend_q1_sky_view sky;
@@ -1249,7 +1249,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
             !frontend_source_cinematics_ensure(frontend,source->images,error) ||
             !frontend_material_movies_cinematic_attach(source->shader_movies,frontend->source_cinematics,source->seat,source->identity,error)) return false;
     }
-    qa_scene_image_options images = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
+    qa_scene_image_options images = {.family = QA_GAME_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = -1};
     bool ok = source->mounts && source->images && source->materials && source->fonts && source->movies &&
         (restoring || (qa_material_library_load_scripts(source->materials, source->mounts, &images, error) &&
@@ -1258,7 +1258,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
     if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
-    qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_SCENE_Q3},
+    qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,
@@ -1339,7 +1339,7 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
         !frontend_network_prediction_geometry_prepare(source->frontend,source->owner,source->launch_seat,
             source->geometry,&source->trace_scratch,error)) return false;
     if (!world) return true;
-    qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
+    qa_scene_world_options options={.images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
     if (!frontend_q3_world_policy_initialize(source->frontend,&options,error)) return false;
@@ -2627,7 +2627,7 @@ bool frontend_source_group_q3_ready(const qa_frontend *f,size_t index,
         p->scene_completed!=scene_completed ||
         p->remap!=source_remap || p->print!=print_source ||
         a->provider.mounts!=source->mounts || a->provider.images!=source->images ||
-        a->provider.materials!=source->materials || a->provider.family!=QA_SCENE_Q3 ||
+        a->provider.materials!=source->materials || a->provider.family!=QA_GAME_Q3 ||
         a->sounds!=source->sounds || a->movies!=source->movies || a->zero_sound ||
         a->context!=source || a->select || a->print!=print_source || a->model_initialize!=model_initialize)
         return frontend_fail(error,QA_ERROR_FORMAT,"Q3 source policy differs from its genuine installed frontend group");

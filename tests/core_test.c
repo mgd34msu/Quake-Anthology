@@ -527,7 +527,7 @@ static void test_source_nonmipped_transparency(void)
         tga[20 + i * 4] = 10;
         tga[21 + i * 4] = i ? 255 : 0;
     }
-    qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
+    qa_scene_image_options options = {.family = QA_GAME_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE,
         .source_q3 = true,
         .source_upload = {.color = {.device = {.color_bits = 24}, .gamma = 1, .intensity = 1}}};

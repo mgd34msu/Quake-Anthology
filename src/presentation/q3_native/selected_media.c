@@ -196,7 +196,7 @@ bool q3n_selected_media_create(const q3n_selected_media_options *options, q3n_se
 {
     if (!options || !out || *out || !options->content || !options->assets ||
         options->assets->options.provider.mounts != options->content ||
-        options->assets->options.provider.family != QA_SCENE_Q3 || options->assets->options.select ||
+        options->assets->options.provider.family != QA_GAME_Q3 || options->assets->options.select ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 media requires its genuine selected content registry");
     q3n_selected_media *o = calloc(1, sizeof(*o));
@@ -329,7 +329,7 @@ static bool animation_valid(const q3n_selected_media *o, qa_error *e)
 bool q3n_selected_media_valid(const q3n_selected_media *o, qa_error *e)
 {
     const qa_q3_presentation_assets *a = o ? o->options.assets : NULL;
-    if (!a || a->options.provider.mounts != o->options.content || a->options.provider.family != QA_SCENE_Q3 ||
+    if (!a || a->options.provider.mounts != o->options.content || a->options.provider.family != QA_GAME_Q3 ||
         a->options.select || a->codec_busy ||
         (a->capturing || a->busy != 0))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected Q3 media qualification requires its actual registry lease");
