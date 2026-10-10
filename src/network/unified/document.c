@@ -380,8 +380,6 @@ static bool control_document_owned(qa_unified_control **owned, qa_unified_frame_
     if(lease && !qa_unified_frame_lease_retain(lease,error)) return false;
     d->lease=lease; d->control=*owned; *owned=NULL; *out=d; return true;
 }
-static void *control_allocate(void *lease,size_t bytes,size_t alignment,qa_error *error)
-{ return qa_unified_frame_lease_alloc(lease,1,bytes,alignment,error); }
 bool qa_unified_document_create_control(const qa_unified_control *value, qa_unified_frame_lease *lease,
     qa_unified_document **out, qa_error *error)
 {
@@ -390,7 +388,7 @@ bool qa_unified_document_create_control(const qa_unified_control *value, qa_unif
     qa_unified_control *owned=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*owned),_Alignof(qa_unified_control),error) : calloc(1,sizeof(*owned));
     if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual Unified control"); return false; }
     bool okay=qa_unified_record_clone_alloc(&qa_unified_control_layout,value,owned,
-        lease?control_allocate:NULL,lease,(qa_bytes){0},error) && control_document_owned(&owned,lease,out,error);
+        lease?qa_unified_frame_lease_alloc_callback:NULL,lease,(qa_bytes){0},error) && control_document_owned(&owned,lease,out,error);
     if (owned && !lease) { qa_unified_record_dispose(&qa_unified_control_layout,owned); free(owned); }
     return okay;
 }

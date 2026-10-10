@@ -190,15 +190,19 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
     const char *at = text + client->command_offset;
     while (*at) {
         const char *end = at; while (*end && *end != '\n' && *end != ';') ++end;
-        size_t length = (size_t)(end - at); char *line = malloc(length + 1);
-        if (!line) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 signon command");
+        qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(client->record_pool,error);
+        if (!storage) return false;
+        size_t length = (size_t)(end - at);
+        char *line=qa_unified_frame_lease_alloc(storage,length+1,1,1,error);
+        if (!line) { qa_unified_frame_lease_release(storage);return false; }
         memcpy(line, at, length); line[length] = 0;
         qa_command_tokens tokens = {0};
-        bool ok = qa_command_tokenize(line, QA_RULESET_Q2_CLASSIC, false, &tokens, NULL, NULL, error);
+        bool ok = qa_command_tokenize(line, QA_RULESET_Q2_CLASSIC, false, &tokens,
+            qa_unified_frame_lease_alloc_callback,storage,error);
         const char *name = tokens.count ? tokens.values[0] : "";
         if (ok && !strcmp(name, "cmd") && tokens.count >= 2 &&
             (!strcmp(tokens.values[1], "configstrings") || !strcmp(tokens.values[1], "baselines"))) {
-            char *command = malloc(length + 1);
+            char *command=qa_unified_frame_lease_alloc(storage,length+1,1,1,error);
             if (!command) ok = q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 config request");
             else {
                 size_t used = 0;
@@ -208,7 +212,6 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
                     memcpy(command + used, tokens.values[i], size); used += size;
                 }
                 command[used] = 0; ok = qa_network_q2_client_command(session->runtime, session->id, command, 0, error);
-                free(command);
             }
         } else if (ok && !strcmp(name, "precache")) {
             char saved_count[32];
@@ -226,7 +229,7 @@ static bool server_command(q2_session *session, uint8_t source_seat, const char 
         } else if (ok && !strcmp(name, "changing")) ok = cancel(session, error) && loading(session, error);
         else if (ok && tokens.count) ok = current(session, error) &&
             client->hooks.server_command(client->hooks.context, session->id, source_seat, line, error) && current(session, error);
-        qa_command_tokens_free(&tokens); free(line);
+        qa_command_tokens_free(&tokens);qa_unified_frame_lease_release(storage);
         if (!ok || *waiting) { client->command_offset = (size_t)((*end ? end + 1 : end) - text); return ok; }
         at = *end ? end + 1 : end;
     }
