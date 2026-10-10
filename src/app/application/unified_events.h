@@ -135,13 +135,11 @@ size_t application_unified_event_resource_count(const qa_application *);
 const application_unified_event_resource *application_unified_event_resource_at(const qa_application *, size_t);
 
 typedef struct application_unified_world_text {
-    qa_string_id content, text;
+    qa_entity_text visual;
     qa_actor_owner provider;
-    qa_vec3 origin, angles, color;
-    float alpha, cell_size;
     double expires;
     uint64_t first_frame;
-    bool timed, observed, billboard, depth_test;
+    bool timed, observed;
     struct application_unified_world_text *next;
     qa_event_lease *lease;
 } application_unified_world_text;

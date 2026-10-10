@@ -438,16 +438,23 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
     for (size_t i = 0; i < store->world_text_count; ++i,
          text = store->world_text_borrowed ? text->next : text + 1) {
         application_unified_world_text *row = text;
-        if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
-            !qa_source_save_string(io, &row->text) || !vector_field(io, &row->origin) ||
-            !vector_field(io, &row->angles) || !vector_field(io, &row->color) ||
-            !finite_field(io, &row->alpha) || !finite_field(io, &row->cell_size) || row->cell_size <= 0 ||
+        qa_entity_text *visual = &row->visual;
+        /* The import/export adapter retains the existing on-disk RGB doubles. */
+        qa_vec3 color = qa_v3(visual->color[0], visual->color[1], visual->color[2]);
+        if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &visual->content) ||
+            !qa_source_save_string(io, &visual->text) || !vector_field(io, &visual->origin) ||
+            !vector_field(io, &visual->angles) || !vector_field(io, &color) ||
+            !finite_field(io, &visual->color[3]) || !finite_field(io, &visual->cell_size) || visual->cell_size <= 0 ||
             !qa_source_save_f64(io, &row->expires) || !isfinite(row->expires) ||
             !qa_source_save_u64(io, &row->first_frame) || !qa_source_save_bool(io, &row->timed) ||
-            !qa_source_save_bool(io, &row->observed) || !qa_source_save_bool(io, &row->billboard) ||
-            !qa_source_save_bool(io, &row->depth_test) || !row->content || !row->text ||
+            !qa_source_save_bool(io, &row->observed) || !qa_source_save_bool(io, &visual->billboard) ||
+            !qa_source_save_bool(io, &visual->depth_test) || !visual->content || !visual->text ||
             (row->timed && row->observed) || (!row->observed && row->first_frame))
             return event_fail(io, QA_ERROR_FORMAT, "World text continuation lost its Source geometry or lifetime");
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            visual->color[0] = color.x; visual->color[1] = color.y; visual->color[2] = color.z;
+            visual->distance_cull_factor = .004f;
+        }
     }
     for (size_t i = 0; i < store->registration_count; ++i) {
         application_unified_event_registration *row = store->registrations + i;
@@ -969,12 +976,14 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
             ok = application_event_stream_begin(&staging, QA_APPLICATION_EVENT_Q2_MAP, &write, error);
             if (!ok) break;
             const application_unified_world_text *row = saved + i;
+            const qa_entity_text *visual = &row->visual;
             write.envelope->raw.q2_map.source = (qa_application_q2_map_event){
                 .provider = row->provider,
-                .event = {.kind = QA_Q2_MAP_WORLD_TEXT, .text = row->text,
-                    .origin = row->origin, .direction = row->angles, .color = row->color,
-                    .alpha = row->alpha, .value = row->cell_size,
-                    .flags = (row->billboard ? 2u : 0u) | (row->depth_test ? 1u : 0u)}};
+                .event = {.kind = QA_Q2_MAP_WORLD_TEXT, .text = visual->text,
+                    .origin = visual->origin, .direction = visual->angles,
+                    .color = qa_v3(visual->color[0], visual->color[1], visual->color[2]),
+                    .alpha = visual->color[3], .value = visual->cell_size,
+                    .flags = (visual->billboard ? 2u : 0u) | (visual->depth_test ? 1u : 0u)}};
             ok = application_unified_world_text_append(&staging, row, error);
             if (ok) ok = application_event_stream_commit(&staging, &write, error);
             else application_event_stream_abort(&staging, &write, error);

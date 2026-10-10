@@ -474,12 +474,13 @@ bool application_unified_world_text_emit(qa_application *app, qa_actor_owner own
             return application_fail(error, QA_ERROR_ARGUMENT, "World text lost its primary Source clock");
         clock = source_clock;
     }
-    application_unified_world_text row = {.provider = owner, .text = event->text,
-        .origin = event->origin, .angles = event->direction, .color = event->color,
-        .alpha = event->alpha, .cell_size = event->value, .timed = event->duration > 0,
-        .expires = (double)clock.frame.time_ns / 1e9 + event->duration,
-        .billboard = (event->flags & 2u) != 0, .depth_test = (event->flags & 1u) != 0};
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity, &row.content, error)) return false;
+    application_unified_world_text row = {.provider = owner,
+        .visual = {.text = event->text, .origin = event->origin, .angles = event->direction,
+            .color = {event->color.x, event->color.y, event->color.z, event->alpha},
+            .cell_size = event->value, .distance_cull_factor = .004f,
+            .billboard = (event->flags & 2u) != 0, .depth_test = (event->flags & 1u) != 0},
+        .timed = event->duration > 0, .expires = (double)clock.frame.time_ns / 1e9 + event->duration};
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity, &row.visual.content, error)) return false;
     return application_unified_world_text_append(app, &row, error);
 }
 
@@ -980,12 +981,7 @@ bool application_unified_world_text_read(qa_application *app, const application_
     out->world_text_count = kept;
     const application_unified_world_text *s = app->unified_world_text;
     for (size_t i = 0; i < kept; ++i, s = s->next) {
-        qa_unified_world_text *r = out->world_text + i;
-        *r = (qa_unified_world_text){.origin = s->origin, .angles = s->angles,
-            .color = {s->color.x, s->color.y, s->color.z, s->alpha}, .cell_size = s->cell_size,
-            .distance_cull_factor = .004f, .billboard = s->billboard, .depth_test = s->depth_test};
-        if (!application_unified_frame_string(lease, &r->content, event_alias(app, s->content), e) ||
-            !application_unified_frame_string(lease, &r->text, event_alias(app, s->text), e)) return false;
+        out->world_text[i] = s->visual;
     }
     return true;
 }

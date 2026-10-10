@@ -35,18 +35,12 @@ typedef struct qa_unified_character_state {
     float color[4], scale, opacity;
     bool has_team;
 } qa_unified_character_state;
-typedef struct qa_unified_world_text {
-    char *content, *text;
-    qa_vec3 origin, angles;
-    float color[4], cell_size, distance_cull_factor;
-    bool billboard, depth_test;
-} qa_unified_world_text;
 struct qa_unified_frame_visuals {
     qa_unified_model_state *models;
     size_t model_count;
     qa_unified_character_state *characters;
     size_t character_count;
-    qa_unified_world_text *world_text;
+    qa_entity_text *world_text;
     size_t world_text_count;
 };
 

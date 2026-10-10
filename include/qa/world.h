@@ -24,6 +24,12 @@ typedef struct qa_entity_flare {
     float fade_start, fade_end, scale;
     bool has_rim_color, lock_angle;
 } qa_entity_flare;
+typedef struct qa_entity_text {
+    qa_string_id content, text;
+    qa_vec3 origin, angles;
+    float color[4], cell_size, distance_cull_factor;
+    bool billboard, depth_test;
+} qa_entity_text;
 typedef enum qa_body_vector_kind {
     QA_BODY_ORIGIN = offsetof(qa_body_state, origin),
     QA_BODY_VELOCITY = offsetof(qa_body_state, velocity),

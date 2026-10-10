@@ -54,7 +54,7 @@ static const qa_unified_record_layout qa_unified_q3_client_layout;
 static const qa_unified_record_layout qa_unified_q3_entity_layout;
 const qa_unified_record_layout qa_unified_bounds_layout;
 const qa_unified_record_layout qa_unified_visual_frame_layout;
-static const qa_unified_record_layout qa_unified_world_text_layout;
+static const qa_unified_record_layout qa_entity_text_layout;
 static const qa_unified_record_layout qa_unified_character_state_layout;
 static const qa_unified_record_layout qa_unified_model_state_layout;
 static const qa_unified_record_layout qa_unified_model_attachment_layout;
@@ -413,22 +413,22 @@ const qa_unified_record_layout qa_unified_bounds_layout = QA_UNIFIED_LAYOUT(qa_b
 static const qa_unified_field qa_unified_frame_visuals_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_frame_visuals, models, model_count, qa_unified_model_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_frame_visuals, characters, character_count, qa_unified_character_state_layout, 65536),
-    QA_UNIFIED_ARRAY(qa_unified_frame_visuals, world_text, world_text_count, qa_unified_world_text_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_unified_frame_visuals, world_text, world_text_count, qa_entity_text_layout, 65536),
 };
 const qa_unified_record_layout qa_unified_visual_frame_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_visuals, qa_unified_frame_visuals_fields);
 
-static const qa_unified_field qa_unified_world_text_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_world_text, content, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_world_text, text, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RECORD(qa_unified_world_text, origin, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_world_text, angles, qa_unified_vector_layout),
-    QA_UNIFIED_FIXED(qa_unified_world_text, color, float_layout, 4),
-    QA_UNIFIED_FIELD(qa_unified_world_text, cell_size, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_world_text, distance_cull_factor, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_world_text, billboard, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_world_text, depth_test, QA_UNIFIED_FIELD_BOOL),
+static const qa_unified_field qa_entity_text_fields[] = {
+    QA_UNIFIED_FIELD(qa_entity_text, content, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_entity_text, text, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_RECORD(qa_entity_text, origin, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_entity_text, angles, qa_unified_vector_layout),
+    QA_UNIFIED_FIXED(qa_entity_text, color, float_layout, 4),
+    QA_UNIFIED_FIELD(qa_entity_text, cell_size, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_text, distance_cull_factor, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_text, billboard, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_text, depth_test, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_world_text_layout = QA_UNIFIED_LAYOUT(qa_unified_world_text, qa_unified_world_text_fields);
+static const qa_unified_record_layout qa_entity_text_layout = QA_UNIFIED_LAYOUT(qa_entity_text, qa_entity_text_fields);
 
 static const qa_unified_field qa_unified_character_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_character_state, actor, qa_unified_actor_layout),
