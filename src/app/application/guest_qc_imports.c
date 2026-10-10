@@ -267,22 +267,21 @@ static bool static_entity(struct application_qc_state *engine, qa_qc_instance *v
     if (model.index > 255 || !isfinite(frame) || frame < 0 || frame > 255 ||
         !isfinite(color) || color < 0 || color > 255 || !isfinite(skin) || skin < 0 || skin > 255)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC static model exceeds source protocol range");
-    uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_q1_entity entity; qa_q1_entity_init(&entity);
     entity.model = model.index; entity.frame = (uint32_t)frame;
     entity.colormap = (uint32_t)color; entity.skin = (uint32_t)skin;
     entity.origin[0] = origin.x; entity.origin[1] = origin.y; entity.origin[2] = origin.z;
     entity.angles[0] = angles.x; entity.angles[1] = angles.y; entity.angles[2] = angles.z;
-    bool ok;
+    qa_qw_service service = {.kind = QA_QW_STATIC, .data.baseline = entity};
+    qa_nq_message message = {.op = QA_NQ_STATIC, .data.entity = entity};
+    qa_application_protocol_event event = {.encoding_protocol = engine->protocol,
+        .standard_quake = true, .destination = 3, .signon = true};
     if (engine->profile == QA_QC_QUAKEWORLD) {
-        qa_qw_service service = {.kind = QA_QW_STATIC, .data.baseline = entity};
-        ok = qa_qw_service_write(&writer, engine->protocol, &service, NULL);
+        event.qw = &service;
     } else {
-        qa_nq_message message = {.op = QA_NQ_STATIC, .data.entity = entity};
-        ok = qa_nq_write(&writer, engine->protocol, (qa_nq_options){.standard_quake = true}, &message, NULL, 0);
+        event.nq = &message;
     }
-    qa_application_protocol_event event = {.payload = {bytes, qa_net_writer_size(&writer)}, .destination = 3, .signon = true};
-    return ok && application_emit_protocol(engine->provider, &event, error) &&
+    return application_emit_protocol(engine->provider, &event, error) &&
            qa_actors_get(qa_session_actors(engine->services.session), actor) != NULL && qa_qc_remove_entity(vm, reference, error);
 }
 bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin builtin,
