@@ -723,7 +723,8 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     if ((!options->dedicated && !frontend_q1_sky_create(frontend,&frontend->q1_sky,error)) ||
         !frontend_qc_messages_create(frontend,&frontend->qc_messages,error) ||
         !frontend_view_bindings_create(frontend,error) ||
-        !frontend_equipment_events_create(frontend,&frontend->gear_events,error)) goto fail;
+        !frontend_equipment_events_create(frontend,&frontend->gear_events,error) ||
+        !frontend_event_prepare(frontend,error)) goto fail;
     frontend->sdl_subsystems = SDL_INIT_TIMER | SDL_INIT_EVENTS;
     if (!options->dedicated) frontend->sdl_subsystems |= SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC;
     if (!options->dedicated && options->audio) frontend->sdl_subsystems |= SDL_INIT_AUDIO;

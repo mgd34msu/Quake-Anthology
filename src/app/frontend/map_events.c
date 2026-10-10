@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/pool.h"
 #include "qc_rerelease_events.h"
 #include "qa/scene_resource_save.h"
 #include "round.h"
@@ -42,6 +43,7 @@ typedef struct frontend_event_resources {
     qa_resource *artifact;
 } frontend_event_resources;
 typedef struct frontend_retained_sound {
+    size_t slot;
     struct frontend_retained_sound *next;
     qa_actor_id actor;
     qa_audio_loop loop;
@@ -54,21 +56,23 @@ typedef enum frontend_audio_projection_kind {
     FRONTEND_AUDIO_PLAY, FRONTEND_AUDIO_STOP_CHANNEL
 } frontend_audio_projection_kind;
 typedef struct frontend_audio_projection {
+    size_t slot;
     struct frontend_audio_projection *next;
     frontend_audio_projection_kind kind;
     qa_actor_id actor;
     qa_actor_id recipient; /* Delivery identity; FIXED sounds have no emitter actor. */
     qa_audio_play sound;
-    char *name;
     int32_t milliseconds;
 } frontend_audio_projection;
 typedef struct frontend_retained_light {
+    size_t slot;
     struct frontend_retained_light *next;
     qa_actor_owner owner;
     qa_q2_map_event event;
     uint64_t identity, revision;
 } frontend_retained_light;
 typedef struct frontend_retained_bounds {
+    size_t slot;
     struct frontend_retained_bounds *next;
     qa_actor_owner owner;
     qa_actor_id actor, recipient;
@@ -103,6 +107,8 @@ typedef struct frontend_event_view {
     bool sky_auto;
 } frontend_event_view;
 struct frontend_event_state {
+    qa_arena storage;
+    qa_pool projections, sound_records, light_records, bound_records;
     frontend_event_resources *resources;
     frontend_event_image_policy *image_policy;
     frontend_retained_sound *sounds;
@@ -234,6 +240,25 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
     if (!frontend->events) {
         frontend->events = calloc(1, sizeof(*frontend->events));
         if (!frontend->events) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend presentation state");
+        frontend_event_state *state = frontend->events;
+        size_t capacity = qa_actors_capacity(qa_session_actor_registry(qa_application_session(frontend->application)));
+        if (capacity > (SIZE_MAX - 256) / 2) {
+            free(state); frontend->events = NULL;
+            return frontend_fail(error, QA_ERROR_MEMORY, "Frontend event capacity overflow");
+        }
+        capacity = capacity * 2 + 256;
+        qa_arena_init(&state->storage, 0);
+        if (!qa_pool_prepare(&state->projections, &state->storage, capacity,
+                sizeof(frontend_audio_projection), _Alignof(frontend_audio_projection), error) ||
+            !qa_pool_prepare(&state->sound_records, &state->storage, capacity,
+                sizeof(frontend_retained_sound), _Alignof(frontend_retained_sound), error) ||
+            !qa_pool_prepare(&state->light_records, &state->storage, capacity,
+                sizeof(frontend_retained_light), _Alignof(frontend_retained_light), error) ||
+            !qa_pool_prepare(&state->bound_records, &state->storage, capacity,
+                sizeof(frontend_retained_bounds), _Alignof(frontend_retained_bounds), error)) {
+            qa_arena_destroy(&state->storage); free(state); frontend->events = NULL; return false;
+        }
+        qa_arena_seal(&state->storage);
         qa_builtin_random_seed(&frontend->events->light_random, 1);
         frontend->events->step_random[0] = 1;
         for (uint32_t i = 1; i < 624; ++i) {
@@ -245,15 +270,20 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
     }
     *out = frontend->events; return true;
 }
-static void audio_projection_free(frontend_audio_projection *entry)
+bool frontend_event_prepare(qa_frontend *frontend, qa_error *error)
 {
-    qa_audio_asset_release(entry->sound.asset); free(entry->name); free(entry);
+    frontend_event_state *state;
+    return state_read(frontend, &state, error);
+}
+static void audio_projection_free(frontend_event_state *state, frontend_audio_projection *entry)
+{
+    qa_audio_asset_release(entry->sound.asset); qa_pool_release(&state->projections, entry->slot);
 }
 static void audio_projection_clear(frontend_event_state *state)
 {
     while (state->audio_head) {
         frontend_audio_projection *entry = state->audio_head;
-        state->audio_head = entry->next; audio_projection_free(entry);
+        state->audio_head = entry->next; audio_projection_free(state, entry);
     }
     state->audio_tail = NULL;
 }
@@ -261,24 +291,19 @@ static bool audio_projection_append(frontend_event_state *state, qa_actor_id act
     const qa_audio_play *sound, frontend_audio_projection_kind kind,
     int32_t milliseconds, qa_error *error)
 {
-    frontend_audio_projection *entry = calloc(1, sizeof(*entry));
+    size_t slot;
+    frontend_audio_projection *entry = qa_pool_take(&state->projections, &slot);
     if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining round sound projection");
-    entry->kind = kind; entry->actor = actor; entry->sound = *sound;
+    *entry = (frontend_audio_projection){.slot = slot, .kind = kind, .actor = actor, .sound = *sound};
     entry->recipient = recipient;
     entry->milliseconds = milliseconds;
     entry->sound.asset = qa_audio_asset_retain(sound->asset);
     if (sound->asset && !entry->sound.asset) {
-        audio_projection_free(entry); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining projected sound asset");
+        audio_projection_free(state, entry); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining projected sound asset");
     }
-    if (sound->name) {
-        size_t size = strlen(sound->name) + 1;
-        entry->name = malloc(size);
-        if (!entry->name) {
-            audio_projection_free(entry); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining projected sound name");
-        }
-        memcpy(entry->name, sound->name, size);
-    }
-    entry->sound.name = entry->name;
+    /* Every named projection comes from a retained sound-bank asset. Channel
+     * stops have no name; the asset owns its canonical path through delivery. */
+    entry->sound.name = sound->name ? qa_audio_asset_name(entry->sound.asset) : NULL;
     if (state->audio_tail) state->audio_tail->next = entry;
     else state->audio_head = entry;
     state->audio_tail = entry; return true;
@@ -340,7 +365,7 @@ static bool audio_projection_publish(qa_frontend *frontend, frontend_event_state
             ok = audio_play_receivers(frontend, &entry->sound, entry->milliseconds, error);
         else if (entry->kind == FRONTEND_AUDIO_STOP_CHANNEL) qa_audio_engine_stop_channel(frontend->audio, entry->sound.actor,
             entry->sound.owner, entry->sound.family, entry->sound.channel);
-        audio_projection_free(entry);
+        audio_projection_free(state, entry);
         if (!ok) return false;
     }
     return true;
@@ -397,13 +422,13 @@ void frontend_event_reset_round(qa_frontend *frontend)
     audio_projection_clear(state); state->audio_deferred = true;
     while (state->sounds) {
         frontend_retained_sound *entry = state->sounds; state->sounds = entry->next;
-        qa_audio_asset_release(entry->loop.sound.asset); free(entry);
+        qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
     }
     while (state->lights) {
-        frontend_retained_light *entry = state->lights; state->lights = entry->next; free(entry);
+        frontend_retained_light *entry = state->lights; state->lights = entry->next; qa_pool_release(&state->light_records, entry->slot);
     }
     while (state->bounds) {
-        frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; free(entry);
+        frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; qa_pool_release(&state->bound_records, entry->slot);
     }
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         frontend_event_view *view = &state->views[i];
@@ -425,13 +450,13 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
     audio_projection_clear(state);
     while (state->sounds) {
         frontend_retained_sound *entry = state->sounds; state->sounds = entry->next;
-        qa_audio_asset_release(entry->loop.sound.asset); free(entry);
+        qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
     }
     while (state->lights) {
-        frontend_retained_light *entry = state->lights; state->lights = entry->next; free(entry);
+        frontend_retained_light *entry = state->lights; state->lights = entry->next; qa_pool_release(&state->light_records, entry->slot);
     }
     while (state->bounds) {
-        frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; free(entry);
+        frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; qa_pool_release(&state->bound_records, entry->slot);
     }
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(state->views[i].sky[face]);
@@ -451,7 +476,7 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
         qa_vfs_destroy(entry->files); qa_resource_release(entry->artifact);
         qa_launch_instance_lease_release(entry->descriptor); free(entry);
     }
-    qa_audio_asset_release(state->last_step); free(state); frontend->events = NULL;
+    qa_audio_asset_release(state->last_step); qa_arena_destroy(&state->storage); free(state); frontend->events = NULL;
     return true;
 }
 
@@ -502,7 +527,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         frontend_retained_bounds *entry = *link;
         if ((!entry->deadline && entry->frame != frontend->frame_number) || (entry->deadline && now >= entry->deadline) ||
             (entry->actor.registry && !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), entry->actor))) {
-            *link = entry->next; free(entry);
+            *link = entry->next; qa_pool_release(&state->bound_records, entry->slot);
         } else link = &entry->next;
     }
     for (uint64_t i = qa_application_events_local_first(frontend->application);
@@ -542,9 +567,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                 if (!qa_vec_finite(event.origin) || !qa_vec_finite(event.end) || event.code < 0 || event.code > 255 ||
                     !isfinite(event.value) || event.value < 0 || event.value > (double)(UINT64_MAX - event.time_ns) / 1e9)
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid builtin debug bounds");
-                frontend_retained_bounds *entry = calloc(1, sizeof(*entry));
+                size_t slot;
+                frontend_retained_bounds *entry = qa_pool_take(&state->bound_records, &slot);
                 if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "retaining builtin debug bounds");
-                *entry = (frontend_retained_bounds){.next = state->bounds, .owner = event.provider, .actor = event.actor,
+                *entry = (frontend_retained_bounds){.slot = slot, .next = state->bounds, .owner = event.provider, .actor = event.actor,
                     .recipient = event.other, .bounds = {event.origin, event.end}, .color = (unsigned)event.code,
                     .frame = frontend->frame_number, .deadline = event.value > 0 ? event.time_ns + (uint64_t)(event.value * 1e9) : 0,
                     .depth = (event.flags & 1) != 0};
@@ -570,8 +596,9 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             frontend_retained_light *light = state->lights;
             while (light && (light->owner != source.provider || !qa_actor_id_equal(light->event.actor, event->actor))) light = light->next;
             if (!light) {
-                light = calloc(1, sizeof(*light));
+                size_t slot; light = qa_pool_take(&state->light_records, &slot);
                 if (!light) return frontend_fail(error, QA_ERROR_MEMORY, "retaining authored dynamic light");
+                *light = (frontend_retained_light){.slot = slot};
                 light->owner = source.provider; light->identity = qa_scene_identity();
                 light->next = state->lights; state->lights = light;
             }
@@ -1088,7 +1115,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
             if (!entry->static_key && entry->loop.sound.actor == actor && entry->loop.sound.owner == event->provider &&
                 entry->loop.sound.family == family) {
                 if (!qa_audio_engine_stop_loop(frontend->audio, actor, event->provider, entry->loop.sound.audience, error)) return false;
-                *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); free(entry);
+                *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
                 loop_stopped = true;
             } else link = &entry->next;
         }
@@ -1159,8 +1186,9 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         entry->loop.sound.owner != event->provider || entry->loop.sound.family != family ||
         entry->loop.sound.audience != audience)) entry = entry->next;
     if (!entry) {
-        entry = calloc(1, sizeof(*entry));
+        size_t slot; entry = qa_pool_take(&state->sound_records, &slot);
         if (!entry) { qa_audio_asset_release(asset); return frontend_fail(error, QA_ERROR_MEMORY, "retaining builtin looping sound"); }
+        *entry = (frontend_retained_sound){.slot = slot};
         entry->next = state->sounds; state->sounds = entry;
     } else qa_audio_asset_release(entry->loop.sound.asset);
     entry->actor = event->actor;
@@ -1201,7 +1229,7 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
                 !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), entry->actor)) {
                 if (!qa_audio_engine_stop_loop(frontend->audio, entry->loop.sound.actor,
                     entry->loop.sound.owner, entry->loop.sound.audience, error)) return false;
-                *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); free(entry); continue;
+                *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot); continue;
             }
             if (entry->loop.persistent) {
                 qa_body_state body; qa_error observed = {0};

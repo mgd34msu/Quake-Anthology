@@ -404,6 +404,7 @@ bool frontend_seat_context_ready(void *,uint32_t,const qa_command_context *,qa_e
 bool frontend_events(qa_frontend *, qa_error *);
 bool frontend_events_flush(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);
+bool frontend_event_prepare(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
 bool frontend_event_sound(qa_frontend *, const qa_builtin_event *, qa_error *);
 bool frontend_event_audio(qa_frontend *, qa_error *);
