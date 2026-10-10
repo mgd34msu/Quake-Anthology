@@ -2,6 +2,7 @@
 #include "qa/material.h"
 #include "../../gameplay/q2/monsters/muzzle_data.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/allocation_gate.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -194,10 +195,11 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     owner->source_light_capacity=(size_t)source->actor_capacity*2;
     owner->flashlight_capacity=source->actor_capacity;
     owner->light_capacity=Q2FX_LIGHT_CAPACITY+owner->source_light_capacity+owner->flashlight_capacity;
+    owner->draw_capacity=(size_t)source->actor_capacity*16+Q2FX_POOL*2;
     size_t bytes=owner->source_beam_capacity*sizeof(*owner->source_beams)+
         owner->source_light_capacity*sizeof(*owner->source_lights)+
         owner->flashlight_capacity*sizeof(*owner->flashlights)+owner->light_capacity*sizeof(*owner->sampled_lights)+
-        4*_Alignof(max_align_t);
+        owner->draw_capacity*sizeof(*owner->draws)+5*_Alignof(max_align_t);
     if (!qa_arena_reserve(&owner->semantic_storage,bytes,error) ||
         !frontend_q2_entity_cache_prepare(&owner->entity_trails,source->actor_capacity,error)) return false;
     owner->source_beams=qa_arena_alloc(&owner->semantic_storage,
@@ -208,7 +210,9 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
         owner->flashlight_capacity*sizeof(*owner->flashlights),_Alignof(q2fx_flashlight),error);
     owner->sampled_lights=qa_arena_alloc(&owner->semantic_storage,
         owner->light_capacity*sizeof(*owner->sampled_lights),_Alignof(qa_scene_light),error);
-    if (!owner->source_beams || !owner->source_lights || !owner->flashlights || !owner->sampled_lights) return false;
+    owner->draws=qa_arena_alloc(&owner->semantic_storage,
+        owner->draw_capacity*sizeof(*owner->draws),_Alignof(q2fx_model_draw),error);
+    if (!owner->source_beams || !owner->source_lights || !owner->flashlights || !owner->sampled_lights || !owner->draws) return false;
     qa_arena_seal(&owner->semantic_storage);
     qa_scene_image *image = NULL; qa_bytes palette;
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_GAME_Q2, &image, error)) return false;
@@ -226,7 +230,7 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     frontend_remote_q2_effects *owner = *slot;
     if (!owner) return true;
     if (!frontend_remote_q2_effects_idle(owner)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects still own an active source callback or policy");
-    qa_scene_image_release(owner->particle_image); qa_arena_destroy(&owner->entity_trails.storage); free(owner->draws);
+    qa_scene_image_release(owner->particle_image); qa_arena_destroy(&owner->entity_trails.storage);
     qa_arena_destroy(&owner->semantic_storage);
     free(owner); *slot = NULL; return true;
 }
@@ -953,11 +957,8 @@ static bool model_draw(frontend_remote_q2_effects *o, q2fx_model model, qa_vec3 
 {
     if (!q2fx_model_admit(o,model,e)) return false;
     if (o->draw_count==o->draw_capacity) {
-        size_t capacity=o->draw_capacity?o->draw_capacity*2:64;
-        if (capacity<o->draw_capacity || capacity>SIZE_MAX/sizeof(*o->draws)) return q2fx_fail(e,QA_ERROR_MEMORY,"Q2 transient model draw capacity overflow");
-        q2fx_model_draw *next=realloc(o->draws,capacity*sizeof(*next));
-        if (!next) return q2fx_fail(e,QA_ERROR_MEMORY,"Retaining Q2 transient model draws");
-        o->draws=next; o->draw_capacity=capacity;
+        qa_allocation_gate_capacity_exhausted();
+        return q2fx_fail(e,QA_ERROR_MEMORY,"Q2 transient model draw capacity exhausted");
     }
     o->draws[o->draw_count++]=(q2fx_model_draw){(uint8_t)model,origin,angles,frame,old_frame,skin,flags,alpha,back_lerp,{scale,scale,scale}}; return true;
 }
