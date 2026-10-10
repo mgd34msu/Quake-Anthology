@@ -1261,6 +1261,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
     if (!engine->clients || !engine->actors)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating QC physical client and actor rows");
+    if (!application_qc_messages_create(engine, error)) return false;
     int32_t difficulty = (int32_t)(fmaxf(0, fminf(3, skill->number)) + 0.5);
     static const qa_qc_builtin imports[] = {
         QA_QC_BUILTIN_CHECKCLIENT, QA_QC_BUILTIN_AIM, QA_QC_BUILTIN_STUFFCMD,
@@ -1381,10 +1382,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         if(engine->model_fields.entries)
             memset((void *)engine->model_fields.entries,0,
                    (size_t)engine->model_fields.count*sizeof(*engine->model_fields.entries));
-        for (size_t i = 0; i < engine->message_count; ++i) {
-            free(engine->messages[i].data); free(engine->messages[i].references);
-        }
-        engine->message_count = 0;
+        application_qc_messages_reset(engine);
         for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = NULL; }
     }
     if (engine == NULL || entities == NULL || map == NULL || entities->count == 0 || !engine->loading)
@@ -1501,16 +1499,14 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource_dispose(&engine->resources[i]);
     }
-    for (size_t i = 0; i < engine->message_count; ++i) {
-        free(engine->messages[i].data); free(engine->messages[i].references);
-    }
+    application_qc_messages_destroy(engine);
     for (size_t i = 0; i < 64; ++i) free(engine->lightstyles[i]);
     qa_buffer_free(&engine->original_extension);
     application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
     free((void *)engine->model_fields.entries);
-    free(engine->resources); free(engine->messages); free(engine->clients); free(engine->actors); free(engine);
+    free(engine->resources); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
     return true;
 }
@@ -1530,6 +1526,7 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
         engine->actors[record.id.slot] = (application_qc_actor){0};
     for (uint32_t i = 1; i <= engine->max_clients; ++i)
         if (qa_actor_id_equal(engine->clients[i].actor, record.id)) {
+            application_qc_messages_release(engine, record.id);
             engine->clients[i].actor = (qa_actor_id){0}; engine->clients[i].connected = false; engine->clients[i].spawned = false;
             engine->clients[i].prepared = false;
             engine->clients[i].output_published = false;

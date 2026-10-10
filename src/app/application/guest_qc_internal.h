@@ -121,6 +121,10 @@ bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
 bool application_qc_source_globals(application_provider *, qa_error *);
 bool application_qc_npc_restore_finish(application_provider *, qa_error *);
 bool application_qc_flush(struct application_qc_state *, qa_error *);
+bool application_qc_messages_create(struct application_qc_state *, qa_error *);
+void application_qc_messages_reset(struct application_qc_state *);
+void application_qc_messages_destroy(struct application_qc_state *);
+void application_qc_messages_release(struct application_qc_state *, qa_actor_id);
 bool application_qc_write_message(struct application_qc_state *, qa_qc_instance *, qa_qc_builtin, qa_error *);
 bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, qa_error *);
 bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, bool,

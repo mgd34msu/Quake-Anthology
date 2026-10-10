@@ -390,13 +390,11 @@ static void dispose_candidate(struct application_qc_state *candidate)
     for (size_t i = 0; i < candidate->resource_count; ++i) {
         application_qc_resource_dispose(&candidate->resources[i]);
     }
-    for (size_t i = 0; i < candidate->message_count; ++i) {
-        free(candidate->messages[i].data); free(candidate->messages[i].references);
-    }
+    application_qc_messages_destroy(candidate);
     for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
-    free(candidate->resources); free(candidate->messages); free(candidate->clients);
+    free(candidate->resources); free(candidate->clients);
     free((void *)candidate->model_fields.entries);
 }
 bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
@@ -532,11 +530,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     }
     uint32_t messages = ok ? qa_net_read_u32(&reader) : 0;
     if ((uint64_t)messages > (uint64_t)candidate.max_clients + 4) ok = qa_net_reader_fail(&reader, "QuakeC message route count exceeds source destinations");
-    if (ok && messages) {
-        candidate.messages = calloc(messages, sizeof(*candidate.messages));
-        ok = candidate.messages != NULL;
-        candidate.message_capacity = messages;
-    }
+    if (ok) ok = application_qc_messages_create(&candidate, error);
     for (uint32_t i = 0; ok && i < messages; ++i) {
         application_qc_message *message = &candidate.messages[candidate.message_count++];
         message->destination = qa_net_read_u32(&reader);
@@ -549,13 +543,10 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
             message->destination == 0 || message->destination == 2 ? 1024u : 8000u;
         ok = ok && message->capacity == maximum && message->size <= maximum && overflowed <= 1 &&
              (message->destination == 1 ? message->recipient.registry != 0 : message->recipient.registry == 0);
-        if (ok) { message->data = malloc(maximum); ok = message->data && qa_net_read_data(&reader, message->data, message->size); }
+        if (ok) ok = qa_net_read_data(&reader, message->data, message->size);
         uint32_t references = ok ? qa_net_read_u32(&reader) : 0;
-        if (references > message->size * 2) ok = qa_net_reader_fail(&reader, "QuakeC protocol references exceed payload");
-        if (ok && references) {
-            message->references = calloc(references, sizeof(*message->references));
-            ok = message->references != NULL; message->reference_capacity = references;
-        }
+        if (references > message->size * (candidate.profile == QA_QC_QUAKEWORLD ? 2u : 1u))
+            ok = qa_net_reader_fail(&reader, "QuakeC protocol references exceed payload");
         for (uint32_t p = 0; ok && p < references; ++p) {
             qa_application_protocol_reference *reference = &message->references[message->reference_count++];
             reference->offset = qa_net_read_u32(&reader);
@@ -604,16 +595,16 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         for (size_t i = 0; i < engine->resource_count; ++i) {
             application_qc_resource_dispose(&engine->resources[i]);
         }
-        for (size_t i = 0; i < engine->message_count; ++i) { free(engine->messages[i].data); free(engine->messages[i].references); }
+        application_qc_messages_destroy(engine);
         for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = candidate.lightstyles[i]; candidate.lightstyles[i] = NULL; }
-        free(engine->resources); free(engine->messages); free(engine->clients);
+        free(engine->resources); free(engine->clients);
         free((void *)engine->model_fields.entries);
         engine->model_fields=candidate.model_fields;
         candidate.model_fields=(qa_entity_model_fields){0};
         engine->resources = candidate.resources; engine->resource_count = candidate.resource_count; engine->resource_capacity = candidate.resource_capacity;
         candidate.resources = NULL; candidate.resource_count = 0;
         engine->messages = candidate.messages; engine->message_count = candidate.message_count; engine->message_capacity = candidate.message_capacity;
-        candidate.messages = NULL; candidate.message_count = 0;
+        candidate.messages = NULL; candidate.message_count = candidate.message_capacity = 0;
         engine->clients = candidate.clients; candidate.clients = NULL;
         engine->source_time_ns = candidate.source_time_ns; engine->serverflags = candidate.serverflags;
         qa_buffer_free(&engine->original_extension);

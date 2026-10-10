@@ -1,5 +1,58 @@
 #include "guest_qc_internal.h"
 
+bool application_qc_messages_create(struct application_qc_state *engine, qa_error *error)
+{
+    size_t count = (size_t)engine->max_clients + 4;
+    size_t bytes = engine->profile == QA_QC_QUAKEWORLD ? 1450u * 5u : 8000u;
+    size_t references = bytes * (engine->profile == QA_QC_QUAKEWORLD ? 2u : 1u);
+    engine->messages = calloc(count, sizeof(*engine->messages));
+    if (!engine->messages)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized QuakeC message routes");
+    engine->message_capacity = count;
+    for (size_t i = 0; i < count; ++i) {
+        application_qc_message *message = engine->messages + i;
+        message->data = malloc(bytes);
+        message->references = malloc(references * sizeof(*message->references));
+        message->reference_capacity = references;
+        if (!message->data || !message->references) {
+            application_qc_messages_destroy(engine);
+            return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized QuakeC message payloads");
+        }
+    }
+    return true;
+}
+
+void application_qc_messages_reset(struct application_qc_state *engine)
+{
+    engine->message_count = 0;
+}
+
+void application_qc_messages_destroy(struct application_qc_state *engine)
+{
+    for (size_t i = 0; i < engine->message_capacity; ++i) {
+        free(engine->messages[i].data);
+        free(engine->messages[i].references);
+    }
+    free(engine->messages);
+    engine->messages = NULL;
+    engine->message_count = engine->message_capacity = 0;
+}
+
+void application_qc_messages_release(struct application_qc_state *engine, qa_actor_id actor)
+{
+    for (size_t i = 0; i < engine->message_count;) {
+        application_qc_message *message = engine->messages + i;
+        if (message->destination != 1 || !qa_actor_id_equal(message->recipient, actor)) {
+            ++i;
+            continue;
+        }
+        application_qc_message retired = *message;
+        --engine->message_count;
+        memmove(message, message + 1, (engine->message_count - i) * sizeof(*message));
+        engine->messages[engine->message_count] = retired;
+    }
+}
+
 static bool message_target(struct application_qc_state *engine, qa_qc_instance *vm,
                             uint32_t destination, application_qc_message **out, qa_error *error)
 {
@@ -25,30 +78,16 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
     for (size_t i = 0; i < engine->message_count; ++i)
         if (engine->messages[i].destination == destination &&
             qa_actor_id_equal(engine->messages[i].recipient, recipient)) { *out = &engine->messages[i]; return true; }
-    if (engine->message_count == engine->message_capacity) {
-        size_t capacity = engine->message_capacity ? engine->message_capacity * 2 : 8;
-        if (capacity < engine->message_capacity || capacity > SIZE_MAX / sizeof(*engine->messages)) {
-            application_fail(error, QA_ERROR_MEMORY, "QuakeC message routing allocation overflow");
-            return false;
-        }
-        application_qc_message *messages = realloc(engine->messages, capacity * sizeof(*messages));
-        if (messages == NULL) {
-            application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message routes");
-            return false;
-        }
-        engine->messages = messages; engine->message_capacity = capacity;
-    }
     size_t maximum = engine->profile == QA_QC_QUAKEWORLD ?
         destination == 1 ? 1450u * 5u : destination == 0 || destination == 3 ? 1024u : 1450u :
         destination == 0 || destination == 2 ? 1024u : 8000u;
-    uint8_t *data = malloc(maximum);
-    if (data == NULL) {
-        application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC message buffer");
-        return false;
-    }
     application_qc_message *message = &engine->messages[engine->message_count++];
+    uint8_t *data = message->data;
+    qa_application_protocol_reference *references = message->references;
+    size_t reference_capacity = message->reference_capacity;
     *message = (application_qc_message){.destination = destination, .recipient = recipient,
-                                     .data = data, .capacity = maximum};
+        .data = data, .capacity = maximum, .references = references,
+        .reference_capacity = reference_capacity};
     *out = message; return true;
 }
 static bool integer_argument(qa_qc_instance *vm, uint32_t index, int32_t *out, qa_error *error)
@@ -118,25 +157,8 @@ bool application_qc_write_message(struct application_qc_state *engine, qa_qc_ins
     default: return application_fail(error, QA_ERROR_ARGUMENT, "Unknown QuakeC message writer");
     }
     if (ok) {
-        size_t size = before + qa_net_writer_size(&writer), reference_need = message->reference_count;
+        size_t size = before + qa_net_writer_size(&writer);
         unsigned kinds = engine->profile == QA_QC_QUAKEWORLD ? 2u : 1u;
-        for (size_t end = before > 1 ? before : 1; end < size; ++end) {
-            uint32_t word = message->data[end - 1] | (uint32_t)message->data[end] << 8;
-            for (unsigned kind = 0; kind < kinds; ++kind)
-                if (window_actor(vm, word, kind != 0).registry != 0) ++reference_need;
-        }
-        if (reference_need > message->reference_capacity) {
-            size_t capacity = message->reference_capacity ? message->reference_capacity : 32;
-            while (capacity < reference_need) {
-                if (capacity > SIZE_MAX / 2) { capacity = reference_need; break; }
-                capacity *= 2;
-            }
-            if (capacity > SIZE_MAX / sizeof(*message->references))
-                return application_fail(error, QA_ERROR_MEMORY, "QuakeC protocol reference allocation overflow");
-            qa_application_protocol_reference *references = realloc(message->references, capacity * sizeof(*references));
-            if (references == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC protocol references");
-            message->references = references; message->reference_capacity = capacity;
-        }
         message->size = size;
         for (size_t end = before > 1 ? before : 1; end < size; ++end) {
             uint32_t word = message->data[end - 1] | (uint32_t)message->data[end] << 8;
