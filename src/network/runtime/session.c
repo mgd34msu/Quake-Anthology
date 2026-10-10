@@ -133,10 +133,10 @@ bool qa_network_connection_incomplete(const qa_network_runtime *runtime,qa_net_c
     return runtime && id.slot<runtime->options.clients && qa_net_connections_get(runtime->connections,id) &&
         !runtime->peers[id.slot].occupied && !runtime->peers[id.slot].state && !runtime->peers[id.slot].seats;
 }
-bool qa_network_send(qa_network_runtime *runtime, qa_net_client_id id, qa_bytes bytes, qa_error *error) {
+qa_net_send_result qa_network_send(qa_network_runtime *runtime, qa_net_client_id id, qa_bytes bytes, qa_error *error) {
     const qa_net_client *client = runtime ? qa_net_connections_get(runtime->connections, id) : NULL;
     if (!client) return qa_network_fail(error, "Cannot send to stale connection");
-    return qa_net_transport_send(runtime->transport, &client->endpoint, bytes, error) == QA_NET_SEND_ACCEPTED;
+    return qa_net_transport_send(runtime->transport, &client->endpoint, bytes, error);
 }
 bool qa_network_received(qa_network_runtime *runtime, qa_net_client_id id, uint64_t now, qa_error *error) {
     return runtime && qa_net_connections_received(runtime->connections, id, now, error);

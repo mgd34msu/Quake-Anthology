@@ -282,7 +282,7 @@ static bool rejected(void *context, qa_error *error)
 { q3_runtime_peer *p = context; return p->hooks.pure_rejected_snapshot(p->hooks.context, error); }
 static bool drop(void *context, const char *reason, qa_error *error)
 { q3_runtime_peer *p = context; return p->hooks.drop(p->hooks.context, reason, error); }
-static bool send(void *context, const qa_net_address *address, qa_bytes bytes, qa_error *error)
+static qa_net_send_result send(void *context, const qa_net_address *address, qa_bytes bytes, qa_error *error)
 {
     q3_runtime_peer *p = context;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(p->runtime), p->id);

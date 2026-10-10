@@ -208,7 +208,7 @@ static bool receive_peer(void *state, qa_network_runtime *runtime, qa_net_client
     return ok;
 }
 
-static bool send_peer(void *state, qa_bytes bytes, qa_error *e)
+static qa_net_send_result send_peer(void *state, qa_bytes bytes, qa_error *e)
 {
     qa_unified_session *s = state;
     return qa_network_send(s->runtime, s->id, bytes, e);

@@ -380,7 +380,7 @@ bool qa_unified_channel_resume(qa_unified_channel *c, qa_unified_admit_delivery_
     c->busy=false; return result;
 }
 
-static bool send_packet(qa_unified_channel *c, const qa_unified_packet *p,
+static qa_net_send_result send_packet(qa_unified_channel *c, const qa_unified_packet *p,
                          qa_unified_send_fn send, void *context, qa_error *error) {
     size_t size=0;
     if (!qa_unified_packet_encode(p,c->packet,c->limits.datagram_bytes,&size,error)) return false;
@@ -393,7 +393,8 @@ static bool send_ack(qa_unified_channel *c, qa_unified_send_fn send, void *conte
         .acknowledged_frame=c->frame_admitted};
     if (c->cumulative_pending) {
         p.sequence=c->cumulative_sequence; p.fragment=c->cumulative_fragment;
-        if (!send_packet(c,&p,send,context,error)) return false;
+        qa_net_send_result result=send_packet(c,&p,send,context,error);
+        if (result!=QA_NET_SEND_ACCEPTED) return result==QA_NET_SEND_FULL;
         c->cumulative_pending=false; *progress=true; return true;
     }
     assembly *selected=NULL;
@@ -407,11 +408,13 @@ static bool send_ack(qa_unified_channel *c, qa_unified_send_fn send, void *conte
     }
     if (!selected) {
         if (!c->frame_ack_pending) return true;
-        if (!send_packet(c,&p,send,context,error)) return false;
+        qa_net_send_result result=send_packet(c,&p,send,context,error);
+        if (result!=QA_NET_SEND_ACCEPTED) return result==QA_NET_SEND_FULL;
         c->frame_ack_pending=false; *progress=true; return true;
     }
     p.sequence=selected->sequence; p.fragment=selected_fragment;
-    if (!send_packet(c,&p,send,context,error)) return false;
+    qa_net_send_result result=send_packet(c,&p,send,context,error);
+    if (result!=QA_NET_SEND_ACCEPTED) return result==QA_NET_SEND_FULL;
     selected->pending_ack[selected_fragment]=0; *progress=true; return true;
 }
 
@@ -457,7 +460,8 @@ static bool send_reliable(qa_unified_channel *c, uint64_t now, qa_unified_send_f
             close_channel(c); return error_message(error,QA_ERROR_IO,"unified reliable retry limit exceeded");
         }
         qa_unified_packet p=data_packet(c,message,QA_UNIFIED_RELIABLE,(uint16_t)fragment);
-        if (!send_packet(c,&p,send,context,error)) { c->reliable_cursor=index; return false; }
+        qa_net_send_result result=send_packet(c,&p,send,context,error);
+        if (result!=QA_NET_SEND_ACCEPTED) { c->reliable_cursor=index; return result==QA_NET_SEND_FULL; }
         s->at=now; s->attempts++;
         if (fresh) message->next_fragment++;
         *progress=true; return true;
@@ -470,7 +474,8 @@ static bool send_frame(qa_unified_channel *c, qa_unified_send_fn send, void *con
     outgoing *message=c->frame;
     if (!message) return true;
     qa_unified_packet p=data_packet(c,message,QA_UNIFIED_FRAME,(uint16_t)message->next_fragment);
-    if (!send_packet(c,&p,send,context,error)) return false;
+    qa_net_send_result result=send_packet(c,&p,send,context,error);
+    if (result!=QA_NET_SEND_ACCEPTED) return result==QA_NET_SEND_FULL;
     if (++message->next_fragment==message->fragments) {
         c->frame_transmitted=message->sequence;
         c->frame=c->pending_frame; c->pending_frame=NULL; qa_unified_outgoing_release(c, message);

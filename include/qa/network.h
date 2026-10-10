@@ -128,6 +128,7 @@ typedef struct qa_network_reliable_receipt {
 typedef enum qa_net_send_result {
     QA_NET_SEND_FAILED, QA_NET_SEND_ACCEPTED, QA_NET_SEND_FULL
 } qa_net_send_result;
+typedef qa_net_send_result (*qa_net_send_fn)(void *, const qa_net_address *, qa_bytes, qa_error *);
 typedef struct qa_net_transport_ops {
     qa_net_send_result (*send)(void *, const qa_net_address *, qa_bytes, qa_error *);
     bool (*collect)(void *, uint64_t now_ns, qa_net_transport_event *, qa_error *);

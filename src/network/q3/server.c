@@ -135,7 +135,8 @@ static bool send_next(qa_q3_server_peer *p, bool *sent, qa_error *e) {
     *sent = false;
     if (!qa_q3_channel_prepare(p->channel, &present, &packet, e)) return false;
     if (!present) return true;
-    if (!p->hooks.send(p->hooks.context, &p->remote, packet, e)) return false;
+    qa_net_send_result result = p->hooks.send(p->hooks.context, &p->remote, packet, e);
+    if (result != QA_NET_SEND_ACCEPTED) return result == QA_NET_SEND_FULL;
     qa_q3_channel_sent(p->channel, packet);
     *sent = true;
     return true;

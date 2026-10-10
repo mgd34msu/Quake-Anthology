@@ -120,7 +120,7 @@ bool qa_network_receive(qa_network_runtime *, const qa_net_datagram *, qa_error 
 /* Timeout and flush maintenance uses the host time, independently of the
  * captured receive timestamp. Held decoders defer both operations. */
 bool qa_network_tick(qa_network_runtime *, uint64_t now_ns, qa_error *);
-bool qa_network_send(qa_network_runtime *, qa_net_client_id, qa_bytes, qa_error *);
+qa_net_send_result qa_network_send(qa_network_runtime *, qa_net_client_id, qa_bytes, qa_error *);
 /* Connectionless services share this transport; they never open a second
  * receive owner. The address is not a connection admission. */
 bool qa_network_send_address(qa_network_runtime *, const qa_net_address *, qa_bytes, qa_error *);

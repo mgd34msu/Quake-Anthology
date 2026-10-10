@@ -380,7 +380,7 @@ typedef struct qa_q3_server_hooks {
     bool (*resend_gamestate)(void *, qa_error *);
     bool (*pure_rejected_snapshot)(void *, qa_error *);
     bool (*drop)(void *, const char *, qa_error *);
-    qa_q3_send_fn send;
+    qa_net_send_fn send;
 } qa_q3_server_hooks;
 typedef struct qa_q3_server_rate {
     uint32_t bytes_per_second, snapshot_ms;
@@ -454,7 +454,7 @@ typedef struct qa_q3_client_hooks {
     bool (*disconnect)(void *, const char *, qa_error *);
     bool (*level_shot)(void *, qa_error *);
     bool (*local_server_running)(void *);
-    qa_q3_send_fn send;
+    qa_net_send_fn send;
     /* Plaintext from one accepted physical message, after native decoding.
      * Recording starts only after the real non-delta snapshot clears waiting.
      * The callback borrows the entered receiver; it cannot feed another message. */

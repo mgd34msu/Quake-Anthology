@@ -312,8 +312,9 @@ static bool transmit_pending(qa_q3_client_peer *p, int32_t real_time, qa_error *
                 return fail(e, QA_ERROR_FORMAT, "Q3 channel produced no bounded pending client datagram");
             memcpy(p->transmit_packet, packet.data, packet.size); p->transmit_size = (uint16_t)packet.size;
         }
-        if (!p->hooks.send(p->hooks.context, &p->remote,
-            (qa_bytes){p->transmit_packet, p->transmit_size}, e)) return false;
+        qa_net_send_result result = p->hooks.send(p->hooks.context, &p->remote,
+            (qa_bytes){p->transmit_packet, p->transmit_size}, e);
+        if (result != QA_NET_SEND_ACCEPTED) return result == QA_NET_SEND_FULL;
         qa_bytes packet = {p->transmit_packet, p->transmit_size};
         uint32_t sequence = qa_q3_channel_outgoing(p->channel);
         qa_q3_channel_sent(p->channel, packet);
@@ -372,11 +373,13 @@ bool qa_q3_client_peer_disconnect(qa_q3_client_peer *p, const qa_q3_client_send 
         /* Complete any older interrupted message before inserting disconnect;
          * its eventual delivery is not one of the three close packets. */
         if ((p->transmit_size || qa_q3_channel_pending(p->channel)) && !transmit_pending(p, o->real_time, e)) return false;
+        if (p->transmit_size || qa_q3_channel_pending(p->channel)) return true;
         if (!qa_q3_client_peer_command(p, "disconnect", e)) return false;
         p->disconnect_started = true;
     }
     while (p->disconnect_packets < 3) {
         if (!qa_q3_client_peer_send(p, o, e)) return false;
+        if (p->transmit_size || qa_q3_channel_pending(p->channel)) return true;
         ++p->disconnect_packets;
     }
     p->disconnected = true; return true;

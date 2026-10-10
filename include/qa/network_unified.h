@@ -45,7 +45,7 @@ typedef struct qa_unified_delivery {
     uint32_t sequence, required_reliable;
     qa_bytes payload;
 } qa_unified_delivery;
-typedef bool (*qa_unified_send_fn)(void *, qa_bytes, qa_error *);
+typedef qa_net_send_result (*qa_unified_send_fn)(void *, qa_bytes, qa_error *);
 /* Delivery bytes live only for this synchronous callback. Callbacks may queue
  * outgoing messages, but must not receive, flush, close or destroy the channel.
  * Delivery failure closes it: accepted reliable

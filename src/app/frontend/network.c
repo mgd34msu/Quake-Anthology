@@ -317,10 +317,10 @@ static const qa_q3_client_peer *q3_view(const frontend_q3_client *n)
 {
     return n && n->q3_client_attached ? qa_network_q3_client_view(n->runtime, n->q3_client) : NULL;
 }
-static bool client_send_address(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
+static qa_net_send_result client_send_address(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     frontend_q3_client *n = context;
-    return qa_network_send_address(n->runtime, to, bytes, error);
+    return qa_net_transport_send(qa_network_transport(n->runtime), to, bytes, error);
 }
 static bool round_publish(qa_network_q3_round *, qa_error *);
 static bool demo_q3_accepted(void *,int32_t,qa_bytes,bool,qa_error *);
@@ -3513,7 +3513,8 @@ static bool client_authorization_attempt_current(void *context, qa_error *error)
 static bool client_authorization_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
     client_authorization_attempt *attempt = context;
-    return client_authorization_attempt_current(attempt, error) && client_send_address(attempt->network, to, bytes, error);
+    return client_authorization_attempt_current(attempt, error) &&
+        client_send_address(attempt->network, to, bytes, error) == QA_NET_SEND_ACCEPTED;
 }
 static bool client_lan_address(const qa_net_address *address)
 {
@@ -3531,7 +3532,7 @@ static bool client_admission_send(void *context, const qa_net_address *to, qa_by
         if (!qa_q3_client_authorization_request(n->q3_client_authorization,
             client_authorization_attempt_current, client_authorization_send, &attempt, error)) return false;
     }
-    return client_send_address(n, to, bytes, error);
+    return client_send_address(n, to, bytes, error) == QA_NET_SEND_ACCEPTED;
 }
 static bool client_input_source_read(void *context, frontend_remote_input_source *out, bool *present, qa_error *error)
 {
