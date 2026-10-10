@@ -647,24 +647,31 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
 bool application_unified_persistent_prepare(qa_application *app,
     application_event_envelope *envelope, qa_error *error)
 {
-    size_t count = app->unified_persistent_count;
     for (application_event_view *view = envelope->views; view; view = view->next) {
         if (!application_unified_persistent_key(app, &view->event, &view->persistent_key,
             &view->persistent_remove, error)) return false;
+    }
+    for (application_event_view *view = envelope->views; view; view = view->next) {
+        if (!view->persistent_key.domain) continue;
+        for (application_event_view *later = view->next; later; later = later->next)
+            if (application_unified_persistent_key_equal(&view->persistent_key, &later->persistent_key)) {
+                view->persistent_key = (application_persistent_key){0};
+                break;
+            }
+    }
+    size_t count = app->unified_persistent_count;
+    for (application_event_view *view = envelope->views; view; view = view->next) {
         if (!view->persistent_key.domain) continue;
         bool present = false;
         for (size_t i = 0; i < app->unified_persistent_count; ++i)
             if (application_unified_persistent_key_equal(&view->persistent_key,
                 &app->unified_persistent[i].key)) { present = true; break; }
-        for (application_event_view *prior = envelope->views; prior != view; prior = prior->next)
-            if (application_unified_persistent_key_equal(&view->persistent_key,
-                &prior->persistent_key)) present = !prior->persistent_remove;
         if (view->persistent_remove) { if (present) --count; }
         else if (!present) ++count;
-        if (count > app->unified_persistent_capacity) {
-            app->event_write->transaction.blocked = true;
-            return false;
-        }
+    }
+    if (count > app->unified_persistent_capacity) {
+        app->event_write->transaction.blocked = true;
+        return false;
     }
     return true;
 }
@@ -678,12 +685,14 @@ void application_unified_persistent_publish(qa_application *app,
         while (index < app->unified_persistent_count &&
             !application_unified_persistent_key_equal(&view->persistent_key,
                 &app->unified_persistent[index].key)) ++index;
-        if (view->persistent_remove && index == app->unified_persistent_count) continue;
         if (index < app->unified_persistent_count) {
             qa_event_lease_release(app->unified_persistent[index].lease);
             memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
                 (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
         }
+    }
+    for (application_event_view *view = envelope->views; view; view = view->next) {
+        if (!view->persistent_key.domain) continue;
         if (!view->persistent_remove) {
             application_unified_event_record record = view->event;
             record.simulation = NULL;
