@@ -4,24 +4,17 @@
 #include <math.h>
 
 static bool call_text(qa_native_host *host, const qa_native_import_call *call, size_t index,
-                      qa_buffer *out, qa_error *error)
+                      qa_bytes *out, qa_error *error)
 {
     if (index >= call->argument_count)
         return native_host_fail(error, QA_ERROR_ARGUMENT, index,
                                 "native import string argument is missing");
     qa_native_address address = native_argument_address(call, index);
-    if (!address) {
-        out->data = calloc(1, 1);
-        if (!out->data)
-            return native_host_fail(error, QA_ERROR_MEMORY, 0,
-                                    "allocating empty native import string");
-        return true;
-    }
     return native_host_string_read(host, address, out, error);
 }
 
 static bool call_string_span(qa_native_host *host, const qa_native_import_call *call,
-                             size_t index, const char **out, qa_buffer *owned,
+                             size_t index, const char **out, qa_bytes *owned,
                              qa_error *error)
 {
     if (index >= call->argument_count)
@@ -82,14 +75,13 @@ static bool print_import(qa_native_host *host, const qa_native_import_call *call
         entity = native_argument_address(call, 0);
         text_index = 1;
     }
-    qa_buffer text = {0};
+    qa_bytes text = {0};
     if (!call_text(host, call, text_index, &text, error))
         return false;
     bool fatal = !strcmp(call->name, "error") || !strcmp(call->name, "Com_Error");
     bool ok = fatal ? native_host_fail(error, QA_ERROR_FORMAT, call->slot,
                                        (const char *)text.data)
                     : emit_print(host, kind, entity, level, (const char *)text.data, error);
-    qa_buffer_free(&text);
     return ok;
 }
 
@@ -111,13 +103,12 @@ static bool configstring_set(qa_native_host *host, const qa_native_import_call *
     if (!host->engine.configstring_set)
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, call->slot,
                                 "native configstring writer is unbound");
-    qa_buffer value = {0};
+    qa_bytes value = {0};
     if (!call_text(host, call, 1, &value, error))
         return false;
     bool ok = host->engine.configstring_set(host->engine.context,
                                             native_argument_i32(call, 0),
                                             (const char *)value.data, error);
-    qa_buffer_free(&value);
     return ok;
 }
 
@@ -143,7 +134,7 @@ static bool remember_inline_model(qa_native_host *, int32_t, const char *,
 static bool resource_import(qa_native_host *host, const qa_native_import_call *call,
                             qa_native_value *result, qa_error *error)
 {
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!call_text(host, call, 0, &name, error))
         return false;
     int32_t index;
@@ -153,7 +144,6 @@ static bool resource_import(qa_native_host *host, const qa_native_import_call *c
         uint32_t model;
         ok = remember_inline_model(host, index, (const char *)name.data, &model, error);
     }
-    qa_buffer_free(&name);
     if (ok)
         result->as.i32 = index;
     return ok;
@@ -202,7 +192,7 @@ static bool set_model(qa_native_host *host, const qa_native_import_call *call,
                       qa_error *error)
 {
     qa_native_address entity = native_argument_address(call, 0);
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!entity || !call_text(host, call, 1, &name, error))
         return false;
     int32_t resource;
@@ -220,7 +210,6 @@ static bool set_model(qa_native_host *host, const qa_native_import_call *call,
                  native_host_write_vec3(host, entity + host->edict->maxs, bounds.maxs, error) &&
                  native_host_link(host, entity, error);
     }
-    qa_buffer_free(&name);
     return ok;
 }
 
@@ -338,26 +327,24 @@ static bool add_command(qa_native_host *host, const qa_native_import_call *call,
     if (!host->console)
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, call->slot,
                                 "native command buffer is unbound");
-    qa_buffer text = {0};
+    qa_bytes text = {0};
     if (!call_text(host, call, 0, &text, error))
         return false;
     bool ok = qa_console_append(host->console, &host->command_context,
                                 (const char *)text.data, error);
-    qa_buffer_free(&text);
     return ok;
 }
 
 static bool extension_import(qa_native_host *host, const qa_native_import_call *call,
                              qa_native_value *result, qa_error *error)
 {
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!call_text(host, call, 0, &name, error))
         return false;
     qa_native_address address = 0;
     bool ok = !host->engine.extension ||
               host->engine.extension(host->engine.context, host->profile,
                                      (const char *)name.data, &address, error);
-    qa_buffer_free(&name);
     if (ok)
         result->as.address = address;
     return ok;
@@ -386,12 +373,10 @@ static bool tagged_memory(qa_native_host *host, const qa_native_import_call *cal
 static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                         qa_native_value *result, qa_error *error)
 {
-    qa_buffer name_copy = {0}, value_copy = {0};
+    qa_bytes name_copy = {0}, value_copy = {0};
     const char *name, *value;
     if (!call_string_span(host, call, 0, &name, &name_copy, error) ||
         !call_string_span(host, call, 1, &value, &value_copy, error)) {
-        if (name_copy.data) qa_buffer_free(&name_copy);
-        if (value_copy.data) qa_buffer_free(&value_copy);
         return false;
     }
     bool registration = !strcmp(call->name, "cvar");
@@ -401,8 +386,6 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
     if ((declaration && !name_copy.data && !call_text(host, call, 0, &name_copy, error)) ||
         ((declaration || !registration) && !value_copy.data &&
          !call_text(host, call, 1, &value_copy, error))) {
-        if (name_copy.data) qa_buffer_free(&name_copy);
-        if (value_copy.data) qa_buffer_free(&value_copy);
         return false;
     }
     if (name_copy.data) name = (const char *)name_copy.data;
@@ -414,8 +397,6 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                          : !strcmp(call->name, "cvar_forceset") ? 1u : 0u;
     bool ok = native_host_cvar(host, name, value, flags, !registration,
                                &result->as.address, error);
-    if (name_copy.data) qa_buffer_free(&name_copy);
-    if (value_copy.data) qa_buffer_free(&value_copy);
     return ok;
 }
 
@@ -445,10 +426,8 @@ static bool info_find(const char *info, const char *key, const char **begin, siz
 static bool info_value(qa_native_host *host, const qa_native_import_call *call,
                        qa_native_value *result, qa_error *error)
 {
-    qa_buffer info = {0}, key = {0};
+    qa_bytes info = {0}, key = {0};
     if (!call_text(host, call, 0, &info, error) || !call_text(host, call, 1, &key, error)) {
-        qa_buffer_free(&info);
-        qa_buffer_free(&key);
         return false;
     }
     const char *begin = "";
@@ -467,8 +446,6 @@ static bool info_value(qa_native_host *host, const qa_native_import_call *call,
     }
     if (ok)
         result->as.u64 = length;
-    qa_buffer_free(&info);
-    qa_buffer_free(&key);
     return ok;
 }
 

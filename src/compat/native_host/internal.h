@@ -111,6 +111,7 @@ struct qa_native_host {
     qa_pool movement_results;
     qa_arena call_storage;
     qa_pool call_scratch;
+    qa_arena text_storage;
     qa_native_host_q2_application_fn q2_application;
     void *q2_application_context;
     uint32_t q2_seat;
@@ -196,7 +197,7 @@ bool native_host_write_u32(qa_native_host *, qa_native_address, uint32_t, qa_err
 bool native_host_write_i32(qa_native_host *, qa_native_address, int32_t, qa_error *);
 bool native_host_read_vec3(qa_native_host *, qa_native_address, qa_vec3 *, qa_error *);
 bool native_host_write_vec3(qa_native_host *, qa_native_address, qa_vec3, qa_error *);
-bool native_host_string_read(qa_native_host *, qa_native_address, qa_buffer *, qa_error *);
+bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa_error *);
 bool native_host_string_address(qa_native_host *, const char *, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 void native_host_temporary_free(qa_native_host *, qa_native_address);

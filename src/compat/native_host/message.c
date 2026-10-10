@@ -101,11 +101,10 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         qa_native_address address = native_argument_address(call, 0);
         if (!address)
             return append_u8(host, 0, error);
-        qa_buffer string = {0};
+        qa_bytes string = {0};
         if (!native_host_string_read(host, address, &string, error))
             return false;
         bool ok = append(host, string.data, string.size, error) && append_u8(host, 0, error);
-        qa_buffer_free(&string);
         return ok;
     }
     if (!strcmp(call->name, "WritePosition")) {

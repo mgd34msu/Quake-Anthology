@@ -97,17 +97,24 @@ bool native_host_write_vec3(qa_native_host *host, qa_native_address address, qa_
     return native_host_write(host, address, bytes, sizeof(bytes), error);
 }
 
-bool native_host_string_read(qa_native_host *host, qa_native_address address, qa_buffer *out,
+bool native_host_string_read(qa_native_host *host, qa_native_address address, qa_bytes *out,
                              qa_error *error)
 {
     if (!out)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native string output is required");
     if (!address) {
-        *out = (qa_buffer){0};
+        *out = (qa_bytes){(const uint8_t *)"", 0};
         return true;
     }
-    return qa_native_read_string(host->instance, address, host->maximum_string_bytes, out,
-                                 error);
+    qa_bytes source;
+    if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes,
+            &source, error)) return false;
+    uint8_t *text = qa_arena_alloc(&host->text_storage, source.size + 1, 1, error);
+    if (!text) return false;
+    if (source.data) memcpy(text, source.data, source.size + 1);
+    else if (!qa_native_read(host->instance, address, text, source.size + 1, error)) return false;
+    *out = (qa_bytes){text, source.size};
+    return true;
 }
 
 static char *copy_text(const char *text)

@@ -242,6 +242,15 @@ static qa_native_host *allocate_host(qa_native_module *module, native_host_kind 
         host->edict = &rerelease_edict;
     }
     host->maximum_string_bytes = maximum_string ? maximum_string : 1024u * 1024u;
+    if (kind != NATIVE_HOST_Q3) {
+        if (host->maximum_string_bytes > SIZE_MAX / 16 ||
+            !qa_arena_reserve(&host->text_storage, host->maximum_string_bytes * 16, error)) {
+            free_records(host);
+            free(host);
+            return NULL;
+        }
+        qa_arena_seal(&host->text_storage);
+    }
     if (kind == NATIVE_HOST_Q2_GAME && !native_host_movement_prepare(host, error)) {
         free_records(host);
         free(host);
@@ -370,6 +379,7 @@ static void free_records(qa_native_host *host)
 {
     native_host_movement_dispose(host);
     qa_arena_destroy(&host->call_storage);
+    qa_arena_destroy(&host->text_storage);
     native_host_memory_state memory={host->strings,host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=NULL; host->cvar_shadows=NULL;
     while (host->surfaces) {
@@ -970,6 +980,7 @@ bool native_host_import(void *context, qa_native_instance *instance,
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native import belongs to another host instance");
     bool bootstrap = host->instance == NULL;
+    if (!host->callback_depth) qa_arena_reset(&host->text_storage);
     if (bootstrap) {
         host->instance = instance;
         if (host->kind == NATIVE_HOST_Q2_GAME && !native_host_call_scratch_prepare(host, error)) {
