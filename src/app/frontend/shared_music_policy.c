@@ -1,4 +1,5 @@
 #include "shared_music_policy.h"
+#include "qa/pool.h"
 #include "capture.h"
 #include "shared_audio.h"
 #include "shared_register.h"
@@ -18,12 +19,17 @@ typedef struct music_source {
     size_t track_count;
 } music_source;
 typedef struct music_state {
-    char *track, *menu_track;
+    const char *track, *menu_track;
     size_t source, *bag, bag_count, bag_position;
+    qa_pool *bag_pool;
+    size_t bag_slot;
     uint64_t random, completed;
     bool initialized, automatic, shuffle, looping;
 } music_state;
 struct frontend_music_policy {
+    qa_strings *names;
+    qa_arena shuffle_storage;
+    qa_pool shuffle_bags;
     qa_frontend *frontend;
     qa_application *application;
     qa_audio_engine *engine;
@@ -35,7 +41,7 @@ struct frontend_music_policy {
     float bus_gain;
     music_source *sources;
     size_t source_count;
-    char *authored_cue;
+    const char *authored_cue;
     music_state state;
     frontend_shared_music *selection;
     bool menu, busy, restoring, restore_attached, external_player;
@@ -70,16 +76,23 @@ static char *copy(const char *text, qa_error *e) {
     if (!result) { frontend_fail(e, QA_ERROR_MEMORY, "Retaining music declaration text"); return NULL; }
     memcpy(result, text, n); return result;
 }
-static void state_free(music_state *state) {
-    free(state->track); free(state->menu_track); free(state->bag); *state = (music_state){0};
+static const char *cue_name(frontend_music_policy *owner,const char *text,qa_error *e) {
+    qa_string_id id;
+    return qa_strings_intern_cstr(owner->names,text,&id,e)?qa_strings_cstr(owner->names,id):NULL;
 }
-static bool state_copy(const music_state *source, music_state *out, qa_error *e) {
-    *out = *source; out->track = out->menu_track = NULL; out->bag = NULL;
-    if (source->track && !(out->track = copy(source->track, e))) goto failed;
-    if (source->menu_track && !(out->menu_track = copy(source->menu_track, e))) goto failed;
+static void bag_free(music_state *state) {
+    if (state->bag) qa_pool_release(state->bag_pool,state->bag_slot);
+    state->bag=NULL;state->bag_pool=NULL;state->bag_count=state->bag_position=0;
+}
+static void state_free(music_state *state) {
+    bag_free(state); *state = (music_state){0};
+}
+static bool state_copy(frontend_music_policy *owner,const music_state *source, music_state *out, qa_error *e) {
+    *out = *source; out->bag = NULL;out->bag_pool=NULL;
     if (source->bag_count) {
-        out->bag = malloc(source->bag_count * sizeof(*out->bag));
+        out->bag = qa_pool_take(&owner->shuffle_bags,&out->bag_slot);
         if (!out->bag) { frontend_fail(e, QA_ERROR_MEMORY, "Retaining music shuffle bag"); goto failed; }
+        out->bag_pool=&owner->shuffle_bags;
         memcpy(out->bag, source->bag, source->bag_count * sizeof(*out->bag));
     }
     return true;
@@ -176,7 +189,8 @@ static void source_free(music_source *source) {
 }
 static void release(frontend_music_policy *owner) {
     for (size_t i = 0; owner->sources && i < owner->source_count; ++i) source_free(owner->sources + i);
-    free(owner->sources); free(owner->authored_cue); state_free(&owner->state);
+    free(owner->sources); state_free(&owner->state);
+    qa_arena_destroy(&owner->shuffle_storage);qa_strings_destroy(owner->names);
     qa_audio_music_release(owner->music); free(owner);
 }
 static bool track_valid(const char *path) {
@@ -291,13 +305,15 @@ bool frontend_music_policy_create(qa_frontend *f, const frontend_music_policy_op
     music_cvars_bind(owner);
     if (!qa_audio_music_retain(options->music, e)) { free(owner); return false; }
     owner->music = options->music; owner->slot = out; owner->bus = options->bus;
+    owner->names=qa_session_strings(qa_application_session(owner->application));qa_strings_retain(owner->names);
     owner->audience = options->audience; owner->bus_gain = options->bus_gain; owner->menu = options->menu;
     owner->external_player = options->external_player;
     owner->state.random = options->random_seed; owner->source_count = options->source_count;
     owner->state.source = owner->menu ? owner->source_count - 1 : 0;
     owner->sources = calloc(owner->source_count, sizeof(*owner->sources));
-    owner->authored_cue = trimmed(options->authored_cue ? options->authored_cue : "", e);
-    owner->state.track = copy("", e);
+    char *authored=trimmed(options->authored_cue ? options->authored_cue : "", e);
+    owner->authored_cue=authored?cue_name(owner,authored,e):NULL;free(authored);
+    owner->state.track = cue_name(owner,"", e);
     bool ok = owner->sources && owner->authored_cue && owner->state.track;
     for (size_t i = 0; ok && i < owner->source_count; ++i) {
         const frontend_music_content *receipt = options->sources + i;
@@ -306,6 +322,23 @@ bool frontend_music_policy_create(qa_frontend *f, const frontend_music_policy_op
             ok = fail(e, "Menu music requires the actual independent selected product mount plan");
         if (ok) ok = source_create(receipt, owner->sources + i, !owner->external_player, e);
     }
+    size_t largest=1;
+    for (size_t i=0;ok && i<owner->source_count;++i) {
+        const music_source *source=owner->sources+i;
+        if (source->track_count>largest) largest=source->track_count;
+        for (size_t j=0;ok && j<source->track_count;++j) {
+            char *label=file_cue(source->tracks[j],e);
+            ok=label && cue_name(owner,label,e);free(label);
+        }
+    }
+    for (unsigned i=0;ok && i<256;++i) {
+        char number_text[16];snprintf(number_text,sizeof(number_text),"%u",i);
+        ok=cue_name(owner,number_text,e)!=NULL;
+    }
+    if (ok) ok=cue_name(owner,"auto",e)!=NULL;
+    if (ok) ok=qa_arena_reserve(&owner->shuffle_storage,largest*sizeof(size_t)*3+256,e) &&
+        qa_pool_prepare(&owner->shuffle_bags,&owner->shuffle_storage,3,largest*sizeof(size_t),_Alignof(size_t),e);
+    qa_arena_seal(&owner->shuffle_storage);
     if (ok && owner->menu && owner->source_count == 2) {
         const qa_product *theme = product(owner->sources);
         ok = theme->family == QA_GAME_Q2 && theme->edition == QA_EDITION_RERELEASE && !strcmp(theme->campaign, "baseq2");
@@ -449,8 +482,8 @@ static bool prepare_track(frontend_music_policy *owner, music_state *state, cons
         if (ok && !*intro) ok = unavailable(owner, state, call, name ? name : "", e);
         free(name); free(repeat); if (!ok) return false;
     }
-    char *selected = copy(cue, e); if (!selected) return false;
-    free(state->track); state->track = selected; state->looping = *loop != NULL; return true;
+    const char *selected = cue_name(owner,cue,e); if (!selected) return false;
+    state->track = selected; state->looping = *loop != NULL; return true;
 }
 /* SplitMix64 is this independent native constructor's retained random stream.
  * It never consumes a simulation clock or another subsystem's RNG. */
@@ -475,10 +508,11 @@ static bool next_track(frontend_music_policy *owner, music_state *state,
     qa_audio_stream **intro, qa_audio_stream **loop, unsigned *cd, qa_error *e) {
     music_source *source = owner->sources + state->source;
     if (state->bag_position == state->bag_count) {
-        free(state->bag); state->bag = NULL; state->bag_count = source->track_count; state->bag_position = 0;
+        bag_free(state);state->bag_count = source->track_count;
         if (state->bag_count) {
-            state->bag = malloc(state->bag_count * sizeof(*state->bag));
+            state->bag = qa_pool_take(&owner->shuffle_bags,&state->bag_slot);
             if (!state->bag) return frontend_fail(e, QA_ERROR_MEMORY, "Preparing music shuffle bag");
+            state->bag_pool=&owner->shuffle_bags;
         }
         for (size_t i = 0; i < state->bag_count; ++i) state->bag[i] = i;
         for (size_t i = state->bag_count; i > 1; --i) {
@@ -499,7 +533,9 @@ static bool next_track(frontend_music_policy *owner, music_state *state,
         if (!open_cue(source, path, intro, e)) return false;
         if (!*intro && !unavailable(owner, state, NULL, path, e)) return false;
         char *track = file_cue(path, e); if (!track) return false;
-        free(state->track); state->track = track; state->looping = false;
+        state->track=cue_name(owner,track,e);free(track);
+        if (!state->track) return false;
+        state->looping = false;
     }
     *loop = NULL; *cd = 0; return true;
 }
@@ -507,8 +543,8 @@ static bool prepare_menu(frontend_music_policy *owner, music_state *state, const
     qa_audio_stream **intro, qa_audio_stream **loop, bool *changed, qa_error *e) {
     if (!frontend_shared_menu_track_valid(value)) return fail(e, "Menu music lacks its actual validated authored preference");
     if (state->menu_track && !strcmp(state->menu_track, value)) return true;
-    char *retained = copy(value, e); if (!retained) return false;
-    free(state->menu_track); state->menu_track = retained;
+    const char *retained = cue_name(owner,value,e); if (!retained) return false;
+    state->menu_track = retained;
     state->automatic = false; state->shuffle = false; state->initialized = true; *changed = true;
     if (!strcmp(value, "0")) return true;
     qa_audio_music_state player;
@@ -532,9 +568,11 @@ static bool prepare_menu(frontend_music_policy *owner, music_state *state, const
             if (track) {
                 resolved = true;
                 if (player.enabled) {
-                    free(state->track); state->track = track; track = NULL; state->looping = true; *loop = *intro;
+                    state->track=cue_name(owner,track,e);
+                    if (!state->track) { free(track);return false; }
+                    state->looping = true; *loop = *intro;
                 } else if (state->source != i) {
-                    free(state->track); state->track = copy("", e); state->looping = false;
+                    state->track = cue_name(owner,"",e); state->looping = false;
                 }
                 state->source = i; free(track); if (!state->track) return false;
             }
@@ -637,7 +675,7 @@ static bool prepare_shared(qa_frontend *f, const qa_launch_snapshot *candidate,
     selection->candidate = candidate; selection->client = client; selection->edit = edit;
     selection->root_console = console; selection->root_cvars = cvars; selection->root_command = command;
     selection->shuffle_text = copy(shuffle->value, e); selection->menu_text = copy(menu->value, e);
-    if (!selection->shuffle_text || !selection->menu_text || !state_copy(&owner->state, &selection->next, e)) { selection_free(selection); return false; }
+    if (!selection->shuffle_text || !selection->menu_text || !state_copy(owner,&owner->state, &selection->next, e)) { selection_free(selection); return false; }
     owner->busy = true;
     qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0; bool changed = false;
     bool ok = owner->menu ? prepare_menu(owner, &selection->next, menu->value, &intro, &loop, &changed, e) :
@@ -709,7 +747,7 @@ bool frontend_music_policy_update(frontend_music_policy *owner, qa_error *e) {
         if (shuffling == owner->state.shuffle && (!shuffling || owner->state.completed == player.completions)) return true;
     }
     music_state next = {0};
-    if (!state_copy(&owner->state, &next, e)) return false;
+    if (!state_copy(owner,&owner->state, &next, e)) return false;
     owner->busy = true; qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0; bool changed = false;
     bool ok = owner->menu ? prepare_menu(owner, &next, menu->value, &intro, &loop, &changed, e) :
         prepare_automatic(owner, &next, enabled, &intro, &loop, &cd, &changed, e);
@@ -748,7 +786,7 @@ static bool whitespace(const char *text) {
 }
 static void manual_state(music_state *state) {
     state->initialized = true; state->automatic = state->shuffle = false;
-    free(state->bag); state->bag = NULL; state->bag_count = state->bag_position = 0;
+    bag_free(state);
 }
 static bool manual_track(frontend_music_policy *owner, const qa_command_invocation *call,
     const char *cue, bool looping, bool numbered, qa_error *e) {
@@ -763,11 +801,11 @@ static bool manual_track(frontend_music_policy *owner, const qa_command_invocati
     if (numeric) mapped = qa_audio_music_mapped_track(owner->music, mapped);
     if (player.playing && !strcmp(owner->state.track, cue) && owner->state.looping == looping &&
         (!numeric || mapped == player.cd_track)) return true;
-    char *track = copy(cue, e); if (!track) return false;
-    free(owner->state.track); owner->state.track = track; owner->state.looping = looping;
+    const char *track = cue_name(owner,cue,e); if (!track) return false;
+    owner->state.track = track; owner->state.looping = looping;
     qa_audio_music_stop(owner->music);
     if (!attach_player(owner, e)) return false;
-    music_state next = {0}; if (!state_copy(&owner->state, &next, e)) return false;
+    music_state next = {0}; if (!state_copy(owner,&owner->state, &next, e)) return false;
     qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0;
     bool ok = prepare_track(owner, &next, cue, looping, numbered, call, &intro, &loop, &cd, e);
     qa_audio_music_selection *selection = NULL;
@@ -790,9 +828,9 @@ bool frontend_music_policy_world_cd(frontend_music_policy *owner, unsigned track
     char cue[16]; snprintf(cue, sizeof(cue), "%u", track);
     if ((owner->state.initialized && player.playing && player.cd_track == mapped) ||
         (!owner->state.initialized && !strcmp(owner->authored_cue, cue))) return true;
-    char *authored = copy(cue, e);
+    const char *authored = cue_name(owner,cue,e);
     if (!authored) return false;
-    free(owner->authored_cue); owner->authored_cue = authored;
+    owner->authored_cue = authored;
     owner->state.initialized = false;
     return true;
 }
@@ -804,8 +842,8 @@ bool frontend_music_policy_source_play(frontend_music_policy *owner,const char *
     bool ok;
     if(!strcmp(cue,"0")){
         music_state next={0};qa_audio_music_selection *selection=NULL;
-        ok=state_copy(&owner->state,&next,e);
-        if(ok){manual_state(&next);free(next.track);next.track=copy(cue,e);next.looping=false;ok=next.track!=NULL;}
+        ok=state_copy(owner,&owner->state,&next,e);
+        if(ok){manual_state(&next);next.track=cue_name(owner,cue,e);next.looping=false;ok=next.track!=NULL;}
         if(ok)ok=parent_current(owner) && qa_audio_music_selection_prepare(owner->music,
             QA_AUDIO_MUSIC_STOP,NULL,NULL,0,NULL,&selection,e) && qa_audio_music_selection_ready(selection,e);
         if(ok){qa_audio_music_selection_publish(&selection);state_free(&owner->state);owner->state=next;next=(music_state){0};}
@@ -847,7 +885,11 @@ bool frontend_music_policy_explicit(frontend_music_policy *owner, const char *in
         if (!track) return frontend_fail(e, QA_ERROR_MEMORY, "Retaining actual explicit music cue");
     }
     owner->state.initialized = true; manual_state(&owner->state);
-    if (track) { free(owner->state.track); owner->state.track = track; owner->state.looping = looping; }
+    if (track) {
+        owner->state.track=cue_name(owner,track,e);free(track);
+        if (!owner->state.track) return false;
+        owner->state.looping = looping;
+    }
     owner->state.completed = qa_audio_music_completions(owner->music); return true;
 }
 bool frontend_music_policy_command(frontend_music_policy *owner, const qa_command_invocation *call, qa_error *e) {
