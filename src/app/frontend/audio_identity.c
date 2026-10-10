@@ -91,10 +91,7 @@ static bool retained_event_source(qa_frontend *frontend, qa_actor_owner owner, q
         frontend_fail(error, QA_ERROR_ARGUMENT, "Retained sound has no gameplay Source clock");
         return false;
     }
-    qa_ruleset_id dialect=(clock.frame.kind);
-    bool matches = family == QA_GAME_Q1 ? dialect == QA_RULESET_NETQUAKE || dialect == QA_RULESET_QUAKEWORLD :
-        family == QA_GAME_Q2 ? dialect == QA_RULESET_Q2_CLASSIC || dialect == QA_RULESET_Q2_RERELEASE :
-        family == QA_GAME_Q3 && dialect == QA_RULESET_Q3;
+    bool matches = qa_ruleset_descriptors[clock.frame.kind].family == family;
     return matches || frontend_fail(error, QA_ERROR_ARGUMENT, "Retained sound changed its Source family");
 }
 uint64_t frontend_audio_retained_event_actor(qa_frontend *frontend,

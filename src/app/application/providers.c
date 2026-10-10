@@ -186,25 +186,6 @@ typedef struct application_native_profile {
     bool cooperative, deathmatch, friendly_fire;
 } application_native_profile;
 
-static bool provider_family(const qa_launch_instance *launch,
-                            qa_game_family *out)
-{
-    switch (launch->selection.clock.kind) {
-    case QA_RULESET_NETQUAKE:
-    case QA_RULESET_QUAKEWORLD:
-        *out = QA_GAME_Q1;
-        return true;
-    case QA_RULESET_Q2_CLASSIC:
-    case QA_RULESET_Q2_RERELEASE:
-        *out = QA_GAME_Q2;
-        return true;
-    case QA_RULESET_Q3:
-        *out = QA_GAME_Q3;
-        return true;
-    }
-    return false;
-}
-
 static bool native_profile(const qa_launch_instance *launch,
                            const qa_launch_choices *choices,
                            application_native_profile *out,
@@ -213,10 +194,11 @@ static bool native_profile(const qa_launch_instance *launch,
     if (launch == NULL || choices == NULL || out == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "native construction profile needs launch choices");
-    qa_game_family family;
-    if (!provider_family(launch, &family))
+    const qa_ruleset_descriptor *ruleset = qa_ruleset_read(launch->selection.clock.kind);
+    if (!ruleset)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "provider clock has no native game family");
+    qa_game_family family = ruleset->family;
 
     qa_mode_rules mode = family == QA_GAME_Q3
                              ? qa_mode_defaults(QA_MODE_Q3, QA_MODE_FFA)

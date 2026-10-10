@@ -250,8 +250,8 @@ static bool selected_command(native_q3_think_call *call,
     qa_application *app = call->provider->application;
     application_control_record *record = &app->controls[call->actor.slot];
     const qa_q3_usercmd *raw = &call->movement;
-    *out = (qa_movement_command){.kind = record->state.kind,
-        .sequence = record->command_sequence,
+    *out = (qa_movement_command){.kind = record->player.state.kind,
+        .sequence = record->player.command_sequence,
         .milliseconds = call->movement_milliseconds,
         .server_time_ms = raw->serverTime, .buttons = (uint32_t)raw->buttons,
         .weapon = raw->weapon};
@@ -272,9 +272,9 @@ static bool selected_command(native_q3_think_call *call,
     qa_input_command_basis to = {.kind = out->kind};
     if (out->kind == QA_RULESET_Q2_CLASSIC) {
         to.words = to.relative = to.wrap_words = true;
-        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = record->state.data.q2.delta_angle_shorts[i];
+        for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = record->player.state.data.q2.delta_angle_shorts[i];
     } else if (out->kind == QA_RULESET_Q2_RERELEASE) {
-        to.relative = to.wide_delta = true; to.delta_angles = record->state.data.q2r.delta_angles;
+        to.relative = to.wide_delta = true; to.delta_angles = record->player.state.data.q2r.delta_angles;
     }
     qa_input_command_convert(out, NULL, &from, &to, (qa_input_axis_rule){0}, out);
     out->buttons &= 1u;
@@ -343,10 +343,10 @@ static bool client_think_body(void *opaque, qa_session *session,
     int32_t type, gravity, speed; bool projected_spectator;
     if (!application_native_q3_client_movement_parameters(provider, call->actor,
         true, &type, &gravity, &speed, &projected_spectator, error)) return false;
-    if (record->state.kind == QA_RULESET_Q3) {
-        record->state.data.q3.movement_type = type;
-        record->state.data.q3.gravity = gravity;
-        record->state.data.q3.speed = speed;
+    if (record->player.state.kind == QA_RULESET_Q3) {
+        record->player.state.data.q3.movement_type = type;
+        record->player.state.data.q3.gravity = gravity;
+        record->player.state.data.q3.speed = speed;
     }
     uint32_t old_sequence = 0;
     if (!spectator && !qa_q3_client_think_prepare(provider->state.q3, call->actor,
@@ -465,7 +465,7 @@ application_control_outcome application_control_q3_client_think(application_prov
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 think requires its current source client");
     if (!qa_q3_native_client_slot(provider->state.q3, actor, &slot, error)) return false;
     application_control_record *record = &app->controls[actor.slot];
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor))
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 think requires its actual idle selected control");
     if (!application_native_q3_console_borrow(provider, error)) return false;
     application_operation previous = app->operation;

@@ -12,7 +12,7 @@ static bool posture(void *context,qa_actor_id actor,qa_bounds *bounds,double *he
     application_q3_component *c=context;
     qa_application *app=c->options.application;
     qa_body_state body;
-    qa_application_control_view control;
+    qa_player_state control;
     qa_application_camera_view camera;
     if(!app||!q3component_current(c,e)||!qa_world_body_read(c->options.host.world,actor,&body,e)) return false;
     if(!qa_application_control_read(app,actor,&control)||!qa_application_control_camera(app,actor,&camera))

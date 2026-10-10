@@ -622,7 +622,7 @@ bool qa_application_network_controlled(qa_application *application, qa_net_clien
     qa_net_seat_id seat, qa_actor_id actor, qa_ruleset_id kind, qa_bytes arsenal, qa_error *error)
 {
     qa_actor_id admitted;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!application || !qa_application_remote_player_actor(application, client, seat, &admitted) ||
         !qa_actor_id_equal(actor, admitted) || !qa_application_control_read(application, actor, &control) ||
         control.state.kind != kind)

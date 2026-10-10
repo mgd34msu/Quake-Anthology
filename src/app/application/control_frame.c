@@ -303,7 +303,7 @@ static bool unified_command(qa_application *app, qa_actor_id actor, const contro
 {
     if (!app || !unified_valid(receipt) || actor.slot >= app->control_capacity)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified receipt lost its actual selected movement");
-    return qa_application_control_project_unified(&receipt->movement, &app->controls[actor.slot].state,
+    return qa_application_control_project_unified(&receipt->movement, &app->controls[actor.slot].player.state,
         receipt->sequence, out, error);
 }
 
@@ -514,7 +514,7 @@ bool qa_application_control_source_read(qa_application *app, qa_actor_id actor,
     const application_control_record *record = &app->controls[actor.slot];
     application_provider *provider = source_provider(app, actor);
     qa_console *console; qa_cvars *cvars;
-    if (!record->active || record->retired || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || !qa_actor_id_equal(record->player.actor, actor) ||
         !provider || !provider->constructed || !provider->attached || provider->close_pending ||
         !application_guest_console_at(provider, 0, &console, &cvars, NULL) || !cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Control Source lost its actual command recipient registry");
@@ -603,9 +603,9 @@ bool application_control_body_request(qa_application *app, qa_actor_id actor, qa
         return application_fail(error, QA_ERROR_ARGUMENT, "Body request needs its actual live control owner");
     application_control_record *record = &app->controls[actor.slot];
     application_provider *source = source_provider(app, actor);
-    if (!record->active || !qa_actor_id_equal(record->actor, actor) || !source)
+    if (!record->active || !qa_actor_id_equal(record->player.actor, actor) || !source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Body request lost its selected movement owner");
-    if (!body_base_owner(source, record->state.kind)) return true;
+    if (!body_base_owner(source, record->player.state.kind)) return true;
     control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (!qa_actor_id_equal(input->actor, actor)) {
         if (!outputs->has_body_bounds) return true;
@@ -613,7 +613,7 @@ bool application_control_body_request(qa_application *app, qa_actor_id actor, qa
         if (input->actor.registry || input->turn) *input = (control_input){0};
         input->actor = actor; input->provider = source->owner;
         input->retained = source_client(source) && source->component.clock.kind == QA_RULESET_NETQUAKE &&
-            record->state.kind == QA_RULESET_NETQUAKE;
+            record->player.state.kind == QA_RULESET_NETQUAKE;
     }
     if (input->provider != source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Body continuation changed its genuine source owner");
@@ -774,8 +774,8 @@ bool application_control_frames_sequence(const qa_application *app, qa_actor_id 
 {
     if (!app || !seen || !sequence || actor.slot >= app->control_capacity) return false;
     const application_control_record *record = &app->controls[actor.slot];
-    if (!record->active || !qa_actor_id_equal(record->actor, actor)) return false;
-    *seen = record->command_seen; *sequence = record->command_sequence;
+    if (!record->active || !qa_actor_id_equal(record->player.actor, actor)) return false;
+    *seen = record->command_seen; *sequence = record->player.command_sequence;
     const struct application_control_frames *frames = app->control_frames;
     if (frames && qa_actor_id_equal(frames->inputs[actor.slot].value.actor, actor) && frames->inputs[actor.slot].value.seen) {
         *seen = true; *sequence = frames->inputs[actor.slot].value.sequence;
@@ -895,7 +895,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     application_provider *provider = source_provider(app, actor);
     uint32_t slot = 0; bool deferred = false;
     qa_clock_state clock;
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor) ||
         !provider || (provider->kind != APPLICATION_PROVIDER_Q3 && !original_q3(provider)) || !provider->constructed ||
         !provider->attached || provider->close_pending || frames->draining || frames->current ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") || !provider->component.command_actor ||
@@ -969,7 +969,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     application_provider *provider = source_provider(app, actor);
     qa_clock_state clock;
     qa_movement_result source;
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor) ||
         !provider || (provider->kind != APPLICATION_PROVIDER_Q2 &&
             !application_native_q2_source_client(provider, actor) &&
             !application_native_q2_declared_source_client(provider, actor)) || !provider->constructed ||
@@ -1030,7 +1030,7 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     application_control_record *record = &app->controls[actor.slot];
     application_provider *provider = source_provider(app, actor);
     qa_clock_state clock;
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor) ||
         !source_client(provider) || provider->component.clock.kind != QA_RULESET_NETQUAKE ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         !provider->component.command_actor ||
@@ -1078,7 +1078,7 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     application_control_record *record = &app->controls[actor.slot];
     application_provider *provider = source_provider(app, actor);
     qa_clock_state clock;
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor) ||
         !source_client(provider) || provider->component.clock.kind != QA_RULESET_QUAKEWORLD ||
         provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
         !provider->component.command_actor ||
@@ -1135,7 +1135,7 @@ bool application_control_last_qw_command(const qa_application *app, qa_actor_id 
     qa_movement_command *out, uint64_t *time_ns, bool *present, qa_error *error)
 {
     if (!app || !out || !time_ns || !present || !app->control_frames || actor.slot >= app->control_capacity ||
-        !app->controls[actor.slot].active || !qa_actor_id_equal(app->controls[actor.slot].actor, actor))
+        !app->controls[actor.slot].active || !qa_actor_id_equal(app->controls[actor.slot].player.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source input read needs a current full control actor");
     *out = (qa_movement_command){0}; *time_ns = 0; *present = false;
     const control_input *input = &app->control_frames->inputs[actor.slot].value;
@@ -1175,10 +1175,10 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
     }
     bool seen = false; uint64_t previous = 0;
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
-    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->actor, actor) ||
+    if (!record->active || record->retired || record->moving || !qa_actor_id_equal(record->player.actor, actor) ||
         !source || !source->constructed || !source->attached || source->close_pending ||
         frames->current || frames->draining || !unified_valid(&receipt) ||
-        receipt.movement.kind != record->state.kind || (seen && receipt.sequence <= previous))
+        receipt.movement.kind != record->player.state.kind || (seen && receipt.sequence <= previous))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input lost its selected actor, dialect or sequence");
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
@@ -1222,10 +1222,10 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     struct application_control_frames *frames = app->control_frames;
     application_control_record *record = &app->controls[actor.slot];
     application_provider *provider = source_provider(app, actor);
-    if (!record->active || record->retired || !qa_actor_id_equal(record->actor, actor) || !provider)
+    if (!record->active || record->retired || !qa_actor_id_equal(record->player.actor, actor) || !provider)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Input group has no current execution owner");
     if ((provider->kind == APPLICATION_PROVIDER_Q3 || original_q3(provider)) &&
-        record->state.kind == QA_RULESET_Q3) {
+        record->player.state.kind == QA_RULESET_Q3) {
         bool seen; uint64_t previous;
         (void)application_control_frames_sequence(app, actor, &seen, &previous);
         for (size_t i = 0; i < count; ++i)
@@ -1239,13 +1239,13 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
         }
         return true;
     }
-    if (record->state.kind == QA_RULESET_QUAKEWORLD && source_client(provider) &&
+    if (record->player.state.kind == QA_RULESET_QUAKEWORLD && source_client(provider) &&
         provider->component.clock.kind == QA_RULESET_QUAKEWORLD && provider->component.command_actor &&
         provider->component.command_actor(provider->component.state, app->session, actor))
         return qa_application_control_qw_commands(app, actor, commands, count, error);
-    bool q2_source = (record->state.kind == QA_RULESET_Q2_CLASSIC &&
+    bool q2_source = (record->player.state.kind == QA_RULESET_Q2_CLASSIC &&
         provider->component.clock.kind == QA_RULESET_Q2_CLASSIC) ||
-        (record->state.kind == QA_RULESET_Q2_RERELEASE &&
+        (record->player.state.kind == QA_RULESET_Q2_RERELEASE &&
          provider->component.clock.kind == QA_RULESET_Q2_RERELEASE);
     if (q2_source && provider == application_world_provider(app, QA_ROLE_ENTITIES, "") &&
         (provider->kind == APPLICATION_PROVIDER_Q2 || native_q2_raw_source_client(provider, actor))) {
@@ -1268,13 +1268,13 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     bool seen; uint64_t sequence;
     (void)application_control_frames_sequence(app, actor, &seen, &sequence);
     bool retained = source_client(provider) && provider->component.clock.kind == QA_RULESET_NETQUAKE &&
-        record->state.kind == QA_RULESET_NETQUAKE;
+        record->player.state.kind == QA_RULESET_NETQUAKE;
     bool quakeworld = source_client(provider) && provider->component.clock.kind == QA_RULESET_QUAKEWORLD &&
-        record->state.kind == QA_RULESET_QUAKEWORLD;
+        record->player.state.kind == QA_RULESET_QUAKEWORLD;
     if (quakeworld && count > 20)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW input group exceeds its twenty-command source bound");
     for (size_t i = 0; i < count; ++i) {
-        if (!command_valid(&commands[i]) || commands[i].kind != record->state.kind ||
+        if (!command_valid(&commands[i]) || commands[i].kind != record->player.state.kind ||
             (commands[i].kind == QA_RULESET_QUAKEWORLD && commands[i].milliseconds > 255) ||
             (i && quakeworld ? commands[i].sequence != sequence : seen && commands[i].sequence <= sequence))
             return application_fail(error, QA_ERROR_ARGUMENT, "Input group has invalid dialect, values or sequence");
@@ -1350,7 +1350,7 @@ bool application_control_last_mod_command(const qa_application *app, qa_actor_id
     if (!app || !player || !out || !app->control_frames || actor.slot >= app->control_capacity ||
         !qa_actors_get(qa_session_actors(app->session), actor) ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
-        !qa_actor_id_equal(app->controls[actor.slot].actor, actor))
+        !qa_actor_id_equal(app->controls[actor.slot].player.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component command needs its admitted actual actor");
     const control_input *input = &app->control_frames->inputs[actor.slot].value;
     application_provider *source = source_provider((qa_application *)app, actor);
@@ -1471,7 +1471,7 @@ const application_control_context *application_control_frame_current(const qa_ap
             if (!application_guest_input_interval(app, actor, &interval)) return NULL;
         } else if (!current->source_usercmd && !current->source_q2cmd && !current->unified_command)
             (void)qa_session_advance_interval(app->session, &interval);
-        if (actor.slot >= app->control_capacity || source_interval(app->controls[actor.slot].state.kind, interval)
+        if (actor.slot >= app->control_capacity || source_interval(app->controls[actor.slot].player.state.kind, interval)
             != current->source_elapsed_ns) return NULL;
     }
     return frames->current;
@@ -1560,7 +1560,7 @@ bool application_control_frames_owns(const qa_application *app, qa_actor_id acto
 {
     if (!app || !app->control_frames || actor.slot >= app->control_capacity) return false;
     const application_control_record *record = &app->controls[actor.slot];
-    if (!record->active || !qa_actor_id_equal(record->actor, actor)) return false;
+    if (!record->active || !qa_actor_id_equal(record->player.actor, actor)) return false;
     application_provider *provider = source_provider((qa_application *)app, actor);
     qa_source_frame frame;
     if (!source_client(provider) || !qa_session_active_frame(app->session, provider->owner, &frame)) return false;
@@ -1665,34 +1665,34 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
     if (!application_bots_frame_at(app, frames, count, host_ns, error)) return false;
     for (uint32_t i = 0; i < app->control_capacity; ++i) {
         application_control_record *record = &app->controls[i];
-        if (!record->active || !qa_actors_get(qa_session_actors(session), record->actor)) continue;
-        application_provider *provider = source_provider(app, record->actor);
+        if (!record->active || !qa_actors_get(qa_session_actors(session), record->player.actor)) continue;
+        application_provider *provider = source_provider(app, record->player.actor);
         control_input *input = &app->control_frames->inputs[i].value;
         if (!source_client(provider) || provider->component.clock.kind != QA_RULESET_NETQUAKE ||
-            (record->state.kind != QA_RULESET_NETQUAKE &&
-             (!qa_actor_id_equal(input->actor, record->actor) || input->domain != CONTROL_COMMAND_NQ_SOURCE))) continue;
-        const qa_source_frame *frame = actor_frame(app, record->actor, frames, count);
+            (record->player.state.kind != QA_RULESET_NETQUAKE &&
+             (!qa_actor_id_equal(input->actor, record->player.actor) || input->domain != CONTROL_COMMAND_NQ_SOURCE))) continue;
+        const qa_source_frame *frame = actor_frame(app, record->player.actor, frames, count);
         if (!frame) continue;
-        if (!qa_actor_id_equal(input->actor, record->actor) && input->turn) {
+        if (!qa_actor_id_equal(input->actor, record->player.actor) && input->turn) {
             struct application_control_turn *turn = input->turn; input->turn = NULL;
             if (!application_control_turn_abort(turn, error)) return false;
         }
         (void)input_enroll(app->control_frames, i);
-        if (!qa_actor_id_equal(input->actor, record->actor)) *input = (control_input){.actor = record->actor,
+        if (!qa_actor_id_equal(input->actor, record->player.actor)) *input = (control_input){.actor = record->player.actor,
             .provider = provider->owner, .retained = true};
         if (input->provider != provider->owner || input->turn)
             return application_fail(error, QA_ERROR_ARGUMENT, "Retained input execution changed during admission");
         qa_movement_command command = input->seen ? input->latest :
-            (qa_movement_command){.kind = QA_RULESET_NETQUAKE, .angles = record->command_angles};
+            (qa_movement_command){.kind = QA_RULESET_NETQUAKE, .angles = record->player.command_angles};
         command.impulse = input->impulse;
         if (input->domain != CONTROL_COMMAND_NQ_SOURCE)
             command.milliseconds = (uint32_t)(frame->elapsed_ns / UINT64_C(1000000));
-        application_control_outcome outcome = apply(app, record->actor, &command, frame,
+        application_control_outcome outcome = apply(app, record->player.actor, &command, frame,
             APPLICATION_CONTROL_NQ_TURN, APPLICATION_CONTROL_PREPARE, true, false,
             &input->turn, input->arsenal, input->weapon, error);
         if (outcome == APPLICATION_CONTROL_FAILED) return false;
         if (outcome == APPLICATION_CONTROL_SKIPPED) {
-            input->source_turn_actor = record->actor; input->source_turn_provider = frame->provider;
+            input->source_turn_actor = record->player.actor; input->source_turn_provider = frame->provider;
             input->source_turn_frame_number = frame->number;
         }
         input->arsenal = 0; input->weapon = 0;
@@ -1712,12 +1712,12 @@ static qa_movement_command selected_command(const application_control_record *re
     const qa_movement_command *raw, uint64_t source_time_ns,
     const int32_t words[3], qa_vec3 axes)
 {
-    qa_movement_command out = {.kind = record->state.kind, .sequence = raw->sequence,
+    qa_movement_command out = {.kind = record->player.state.kind, .sequence = raw->sequence,
         .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
         .angles = {(float)(words[0] * 360.0 / 65536.0), (float)(words[1] * 360.0 / 65536.0),
             (float)(words[2] * 360.0 / 65536.0)}};
     uint32_t time = out.kind == QA_RULESET_Q3 ?
-        (uint32_t)record->state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
+        (uint32_t)record->player.state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
     time += raw->milliseconds; memcpy(&out.server_time_ms, &time, sizeof(time));
     out.acknowledged_server_seconds = (double)out.server_time_ms / 1000.0;
     qa_movement_command source = out;
@@ -1727,9 +1727,9 @@ static qa_movement_command selected_command(const application_control_record *re
     if (out.kind == QA_RULESET_Q2_CLASSIC || out.kind == QA_RULESET_Q3) {
         to.words = to.relative = true;
         for (unsigned i = 0; i < 3; ++i) to.delta_words[i] = out.kind == QA_RULESET_Q3 ?
-            record->state.data.q3.delta_angle_words[i] : record->state.data.q2.delta_angle_shorts[i];
+            record->player.state.data.q3.delta_angle_words[i] : record->player.state.data.q2.delta_angle_shorts[i];
     } else if (out.kind == QA_RULESET_Q2_RERELEASE) {
-        to.relative = true; to.delta_angles = record->state.data.q2r.delta_angles;
+        to.relative = true; to.delta_angles = record->player.state.data.q2r.delta_angles;
     }
     qa_input_command_convert(&source, NULL, &from, &to, (qa_input_axis_rule){0}, &out);
     if (out.kind == QA_RULESET_NETQUAKE) {
@@ -1775,7 +1775,7 @@ static bool nq_selected_command(qa_application *app, qa_actor_id actor,
     const qa_movement_command *raw, const application_control_context *context,
     qa_movement_command *out, qa_error *error)
 {
-    if (app->controls[actor.slot].state.kind == QA_RULESET_NETQUAKE) {
+    if (app->controls[actor.slot].player.state.kind == QA_RULESET_NETQUAKE) {
         *out = *raw;
         out->milliseconds = (uint32_t)(context->frame.elapsed_ns / UINT64_C(1000000));
         return true;
@@ -1794,7 +1794,7 @@ static bool q2_selected_command(qa_application *app, qa_actor_id actor,
     if (physical->state.kind != raw->kind) return false;
     application_control_record *record = &app->controls[actor.slot];
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
-    if (movement == source && record->state.kind == raw->kind) {
+    if (movement == source && record->player.state.kind == raw->kind) {
         *out = *raw;
         return true;
     }
@@ -1902,7 +1902,7 @@ static application_control_outcome qw_foreign_slice(command_group_call *call,
     application_source_input_scope scope = {0};
     current->source_elapsed_ns = (uint64_t)raw.milliseconds * UINT64_C(1000000);
     current->source_command = raw;
-    bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
+    bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].player.state,
         &raw, NULL, &scope, true, true, current->source_elapsed_ns, error);
     application_control_outcome outcome = APPLICATION_CONTROL_COMPLETED;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
@@ -1916,7 +1916,7 @@ static application_control_outcome qw_foreign_slice(command_group_call *call,
     }
     if (ok && outcome == APPLICATION_CONTROL_COMPLETED &&
         qa_actors_get(qa_session_actors(app->session), actor))
-        ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
+        ok = application_control_source_input(app, actor, &app->controls[actor.slot].player.state,
             &raw, NULL, &scope, false, true, current->source_elapsed_ns, error);
     qa_error cleanup = {0};
     if (!application_control_source_abort(&scope, &cleanup)) {
@@ -1947,7 +1947,7 @@ static application_control_outcome qw_foreign_command(command_group_call *call,
     application_source_input_scope scope = {0};
     current->source_input_applied = true; current->source_command = raw;
     current->source_elapsed_ns = (uint64_t)elapsed * UINT64_C(1000000);
-    bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
+    bool ok = application_control_source_input(app, actor, &app->controls[actor.slot].player.state,
         &raw, NULL, &scope, true, false, current->source_elapsed_ns, error);
     application_control_outcome outcome = APPLICATION_CONTROL_COMPLETED;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
@@ -1956,7 +1956,7 @@ static application_control_outcome qw_foreign_command(command_group_call *call,
     }
     if (ok && outcome == APPLICATION_CONTROL_COMPLETED &&
         qa_actors_get(qa_session_actors(app->session), actor))
-        ok = application_control_source_input(app, actor, &app->controls[actor.slot].state,
+        ok = application_control_source_input(app, actor, &app->controls[actor.slot].player.state,
             &raw, NULL, &scope, false, false, (uint64_t)elapsed * UINT64_C(1000000), error);
     qa_error cleanup = {0};
     if (!application_control_source_abort(&scope, &cleanup)) {
@@ -1988,7 +1988,7 @@ static bool native_q2_command_current(void *context, qa_actor_id actor)
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == call->arsenal &&
         actor.slot < app->control_capacity && qa_actors_get(qa_session_actors(app->session), actor) &&
         app->controls[actor.slot].active && !app->controls[actor.slot].retired &&
-        qa_actor_id_equal(app->controls[actor.slot].actor, actor);
+        qa_actor_id_equal(app->controls[actor.slot].player.actor, actor);
 }
 
 static bool native_q2_command_move(void *context, const qa_movement_input *input,
@@ -2105,7 +2105,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                     ok = unified_command(app, group->actor, &group->unified, &selected, error);
                 }
             }
-            bool cutscene = app->controls[group->actor.slot].cutscene;
+            bool cutscene = app->controls[group->actor.slot].player.cutscene;
             if (ok && run_pmove && (!physical_q2 || !cutscene)) {
                 outcome = application_control_stage_move(app, group->actor, &selected, NULL, error);
                 ok = outcome != APPLICATION_CONTROL_FAILED;
@@ -2114,7 +2114,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                 qa_actors_get(qa_session_actors(session), group->actor)) {
                 application_control_record *record = &app->controls[group->actor.slot];
                 if (source_provider(app, group->actor) != source || !record->active || record->moving ||
-                    record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
+                    record->retired || !qa_actor_id_equal(record->player.actor, group->actor) ||
                     (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
                         record->result.command_sequence != group->unified.sequence)))
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 Source completion lost its selected turn");
@@ -2154,7 +2154,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                 qa_q2_player_movement_prepare(source->state.q2, group->actor,
                     &current.source_command, &physical, &run_pmove, error);
             was_grounded = ok && physical.ground.hit != QA_TRACE_HIT_NONE;
-            bool cutscene = ok && app->controls[group->actor.slot].cutscene;
+            bool cutscene = ok && app->controls[group->actor.slot].player.cutscene;
             if (ok && run_pmove && !cutscene && qa_actors_get(qa_session_actors(session), group->actor)) {
                 ok = q2_selected_command(app, group->actor, source, &physical,
                     &current.source_command, command, &selected, error);
@@ -2167,7 +2167,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
                 qa_actors_get(qa_session_actors(session), group->actor)) {
                 application_control_record *record = &app->controls[group->actor.slot];
                 if (source_provider(app, group->actor) != source || !record->active || record->moving ||
-                    record->retired || !qa_actor_id_equal(record->actor, group->actor) ||
+                    record->retired || !qa_actor_id_equal(record->player.actor, group->actor) ||
                     (!cutscene && (!qa_actor_id_equal(record->result.actor, group->actor) ||
                         record->result.command_sequence != selected.sequence)))
                     ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 Source completion lost its selected phase");
@@ -2180,7 +2180,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
         }
     } else if (group->domain == CONTROL_COMMAND_Q3_SOURCE) {
         current.source_guestcmd = true; current.retained = true;
-        current.source_elapsed_ns = source_interval(app->controls[group->actor.slot].state.kind,
+        current.source_elapsed_ns = source_interval(app->controls[group->actor.slot].player.state.kind,
             command->host_elapsed_ns);
         current.arsenal = group->arsenal; current.weapon = group->weapon;
         owner->current = &current;
@@ -2203,7 +2203,7 @@ static bool apply_command_group(void *opaque, qa_session *session, const qa_sour
             input->frame_owned = true; input->owned_frame_number = frame.number;
         }
         if (group->domain == CONTROL_COMMAND_QW_SOURCE &&
-            app->controls[group->actor.slot].state.kind != QA_RULESET_QUAKEWORLD) {
+            app->controls[group->actor.slot].player.state.kind != QA_RULESET_QUAKEWORLD) {
             outcome = qw_foreign_command(call, &current, error);
             ok = outcome != APPLICATION_CONTROL_FAILED;
         } else {
@@ -2236,7 +2236,7 @@ static bool execute_original_q3_group(qa_application *app, control_group *group,
     app->operation = previous;
     if (ok && qa_actors_get(qa_session_actors(app->session), group->actor)) {
         application_control_record *record = &app->controls[group->actor.slot];
-        record->command_sequence = group->commands[0].sequence; record->command_seen = true;
+        record->player.command_sequence = group->commands[0].sequence; record->command_seen = true;
     }
     if (ok && qa_session_safe(app->session) && qa_world_idle(app->world) &&
         qa_modes_idle(app->modes) && qa_combat_idle(app->combat))
@@ -2290,7 +2290,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
                 }
                 live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
                 if (ok && live) {
-                    app->controls[group->actor.slot].command_sequence = group->unified.sequence;
+                    app->controls[group->actor.slot].player.command_sequence = group->unified.sequence;
                     app->controls[group->actor.slot].command_seen = true;
                 }
                 continue;
@@ -2305,7 +2305,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
                 live = qa_actors_get(qa_session_actors(app->session), group->actor) != NULL;
                 if (ok && live) {
                     application_control_record *record = &app->controls[group->actor.slot];
-                    record->command_sequence = group->commands[i].sequence; record->command_seen = true;
+                    record->player.command_sequence = group->commands[i].sequence; record->command_seen = true;
                 }
                 continue;
             }
@@ -2323,7 +2323,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
             if (ok && live && (group->domain == CONTROL_COMMAND_Q3_SOURCE || group->domain == CONTROL_COMMAND_Q2_SOURCE ||
                 group->domain == CONTROL_COMMAND_UNIFIED)) {
                 application_control_record *record = &app->controls[group->actor.slot];
-                record->command_sequence = group->commands[i].sequence; record->command_seen = true;
+                record->player.command_sequence = group->commands[i].sequence; record->command_seen = true;
             }
         }
         if (ok && live && !skipped && quakeworld) {
@@ -2334,7 +2334,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
         }
         if (ok && live && group->domain == CONTROL_COMMAND_QW_SOURCE) {
             application_control_record *record = &app->controls[group->actor.slot];
-            record->command_sequence = group->commands[group->count - 1].sequence;
+            record->player.command_sequence = group->commands[group->count - 1].sequence;
             record->command_seen = true;
         }
         free(group);
@@ -2365,33 +2365,33 @@ bool application_control_frames_commands(void *opaque, qa_session *session, cons
     }
     if (due) for (uint32_t i = 0; i < app->control_capacity; ++i) {
         application_control_record *record = &app->controls[i];
-        if (!record->active || record->state.kind == QA_RULESET_NETQUAKE ||
-            (qa_actor_id_equal(app->control_frames->inputs[i].value.actor, record->actor) &&
+        if (!record->active || record->player.state.kind == QA_RULESET_NETQUAKE ||
+            (qa_actor_id_equal(app->control_frames->inputs[i].value.actor, record->player.actor) &&
              app->control_frames->inputs[i].value.domain == CONTROL_COMMAND_NQ_SOURCE) ||
-            !qa_q1_player_source_present(map->state.q1, record->actor)) continue;
+            !qa_q1_player_source_present(map->state.q1, record->player.actor)) continue;
         const qa_movement_command *received = NULL;
         for (const control_group *group = app->control_frames->head; group; group = group->next)
-            if (!group->bot && qa_actor_id_equal(group->actor, record->actor))
+            if (!group->bot && qa_actor_id_equal(group->actor, record->player.actor))
                 received = &group->commands[group->count - 1];
         control_input *input = &app->control_frames->inputs[i].value;
         qa_movement_command unified_received;
         if (received && input->domain == CONTROL_COMMAND_UNIFIED) {
-            if (!unified_command(app, record->actor, &input->unified, &unified_received, error)) return false;
+            if (!unified_command(app, record->player.actor, &input->unified, &unified_received, error)) return false;
             received = &unified_received;
         }
-        if (received && (!qa_actor_id_equal(input->actor, record->actor) || !input->seen))
+        if (received && (!qa_actor_id_equal(input->actor, record->player.actor) || !input->seen))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source preparation lost its received command");
         if (received && applications_active) {
             qa_source_frame actual;
             if (!qa_session_active_frame(app->session, map->owner, &actual))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Deferred Q1 source input lost its real map frame");
             (void)input_enroll(app->control_frames, i);
-            input->q1_source_actor = record->actor; input->q1_source_provider = map->owner;
+            input->q1_source_actor = record->player.actor; input->q1_source_provider = map->owner;
             input->q1_source_frame_number = actual.number; input->q1_source_sequence = received->sequence;
             input->q1_source_deferred = true;
             continue;
         }
-        if (!application_control_q1_source_prethink(app, record->actor, received, error)) return false;
+        if (!application_control_q1_source_prethink(app, record->player.actor, received, error)) return false;
     }
     return drain(app, frames, count, false, false, error);
 }
@@ -2409,8 +2409,8 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
     bool physical_nq = provider && (provider->kind == APPLICATION_PROVIDER_Q1 ||
         (provider->kind == APPLICATION_PROVIDER_QC && !provider->state.qc.qualified)) &&
         actor.slot < app->control_capacity && app->controls[actor.slot].active &&
-        qa_actor_id_equal(app->controls[actor.slot].actor, actor) &&
-        (app->controls[actor.slot].state.kind == QA_RULESET_NETQUAKE ||
+        qa_actor_id_equal(app->controls[actor.slot].player.actor, actor) &&
+        (app->controls[actor.slot].player.state.kind == QA_RULESET_NETQUAKE ||
          (qa_actor_id_equal(app->control_frames->inputs[actor.slot].value.actor, actor) &&
           app->control_frames->inputs[actor.slot].value.domain == CONTROL_COMMAND_NQ_SOURCE)) &&
         provider->component.clock.kind == QA_RULESET_NETQUAKE &&
@@ -2467,7 +2467,7 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         if (outcome == APPLICATION_CONTROL_COMPLETED &&
             input->domain == CONTROL_COMMAND_NQ_SOURCE && input->seen &&
             qa_actors_get(qa_session_actors(session), actor)) {
-            app->controls[actor.slot].command_sequence = input->sequence;
+            app->controls[actor.slot].player.command_sequence = input->sequence;
             app->controls[actor.slot].command_seen = true;
         }
         (void)input_enroll(app->control_frames, actor.slot);
@@ -2565,7 +2565,7 @@ static bool domain_command(control_command_domain domain, const qa_movement_comm
     if (domain == CONTROL_COMMAND_NQ_SOURCE) return nq_raw_valid(command);
     if (domain == CONTROL_COMMAND_QW_SOURCE)
         return command_valid(command) && command->kind == QA_RULESET_QUAKEWORLD && command->milliseconds <= 255;
-    return command->kind == control->state.kind &&
+    return command->kind == control->player.state.kind &&
         (command->kind != QA_RULESET_QUAKEWORLD || command->milliseconds <= 255);
 }
 
@@ -2588,7 +2588,7 @@ static bool unified_owner(qa_application *app, qa_actor_id actor, const control_
     const qa_movement_command *marker, const application_control_record *control)
 {
     qa_movement_command expected = {.kind = receipt->movement.kind, .sequence = receipt->sequence};
-    if (!unified_valid(receipt) || receipt->movement.kind != control->state.kind ||
+    if (!unified_valid(receipt) || receipt->movement.kind != control->player.state.kind ||
         !command_equal(marker, &expected) ||
         marker->sequence != receipt->sequence || marker->kind != receipt->movement.kind) return false;
     if (!receipt->has_arsenal) return true;
@@ -2643,7 +2643,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             qa_session_clock(app->session, source->owner, &accepted_clock) &&
             value.accepted_time_ns <= accepted_clock.frame.time_ns);
         if (value.actor.slot >= app->control_capacity || !controls[value.actor.slot].active ||
-            !qa_actor_id_equal(controls[value.actor.slot].actor, value.actor) ||
+            !qa_actor_id_equal(controls[value.actor.slot].player.actor, value.actor) ||
             !source || source->owner != value.provider || !domain_owner(app, source, value.actor, value.domain, value.source_time_ns, reading) ||
             !accepted_clock_valid || (!value.seen && value.accepted_time_ns) ||
             (value.domain != CONTROL_COMMAND_SELECTED && value.domain != CONTROL_COMMAND_UNIFIED &&
@@ -2651,11 +2651,11 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             (value.domain == CONTROL_COMMAND_QW_SOURCE ? value.qw_receipt_time_ns > value.source_time_ns :
                 value.qw_receipt_time_ns != 0) ||
             (reading && i && value.actor.slot <= previous) ||
-            (value.seen && controls[value.actor.slot].command_seen && value.sequence < controls[value.actor.slot].command_sequence) ||
+            (value.seen && controls[value.actor.slot].command_seen && value.sequence < controls[value.actor.slot].player.command_sequence) ||
             (!value.seen && (value.sequence || value.impulse)) || (!value.retained && value.impulse) ||
             (!value.retained && ((!value.seen && !value.has_body_base) ||
                 (value.domain != CONTROL_COMMAND_Q3_SOURCE && (value.arsenal || value.weapon)))) ||
-            (value.has_body_base && (!body_base_owner(source, controls[value.actor.slot].state.kind) ||
+            (value.has_body_base && (!body_base_owner(source, controls[value.actor.slot].player.state.kind) ||
                 !qa_vec_finite(value.body_base.mins) || !qa_vec_finite(value.body_base.maxs) ||
                 value.body_base.mins.x > value.body_base.maxs.x || value.body_base.mins.y > value.body_base.maxs.y ||
                 value.body_base.mins.z > value.body_base.maxs.z)) ||
@@ -2673,7 +2673,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved retained input has no exact control owner"); break;
         }
         bool retained = source_client(source) && source->component.clock.kind == QA_RULESET_NETQUAKE &&
-            (controls[value.actor.slot].state.kind == QA_RULESET_NETQUAKE || value.domain == CONTROL_COMMAND_NQ_SOURCE);
+            (controls[value.actor.slot].player.state.kind == QA_RULESET_NETQUAKE || value.domain == CONTROL_COMMAND_NQ_SOURCE);
         if (value.retained != retained) { ok = application_fail(error, QA_ERROR_FORMAT, "Saved input retention differs from source ownership"); break; }
         if (reading) { previous = value.actor.slot; *input_enroll(owner, value.actor.slot) = value; }
         else saved = saved->next;
@@ -2698,7 +2698,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
         if (reading && ok) { *group = value; if (owner->tail) owner->tail->next = group; else owner->head = group; owner->tail = group; }
         application_provider *actor_source = ok ? saved_source_provider(app, value.actor, error) : NULL;
         if (ok && (value.actor.slot >= app->control_capacity || !controls[value.actor.slot].active ||
-            !qa_actor_id_equal(controls[value.actor.slot].actor, value.actor) ||
+            !qa_actor_id_equal(controls[value.actor.slot].player.actor, value.actor) ||
             !actor_source || actor_source->owner != value.provider ||
             value.domain == CONTROL_COMMAND_NQ_SOURCE ||
             !domain_owner(app, actor_source, value.actor, value.domain, value.source_time_ns, reading) ||
@@ -2707,7 +2707,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             !weapon_owner(app, value.actor, value.arsenal, value.weapon)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved input group has no exact control owner");
         bool qw = value.domain != CONTROL_COMMAND_UNIFIED && actor_source && source_client(actor_source) && actor_source->component.clock.kind == QA_RULESET_QUAKEWORLD &&
-            (value.domain == CONTROL_COMMAND_QW_SOURCE || controls[value.actor.slot].state.kind == QA_RULESET_QUAKEWORLD);
+            (value.domain == CONTROL_COMMAND_QW_SOURCE || controls[value.actor.slot].player.state.kind == QA_RULESET_QUAKEWORLD);
         if (ok && (qw != value.quakeworld || before_source(actor_source) != value.before_source ||
             (qw && value.count > 20) || (value.domain == CONTROL_COMMAND_Q3_SOURCE &&
                 (value.count != 1 || actor_source->kind != APPLICATION_PROVIDER_Q3)) ||
@@ -2720,7 +2720,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved command group differs from source ownership");
         uint64_t last = 0;
         bool seen = ok && controls[value.actor.slot].command_seen;
-        if (seen) last = controls[value.actor.slot].command_sequence;
+        if (seen) last = controls[value.actor.slot].player.command_sequence;
         if (ok) for (control_group *prior = owner->head; prior && prior != group; prior = prior->next)
             if (qa_actor_id_equal(prior->actor, value.actor) && prior->count) {
                 seen = true; last = prior->commands[prior->count - 1].sequence;

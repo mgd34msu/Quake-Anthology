@@ -1489,10 +1489,10 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         !qa_actors_get(qa_session_actors(app->session), actor) ||
         actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
-        !qa_actor_id_equal(app->controls[actor.slot].actor, actor) ||
+        !qa_actor_id_equal(app->controls[actor.slot].player.actor, actor) ||
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
     application_control_record *control = &app->controls[actor.slot];
-    bool foreign = control->state.kind != QA_RULESET_Q3;
+    bool foreign = control->player.state.kind != QA_RULESET_Q3;
     bool noclip;
     qa_q3_wire_policy policy = {0};
     if (source_client) {
@@ -1508,13 +1508,13 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
     } else {
         if (foreign) return application_fail(error, QA_ERROR_ARGUMENT,
             "Selected Q3 movement requires its actual Q3 control state");
-        *spectator = control->state.data.q3.movement_type == 2;
-        noclip = control->state.data.q3.movement_type == 1;
+        *spectator = control->player.state.data.q3.movement_type == 2;
+        noclip = control->player.state.data.q3.movement_type == 1;
     }
     if (*spectator) {
         *pm_type = 2;
         *speed = 400;
-        *gravity = foreign ? policy.gravity : control->state.data.q3.gravity;
+        *gravity = foreign ? policy.gravity : control->player.state.data.q3.gravity;
     } else {
         float gravity_value, speed_value;
         if (!application_native_q3_settings_number_at(provider, APPLICATION_Q3_SETTING_G_GRAVITY, &gravity_value, error) ||

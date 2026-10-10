@@ -1672,7 +1672,7 @@ static bool q3_input(void *context, const qa_q3_usercmd *source, qa_error *error
     if (peer->sequence == UINT64_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 command sequence exhausted");
     qa_actor_id actor;
     if (!q3_actor(peer, &actor, error)) return false;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(n->frontend->application, actor, &control))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 input has no actual selected movement owner");
     qa_network_q3_source_command command = {.client = peer->client, .seat = peer->seat, .actor = actor,

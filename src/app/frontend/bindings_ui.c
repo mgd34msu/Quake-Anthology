@@ -329,8 +329,8 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
     qa_ruleset_id dialect = qa_input_seat_context(seat->input).dialect;
     const qa_launch_choices *choices = seat->library ? qa_ui_library_choices(seat->library) : NULL;
     const qa_catalog *catalog = seat->library ? qa_ui_library_catalog(seat->library) : NULL;
-    qa_game_family entities_family=dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD?QA_GAME_Q1:
-        dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE?QA_GAME_Q2:QA_GAME_Q3;
+    const qa_ruleset_descriptor *ruleset = qa_ruleset_read(dialect);
+    qa_game_family entities_family = ruleset ? ruleset->family : QA_GAME_Q3;
     if (choices && catalog) {
         qa_launch_scope scope={.kind=QA_SCOPE_DEFAULT_PLAYER};
         if (seat->id<choices->seat_count) scope=(qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=choices->seats[seat->id].id};

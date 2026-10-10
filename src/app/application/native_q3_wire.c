@@ -22,7 +22,7 @@ static bool native_movement(void *context, qa_actor_id actor, qa_q3_movement_sta
     bool *selected, qa_error *error)
 {
     application_provider *provider = context;
-    qa_application_control_view control;
+    qa_player_state control;
     uint32_t slot;
     if (!out || !selected || !native_source_actor(provider, actor, &slot, error) ||
         !qa_application_control_read(provider->application, actor, &control))

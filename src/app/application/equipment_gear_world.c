@@ -49,7 +49,7 @@ bool application_equipment_gear_world_read(qa_application *app, qa_actor_id acto
     if (!application_q3_gear_read(view.source.source.gear, actor, &view.source.gear, error)) return false;
     if (!view.source.gear.tether.registry) return true;
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    qa_application_control_view control;
+    qa_player_state control;
     if (!primary)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Gear world observation lost its authoritative primary owner");
     view.source.primary = primary->owner;

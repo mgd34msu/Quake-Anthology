@@ -134,9 +134,9 @@ static bool set(const view_scope *scope, qa_actor_id actor, double value,
     const application_control_record *record = actor.slot < scope->app->control_capacity
         ? scope->app->controls + actor.slot : NULL;
     bool in_intermission = record && record->active && !record->retired &&
-        qa_actor_id_equal(record->actor, actor) && record->player_mode_set &&
-        record->player_mode == QA_MOVEMENT_MODE_FREEZE;
-    qa_application_control_view control;
+        qa_actor_id_equal(record->player.actor, actor) && record->player.player_mode_set &&
+        record->player.player_mode == QA_MOVEMENT_MODE_FREEZE;
+    qa_player_state control;
     bool cutscene = qa_application_control_read(scope->app, actor, &control) && control.cutscene;
     qa_q2_game *game = owner->state.q2;
     bool ok = qa_q2_player_field_of_view_set(game, actor, value, is_source,

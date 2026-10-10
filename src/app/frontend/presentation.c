@@ -210,7 +210,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!frontend_config_store_primary_legacy_read(f->config_store, logical, &source, &present, error)) return false;
     if (!present || source.product->family != QA_GAME_Q1) return true;
     bool q1_character = camera->has_character && camera->character_family == QA_GAME_Q1;
-    qa_application_control_view control; qa_body_state body;
+    qa_player_state control; qa_body_state body;
     qa_application_equipment_view equipment;
     qa_combat_state combat;
     uint32_t items = 0;

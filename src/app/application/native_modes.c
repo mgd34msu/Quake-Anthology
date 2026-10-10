@@ -840,8 +840,8 @@ bool application_native_mode_drop_arsenal(void *opaque, qa_actor_id actor,
     if (okay && p->kind == APPLICATION_PROVIDER_Q1) {
         const application_control_record *control = actor.slot < app->control_capacity
             ? &app->controls[actor.slot] : NULL;
-        if (control && control->active && qa_actor_id_equal(control->actor, actor))
-            input.view_angles = control->view_angles;
+        if (control && control->active && qa_actor_id_equal(control->player.actor, actor))
+            input.view_angles = control->player.view_angles;
         else {
             qa_body_state body;
             okay = qa_world_body_read(app->world, actor, &body, error);

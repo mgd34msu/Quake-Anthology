@@ -170,7 +170,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     qa_q3_player player;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
         !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &player, error)) return false;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
     uint32_t remaining = scope->milliseconds;
@@ -325,7 +325,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_q3_player player;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
         !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &player, error)) return false;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest source input lost its continuation");
     qa_movement_state state = qa_movement_state_default(QA_RULESET_Q3,
@@ -1141,7 +1141,7 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     qa_q3_usercmd source = {.serverTime = (int32_t)((uint32_t)player.commandTime + command->milliseconds),
         .buttons = (int32_t)(command->kind == QA_RULESET_Q3 ? command->buttons : command->buttons & 5u),
         .weapon = arsenal == guest ? command->weapon : (uint8_t)player.weapon};
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest command has no shared control view");
     qa_input_command_basis from = {.kind = command->kind}, to = {

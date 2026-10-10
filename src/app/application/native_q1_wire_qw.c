@@ -143,9 +143,9 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
         vector(value.minimum,body.bounds.mins); vector(value.velocity,body.velocity);
         if (actor.slot>=app->control_capacity || !app->controls[actor.slot].active ||
             app->controls[actor.slot].retired || app->controls[actor.slot].moving ||
-            !qa_actor_id_equal(app->controls[actor.slot].actor,actor))
+            !qa_actor_id_equal(app->controls[actor.slot].player.actor,actor))
             okay=application_fail(error,QA_ERROR_UNSUPPORTED,"Native QuakeWorld client lacks its actual selected control");
-        else vector(value.view_offset,app->controls[actor.slot].view_offset);
+        else vector(value.view_offset,app->controls[actor.slot].player.view_offset);
         uint32_t server_items=world.server_flags<<28;
         int32_t signed_server_items;memcpy(&signed_server_items,&server_items,sizeof(server_items));
         value.stats[15]=signed_server_items;
@@ -527,7 +527,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
             if (!qa_q1_source_client_actor(p->state.q1,i,&actor)) continue;
             const application_player_record *row=record(p->application,actor);
             if (!row || row->source_begin_pending || row->deferred) continue;
-            qa_application_control_view control;
+            qa_player_state control;
             if (!qa_world_body_read(p->application->world,actor,&body,error) ||
                 !qa_application_control_read(p->application,actor,&control)) return false;
             vector(service.data.intermission.origin,body.origin);vector(service.data.intermission.angles,control.view_angles);

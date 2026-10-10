@@ -1145,7 +1145,7 @@ bool application_native_q1_cvar(void *opaque, qa_string_id name, float *out, qa_
 bool application_native_q1_client_attack(void *opaque, qa_actor_id actor, bool *out)
 {
     application_provider *provider = opaque;
-    qa_application_control_view control;
+    qa_player_state control;
     uint32_t slot;
     if (!out || !provider || provider->kind != APPLICATION_PROVIDER_Q1 || !provider->constructed ||
         !provider->attached || provider->close_pending || provider->application->destroy_requested ||

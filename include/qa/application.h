@@ -10,6 +10,7 @@
 #include "qa/launch.h"
 #include "qa/input.h"
 #include "qa/movement.h"
+#include "qa/player_state.h"
 #include "qa/native_host.h"
 #include "qa/native_process_resources.h"
 #include "qa/player_progress.h"
@@ -168,23 +169,7 @@ typedef struct qa_application_protocol_event {
     bool reliable, multicast, signon;
 } qa_application_protocol_event;
 
-/* One application-owned control continuation follows a live actor generation.
- * Its movement family comes from the current MOVEMENT role binding; callers do
- * not select or duplicate a family state. The shared world remains the body,
- * collision and link authority. */
-typedef struct qa_application_control_view {
-    qa_actor_id actor;
-    qa_movement_state state;
-    qa_movement_profile profile;
-    qa_bounds bounds;
-    qa_movement_ground ground;
-    qa_vec3 view_angles, command_angles, view_offset;
-    uint64_t command_sequence, command_angle_revision;
-    uint32_t buttons, previous_buttons;
-    int32_t water_level, water_type;
-    float view_height, gravity_multiplier;
-    bool flight, cutscene;
-} qa_application_control_view;
+
 
 /* A copied selected-player seed for private client prediction. Provider IDs
  * identify the actual admitted roles. No command, source call or world write
@@ -577,7 +562,7 @@ bool qa_application_control_q3_command(qa_application *, qa_actor_id,
 bool qa_application_q3_input_values_read(qa_application *, uint32_t seat, qa_actor_id,
     uint8_t *weapon, float *sensitivity, bool *present, qa_error *);
 bool qa_application_control_read(const qa_application *, qa_actor_id,
-                                 qa_application_control_view *);
+                                 qa_player_state *);
 /* Actual selected command recipient: physical Source-client admission precedes
  * actor execution ownership, including mixed character/movement selections. */
 bool qa_application_control_source_read(qa_application *, qa_actor_id,

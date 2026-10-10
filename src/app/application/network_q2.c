@@ -275,7 +275,7 @@ static application_player_record *roster_player(qa_application_network_q2 *owner
 bool qa_application_network_q2_player(qa_application_network_q2 *owner, qa_actor_id actor,
     qa_network_q2_player *out, qa_error *error)
 {
-    qa_application_control_view control;
+    qa_player_state control;
     if (!out || !application_network_q2_current(owner, error) || !roster_player(owner, actor) ||
         !qa_application_control_read(owner->app, actor, &control))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire player has no admitted full actor/control owner");

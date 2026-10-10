@@ -247,7 +247,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified view weapon changed its actual Source or selected owner");
     /* Q3's public weapon continuation belongs to the actual selected owner. */
     if (e.family == QA_GAME_Q3) {
-        qa_application_control_view control;
+        qa_player_state control;
         qa_combat_state combat;
         qa_body_state body;
         if (!qa_application_control_read(app, actor, &control) ||

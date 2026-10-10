@@ -419,7 +419,7 @@ static qa_vec3 from_array(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
 
 static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e)
 {
-    qa_application_control_view control;
+    qa_player_state control;
     qa_application_camera_view camera;
     if (!qa_application_control_read(o->app, o->player->actor, &control) ||
         !qa_application_control_camera(o->app, o->player->actor, &camera) || !current(o, e))

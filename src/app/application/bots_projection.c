@@ -187,7 +187,7 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
     if(source && source->kind==APPLICATION_PROVIDER_Q3) return native_player(bots,source,actor,out,state,error);
     if(state) return application_fail(error,QA_ERROR_UNSUPPORTED,"bot source player copy requires its genuine GAME player state");
     qa_builtin_services services=application_builtin_services(application,application->world,application->physics);
-    qa_builtin_player_info info;qa_application_control_view control={0};qa_body_state body;qa_combat_state combat;
+    qa_builtin_player_info info;qa_player_state control={0};qa_body_state body;qa_combat_state combat;
     if(!services.player_info(services.context,actor,&info) ||
        !qa_world_body_read(application->world,actor,&body,error) ||
        !qa_combat_read_traits(application->combat,actor,&combat,error))
