@@ -37,6 +37,7 @@ typedef struct source_region {
 } source_region;
 struct source_call {
     source_call *parent;
+    qa_unified_frame_lease *storage;
     operands *operands;
     uint32_t stack, instruction, caller, depth, argument_base;
     int32_t return_pc;
@@ -624,8 +625,10 @@ bool qa_qvm_bind_branches(const qa_qvm_call *call, const qa_qvm_branch_binding *
         for (size_t j = 0; j < i; ++j)
             if (bindings[j].instruction == index) return error_at(error, index, "Duplicate QVM branch binding");
     }
-    qa_qvm_branch_binding *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
-    if (count != 0 && copy == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM branch bindings");
+    if(count&&!source->storage)source->storage=qa_unified_frame_lease_acquire(call->vm->transient_storage,error);
+    if(count&&!source->storage)return false;
+    qa_qvm_branch_binding *copy=count?qa_unified_frame_lease_alloc(source->storage,count,sizeof(*copy),_Alignof(qa_qvm_branch_binding),error):NULL;
+    if (count && !copy) return false;
     if (count != 0) memcpy(copy, bindings, count * sizeof(*copy));
     source->branches = copy; source->branch_count = count; source->branches_bound = true; return true;
 }
@@ -642,17 +645,19 @@ bool qa_qvm_bind_regions(const qa_qvm_call *call, const qa_qvm_region_binding *b
     if (host->kind != HOST_FUNCTION || source == NULL || source->proceeded || source->regions_bound
         || (count != 0 && bindings == NULL) || count > SIZE_MAX / sizeof(source_region))
         return error_at(error, 0, "QVM regions must bind once before proceeding");
-    source_region *copy = count == 0 ? NULL : calloc(count, sizeof(*copy));
-    if (count != 0 && copy == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM region bindings");
+    if(count&&!source->storage)source->storage=qa_unified_frame_lease_acquire(call->vm->transient_storage,error);
+    if(count&&!source->storage)return false;
+    source_region *copy=count?qa_unified_frame_lease_alloc(source->storage,count,sizeof(*copy),_Alignof(source_region),error):NULL;
+    if (count && !copy) return false;
     for (size_t i = 0; i < count; ++i) {
-        if (bindings[i].enter == NULL) { free(copy); return error_at(error, 0, "QVM region entry callback is missing"); }
+        if (bindings[i].enter == NULL) return error_at(error, 0, "QVM region entry callback is missing");
         if (!qualify(call->vm->image, source->instruction, bindings[i].entry, bindings[i].join,
-                     NULL, call->vm->options.semantics == QA_QVM_INTERPRETED, error)) { free(copy); return false; }
+                     NULL, call->vm->options.semantics == QA_QVM_INTERPRETED, error)) return false;
         copy[i].binding = bindings[i];
     }
     if (count > 1) qsort(copy, count, sizeof(*copy), region_order);
     for (size_t i = 1; i < count; ++i)
-        if (copy[i].binding.entry < copy[i - 1].binding.join) { free(copy); return error_at(error, 0, "QVM bound regions overlap"); }
+        if (copy[i].binding.entry < copy[i - 1].binding.join) return error_at(error, 0, "QVM bound regions overlap");
     source->regions = copy; source->region_count = count; source->regions_bound = true; return true;
 }
 
@@ -909,14 +914,16 @@ static bool branch_taken(uint8_t op, int32_t left, int32_t right)
     }
 }
 static bool reserve_return(return_address **returns, size_t *count, size_t *capacity,
-                            return_address *inline_storage, uint32_t stack, int32_t pc, qa_error *error)
+                            qa_qvm *vm,qa_unified_frame_lease **storage,uint32_t stack,int32_t pc,qa_error *error)
 {
     if (*count == *capacity) {
         size_t next = *capacity == 0 ? 16 : *capacity * 2;
         if (next < *capacity || next > SIZE_MAX / sizeof(**returns)) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM return stack capacity exhausted");
-        return_address *resized = *returns == inline_storage ? malloc(next * sizeof(*resized)) : realloc(*returns, next * sizeof(*resized));
-        if (resized == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM return stack");
-        if (*returns == inline_storage) memcpy(resized, inline_storage, *count * sizeof(*resized));
+        if(!*storage)*storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+        if(!*storage)return false;
+        return_address *resized=qa_unified_frame_lease_alloc(*storage,next,sizeof(*resized),_Alignof(return_address),error);
+        if (!resized) return false;
+        memcpy(resized,*returns,*count*sizeof(*resized));
         *returns = resized; *capacity = next;
     }
     (*returns)[(*count)++] = (return_address){stack, pc}; return true;
@@ -987,7 +994,7 @@ static bool intercept(qa_qvm *vm, execution_frame *frame, uint32_t stack, int32_
     }
     source.active = false;
     if (exec->cancelled == &source) exec->cancelled = NULL;
-    free(source.branches); free(source.regions);
+    qa_unified_frame_lease_release(source.storage);
     if (ok) *out = result;
     return ok;
 }
@@ -1006,8 +1013,9 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
     int32_t result = 0;
     return_address inline_returns[32];
     return_address *returns = inline_returns; size_t return_count = 0, return_capacity = 32;
+    qa_unified_frame_lease *return_storage=NULL;
     bool compiled = vm->options.semantics == QA_QVM_COMPILED_SEMANTICS;
-    if (ok && compiled) ok = reserve_return(&returns, &return_count, &return_capacity, inline_returns, entry_stack, source == NULL ? -1 : source->return_pc, error);
+    if (ok && compiled) ok = reserve_return(&returns, &return_count, &return_capacity, vm, &return_storage, entry_stack, source == NULL ? -1 : source->return_pc, error);
     bool evaluation_started = false;
     uint32_t initial_depth = source == NULL ? 0 : source->depth;
     while (ok && !finished) {
@@ -1145,7 +1153,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
                     }
                 }
                 if (hook == NULL && observers == NULL) {
-                    if (compiled && !reserve_return(&returns, &return_count, &return_capacity, inline_returns, frame.stack, return_pc, error)) { ok = false; break; }
+                    if (compiled && !reserve_return(&returns, &return_count, &return_capacity, vm, &return_storage, frame.stack, return_pc, error)) { ok = false; break; }
                     pc = target;
                 } else {
                     uint32_t saved = exec->program_stack;
@@ -1266,7 +1274,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             break;
         }
     }
-    if (returns != inline_returns) free(returns);
+    qa_unified_frame_lease_release(return_storage);
     exec->active = frame.parent; exec->program_stack = previous_stack;
     if (ok && finished) *out = result;
     return ok && finished;
