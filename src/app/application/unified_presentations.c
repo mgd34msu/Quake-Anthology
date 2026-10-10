@@ -51,14 +51,11 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         out->models = rows; *capacity = next;
     }
     qa_unified_model_state *row = out->models + out->model_count++;
-    *row = (qa_unified_model_state){.actor = v->actor, .family = v->family,
-        .frame = v->visual.frame, .old_frame = v->visual.old_frame < 0 ? v->visual.frame : v->visual.old_frame,
-        .skin = v->visual.skin, .effects = v->visual.effects, .render_flags = v->visual.render_flags, .q1_effects = v->q1_effects,
-        .origin = v->body.origin, .angles = v->body.angles, .scale = v->visual.scale,
-        .visible = v->visual.visible, .view_weapon = view_weapon,
-        .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
-        .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon,
-        .alpha = v->visual.alpha, .has_player_colors = v->visual.has_player_colors, .player_colors = v->visual.player_colors};
+    *row = (qa_unified_model_state){.actor = v->actor, .family = v->family, .visual = v->visual,
+        .q1_effects = v->q1_effects, .origin = v->body.origin, .angles = v->body.angles,
+        .view_weapon = view_weapon, .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
+        .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon};
+    if (row->visual.old_frame < 0) row->visual.old_frame = row->visual.frame;
     if (!application_unified_frame_string(frame->lease, &row->content, content, error) ||
         !application_unified_frame_string(frame->lease, &row->path, path, error) ||
         !application_unified_frame_string(frame->lease, &row->skin_path, v->skin_path, error)) return false;

@@ -519,7 +519,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
                 .anchor_offset=model->anchor->offset,
                 .field_of_view=camera.field_of_view,
                 .fov_above=model->anchor->fov_above,.fov_scale=model->anchor->fov_scale,
-                .frame=(int32_t)model->frame,.old_frame=(int32_t)model->old_frame,.back_lerp=model->back_lerp,
+                .frame=(int32_t)model->visual.frame,.old_frame=(int32_t)model->visual.old_frame,.back_lerp=model->back_lerp,
                 .attachments=state->attachments,.attachment_count=model->attachment_count};
             if (okay) okay=q3n_weapons_selected_authored_view(b->weapons,&media,&state->view_state,
                 &request,&authored,submitted,e);

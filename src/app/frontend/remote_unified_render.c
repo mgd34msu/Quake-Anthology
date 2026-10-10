@@ -182,18 +182,18 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     unified_render_model *m,qa_error *e)
 {
     m->source=source;
-    m->flat_beam=source->family==QA_GAME_Q2 && (source->render_flags&128u) && source->path && !*source->path;
+    m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !*source->path;
     qa_game_family kind=source->family==QA_GAME_Q1?QA_GAME_Q1:source->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
         frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
-    m->origin=source->origin; m->angles=source->angles; m->scale=source->scale; m->visible=source->visible; m->effects=source->effects; m->q1_effects=source->q1_effects;
-    m->input.frame=source->frame<0?0:(uint32_t)source->frame;
-    m->input.old_frame=source->old_frame<0?m->input.frame:(uint32_t)source->old_frame;
+    m->origin=source->origin; m->angles=source->angles; m->scale=source->visual.scale; m->visible=source->visual.visible; m->effects=source->visual.effects; m->q1_effects=source->q1_effects;
+    m->input.frame=source->visual.frame<0?0:(uint32_t)source->visual.frame;
+    m->input.old_frame=source->visual.old_frame<0?m->input.frame:(uint32_t)source->visual.old_frame;
     qa_scene_image_options images={.family=kind,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
     uint8_t translation[256];
-    if (source->has_player_colors) {
-        unsigned top=source->player_colors>>4,bottom=source->player_colors&15;
+    if (source->visual.has_player_colors) {
+        unsigned top=source->visual.player_colors>>4,bottom=source->visual.player_colors&15;
         for (unsigned i=0;i<256;++i) translation[i]=(uint8_t)i;
         for (unsigned i=0;i<16;++i) { unsigned t=top*16,b=bottom*16;
             translation[16+i]=(uint8_t)(t<128?t+i:t+15-i);
@@ -206,10 +206,10 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         frontend_unified_media_bank(r->media,source->content,&bank,&materials,&fonts,&sounds,e) &&
         (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e)) && copy_text(source->path,&m->path,e);
     if (okay) {
-        m->input.family=kind; m->input.skin=source->skin<0 && !m->flat_beam?0:(uint32_t)source->skin;
-        m->input.flags=source->render_flags;
+        m->input.family=kind; m->input.skin=source->visual.skin<0 && !m->flat_beam?0:(uint32_t)source->visual.skin;
+        m->input.flags=source->visual.render_flags;
         m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
-        m->input.color=(qa_vec4){1,1,1,source->has_alpha?source->alpha:1}; m->input.seconds=r->seconds;
+        m->input.color=(qa_vec4){1,1,1,source->has_alpha?source->visual.alpha:1}; m->input.seconds=r->seconds;
         m->input.has_milliseconds=true; m->input.milliseconds=r->milliseconds;
         m->input.view_model=source->view_weapon; m->native_held_weapon=source->native_held_weapon; m->previous_origin=source->previous_origin;
         m->has_previous_origin=source->has_previous_origin; m->input.back_lerp=source->back_lerp;

@@ -307,7 +307,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
     char *content=text_copy(row->content),*source=text_copy(provider),*path=is_model?text_copy(m->path):NULL;
     if (!content || (provider && !source) || (is_model && !path)) { free(content);free(source);free(path);record_free(copy);return false; }
     free(v->content);v->content=content;free(v->source_provider);v->source_provider=source;
-    if (is_model) { free(v->path);v->path=path;record_free(v->model);v->model=copy;v->effects=m->effects; }
+    if (is_model) { free(v->path);v->path=path;record_free(v->model);v->model=copy;v->effects=m->visual.effects; }
     else if (row->payload.kind==QA_UNIFIED_PRESENTATION_VISIBILITY) v->visible=row->payload.value.visibility.visible;
     else { const qa_builtin_event *event=&row->payload.value.builtin;
         v->event=event->kind==QA_BUILTIN_ITEM?2u:(uint32_t)event->code;v->event_frame=o->frame_number; }
@@ -378,15 +378,14 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
         const qa_unified_model_state *row=frame->visuals->models+i; qa_actor_id actual;
         if (!frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&actual,e)) return false;
         if (!qa_actor_id_equal(actual,id)) continue;
-        if (row->frame<INT32_MIN || row->frame>INT32_MAX) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 effect pose frame exceeds its signed Source frame");
         frontend_remote_q2_effects_pose p={.actor=id,.origin=row->origin,.angles=row->angles,
-            .frame=(int32_t)row->frame,.scale=row->scale};
+            .frame=(int32_t)row->visual.frame,.scale=row->visual.scale};
         q2_visual *visual=visual_read(o,id);
         if (visual && !strcmp(visual->content?visual->content:"",b->content)) {
             p.effects=visual->effects; p.event=visual->event_frame==o->frame_number?visual->event:0;
         }
         if (visual && visual->model) {
-            p.scale=visual->model->payload.value.model.scale;
+            p.scale=visual->model->payload.value.model.visual.scale;
         }
         if (p.scale == 0) p.scale=1;
         qa_game_family family=row->family==QA_GAME_Q1?QA_GAME_Q1:row->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
@@ -1495,9 +1494,9 @@ bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *
     if (!v->visible) { input->color.w=0; return true; }
     if (!v->model || !v->path || strcmp(v->path,path)) return true;
     const qa_unified_model_state *model_state=&v->model->payload.value.model;
-    input->frame=(uint32_t)model_state->frame;input->old_frame=(uint32_t)model_state->old_frame;
-    input->skin=(uint32_t)model_state->skin;input->flags=model_state->render_flags;
-    input->color.w=model_state->alpha;float scale=model_state->scale;if (scale==0)scale=1;
+    input->frame=(uint32_t)model_state->visual.frame;input->old_frame=(uint32_t)model_state->visual.old_frame;
+    input->skin=(uint32_t)model_state->visual.skin;input->flags=model_state->visual.render_flags;
+    input->color.w=model_state->visual.alpha;float scale=model_state->visual.scale;if (scale==0)scale=1;
     for (size_t i=0;i<3;++i)input->transform.scale[i]=scale;
     return true;
 }

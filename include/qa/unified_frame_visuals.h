@@ -20,13 +20,11 @@ typedef struct qa_unified_model_state {
     qa_actor_id actor;
     qa_game_family family;
     char *content, *path, *skin_path, *weapon_item;
-    int64_t frame, old_frame, skin;
-    uint64_t effects;
-    uint32_t render_flags, q1_effects;
+    qa_entity_visual visual;
+    uint32_t q1_effects;
     qa_vec3 origin, angles, previous_origin;
-    float scale, alpha, back_lerp;
-    bool visible, view_weapon, native_held_weapon, has_previous_origin, has_alpha, has_player_colors;
-    uint8_t player_colors;
+    float back_lerp;
+    bool view_weapon, native_held_weapon, has_previous_origin, has_alpha;
     qa_unified_source_identity *render_source, *render_equipment;
     bool equipment_slot;
     qa_unified_q2_flare *flare;

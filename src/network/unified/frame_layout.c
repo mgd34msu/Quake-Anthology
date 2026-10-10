@@ -35,6 +35,7 @@ static const qa_unified_record_layout float_layout;
 static const qa_unified_record_layout qa_q3_trajectory_layout;
 static const qa_unified_record_layout qa_q3_player_layout;
 static const qa_unified_record_layout int32_t_layout;
+static const qa_unified_record_layout message_string_layout;
 static const qa_unified_record_layout qa_unified_component_owner_layout;
 static const qa_unified_record_layout qa_unified_native_component_layout;
 static const qa_unified_record_layout qa_unified_native_camera_layout;
@@ -449,32 +450,41 @@ static const qa_unified_field qa_unified_character_state_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_character_state_layout = QA_UNIFIED_LAYOUT(qa_unified_character_state, qa_unified_character_state_fields);
 
+static const qa_unified_field entity_visual_fields[] = {
+    QA_UNIFIED_FIXED(qa_entity_visual, models, message_string_layout, 4),
+    QA_UNIFIED_FIELD(qa_entity_visual, frame, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_entity_visual, old_frame, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_entity_visual, skin, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_entity_visual, colormap, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_entity_visual, effects, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_entity_visual, render_flags, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_entity_visual, inline_model, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_entity_visual, scale, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_visual, alpha, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_visual, player_colors, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_entity_visual, visible, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_visual, has_inline_model, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_visual, has_player_colors, QA_UNIFIED_FIELD_BOOL),
+};
+static const qa_unified_record_layout entity_visual_layout = QA_UNIFIED_LAYOUT(qa_entity_visual, entity_visual_fields);
+
 static const qa_unified_field qa_unified_model_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_model_state, actor, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, family, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_unified_model_state, visual, entity_visual_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, content, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_model_state, path, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_model_state, skin_path, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_model_state, weapon_item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_model_state, frame, QA_UNIFIED_FIELD_I64),
-    QA_UNIFIED_FIELD(qa_unified_model_state, old_frame, QA_UNIFIED_FIELD_I64),
-    QA_UNIFIED_FIELD(qa_unified_model_state, skin, QA_UNIFIED_FIELD_I64),
-    QA_UNIFIED_FIELD(qa_unified_model_state, effects, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_model_state, q1_effects, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_model_state, render_flags, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_RECORD(qa_unified_model_state, origin, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_model_state, angles, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_model_state, previous_origin, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_model_state, scale, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_model_state, alpha, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_model_state, back_lerp, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_model_state, visible, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_model_state, view_weapon, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_model_state, native_held_weapon, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_model_state, has_previous_origin, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_model_state, has_alpha, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_model_state, has_player_colors, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_model_state, player_colors, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_POINTER(qa_unified_model_state, render_source, qa_unified_source_identity_layout),
     QA_UNIFIED_POINTER(qa_unified_model_state, render_equipment, qa_unified_source_identity_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, equipment_slot, QA_UNIFIED_FIELD_BOOL),

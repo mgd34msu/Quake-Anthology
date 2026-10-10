@@ -31,14 +31,14 @@ static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
     bool rerelease = view->source.edition == QA_Q2_RERELEASE;
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = view->entity.binding.actor, .family = QA_GAME_Q2,
-        .frame = state->frame, .old_frame = rerelease ? state->old_frame : state->frame,
-        .skin = index ? 0 : view->skin, .effects = state->effects, .render_flags = state->renderfx,
+        .visual.frame = (int32_t)state->frame, .visual.old_frame = (int32_t)(rerelease ? state->old_frame : state->frame),
+        .visual.skin = index ? 0 : (int32_t)view->skin, .visual.effects = state->effects, .visual.render_flags = state->renderfx,
         .origin = qa_v3(state->origin[0], state->origin[1], state->origin[2]),
         .previous_origin = qa_v3(state->old_origin[0], state->old_origin[1], state->old_origin[2]),
         .angles = qa_v3(state->angles[0], state->angles[1], state->angles[2]),
-        .scale = rerelease && state->scale != 0 ? state->scale : 1,
-        .alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
-        .has_previous_origin = true, .has_alpha = true, .visible = true, .native_held_weapon = held};
+        .visual.scale = rerelease && state->scale != 0 ? state->scale : 1,
+        .visual.alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
+        .has_previous_origin = true, .has_alpha = true, .visual.visible = true, .native_held_weapon = held};
     return application_unified_frame_string(lease, &row->content, content, error) &&
         application_unified_frame_string(lease, &row->path, path, error) &&
         application_unified_frame_string(lease, &row->skin_path, index || !*path ? NULL : qa_strings_cstr(qa_session_strings(view->source.session), view->skin_path), error);

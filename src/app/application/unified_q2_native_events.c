@@ -93,10 +93,8 @@ static bool model(application_provider *p, qa_actor_id id, const qa_entity_visua
     for (size_t i = 1; i < 4; ++i)
         if (v->models[i]) attachments[count++].path = alias(p->application, v->models[i]);
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_MODEL};
-    payload.value.model = (qa_unified_model_state){.actor = id, .family = QA_GAME_Q2,
-        .path = alias(p->application, v->models[0]), .frame = v->frame, .old_frame = v->old_frame,
-        .skin = v->skin, .effects = v->effects, .render_flags = v->render_flags,
-        .scale = v->scale, .alpha = v->alpha, .has_alpha = true, .visible = v->visible,
+    payload.value.model = (qa_unified_model_state){.actor = id, .family = QA_GAME_Q2, .visual = *v,
+        .path = alias(p->application, v->models[0]), .has_alpha = true,
         .attachments = attachments, .attachment_count = count};
     return emit(p, &payload, NULL, id, (qa_actor_id){0}, time, audience, e);
 }
