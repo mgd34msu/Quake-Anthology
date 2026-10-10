@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <fenv.h>
 #include "qa/jobs.h"
+#include "qa/arena.h"
 
 _Thread_local qa_cpu_statistics *cpu_row_statistics;
 
@@ -75,6 +76,7 @@ typedef struct cpu_raster_slice {
 } cpu_raster_slice;
 struct qa_render_workers {
   size_t references;
+  qa_arena batch_storage;
   qa_cpu_renderer *raster_owner;
   bool active;
   cpu_triangle *triangles;
@@ -177,10 +179,8 @@ static void raster_slices_finish(qa_render_workers *pool) {
 void qa_render_workers_release(qa_render_workers *pool) {
   if (!pool || --pool->references) return;
   qa_jobs_destroy(pool->jobs);
-  free(pool->triangles);
-  free(pool->commands);
+  qa_arena_destroy(&pool->batch_storage);
   free(pool->projected);
-  free(pool->slices);
   free(pool);
 }
 bool qa_render_workers_retain(qa_render_workers *pool, qa_error *error) {
@@ -228,10 +228,23 @@ qa_render_workers *qa_render_workers_create(qa_error *error) {
   pool->references = 1;
   pool->count = qa_jobs_count(pool->jobs) - 1;
   pool->slice_capacity = (size_t)qa_jobs_count(pool->jobs) * 4;
-  pool->slices = calloc(pool->slice_capacity, sizeof(*pool->slices));
   pool->triangle_capacity = 8192;
-  pool->triangles = malloc(pool->triangle_capacity * sizeof(*pool->triangles));
-  if (!pool->slices || !pool->triangles) {
+  pool->command_capacity = pool->triangle_capacity;
+  size_t bytes = pool->slice_capacity * sizeof(*pool->slices) +
+      pool->triangle_capacity * sizeof(*pool->triangles) +
+      pool->command_capacity * sizeof(*pool->commands) + 3 * _Alignof(max_align_t);
+  if (!qa_arena_reserve(&pool->batch_storage, bytes, error)) {
+    qa_render_workers_release(pool);
+    return NULL;
+  }
+  qa_arena_seal(&pool->batch_storage);
+  pool->slices = qa_arena_alloc(&pool->batch_storage, pool->slice_capacity * sizeof(*pool->slices),
+      _Alignof(cpu_raster_slice), error);
+  pool->triangles = qa_arena_alloc(&pool->batch_storage, pool->triangle_capacity * sizeof(*pool->triangles),
+      _Alignof(cpu_triangle), error);
+  pool->commands = qa_arena_alloc(&pool->batch_storage, pool->command_capacity * sizeof(*pool->commands),
+      _Alignof(cpu_raster_command), error);
+  if (!pool->slices || !pool->triangles || !pool->commands) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained raster slices");
     qa_render_workers_release(pool);
     return NULL;
@@ -1351,25 +1364,15 @@ void cpu_raster_flush(qa_cpu_renderer *renderer) {
       pool->commands[i].retire(renderer, pool->commands[i].row_context);
   pool->active = false;
 }
-static bool raster_command_reserve(struct qa_render_workers *pool) {
-  if (pool->command_count < pool->command_capacity) return true;
-  size_t maximum = SIZE_MAX / sizeof(*pool->commands);
-  if (pool->command_capacity == maximum) return false;
-  size_t capacity = pool->command_capacity ? pool->command_capacity : 16;
-  capacity = capacity > maximum / 2 ? maximum : capacity * 2;
-  cpu_raster_command *commands = realloc(pool->commands,
-                                        capacity * sizeof(*commands));
-  if (!commands) return false;
-  pool->commands = commands;
-  pool->command_capacity = capacity;
-  return true;
+static bool raster_command_available(const struct qa_render_workers *pool) {
+  return pool->command_count < pool->command_capacity;
 }
 void cpu_raster_queue_rows(qa_cpu_renderer *renderer, int64_t first, int64_t last,
     cpu_brush_rows_fn kernel, void *context,
     void (*retire)(qa_cpu_renderer *, void *), int rounding) {
   bool acquired = cpu_raster_acquire(renderer, NULL);
   struct qa_render_workers *pool = acquired ? renderer->raster_pool : NULL;
-  if (last >= first && pool && rounding >= 0 && raster_command_reserve(pool)) {
+  if (last >= first && pool && rounding >= 0 && raster_command_available(pool)) {
     if (!pool->command_count) pool->triangle_count = 0;
     pool->commands[pool->command_count++] = (cpu_raster_command){
         .row_kernel = kernel, .row_context = context, .retire = retire,
@@ -1393,7 +1396,7 @@ void cpu_raster_queue_rows(qa_cpu_renderer *renderer, int64_t first, int64_t las
 static bool raster_queue(cpu_raster_job *job) {
   struct qa_render_workers *pool = job->renderer->raster_pool;
   if (!pool->command_count) pool->triangle_count = 0;
-  if (!raster_command_reserve(pool)) return false;
+  if (!raster_command_available(pool)) return false;
   size_t first = pool->triangle_count;
   cpu_triangle_output output = {.pool = pool};
   raster_geometry(job, &output);
