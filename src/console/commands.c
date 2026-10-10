@@ -1260,9 +1260,6 @@ static bool dispatch_contributions(qa_console *console,const qa_command_context 
     return success;
 }
 
-static void *token_allocate(void *context,size_t size,size_t alignment,qa_error *error)
-{ return qa_arena_alloc(context,size,alignment,error); }
-
 static bool dispatch_inner(qa_console *console, const qa_command_context *context,
                             const char *raw, qa_error *error)
 {
@@ -1290,7 +1287,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     bool local=strlen(expanded)<1024;
     if(local && !qa_arena_init_buffer(&token_arena,token_storage,sizeof(token_storage),error))return false;
     if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens,
-        local?token_allocate:NULL,&token_arena,error)) return false;
+        local?qa_arena_alloc_callback:NULL,&token_arena,error)) return false;
     if (tokens.count == 0) { qa_command_tokens_free(&tokens); return true; }
     qa_command_invocation command = {console, *context, tokens.count,
         (const char *const *)tokens.values, tokens.args_text, raw, 0, 0};

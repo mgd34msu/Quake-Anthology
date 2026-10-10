@@ -141,6 +141,9 @@ void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *e
     return block_alloc(block, size, alignment);
 }
 
+void *qa_arena_alloc_callback(void *context,size_t size,size_t alignment,qa_error *error)
+{ return qa_arena_alloc(context,size,alignment,error); }
+
 void *qa_arena_grow(qa_arena *arena,void *data,size_t old_size,size_t new_size,
     size_t alignment,qa_error *error)
 {
