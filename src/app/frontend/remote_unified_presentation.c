@@ -43,6 +43,7 @@ struct unified_presentation {
     frontend_remote_unified *replica;
     frontend_unified_media *media, *candidate_media;
     frontend_unified_render *render, *candidate_render;
+    qa_unified_frame_pool *render_storage;
     frontend_remote_unified_prediction *prediction;
     frontend_unified_input *physical;
     frontend_unified_events *events;
@@ -901,7 +902,7 @@ static bool frame(void *context, frontend_remote_unified *replica, const qa_unif
     if (!p->prediction && !frontend_remote_unified_prediction_create(replica,&p->prediction,error)) {
         frame_abort(p); return false;
     }
-    if (!p->candidate_render && !frontend_unified_render_create(p->frontend,replica,p->media,doc,&p->candidate_render,error)) {
+    if (!p->candidate_render && !frontend_unified_render_create(p->frontend,replica,p->media,p->render_storage,doc,&p->candidate_render,error)) {
         frame_abort(p); return false;
     }
     bool okay = frontend_unified_events_frame_prepare(p->events,doc,error) &&
@@ -1277,7 +1278,12 @@ static bool content_visit(void *context, const frontend_remote_unified *replica,
         (!p->components || frontend_unified_components_visit(p->components,visitor,error)) &&
         (!p->candidate_media || frontend_unified_media_visit(p->candidate_media,visitor,error));
 }
-static void dispose(void *context) { free(context); }
+static void dispose(void *context)
+{
+    unified_presentation *p=context;
+    qa_unified_frame_pool_destroy(&p->render_storage);
+    free(p);
+}
 static frontend_remote_unified_consumers consumers(unified_presentation *p)
 {
     return (frontend_remote_unified_consumers){.context=p,.prepare=prepare,.offer_publish=offer_publish,
@@ -1292,10 +1298,12 @@ bool frontend_remote_unified_presentation_create(qa_frontend *frontend,
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified factory needs its actual CLIENT construction tuple");
     unified_presentation *p = calloc(1,sizeof(*p));
     if (!p) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating readonly unified presentation owner");
+    p->render_storage=qa_unified_frame_pool_create(64u*1024u*1024u,3,error);
+    if(!p->render_storage) { free(p);return false; }
     p->frontend = frontend;
     frontend_remote_unified_options options = *source;
     options.consumers = consumers(p);
-    if (!frontend_remote_unified_create(frontend,&options,out,error)) { free(p); return false; }
+    if (!frontend_remote_unified_create(frontend,&options,out,error)) { dispose(p); return false; }
     p->replica = *out; return true;
 }
 

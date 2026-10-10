@@ -25,7 +25,7 @@ typedef struct unified_render_model {
     frontend_unified_model media;
     qa_scene_model_input input;
     const qa_product *product;
-    char *path;
+    const char *path;
     qa_actor_id actor;
     qa_vec3 origin, angles;
     qa_vec3 previous_origin;
@@ -33,19 +33,20 @@ typedef struct unified_render_model {
     bool visible, has_previous_origin,native_held_weapon;
     bool source_client,submitted,flat_beam;
     uint32_t source_provider;
-    char *source_instance;
+    const char *source_instance;
     uint64_t submitted_cycle, effects;
     uint32_t q1_effects;
     bool equipment,equipment_slot;
     uint32_t equipment_provider;
-    char *equipment_instance;
+    const char *equipment_instance;
 } unified_render_model;
 struct frontend_unified_render {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
     frontend_unified_media *media;
     qa_unified_document *frame;
-    qa_buffer area_bits;
+    qa_bytes area_bits;
+    qa_unified_frame_lease *storage;
     unified_render_model *models;
     size_t model_count;
     qa_hud *hud;
@@ -53,7 +54,7 @@ struct frontend_unified_render {
     qa_hud_team_face team_face;
     qa_hud_q1_status q1;
     qa_ui_preferences preferences;
-    char *ammo_label;
+    const char *ammo_label;
     qa_vec3 origin, angles, kick;
     qa_vec4 blend,damage_blend;
     float height;
@@ -62,13 +63,6 @@ struct frontend_unified_render {
     bool explicit_fov, source_view_offset, busy;
     bool has_blend,has_damage_blend;
 };
-static bool copy_text(const char *source,char **out,qa_error *e)
-{
-    size_t size=strlen(source)+1;
-    *out=malloc(size);
-    if (!*out) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Unified model text");
-    memcpy(*out,source,size); return true;
-}
 static bool render_frame_current(const frontend_unified_render *);
 static bool presentation_source(const frontend_unified_render *r,const qa_unified_source_identity *source,qa_error *e)
 {
@@ -136,20 +130,6 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     if (out->q1.present) { out->vital_count=0; out->crosshair_visible=out->crosshair_visible && out->q1.health>0; }
     return true;
 }
-static bool model_source_read(const qa_unified_model_state *source,unified_render_model *m,qa_error *e)
-{
-    m->source_client=source->render_source!=NULL;
-    if (!m->source_client) return true;
-    m->source_provider=source->render_source->provider;
-    return copy_text(source->render_source->instance,&m->source_instance,e);
-}
-static bool model_equipment_read(const qa_unified_model_state *source,unified_render_model *m,qa_error *e)
-{
-    if (!source->render_equipment) return true;
-    m->equipment=true; m->equipment_slot=source->equipment_slot;
-    m->equipment_provider=source->render_equipment->provider;
-    return copy_text(source->render_equipment->instance,&m->equipment_instance,e);
-}
 static bool player_blend_read(frontend_unified_render *r,qa_error *e)
 {
     const qa_unified_frame *frame=qa_unified_document_frame(r->frame);
@@ -184,8 +164,17 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     m->source=source;
     m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !*source->path;
     qa_game_family kind=source->family==QA_GAME_Q1?QA_GAME_Q1:source->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
-    bool okay=model_source_read(source,m,e) && model_equipment_read(source,m,e) &&
-        frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
+    m->source_client=source->render_source!=NULL;
+    if(m->source_client) {
+        m->source_provider=source->render_source->provider;
+        m->source_instance=source->render_source->instance;
+    }
+    if(source->render_equipment) {
+        m->equipment=true;m->equipment_slot=source->equipment_slot;
+        m->equipment_provider=source->render_equipment->provider;
+        m->equipment_instance=source->render_equipment->instance;
+    }
+    bool okay=frontend_remote_unified_source_actor(r->replica,qa_unified_document_frame(r->frame),source->actor,false,&m->actor,e);
     m->origin=source->origin; m->angles=source->angles; m->scale=source->visual.scale; m->visible=source->visual.visible; m->effects=source->visual.effects; m->q1_effects=source->q1_effects;
     m->input.frame=source->visual.frame<0?0:(uint32_t)source->visual.frame;
     m->input.old_frame=source->visual.old_frame<0?m->input.frame:(uint32_t)source->visual.old_frame;
@@ -204,7 +193,8 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     qa_vfs *files;
     if (okay) okay=qa_executable_recipe_content(frontend_remote_unified_recipe(r->replica),source->content,&files,&m->product,e) &&
         frontend_unified_media_bank(r->media,source->content,&bank,&materials,&fonts,&sounds,e) &&
-        (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e)) && copy_text(source->path,&m->path,e);
+        (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e));
+    m->path=source->path;
     if (okay) {
         m->input.family=kind; m->input.skin=source->visual.skin<0 && !m->flat_beam?0:(uint32_t)source->visual.skin;
         m->input.flags=source->visual.render_flags;
@@ -310,25 +300,23 @@ static bool hud_presentation(void *context, qa_ui_presentation *out, qa_error *e
     return true;
 }
 bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *replica,
-    frontend_unified_media *media,const qa_unified_document *frame,frontend_unified_render **out,qa_error *e)
+    frontend_unified_media *media,qa_unified_frame_pool *pool,const qa_unified_document *frame,frontend_unified_render **out,qa_error *e)
 {
     if (!f || !replica || !media || !frame || !out || *out ||
         qa_unified_document_type(frame)!=QA_UNIFIED_FRAME_DOCUMENT || !frontend_unified_media_current(media))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified frame preparation lost its actual replica media");
-    frontend_unified_render *r=calloc(1,sizeof(*r));
-    if (!r) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining unified received render frame");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(pool,e);
+    if(!storage) return false;
+    frontend_unified_render *r=qa_unified_frame_lease_alloc(storage,1,sizeof(*r),_Alignof(frontend_unified_render),e);
+    if(!r) { qa_unified_frame_lease_release(storage);return false; }
+    r->storage=storage;
     r->frontend=f; r->replica=replica; r->media=media;
     const qa_unified_frame *received=qa_unified_document_frame(frame);
     bool okay=received && received->world && received->player && received->visuals && qa_unified_document_retain(frame,&r->frame,e);
-    if (!okay) { free(r); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified renderer requires its actual typed world/player/visual frame"); }
+    if (!okay) { qa_unified_frame_lease_release(storage); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified renderer requires its actual typed world/player/visual frame"); }
     r->seconds=received->world->presentation_seconds;
     r->milliseconds=qa_unified_world_frame_milliseconds(received->world);
-    if (okay && received->world->area_bits.size) {
-        r->area_bits.data=malloc(received->world->area_bits.size);
-        if (!r->area_bits.data) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received world area visibility");
-        else { r->area_bits.size=received->world->area_bits.size;
-            memcpy(r->area_bits.data,received->world->area_bits.data,r->area_bits.size); }
-    }
+    r->area_bits=(qa_bytes){received->world->area_bits.data,received->world->area_bits.size};
     const qa_unified_player_view *view=&received->player->view;
     const qa_unified_player_ui *ui=&received->player->ui;
     const frontend_remote_unified_domain *hud_domain=frontend_remote_unified_domain_read(replica);
@@ -352,12 +340,12 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     r->vitals[1]=(qa_hud_value){.label="Armor",.value=ui->armor.regular.points};
     if (okay && ui->has_ammo) {
         const char *label=ui->weapon_status?ui->weapon_status->label:ui->ammo_item;
-        okay=copy_text(label,&r->ammo_label,e);
+        r->ammo_label=label;
         r->vitals[2]=(qa_hud_value){.label=r->ammo_label,.value=ui->ammo_count,
             .warning=ui->arsenal_warning==QA_AMMO_EMPTY || ui->arsenal_warning==QA_AMMO_LOW};
     }
     size_t count=received->visuals->model_count;
-    if (okay && count) { r->models=calloc(count,sizeof(*r->models)); okay=r->models!=NULL;
+    if (okay && count) { r->models=qa_unified_frame_lease_alloc(storage,count,sizeof(*r->models),_Alignof(unified_render_model),e); okay=r->models!=NULL;
         if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received unified model bindings"); }
     for (size_t i=0;okay && i<count;++i) { r->model_count=i+1; okay=model_read(r,received->visuals->models+i,r->models+i,e); }
     if (okay) r->hud=f->seats[hud_domain->physical_seat].hud;
@@ -685,11 +673,10 @@ bool frontend_unified_render_destroy(frontend_unified_render **slot,qa_error *e)
     frontend_unified_render *r=*slot;
     if (r->busy || (r->hud && !qa_hud_idle(r->hud)))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified received render frame still has callbacks");
-    for (size_t i=0;i<r->model_count;++i) {
-        free(r->models[i].path); free(r->models[i].source_instance); free(r->models[i].equipment_instance);
-    }
-    free(r->models); free(r->ammo_label); qa_buffer_free(&r->area_bits);
-    qa_unified_document_destroy(r->frame); free(r); *slot=NULL; return true;
+    qa_unified_frame_lease *storage=r->storage;
+    qa_unified_document_destroy(r->frame);
+    qa_unified_frame_lease_release(storage);
+    *slot=NULL;return true;
 }
 
 static bool render_document_current(const frontend_unified_render *r,const qa_unified_document *published)

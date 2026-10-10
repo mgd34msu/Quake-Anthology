@@ -58,10 +58,10 @@ typedef struct frontend_unified_render_children {
     bool (*model_after)(void *, qa_actor_id, const char *content, const char *path,
         const qa_scene_model_input *, qa_scene_frame *, qa_error *);
 } frontend_unified_render_children;
-/* Owns a clone of one actually received frame and registered immutable model
- * bindings. No local application world or player state is observed. */
+/* Retains one actually received immutable frame, borrowing its names and area
+ * bits. Derived model bindings use load-sized common-pool storage. No local application world or player state is observed. */
 bool frontend_unified_render_create(qa_frontend *, frontend_remote_unified *,
-    frontend_unified_media *, const qa_unified_document *, frontend_unified_render **, qa_error *);
+    frontend_unified_media *, qa_unified_frame_pool *, const qa_unified_document *, frontend_unified_render **, qa_error *);
 /* Reads declared QC values from the existing received FRAME for its full player. */
 bool frontend_unified_render_client_presentation_read(const frontend_unified_render *,qa_actor_id,
     qa_application_camera_view *,qa_hud_value vitals[2],bool *has_view,bool *has_vitals,qa_error *);

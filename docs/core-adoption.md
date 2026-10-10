@@ -105,15 +105,15 @@ capacity exhaustion. Every edition still fails the allocation target.
 
 | Actual remaining caller | Required migration |
 | --- | --- |
-| `src/network/unified/frame.c:117`, `document.c:353,557`, `session.c:158,163` | Use load-sized common arena/pool frame and delivery custody; delete the heap fallback on the gameplay path. Preserve retained payload lifetime and acknowledgments. |
-| `src/app/frontend/remote_unified_render.c:69,319,361` | Reuse retained presentation records and interned identity fields; stop cloning text and UI arrays for each frame. |
+| Unified frame and delivery custody | `611cfc59` / `03b0f8de` reserve shared pages and lease slots at construction; `96ff5164` decodes held typed control/input/metadata into those leases. The production holding path has no heap fallback. Standalone/cold document owners still use heap storage; remaining gameplay producers and metadata merges need migration. |
+| Unified render preparation | Three load-sized render leases hold derived model records. The render object retains the received document and borrows its paths, provider names, HUD labels and area bits. Per-frame heap records, string clones and area copies are deleted. |
 | `src/app/frontend/remote_unified_q2.c:194,206` | Retain immutable changed configuration and reuse player records, preserving original status layouts. |
-| `src/app/frontend/unified_q3_client.c:192,204` | Retain bounded history and reliable command storage; stop deep-copying 64 command token records on every frame. |
+| Q3 retained history | `src/app/frontend/unified_q3_client.c:192` already owns load-sized snapshot, reliable-command and gamestate pools. Candidate histories share references and acquire replacement slots; no history heap fallback remains. |
 | `src/render/scene/models/images.c:8`, `src/render/material/library.c:204` | Keep admitted image/material handles through model submission rather than creating copied names. |
 
-The census is diagnostic attribution, not a timing comparison. The gate must
-reach zero over full-frame runs in all five editions before these issues move
-to In Review.
+The census is diagnostic attribution, not a timing comparison. These migrations remain open until every gameplay caller is adopted. Current
+verification follows the owner normal-build/core-test rule; the earlier census
+is not a current whole-frame allocation result.
 
 The selected-equipment caller now uses the existing inventory lookup. Actual
 inventory component comparisons preserve active/inactive group selection,
