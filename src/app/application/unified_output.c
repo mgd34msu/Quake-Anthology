@@ -544,12 +544,12 @@ bool application_unified_resource_key(uint64_t serial, const qa_product *product
     return ok;
 }
 
-bool application_unified_resource_control(uint32_t epoch,
+bool application_unified_resource_control(uint32_t epoch, qa_unified_frame_lease *lease,
     const qa_unified_resource_declaration *resources, size_t count, qa_unified_document **out, qa_error *error)
 {
     if (!out || !epoch || (count && !resources) || count>32768)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified resource control has an invalid actual dictionary extent");
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_RESOURCES,.epoch=epoch,
         .value.resources={.values=(qa_unified_resource_declaration *)resources,.count=count}};
-    return qa_unified_document_create_control(&value,NULL,out,error);
+    return qa_unified_document_create_control(&value,lease,out,error);
 }

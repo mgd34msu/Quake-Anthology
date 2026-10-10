@@ -109,6 +109,8 @@ bool qa_unified_session_client_disconnect_pending(const qa_unified_session *, qa
     qa_net_client_id, uint32_t callback_epoch, const qa_unified_document *disconnect,
     const qa_unified_document *actual_offer, qa_error *);
 bool qa_unified_session_control(qa_unified_session *, const qa_unified_document *, qa_error *);
+struct qa_unified_control;
+bool qa_unified_session_control_value(qa_unified_session *, const struct qa_unified_control *, qa_error *);
 /* Native compiled Source commands preserve their received activation and
  * lexical tokens; the server resolves that actual provider instance. */
 typedef struct qa_module_console_call {

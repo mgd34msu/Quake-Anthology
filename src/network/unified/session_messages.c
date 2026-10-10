@@ -114,6 +114,19 @@ bool qa_unified_session_control(qa_unified_session *s, const qa_unified_document
     return qa_unified_session_queue_control(s, d, e);
 }
 
+bool qa_unified_session_control_value(qa_unified_session *s, const qa_unified_control *value, qa_error *e)
+{
+    if (!qa_unified_session_idle(s) || !s->bound_source)
+        return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control producer is not idle");
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
+    qa_unified_document *document=NULL;
+    bool okay=lease && qa_unified_document_create_control(value,lease,&document,e) &&
+        qa_unified_session_queue_control(s,document,e);
+    qa_unified_document_destroy(document);
+    qa_unified_frame_lease_release(lease);
+    return okay;
+}
+
 bool qa_unified_session_frame(qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
     if (!qa_unified_session_idle(s) || !s->bound_source || !s->server || !s->admitted || s->disconnected || s->closing ||

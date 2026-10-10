@@ -25,10 +25,7 @@ bool qa_unified_session_source_command(qa_unified_session *s, const qa_module_co
         .value.source_command={.instance=(char *)command->instance,
             .publication=command->publication,.map_revision=command->map_revision,
             .arguments={.values=(char **)command->arguments,.count=command->argument_count}}};
-    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
-    qa_unified_document *document=NULL;
-    bool okay=lease && qa_unified_document_create_control(&value,lease,&document,e) && qa_unified_session_control(s,document,e);
-    qa_unified_document_destroy(document);qa_unified_frame_lease_release(lease);return okay;
+    return qa_unified_session_control_value(s,&value,e);
 }
 
 bool qa_unified_session_player_read(const qa_unified_session *s, qa_unified_session_player *out, qa_error *e)

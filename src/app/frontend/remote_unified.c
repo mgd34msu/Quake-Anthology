@@ -600,9 +600,7 @@ static bool command_document(frontend_remote_unified *owner, const char *name,
         value.value.command=(qa_unified_command_control){.name=(char *)name,
             .arguments={.values=(char **)args,.count=count}};
     }
-    qa_unified_document *document=NULL;
-    bool okay=qa_unified_document_create_control(&value,NULL,&document,error) && qa_unified_session_control(owner->session,document,error);
-    qa_unified_document_destroy(document); return okay;
+    return qa_unified_session_control_value(owner->session,&value,error);
 }
 bool frontend_remote_unified_source_disconnect(frontend_remote_unified *owner,const char *reason,qa_error *error)
 {

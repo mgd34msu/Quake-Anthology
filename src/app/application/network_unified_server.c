@@ -1,6 +1,7 @@
 #include "network_unified_private.h"
 #include "map_players_private.h"
 #include "unified_output.h"
+#include "unified_frame_private.h"
 #include "unified_output_capture.h"
 #include "unified_events.h"
 #include "qa/network_unified_save.h"
@@ -220,11 +221,11 @@ static bool source_custody_ready(void *context,qa_network_runtime *runtime,qa_ne
         application_fail(error,QA_ERROR_ARGUMENT,"Unified obsolete offer lacks its genuine historical player admission");
 }
 
-static bool resource_declarations(application_unified_server *owner, size_t first, size_t count,
+static bool resource_declarations(application_unified_server *owner, size_t first, size_t count, qa_unified_frame_lease *lease,
     qa_unified_document **out, qa_error *error)
 {
     if (!count) return true;
-    qa_unified_resource_declaration *rows=calloc(count,sizeof(*rows));
+    qa_unified_resource_declaration *rows=application_unified_frame_alloc(lease,count,sizeof(*rows),error);
     if (!rows) return application_fail(error,QA_ERROR_MEMORY,"Retaining newly registered Source dictionary");
     bool okay=true;
     qa_strings *strings=qa_session_strings(owner->offered.session);
@@ -238,8 +239,9 @@ static bool resource_declarations(application_unified_server *owner, size_t firs
                 .path=(char *)qa_strings_cstr(strings,row->path),
                 .byte_length=qa_resource_bytes(row->resource).size}};
     }
-    if (okay) okay=application_unified_resource_control(owner->epoch,rows,count,out,error);
-    free(rows); return okay;
+    if (okay) okay=application_unified_resource_control(owner->epoch,lease,rows,count,out,error);
+    if (!lease) free(rows);
+    return okay;
 }
 
 static bool admitted_document(application_unified_server *owner, const qa_unified_session_player *player,
@@ -297,12 +299,12 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
             application_unified_source_read(owner->application, &current_source, error) &&
             application_unified_events_initial_read(owner->application, &current_source, client, &actual,
                 epoch, event_lease, &initial, error);
-        qa_unified_frame_lease_release(event_lease);
         size_t resources = application_unified_event_resource_count(owner->application);
         qa_unified_document *declarations = NULL;
         if (okay && resources > owner->declared_resources)
             okay = resource_declarations(owner, owner->declared_resources,
-                resources - owner->declared_resources, &declarations, error);
+                resources - owner->declared_resources, event_lease, &declarations, error);
+        qa_unified_frame_lease_release(event_lease);
         size_t prerequisite = declarations ? 1 : 0;
         if (okay && initial.control_count + prerequisite > sizeof(commit->followups) / sizeof(commit->followups[0]))
             okay = application_fail(error, QA_ERROR_FORMAT, "Initial Source controls exceed the actual ordered reply capacity");
@@ -639,7 +641,7 @@ bool application_unified_server_publish(application_unified_server *owner, qa_un
         } else if (copied) candidate.controls = observed->controls;
         if (copied && declare) {
             copied = resource_declarations(owner, owner->declared_resources,
-                resources - owner->declared_resources, candidate.controls, error);
+                resources - owner->declared_resources, frame->lease, candidate.controls, error);
             if (copied) ++candidate.control_count;
         }
         for (size_t i = 0; copied && i < observed->control_count; ++i) {
