@@ -419,8 +419,9 @@ bool application_guest_native_q2_console_prepare(qa_application *app, applicatio
         provider->product != product || application_startup_flow_provider(app, provider->owner) != provider ||
         !qa_session_safe(app->session) || !qa_world_idle(world))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source preparation lost its actual detached candidate");
-    if (!prepare_owner(app, provider, world, product, choices, error) ||
-        !load_host(provider->state.native.q2_engine, error)) return false;
+    if (!provider->state.native.q2_engine &&
+        !prepare_owner(app, provider, world, product, choices, error)) return false;
+    if (!load_host(provider->state.native.q2_engine, error)) return false;
     struct application_native_q2 *engine = provider->state.native.q2_engine;
     *console = engine->console; *cvars = engine->cvars; *command = engine->command_context;
     return true;

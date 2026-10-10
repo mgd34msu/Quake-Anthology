@@ -105,11 +105,40 @@ null results, size overflow and capacity exhaustion. All three runs quit with
 exit 0; owner profile bytes remained unchanged and owned processes exited.
 The normal production build and seven existing core suites pass.
 
+The additional TA-873/TA-882 census on 2026-10-10 covers the requested combined
+configuration and module boundaries. Each run again completed 600 playing
+frames, with 120 warm-up and 480 measured frames, using copied owner settings,
+a private X display and dummy audio.
+
+| Added listen-server case | Initial heap calls / name lookups | Repeat heap calls / name lookups |
+| --- | --- | --- |
+| Q1 dm1 world, Q3 movement, Q2 rerelease monster provider, Q2 classic client/HUD | 0 / 0 | 0 / 0 |
+| Q2 rerelease base1, installed native `baseq2/game_x64.dll` | 0 / 8,640 | 0 / 0 |
+| Q3 q3dm1, original QVM game and cgame | 446 malloc + 446 calloc + 892 frees / 0 | 0 / 0 |
+
+The QVM calls came from `qa_qvm_observe_writes_owned` and retirement around
+`q3g_call`. `src/compat/qvm/memory.c` now retains inactive registrations and
+their range storage until VM destruction, reuses them only after delivery
+returns, and excludes them from active checkpoint inventories. The native
+`maxclients` reads came from `src/app/application/network_unified.c:59` and now
+use the provider handle resolved at bind. No other steady-state callers were
+changed for this census.
+
+Native startup also needed to reuse its cold-prepared engine, declare existing
+common-table aliases to the module, and accept the module's `ctf=0` default.
+These fixes remove valid-state rejections rather than add admission layers.
+All final measured frames report zero heap calls, requested bytes, failed
+allocations, capacity exhaustion and name lookups. Each run exits normally;
+original profile bytes are unchanged and owned processes exit.
+
 The observation covers engine/static calls across threads inside
 `qa_frontend_step`. DSO/libc internals, other allocation APIs, outer save drain,
-pacing and shutdown are excluded. These three native cases do not establish
-zero allocation for other editions, combined configurations or guest modules.
-No timing comparison or new installation was performed.
+pacing and shutdown are excluded. The combined dm1 map selects the Q2 monster
+provider but has no authored monsters. The QVM run logs one skipped
+`control/move` feature with no diagnostic; this is an allocation census, not
+movement acceptance. Unmeasured editions, input scenarios and module internals
+are not established by these cases. No timing comparison or new installation
+was performed.
 
 ## Jobs: THE-2871
 

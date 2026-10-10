@@ -320,8 +320,7 @@ bool qac_cvar_write_conversion(const qac_cvar_conversion_input *in,
         value = value > 0 ? 3 : family(current, true) ? 0 : current;
         break;
     case QA_CATALOG_OP_CTF:
-        if (value == 0) return qac_fail(error, QA_ERROR_ARGUMENT, "ctf zero conversion is not specified by Source policy");
-        value = 4;
+        value = value != 0 ? 4 : current == 4 ? 0 : current;
         break;
     case QA_CATALOG_OP_FORCE_RESPAWN: value = value != 0 ? fmax(current, 1) : 0; break;
     case QA_CATALOG_OP_AUTOSWITCH:

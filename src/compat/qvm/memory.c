@@ -8,7 +8,7 @@ typedef struct qa_qvm_write_watch {
     struct qa_qvm_write_watch *next;
     qa_qvm_binding id;
     qa_qvm_write_range *ranges;
-    size_t count;
+    size_t count, capacity;
     qa_qvm_write_observer publish, after;
     qa_qvm_write_dispose dispose;
     void *context;
@@ -85,18 +85,6 @@ static int range_order(const void *left, const void *right)
     return a->offset < b->offset ? -1 : a->offset > b->offset ? 1 : 0;
 }
 
-static void collect_watches(qa_qvm *vm)
-{
-    if (vm->write_delivery_depth != 0) return;
-    qa_qvm_write_watch **link = &vm->watches;
-    while (*link != NULL) {
-        qa_qvm_write_watch *watch = *link;
-        if (watch->active) { link = &watch->next; continue; }
-        *link = watch->next;
-        free(watch->ranges); free(watch);
-    }
-}
-
 bool qa_qvm_observe_writes_owned(qa_qvm *vm, const qa_qvm_write_range *ranges, size_t count,
                           qa_qvm_write_observer publish, qa_qvm_write_observer after,
                           qa_qvm_write_dispose dispose, void *context, qa_qvm_binding *out, qa_error *error)
@@ -106,12 +94,25 @@ bool qa_qvm_observe_writes_owned(qa_qvm *vm, const qa_qvm_write_range *ranges, s
     if (publish == NULL || out == NULL || (count > 0 && ranges == NULL) || count > SIZE_MAX / sizeof(*ranges))
         return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM write observer");
     if (vm->next_watch == UINT64_MAX) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"QVM observer identity exhausted");
-    qa_qvm_write_watch *watch = calloc(1,sizeof(*watch));
-    if (watch == NULL) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM write observer");
-    if (count > 0) watch->ranges = malloc(count * sizeof(*ranges));
-    if (count > 0 && watch->ranges == NULL) { free(watch); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM observer ranges"); }
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_qvm_raw_range(vm,ranges[i].offset,ranges[i].length,error)) return false;
+    qa_qvm_write_watch *watch = NULL;
+    /* A retired registration can be reused after every delivery returns.
+     * Keep its range storage for the next call instead of allocating per tick. */
+    if (!vm->write_delivery_depth) {
+        qa_qvm_write_watch **link = &vm->watches;
+        while (*link && ((*link)->active || (*link)->capacity < count)) link = &(*link)->next;
+        if (*link) { watch = *link; *link = watch->next; }
+    }
+    if (!watch) {
+        watch = calloc(1,sizeof(*watch));
+        if (watch == NULL) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM write observer");
+        if (count > 0) watch->ranges = malloc(count * sizeof(*ranges));
+        if (count > 0 && watch->ranges == NULL) { free(watch); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM observer ranges"); }
+        watch->capacity = count;
+    }
+    watch->count = 0; watch->next = NULL;
     for (size_t i = 0; i < count; ++i) {
-        if (!qa_qvm_raw_range(vm,ranges[i].offset,ranges[i].length,error)) { free(watch->ranges); free(watch); return false; }
         if (ranges[i].length > 0) watch->ranges[watch->count++] = ranges[i];
     }
     if (watch->count > 1) qsort(watch->ranges,watch->count,sizeof(*ranges),range_order);
@@ -148,7 +149,7 @@ bool qa_qvm_unobserve_writes(qa_qvm *vm, qa_qvm_binding id, qa_error *error)
     for (qa_qvm_write_watch *watch = vm->watches; watch != NULL; watch = watch->next)
         if (watch->id == id && watch->active) {
             if (vm->candidate_inventory) vm->candidate_inventory_invalid=true;
-            watch->active = false; collect_watches(vm); return true;
+            watch->active = false; return true;
         }
     return qa_qvm_error(error,QA_ERROR_NOT_FOUND,0,"QVM write observer not found");
 }
@@ -189,6 +190,7 @@ bool qa_qvm_memory_checkpoint_watches(const qa_qvm *vm,
     }
     size_t actual = 0;
     for (const qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next) {
+        if (!watch->active) continue;
         size_t i = 0;
         while (i < count && expected[i].binding != watch->id) ++i;
         if (i == count || !watch_matches(watch,expected+i))
@@ -217,6 +219,7 @@ void qa_qvm_memory_restore_watches(qa_qvm *vm, uint64_t generation,
     const qa_qvm_saved_write_watch *constructed, const qa_qvm_binding *saved, size_t count)
 {
     for (qa_qvm_write_watch *watch = vm->watches; watch; watch = watch->next) {
+        if (!watch->active) continue;
         size_t i = 0;
         while (i < count && constructed[i].binding != watch->id) ++i;
         watch->id = saved[i];
@@ -341,7 +344,7 @@ static bool publish_writes(qa_qvm *vm, write_delivery *head, qa_error *error)
     }
     dispose_deliveries(vm,head);
     --vm->write_delivery_depth;
-    free_deliveries(head); collect_watches(vm);
+    free_deliveries(head);
     if (!success && error != NULL) *error = first;
     return success;
 }

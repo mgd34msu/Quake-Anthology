@@ -403,8 +403,8 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
                                 "native cvar registry, name and output are required");
     const qa_cvar_view *view = qa_cvars_find(host->cvars, name);
     uint64_t owner = host->world.owner ? host->world.owner : host->command_context.owner;
-    if (!view && !qa_cvars_register(host->cvars, name, value ? value : "", flags, owner,
-                                    NULL, error))
+    if ((!view || !view->declared) &&
+        !qa_cvars_register(host->cvars, name, value ? value : "", flags, owner, NULL, error))
         return false;
     view = qa_cvars_find(host->cvars, name);
     if (view) name = view->name;

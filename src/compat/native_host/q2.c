@@ -381,7 +381,8 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
         return false;
     }
     bool registration = !strcmp(call->name, "cvar");
-    bool declaration = host->cvars && !qa_cvars_find(host->cvars, name);
+    const qa_cvar_view *existing = host->cvars ? qa_cvars_find(host->cvars, name) : NULL;
+    bool declaration = !existing || !existing->declared;
     /* Declaration and set callbacks may reenter the guest before the common
      * table retains their text. Existing Cvar_Get ignores the supplied default. */
     if ((declaration && !name_copy.data && !call_text(host, call, 0, &name_copy, error)) ||

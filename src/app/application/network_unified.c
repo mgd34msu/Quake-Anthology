@@ -56,7 +56,7 @@ static bool capacity(application_provider *source, uint32_t *out, bool checkpoin
     }
     if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
         const struct application_native_q2 *engine = source->state.native.q2_engine;
-        const qa_cvar_view *maximum = qa_cvars_find(engine->cvars, "maxclients");
+        const qa_cvar_view *maximum = qa_cvars_read(engine->cvars, source->q2_maxclients);
         if (!engine->initialized || !engine->map_ready || engine->shutting_down || engine->calls ||
             !maximum || maximum->integer < 1 || maximum->integer > 256)
             return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source lost its initialized Q2 client capacity");
