@@ -4,6 +4,10 @@
 #include <errno.h>
 
 typedef qa_q2_entity_state q2_entity_state;
+typedef struct q2_entity_record {
+    q2_entity_state state;
+    q2_player_trail_node trail;
+} q2_entity_record;
 enum q2_barrel_stage { Q2_BARREL_DROP, Q2_BARREL_EXPLODE, Q2_BARREL_IDLE, Q2_BARREL_BURN };
 bool q2_player_map_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
 bool q2_player_map_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
@@ -46,6 +50,7 @@ uint32_t q2_actor_field_flags(qa_q2_game *, qa_actor_id, const char *);
 bool q2_entity_bind(qa_q2_game *, q2_actor *, qa_error *);
 q2_entity_state *q2_entity_state_take(qa_q2_game *, qa_error *);
 void q2_entity_state_release(qa_q2_game *, q2_entity_state *);
+q2_player_trail_node *q2_entity_trail_prepare(q2_entity_state *);
 const char *q2_field_text(qa_q2_game *, const q2_entity_state *, const char *);
 qa_string_id q2_field_id(qa_q2_game *, const q2_entity_state *, const char *);
 float q2_field_float(qa_q2_game *, const q2_entity_state *, const char *, float);

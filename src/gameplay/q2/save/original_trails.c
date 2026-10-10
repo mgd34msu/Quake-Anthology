@@ -21,11 +21,7 @@ bool q2_original_trail_record(qa_q2_game *game, q2_original_record_io *io,
     }
     q2_entity_state *node = actor->entity;
     if (io->edition == QA_Q2_RERELEASE && !node->trail) {
-        node->trail = calloc(1, sizeof(*node->trail));
-        if (!node->trail) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 trail links");
-            return false;
-        }
+        q2_entity_trail_prepare(node);
     }
     if (!io->references_only && !q2_original_scalar(io, "timestamp", Q2_ORIGINAL_TIME,
         288, 288, 288, &node->timestamp_ns)) return false;

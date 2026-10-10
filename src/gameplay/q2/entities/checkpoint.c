@@ -11,7 +11,8 @@ void qa_q2_entity_checkpoint_free(qa_q2_entity_checkpoint *s) {
     free(s->value.trail);
     *s = (qa_q2_entity_checkpoint){0};
 }
-static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to, qa_error *e) {
+static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to,
+                        bool runtime, qa_error *e) {
     to->fields = NULL;
     to->mover = NULL;
     to->turret = NULL;
@@ -30,9 +31,13 @@ static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to, 
     if (!q2_saved_array(from->q64, from->q64 ? 1 : 0, sizeof(*from->q64), &copy, e))
         return false;
     to->q64 = copy;
-    if (!q2_saved_array(from->trail, from->trail ? 1 : 0, sizeof(*from->trail), &copy, e))
-        return false;
-    to->trail = copy;
+    if (runtime && from->trail) {
+        *q2_entity_trail_prepare(to) = *from->trail;
+    } else {
+        if (!q2_saved_array(from->trail, from->trail ? 1 : 0, sizeof(*from->trail), &copy, e))
+            return false;
+        to->trail = copy;
+    }
     return true;
 }
 bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint *out,
@@ -56,7 +61,7 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     }
     saved.present = true;
     saved.value = *s;
-    if (!copy_arrays(s, &saved.value, e))
+    if (!copy_arrays(s, &saved.value, false, e))
         goto fail;
     if (!q2_save_reference(g, s->activator, &saved.activator, e) ||
         !q2_save_reference(g, s->owner, &saved.owner, e) ||
@@ -191,7 +196,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     q2_entity_state *s = q2_entity_state_take(g, e);
     if (!s) return false;
     *s = saved->value;
-    if (!copy_arrays(&saved->value, s, e))
+    if (!copy_arrays(&saved->value, s, true, e))
         goto fail;
     if (!q2_resolve_reference(g, saved->activator, &s->activator, e) ||
         !q2_resolve_reference(g, saved->owner, &s->owner, e) ||

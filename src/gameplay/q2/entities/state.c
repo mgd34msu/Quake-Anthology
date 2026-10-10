@@ -43,8 +43,8 @@ bool q2_entities_init(qa_q2_game *g, qa_error *e) {
         return false;
     }
     if (!qa_pool_prepare(&g->entity_records, &g->entity_storage,
-            g->actor_records.capacity + 1, sizeof(q2_entity_state),
-            _Alignof(q2_entity_state), e)) return false;
+            g->actor_records.capacity + 1, sizeof(q2_entity_record),
+            _Alignof(q2_entity_record), e)) return false;
     qa_arena_seal(&g->entity_storage);
     return true;
 }
@@ -55,15 +55,20 @@ q2_entity_state *q2_entity_state_take(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 entity state pool exhausted");
         return NULL;
     }
-    *s = (q2_entity_state){0};
+    *(q2_entity_record *)s = (q2_entity_record){0};
     return s;
+}
+q2_player_trail_node *q2_entity_trail_prepare(q2_entity_state *s) {
+    q2_entity_record *record = (q2_entity_record *)s;
+    record->trail = (q2_player_trail_node){0};
+    s->trail = &record->trail;
+    return s->trail;
 }
 void q2_entity_state_release(qa_q2_game *g, q2_entity_state *s) {
     free(s->fields);
     free(s->mover);
     free(s->turret);
     free(s->q64);
-    free(s->trail);
     size_t slot = (size_t)((uint8_t *)s - g->entity_records.values) / g->entity_records.stride;
     qa_pool_release(&g->entity_records, slot);
 }

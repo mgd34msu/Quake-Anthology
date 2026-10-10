@@ -552,12 +552,7 @@ static bool trail_add(qa_q2_game *game, q2m_player_trail *trail,
     } else {
       if (!q2_entity_native_spawn(game, "player_trail", &body, Q2E_POINT, &node, error))
         return false;
-      node->entity->trail = calloc(1, sizeof(*node->entity->trail));
-      if (!node->entity->trail) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 player trail links");
-        qa_session_release(game->services.session, node->id, NULL);
-        return false;
-      }
+      q2_entity_trail_prepare(node->entity);
       node->physics.motion = QA_PHYSICS_STATIONARY;
       node->physics.solid = QA_PHYSICS_NOT_SOLID;
       node->physics_bound = true;
