@@ -14,7 +14,8 @@ typedef struct cpu_surface_mip {
  * An unsupported surface or a full pinned batch returns false without an error;
  * the caller may flush the batch and retry, or use the triangle path. */
 bool cpu_surface_cache_prepare(qa_cpu_renderer *, const qa_scene_draw *,
-                               unsigned mip, cpu_surface_mip *, qa_error *);
+                               unsigned mip, cpu_surface_mip *);
+bool cpu_surface_cache_init(qa_cpu_renderer *, qa_error *);
 void cpu_surface_cache_begin(qa_cpu_renderer *);
 void cpu_surface_cache_end(qa_cpu_renderer *);
 void cpu_surface_cache_destroy(qa_cpu_renderer *);

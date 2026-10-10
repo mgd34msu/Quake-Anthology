@@ -55,6 +55,7 @@ struct cpu_surface_cache {
   uint64_t batch;
   bool active;
   size_t hits, builds, evictions;
+  cpu_surface_entry entries[CPU_SURFACE_CACHE_ENTRIES];
 };
 
 static bool block_pinned(const struct cpu_surface_cache *cache,
@@ -113,13 +114,17 @@ static cpu_surface_block *block_allocate(struct cpu_surface_cache *cache,
   return NULL;
 }
 
-static bool cache_create(qa_cpu_renderer *renderer, qa_error *error) {
+bool cpu_surface_cache_init(qa_cpu_renderer *renderer, qa_error *error) {
   struct cpu_surface_cache *cache = calloc(1, sizeof(*cache));
   if (!cache) goto failed;
   cache->arena = malloc(CPU_SURFACE_CACHE_BYTES);
   if (!cache->arena) {
     free(cache);
     goto failed;
+  }
+  if (!render_resource_reserve(&cache->index, CPU_SURFACE_CACHE_ENTRIES, error)) {
+    free(cache->arena); free(cache);
+    return false;
   }
   *cache->arena = (cpu_surface_block){
       .bytes = CPU_SURFACE_CACHE_BYTES - sizeof(*cache->arena)};
@@ -170,19 +175,13 @@ static void entry_clear(struct cpu_surface_cache *cache,
 }
 
 static cpu_surface_entry *entry_admit(struct cpu_surface_cache *cache,
-    const qa_scene_mesh *mesh, uint64_t identity, qa_error *error) {
+    const qa_scene_mesh *mesh, uint64_t identity) {
   cpu_surface_entry *entry = cache->last;
   if (entry && !qa_scene_geometry_active(entry->geometry) &&
       !entry_pinned(cache, entry)) {
     entry_clear(cache, entry);
   } else if (cache->count < CPU_SURFACE_CACHE_ENTRIES) {
-    if (!render_resource_reserve(&cache->index, cache->count + 1, error))
-      return NULL;
-    entry = calloc(1, sizeof(*entry));
-    if (!entry) {
-      qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating CPU surface entry");
-      return NULL;
-    }
+    entry = cache->entries + cache->count;
     entry->next = cache->first;
     if (cache->first) cache->first->previous = entry;
     else cache->last = entry;
@@ -378,8 +377,7 @@ static void surface_build(const qa_scene_draw *draw, unsigned mip,
 }
 
 bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
-    const qa_scene_draw *draw, unsigned mip, cpu_surface_mip *out,
-    qa_error *error) {
+    const qa_scene_draw *draw, unsigned mip, cpu_surface_mip *out) {
   if (!surface_supported(renderer, draw, mip)) return false;
   uint32_t width = draw->brush.texture_extents[0] >> mip;
   uint32_t height = draw->brush.texture_extents[1] >> mip;
@@ -402,7 +400,7 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
   base.level_count = 1;
   base.linear = base.magnification_linear = false;
   base.blend = false;
-  if (!renderer->surface_cache && !cache_create(renderer, error)) return false;
+  if (!renderer->surface_cache) return false;
   struct cpu_surface_cache *cache = renderer->surface_cache;
   if (!cache->active) {
     ++cache->batch;
@@ -412,7 +410,7 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
   uint64_t identity = draw->brush.identity ? draw->brush.identity : draw->mesh.identity;
   cpu_surface_entry *entry = render_resource_get(&cache->index,
       identity, draw->mesh.revision, draw->mesh.geometry);
-  if (!entry) entry = entry_admit(cache, &draw->mesh, identity, error);
+  if (!entry) entry = entry_admit(cache, &draw->mesh, identity);
   if (!entry) return false;
   entry_touch(cache, entry);
   cpu_surface_slot *slot = entry->mips + mip;
@@ -460,7 +458,6 @@ void cpu_surface_cache_destroy(qa_cpu_renderer *renderer) {
   for (cpu_surface_entry *entry = cache->first; entry;) {
     cpu_surface_entry *next = entry->next;
     qa_scene_geometry_cache_release(entry->geometry);
-    free(entry);
     entry = next;
   }
   render_resource_destroy(&cache->index);

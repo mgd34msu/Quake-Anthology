@@ -279,7 +279,7 @@ static bool prepare_surface(brush_surface *surface, const brush_vertex *vertices
   return true;
 }
 static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
-    const brush_vertex *vertices, size_t count, brush_surface *surface, qa_error *error) {
+    const brush_vertex *vertices, size_t count, brush_surface *surface) {
   const brush_vertex *nearest = &vertices[0];
   for (size_t i = 1; i < count; ++i)
     if (vertices[i].clip[3] < nearest->clip[3]) nearest = &vertices[i];
@@ -300,9 +300,9 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   unsigned first = (unsigned)floor(blend ? lod : lod + 0.5);
   unsigned second = blend && first < maximum ? first + 1 : first;
   surface->mip_blend = second != first ? lod - first : 0;
-  if (!cpu_surface_cache_prepare(renderer, draw, first, &surface->mips[0], error)) return false;
+  if (!cpu_surface_cache_prepare(renderer, draw, first, &surface->mips[0])) return false;
   if (second == first) surface->mips[1] = surface->mips[0];
-  else if (!cpu_surface_cache_prepare(renderer, draw, second, &surface->mips[1], error)) return false;
+  else if (!cpu_surface_cache_prepare(renderer, draw, second, &surface->mips[1])) return false;
   return true;
 }
 
@@ -391,13 +391,8 @@ bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     if (!cache_pinned(renderer)) cpu_surface_cache_begin(renderer);
     context->pinned = true;
   }
-  qa_error cache_error = {0};
-  if (!prepare_mips(renderer, draw, vertices, count, &surface, &cache_error)) {
+  if (!prepare_mips(renderer, draw, vertices, count, &surface)) {
     CPU_STATS_ADD(renderer, brush_cache_rejects, 1);
-    if (cache_error.code != QA_OK) {
-      if (error) *error = cache_error;
-      return false;
-    }
     return true;
   }
   int64_t top = renderer->view.viewport.y > 0 ? renderer->view.viewport.y : 0;

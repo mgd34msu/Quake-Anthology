@@ -187,7 +187,7 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     qa_cpu_destroy(renderer);
     return NULL;
   }
-  if (!cpu_texture_components_init(renderer, error)) {
+  if (!cpu_texture_components_init(renderer, error) || !cpu_surface_cache_init(renderer, error)) {
     qa_cpu_destroy(renderer);
     return NULL;
   }
