@@ -13,9 +13,4 @@ bool frontend_equipment_events_destroy(frontend_equipment_events *, qa_error *);
  * console owners. Rebind itself performs no output or allocation. */
 void frontend_equipment_events_rebind(frontend_equipment_events *, qa_frontend *);
 bool frontend_equipment_events_drain(frontend_equipment_events *, qa_error *);
-/* Only CONFIGSTRING events reached by drain are visible here. These are
- * private gear namespaces, separate from primary GAME/CGAME rows. */
-bool frontend_equipment_events_configstring(const frontend_equipment_events *, qa_actor_owner,
-    uint32_t, const char **, bool *present, qa_error *);
-
 #endif
