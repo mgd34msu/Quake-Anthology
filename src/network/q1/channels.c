@@ -10,7 +10,8 @@
 struct qa_nq_channel {
     qa_net_stopwait *reliable;
     size_t message_bytes, wire_capacity;
-    uint32_t unreliable_send;
+    uint32_t unreliable_send, ack_sequence;
+    bool ack_pending;
     uint64_t unreliable_receive;
     uint8_t *wire;
 };
@@ -79,19 +80,29 @@ uint32_t qa_nq_channel_unreliable_sequence(const qa_nq_channel *channel) {
 bool qa_nq_channel_queue(qa_nq_channel *channel, qa_bytes payload, qa_error *error) {
     return channel ? qa_net_stopwait_begin(channel->reliable, payload, error) : invalid(error, "Missing NetQuake channel");
 }
-bool qa_nq_channel_next(qa_nq_channel *channel, uint64_t now_ns, bool *present,
+bool qa_nq_channel_prepare(qa_nq_channel *channel, uint64_t now_ns, bool *present,
                          qa_bytes *out, qa_error *error) {
     if (!channel || !present || !out) return invalid(error, "Invalid NetQuake send arguments");
     *out = (qa_bytes){0};
+    if (channel->ack_pending) {
+        *present = true;
+        return nq_packet(channel, QA_NQ_FLAG_ACK, channel->ack_sequence, (qa_bytes){0}, out, error);
+    }
     qa_net_reliable_fragment fragment;
-    if (!qa_net_stopwait_next(channel->reliable, now_ns, present, &fragment, error)) return false;
+    if (!qa_net_stopwait_prepare(channel->reliable, now_ns, present, &fragment, error)) return false;
     return !*present || nq_packet(channel, QA_NQ_FLAG_DATA | (fragment.final ? QA_NQ_FLAG_EOM : 0),
                                  fragment.sequence, fragment.payload, out, error);
+}
+void qa_nq_channel_sent(qa_nq_channel *channel, qa_bytes packet, uint64_t now_ns) {
+    uint32_t flags = read_be32(packet.data) & UINT32_C(0xffff0000);
+    uint32_t sequence = read_be32(packet.data + 4);
+    if (flags == QA_NQ_FLAG_ACK && sequence == channel->ack_sequence) channel->ack_pending = false;
+    else if (flags == QA_NQ_FLAG_UNRELIABLE && sequence == channel->unreliable_send) ++channel->unreliable_send;
+    else if (flags & QA_NQ_FLAG_DATA) qa_net_stopwait_sent(channel->reliable, sequence, now_ns);
 }
 bool qa_nq_channel_unreliable(qa_nq_channel *channel, qa_bytes payload, qa_bytes *out, qa_error *error) {
     if (!channel || payload.size > channel->message_bytes) return invalid(error, "Invalid NetQuake unreliable payload");
     if (!nq_packet(channel, QA_NQ_FLAG_UNRELIABLE, channel->unreliable_send, payload, out, error)) return false;
-    ++channel->unreliable_send;
     return true;
 }
 bool qa_nq_channel_receive(qa_nq_channel *channel, qa_bytes bytes, uint64_t now_ns,
@@ -121,13 +132,15 @@ bool qa_nq_channel_receive(qa_nq_channel *channel, qa_bytes bytes, uint64_t now_
     if (flags == QA_NQ_FLAG_ACK && !payload.size) {
         (void)qa_net_stopwait_acknowledge(channel->reliable, sequence);
         bool present;
-        return qa_nq_channel_next(channel, now_ns, &present, reply, error);
+        return qa_nq_channel_prepare(channel, now_ns, &present, reply, error);
     }
     if (flags == QA_NQ_FLAG_DATA || flags == (QA_NQ_FLAG_DATA | QA_NQ_FLAG_EOM)) {
         qa_net_reliable_fragment fragment = {sequence, (flags & QA_NQ_FLAG_EOM) != 0, payload};
         qa_net_fragment_result result;
         qa_bytes message;
         if (!qa_net_stopwait_receive(channel->reliable, &fragment, &result, &message, error)) return false;
+        channel->ack_sequence = sequence;
+        channel->ack_pending = true;
         if (!nq_packet(channel, QA_NQ_FLAG_ACK, sequence, (qa_bytes){0}, reply, error)) return false;
         if (result == QA_NET_FRAGMENT_COMPLETE)
             *out = (qa_q1_delivery){.present = true, .reliable = true, .sequence = sequence, .payload = message};
@@ -226,8 +239,11 @@ bool qa_qw_channel_demo_sequences(qa_qw_channel *channel, uint32_t outgoing,
     return channel && channel->side == QA_Q1_CHANNEL_CLIENT &&
         qa_net_toggle_demo_sequences(channel->reliable, outgoing, incoming, error);
 }
-bool qa_q1_peer_send(qa_q1_peer *peer, qa_bytes bytes, qa_error *error) {
-    return peer ? qa_net_transport_send(peer->transport, &peer->remote, bytes, error) == QA_NET_SEND_ACCEPTED : invalid(error, "Missing Quake peer");
+bool qa_q1_peer_send(qa_q1_peer *peer, qa_bytes bytes, uint64_t now_ns, qa_error *error) {
+    if (!peer) return invalid(error, "Missing Quake peer");
+    if (qa_net_transport_send(peer->transport, &peer->remote, bytes, error) != QA_NET_SEND_ACCEPTED) return false;
+    if (peer->kind == QA_Q1_PEER_NETQUAKE) qa_nq_channel_sent(peer->channel.nq, bytes, now_ns);
+    return true;
 }
 bool qa_q1_peer_send_ready(const qa_q1_peer *peer) {
     return qa_net_transport_send_ready(peer->transport, &peer->remote);
@@ -243,7 +259,7 @@ bool qa_q1_peer_receive(qa_q1_peer *peer, const qa_net_address *from, qa_bytes b
         if (!qa_net_address_equal(from, &peer->remote, true)) return true;
         qa_bytes reply;
         if (!qa_nq_channel_receive(peer->channel.nq, bytes, now_ns, out, &reply, error)) return false;
-        if (reply.size) peer->reply_send_failed = !qa_q1_peer_send(peer, reply, NULL);
+        if (reply.size) peer->reply_send_failed = !qa_q1_peer_send(peer, reply, now_ns, NULL);
         return true;
     }
     case QA_Q1_PEER_QUAKEWORLD:

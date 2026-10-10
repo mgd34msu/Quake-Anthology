@@ -24,7 +24,8 @@ bool qa_nq_channel_create(size_t message_bytes, size_t fragment_bytes, qa_nq_cha
 void qa_nq_channel_destroy(qa_nq_channel *);
 bool qa_nq_channel_ready(const qa_nq_channel *);
 bool qa_nq_channel_queue(qa_nq_channel *, qa_bytes, qa_error *);
-bool qa_nq_channel_next(qa_nq_channel *, uint64_t, bool *present, qa_bytes *, qa_error *);
+bool qa_nq_channel_prepare(qa_nq_channel *, uint64_t, bool *present, qa_bytes *, qa_error *);
+void qa_nq_channel_sent(qa_nq_channel *, qa_bytes, uint64_t now_ns);
 bool qa_nq_channel_unreliable(qa_nq_channel *, qa_bytes, qa_bytes *, qa_error *);
 uint32_t qa_nq_channel_unreliable_sequence(const qa_nq_channel *);
 bool qa_nq_channel_receive(qa_nq_channel *, qa_bytes, uint64_t, qa_q1_delivery *, qa_bytes *reply, qa_error *);
@@ -56,7 +57,7 @@ typedef struct qa_q1_peer {
     /* A failed ACK send does not discard an already accepted delivery. */
     bool reply_send_failed;
 } qa_q1_peer;
-bool qa_q1_peer_send(qa_q1_peer *, qa_bytes, qa_error *);
+bool qa_q1_peer_send(qa_q1_peer *, qa_bytes, uint64_t now_ns, qa_error *);
 bool qa_q1_peer_send_ready(const qa_q1_peer *);
 bool qa_q1_peer_receive(qa_q1_peer *, const qa_net_address *, qa_bytes, uint64_t,
                          qa_q1_delivery *, qa_error *);

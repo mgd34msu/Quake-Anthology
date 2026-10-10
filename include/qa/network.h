@@ -256,8 +256,9 @@ bool qa_net_stopwait_create(size_t message_bytes, size_t fragment_bytes,
                              uint64_t retry_ns, qa_net_stopwait **, qa_error *);
 void qa_net_stopwait_destroy(qa_net_stopwait *);
 bool qa_net_stopwait_begin(qa_net_stopwait *, qa_bytes, qa_error *);
-bool qa_net_stopwait_next(qa_net_stopwait *, uint64_t now_ns,
+bool qa_net_stopwait_prepare(qa_net_stopwait *, uint64_t now_ns,
                           bool *present, qa_net_reliable_fragment *, qa_error *);
+void qa_net_stopwait_sent(qa_net_stopwait *, uint32_t sequence, uint64_t now_ns);
 bool qa_net_stopwait_acknowledge(qa_net_stopwait *, uint32_t);
 bool qa_net_stopwait_receive(qa_net_stopwait *, const qa_net_reliable_fragment *,
                              qa_net_fragment_result *, qa_bytes *, qa_error *);

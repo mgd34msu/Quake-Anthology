@@ -79,7 +79,7 @@ static bool paused(qw_server *peer, bool *out, qa_error *error)
 static bool native_send(qw_server *peer, qa_bytes packet, qa_error *error)
 {
     bool previous = peer->runtime->callback; peer->runtime->callback = true;
-    bool ok = qa_q1_peer_send(&peer->native, packet, error);
+    bool ok = qa_q1_peer_send(&peer->native, packet, peer->runtime->now_ns, error);
     peer->runtime->callback = previous; return ok;
 }
 static bool retire(qw_server *peer, const char *reason, bool notify, qa_error *error)

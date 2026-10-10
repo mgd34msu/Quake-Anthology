@@ -88,7 +88,7 @@ static bool retire(nq_server *peer, const char *reason, bool notify, qa_error *e
                 r->packet_disconnect = true;
             }
         }
-        if (ok) ok = qa_q1_peer_send(&peer->native, (qa_bytes){r->packet.data, r->packet.size}, error);
+        if (ok) ok = qa_q1_peer_send(&peer->native, (qa_bytes){r->packet.data, r->packet.size}, peer->runtime->now_ns, error);
         if (ok) r->sent = true;
     }
     if (ok) {
@@ -170,8 +170,8 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
         qa_buffer_free(&pending->bytes); free(pending);
     }
     bool present; qa_bytes packet;
-    return qa_nq_channel_next(peer->native.channel.nq, now, &present, &packet, error) &&
-        (!present || qa_q1_peer_send(&peer->native, packet, error));
+    return qa_nq_channel_prepare(peer->native.channel.nq, now, &present, &packet, error) &&
+        (!present || qa_q1_peer_send(&peer->native, packet, peer->runtime->now_ns, error));
 }
 static bool command(void *context, const qa_usercmd *value, qa_error *error)
 { (void)context; (void)value; return qa_network_fail(error, "NetQuake server cannot submit local client movement"); }
@@ -237,7 +237,7 @@ bool qa_network_nq_server_frame(qa_network_runtime *runtime, qa_net_client_id id
     if (!qa_q1_peer_send_ready(&peer->native)) return true;
     qa_bytes packet;
     return qa_nq_channel_unreliable(peer->native.channel.nq, bytes, &packet, error) &&
-        qa_q1_peer_send(&peer->native, packet, error);
+        qa_q1_peer_send(&peer->native, packet, peer->runtime->now_ns, error);
 }
 bool qa_network_nq_server_drop(qa_network_runtime *runtime, qa_net_client_id id, const char *reason, qa_error *error)
 {

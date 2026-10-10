@@ -162,7 +162,7 @@ static bool transmit(q1_runtime_client *c, qa_bytes bytes, uint64_t now, qa_erro
     qa_bytes packet;
     return (c->qw ? qa_qw_channel_transmit(c->native.channel.qw, bytes, now, false, &packet, e) :
         qa_nq_channel_unreliable(c->native.channel.nq, bytes, &packet, e)) &&
-        qa_q1_peer_send(&c->native, packet, e);
+        qa_q1_peer_send(&c->native, packet, now, e);
 }
 static bool retire_client(q1_runtime_client *c, const char *reason, bool notify, qa_error *e)
 {
@@ -195,7 +195,7 @@ static bool retire_client(q1_runtime_client *c, const char *reason, bool notify,
             if (ok && packet.size > r->capacity) ok = qa_network_fail(e, "Q1 CLIENT retirement packet exceeds its channel");
             if (ok) { memcpy(r->packet.data, packet.data, packet.size); r->packet.size = packet.size; }
         }
-        if (ok) ok = qa_q1_peer_send(&c->native, (qa_bytes){r->packet.data, r->packet.size}, e);
+        if (ok) ok = qa_q1_peer_send(&c->native, (qa_bytes){r->packet.data, r->packet.size}, c->runtime->now_ns, e);
         if (ok) { ++r->transmissions; r->packet.size = 0; }
     }
     if (ok) {
@@ -220,8 +220,8 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     if (!queue_next(c, e)) return false;
     if (!c->qw) {
         bool present; qa_bytes packet;
-        if (!qa_nq_channel_next(c->native.channel.nq, now, &present, &packet, e) ||
-            (present && !qa_q1_peer_send(&c->native, packet, e))) return false;
+        if (!qa_nq_channel_prepare(c->native.channel.nq, now, &present, &packet, e) ||
+            (present && !qa_q1_peer_send(&c->native, packet, now, e))) return false;
     }
     if (!qa_q1_peer_send_ready(&c->native)) return true;
     size_t consumed = 0;

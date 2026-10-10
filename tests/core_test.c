@@ -14,6 +14,7 @@
 #include "qa/input.h"
 #include "qa/platform_events.h"
 #include "qa/network_q3.h"
+#include "qa/network_q1_channel.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -723,6 +724,52 @@ static void test_platform_event_retirement(void)
     qa_platform_events_destroy(events);
 }
 
+static void test_nq_send_admission(void)
+{
+    qa_error error = {0};
+    qa_nq_channel *sender, *receiver;
+    uint8_t message[32768], saved[1032];
+    for (size_t i = 0; i < sizeof(message); ++i) message[i] = (uint8_t)i;
+    CHECK(qa_nq_channel_create(sizeof(message), 1024, &sender, &error));
+    CHECK(qa_nq_channel_create(sizeof(message), 1024, &receiver, &error));
+    CHECK(qa_nq_channel_queue(sender, (qa_bytes){message, sizeof(message)}, &error));
+    unsigned deliveries = 0;
+    for (unsigned i = 0; i < sizeof(message) / 1024; ++i) {
+        bool present;
+        qa_bytes first, retry, ack, next;
+        CHECK(qa_nq_channel_prepare(sender, i + 1, &present, &first, &error) && present);
+        memcpy(saved, first.data, first.size);
+        CHECK(qa_nq_channel_prepare(sender, i + 2, &present, &retry, &error) && present);
+        CHECK(first.size == retry.size && !memcmp(saved, retry.data, retry.size));
+        qa_nq_channel_sent(sender, retry, i + 2);
+        qa_q1_delivery delivery;
+        CHECK(qa_nq_channel_receive(receiver, retry, i + 2, &delivery, &ack, &error));
+        if (delivery.present) {
+            ++deliveries;
+            CHECK(delivery.reliable && delivery.payload.size == sizeof(message));
+            CHECK(!memcmp(delivery.payload.data, message, sizeof(message)));
+        }
+        memcpy(saved, ack.data, ack.size);
+        CHECK(qa_nq_channel_prepare(receiver, i + 3, &present, &retry, &error) && present);
+        CHECK(retry.size == 8 && !memcmp(saved, retry.data, retry.size));
+        CHECK(qa_nq_channel_prepare(receiver, i + 4, &present, &retry, &error) && present);
+        CHECK(retry.size == 8 && !memcmp(saved, retry.data, retry.size));
+        qa_nq_channel_sent(receiver, retry, i + 4);
+        CHECK(qa_nq_channel_receive(sender, retry, i + 4, &delivery, &next, &error));
+        CHECK(!delivery.present);
+    }
+    CHECK(deliveries == 1 && qa_nq_channel_ready(sender));
+    qa_bytes first, retry;
+    CHECK(qa_nq_channel_unreliable(sender, (qa_bytes){message, 1}, &first, &error));
+    memcpy(saved, first.data, first.size);
+    CHECK(qa_nq_channel_unreliable(sender, (qa_bytes){message, 1}, &retry, &error));
+    CHECK(qa_nq_channel_unreliable_sequence(sender) == 0 && !memcmp(saved, retry.data, retry.size));
+    qa_nq_channel_sent(sender, retry, 100);
+    CHECK(qa_nq_channel_unreliable_sequence(sender) == 1);
+    qa_nq_channel_destroy(sender);
+    qa_nq_channel_destroy(receiver);
+}
+
 static void test_q3_send_admission(void)
 {
     qa_error error = {0};
@@ -761,6 +808,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_platform_event_retirement();
+    test_nq_send_admission();
     test_q3_send_admission();
     test_shared_cvar_archive();
     test_shared_input_menu_defaults();

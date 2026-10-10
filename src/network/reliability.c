@@ -177,7 +177,7 @@ bool qa_net_stopwait_begin(qa_net_stopwait *channel, qa_bytes bytes, qa_error *e
     return true;
 }
 
-bool qa_net_stopwait_next(qa_net_stopwait *channel, uint64_t now_ns,
+bool qa_net_stopwait_prepare(qa_net_stopwait *channel, uint64_t now_ns,
                           bool *present, qa_net_reliable_fragment *out, qa_error *error)
 {
     if (channel == NULL || present == NULL || out == NULL)
@@ -190,10 +190,16 @@ bool qa_net_stopwait_next(qa_net_stopwait *channel, uint64_t now_ns,
     *out = (qa_net_reliable_fragment){ .sequence = channel->outgoing,
         .final = size == channel->send_size - channel->send_offset,
         .payload = { channel->send + channel->send_offset, size } };
-    channel->sent = true;
-    channel->sent_ns = now_ns;
     *present = true;
     return true;
+}
+
+void qa_net_stopwait_sent(qa_net_stopwait *channel, uint32_t sequence, uint64_t now_ns)
+{
+    if (channel->sending && sequence == channel->outgoing) {
+        channel->sent = true;
+        channel->sent_ns = now_ns;
+    }
 }
 
 bool qa_net_stopwait_acknowledge(qa_net_stopwait *channel, uint32_t sequence)
