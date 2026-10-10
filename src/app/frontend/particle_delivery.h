@@ -9,7 +9,7 @@
 bool frontend_particle_draw(qa_frontend *, uint32_t seat, const qa_scene_world_input *, qa_error *);
 bool frontend_particle_world(qa_frontend *, uint32_t seat, qa_scene_world_input *, qa_error *);
 bool frontend_particle_q2_temporary(qa_frontend *, const qa_application_protocol_event *,
-    const qa_application_q2_audience *, const qa_q2_temp_entity *, qa_error *);
+    const qa_application_q2_audience *, const qa_q2_temp_entity *, const qa_actor_id *, qa_error *);
 bool frontend_particle_q1_temporary(qa_frontend *, qa_actor_owner, qa_actor_id,
     const qa_q1_temp *, qa_actor_id beam_actor, bool quakeworld, qa_error *);
 bool frontend_particle_visual_read(qa_frontend *, qa_actor_id,

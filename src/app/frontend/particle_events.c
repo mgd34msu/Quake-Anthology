@@ -1632,30 +1632,9 @@ static bool q2_temporary_beam_admit(qa_frontend *frontend,frontend_particle_owne
     }
     return true;
 }
-static bool temporary_actor(const qa_application_protocol_event *message,const qa_q2_temp_entity *temporary,
-    const qa_q2_temp_field *field,qa_actor_id *out,qa_error *error)
-{
-    uintptr_t base=(uintptr_t)message->payload.data,raw=(uintptr_t)temporary->raw.data;
-    if (!field || field->kind!=QA_Q2_TEMP_INTEGER || field->value.integer<0 ||
-        !message->payload.data || !temporary->raw.data || raw<base ||
-        raw-base>message->payload.size || temporary->raw.size>message->payload.size-(raw-base) ||
-        field->offset>=temporary->raw.size)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 entity effect lost its actual decoded packet operand");
-    size_t offset=(size_t)(raw-base)+field->offset;
-    bool found=false;
-    for (size_t i=0;i<message->reference_count;++i) {
-        const qa_application_protocol_reference *reference=message->references+i;
-        if (reference->offset!=offset || reference->packed_sound) continue;
-        if (!reference->actor.registry || (found && !qa_actor_id_equal(*out,reference->actor)))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 entity effect has an ambiguous captured actor");
-        *out=reference->actor; found=true;
-    }
-    return found || frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q2 entity effect requires its emission-time full actor receipt");
-}
-
 bool frontend_particle_q2_temporary(qa_frontend *frontend,
     const qa_application_protocol_event *message, const qa_application_q2_audience *audience,
-    const qa_q2_temp_entity *temporary, qa_error *error)
+    const qa_q2_temp_entity *temporary, const qa_actor_id *actors, qa_error *error)
 {
     int code=-1;
     frontend_q2_beam_recipe beam_recipe;
@@ -1760,9 +1739,11 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     qa_actor_id beam_actor={0},beam_destination={0};
     if (beam_effect) {
         const qa_q2_temp_field *actor=temporary_field(temporary,QA_Q2_TEMP_ENTITY1,QA_Q2_TEMP_INTEGER);
-        if (!temporary_actor(message,temporary,actor,&beam_actor,error)) return false;
-        if (beam_recipe.destination && !temporary_actor(message,temporary,
-            temporary_field(temporary,QA_Q2_TEMP_ENTITY2,QA_Q2_TEMP_INTEGER),&beam_destination,error)) return false;
+        beam_actor=actors[actor-temporary->fields];
+        if (beam_recipe.destination) {
+            const qa_q2_temp_field *destination=temporary_field(temporary,QA_Q2_TEMP_ENTITY2,QA_Q2_TEMP_INTEGER);
+            beam_destination=actors[destination-temporary->fields];
+        }
         if (temporary->type==QA_Q2_TE_GRAPPLE_CABLE) {
             const qa_q2_temp_field *offset=temporary_field(temporary,QA_Q2_TEMP_OFFSET,QA_Q2_TEMP_VECTOR);
             if (!offset) return frontend_fail(error,QA_ERROR_FORMAT,"Q2 grapple lost its Source offset");
@@ -1773,7 +1754,7 @@ bool frontend_particle_q2_temporary(qa_frontend *frontend,
     const qa_q2_temp_field *flashlight_entity=NULL;
     if (flashlight || power) {
         flashlight_entity=temporary_field(temporary,QA_Q2_TEMP_ENTITY1,QA_Q2_TEMP_INTEGER);
-        if (!temporary_actor(message,temporary,flashlight_entity,&flashlight_actor,error)) return false;
+        flashlight_actor=actors[flashlight_entity-temporary->fields];
     }
     if (wall || steam) {
         const qa_q2_temp_field *color=temporary_field(temporary,QA_Q2_TEMP_COLOR,QA_Q2_TEMP_INTEGER);
@@ -2023,7 +2004,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
                 if (named) {
                     qa_application_protocol_event message={.provider=event.provider,
                         .dialect=audience.source_frame.kind,.time_ns=event.time_ns};
-                    if (!frontend_particle_q2_temporary(frontend,&message,&audience,&temporary,error)) return false;
+                    if (!frontend_particle_q2_temporary(frontend,&message,&audience,&temporary,NULL,error)) return false;
                 } else if (!q2_builtin_beam(frontend,&event,&audience,&recipe,q2_sample,physical,error)) return false;
             }
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
