@@ -92,11 +92,10 @@ bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_do
 {
     bool offer, disconnect; uint32_t epoch;
     if (!outgoing_control(s, d, &epoch, &offer, &disconnect, e)) return false;
-    qa_buffer encoded={0};
-    if (!qa_unified_document_encode(d, &encoded, e)) return false;
+    if(!qa_unified_document_write(d,s->limits.message_bytes,&s->frame_wire,e)) return false;
     uint32_t sequence;
-    bool ok = qa_unified_channel_reliable(s->channel, (qa_bytes){encoded.data, encoded.size}, &sequence, e);
-    qa_buffer_free(&encoded);
+    bool ok=qa_unified_channel_reliable(s->channel,
+        (qa_bytes){s->frame_wire.data,s->frame_wire.size},&sequence,e);
     if (!ok) return false;
     s->required = sequence;
     if (offer) {

@@ -499,32 +499,35 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
         qa_unified_document_create_metadata(&owned,out,error);
     qa_unified_frame_metadata_destroy(owned); return okay;
 }
-static bool record_encode(const char magic[4], const qa_unified_record_layout *layout,
-    const void *record, const void *baseline, bool frame, uint32_t sequence, size_t maximum,
-    qa_buffer *out, const qa_strings *strings, qa_error *error)
+bool qa_unified_document_write(const qa_unified_document *d,size_t maximum,
+    qa_unified_builder *out,qa_error *error)
 {
-    size_t header_size=frame?8:4;
-    if (!out || maximum<=header_size) return bad(error,"Typed Unified record lacks its bounded output");
-    qa_unified_builder builder={.maximum=maximum,.strings=strings,.baseline_strings=strings};
-    uint8_t header[8]; memcpy(header,magic,4); if (frame) qa_store_u32le(header+4,sequence);
-    bool okay=qa_unified_append(&builder,header,header_size,error) &&
-        qa_unified_record_delta_write(layout,record,baseline,&builder,error);
-    if (!okay) { free(builder.data); return false; }
-    *out=(qa_buffer){builder.data,builder.size}; return true;
-}
-static bool typed_encode(const qa_unified_document *d, qa_buffer *out, qa_error *error)
-{
-    if (d->control)
-        return record_encode("QUCT",&qa_unified_control_layout,d->control,NULL,false,0,FRAME_LIMIT,out,NULL,error);
-    if (d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT)
-        return record_encode("QUHS",&qa_unified_handshake_layout,&d->handshake,NULL,false,0,512,out,NULL,error);
-    if (d->inputs) {
-        qa_unified_builder builder={0};
-        if (!qa_unified_inputs_write(d->inputs,65536,&builder,error)) { free(builder.data); return false; }
-        *out=(qa_buffer){builder.data,builder.size}; return true;
+    if(d->frame) return qa_unified_frame_write(d,NULL,0,maximum,out,error);
+    if(d->inputs) return qa_unified_inputs_write(d->inputs,maximum,out,error);
+    out->size=0;out->maximum=maximum;out->strings=out->baseline_strings=NULL;
+    if(!d->control && !d->metadata && !d->events && d->kind!=QA_UNIFIED_HANDSHAKE_DOCUMENT)
+        return qa_unified_append(out,d->source.data,d->source.size,error);
+    const char *magic;
+    const qa_unified_record_layout *layout;
+    const void *record;
+    size_t limit=FRAME_LIMIT;
+    if(d->control) { magic="QUCT";layout=&qa_unified_control_layout;record=d->control; }
+    else if(d->kind==QA_UNIFIED_HANDSHAKE_DOCUMENT) {
+        magic="QUHS";layout=&qa_unified_handshake_layout;record=&d->handshake;limit=512;
+    } else if(d->metadata) { magic="QUMD";layout=&qa_unified_metadata_layout;record=d->metadata; }
+    else {
+        magic="QUEV";layout=&qa_unified_events_layout;record=d->events;
+        out->strings=out->baseline_strings=d->events->strings;
     }
-    return d->metadata ? record_encode("QUMD",&qa_unified_metadata_layout,d->metadata,NULL,false,0,FRAME_LIMIT,out,NULL,error) :
-        record_encode("QUEV",&qa_unified_events_layout,d->events,NULL,false,0,FRAME_LIMIT,out,d->events->strings,error);
+    if(out->maximum>limit) out->maximum=limit;
+    return qa_unified_append(out,magic,4,error) &&
+        qa_unified_record_delta_write(layout,record,NULL,out,error);
+}
+static bool typed_encode(const qa_unified_document *d,qa_buffer *out,qa_error *error)
+{
+    qa_unified_builder builder={0};
+    if(!qa_unified_document_write(d,FRAME_LIMIT,&builder,error)) { free(builder.data);return false; }
+    *out=(qa_buffer){builder.data,builder.size};return true;
 }
 bool qa_unified_inputs_write(const qa_unified_input_batch *batch, size_t maximum,
     qa_unified_builder *out, qa_error *error)
