@@ -721,6 +721,15 @@ static const application_unified_event_resource *event_receipt(qa_application *a
     return NULL;
 }
 
+static bool event_wire(qa_application_network_q2 *owner,size_t index,unsigned kind,uint32_t *out,qa_error *error)
+{
+    const char *wire=owner->held_resources[index].wire_path;
+    char config[66];
+    if(kind==QA_NATIVE_HOST_IMAGE) { snprintf(config,sizeof(config),"/%s",wire); wire=config; }
+    else if(kind==QA_NATIVE_HOST_SOUND && !strncmp(wire,"sound/",6)) wire+=6;
+    return application_network_q2_resource(owner,kind,wire,out,error);
+}
+
 bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, qa_actor_owner emitter,
     const qa_application_protocol_resource_reference *reference, uint32_t *out, qa_error *error)
 {
@@ -753,6 +762,22 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     if (*reference->resource_key && (!receipt || !captured_view || !captured ||
         !content || strcmp(content, source.product->identity) || !path || !*path))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 event lost its immutable captured resource key");
+    if(receipt) {
+        application_q2_held_resource probe={.provider=emitter,.identity=source.descriptor->identity,
+            .kind=kind==QA_NATIVE_HOST_MODEL?APPLICATION_Q2_HELD_MODEL:APPLICATION_Q2_HELD_EVENT,
+            .event_kind=reference->kind,.resource=(qa_resource *)captured,.view=(qa_vfs *)captured_view,
+            .path=(char *)path,.opening=*captured_opening};
+        if(probe.kind==APPLICATION_Q2_HELD_EVENT) {
+            memcpy(probe.event_key,reference->resource_key,sizeof(probe.event_key));
+            probe.event_custody=reference->resource_custody;
+        }
+        const qa_application_visual_view colors={0};
+        for(size_t i=0;i<owner->held_resource_count;++i) {
+            const application_q2_held_resource *old=owner->held_resources+i;
+            if(held_same(&probe,old,false) && (probe.kind!=APPLICATION_Q2_HELD_MODEL || model_colors_current(old,&colors)))
+                return event_wire(owner,i,kind,out,error);
+        }
+    }
     if (!receipt && kind == QA_NATIVE_HOST_SOUND && *path == '#') ++path;
     char *requested = NULL;
     if (!receipt && kind == QA_NATIVE_HOST_SOUND && strncmp(path, "sound/", 6)) {
@@ -794,13 +819,8 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     if (ok && !reused && held.kind == APPLICATION_Q2_HELD_MODEL)
         ok = model_derivation(owner, &held, source.product->family, false, 0, error);
     if (ok && !reused) ok = held_store(owner, &held, &index, error);
-    if (ok) {
-        const char *wire = owner->held_resources[index].wire_path;
-        char config[66];
-        if (kind == QA_NATIVE_HOST_IMAGE) { snprintf(config, sizeof(config), "/%s", wire); wire = config; }
-        else if (kind == QA_NATIVE_HOST_SOUND && !strncmp(wire, "sound/", 6)) wire += 6;
-        ok = application_network_q2_resource(owner, kind, wire, out, error);
-    } else while (owner->held_resource_count > dependency_start)
+    if (ok) ok=event_wire(owner,index,kind,out,error);
+    else while (owner->held_resource_count > dependency_start)
         held_free(&owner->held_resources[--owner->held_resource_count]);
     held_free(&held); return ok;
 }
