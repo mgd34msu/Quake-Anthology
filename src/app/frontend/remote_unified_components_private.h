@@ -25,6 +25,7 @@ typedef struct remote_component_state {
     size_t command_count;
 } remote_component_state;
 typedef struct remote_component_frame {
+    qa_unified_frame_lease *lease;
     qa_unified_document *packet;
     application_q3_scene_context context;
     qa_actor_id viewer;
@@ -102,7 +103,7 @@ struct frontend_unified_components {
     size_t count;
     remote_component *retired;
     uint64_t revision;
-    qa_scene_light *lights;
+    qa_scene_light lights[QA_Q3_SOURCE_LIGHT_CAPACITY];
     size_t light_count;
     struct frontend_unified_component_frame *prepared;
     bool busy,closing,failed;

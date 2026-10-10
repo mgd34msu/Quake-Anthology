@@ -37,14 +37,16 @@ typedef struct qa_command_tokens {
     char **values;
     char *args_text;
     char *storage;
+    bool borrowed;
 } qa_command_tokens;
 
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
                           bool console_text, qa_command_tokens *out, qa_error *error);
 void qa_command_tokens_free(qa_command_tokens *tokens);
-/* Copy literal tokens without reparsing; storage and args_text own independent
- * allocations, matching qa_command_tokens_free. */
-bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *, qa_error *);
+/* Copy literal tokens without reparsing. A supplied allocator owns the backing
+ * until its enclosing frame retires; NULL retains independent heap storage. */
+bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *);
 /* First source separator, or length when absent. Quotes protect semicolons;
  * line feeds always split, and Q3 also splits at carriage returns. */
 size_t qa_command_separator(const char *text, size_t length, qa_ruleset_id dialect);

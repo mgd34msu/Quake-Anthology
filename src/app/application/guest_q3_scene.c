@@ -95,7 +95,7 @@ static bool syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_
         q3scene_command *row = seq >= 0 ? s->commands + (uint32_t)seq % 64 : NULL;
         if (!row || row->sequence != seq) return q3scene_fail(e, QA_ERROR_FORMAT, "Component requested an unavailable source command");
         qa_command_tokens_free(&s->reached);
-        if (!qa_command_tokens_copy(&row->tokens, &s->reached, e)) return false;
+        if (!qa_command_tokens_copy(&row->tokens, &s->reached, NULL, NULL, e)) return false;
         *result = s->reached.count != 0; return true;
     }
     if (code >= 7 && code <= 9) {
@@ -311,7 +311,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         if ((int64_t)command->sequence<=(int64_t)latest-64) continue;
         qa_command_tokens t={0};
         if (command->addressed&&command->arguments) {
-            if(!qa_command_tokens_copy(command->arguments,&t,e)) return false;
+            if(!qa_command_tokens_copy(command->arguments,&t,NULL,NULL,e)) return false;
         } else if (!qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,&t,e)) return false;
         q3scene_command *row=s->commands+(uint32_t)command->sequence%64;
         qa_command_tokens_free(&row->tokens); *row=(q3scene_command){command->sequence,t};

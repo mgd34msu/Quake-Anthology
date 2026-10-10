@@ -245,6 +245,27 @@ static void test_arena(void)
     qa_unified_document_destroy(retained);
 }
 
+static void *tokens_frame_allocate(void *lease,size_t bytes,size_t alignment,qa_error *error)
+{ return qa_unified_frame_lease_alloc(lease,1,bytes,alignment,error); }
+static void test_literal_tokens(void)
+{
+    qa_error error={0}; qa_command_tokens owned={0},pooled={0};
+    char first[]="print",second[]="quoted; text";
+    char *values[]={first,second};
+    qa_command_tokens literal={.count=2,.values=values,.args_text="quoted; text"};
+    CHECK(qa_command_tokens_copy(&literal,&owned,NULL,NULL,&error));
+    qa_unified_frame_pool *pool=qa_unified_frame_pool_create(128*1024,2,&error); CHECK(pool);
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error); CHECK(lease);
+    CHECK(qa_command_tokens_copy(&literal,&pooled,tokens_frame_allocate,lease,&error));
+    second[0]='X'; qa_unified_frame_pool_destroy(&pool);
+    CHECK(owned.count==2 && pooled.count==2);
+    CHECK(!strcmp(owned.values[1],"quoted; text") && !strcmp(pooled.values[1],owned.values[1]));
+    CHECK(!strcmp(pooled.args_text,"quoted; text"));
+    char *held=pooled.values[1];
+    qa_command_tokens_free(&pooled); CHECK(!strcmp(held,"quoted; text"));
+    qa_unified_frame_lease_release(lease); qa_command_tokens_free(&owned);
+}
+
 static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
     qa_unified_frame_metadata *owned)
 {
@@ -1179,6 +1200,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_literal_tokens();
     test_platform_event_retirement();
     test_q2_command_angles();
     test_loopback_admission();

@@ -1,6 +1,7 @@
 #include "remote_unified_components_private.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 void q3remote_component_admissions_clear(remote_component *row)
 {
@@ -188,8 +189,7 @@ bool frontend_unified_components_lights_bank(frontend_unified_components *owner,
     if(!out||!count||!frontend_unified_components_current(owner)||!frontend_unified_components_idle(owner)||
         !qa_q3_source_scene_bank_cycle(bank,&cycle))
         return q3remote_component_fail(error,QA_ERROR_ARGUMENT,"Component lights require their actual scene cycle");
-    qa_scene_light *joined=malloc(QA_Q3_SOURCE_LIGHT_CAPACITY*sizeof(*joined));
-    if(!joined) return q3remote_component_fail(error,QA_ERROR_MEMORY,"Retaining component admitted lights");
+    qa_scene_light joined[QA_Q3_SOURCE_LIGHT_CAPACITY];
     owner->busy=true; bool okay=true; size_t used=0;
     for(size_t i=0;okay&&i<owner->count;++i) {
         remote_component *row=owner->rows[i]; if(!row->frame) continue;
@@ -219,8 +219,9 @@ bool frontend_unified_components_lights_bank(frontend_unified_components *owner,
         }
     }
     owner->busy=false;
-    if(!okay) { free(joined); return false; }
-    free(owner->lights); owner->lights=joined; owner->light_count=used; *out=joined; *count=used; return true;
+    if(!okay) return false;
+    memcpy(owner->lights,joined,used*sizeof(*joined));
+    owner->light_count=used; *out=owner->lights; *count=used; return true;
 }
 
 bool frontend_unified_components_submission_restore(frontend_unified_components *owner,qa_q3_source_scene_bank *bank,qa_error *error)

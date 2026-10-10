@@ -284,7 +284,7 @@ bool frontend_unified_components_destroy(frontend_unified_components **slot,qa_e
         if(!q3remote_component_close(&row,e)) return false;
         o->retired=next;
     }
-    free(o->rows); free(o->lights); free(o); *slot=NULL; return true;
+    free(o->rows); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_components_visit(const frontend_unified_components *o,const qa_application_content_visitor *visitor,qa_error *e)
 {

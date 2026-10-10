@@ -234,13 +234,16 @@ fail:
 void qa_command_tokens_free(qa_command_tokens *tokens)
 {
     if (tokens == NULL) return;
-    free(tokens->values);
-    free(tokens->args_text);
-    free(tokens->storage);
+    if (!tokens->borrowed) {
+        free(tokens->values);
+        free(tokens->args_text);
+        free(tokens->storage);
+    }
     *tokens = (qa_command_tokens){0};
 }
 
-bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out, qa_error *error)
+bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
     if (!from || !out || (from->count && !from->values)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid literal command token copy");
@@ -255,11 +258,13 @@ bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *ou
         }
         size += length;
     }
-    qa_command_tokens copy = {.count = from->count};
-    copy.values = from->count ? calloc(from->count, sizeof(*copy.values)) : NULL;
-    copy.storage = size ? malloc(size) : NULL;
+    qa_command_tokens copy = {.count = from->count, .borrowed = allocate != NULL};
+    copy.values = !from->count ? NULL : allocate
+        ? allocate(context, from->count * sizeof(*copy.values), _Alignof(char *), error)
+        : calloc(from->count, sizeof(*copy.values));
+    copy.storage = !size ? NULL : allocate ? allocate(context, size, 1, error) : malloc(size);
     const char *args = from->args_text ? from->args_text : "";
-    copy.args_text = malloc(strlen(args) + 1);
+    copy.args_text = allocate ? allocate(context, strlen(args) + 1, 1, error) : malloc(strlen(args) + 1);
     if ((from->count && !copy.values) || (size && !copy.storage) || !copy.args_text) {
         qa_command_tokens_free(&copy);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining literal command tokens");

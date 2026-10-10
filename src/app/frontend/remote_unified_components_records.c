@@ -63,14 +63,24 @@ void q3remote_component_state_free(remote_component_state *s)
     }
     free(s->provider); qa_unified_component_identity_dispose(&s->identity); memset(s,0,sizeof(*s));
 }
-static bool frame_source_copy(const remote_component_state *source,remote_component_state *out,qa_error *e)
+static void *frame_allocate(void *lease,size_t bytes,size_t alignment,qa_error *e)
+{ return qa_unified_frame_lease_alloc(lease,1,bytes,alignment,e); }
+static bool frame_source_copy(const remote_component_state *source,remote_component_state *out,
+    qa_unified_frame_lease *lease,qa_error *e)
 {
     out->game_state=source->game_state;
     out->game_state_revision=source->game_state_revision;
     out->command_sequence=source->command_sequence;
     for(size_t i=0;i<source->command_count;++i) {
-        out->commands[i]=source->commands[i]; out->commands[i].text=copy_text(source->commands[i].text); ++out->command_count;
-        if(!out->commands[i].text||!qa_command_tokens_copy(source->arguments+i,out->arguments+i,e))
+        out->commands[i]=source->commands[i];
+        if(lease) {
+            size_t bytes=strlen(source->commands[i].text)+1;
+            char *text=qa_unified_frame_lease_alloc(lease,bytes,1,1,e);
+            if(text) memcpy(text,source->commands[i].text,bytes);
+            out->commands[i].text=text;
+        } else out->commands[i].text=copy_text(source->commands[i].text);
+        ++out->command_count;
+        if(!out->commands[i].text||!qa_command_tokens_copy(source->arguments+i,out->arguments+i,lease?frame_allocate:NULL,lease,e))
             return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining received frame command history");
         out->commands[i].arguments=out->arguments+i;
     }
@@ -98,7 +108,7 @@ static bool command_text(const qa_unified_control_arguments *args,char **out,qa_
     }
     *p=0;
     qa_command_tokens borrowed={.count=args->count,.values=args->values,.args_text=args_text};
-    bool okay=qa_command_tokens_copy(&borrowed,tokens,e); free(args_text);
+    bool okay=qa_command_tokens_copy(&borrowed,tokens,NULL,NULL,e); free(args_text);
     if(!okay) { free(joined); return false; }
     *out=joined; return true;
 }
@@ -131,7 +141,7 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
         const application_q3_scene_command *old=previous->state.commands+previous->state.command_count-keep+i;
         s.commands[i]=*old; s.commands[i].text=copy_text(old->text); ++s.command_count;
         if(!s.commands[i].text) ok=q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining reached remote command history");
-        if(ok) ok=qa_command_tokens_copy(previous->state.arguments+previous->state.command_count-keep+i,s.arguments+i,e);
+        if(ok) ok=qa_command_tokens_copy(previous->state.arguments+previous->state.command_count-keep+i,s.arguments+i,NULL,NULL,e);
     }
     for(size_t i=0;ok&&i<count;++i) {
         application_q3_scene_command *command=s.commands+s.command_count;
@@ -145,7 +155,16 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
     return true;
 }
 void q3remote_component_frame_free(remote_component_frame *f)
-{ if(!f) return; if(!f->packet) free((void *)f->snapshot.entities); qa_unified_document_destroy(f->packet); free(f->actors); q3remote_component_state_free(&f->source); free(f); }
+{
+    if(!f) return;
+    qa_unified_frame_lease *lease=f->lease;
+    if(!lease) {
+        if(!f->packet) free((void *)f->snapshot.entities);
+        free(f->actors); q3remote_component_state_free(&f->source);
+    }
+    qa_unified_document_destroy(f->packet);
+    if(lease) qa_unified_frame_lease_release(lease); else free(f);
+}
 static bool module_matches(const qa_unified_mod_identity *a,const qa_unified_mod_identity *b)
 {
     return !strcmp(a->id,b->id)&&!strcmp(a->artifact_path,b->artifact_path);
@@ -207,9 +226,15 @@ bool frontend_unified_components_player_event(frontend_unified_components *o,con
 bool q3remote_component_frame_read(frontend_unified_components *o,remote_component *row,const qa_unified_document *d,
     const qa_unified_component_source *source,remote_component_frame **out,qa_error *e)
 {
-    remote_component_frame *f=calloc(1,sizeof(*f));
-    if(!f) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining actual remote component frame");
     const qa_unified_frame *frame=qa_unified_document_frame(d);
+    qa_unified_frame_lease *lease=frame->lease;
+    if(lease&&!qa_unified_frame_lease_retain(lease,e)) return false;
+    remote_component_frame *f=lease?qa_unified_frame_lease_alloc(lease,1,sizeof(*f),_Alignof(remote_component_frame),e):calloc(1,sizeof(*f));
+    if(!f) {
+        qa_unified_frame_lease_release(lease);
+        return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining actual remote component frame");
+    }
+    f->lease=lease;
     qa_actor_id viewer={0}; uint32_t viewer_slot=0;
     bool ok=!strcmp(source->owner.provider,row->state.provider)&&source->owner.generation==row->state.owner_generation&&
         source->owner.generation==row->state.generation&&source->game_state_revision==(int64_t)row->state.game_state_revision&&
@@ -218,7 +243,7 @@ bool q3remote_component_frame_read(frontend_unified_components *o,remote_compone
         qa_unified_document_retain(d,&f->packet,e);
     if(ok) f->snapshot=source->snapshot;
     size_t count=source->binding_count; bool has_viewer=false;
-    if(ok&&count) { f->actors=calloc(count,sizeof(*f->actors)); if(!f->actors) ok=q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real replica actor bindings"); }
+    if(ok&&count) { f->actors=lease?qa_unified_frame_lease_alloc(lease,count,sizeof(*f->actors),_Alignof(application_q3_scene_actor),e):calloc(count,sizeof(*f->actors)); if(!f->actors) ok=q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining real replica actor bindings"); }
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_binding *binding=source->bindings+i;
         f->actors[i].slot=binding->slot; f->actors[i].owned=binding->owned;
@@ -233,7 +258,7 @@ bool q3remote_component_frame_read(frontend_unified_components *o,remote_compone
         f->context=(application_q3_scene_context){.generation=source->owner.generation,.revision=source->scene_revision,
             .game_state_revision=source->game_state_revision,.time_ms=source->snapshot.server_time,.client_number=source->client_number,
             .snapshot=&f->snapshot,.actors=f->actors,.actor_count=count,.has_weapon_presented=true,.weapon_presented=source->weapon_presented};
-        ok=frame_source_copy(&row->state,&f->source,e);
+        ok=frame_source_copy(&row->state,&f->source,lease,e);
         if(ok) {
             f->context.game_state=&f->source.game_state; f->context.commands=f->source.commands; f->context.command_count=f->source.command_count;
             if(row->frame&&source->snapshot.server_time>=row->frame->context.time_ms)
