@@ -214,7 +214,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
     }
     if (rotated && result.fraction != 1)
         result.plane.normal = qa_collision_pose_normal(result.plane.normal, &query->target, true, basis);
-    if(query->policy.family!=QA_GAME_Q3 && result.start_solid) {
+    if(!query->policy.behavior->owner_pairs && result.start_solid) {
         bool blocked=result.all_solid && (rules.zero_all_solid || (stationary && rules.zero_stationary));
         result.fraction=blocked?0.0f:1.0f;
         result.plane=(qa_collision_plane){0};

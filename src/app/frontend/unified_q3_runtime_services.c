@@ -238,7 +238,7 @@ static bool trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_
         if(!q3n_compiled_frame_entity(f->compiled,(uint32_t)skip,&row,e))return false;
         if(row.published)pass=row.actor;}
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_GAME_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true},.pass_actor=pass};
+        .policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true},.pass_actor=pass};
     return frontend_remote_unified_presentation_trace(o->options.replica,&query,out,e) && cut(o,f,e);
 }
 static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 end,qa_bounds bounds,
@@ -246,14 +246,14 @@ static bool world_trace(void *context,const q3n_frame *f,qa_vec3 start,qa_vec3 e
 {
     frontend_unified_q3_runtime_services *o=context;if(!cut(o,f,e))return false;
     qa_trace_query query={.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_GAME_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true}};
+        .policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true}};
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
     return geometry && qa_collision_trace(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,out,e) && cut(o,f,e);
 }
 static bool contents(void *context,const q3n_frame *f,qa_vec3 point,int32_t pass,uint32_t *out,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;if(!out || !cut(o,f,e))return false;
-    qa_point_query query={.point=point,.policy={.family=QA_GAME_Q3,.curves=true}};
+    qa_point_query query={.point=point,.policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.curves=true}};
     if(pass>=0 && pass<1022){q3n_compiled_entity row;
         if(!q3n_compiled_frame_entity(f->compiled,(uint32_t)pass,&row,e))return false;
         if(row.published)query.pass_actor=row.actor;}
@@ -264,7 +264,7 @@ static bool contents(void *context,const q3n_frame *f,qa_vec3 point,int32_t pass
 static bool world_contents(void *context,const q3n_frame *f,qa_vec3 point,uint32_t *out,qa_error *e)
 {
     frontend_unified_q3_runtime_services *o=context;if(!out || !cut(o,f,e))return false;
-    qa_point_query query={.point=point,.policy={.family=QA_GAME_Q3,.curves=true}};
+    qa_point_query query={.point=point,.policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.curves=true}};
     qa_collision_geometry *geometry=(qa_collision_geometry *)frontend_remote_unified_geometry(o->options.replica);
     qa_point_contents result;
     if(!geometry || !qa_collision_point_contents(geometry,frontend_remote_unified_presentation_trace_scratch(o->options.replica),&query,&result,e) || !cut(o,f,e))return false;

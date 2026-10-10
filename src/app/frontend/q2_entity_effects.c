@@ -202,7 +202,7 @@ bool frontend_q2_entity_effect(frontend_q2_entity_effects *o,const frontend_q2_e
             qa_vec3 forward=self?s->view.axis[0]:qa_v3(cosf(pitch)*cosf(yaw),cosf(pitch)*sinf(yaw),-sinf(pitch));
             qa_vec3 point=self?s->view.origin:row->origin;
             qa_trace_query query={.start=point,.end=qa_vec_add(point,qa_vec_scale(forward,self || !s->per_pixel_lighting?256:1024)),
-                .shape={.kind=QA_SHAPE_POINT},.policy={.family=QA_GAME_Q2,
+                .shape={.kind=QA_SHAPE_POINT},.policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC],
                     .contents_mask=qa_collision_contents_mask(s->per_pixel_lighting?1u:
                         1u|UINT32_C(0x02000000)|UINT32_C(0x40000000),QA_GAME_Q2)},.pass_actor=row->actor};
             qa_trace_result hit;

@@ -300,7 +300,7 @@ static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa
     }
     const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
     *out = (qa_point_contents){.family = QA_GAME_Q2,
-        .contents = query->policy.family != QA_GAME_Q2 || query->policy.q2_merged_contents ? leaf->merged : leaf->stored,
+        .contents = query->policy.behavior->contents_format != QA_GAME_Q2 || query->policy.behavior->merged_contents ? leaf->merged : leaf->stored,
         .stored = leaf->stored, .merged = leaf->merged};
     return true;
 }
@@ -549,7 +549,7 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
         scratch->expanded_bounds = work.bounds;
     }
     work.stationary = work.start.x == work.end.x && work.start.y == work.end.y && work.start.z == work.end.z;
-    work.merged = query->policy.family != QA_GAME_Q2 || query->policy.q2_merged_contents;
+    work.merged = query->policy.behavior->contents_format != QA_GAME_Q2 || query->policy.behavior->merged_contents;
     work.mask = query->policy.contents_mask;
     work.extents = qa_v3(fmaxf(-work.bounds.mins.x, work.bounds.maxs.x),
                          fmaxf(-work.bounds.mins.y, work.bounds.maxs.y),
@@ -569,7 +569,7 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
     work.result.contact = work.result.fraction < 1 && !work.result.all_solid;
     work.result.contact_plane = work.result.plane;
     work.result.hit = work.result.fraction < 1 || work.result.start_solid ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
-    if (query->policy.family == QA_GAME_Q1) q2_trace_media(&work, headnode);
+    if (query->policy.behavior->hull_boxes) q2_trace_media(&work, headnode);
     *out = work.result;
     return true;
 }

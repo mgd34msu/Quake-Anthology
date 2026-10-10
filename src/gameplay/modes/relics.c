@@ -178,7 +178,7 @@ static bool relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool init
             .start = origin,
             .end = origin,
             .shape = {QA_SHAPE_BOX, body.bounds},
-            .policy = {.family = QA_GAME_Q2, .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2), .q1_hull = -1}};
+            .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC], .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2), .q1_hull = -1}};
         query.end.z += 48;
         qa_trace_result trace;
         if (!qa_world_trace(m->options.services.world, &query, &trace, e))

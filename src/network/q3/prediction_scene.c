@@ -462,7 +462,7 @@ static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_
     const qa_trace_query *query, qa_trace_result *out, int32_t *number, qa_error *error)
 {
     if (!query || !out || !s || !s->world || !qa_q3_prediction_scene_current(s,v)) return false;
-    qa_trace_query q=*query; q.target=(qa_collision_target){0}; q.policy.family=QA_GAME_Q3;
+    qa_trace_query q=*query; q.target=(qa_collision_target){0}; q.policy.behavior=&qa_trace_behaviors[QA_RULESET_Q3];
     q.pass_source=pass_source(s,q.pass_actor,q.pass_source);
     if (!qa_world_trace(s->world,&q,out,error)) return false;
     *number=out->fraction!=1?QA_Q3_ENTITY_WORLD:QA_Q3_ENTITY_NONE;

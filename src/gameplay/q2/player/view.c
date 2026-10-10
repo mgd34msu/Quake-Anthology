@@ -382,7 +382,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             g->services.world,
             &(qa_point_query){.point = eye,
                               .pass_actor = a->id,
-                              .policy = {.family = QA_GAME_Q2, .q2_merged_contents = rr}},
+                              .policy = {.behavior = &qa_trace_behaviors[(rr) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],}},
             &contents, e))
         return false;
     int mask = rr ? qa_collision_point_contents_export(contents.merged, QA_GAME_Q2, contents.q1_opaque_token) : qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token);

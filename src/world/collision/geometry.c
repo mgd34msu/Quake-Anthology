@@ -390,8 +390,8 @@ bool qa_collision_set_surface_material(qa_collision_geometry *geometry, uint32_t
 
 static bool valid_policy(const qa_trace_policy *policy)
 {
-    return policy->family >= QA_GAME_Q1 && policy->family <= QA_GAME_Q3
-        && (policy->family != QA_GAME_Q1 || ((unsigned)policy->q1_move <= (unsigned)QA_Q1_MOVE_MISSILE
+    return policy->behavior != NULL && policy->behavior->contents_format >= QA_GAME_Q1 && policy->behavior->contents_format <= QA_GAME_Q3
+        && (policy->behavior->contents_format != QA_GAME_Q1 || ((unsigned)policy->q1_move <= (unsigned)QA_Q1_MOVE_MISSILE
             && policy->q1_hull >= -1 && policy->q1_hull < 3));
 }
 
@@ -427,7 +427,7 @@ bool qa_collision_point_contents(const qa_collision_geometry *geometry, qa_trace
     qa_point_contents result;
     if (!geometry->kernel.ops->point_contents(geometry->kernel.state, scratch->kernel, query, &result, error)) return false;
     qa_collision_adapt_point(&result, &query->policy);
-    if (result.family == QA_GAME_Q2) result.contents = query->policy.q2_merged_contents ? result.merged : result.stored;
+    if (result.family == QA_GAME_Q2) result.contents = query->policy.behavior->merged_contents ? result.merged : result.stored;
     *out = result;
     return true;
 }
@@ -436,8 +436,8 @@ bool qa_collision_trace_q3_capsule(const qa_collision_geometry *geometry, qa_tra
                                    qa_bounds bounds, bool transformed,
                                    qa_trace_result *out, qa_error *error)
 {
-    if (geometry == NULL || query == NULL || out == NULL || query->policy.family != QA_GAME_Q3
-        || !valid_policy(&query->policy))
+    if (geometry == NULL || query == NULL || out == NULL || !valid_policy(&query->policy)
+        || query->policy.behavior->contents_format != QA_GAME_Q3)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 capsule trace query");
     void *replacement = geometry->family == QA_GAME_Q3 && geometry->model_count > 255
                             ? geometry->kernel.state : NULL;
@@ -450,7 +450,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
                                  uint32_t model, bool transformed, qa_trace_result *out, qa_error *error)
 {
     if (geometry == NULL || query == NULL || out == NULL || model >= geometry->model_count
-        || query->policy.family != QA_GAME_Q3 || !valid_policy(&query->policy)
+        || !valid_policy(&query->policy) || query->policy.behavior->contents_format != QA_GAME_Q3
         || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
         || (transformed && (!qa_vec_finite(query->target.origin) || !qa_vec_finite(query->target.angles)))
         || (unsigned)query->shape.kind > QA_SHAPE_CAPSULE
@@ -472,7 +472,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
 bool qa_collision_trace_q3_box(const qa_trace_query *query, qa_bounds bounds, bool transformed,
                                qa_trace_result *out, qa_error *error)
 {
-    if (query == NULL || out == NULL || query->policy.family != QA_GAME_Q3 || !valid_policy(&query->policy))
+    if (query == NULL || out == NULL || !valid_policy(&query->policy) || query->policy.behavior->contents_format != QA_GAME_Q3)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 box trace query");
     return qa_q3_trace_box_source(query, bounds, transformed, out, error);
 }

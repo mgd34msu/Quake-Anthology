@@ -276,7 +276,7 @@ static bool graph_resource(application_bots_npc *owner,npc_graph *graph,qa_error
 bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,qa_error *error)
 {
     qa_nav_profile profile={.movement=owner->movement,.shape={QA_SHAPE_BOX,graph->bounds},
-        .policy={.family=QA_GAME_Q1,.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
+        .policy={.behavior = &qa_trace_behaviors[QA_RULESET_NETQUAKE],.q1_hull=-1},.maximum_step=18,.minimum_floor_normal=.7f,
         .maximum_drop=18,.monster=true,.capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|
             QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)};
     qa_navigation_services services=application_npc_services(owner);

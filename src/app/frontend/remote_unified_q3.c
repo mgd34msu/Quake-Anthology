@@ -161,7 +161,7 @@ static bool trace(void *context, const q3n_frame *f, qa_vec3 start, qa_vec3 end,
     if (f->unified_effects != &b->source || !effect_current(&b->source))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified Q3 trace lost its entered CLIENT");
     qa_trace_query q = {.start=start,.end=end,.shape={.kind=QA_SHAPE_BOX,.bounds=bounds},
-        .policy={.family=QA_GAME_Q3,.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true},.pass_actor=b->source.actor};
+        .policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.contents_mask=qa_collision_contents_mask(mask,QA_GAME_Q3),.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
     return g && qa_collision_trace(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,out,e) && effect_current(&b->source);
 }
@@ -170,7 +170,7 @@ static bool contents(void *context, const q3n_frame *f, qa_vec3 point, int32_t p
     unified_q3_bank *b = context; (void)pass;
     if (f->unified_effects != &b->source || !effect_current(&b->source)) return false;
     qa_point_contents result; qa_point_query q = {.point=point,
-        .policy={.family=QA_GAME_Q3,.curves=true},.pass_actor=b->source.actor};
+        .policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q3],.curves=true},.pass_actor=b->source.actor};
     qa_collision_geometry *g = (qa_collision_geometry *)frontend_remote_unified_geometry(b->owner->replica);
     if (!g || !qa_collision_point_contents(g,frontend_remote_unified_presentation_trace_scratch(b->owner->replica),&q,&result,e) || !effect_current(&b->source)) return false;
     *out=(uint32_t)qa_collision_point_contents_export(result.contents,QA_GAME_Q3,result.q1_opaque_token); return true;

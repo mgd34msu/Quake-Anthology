@@ -214,12 +214,11 @@ static bool source_current_observe(void *context, const frontend_remote_predicti
         source->configuration.input.has_source_punch_angles!=now.configuration.input.has_source_punch_angles ||
         !vector_equal(source->configuration.input.source_punch_angles,now.configuration.input.source_punch_angles) ||
         source->configuration.input.has_trace_policy!=now.configuration.input.has_trace_policy ||
-        source->configuration.input.trace_policy.family!=now.configuration.input.trace_policy.family ||
+        source->configuration.input.trace_policy.behavior!=now.configuration.input.trace_policy.behavior ||
         !qa_collision_bits_equal(source->configuration.input.trace_policy.contents_mask,
             now.configuration.input.trace_policy.contents_mask) ||
         source->configuration.input.trace_policy.q1_move!=now.configuration.input.trace_policy.q1_move ||
         source->configuration.input.trace_policy.q1_hull!=now.configuration.input.trace_policy.q1_hull ||
-        source->configuration.input.trace_policy.q2_merged_contents!=now.configuration.input.trace_policy.q2_merged_contents ||
         source->configuration.input.trace_policy.curves!=now.configuration.input.trace_policy.curves ||
         source->configuration.input.trace_policy.player_curve_clip!=now.configuration.input.trace_policy.player_curve_clip) return false;
     bool current=source->settings_owner==now.settings_owner && source->geometry==now.geometry && source->scene.snapshot==now.scene.snapshot &&

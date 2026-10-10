@@ -57,7 +57,7 @@ static bool graph_fields(qa_source_save_io *io,application_bots_npc *owner,npc_g
     if(!view || !view->profile.monster || view->profile.movement.kind!=owner->movement.kind ||
        memcmp(&view->profile.shape.bounds,&graph->bounds,sizeof(graph->bounds)) ||
        view->profile.maximum_step!=18 || view->profile.maximum_drop!=18 ||
-       view->profile.minimum_floor_normal!=.7f || view->profile.policy.family!=QA_GAME_Q1 ||
+       view->profile.minimum_floor_normal!=.7f || view->profile.policy.behavior->contents_format!=QA_GAME_Q1 ||
        view->profile.policy.q1_hull!=-1 || view->profile.capabilities!=
         (QA_NAV_CAPABILITY(QA_NAV_WALK)|QA_NAV_CAPABILITY(QA_NAV_DROP)|QA_NAV_CAPABILITY(QA_NAV_SWIM)))
         return fail(io,"Monster graph is not its genuine source walking profile");

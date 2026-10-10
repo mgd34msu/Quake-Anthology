@@ -621,7 +621,7 @@ bool q2_entity_radius(qa_q2_game *g, q2_actor *a, qa_actor_id credit, float amou
         .distance_scale = .5f,
         .self_scale = .5f,
         .knockback_scale = 1,
-        .trace = {.family = QA_GAME_Q2, .contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2)},
+        .trace = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC], .contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2)},
         .check_visibility = true};
     r.context = g;
     r.prepare = q2_prepare_radius_damage;

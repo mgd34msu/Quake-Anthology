@@ -72,7 +72,8 @@ static qa_trace_policy ph_policy(const qa_physics_properties *props, uint32_t ma
     policy.contents_mask = qa_collision_contents_mask(mask,props->family);
     policy.q1_move = move;
     policy.q1_hull = -1;
-    policy.q2_merged_contents = props->q2_rerelease;
+    policy.behavior = &qa_trace_behaviors[props->family == QA_GAME_Q2 && props->q2_rerelease ?
+        QA_RULESET_Q2_RERELEASE : qa_collision_source_rules(props->family)];
     policy.curves = policy.player_curve_clip = true;
     return policy;
 }

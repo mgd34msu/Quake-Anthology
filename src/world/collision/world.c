@@ -4,12 +4,7 @@
 
 qa_collision_trace_rules qa_collision_rules(const qa_trace_policy *policy)
 {
-    if (policy != NULL && policy->family == QA_GAME_Q3)
-        return (qa_collision_trace_rules){{0.125f, true, false, true, true},
-            {0.125f, 1, false}, true};
-    bool rerelease = policy != NULL && policy->family == QA_GAME_Q2 && policy->q2_merged_contents;
-    return (qa_collision_trace_rules){{0.03125f, rerelease, rerelease, rerelease,
-        policy != NULL && policy->family != QA_GAME_Q1}, {0.03125f, 0, true}, false};
+    return (policy ? policy->behavior : &qa_trace_behaviors[QA_RULESET_NETQUAKE])->trace;
 }
 
 bool qa_collision_trace_brush(void *context, qa_collision_side_distances_fn distances,
@@ -189,7 +184,7 @@ static bool skip_owner(const qa_world *world,const qa_trace_query *query,const q
     qa_actor_id actor=query->pass_actor;
     if(actor.registry==0) return false;
     if(qa_actor_id_equal(actor,id)) return true;
-    if(query->policy.family==QA_GAME_Q3 && pass!=NULL && pass->has_q3_owner && candidate->has_q3_owner) {
+    if(query->policy.behavior->owner_pairs && pass!=NULL && pass->has_q3_owner && candidate->has_q3_owner) {
         const qa_actor_record *pass_record=qa_actors_get(world->actors,actor);
         const qa_actor_record *candidate_record=qa_actors_get(world->actors,id);
         if(pass_record!=NULL && candidate_record!=NULL && pass_record->owner==candidate_record->owner) {
@@ -199,7 +194,7 @@ static bool skip_owner(const qa_world *world,const qa_trace_query *query,const q
     }
     if(owner_matches_actor(world->actors,candidate->owner,actor)) return true;
     if(pass==NULL || !qa_actor_reference_present(pass->owner)) return false;
-    return query->policy.family==QA_GAME_Q3?
+    return query->policy.behavior->owner_pairs?
         owners_match(world->actors,pass->owner,candidate->owner):owner_matches_actor(world->actors,pass->owner,id);
 }
 
@@ -228,10 +223,10 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     if(!qa_collision_trace(world->geometry,world->trace_scratch,query,&result,error)) return false;
     qa_world_trace_merge merge=world->query_rules.merge;
     if(query->target.inline_model || (merge==QA_WORLD_MERGE_SERVER && (result.all_solid
-        || (query->policy.family==QA_GAME_Q3 && result.fraction==0.0f)))) { *out=result; return true; }
+        || (query->policy.behavior->owner_pairs && result.fraction==0.0f)))) { *out=result; return true; }
     if(merge==QA_WORLD_MERGE_QW_CLIENT) {
         qa_trace_result first=result;
-        result=(qa_trace_result){.family=query->policy.family,.fraction=1,.end=query->end};
+        result=(qa_trace_result){.family=query->policy.behavior->contents_format,.fraction=1,.end=query->end};
         if(first.start_solid) first.fraction=0;
         if(first.fraction<result.fraction) result=first;
     }
@@ -240,22 +235,22 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     const qa_actor_collision *pass=qa_world_get_collision(world,query->pass_actor,&pass_collision,&local)?&pass_collision:NULL;
     if(local.code!=QA_OK) { if(error!=NULL) *error=local; return false; }
     bool pass_has_width=false;
-    if(query->policy.family==QA_GAME_Q1 && pass!=NULL) {
+    if(query->policy.behavior->hull_boxes && pass!=NULL) {
         qa_body_state body;
         if(!qa_world_body_read(world,query->pass_actor,&body,error)) return false;
         pass_has_width=body.bounds.maxs.x!=body.bounds.mins.x;
     }
     qa_trace_query broad=*query;
     const qa_trace_shape missile={QA_SHAPE_BOX,{{-15,-15,-15},{15,15,15}}};
-    if(query->policy.family==QA_GAME_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE) broad.shape=missile;
+    if(query->policy.behavior->hull_boxes && query->policy.q1_move==QA_Q1_MOVE_MISSILE) broad.shape=missile;
     qa_world_actor_snapshot candidates;
     const qa_actor_id *actors; size_t count;
     qa_bounds query_bounds=swept_bounds(&broad);
     if(!query_candidates(world,query_bounds,&candidates,&actors,&count,error)) return false;
     qa_bounds body_query_bounds=query_bounds;
-    if(query->policy.family==QA_GAME_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE)
+    if(query->policy.behavior->hull_boxes && query->policy.q1_move==QA_Q1_MOVE_MISSILE)
         body_query_bounds=qa_bounds_union(body_query_bounds,swept_bounds(query));
-    const bool occupancy_replaces=query->policy.family!=QA_GAME_Q3;
+    const bool occupancy_replaces=query->policy.behavior->occupancy_replaces;
     bool ok=true;
     for(size_t i=0;i<count;++i) {
         qa_actor_id id=actors[i];
@@ -274,8 +269,8 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
             if(skip_owner(world,query,&collision,id,pass)) continue;
         } else if(query->pass_source.kind==QA_ACTOR_REFERENCE_NONE
             && qa_actor_id_equal(query->pass_actor,id)) continue;
-        if(query->policy.family==QA_GAME_Q1 && collision.q1_corpse && has_volume(query->shape)) continue;
-        if(query->policy.family==QA_GAME_Q1 && query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS && !collision.inline_model) continue;
+        if(query->policy.behavior->hull_boxes && collision.q1_corpse && has_volume(query->shape)) continue;
+        if(query->policy.behavior->hull_boxes && query->policy.q1_move==QA_Q1_MOVE_NO_MONSTERS && !collision.inline_model) continue;
         qa_collision_bits contents=merge==QA_WORLD_MERGE_QW_CLIENT && !collision.inline_model
             ?qa_collision_bit(QA_CONTENT_SOLID):qa_world_actor_contents(&collision);
         const bool q3_all_solid=merge==QA_WORLD_MERGE_Q3_CLIENT && result.all_solid;
@@ -289,7 +284,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
             query->shape.kind!=QA_SHAPE_CAPSULE && qa_bounds_valid(state.bounds) &&
             !qa_bounds_overlap(body_query_bounds,qa_bounds_translate(state.bounds,state.origin))) continue;
         qa_trace_query moving=*query;
-        if(query->policy.family==QA_GAME_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE && collision.monster) moving.shape=missile;
+        if(query->policy.behavior->hull_boxes && query->policy.q1_move==QA_Q1_MOVE_MISSILE && collision.monster) moving.shape=missile;
         qa_trace_result hit;
         if(collision.inline_model) {
             moving.target=(qa_collision_target){true,collision.model,state.origin,state.angles,
@@ -324,11 +319,11 @@ bool qa_world_trace(qa_world *world,const qa_trace_query *query,qa_trace_result 
 bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_point_contents *out,qa_error *error)
 {
     if(world==NULL || query==NULL || out==NULL
-        || (query->q3_server_entities && query->policy.family!=QA_GAME_Q3))
+        || (query->q3_server_entities && (!query->policy.behavior || !query->policy.behavior->owner_pairs)))
         return fail(error,QA_ERROR_ARGUMENT,"Invalid shared contents query");
     qa_point_contents result;
     if(!qa_collision_point_contents(world->geometry,world->trace_scratch,query,&result,error)) return false;
-    if(query->target.inline_model || query->policy.family==QA_GAME_Q1) { *out=result; return true; }
+    if(query->target.inline_model || query->policy.behavior->hull_boxes) { *out=result; return true; }
     qa_world_actor_snapshot candidates;
     const qa_actor_id *actors; size_t count;
     if(!query_candidates(world,(qa_bounds){query->point,query->point},&candidates,&actors,&count,error)) return false;
@@ -367,14 +362,14 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
             if(result.family==QA_GAME_Q2 && world->query_rules.brush_contents_only) {
                 result.stored=qa_collision_bits_union(result.stored,sample.stored);
                 result.merged=qa_collision_bits_union(result.merged,sample.merged);
-                result.contents=query->policy.q2_merged_contents?result.merged:result.stored;
+                result.contents=query->policy.behavior->merged_contents?result.merged:result.stored;
                 continue;
             }
             if(world->query_rules.merge==QA_WORLD_MERGE_Q3_CLIENT) {
                 result.stored=qa_collision_bits_union(result.stored,sample.stored);
                 result.merged=qa_collision_bits_union(result.merged,sample.merged);
             }
-            added=sample.family==QA_GAME_Q2?(query->policy.q2_merged_contents?sample.merged:sample.stored):sample.contents;
+            added=sample.family==QA_GAME_Q2?(query->policy.behavior->merged_contents?sample.merged:sample.stored):sample.contents;
         } else {
             qa_vec3 point=qa_vec_sub(query->point,state.origin);
             bool source_temporary=query->q3_server_entities && collision.family==QA_GAME_Q3;
@@ -388,7 +383,7 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
             if(!qa_bounds_contains(state.bounds,point)) continue;
             added=source_temporary?qa_collision_bit(QA_CONTENT_BODY):qa_world_actor_contents(&collision);
         }
-        if(result.family==QA_GAME_Q2) { result.stored=qa_collision_bits_union(result.stored,added); result.merged=qa_collision_bits_union(result.merged,added); result.contents=query->policy.q2_merged_contents?result.merged:result.stored; }
+        if(result.family==QA_GAME_Q2) { result.stored=qa_collision_bits_union(result.stored,added); result.merged=qa_collision_bits_union(result.merged,added); result.contents=query->policy.behavior->merged_contents?result.merged:result.stored; }
         else result.contents=qa_collision_bits_union(result.contents,added);
     }
     qa_world_snapshot_release(&candidates);

@@ -466,7 +466,7 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     result.in_open=environment.in_open; result.in_water=environment.in_water;
     result.plane=qa_collision_make_plane(qa_collision_pose_normal(qto(plane.normal),&query->target,query->target.inline_model,basis),(float)plane.distance,3);
     result.contact_plane=result.plane; result.contact_plane.distance+=qa_vec_dot(result.plane.normal,origin);
-    result.contact=fraction<1 && (query->policy.family==QA_GAME_Q1 || !all_solid);
+    result.contact=fraction<1 && (query->policy.behavior->hull_boxes || !all_solid);
     result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;
     result.contents=contents.bits; result.q1_opaque_token=contents.opaque_token; *out=result; return true;
 }
@@ -524,7 +524,7 @@ static bool q1_trace(const void *opaque,void *workspace,const qa_trace_query *qu
     if(!select_model(state,&query->target,&model,&origin,basis,error)) return false;
     qa_bounds bounds=query->shape.kind==QA_SHAPE_POINT?hull_bounds[0]:query->shape.bounds;
     int32_t hull_index=query->shape.kind==QA_SHAPE_POINT?0:-1;
-    if(query->policy.family==QA_GAME_Q1) {
+    if(query->policy.behavior->hull_boxes) {
         if(query->policy.q1_hull>=0) hull_index=query->policy.q1_hull;
         else if(query->shape.kind==QA_SHAPE_BOX) {
             float width=bounds.maxs.x-bounds.mins.x;

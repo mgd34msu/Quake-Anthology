@@ -582,10 +582,10 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP)|QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP)|QA_NAV_CAPABILITY(QA_NAV_GRAPPLE),
         .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
     profile.crouched_shape.bounds.maxs.z=fminf(graph->bounds.maxs.z,16);
-    profile.policy=(qa_trace_policy){.family=graph->profile.kind==QA_RULESET_Q3?QA_GAME_Q3:
-        graph->profile.kind==QA_RULESET_NETQUAKE || graph->profile.kind==QA_RULESET_QUAKEWORLD?QA_GAME_Q1:QA_GAME_Q2,
+    profile.policy=(qa_trace_policy){.behavior = &qa_trace_behaviors[qa_collision_source_rules(graph->profile.kind==QA_RULESET_Q3?QA_GAME_Q3:
+        graph->profile.kind==QA_RULESET_NETQUAKE || graph->profile.kind==QA_RULESET_QUAKEWORLD?QA_GAME_Q1:QA_GAME_Q2)],
         .q1_hull=-1,.curves=true,.player_curve_clip=true};
-    profile.policy.contents_mask=qa_collision_contents_mask(0x2010001,profile.policy.family);
+    profile.policy.contents_mask=qa_collision_contents_mask(0x2010001,profile.policy.behavior->contents_format);
     qa_nav_map map={.name=bots->application->current_map,.format=bots->geometry.format};
     qa_navigation_services services=application_bot_navigation_services(bots);
     services.topology_geometry_only=true;

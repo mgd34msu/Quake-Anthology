@@ -143,7 +143,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
         end.z = (end.z + -4096);
         qa_trace_query query = {.start = start, .end = end, .pass_actor = actor,
             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
-            .policy = {.family = QA_GAME_Q3, .contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3), .curves = true}};
+            .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q3], .contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3), .curves = true}};
         qa_trace_result trace;
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return q3_rollback_spawn(game, actor, error);

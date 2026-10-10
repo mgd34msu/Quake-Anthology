@@ -221,7 +221,8 @@ static bool point_contents(qa_native_host *host, qa_native_address address,
         return false;
     qa_point_query query = {.point = point,
                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
-    query.policy.q2_merged_contents = host->profile != QA_NATIVE_Q2_GAME_API3;
+    query.policy.behavior = &qa_trace_behaviors[host->profile != QA_NATIVE_Q2_GAME_API3 ?
+        QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC];
     qa_point_contents contents;
     if (!qa_world_point_contents(host->world.world, &query, &contents, error))
         return false;

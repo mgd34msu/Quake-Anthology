@@ -431,7 +431,7 @@ rerelease fragment checks also exercise repeated preparation and blocked retry
 turns. This is native transport/channel proof; the application was not launched
 and no new `qfiles/qa-c` was installed for this slice.
 
-## Collision policy and remaining cvar callers: THE-3177
+## Collision policy and remaining cvar callers: TA-3177
 
 The packet-policy slice uses retained common handles in
 `src/app/frontend/network.c:173,353` for Q3 query/status, authorization,
@@ -453,5 +453,13 @@ Existing continuation tags stay 1..3 through the one boundary codec in
 `src/persistence/source_io.c:111`; physics, contacts, world collisions,
 portal claims, recipe portals and remote prediction use that codec. The
 existing movement-result core check protects those stable tag values.
-Caller trace behavior is the remaining policy step; this section does not
-yet claim that step is complete.
+Caller trace behavior is bound through the immutable `qa_trace_behaviors` table
+in `src/world/collision/contents.c:4`. The policy carries its descriptor,
+contents mask and query options; the per-query family selector and rerelease
+boolean are deleted. Movement, gameplay queries, bot navigation, native hosts
+and prediction select the descriptor at their policy boundary. The shared
+world/body path reads hull/box, ownership and merge behavior directly; native
+contents formats remain boundary annotations. The existing serialized family
+and merged-contents fields still reconstruct the descriptor on restore.
+The normal build and seven core suites pass. This slice does not claim a
+new live combined-mode or legacy-protocol round trip.

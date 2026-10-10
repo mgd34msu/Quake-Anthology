@@ -116,7 +116,7 @@ static bool raw_store(control_frame *frame,uint8_t *bytes,const qa_movement_resu
         qa_trace_query query={.start=origin,.end=qa_v3(origin.x,origin.y,origin.z-.25f),
             .shape={.kind=QA_SHAPE_BOX,.bounds=result->bounds},.pass_actor=result->actor,
             .policy=qa_collision_default_policy(QA_GAME_Q2)};
-        query.policy.q2_merged_contents=true;
+        query.policy.behavior=&qa_trace_behaviors[QA_RULESET_Q2_RERELEASE];
         qa_trace_result trace;
         if(!qa_world_trace(frame->client.engine->world,&query,&trace,error)) return false;
         if(trace.hit!=result->ground.hit || (trace.hit==QA_TRACE_HIT_ACTOR&&!qa_actor_id_equal(trace.actor,result->ground.actor)))

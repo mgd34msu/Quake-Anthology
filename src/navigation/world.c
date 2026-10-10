@@ -9,7 +9,7 @@ bool nav_profile_valid(const qa_nav_profile *p, qa_error *e) {
     qa_game_family family = p->movement.kind <= QA_RULESET_QUAKEWORLD     ? QA_GAME_Q1
                                  : p->movement.kind <= QA_RULESET_Q2_RERELEASE ? QA_GAME_Q2
                                                                                 : QA_GAME_Q3;
-    if (p->policy.family != family)
+    if (p->policy.behavior->contents_format != family)
         goto invalid;
     const qa_trace_shape *shapes[] = {&p->shape, &p->crouched_shape};
     for (unsigned i = 0; i < (p->has_crouched_shape ? 2u : 1u); ++i) {

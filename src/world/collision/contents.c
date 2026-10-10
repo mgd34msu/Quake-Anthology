@@ -1,5 +1,13 @@
 #include "internal.h"
 
+const qa_trace_behavior qa_trace_behaviors[QA_RULESET_Q3 + 1] = {
+    [QA_RULESET_NETQUAKE] = {QA_GAME_Q1, {{.03125f, false, false, false, false}, {.03125f, 0, true}, false}, true, false, false, true, false},
+    [QA_RULESET_QUAKEWORLD] = {QA_GAME_Q1, {{.03125f, false, false, false, false}, {.03125f, 0, true}, false}, true, false, false, true, false},
+    [QA_RULESET_Q2_CLASSIC] = {QA_GAME_Q2, {{.03125f, false, false, false, true}, {.03125f, 0, true}, false}, false, true, false, true, false},
+    [QA_RULESET_Q2_RERELEASE] = {QA_GAME_Q2, {{.03125f, true, true, true, true}, {.03125f, 0, true}, false}, false, true, false, true, true},
+    [QA_RULESET_Q3] = {QA_GAME_Q3, {{.125f, true, false, true, true}, {.125f, 1, false}, true}, false, false, true, false, false}
+};
+
 const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1] = {
     [QA_RULESET_NETQUAKE] = {false, false, false},
     [QA_RULESET_QUAKEWORLD] = {false, false, false},
@@ -53,9 +61,10 @@ qa_bounds qa_collision_link_bounds(qa_bounds bounds, qa_vec3 origin, qa_vec3 ang
 
 qa_trace_policy qa_collision_default_policy(qa_game_family family)
 {
-    return (qa_trace_policy){.family=family,
+    if ((unsigned)family > QA_GAME_Q3) return (qa_trace_policy){0};
+    return (qa_trace_policy){.behavior = &qa_trace_behaviors[qa_collision_source_rules(family)],
         .contents_mask=qa_collision_contents_mask(UINT32_MAX,family),
-        .q1_move=QA_Q1_MOVE_NORMAL,.q1_hull=-1,.q2_merged_contents=false,
+        .q1_move=QA_Q1_MOVE_NORMAL,.q1_hull=-1,
         .curves=true,.player_curve_clip=true};
 }
 
@@ -63,7 +72,7 @@ qa_trace_policy qa_collision_default_policy(qa_game_family family)
  * differ: Q1's axial plane, Q2's named surface and rerelease second plane. */
 void qa_collision_adapt_trace(qa_trace_result *result,const qa_trace_policy *policy)
 {
-    qa_game_family from=result->family,to=policy->family;
+    qa_game_family from=result->family,to=policy->behavior->contents_format;
     if(from==to) return;
     bool sky=from==QA_GAME_Q1 && (
         qa_collision_bits_overlap(result->contents,qa_collision_bit(QA_CONTENT_SKY)) ||
@@ -76,7 +85,7 @@ void qa_collision_adapt_trace(qa_trace_result *result,const qa_trace_policy *pol
         result->plane=qa_collision_make_plane(normal,result->plane.distance,type);
     }
     result->family=to;
-    if(to!=QA_GAME_Q2 || !policy->q2_merged_contents) {
+    if(to!=QA_GAME_Q2 || !policy->behavior->merged_contents) {
         result->has_secondary=false; result->secondary_has_surface=false;
     }
     if(to==QA_GAME_Q1) {
@@ -102,9 +111,9 @@ void qa_collision_adapt_trace(qa_trace_result *result,const qa_trace_policy *pol
 
 void qa_collision_adapt_point(qa_point_contents *result,const qa_trace_policy *policy)
 {
-    if(result->family==policy->family) return;
+    if(result->family==policy->behavior->contents_format) return;
     qa_collision_bits contents=result->family==QA_GAME_Q2?result->merged:result->contents;
-    result->family=policy->family;
+    result->family=policy->behavior->contents_format;
     result->contents=result->stored=result->merged=contents;
 }
 
@@ -156,19 +165,19 @@ static bool trace_q2_box(const qa_trace_query *query,qa_bounds target,qa_vec3 or
 
 bool qa_collision_trace_body(const qa_trace_query *query,qa_game_family actor_family,qa_shape_kind target_kind,qa_bounds target,qa_vec3 origin,qa_collision_bits contents,qa_trace_result *out,qa_error *error)
 {
-    if(query->policy.family==QA_GAME_Q1 && query->shape.kind!=QA_SHAPE_CAPSULE && target_kind!=QA_SHAPE_CAPSULE)
+    if(query->policy.behavior->hull_boxes && query->shape.kind!=QA_SHAPE_CAPSULE && target_kind!=QA_SHAPE_CAPSULE)
         return qa_q1_trace_box(query,target,origin,out,error);
-    if(query->policy.family==QA_GAME_Q2 && query->shape.kind!=QA_SHAPE_CAPSULE && target_kind!=QA_SHAPE_CAPSULE)
+    if(query->policy.behavior->legacy_boxes && query->shape.kind!=QA_SHAPE_CAPSULE && target_kind!=QA_SHAPE_CAPSULE)
         return trace_q2_box(query,target,origin,contents,out);
-    bool native_q3=query->policy.family==QA_GAME_Q3 && actor_family==QA_GAME_Q3;
+    bool native_q3=query->policy.behavior->owner_pairs && actor_family==QA_GAME_Q3;
     qa_trace_query local=*query;
     local.target=(qa_collision_target){0};
     local.policy.contents_mask=native_q3?query->policy.contents_mask:qa_collision_bit(QA_CONTENT_BODY);
     if(!qa_q3_trace_shape(&local,target_kind,target,origin,qa_collision_bit(QA_CONTENT_BODY),out,error)) return false;
     if(!native_q3) {
-        bool occupied=out->fraction<1 || (query->policy.family==QA_GAME_Q1 && out->start_solid);
+        bool occupied=out->fraction<1 || (query->policy.behavior->hull_boxes && out->start_solid);
         out->contents=occupied?contents:(qa_collision_bits){0};
     }
-    if(query->policy.family==QA_GAME_Q1) { out->in_open=!out->all_solid; out->in_water=qa_collision_bits_overlap(out->contents,(qa_collision_bits){56,0}); }
+    if(query->policy.behavior->hull_boxes) { out->in_open=!out->all_solid; out->in_water=qa_collision_bits_overlap(out->contents,(qa_collision_bits){56,0}); }
     qa_collision_adapt_trace(out,&query->policy); return true;
 }

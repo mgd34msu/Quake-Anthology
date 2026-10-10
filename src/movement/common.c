@@ -171,14 +171,13 @@ bool qa_move_same_ground(qa_movement_ground a, qa_movement_ground b) {
 static qa_trace_policy policy(qa_move_context *c, qa_collision_bits mask) {
     qa_game_family f=family(c->state->kind);
     qa_trace_policy p=c->input->has_trace_policy?c->input->trace_policy:qa_collision_default_policy(f);
-    p.family=f; p.contents_mask=mask;
-    if (f==QA_GAME_Q2) p.q2_merged_contents=c->state->kind==QA_RULESET_Q2_RERELEASE;
+    p.behavior=&qa_trace_behaviors[c->state->kind]; p.contents_mask=mask;
     return p;
 }
 static bool trace_query(qa_move_context *c, const qa_trace_query *q, qa_trace_result *out) {
     if (c->failed||c->removed) return false;
     if (!c->services->trace(c->services->context,q,out,c->error)) { c->failed=true; return false; }
-    if (out->family!=q->policy.family || !isfinite(out->fraction) || out->fraction<0 || out->fraction>1 || !qa_vec_finite(out->end))
+    if (out->family!=q->policy.behavior->contents_format || !isfinite(out->fraction) || out->fraction<0 || out->fraction>1 || !qa_vec_finite(out->end))
         return fail(c,"Movement trace returned an invalid family, fraction or position");
     return true;
 }
@@ -201,9 +200,9 @@ bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
         .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,family(c->state->kind))),.pass_actor=c->input->actor};
     qa_point_contents result;
     if (!c->services->point_contents(c->services->context,&q,&result,c->error)) { c->failed=true; return false; }
-    if (result.family!=q.policy.family) return fail(c,"Movement contents returned another collision family");
+    if (result.family!=q.policy.behavior->contents_format) return fail(c,"Movement contents returned another collision family");
     qa_collision_bits selected=result.family==QA_GAME_Q2?
-        (q.policy.q2_merged_contents?result.merged:result.stored):result.contents;
+        (q.policy.behavior->merged_contents?result.merged:result.stored):result.contents;
     *out=qa_collision_point_contents_export(selected,result.family,result.q1_opaque_token);
     return true;
 }

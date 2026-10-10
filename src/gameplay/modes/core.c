@@ -185,7 +185,7 @@ bool mode_visible(qa_modes *m, qa_actor_id a, qa_actor_id b, bool pvs) {
         .start = from.origin,
         .end = to.origin,
         .pass_actor = a,
-        .policy = {.family = QA_GAME_Q2, .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2), .q1_hull = -1}};
+        .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC], .contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2), .q1_hull = -1}};
     qa_trace_result trace;
     return qa_world_trace(m->options.services.world, &query, &trace, NULL) &&
            (trace.fraction == 1 || qa_actor_id_equal(trace.actor, b));

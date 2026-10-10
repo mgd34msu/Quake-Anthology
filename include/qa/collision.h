@@ -10,12 +10,27 @@
 typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa_shape_kind;
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
 typedef enum qa_q1_move_kind { QA_Q1_MOVE_NORMAL, QA_Q1_MOVE_NO_MONSTERS, QA_Q1_MOVE_MISSILE } qa_q1_move_kind;
+typedef struct qa_collision_brush_rules {
+    float epsilon;
+    bool clamp_fractions, secondary_plane, zero_all_solid, zero_stationary;
+} qa_collision_brush_rules;
+typedef struct qa_collision_tree_rules { float epsilon, margin; bool reciprocal; } qa_collision_tree_rules;
+typedef struct qa_collision_trace_rules {
+    qa_collision_brush_rules brush;
+    qa_collision_tree_rules tree;
+    bool conservative_extent;
+} qa_collision_trace_rules;
+typedef struct qa_trace_behavior {
+    qa_game_family contents_format; /* Native output boundary, not a second family identity. */
+    qa_collision_trace_rules trace;
+    bool hull_boxes, legacy_boxes, owner_pairs, occupancy_replaces, merged_contents;
+} qa_trace_behavior;
+extern const qa_trace_behavior qa_trace_behaviors[QA_RULESET_Q3 + 1];
 typedef struct qa_trace_policy {
-    qa_game_family family;
+    const qa_trace_behavior *behavior;
     qa_collision_bits contents_mask;
     qa_q1_move_kind q1_move;
     int32_t q1_hull; /* -1 selects the Q1 box hull from its X width. */
-    bool q2_merged_contents; /* Q2 rerelease leaf and brush-clip rules. */
     bool curves, player_curve_clip;
 } qa_trace_policy;
 typedef struct qa_collision_target {

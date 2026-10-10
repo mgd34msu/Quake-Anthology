@@ -1343,7 +1343,12 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
 {
     qa_movement_input *in = &v->input;
     uint32_t shape = in->shape.kind, solid = in->q1_solid;
-    uint32_t family = qa_persistence_family_tag(in->trace_policy.family), move = in->trace_policy.q1_move;
+    const qa_trace_behavior *behavior = in->trace_policy.behavior ? in->trace_policy.behavior :
+        &qa_trace_behaviors[QA_RULESET_NETQUAKE];
+    uint32_t family = io->direction == QA_SOURCE_SAVE_READ ? 0 :
+        qa_persistence_family_tag(behavior->contents_format);
+    bool merged = io->direction != QA_SOURCE_SAVE_READ && behavior->merged_contents;
+    uint32_t move = in->trace_policy.q1_move;
     uint32_t clock = v->clock.kind, rounding = v->numeric.rounding;
     uint32_t prediction_rounding = v->prediction_numeric.rounding;
     if (in->q2r_pml_origin || !qa_source_save_string(io, &v->movement) ||
@@ -1379,7 +1384,7 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_u64(io, &in->trace_policy.contents_mask.hi) ||
         !qa_source_save_u32(io, &move) || move > QA_Q1_MOVE_MISSILE ||
         !qa_source_save_i32(io, &in->trace_policy.q1_hull) ||
-        !qa_source_save_bool(io, &in->trace_policy.q2_merged_contents) ||
+        !qa_source_save_bool(io, &merged) ||
         !qa_source_save_bool(io, &in->trace_policy.curves) ||
         !qa_source_save_bool(io, &in->trace_policy.player_curve_clip) ||
         !qa_source_save_bool(io, &in->has_trace_policy) ||
@@ -1395,7 +1400,9 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     v->numeric.rounding = (qa_numeric_rounding)rounding;
     v->prediction_numeric.rounding = (qa_numeric_rounding)prediction_rounding;
     in->shape.kind = (qa_shape_kind)shape; in->q1_solid = (qa_q1_solid)solid;
-    in->trace_policy.family = qa_persistence_family_from_tag(family);
+    qa_game_family contents_format = qa_persistence_family_from_tag(family);
+    in->trace_policy.behavior = &qa_trace_behaviors[contents_format == QA_GAME_Q2 && merged ?
+        QA_RULESET_Q2_RERELEASE : qa_collision_source_rules(contents_format)];
     in->trace_policy.q1_move = (qa_q1_move_kind)move;
     return v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
         v->prediction_numeric.native_c && v->prediction_numeric.id &&

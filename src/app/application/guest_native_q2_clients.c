@@ -188,7 +188,7 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     qa_vec3 origin=qa_movement_origin(&out->state);
     qa_point_query query={.point=qa_v3(origin.x,origin.y,origin.z+body.bounds.mins.z+1.f),
         .policy=qa_collision_default_policy(QA_GAME_Q2),.pass_actor=actor};
-    query.policy.q2_merged_contents=!classic;
+    query.policy.behavior=&qa_trace_behaviors[classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE];
     qa_point_contents contents;
     if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
     int32_t native_contents=qa_collision_point_contents_export(contents.contents,QA_GAME_Q2,contents.q1_opaque_token);

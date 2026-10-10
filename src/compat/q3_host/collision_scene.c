@@ -376,7 +376,7 @@ static bool skip(const qa_q3_host_collision_scene *scene, const collision_row *r
 bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trace_query *query,
     qa_trace_result *out, qa_error *error)
 {
-    if (!scene || !query || !out || scene->readers || query->policy.family != QA_GAME_Q3 ||
+    if (!scene || !query || !out || scene->readers || !query->policy.behavior || query->policy.behavior->contents_format != QA_GAME_Q3 ||
         !qa_vec_finite(query->start) || !qa_vec_finite(query->end) ||
         (query->pass_actor.registry && !qa_actors_get(qa_session_actors(scene->host->options.session), query->pass_actor)))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "CG acoustic trace requires its actual listener and finite query");
@@ -387,7 +387,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
     if (ok && !cached.view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_trace_query q = *query;
     q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3};
-    q.policy.family = QA_GAME_Q3;
+    q.policy.behavior = &qa_trace_behaviors[QA_RULESET_Q3];
     if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, scene->scratch, &q, 0, false, &result, error);
     result.hit = result.fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
     result.actor = (qa_actor_id){0};
@@ -439,7 +439,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
 bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, const qa_point_query *query,
     qa_point_contents *out, qa_error *error)
 {
-    if (!scene || !query || !out || scene->readers || query->policy.family != QA_GAME_Q3 ||
+    if (!scene || !query || !out || scene->readers || !query->policy.behavior || query->policy.behavior->contents_format != QA_GAME_Q3 ||
         !qa_vec_finite(query->point) || (query->pass_actor.registry &&
         !qa_actors_get(qa_session_actors(scene->host->options.session), query->pass_actor)))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "CG contents query needs its actual held scene");
@@ -449,7 +449,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
     qa_point_contents result = {0};
     if (ok && !cached.view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_point_query q = *query;
-    q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3}; q.policy.family = QA_GAME_Q3;
+    q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3}; q.policy.behavior = &qa_trace_behaviors[QA_RULESET_Q3];
     if (ok) ok = qa_collision_point_contents(cached.view.geometry, scene->scratch, &q, &result, error);
     for (size_t i = 0; ok && i < cached.view.solid_count; ++i) {
         const collision_row *row = cached.rows + i;

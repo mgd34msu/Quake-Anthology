@@ -6,9 +6,8 @@ bool q2_player_trace(qa_q2_game *g, qa_actor_id pass, qa_vec3 start, qa_vec3 end
                         .end = end,
                         .pass_actor = pass,
                         .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
-                        .policy = {.family = QA_GAME_Q2,
-                                   .contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2),
-                                   .q2_merged_contents = g->options.edition == QA_Q2_RERELEASE}};
+                        .policy = {.behavior = &qa_trace_behaviors[(g->options.edition == QA_Q2_RERELEASE) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                                   .contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2)}};
     if (bounds)
         q.shape.bounds = *bounds;
     return qa_world_trace(g->services.world, &q, out, e);
@@ -345,8 +344,7 @@ static bool coop_trace(qa_q2_game *g, qa_actor_id player, qa_vec3 origin, qa_bou
                             .end = origin,
                             .pass_actor = player,
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
-                            .policy = {.family = QA_GAME_Q2,
-                                       .q2_merged_contents = true,
+                            .policy = {.behavior = &qa_trace_behaviors[(true) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
                                        .contents_mask = qa_collision_contents_mask(excluded ? 0x2010003 : 0x42010003, QA_GAME_Q2)}};
     return excluded ? qa_world_trace_excluding(g->services.world, &query, excluded->ids,
                                                excluded->count, hit, e)
@@ -369,9 +367,8 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
             body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
         if (!qa_world_point_contents(g->services.world,
                                      &(qa_point_query){.point = center,
-                                                       .policy = {.family = QA_GAME_Q2,
-                                                                  .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2),
-                                                                  .q2_merged_contents = true}},
+                                                       .policy = {.behavior = &qa_trace_behaviors[(true) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                                                                  .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2)}},
                                      &contents, e))
             return false;
         if (qa_collision_point_contents_export(contents.merged, QA_GAME_Q2, contents.q1_opaque_token) & 56)

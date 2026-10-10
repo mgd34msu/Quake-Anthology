@@ -399,7 +399,7 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
         q3_position_visit visit = {&work, 0};
         q3_visit_box(map, scratch, bounds, q3_position_leaf, &visit);
     } else q3_trace_tree(&work);
-    if (query->policy.family == QA_GAME_Q1) q3_trace_media(&work, model);
+    if (query->policy.behavior->hull_boxes) q3_trace_media(&work, model);
     if (rotated && work.result.fraction != 1)
         work.result.plane.normal = qa_collision_pose_normal(work.result.plane.normal, &query->target, true, basis);
     q3_finish_trace(query, &work.result);

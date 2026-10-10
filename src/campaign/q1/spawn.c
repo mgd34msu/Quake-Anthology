@@ -154,7 +154,7 @@ static bool nearby(qa_q1_spawn_selector *selector, qa_actor_id point, float radi
     return true;
 }
 static bool visible(qa_q1_spawn_selector *selector, qa_actor_id point, bool *out, qa_error *error) {
-    qa_trace_policy policy = {.family = QA_GAME_Q1,
+    qa_trace_policy policy = {.behavior = &qa_trace_behaviors[QA_RULESET_NETQUAKE],
                               .contents_mask = qa_collision_contents_mask(0, QA_GAME_Q1),
                               .q1_move = QA_Q1_MOVE_NO_MONSTERS, .q1_hull = -1};
     qa_body_state spawn;

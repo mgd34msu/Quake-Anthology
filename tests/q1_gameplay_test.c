@@ -641,7 +641,7 @@ static void exiting_body_over_world_hit(void)
             caller == 3 ? QA_GAME_Q3 : QA_GAME_Q2;
         qa_trace_query query = {.start = {0, 0, 24}, .end = {0, 0, -24},
             .shape = {.kind = QA_SHAPE_POINT}, .policy = qa_collision_default_policy(family)};
-        query.policy.q2_merged_contents = caller == 2;
+        if (caller == 2) query.policy.behavior = &qa_trace_behaviors[QA_RULESET_Q2_RERELEASE];
         qa_trace_result hit;
         GAME_CHECK(qa_world_trace(world, &query, &hit, &error));
         GAME_CHECK(hit.start_solid && !hit.all_solid);

@@ -127,7 +127,7 @@ static bool hazard(qa_q2_game *g, qa_actor_id id, qa_vec3 point, uint32_t mask, 
             g->services.world,
             &(qa_point_query){.point = point,
                               .pass_actor = id,
-                              .policy = {.family = QA_GAME_Q2, .q2_merged_contents = true}},
+                              .policy = {.behavior = &qa_trace_behaviors[(true) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],}},
             &contents, e))
         return false;
     *value = (qa_collision_point_contents_export(contents.merged, QA_GAME_Q2, contents.q1_opaque_token) & (int32_t)mask) != 0;
