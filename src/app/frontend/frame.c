@@ -864,7 +864,8 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
             ok=qa_application_clients_drain(frontend->application,error);
         bool cinematic=!replay && frontend_cinematic_running(frontend);
         if (ok && ready && !qa_application_should_stop(frontend->application) && cinematic) {
-            ok=frontend_platform_drain(frontend,error) && commands(frontend,*playing,!replay,error);
+            ok=platform_collect(frontend,error) && frontend_platform_drain(frontend,error) &&
+                commands(frontend,*playing,!replay,error);
             bool rendered=false;
             /* Playback owns its separate media clock. A console fallback may
              * still draw the frozen GAME scene under this actual host frame. */
