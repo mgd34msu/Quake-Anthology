@@ -7,6 +7,7 @@
 #include "../../network/unified/frame_internal.h"
 #include "guest_q3_components.h"
 #include "qa/application_native_q2_presentation.h"
+#include "qa/application_network.h"
 
 #include <math.h>
 #include <stdlib.h>
