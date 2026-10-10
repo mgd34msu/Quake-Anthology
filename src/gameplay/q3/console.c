@@ -247,9 +247,9 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         }
         char text[64];
         char fields[3][12];
-        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.x), fields[0]);
-        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.y), fields[1]);
-        (void)qa_format_q3_integer(q3_source_float_to_int(body.origin.z), fields[2]);
+        (void)qa_format_q3_integer(qa_source_float_to_i32(body.origin.x), fields[0]);
+        (void)qa_format_q3_integer(qa_source_float_to_i32(body.origin.y), fields[1]);
+        (void)qa_format_q3_integer(qa_source_float_to_i32(body.origin.z), fields[2]);
         int length = snprintf(text, sizeof(text), "(%s %s %s)", fields[0], fields[1], fields[2]);
         if (length >= 32) {
             char warning[80];

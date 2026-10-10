@@ -211,7 +211,7 @@ static bool use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator
         return q3_map_mover_used(game, actor, 0, 2, error);
     }
     if (mover->state_index == 1) {
-        mover->next_think_ms = q3_source_float_to_int(
+        mover->next_think_ms = qa_source_float_to_i32(
             ((float)game->now_ms + mover->wait_ms));
         q3_postgame_nextthink_assigned(game, actor, mover->next_think_ms);
         return true;
@@ -339,7 +339,7 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
             entry = q3_actor_get(game, actor);
             if (!entry)
                 return true;
-            entry->state.mover.next_think_ms = q3_source_float_to_int(
+            entry->state.mover.next_think_ms = qa_source_float_to_i32(
                 /* Reached_BinaryMover assigns ReturnToPos1 as the thinker. */
                 ((float)now + mover.wait_ms));
             q3_postgame_native_think_assigned(game, actor);

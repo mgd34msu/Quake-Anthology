@@ -527,7 +527,7 @@ bool qa_q3_wire_player_view_command(qa_q3_game *game, qa_actor_id actor,
         if (!q3_player_motion_read(game, actor, &motion, error)) { --game->observation_depth; return false; }
         int32_t type = game->wire->clients[slot].foreign_policy.pm_type;
         if (type != 5 && type != 6 &&
-            (type == 2 || q3_source_float_to_int(combat.health) > 0)) {
+            (type == 2 || qa_source_float_to_i32(combat.health) > 0)) {
             int32_t delta[3] = {motion.delta_pitch_word, motion.delta_yaw_word,
                                 motion.delta_roll_word};
             int32_t angles[3];
@@ -647,9 +647,9 @@ static bool player_authority_read(const qa_q3_game *game, uint32_t slot, qa_acto
         !current(game, slot, actor)) return false;
     vector(value->origin, body.origin); vector(value->velocity, body.velocity);
     unsigned shift = game->options.product == QA_Q3_TEAM_ARENA ? 1u : 0u;
-    value->stats[0] = q3_source_float_to_int(combat.health);
+    value->stats[0] = qa_source_float_to_i32(combat.health);
     value->stats[3 + shift] = combat.armor.regular.kind == QA_ARMOR_NONE ? 0
-        : q3_source_float_to_int((float)combat.armor.regular.points);
+        : qa_source_float_to_i32((float)combat.armor.regular.points);
     value->stats[2 + shift] = 0;
     for (unsigned i = 1; i < QA_Q3_WEAPON_COUNT; ++i) {
         double owned;
@@ -719,7 +719,7 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
         .externalEventParm = source.external_event_parameter,
         .externalEventTime = source.external_event_time, .clientNum = source.client_number,
         .weapon = (int32_t)source.weapon, .weaponState = (int32_t)source.weapon_phase,
-        .viewheight = q3_source_float_to_int(motion.view_height),
+        .viewheight = qa_source_float_to_i32(motion.view_height),
         .damageEvent = source.damage_event, .damageYaw = source.damage_yaw,
         .damagePitch = source.damage_pitch, .damageCount = source.damage_count,
         .generic1 = source.generic1, .jumppadEnt = motion.jumppad_entity,
@@ -766,7 +766,7 @@ bool qa_q3_wire_player_read(const qa_q3_game *game, uint32_t slot,
 }
 
 static float snap_component(float value) {
-    return (float)q3_source_float_to_int(value);
+    return (float)qa_source_float_to_i32(value);
 }
 
 static void convert_player(qa_q3_player player, qa_q3_player_state *native,
@@ -863,7 +863,7 @@ static bool link_membership(const qa_q3_game *game, qa_actor_id actor, const qa_
 }
 
 static uint32_t solid_byte(float value) {
-    int32_t integer = q3_source_float_to_int(value);
+    int32_t integer = qa_source_float_to_i32(value);
     return integer < 1 ? 1u : integer > 255 ? 255u : (uint32_t)integer;
 }
 
@@ -1552,9 +1552,9 @@ bool q3_wire_damage(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error
     q3_wire_client *client = &game->wire->clients[attacker_slot];
     qa_q3_player *followed = q3_client_follow_player(game, attacker_slot);
     client->hits = q3_add_time(followed ? followed->persistant[1] : client->hits, same_team ? -1 : 1);
-    int32_t previous_armor = q3_source_float_to_int(
+    int32_t previous_armor = qa_source_float_to_i32(
         (target_client ? (float)combat.armor.regular.points : 0) + armor_saved);
-    client->attackee_armor = word(((uint32_t)q3_source_float_to_int(previous_health) << 8) |
+    client->attackee_armor = word(((uint32_t)qa_source_float_to_i32(previous_health) << 8) |
                                   (uint32_t)previous_armor);
     if (followed) {
         followed->persistant[1] = client->hits;

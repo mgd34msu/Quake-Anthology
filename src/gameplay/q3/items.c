@@ -1079,10 +1079,10 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (spawn.dropped)
         source->free_after_event = true;
     float seconds = spawn.wait_seconds != 0 ? spawn.wait_seconds : call->respawn;
-    int32_t respawn_seconds = q3_source_float_to_int(seconds);
+    int32_t respawn_seconds = qa_source_float_to_i32(seconds);
     if (spawn.random_seconds != 0) {
         float adjusted = ((float)respawn_seconds + (q3_crandom(game) * spawn.random_seconds));
-        respawn_seconds = q3_source_float_to_int(adjusted);
+        respawn_seconds = qa_source_float_to_i32(adjusted);
         if (respawn_seconds < 1)
             respawn_seconds = 1;
     }

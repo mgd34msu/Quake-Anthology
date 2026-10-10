@@ -156,8 +156,8 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
             wire->ground_entity = 1023;
             char warning[160];
             snprintf(warning, sizeof(warning), "SpawnObelisk: noclass startsolid at (%d %d %d)\n",
-                q3_source_float_to_int(start.x), q3_source_float_to_int(start.y),
-                q3_source_float_to_int(start.z));
+                qa_source_float_to_i32(start.x), qa_source_float_to_i32(start.y),
+                qa_source_float_to_i32(start.z));
             q3_map_warn(game, actor, warning);
             body.origin = start;
         } else {

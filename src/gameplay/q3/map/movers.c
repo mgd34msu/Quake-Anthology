@@ -17,7 +17,7 @@ static qa_vec3 with_component(qa_vec3 value, unsigned axis, float amount) {
 }
 
 static int32_t source_milliseconds(float seconds) {
-    return q3_map_float_to_int(seconds * 1000.0f);
+    return qa_source_float_to_i32(seconds * 1000.0f);
 }
 
 static qa_vec3 vector_angles(qa_vec3 direction) {
@@ -206,10 +206,10 @@ static bool bind_mover(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (!wire || !qa_q3_source_actor_slot(game, actor, &source_slot, error))
         return q3_rollback_spawn(game, actor, error);
     if (state->has_light || state->has_color) {
-        int32_t red = q3_source_float_to_int((state->color.x * 255.0f));
-        int32_t green = q3_source_float_to_int((state->color.y * 255.0f));
-        int32_t blue = q3_source_float_to_int((state->color.z * 255.0f));
-        int32_t intensity = q3_source_float_to_int((state->light / 4.0f));
+        int32_t red = qa_source_float_to_i32((state->color.x * 255.0f));
+        int32_t green = qa_source_float_to_i32((state->color.y * 255.0f));
+        int32_t blue = qa_source_float_to_i32((state->color.z * 255.0f));
+        int32_t intensity = qa_source_float_to_i32((state->light / 4.0f));
         if (red > 255) red = 255;
         if (green > 255) green = 255;
         if (blue > 255) blue = 255;
@@ -288,7 +288,7 @@ static qa_q3_mover_definition binary_definition(const qa_q3_map_actor_state *sta
                                                  bool crusher) {
     qa_vec3 move = qa_vec_sub(state->second, state->first);
     float distance = qa_vec_length(move);
-    int32_t duration = q3_map_float_to_int(((distance * 1000.0f) / state->speed));
+    int32_t duration = qa_source_float_to_i32(((distance * 1000.0f) / state->speed));
     if (duration < 1)
         duration = 1;
     return (qa_q3_mover_definition){
@@ -549,7 +549,7 @@ static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
             .type = QA_TRAJECTORY_SINE,
             .base = state->origin,
             .delta = with_component(qa_v3(0, 0, 0), axis, height),
-            .time_ms = q3_map_float_to_int((float)duration * phase),
+            .time_ms = qa_source_float_to_i32((float)duration * phase),
             .duration_ms = duration};
         state->speed = speed;
         state->damage = mover.damage = damage;
@@ -562,12 +562,12 @@ static bool spawn_continuous(qa_q3_game *game, const qa_q3_map_fields *fields,
         float length = fmaxf(8, fabsf(state->bounds.mins.z));
         float frequency = (1.0f / (Q3_PI * 2.0f)) *
                           sqrtf(game->options.rules.gravity / (3.0f * length));
-        int32_t duration = q3_map_float_to_int(1000.0f / frequency);
+        int32_t duration = qa_source_float_to_i32(1000.0f / frequency);
         mover.state.angular = (qa_trajectory){
             .type = QA_TRAJECTORY_SINE,
             .base = state->angles,
             .delta = qa_v3(0, 0, speed),
-            .time_ms = q3_map_float_to_int((float)duration * phase),
+            .time_ms = qa_source_float_to_i32((float)duration * phase),
             .duration_ms = duration};
         state->damage = mover.damage = damage;
     }
@@ -827,7 +827,7 @@ static bool train_reached(qa_q3_game *game, qa_q3_map_actor_state *train,
     if (speed < 1)
         speed = 1;
     qa_vec3 first = next->origin, second = destination->origin;
-    int32_t duration = q3_map_float_to_int(qa_vec_length(qa_vec_sub(second, first)) *
+    int32_t duration = qa_source_float_to_i32(qa_vec_length(qa_vec_sub(second, first)) *
                                            1000.0f / speed);
     native->state.mover.first = first;
     native->state.mover.second = second;

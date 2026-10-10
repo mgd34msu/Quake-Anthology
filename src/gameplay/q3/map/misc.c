@@ -25,7 +25,7 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->kind = QA_Q3_MAP_PORTAL_SURFACE;
     else if (!strcmp(name, "misc_portal_camera")) {
         state->kind = QA_Q3_MAP_PORTAL_CAMERA;
-        state->count = q3_map_float_to_int(((state->roll / 360.0f) * 256.0f));
+        state->count = qa_source_float_to_i32(((state->roll / 360.0f) * 256.0f));
     } else if (!strncmp(name, "shooter_", 8)) {
         state->kind = QA_Q3_MAP_SHOOTER;
         state->usable = true;
@@ -217,7 +217,7 @@ static bool locate_portal(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     camera_wire = q3_wire_entity(game, camera);
     int32_t camera_roll = camera_wire ? camera_wire->client :
-        q3_map_float_to_int(((roll / 360.0f) * 256.0f));
+        qa_source_float_to_i32(((roll / 360.0f) * 256.0f));
     int32_t owner_number = q3_entity_number(game, camera);
     state = q3_map_get(game, surface);
     if (!state || !qa_actors_get(qa_session_actors(game->options.services.session), camera))

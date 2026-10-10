@@ -179,7 +179,7 @@ bool qa_q3_ranking_damage(qa_q3_game *game, const qa_damage_outcome *outcome,
     if ((method >= 14 && method <= 20) || method == 22)
         return true;
     int32_t group = damage_group(method);
-    int32_t damage = q3_source_float_to_int(amount);
+    int32_t damage = qa_source_float_to_i32(amount);
     bool splash = method == 5 || method == 7 || method == 9 || method == 13;
     if ((new_hit && !pair(game, self, 1111020004, 1111020004 + 100 * group, 1, error)) ||
         !pair(game, self, 1111020006, 1111020006 + 100 * group, damage, error) ||

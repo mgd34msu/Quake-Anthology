@@ -311,11 +311,8 @@ bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_ac
     --actions->operations;return ok;
 }
 
-static int32_t source_integer(float value) {
-    return value >= -2147483648.0f && value < 2147483648.0f ? (int32_t)value : INT32_MIN;
-}
 static float angle_mod(float angle) {
-    return (float)((uint32_t)source_integer(angle * (65536.0f / 360.0f)) & 65535u) *
+    return (float)((uint32_t)qa_source_float_to_i32(angle * (65536.0f / 360.0f)) & 65535u) *
            (360.0f / 65536.0f);
 }
 float qa_bot_angle_difference(float angle, float ideal) {
@@ -362,7 +359,7 @@ void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, f
     float velocity[2] = {state->velocity.x, state->velocity.y};
     for (unsigned i = 0; i < 2; ++i) {
         if (challenge) {
-            int32_t integer = source_integer(qa_bot_angle_difference(angles[i], ideals[i]));
+            int32_t integer = qa_source_float_to_i32(qa_bot_angle_difference(angles[i], ideals[i]));
             float difference = integer == INT32_MIN ? (float)INT32_MIN : (float)abs(integer);
             float speed = difference * factor;
             angles[i] = qa_bot_change_angle(angles[i], ideals[i], speed > maximum ? maximum : speed);

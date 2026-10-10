@@ -17,10 +17,6 @@ struct q3_map_runtime {
     qa_actor_id location_head;
 };
 
-static inline int32_t q3_map_float_to_int(float value) {
-    return q3_source_float_to_int(value);
-}
-
 static inline int32_t q3_map_source_schedule(int32_t now, float seconds) {
     return q3_source_float_schedule(now, seconds);
 }

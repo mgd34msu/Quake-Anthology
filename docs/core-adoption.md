@@ -214,6 +214,18 @@ log: `/tmp/qa-normal-q2-float-command-20261010/build.log`. The checkpoint extens
 is source-reviewed, not claimed as a live save/restore round trip. No new
 installation, original-module gameplay or frame-time result is claimed.
 
+## Scalar numeric callers
+
+TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
+`q3_source_float_to_int`, and the `q3_map_float_to_int` alias. Every caller of
+those deleted helpers uses `qa_source_float_to_i32` in `src/core/number.c`.
+Source scheduling and angle arithmetic keep their original operation order;
+text parsing remains a boundary operation.
+
+The normal build and seven existing core suites pass. Logs:
+`/tmp/qa-ta3192-number-20261011-build.log` and
+`/tmp/qa-ta3192-number-20261011-core.log`. No runtime or timing claim.
+
 ## Interned names and per-role rules
 
 One string table implementation is `include/qa/strings.h` /

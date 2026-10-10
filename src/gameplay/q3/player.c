@@ -339,7 +339,7 @@ bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error)
 }
 static int32_t q3_angle_word(float angle) {
     float scaled = ((angle * 65536.0f) / 360.0f);
-    return (int32_t)((uint32_t)q3_source_float_to_int(scaled) & 65535u);
+    return (int32_t)((uint32_t)qa_source_float_to_i32(scaled) & 65535u);
 }
 static void q3_cutscene_movement(qa_movement_state *state, qa_usercmd *command,
                                  const qa_q3_cutscene_state *cutscene) {
@@ -1764,7 +1764,7 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
         client->rule.followed_player.viewangles[0] = view.x;
         client->rule.followed_player.viewangles[1] = view.y;
         client->rule.followed_player.viewangles[2] = view.z;
-        client->rule.followed_player.viewheight = q3_source_float_to_int(height);
+        client->rule.followed_player.viewheight = qa_source_float_to_i32(height);
         client->rule.followed_player.groundEntityNum = ground_entity_number;
     }
     return true;

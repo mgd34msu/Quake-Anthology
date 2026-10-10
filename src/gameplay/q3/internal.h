@@ -5,6 +5,7 @@
 #include "qa/game_q3_client_types.h"
 #include "qa/game_q3_source_types.h"
 #include "qa/game_q3_source.h"
+#include "qa/text.h"
 #include "source_wire.h"
 #include "source_postgame.h"
 #include "shader_remap.h"
@@ -51,15 +52,9 @@ static inline void q3_source_angle_vectors(qa_vec3 angles, qa_vec3 *forward,
     }
 }
 
-static inline int32_t q3_source_float_to_int(float value) {
-    return isfinite(value) && value >= -2147483648.0f && value < 2147483648.0f
-               ? (int32_t)truncf(value)
-               : INT32_MIN;
-}
-
 static inline int32_t q3_source_float_schedule(int32_t now, float seconds) {
     float milliseconds = (seconds * 1000.0f);
-    return q3_source_float_to_int(((float)now + milliseconds));
+    return qa_source_float_to_i32(((float)now + milliseconds));
 }
 
 typedef qa_q3_projectile_state q3_missile;

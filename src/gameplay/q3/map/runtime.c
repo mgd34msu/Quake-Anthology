@@ -638,10 +638,10 @@ void q3_map_mover_presentation(const qa_q3_game *game, qa_actor_id actor,
         *constant_light = 0;
     if (!state || (!state->has_light && !state->has_color) || !constant_light)
         return;
-    int32_t red = q3_map_float_to_int(fminf(255, state->color.x * 255.0f));
-    int32_t green = q3_map_float_to_int(fminf(255, state->color.y * 255.0f));
-    int32_t blue = q3_map_float_to_int(fminf(255, state->color.z * 255.0f));
-    int32_t intensity = q3_map_float_to_int(fminf(255, state->light / 4.0f));
+    int32_t red = qa_source_float_to_i32(fminf(255, state->color.x * 255.0f));
+    int32_t green = qa_source_float_to_i32(fminf(255, state->color.y * 255.0f));
+    int32_t blue = qa_source_float_to_i32(fminf(255, state->color.z * 255.0f));
+    int32_t intensity = qa_source_float_to_i32(fminf(255, state->light / 4.0f));
     *constant_light = (uint32_t)red | ((uint32_t)green << 8) |
                       ((uint32_t)blue << 16) | ((uint32_t)intensity << 24);
 }

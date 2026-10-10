@@ -173,8 +173,8 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
                     (double)(float)sqrt((double)((d.x * d.x) + (d.y * d.y)))) * 180) / Q3_PI);
             if (pitch < 0)
                 pitch = (pitch + 360);
-            player->damage_pitch = q3_source_float_to_int(((-pitch / 360) * 256));
-            player->damage_yaw = q3_source_float_to_int(((yaw / 360) * 256));
+            player->damage_pitch = qa_source_float_to_i32(((-pitch / 360) * 256));
+            player->damage_yaw = qa_source_float_to_i32(((yaw / 360) * 256));
         }
         qa_combat_state combat;
         if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
