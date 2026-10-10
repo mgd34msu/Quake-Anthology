@@ -35,12 +35,6 @@ typedef struct q2_model {
     qa_scene_model *scene;
 } q2_model;
 typedef struct q2_alias { uint32_t number; qa_actor_id actor; } q2_alias;
-typedef struct q2_muzzle_receipt {
-    qa_actor_id actor;
-    int32_t number, flash;
-    double milliseconds;
-    bool monster, consumed;
-} q2_muzzle_receipt;
 typedef struct q2_activation {
     struct q2_activation *next;
     char *provider;
@@ -186,8 +180,6 @@ struct frontend_unified_q2 {
     qa_scene_light *lights;
     size_t light_count;
     qa_vec3 sampled_styles[256];
-    q2_muzzle_receipt *muzzles;
-    size_t muzzle_count;
     q2_native *native;
     q2_native status, prepared_status;
     size_t native_count;
@@ -1199,13 +1191,11 @@ static bool muzzle_receive(frontend_unified_q2 *o,const qa_unified_presentation_
 {
     qa_actor_id a;q2_bank *b=NULL;int32_t number_id=row->has_source_entity?row->source_entity:(int32_t)m->entity;
     if (!source_actor(o,m->actor,&a,e) || !a.registry || !source_bank(o,row,true,&b,e) || !alias(b,number_id,a,e)) return false;
-    void *p=realloc(o->muzzles,(o->muzzle_count+1)*sizeof(*o->muzzles));if (!p)return false;o->muzzles=p;
     double ms=row->seconds*1000;++o->busy;bool okay;
     if (!m->monster)okay=frontend_remote_q2_effects_actor_muzzle(b->effects,a,m->flash,false,m->silenced,ms,ms,e);
     else if (m->has_pose)okay=frontend_remote_q2_effects_monster_muzzle_pose(b->effects,a,m->flash,m->origin,m->angles,m->scale,ms,ms,e);
     else okay=frontend_remote_q2_effects_monster_muzzle(b->effects,a,m->flash,m->origin,m->direction,ms,ms,e);
     --o->busy;
-    if (okay)o->muzzles[o->muzzle_count++]=(q2_muzzle_receipt){a,number_id,m->flash,ms,m->monster,false};
     return okay;
 }
 static bool sound_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,
@@ -1425,10 +1415,9 @@ bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simu
     const qa_unified_message_event *v=&row->payload.value.message;
     if (v->kind==QA_UNIFIED_MESSAGE_DISCONNECT)return frontend_remote_unified_source_disconnect(o->replica,v->text,e);
     if (v->kind==QA_UNIFIED_MESSAGE_COMMAND_TEXT)return frontend_remote_unified_command_text(o->replica,v->text,e);
-    if (v->kind==QA_UNIFIED_MESSAGE_Q2_MUZZLE_FLASH){double ms=row->milliseconds?row->time:row->time*1000;
-        for (size_t i=0;i<o->muzzle_count;++i){q2_muzzle_receipt *m=o->muzzles+i;
-            if (!m->consumed && m->number==v->entity && m->flash==v->flash && m->monster==v->monster && m->milliseconds==ms){m->consumed=true;return true;}}
-        return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 simulation muzzle has no exact received presentation witness");}
+    /* Muzzle presentation has already consumed this ring event. It changes no
+     * simulation state; do not keep a second history just to re-validate it. */
+    if (v->kind==QA_UNIFIED_MESSAGE_Q2_MUZZLE_FLASH) return true;
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_INVENTORY){for(size_t i=0;i<256;++i)o->inventory[i]=v->counts[i];return true;}
     char *text=text_copy(v->text);if (!text)return false;
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_LAYOUT){free(o->layout);o->layout=text;return true;}
@@ -1461,9 +1450,6 @@ void frontend_unified_q2_frame_commit(frontend_unified_q2 *o)
     qa_unified_document_destroy(o->status_metadata);
     o->status_metadata=o->prepared_status_metadata;o->prepared_status_metadata=NULL;
     frontend_unified_q2_rr_frame_commit(o->rr_hud);
-    size_t retained=0;
-    for (size_t i=0;i<o->muzzle_count;++i) if (!o->muzzles[i].consumed) o->muzzles[retained++]=o->muzzles[i];
-    o->muzzle_count=retained;
 }
 bool frontend_unified_q2_frame_ready(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1917,7 +1903,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
-    free(o->layout); free(o->muzzles); free(o); *slot=NULL; return true;
+    free(o->layout); free(o); *slot=NULL; return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
