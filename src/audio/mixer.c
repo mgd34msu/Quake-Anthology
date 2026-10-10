@@ -152,41 +152,6 @@ static size_t prepared_hash(const qa_audio_sample *sample, const qa_audio_asset 
     return (size_t)(hash ^ (hash >> 31));
 }
 
-static bool prepared_index_reserve(qa_audio_mixer *mixer, size_t count, qa_error *error) {
-    size_t capacity = mixer->prepared_index_capacity;
-    if (count <= capacity / 2)
-        return true;
-    if (!capacity)
-        capacity = 16;
-    while (count > capacity / 2) {
-        if (capacity > SIZE_MAX / 2)
-            return mixer_error(error, QA_ERROR_MEMORY, "Too many prepared effects");
-        capacity *= 2;
-    }
-    if (capacity > SIZE_MAX / sizeof(*mixer->prepared_index))
-        return mixer_error(error, QA_ERROR_MEMORY, "Prepared effect index size overflow");
-    qa_mixer_prepared **index = calloc(capacity, sizeof(*index));
-    if (!index)
-        return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect index");
-    /* Keep the first occupied slot authoritative, including restored tables. */
-    for (size_t i = mixer->prepared_count; i > 0; --i) {
-        qa_mixer_prepared *prepared = mixer->prepared[i - 1];
-        if (!prepared)
-            continue;
-        size_t slot = prepared_hash(prepared->sample, prepared->asset, prepared->q3) & (capacity - 1);
-        prepared->next = index[slot];
-        index[slot] = prepared;
-    }
-    free(mixer->prepared_index);
-    mixer->prepared_index = index;
-    mixer->prepared_index_capacity = capacity;
-    return true;
-}
-
-bool qa_mixer_prepared_index(qa_audio_mixer *mixer, qa_error *error) {
-    return prepared_index_reserve(mixer, mixer->prepared_count, error);
-}
-
 static void prepared_release(qa_audio_mixer *mixer, qa_mixer_prepared *prepared) {
     if (!prepared)
         return;
@@ -197,12 +162,11 @@ static void prepared_release(qa_audio_mixer *mixer, qa_mixer_prepared *prepared)
         while (*link != prepared)
             link = &(*link)->next;
         *link = prepared->next;
-        mixer->prepared[prepared->slot] = NULL;
         qa_audio_sample_release(prepared->sample);
         qa_audio_sample_release(prepared->pcm);
         qa_audio_asset_release(prepared->asset);
         free(prepared->doppler_sums);
-        free(prepared);
+        qa_pool_release(&mixer->prepared_records, prepared->slot);
     }
 }
 
@@ -223,81 +187,42 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
             if (prepared->sample == sample && prepared->asset == asset && prepared->q3 == q3)
                 return prepared_retain(prepared);
     }
-    size_t slot = SIZE_MAX;
-    for (size_t i = 0; i < mixer->prepared_count; i++) {
-        if (!mixer->prepared[i]) {
-            slot = i;
-            break;
-        }
+    size_t slot;
+    qa_mixer_prepared *prepared = qa_pool_take(&mixer->prepared_records, &slot);
+    if (!prepared) {
+        mixer_error(error, QA_ERROR_MEMORY, "Prepared effect capacity exhausted");
+        return NULL;
     }
     qa_audio_sample *pcm = NULL;
     bool ready = asset ? qa_audio_asset_resample(asset, mixer->options.sample_rate,
                                                 q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error) :
                          qa_audio_resample_source(sample, mixer->options.sample_rate,
                                                  q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error);
-    if (!ready)
-        return NULL;
-    if ((!q3 && !pcm->frame_count) || pcm->frame_count > INT64_MAX) {
-        qa_audio_sample_release(pcm);
-        mixer_error(error, QA_ERROR_ARGUMENT, "Resampled effect length is outside the audio clock");
+    if (!ready) {
+        qa_pool_release(&mixer->prepared_records, slot);
         return NULL;
     }
-    qa_mixer_prepared *prepared = calloc(1, sizeof(*prepared));
-    if (!prepared) {
+    if ((!q3 && !pcm->frame_count) || pcm->frame_count > INT64_MAX) {
         qa_audio_sample_release(pcm);
-        mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect");
+        qa_pool_release(&mixer->prepared_records, slot);
+        mixer_error(error, QA_ERROR_ARGUMENT, "Resampled effect length is outside the audio clock");
         return NULL;
     }
     if (!qa_audio_sample_retain(sample)) {
         qa_audio_sample_release(pcm);
-        free(prepared);
+        qa_pool_release(&mixer->prepared_records, slot);
         mixer_error(error, QA_ERROR_MEMORY, "Audio sample reference count is exhausted");
         return NULL;
     }
     if (asset && !qa_audio_asset_retain(asset)) {
         qa_audio_sample_release(sample);
         qa_audio_sample_release(pcm);
-        free(prepared);
+        qa_pool_release(&mixer->prepared_records, slot);
         mixer_error(error, QA_ERROR_MEMORY, "Audio asset reference count is exhausted");
         return NULL;
     }
-    if (slot == SIZE_MAX) {
-        if (mixer->prepared_count == SIZE_MAX) {
-            qa_audio_asset_release(asset);
-            qa_audio_sample_release(sample);
-            qa_audio_sample_release(pcm);
-            free(prepared);
-            mixer_error(error, QA_ERROR_MEMORY, "Too many prepared effects");
-            return NULL;
-        }
-        qa_mixer_prepared **items = reserve(mixer->prepared, &mixer->prepared_capacity,
-                                            mixer->prepared_count + 1, sizeof(*items), error);
-        if (!items) {
-            qa_audio_asset_release(asset);
-            qa_audio_sample_release(sample);
-            qa_audio_sample_release(pcm);
-            free(prepared);
-            return NULL;
-        }
-        mixer->prepared = items;
-        slot = mixer->prepared_count;
-    }
-    if (!prepared_index_reserve(mixer, slot == mixer->prepared_count ? slot + 1 :
-                                   mixer->prepared_count, error)) {
-        qa_audio_asset_release(asset);
-        qa_audio_sample_release(sample);
-        qa_audio_sample_release(pcm);
-        free(prepared);
-        return NULL;
-    }
-    if (slot == mixer->prepared_count)
-        mixer->prepared_count++;
-    prepared->sample = sample;
-    prepared->pcm = pcm;
-    prepared->asset = asset;
-    prepared->q3 = q3;
-    prepared->slot = slot;
-    mixer->prepared[slot] = prepared;
+    *prepared = (qa_mixer_prepared){.sample = sample, .pcm = pcm, .asset = asset,
+                                  .q3 = q3, .slot = slot};
     size_t bucket = prepared_hash(sample, asset, q3) & (mixer->prepared_index_capacity - 1);
     prepared->next = mixer->prepared_index[bucket];
     mixer->prepared_index[bucket] = prepared;
@@ -656,11 +581,36 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
     mixer->random_state = 0x6d2b79f5u;
     mixer->free_head = SIZE_MAX;
     mixer->event_free = mixer->event_head = mixer->event_tail = SIZE_MAX;
+    size_t capacity = options->prepared_capacity ? options->prepared_capacity : 4096;
+    size_t buckets = 16;
+    while (capacity > buckets / 2) {
+        if (buckets > SIZE_MAX / 2) {
+            free(mixer);
+            return mixer_error(error, QA_ERROR_MEMORY, "Prepared effect index size overflow");
+        }
+        buckets *= 2;
+    }
+    if (buckets > SIZE_MAX / sizeof(*mixer->prepared_index)) {
+        free(mixer);
+        return mixer_error(error, QA_ERROR_MEMORY, "Prepared effect index size overflow");
+    }
+    qa_arena_init(&mixer->prepared_storage, 0);
+    if (!qa_pool_prepare(&mixer->prepared_records, &mixer->prepared_storage, capacity,
+                         sizeof(qa_mixer_prepared), _Alignof(qa_mixer_prepared), error)) {
+        qa_arena_destroy(&mixer->prepared_storage); free(mixer); return false;
+    }
+    qa_arena_seal(&mixer->prepared_storage);
+    mixer->prepared_index = calloc(buckets, sizeof(*mixer->prepared_index));
+    if (!mixer->prepared_index) {
+        qa_arena_destroy(&mixer->prepared_storage); free(mixer);
+        return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate prepared effect index");
+    }
+    mixer->prepared_index_capacity = buckets;
     if (options->initial_voices) {
         mixer->voices = reserve(NULL, &mixer->voice_capacity, options->initial_voices,
                                 sizeof(*mixer->voices), error);
         if (!mixer->voices) {
-            free(mixer);
+            free(mixer->prepared_index); qa_arena_destroy(&mixer->prepared_storage); free(mixer);
             return false;
         }
         mixer->voice_count = options->initial_voices;
@@ -700,8 +650,8 @@ void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
         prepared_release(mixer, mixer->events[index].prepared);
     }
     free(mixer->voices);
-    free(mixer->prepared);
     free(mixer->prepared_index);
+    qa_arena_destroy(&mixer->prepared_storage);
     free(mixer->loops);
     free(mixer->loop_mixes);
     free(mixer->positions);

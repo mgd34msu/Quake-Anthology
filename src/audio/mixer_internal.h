@@ -2,6 +2,7 @@
 #define QA_MIXER_INTERNAL_H
 
 #include "codec_internal.h"
+#include "qa/pool.h"
 
 /* These are source DMA/chunk dimensions, not limits on actors or voices. */
 #define QA_MIXER_RAW_FRAMES QA_AUDIO_RAW_CAPACITY
@@ -21,7 +22,6 @@ typedef struct qa_mixer_prepared {
     size_t doppler_period;
 } qa_mixer_prepared;
 bool qa_mixer_prepared_doppler(qa_mixer_prepared *, qa_error *);
-bool qa_mixer_prepared_index(qa_audio_mixer *, qa_error *);
 
 typedef enum qa_mixer_voice_state {
     QA_MIXER_FREE,
@@ -90,8 +90,8 @@ struct qa_audio_mixer {
     void *transmission_user;
     qa_mixer_voice *voices;
     size_t voice_count, voice_capacity, free_head;
-    qa_mixer_prepared **prepared;
-    size_t prepared_count, prepared_capacity;
+    qa_arena prepared_storage;
+    qa_pool prepared_records;
     qa_mixer_prepared **prepared_index;
     size_t prepared_index_capacity;
     qa_mixer_loop *loops;

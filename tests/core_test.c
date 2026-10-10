@@ -445,6 +445,20 @@ static void test_shared_audio_preparation(void)
         CHECK(qa_audio_asset_resample(asset, 32000, families[i], &changed, &error));
         CHECK(changed != first && changed->sample_rate == 32000 && first->sample_rate == 44100);
         CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
+        qa_audio_mixer *mixer = NULL;
+        qa_audio_mixer_options options = {.sample_rate = 44100, .output_channels = 2,
+                                         .initial_voices = 8, .prepared_capacity = 1};
+        CHECK(qa_audio_mixer_create(&options, &mixer, &error));
+        qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
+            .family = families[i], .actor = QA_AUDIO_NO_ACTOR, .owner = QA_AUDIO_NO_OWNER,
+            .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_LOCAL, .volume = 1};
+        for (size_t turn = 0; turn < 16; ++turn) {
+            bool accepted = false;
+            CHECK(qa_audio_mixer_play(mixer, &sound, 0, &accepted, &error) && accepted);
+            CHECK(qa_audio_mixer_play(mixer, &sound, 100, &accepted, &error) && accepted);
+            qa_audio_mixer_stop_all(mixer);
+        }
+        qa_audio_mixer_destroy(mixer);
         if (i + 1 == sizeof(families) / sizeof(*families)) {
             CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
             memcpy(held_samples, first->samples, sizeof(held_samples)); held = qa_audio_sample_retain(first); CHECK(held);

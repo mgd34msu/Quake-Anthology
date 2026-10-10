@@ -243,7 +243,7 @@ typedef struct qa_audio_mixer qa_audio_mixer;
 typedef struct qa_audio_mixer_options {
     uint32_t sample_rate;
     unsigned output_channels;
-    size_t initial_voices;
+    size_t initial_voices, prepared_capacity;
     qa_audio_random_fn random;
     void *random_user;
     qa_audio_milliseconds_fn milliseconds;
@@ -404,7 +404,7 @@ typedef struct qa_audio_engine qa_audio_engine;
 typedef struct qa_audio_engine_options {
     uint32_t sample_rate;
     unsigned output_channels;
-    size_t mix_frames, initial_voices;
+    size_t mix_frames, initial_voices, prepared_capacity;
     qa_audio_random_fn random;
     void *random_user;
     qa_audio_milliseconds_fn milliseconds;

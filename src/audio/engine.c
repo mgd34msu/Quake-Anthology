@@ -118,6 +118,7 @@ qa_audio_mixer_options qa_audio_engine_mixer_options(qa_audio_engine *engine) {
     return (qa_audio_mixer_options){.sample_rate = engine->options.sample_rate,
                                       .output_channels = engine->options.output_channels,
                                       .initial_voices = engine->options.initial_voices,
+                                      .prepared_capacity = engine->options.prepared_capacity,
                                       .random = engine->options.random,
                                       .random_user = engine->options.random_user,
                                       .milliseconds = engine->options.milliseconds,
