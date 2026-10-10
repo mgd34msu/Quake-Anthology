@@ -180,7 +180,6 @@ void qa_render_workers_release(qa_render_workers *pool) {
   if (!pool || --pool->references) return;
   qa_jobs_destroy(pool->jobs);
   qa_arena_destroy(&pool->batch_storage);
-  free(pool->projected);
   free(pool);
 }
 bool qa_render_workers_retain(qa_render_workers *pool, qa_error *error) {
@@ -230,9 +229,11 @@ qa_render_workers *qa_render_workers_create(qa_error *error) {
   pool->slice_capacity = (size_t)qa_jobs_count(pool->jobs) * 4;
   pool->triangle_capacity = 8192;
   pool->command_capacity = pool->triangle_capacity;
+  pool->projected_capacity = pool->triangle_capacity * 3;
   size_t bytes = pool->slice_capacity * sizeof(*pool->slices) +
       pool->triangle_capacity * sizeof(*pool->triangles) +
-      pool->command_capacity * sizeof(*pool->commands) + 3 * _Alignof(max_align_t);
+      pool->command_capacity * sizeof(*pool->commands) +
+      pool->projected_capacity * sizeof(*pool->projected) + 4 * _Alignof(max_align_t);
   if (!qa_arena_reserve(&pool->batch_storage, bytes, error)) {
     qa_render_workers_release(pool);
     return NULL;
@@ -244,7 +245,9 @@ qa_render_workers *qa_render_workers_create(qa_error *error) {
       _Alignof(cpu_triangle), error);
   pool->commands = qa_arena_alloc(&pool->batch_storage, pool->command_capacity * sizeof(*pool->commands),
       _Alignof(cpu_raster_command), error);
-  if (!pool->slices || !pool->triangles || !pool->commands) {
+  pool->projected = qa_arena_alloc(&pool->batch_storage, pool->projected_capacity * sizeof(*pool->projected),
+      _Alignof(cpu_projection), error);
+  if (!pool->slices || !pool->triangles || !pool->commands || !pool->projected) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained raster slices");
     qa_render_workers_release(pool);
     return NULL;
@@ -1138,19 +1141,10 @@ static void raster_geometry(const cpu_raster_job *job, cpu_triangle_output *outp
         ? draw->source_vertex_storage : draw->mesh.vertex_count;
     output->projected = NULL;
     output->projected_count = 0;
-    if (count && count <= SIZE_MAX / sizeof(*pool->projected)) {
-      if (pool->projected_capacity < count) {
-        cpu_projection *projected = realloc(pool->projected, count * sizeof(*projected));
-        if (projected) {
-          pool->projected = projected;
-          pool->projected_capacity = count;
-        }
-      }
-      if (pool->projected_capacity >= count) {
-        output->projected = pool->projected;
-        output->projected_count = count;
-        for (size_t i = 0; i < count; ++i) output->projected[i].ready = false;
-      }
+    if (count && count <= pool->projected_capacity) {
+      output->projected = pool->projected;
+      output->projected_count = count;
+      for (size_t i = 0; i < count; ++i) output->projected[i].ready = false;
     }
   }
   if (job->mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS ||

@@ -105,6 +105,7 @@ receive allocation.
 | --- | --- |
 | `src/render/cpu/raster.c:220,813` | Worker creation reserves an 8,192-triangle batch. The triangle append no longer reallocates. Overflow uses the existing flush/direct raster path and preserves drawing. |
 | Raster commands and worker slices | TA-3192 puts commands, triangles and worker slices in one `qa_arena`, reserved and sealed by `qa_render_workers_create`. Command capacity matches the existing triangle batch; a full queue takes the existing flush/direct path. The per-draw command realloc and separate batch frees are deleted. |
+| Raster projected vertices | The same sealed arena holds projection scratch for three indexed vertices per retained triangle. Larger index spaces use the existing uncached projection path; the per-draw projection realloc and separate free are deleted. |
 | `src/gameplay/q2/entities/state.c:67` | Authored fields belong to the common map arena. Spawn, checkpoint restore and original-save import use that ownership. Map entry resets it and source preparation seals it; entity-slot reuse no longer frees an individual field array. |
 | `src/network/admin/owner.c:450` | Master refresh compares current names with retained names before copying. Unchanged frames allocate and free nothing. |
 | `src/network/dosbox.c:71,225` | Socket creation owns 256 fixed packet slots and a borrowed receive buffer. Delivery, queue overflow and receive no longer allocate or free packets. |
@@ -122,8 +123,11 @@ The normal production build and seven existing core suites pass.
 
 The later TA-3192 raster-arena slice passed the normal build and seven core
 suites (`/tmp/qa-ta3192-raster-arena-20261010-{build,core}.log`). No new gate or
-timing run was made. Brush span/clip/context storage and projected-vertex growth
-remain separate callers to migrate; this slice does not close those gaps.
+timing run was made. The projection-storage follow-up also passed the normal
+build and seven core suites
+(`/tmp/qa-ta3192-projections-20261011-{build,core}.log`). Brush span/clip/context
+storage and transformed-vertex growth remain separate callers to migrate;
+these slices do not close those gaps.
 
 The additional TA-873/TA-882 census on 2026-10-10 covers the requested combined
 configuration and module boundaries. Each run again completed 600 playing
