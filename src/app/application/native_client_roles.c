@@ -181,6 +181,12 @@ static bool create(qa_application *app, const qa_application_client_options *o,
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), definition, &entity_definition, error)) {
         qa_launch_instance_lease_release(r->metadata); free(r); return false;
     }
+    r->actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
+    r->actors = calloc(r->actor_capacity, sizeof(*r->actors));
+    if (!r->actors) {
+        qa_launch_instance_lease_release(r->metadata); free(r);
+        return application_fail(error, QA_ERROR_MEMORY, "Reserving CLIENT observer references");
+    }
     bool qualified = true;
     if (saved) {
         char prefix[80]; int prefix_length = snprintf(prefix, sizeof(prefix), "client-entities:%u:%u:", o->receiver, o->seat);
@@ -196,14 +202,6 @@ static bool create(qa_application *app, const qa_application_client_options *o,
         for (application_provider *other = app->live_providers; qualified && other; other = other->next_live)
             for (struct application_native_client_role *row = other->native_client_roles; row; row = row->next)
                 if (row->source.context.entity_owner == entity_owner) qualified = false;
-        if (qualified && saved->actor_count) {
-            r->actors = calloc(saved->actor_count, sizeof(*r->actors));
-            if (!r->actors) {
-                application_fail(error, QA_ERROR_MEMORY, "Retaining imported CLIENT observer references");
-                qualified = false;
-            }
-            r->actor_capacity = saved->actor_count;
-        }
         for (size_t i = 0; qualified && i < saved->actor_count; ++i) {
             const qa_actor_record *record = qa_actors_resolve_saved(qa_session_actors(app->session), saved->actors[i]);
             if (!record || record->owner != entity_owner || record->definition != entity_definition || !record->has_source) {
@@ -471,12 +469,10 @@ bool qa_application_client_entity_read(qa_application *app, const qa_application
         *out = record->id; return true;
     }
     if (r->actor_count == r->actor_capacity) {
-        size_t capacity = r->actor_capacity ? r->actor_capacity * 2 : 32;
-        if (capacity < r->actor_capacity || capacity > SIZE_MAX / sizeof(*r->actors))
-            return application_fail(error, QA_ERROR_MEMORY, "CLIENT entity namespace exceeds capacity");
-        qa_actor_id *rows = realloc(r->actors, capacity * sizeof(*rows));
-        if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining CLIENT entity namespace");
-        r->actors = rows; r->actor_capacity = capacity;
+        size_t live = 0;
+        for (size_t i = 0; i < r->actor_count; ++i)
+            if (qa_actors_get(actors, r->actors[i])) r->actors[live++] = r->actors[i];
+        r->actor_count = live;
     }
     qa_actor_id id;
     if (!qa_actors_allocate_source(actors, source->context.entity_owner, number,

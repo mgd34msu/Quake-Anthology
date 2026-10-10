@@ -6,18 +6,11 @@
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error,code,0,"%s",message); return false; }
 
-qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
-{
-    qa_world_body *body=qa_world_raw_body(world,actor.slot);
-    return body!=NULL && body->present && qa_actor_id_equal(body->actor,actor)
-        && qa_actors_get(world->actors,actor)!=NULL?body:NULL;
-}
-
 void qa_world_reset_bodies(qa_world *world)
 {
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *body=qa_world_raw_body(world,slot);
-        if(body!=NULL) {
+        if(body!=NULL && body->world==world) {
             if(body->present) {
                 world->leaf_cache[slot].leaf_box_ready=false;
                 world->leaf_cache[slot].leaf_q1_ready=false;
@@ -43,17 +36,10 @@ static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *
     return body;
 }
 
-static bool valid_state(const qa_body_state *state,qa_entity_body_components components)
-{
-    return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
-        && (components!=QA_ENTITY_BODY_ALL || qa_vec_finite(state->velocity))
-        && qa_bounds_valid(state->bounds);
-}
-
 static bool valid_link_state(const qa_body_link_state *saved)
 {
     return saved!=NULL && (!saved->linked || (saved->link_count!=0
-        && valid_state(&saved->state,QA_ENTITY_BODY_ALL) && qa_bounds_valid(saved->absolute_bounds)));
+        && qa_world_body_state_valid(&saved->state,QA_ENTITY_BODY_ALL) && qa_bounds_valid(saved->absolute_bounds)));
 }
 
 static bool same_vector(qa_vec3 left,qa_vec3 right)
@@ -105,6 +91,18 @@ static bool prepare_visibility_storage(qa_world *world,qa_collision_geometry *ge
     }
     qa_arena_seal(arena);return true;
 }
+static bool prepare_release_storage(qa_world *world,qa_error *error)
+{
+    size_t bytes=(size_t)world->capacity*sizeof(*world->release_tickets);
+    if(bytes/sizeof(*world->release_tickets)!=world->capacity)
+        return fail(error,QA_ERROR_MEMORY,"Actor release storage size overflow");
+    world->release_tickets=qa_arena_alloc(&world->snapshot_storage,bytes,
+        _Alignof(qa_world_release_ticket),error);
+    if(world->release_tickets==NULL) return false;
+    memset(world->release_tickets,0,bytes);
+    return true;
+}
+
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
                      const qa_world_hooks *hooks,size_t snapshot_frame_capacity,
                      qa_world **out, qa_error *error)
@@ -123,6 +121,11 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     }
     world->visibility_stride=world->cluster_bytes+world->area_bytes;
     if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { qa_arena_destroy(&world->visibility_storage);free(world);return false; }
+    if(!prepare_release_storage(world,error)) {
+        qa_arena_destroy(&world->visibility_storage);
+        qa_arena_destroy(&world->snapshot_storage);
+        qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
+    }
     if(!qa_spatial_initialize(world,bounds,error)
         || !qa_spatial_prepare_snapshots(world,snapshot_frame_capacity!=0?
             snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,error)) {
@@ -283,11 +286,71 @@ static void notify_unlink(qa_world *world,qa_actor_id actor)
     }
 }
 
-typedef struct attached_actor { qa_actor_id actor; uint64_t order; } attached_actor;
-static int attachment_compare(const void *left,const void *right)
+/* A ticket is indexed by the live actor slot. Retiring or moving it updates
+ * its owning stack frame, so recursive observers never retain stale slots. */
+static void release_ticket_remove(qa_world *world,uint32_t slot)
 {
-    uint64_t a=((const attached_actor *)left)->order,b=((const attached_actor *)right)->order;
-    return a<b?-1:a>b?1:0;
+    qa_world_release_ticket *ticket=world->release_tickets+slot;
+    qa_world_release_frame *frame=ticket->frame;
+    if(frame==NULL) return;
+    if(ticket->previous==QA_SPATIAL_NONE) frame->head=ticket->next;
+    else world->release_tickets[ticket->previous].next=ticket->next;
+    if(ticket->next==QA_SPATIAL_NONE) frame->tail=ticket->previous;
+    else world->release_tickets[ticket->next].previous=ticket->previous;
+    ticket->frame=NULL;
+    --world->release_pending;
+}
+
+static void release_ticket_append(qa_world *world,qa_world_release_frame *frame,
+                                  const qa_world_body *body)
+{
+    uint32_t slot=body->actor.slot;
+    release_ticket_remove(world,slot);
+    qa_world_release_ticket *ticket=world->release_tickets+slot;
+    *ticket=(qa_world_release_ticket){.actor=body->actor,.order=body->attachment_order,
+        .frame=frame,.previous=frame->tail,.next=QA_SPATIAL_NONE};
+    if(frame->tail==QA_SPATIAL_NONE) frame->head=slot;
+    else world->release_tickets[frame->tail].next=slot;
+    frame->tail=slot;
+    ++world->release_pending;
+    if(world->release_pending>world->release_peak) world->release_peak=world->release_pending;
+}
+
+/* Bottom-up merge of the captured insertion serials. No comparator callback,
+ * recursion or libc scratch allocation participates in actor release. */
+static void release_ticket_sort(qa_world *world,qa_world_release_frame *frame)
+{
+    qa_world_release_ticket *tickets=world->release_tickets;
+    for(size_t width=1;;width*=2) {
+        uint32_t left=frame->head,head=QA_SPATIAL_NONE,tail=QA_SPATIAL_NONE;
+        size_t merges=0;
+        while(left!=QA_SPATIAL_NONE) {
+            ++merges;
+            uint32_t right=left;
+            size_t left_count=0,right_count=width;
+            for(;left_count<width && right!=QA_SPATIAL_NONE;++left_count)
+                right=tickets[right].next;
+            while(left_count!=0 || (right_count!=0 && right!=QA_SPATIAL_NONE)) {
+                uint32_t selected;
+                if(left_count==0) {
+                    selected=right; right=tickets[right].next; --right_count;
+                } else if(right_count==0 || right==QA_SPATIAL_NONE
+                    || tickets[left].order<=tickets[right].order) {
+                    selected=left; left=tickets[left].next; --left_count;
+                } else {
+                    selected=right; right=tickets[right].next; --right_count;
+                }
+                if(tail==QA_SPATIAL_NONE) head=selected;
+                else tickets[tail].next=selected;
+                tickets[selected].previous=tail;
+                tail=selected;
+            }
+            left=right;
+        }
+        if(tail!=QA_SPATIAL_NONE) tickets[tail].next=QA_SPATIAL_NONE;
+        frame->head=head; frame->tail=tail;
+        if(merges<=1) return;
+    }
 }
 
 bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *error)
@@ -295,24 +358,20 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
     if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing world for actor release");
     if(qa_actors_get(world->actors,released.id)!=NULL)
         return fail(error,QA_ERROR_ARGUMENT,"Actor release must be forwarded after invalidation");
-    size_t child_count=0;
-    for(uint32_t slot=0;slot<world->capacity;++slot) {
-        qa_world_body *child=qa_world_raw_body(world,slot);
-        if(child!=NULL && child->present && child->attached
-            && qa_actor_id_equal(child->attachment.anchor,released.id)) ++child_count;
+    if(released.id.slot<world->capacity) {
+        qa_world_release_ticket *retired=world->release_tickets+released.id.slot;
+        if(retired->frame!=NULL && qa_actor_id_equal(retired->actor,released.id))
+            release_ticket_remove(world,released.id.slot);
     }
-    if(child_count>SIZE_MAX/sizeof(attached_actor)) return fail(error,QA_ERROR_MEMORY,"Attached child snapshot is too large");
-    attached_actor *children=child_count==0?NULL:malloc(child_count*sizeof(*children));
-    if(child_count!=0 && children==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot snapshot attached children for release");
-    size_t written=0;
+    qa_world_release_frame children={.head=QA_SPATIAL_NONE,.tail=QA_SPATIAL_NONE};
     for(uint32_t slot=0;slot<world->capacity;++slot) {
         qa_world_body *child=qa_world_raw_body(world,slot);
         if(child==NULL || !child->present || !child->attached
             || !qa_actor_id_equal(child->attachment.anchor,released.id)) continue;
-        children[written++]=(attached_actor){child->actor,child->attachment_order};
+        release_ticket_append(world,&children,child);
         child->attached=false;
     }
-    if(child_count>1) qsort(children,child_count,sizeof(*children),attachment_compare);
+    release_ticket_sort(world,&children);
     ++world->callback_depth;
     qa_world_body *body=qa_world_raw_body(world,released.id.slot);
     if(body!=NULL && body->present && qa_actor_id_equal(body->actor,released.id)) {
@@ -325,21 +384,22 @@ bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *
     }
     bool success=true;
     qa_error first={0};
-    for(size_t index=0;index<child_count;++index) {
-        qa_actor_id id=children[index].actor;
+    while(children.head!=QA_SPATIAL_NONE) {
+        uint32_t slot=children.head;
+        qa_actor_id id=world->release_tickets[slot].actor;
+        release_ticket_remove(world,slot);
         if(qa_actors_get(world->actors,id)==NULL) continue;
         qa_error current={0};
         if(!qa_actors_release(world->actors,id,&current) && success) { first=current; success=false; }
     }
     --world->callback_depth;
-    free(children);
     if(!success && error!=NULL) *error=first;
     return success;
 }
 
 bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
 {
-    if(!valid_state(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    if(!qa_world_body_state_valid(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
     qa_world_body *body=ensure_body(world,actor,error);
     if(body==NULL) return false;
     if(body->present) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body");
@@ -366,26 +426,6 @@ uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
     return body==NULL?0:body->storage_serial;
 }
 
-bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
-                          qa_entity_body_components components,
-                          qa_body_state *out,qa_error *error)
-{
-    qa_body_state state;
-    qa_body_state *selected=components==QA_ENTITY_BODY_ALL?&state:out;
-    if(body->external) {
-        if(!qa_entity_body_read(body->binding.fields,pose,components,selected,error)) return false;
-        if(!valid_state(selected,components)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
-        if(components==QA_ENTITY_BODY_ALL) body->state=*selected;
-    } else if(components==QA_ENTITY_BODY_ALL) state=body->state;
-    else {
-        selected->origin=body->state.origin;
-        selected->angles=body->state.angles;
-        selected->bounds=body->state.bounds;
-    }
-    if(components==QA_ENTITY_BODY_ALL) *out=*selected;
-    return true;
-}
-
 bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
                             qa_body_state *out,qa_error *error)
 {
@@ -399,7 +439,7 @@ bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_
 
 bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
 {
-    if(!valid_state(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    if(!qa_world_body_state_valid(state,QA_ENTITY_BODY_ALL)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return qa_world_body_create(world,actor,state,error);
     if(!body->external) { body->state=*state; return true; }
@@ -438,7 +478,7 @@ bool qa_world_collision_rows_validate(qa_world *world,const qa_spatial_actor *ro
         const qa_spatial_actor *row=rows+i;
         if(qa_actors_get(world->actors,row->body.actor)==NULL)
             return fail(error,QA_ERROR_ARGUMENT,"Body actor is not live in this world");
-        if(!valid_state(&row->body.state,QA_ENTITY_BODY_ALL))
+        if(!qa_world_body_state_valid(&row->body.state,QA_ENTITY_BODY_ALL))
             return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
         if(!valid_collision(world,&row->collision,QA_ERROR_ARGUMENT,error)) return false;
         qa_body_link_state link={.linked=true,.state=row->body.state,
@@ -494,20 +534,6 @@ bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_
     ++body->collision_serial;
     body->collision_binding=(qa_collision_binding){0};
     return true;
-}
-
-bool qa_world_collision_sample(const qa_world_body *body,bool link_metadata,
-                               qa_entity_collision_components components,
-                               qa_actor_collision *out,qa_error *error)
-{
-    const qa_entity_collision_fields *fields=body->collision_binding.fields;
-    if(fields==NULL) {
-        if(!body->has_collision) return false;
-        if(components==QA_ENTITY_COLLISION_ROLE) out->role=body->collision.role;
-        else *out=body->collision;
-        return true;
-    }
-    return qa_entity_collision_read(fields,link_metadata,components,out,error);
 }
 
 static bool read_collision(qa_world *world,qa_actor_id actor,qa_actor_collision *out,

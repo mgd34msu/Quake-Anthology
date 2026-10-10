@@ -335,12 +335,15 @@ bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error 
     }
     --registry->live_count;
     ++registry->revision;
-    if (registry->release != NULL) {
-        ++registry->callback_depth;
+    ++registry->callback_depth;
+    qa_world_body *body=&page->bodies[offset];
+    bool body_ok=true;
+    if(body->world!=NULL && body->present && qa_actor_id_equal(body->actor,released.id))
+        body_ok=qa_world_actor_released(body->world,released,error);
+    if (registry->release != NULL)
         registry->release(registry->context, registry, released);
-        --registry->callback_depth;
-    }
-    return true;
+    --registry->callback_depth;
+    return body_ok;
 }
 
 bool qa_actors_clear(qa_actor_registry *registry, qa_error *error)

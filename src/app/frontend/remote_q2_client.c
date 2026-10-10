@@ -132,7 +132,8 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 configstring leaves the actual protocol layout");
     size_t size = strlen(value) + 1; char *copy = malloc(size);
     if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 configstring");
-    memcpy(copy, value, size); free(row->configs[index]); row->configs[index] = copy; return true;
+    memcpy(copy, value, size); free(row->configs[index]); row->configs[index] = copy;
+    remote_q2_prediction_config(row, index); return true;
 }
 static bool content_clear(frontend_remote_q2 *row, qa_error *error)
 {
@@ -389,6 +390,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
     bool ok = remote_q2_player_fog_receive(row, error);
     if (ok && row->options.entities_changed) ok = row->options.entities_changed(row->options.context,
         &row->options.domain, error);
+    if (ok) ok = remote_q2_prediction_publish(row, error);
     if (ok && !row->options.demo) remote_q2_prediction_receive(row);
     if (ok && !row->options.demo) ok = remote_q2_prediction_replay(row, error);
     if (ok) ok = remote_q2_effects_frame(row, error);
@@ -402,6 +404,7 @@ static bool hook_records(void *context, qa_net_client_id id, const qa_q2_server_
     if (!hook_current(row, id, error)) return false;
     ++row->busy; bool ok = remote_q2_records(row, records, count, error);
     if (ok) ok = row->options.records(row->options.context, &row->options.domain, records, count, error);
+    if (ok && row->collision_dirty) ok = remote_q2_prediction_publish(row, error);
     --row->busy;
     return ok && (row->options.demo || remote_q2_prediction_replay(row, error)) && remote_q2_live(row, error);
 }

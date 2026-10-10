@@ -192,8 +192,8 @@ bool qa_world_prepare_geometry(qa_world *, qa_collision_geometry *, qa_world_geo
 bool qa_world_geometry_admission_validate(qa_world_geometry_admission *, qa_error *);
 bool qa_world_geometry_admission_commit(qa_world_geometry_admission *, qa_error *);
 void qa_world_geometry_admission_abort(qa_world_geometry_admission *);
-/* The session must forward every registry release here, after invalidation,
- * before provider teardown. It unlinks the released generation and releases
+/* The registry forwards release to the canonical body owner after invalidation,
+ * before observer teardown. It unlinks the released generation and releases
  * attached children through the same registry, including nested attachments. */
 bool qa_world_actor_released(qa_world *, qa_actor_record, qa_error *);
 bool qa_world_body_create(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
@@ -293,6 +293,15 @@ typedef qa_spatial_visit (*qa_spatial_visit_fn)(void *, const qa_spatial_actor *
  * Visits preserve sector order and family-specific insertion order. */
 bool qa_world_visit(qa_world *, qa_bounds, qa_collision_role, qa_spatial_visit_fn, void *, qa_error *);
 bool qa_world_query(qa_world *, qa_bounds, qa_collision_role, qa_actor_id *, size_t capacity, size_t *count, bool *overflow, qa_error *);
+/* CLIENT membership borrows decoded append order over the common linked
+ * bodies. NULL actors retains the normal spatial candidate order. */
+typedef struct qa_world_query_rules {
+    const qa_actor_id *actors;
+    size_t count;
+    bool brush_contents_only, contents_ignore_pass;
+} qa_world_query_rules;
+void qa_world_set_query_rules(qa_world *, const qa_world_query_rules *);
+
 bool qa_world_trace(qa_world *, const qa_trace_query *, qa_trace_result *, qa_error *);
 bool qa_world_trace_excluding(qa_world *, const qa_trace_query *, const qa_actor_id *, size_t count, qa_trace_result *, qa_error *);
 bool qa_world_point_contents(qa_world *, const qa_point_query *, qa_point_contents *, qa_error *);

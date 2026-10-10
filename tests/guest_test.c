@@ -23,14 +23,6 @@ typedef struct guest_fixture {
     double source_time;
 } guest_fixture;
 
-static bool guest_released(void *context, qa_session *session, qa_actor_record actor,
-    qa_error *error)
-{
-    (void)session;
-    guest_fixture *fixture = context;
-    return qa_world_actor_released(fixture->world, actor, error);
-}
-
 static void guest_component_released(void *state, qa_session *session, qa_actor_record actor)
 {
     (void)session;
@@ -640,7 +632,7 @@ void test_guest(void)
     guest_fixture fixture = {0};
     gameplay_map_create(&fixture.map);
     GAME_CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 8,
-        .component_capacity = 1, .actor_released = guest_released, .release_context = &fixture},
+        .component_capacity = 1},
         &fixture.session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture.session),
         fixture.map.geometry, NULL, 0, &fixture.world, &error));

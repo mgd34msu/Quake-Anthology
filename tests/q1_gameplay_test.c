@@ -109,12 +109,12 @@ static bool check_client(void *context, qa_actor_id observer, qa_actor_id *targe
 
 static bool released(void *context, qa_session *session, qa_actor_record actor, qa_error *error)
 {
-    (void)session;
+    (void)session; (void)error;
     q1_fixture *fixture = context;
     if (fixture->level) qa_q1_level_actor_released(fixture->level, actor.id);
     qa_inventory_actor_released(fixture->inventory, actor);
     qa_combat_actor_released(fixture->combat, actor);
-    return qa_world_actor_released(fixture->world, actor, error);
+    return true;
 }
 
 static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,

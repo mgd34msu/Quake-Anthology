@@ -194,6 +194,22 @@ static bool skip_owner(const qa_world *world,const qa_trace_query *query,const q
         owners_match(world->actors,pass->owner,candidate->owner):owner_matches_actor(world->actors,pass->owner,id);
 }
 
+void qa_world_set_query_rules(qa_world *world,const qa_world_query_rules *rules)
+{ world->query_rules=rules!=NULL?*rules:(qa_world_query_rules){0}; }
+
+static bool query_candidates(qa_world *world,qa_bounds bounds,
+    qa_world_actor_snapshot *snapshot,const qa_actor_id **actors,size_t *count,qa_error *error)
+{
+    if(world->query_rules.actors!=NULL) {
+        *snapshot=(qa_world_actor_snapshot){0};
+        *actors=world->query_rules.actors;
+        *count=world->query_rules.count;
+        return true;
+    }
+    if(!qa_world_snapshot_capture(world,bounds,QA_COLLISION_BOTH,snapshot,error)) return false;
+    *actors=snapshot->actors; *count=snapshot->count; return true;
+}
+
 bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const qa_actor_id *excluded,
                               size_t exclude_count,qa_trace_result *out,qa_error *error)
 {
@@ -216,13 +232,18 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
     const qa_trace_shape missile={QA_SHAPE_BOX,{{-15,-15,-15},{15,15,15}}};
     if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE) broad.shape=missile;
     qa_world_actor_snapshot candidates;
-    if(!qa_world_snapshot_capture(world,swept_bounds(&broad),QA_COLLISION_BOTH,&candidates,error)) return false;
+    const qa_actor_id *actors; size_t count;
+    qa_bounds query_bounds=swept_bounds(&broad);
+    if(!query_candidates(world,query_bounds,&candidates,&actors,&count,error)) return false;
+    qa_bounds body_query_bounds=query_bounds;
+    if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE)
+        body_query_bounds=qa_bounds_union(body_query_bounds,swept_bounds(query));
     const bool occupancy_replaces=query->policy.family!=QA_COLLISION_Q3;
     bool ok=true;
-    for(size_t i=0;i<candidates.count;++i) {
-        qa_actor_id id=candidates.actors[i];
-        qa_world_body *body=qa_world_raw_body(world,id.slot);
-        if(body==NULL) continue;
+    for(size_t i=0;i<count;++i) {
+        qa_actor_id id=actors[i];
+        qa_world_body *body=qa_world_find_body(world,id);
+        if(body==NULL || !body->linked) continue;
         qa_actor_collision collision;
         if(!qa_world_collision_sample(body,false,QA_ENTITY_COLLISION_ALL,&collision,&local)) {
             if(local.code!=QA_OK) { if(error!=NULL) *error=local; ok=false; break; }
@@ -241,6 +262,9 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
             ok=false; break;
         }
         if(pass_has_width && state.bounds.maxs.x==state.bounds.mins.x) continue;
+        if(!collision.inline_model && collision.shape==QA_SHAPE_BOX &&
+            query->shape.kind!=QA_SHAPE_CAPSULE && qa_bounds_valid(state.bounds) &&
+            !qa_bounds_overlap(body_query_bounds,qa_bounds_translate(state.bounds,state.origin))) continue;
         qa_trace_query moving=*query;
         if(query->policy.family==QA_COLLISION_Q1 && query->policy.q1_move==QA_Q1_MOVE_MISSILE && collision.monster) moving.shape=missile;
         qa_trace_result hit;
@@ -276,36 +300,51 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
     if(!qa_collision_point_contents(world->geometry,world->trace_scratch,query,&result,error)) return false;
     if(query->target.inline_model || query->policy.family==QA_COLLISION_Q1) { *out=result; return true; }
     qa_world_actor_snapshot candidates;
-    if(!qa_world_snapshot_capture(world,(qa_bounds){query->point,query->point},QA_COLLISION_BOTH,&candidates,error)) return false;
+    const qa_actor_id *actors; size_t count;
+    if(!query_candidates(world,(qa_bounds){query->point,query->point},&candidates,&actors,&count,error)) return false;
     bool ok=true;
-    for(size_t i=0;i<candidates.count;++i) {
-        qa_actor_id id=candidates.actors[i];
-        if(query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,id)) continue;
-        qa_spatial_actor actor; qa_error refresh_error={0};
-        if(!qa_world_refresh(world,id,QA_ENTITY_CONTENTS_POSE,QA_ENTITY_BODY_SPATIAL,&actor,&refresh_error)) {
+    for(size_t i=0;i<count;++i) {
+        qa_actor_id id=actors[i];
+        qa_world_body *body=qa_world_find_body(world,id);
+        if(body==NULL || !body->linked) continue;
+        if(!world->query_rules.contents_ignore_pass && query->pass_actor.registry!=0 && qa_actor_id_equal(query->pass_actor,id)) continue;
+        qa_actor_collision collision; qa_error refresh_error={0};
+        if(!qa_world_collision_sample(body,false,QA_ENTITY_COLLISION_ALL,&collision,&refresh_error)) {
             if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
             continue;
         }
-        if(!query->q3_server_entities && actor.collision.role!=QA_COLLISION_SOLID
-            && actor.collision.role!=QA_COLLISION_BOTH) continue;
+        if(!query->q3_server_entities && collision.role!=QA_COLLISION_SOLID
+            && collision.role!=QA_COLLISION_BOTH) continue;
+        if(world->query_rules.brush_contents_only && !collision.inline_model) continue;
+        qa_body_state state;
+        if(!qa_world_body_sample(body,QA_ENTITY_CONTENTS_POSE,QA_ENTITY_BODY_SPATIAL,&state,&refresh_error)) {
+            if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
+            continue;
+        }
         qa_collision_bits added;
-        if(actor.collision.inline_model) {
+        if(collision.inline_model) {
             qa_point_query local=*query;
-            local.target=(qa_collision_target){true,actor.collision.model,actor.body.state.origin,actor.body.state.angles};
+            local.target=(qa_collision_target){true,collision.model,state.origin,state.angles};
             qa_point_contents sample;
-            if(!qa_collision_point_contents(qa_world_model_geometry(world,&actor.collision),
-                qa_world_trace_scratch(world,qa_world_model_geometry(world,&actor.collision)),&local,&sample,error)) { ok=false; break; }
+            if(!qa_collision_point_contents(qa_world_model_geometry(world,&collision),
+                qa_world_trace_scratch(world,qa_world_model_geometry(world,&collision)),&local,&sample,error)) { ok=false; break; }
+            if(result.family==QA_COLLISION_Q2 && world->query_rules.brush_contents_only) {
+                result.stored=qa_collision_bits_union(result.stored,sample.stored);
+                result.merged=qa_collision_bits_union(result.merged,sample.merged);
+                result.contents=query->policy.q2_merged_contents?result.merged:result.stored;
+                continue;
+            }
             added=sample.family==QA_COLLISION_Q2?(query->policy.q2_merged_contents?sample.merged:sample.stored):sample.contents;
         } else {
-            qa_vec3 point=qa_vec_sub(query->point,actor.body.state.origin);
-            bool source_temporary=query->q3_server_entities && actor.collision.family==QA_COLLISION_Q3;
-            if(source_temporary && actor.collision.shape==QA_SHAPE_CAPSULE) {
+            qa_vec3 point=qa_vec_sub(query->point,state.origin);
+            bool source_temporary=query->q3_server_entities && collision.family==QA_COLLISION_Q3;
+            if(source_temporary && collision.shape==QA_SHAPE_CAPSULE) {
                 qa_vec3 basis[3];
-                qa_collision_basis(actor.body.state.angles,basis);
+                qa_collision_basis(state.angles,basis);
                 point=qa_collision_to_local(point,basis);
             }
-            if(!qa_bounds_contains(actor.body.state.bounds,point)) continue;
-            added=source_temporary?qa_collision_bit(QA_CONTENT_BODY):qa_world_actor_contents(&actor.collision);
+            if(!qa_bounds_contains(state.bounds,point)) continue;
+            added=source_temporary?qa_collision_bit(QA_CONTENT_BODY):qa_world_actor_contents(&collision);
         }
         if(result.family==QA_COLLISION_Q2) { result.stored=qa_collision_bits_union(result.stored,added); result.merged=qa_collision_bits_union(result.merged,added); result.contents=query->policy.q2_merged_contents?result.merged:result.stored; }
         else result.contents=qa_collision_bits_union(result.contents,added);

@@ -30,6 +30,15 @@ typedef struct qa_world_actor_snapshot {
     qa_error *error;
     bool failed;
 } qa_world_actor_snapshot;
+typedef struct qa_world_release_frame {
+    uint32_t head, tail;
+} qa_world_release_frame;
+typedef struct qa_world_release_ticket {
+    qa_actor_id actor;
+    uint64_t order;
+    qa_world_release_frame *frame;
+    uint32_t previous, next;
+} qa_world_release_ticket;
 typedef struct qa_world_trace_geometry {
     struct qa_world_trace_geometry *next;
     qa_collision_geometry *geometry;
@@ -60,20 +69,69 @@ struct qa_world {
     size_t cluster_bytes, area_bytes, visibility_stride;
     qa_arena snapshot_storage;
     qa_pool snapshot_pool;
+    qa_world_release_ticket *release_tickets;
+    size_t release_pending, release_peak;
+    qa_world_query_rules query_rules;
 };
 static inline qa_collision_geometry *qa_world_model_geometry(const qa_world *world,
     const qa_actor_collision *collision)
 { return collision->model_geometry ? collision->model_geometry : world->geometry; }
-qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
-bool qa_world_body_sample(qa_world_body *, qa_entity_pose,
-                          qa_entity_body_components, qa_body_state *, qa_error *);
-bool qa_world_collision_sample(const qa_world_body *, bool,
-                               qa_entity_collision_components, qa_actor_collision *, qa_error *);
 static inline qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
 {
     if(world==NULL || slot>=world->capacity) return NULL;
     qa_world_body *body=qa_actors_body(world->actors->pages,slot);
     return body->world==NULL || body->world==world?body:NULL;
+}
+
+static inline qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
+{
+    qa_world_body *body=qa_world_raw_body(world,actor.slot);
+    return body!=NULL && body->present && qa_actor_id_equal(body->actor,actor)
+        && qa_actors_get(world->actors,actor)!=NULL?body:NULL;
+}
+
+static inline bool qa_world_body_state_valid(const qa_body_state *state,qa_entity_body_components components)
+{
+    return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
+        && (components!=QA_ENTITY_BODY_ALL || qa_vec_finite(state->velocity))
+        && qa_bounds_valid(state->bounds);
+}
+
+static inline bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
+                          qa_entity_body_components components,
+                          qa_body_state *out,qa_error *error)
+{
+    qa_body_state state;
+    qa_body_state *selected=components==QA_ENTITY_BODY_ALL?&state:out;
+    if(body->external) {
+        if(!qa_entity_body_read(body->binding.fields,pose,components,selected,error)) return false;
+        if(!qa_world_body_state_valid(selected,components)) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"%s","Binding returned invalid body state");
+            return false;
+        }
+        if(components==QA_ENTITY_BODY_ALL) body->state=*selected;
+    } else if(components==QA_ENTITY_BODY_ALL) state=body->state;
+    else {
+        selected->origin=body->state.origin;
+        selected->angles=body->state.angles;
+        selected->bounds=body->state.bounds;
+    }
+    if(components==QA_ENTITY_BODY_ALL) *out=*selected;
+    return true;
+}
+
+static inline bool qa_world_collision_sample(const qa_world_body *body,bool link_metadata,
+                               qa_entity_collision_components components,
+                               qa_actor_collision *out,qa_error *error)
+{
+    const qa_entity_collision_fields *fields=body->collision_binding.fields;
+    if(fields==NULL) {
+        if(!body->has_collision) return false;
+        if(components==QA_ENTITY_COLLISION_ROLE) out->role=body->collision.role;
+        else *out=body->collision;
+        return true;
+    }
+    return qa_entity_collision_read(fields,link_metadata,components,out,error);
 }
 
 static inline qa_linked_body qa_world_published_body(const qa_world *world, const qa_world_body *body)

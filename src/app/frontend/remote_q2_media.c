@@ -191,7 +191,12 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     remote_q2_footsteps_clear(row);
     frontend_world_scratch_destroy(&row->world_scratch);
     qa_scene_world_destroy(row->world); row->world = NULL;
-    qa_trace_scratch_destroy(row->trace_scratch); row->trace_scratch=NULL;
+    if (!qa_world_destroy(row->collision_world, error)) return false;
+    row->collision_world = NULL;
+    free(row->collision_actors); row->collision_actors = NULL;
+    free(row->collision_models); row->collision_models = NULL;
+    row->collision_count = row->collision_capacity = 0;
+    row->collision_viewer = (qa_actor_id){0}; row->collision_clients = 0;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
@@ -240,7 +245,18 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     qa_bsp_view bsp;
     if (!remote_q2_map_validate(row, row->map, &bsp, error)) return false;
     if (!qa_collision_create(&bsp, &row->geometry, error) || !qa_collision_bind_resource(row->geometry, row->map, error)) return false;
-    if (!qa_trace_scratch_create(row->geometry,&row->trace_scratch,error)) return false;
+    qa_actor_registry *actors = qa_session_actor_registry(qa_application_session(row->options.domain.application));
+    row->collision_capacity = qa_actors_capacity(actors);
+    row->collision_actors = calloc(row->collision_capacity, sizeof(*row->collision_actors));
+    row->collision_models = calloc(row->layout.max_models, sizeof(*row->collision_models));
+    if (!row->collision_actors || !row->collision_models ||
+        !qa_world_create(actors, row->geometry, NULL, 1, &row->collision_world, error)) return false;
+    for (size_t i = 0; i < row->layout.max_models; ++i)
+        remote_q2_prediction_config(row, (uint16_t)(row->layout.models + i));
+    remote_q2_prediction_config(row, row->layout.max_clients);
+    qa_world_query_rules query_rules = {.actors = row->collision_actors,
+        .brush_contents_only = true, .contents_ignore_pass = true};
+    qa_world_set_query_rules(row->collision_world, &query_rules);
     row->images = qa_scene_resources_create(row->content.mounts, error);
     if (!row->images || !frontend_image_policy_initialize(row->frontend, row->images, error)) return false;
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);

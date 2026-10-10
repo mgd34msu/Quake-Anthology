@@ -433,11 +433,6 @@ bool application_actor_released(void *opaque, qa_session *session,
     remember_failure(application_bots_actor_released(application, released, &current),
                      &current, "bot actor retirement failed", &ok, &first);
     current = (qa_error){0};
-    if (application->world != NULL)
-        remember_failure(qa_world_actor_released(application->world, released,
-                                                 &current),
-                         &current, "world actor retirement failed", &ok, &first);
-    current = (qa_error){0};
     remember_failure(application_equipment_runtime_actor_released(application->equipment_runtime,
                          released, &current), &current,
                      "gear source actor retirement failed", &ok, &first);

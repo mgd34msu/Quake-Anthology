@@ -10,14 +10,23 @@ static const qa_q2_player *player(const frontend_remote_q2 *row)
     return row->frame.valid && frontend_remote_q2_wire_seat(row, &seat, &error) && seat < row->frame.player_count ?
         &row->frame.players[seat].player : NULL;
 }
-static bool brush(const frontend_remote_q2 *row, const qa_q2_entity *entity, uint32_t *model)
+void remote_q2_prediction_config(frontend_remote_q2 *row, uint16_t index)
 {
-    if (entity->solid != 31 || entity->modelindex >= row->layout.max_models) return false;
-    const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + entity->modelindex));
-    if (*path != '*') return false;
-    char *end; unsigned long index = strtoul(path + 1, &end, 10);
-    if (end == path + 1 || *end || !index || index >= qa_collision_model_count(row->geometry)) return false;
-    *model = (uint32_t)index; return true;
+    if (index == row->layout.max_clients) {
+        row->collision_clients = strtoul(frontend_remote_q2_config(row, index), NULL, 10);
+        row->collision_dirty = true;
+    }
+    if (!row->collision_models || index < row->layout.models ||
+        (size_t)(index - row->layout.models) >= row->layout.max_models) return;
+    qa_entity_model_field *entry = row->collision_models + index - row->layout.models;
+    *entry = (qa_entity_model_field){0};
+    const char *path = frontend_remote_q2_config(row, index);
+    if (*path == '*') {
+        char *end; unsigned long model = strtoul(path + 1, &end, 10);
+        if (end != path + 1 && !*end && model && model < qa_collision_model_count(row->geometry))
+            *entry = (qa_entity_model_field){.model = (uint32_t)model, .present = true};
+    }
+    row->collision_dirty = true;
 }
 qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
 {
@@ -36,71 +45,81 @@ qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
         v2 ? (float)((solid >> 24) & 255) - 32 : (float)(solid >> 16) - 32768;
     return (qa_bounds){qa_v3(-x, -y, -down), qa_v3(x, y, up)};
 }
+bool remote_q2_prediction_publish(frontend_remote_q2 *row, qa_error *error)
+{
+    if (!row->collision_world) return true;
+    qa_actor_registry *actors = qa_world_actors(row->collision_world);
+    for (size_t i = 0; i < row->collision_count; ++i)
+        if (qa_actors_get(actors, row->collision_actors[i]) &&
+            !qa_world_unlink(row->collision_world, row->collision_actors[i], error)) return false;
+    row->collision_count = 0; row->collision_viewer = (qa_actor_id){0};
+    qa_world_query_rules rules = {.actors = row->collision_actors,
+        .brush_contents_only = true, .contents_ignore_pass = true};
+    qa_world_set_query_rules(row->collision_world, &rules);
+    if (!row->frame.valid || !row->options.entity_actor) return true;
+    uint32_t self_index; int32_t self_number;
+    if (!frontend_remote_q2_wire_seat(row, &self_index, error) ||
+        !frontend_remote_q2_player_number(row, &row->frame, self_index, &self_number)) return false;
+    qa_actor_owner owner = 0;
+    qa_actor_definition definition = 0;
+    if (self_number >= 0) {
+        if (!row->options.entity_actor(row->options.context, &row->options.domain,
+                (uint32_t)self_number + 1, &row->collision_viewer, error)) return false;
+        const qa_actor_record *viewer = qa_actors_get(actors, row->collision_viewer);
+        if (viewer) { owner = viewer->owner; definition = viewer->definition; }
+    }
+    bool extended = remote_q2_float_movement(row) ||
+        (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
+            row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
+    for (size_t i = 0; i < row->frame.entity_count; ++i) {
+        const qa_q2_entity *entity = row->frame.entities + i;
+        if (!entity->solid) continue;
+        uint32_t model = 0;
+        qa_body_state state = {.origin = vector(entity->origin)};
+        qa_actor_collision collision = {.family = QA_COLLISION_Q2, .shape = QA_SHAPE_BOX,
+            .role = QA_COLLISION_SOLID};
+        if (entity->solid == 31) {
+            if (entity->modelindex >= row->layout.max_models ||
+                !row->collision_models[entity->modelindex].present) continue;
+            model = row->collision_models[entity->modelindex].model;
+            if (!qa_collision_model_bounds(row->geometry, model, &state.bounds, error)) return false;
+            state.angles = vector(entity->angles);
+            collision.inline_model = true; collision.model = model;
+            collision.contents = extended && entity->number <= row->collision_clients ?
+                qa_collision_bit(QA_CONTENT_PLAYER) : (qa_collision_bits){UINT64_MAX, UINT64_MAX};
+        } else {
+            state.bounds = remote_q2_solid_bounds(row, entity->solid);
+            collision.contents = qa_collision_bit(extended && entity->number <= row->collision_clients ?
+                QA_CONTENT_PLAYER : QA_CONTENT_MONSTER);
+        }
+        qa_actor_id actor;
+        const qa_actor_record *record = owner ? qa_actors_at_source(actors, owner, entity->number) : NULL;
+        if (record && record->definition == definition) actor = record->id;
+        else if (!row->options.entity_actor(row->options.context, &row->options.domain,
+                entity->number, &actor, error)) return false;
+        if (row->collision_count == row->collision_capacity)
+            return remote_q2_fail(error, QA_ERROR_MEMORY, "Received solids exceed the loaded entity capacity");
+        if (!qa_world_body_write(row->collision_world, actor, &state, error) ||
+            !qa_world_set_collision(row->collision_world, actor, &collision, error) ||
+            !qa_world_link(row->collision_world, actor, NULL, error)) return false;
+        row->collision_actors[row->collision_count++] = actor;
+    }
+    rules.count = row->collision_count;
+    qa_world_set_query_rules(row->collision_world, &rules);
+    row->collision_dirty = false; return true;
+}
 bool remote_q2_trace(void *context, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
-    frontend_remote_q2 *row = context; uint32_t self_index; int32_t self_number = -1;
-    if (row->frame.valid && (!frontend_remote_q2_wire_seat(row, &self_index, error) ||
-        !frontend_remote_q2_player_number(row, &row->frame, self_index, &self_number))) return false;
-    uint32_t pass_number = 0;
-    if (query->pass_actor.registry) {
-        const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
-            qa_application_session(row->options.domain.application)), query->pass_actor);
-        uint32_t number = record && record->has_source ? record->source_slot : 0;
-        qa_actor_id actual;
-        if (!record || !record->has_source || !frontend_remote_q2_entity_received(row, number) ||
-            !row->options.entity_actor || !row->options.entity_actor(row->options.context, &row->options.domain,
-                number, &actual, error) || !qa_actor_id_equal(actual, query->pass_actor))
-            return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 trace pass actor has another received Source namespace");
-        pass_number = number;
-    }
+    frontend_remote_q2 *row = context;
     qa_trace_query q = *query; q.target = (qa_collision_target){0};
-    if (!qa_collision_trace(row->geometry,row->trace_scratch, &q, out, error)) return false;
-    for (size_t i = 0; i < row->frame.entity_count && !out->all_solid; ++i) {
-        const qa_q2_entity *entity = row->frame.entities + i;
-        if (!entity->solid || (self_number >= 0 && entity->number == (uint32_t)self_number + 1) || entity->number == pass_number) continue;
-        bool extended = remote_q2_float_movement(row) ||
-            (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
-                row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
-        unsigned long clients = strtoul(frontend_remote_q2_config(row, row->layout.max_clients), NULL, 10);
-        if (extended && entity->number <= clients &&
-            !qa_collision_bits_overlap(query->policy.contents_mask, qa_collision_bit(QA_CONTENT_PLAYER))) continue;
-        uint32_t model = 0; qa_trace_result hit;
-        q = *query;
-        if (entity->solid == 31) {
-            if (!brush(row, entity, &model)) continue;
-            q.target = (qa_collision_target){.inline_model = true, .model = model,
-                .origin = vector(entity->origin), .angles = vector(entity->angles)};
-            if (!qa_collision_trace(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
-        } else if (!qa_collision_trace_body(&q, QA_COLLISION_Q2, QA_SHAPE_BOX,
-            remote_q2_solid_bounds(row, entity->solid), vector(entity->origin),
-            qa_collision_bit(extended && entity->number <= clients ? QA_CONTENT_PLAYER : QA_CONTENT_MONSTER), &hit, error)) return false;
-        bool start_solid = out->start_solid || hit.start_solid;
-        if (hit.all_solid || hit.fraction < out->fraction) {
-            if (!row->options.entity_actor(row->options.context, &row->options.domain, entity->number, &hit.actor, error) ||
-                !hit.actor.registry || !remote_q2_live(row, error)) return false;
-            hit.hit = QA_TRACE_HIT_ACTOR; hit.model = model; *out = hit;
-        }
-        out->start_solid = start_solid;
-    }
-    return true;
+    return qa_world_trace_excluding(row->collision_world, &q, &row->collision_viewer,
+        row->collision_viewer.registry ? 1 : 0, out, error);
 }
 static bool contents(void *context, const qa_point_query *query, qa_point_contents *out, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     qa_point_query q = *query; q.target = (qa_collision_target){0};
-    if (!qa_collision_point_contents(row->geometry,row->trace_scratch, &q, out, error)) return false;
-    for (size_t i = 0; i < row->frame.entity_count; ++i) {
-        const qa_q2_entity *entity = row->frame.entities + i; uint32_t model;
-        if (!brush(row, entity, &model)) continue;
-        q = *query; q.target = (qa_collision_target){.inline_model = true, .model = model,
-            .origin = vector(entity->origin), .angles = vector(entity->angles)};
-        qa_point_contents hit;
-        if (!qa_collision_point_contents(row->geometry,row->trace_scratch, &q, &hit, error)) return false;
-        out->contents = qa_collision_bits_union(out->contents, hit.contents);
-        out->stored = qa_collision_bits_union(out->stored, hit.stored);
-        out->merged = qa_collision_bits_union(out->merged, hit.merged);
-    }
-    return true;
+    return qa_world_point_contents(row->collision_world, &q, out, error);
 }
 static bool is_brush(void *context, const qa_trace_result *hit, bool *out, qa_error *error)
 { (void)context; (void)error; *out = hit->hit == QA_TRACE_HIT_WORLD || hit->model != 0; return true; }
