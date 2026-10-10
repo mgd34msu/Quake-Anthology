@@ -119,7 +119,7 @@ uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
     qa_application_event_view output;
     const qa_application_protocol_event *retained=message;
     if (message->event_id) {
-        if (!qa_application_event_at(frontend->application,message->event_id,0,&output) || !output.protocol) {
+        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = message->event_id, .projection = 0}, &output) || !output.protocol) {
             frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its retained event ID");
             return QA_AUDIO_NO_ACTOR;
         }

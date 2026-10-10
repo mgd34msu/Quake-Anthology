@@ -475,17 +475,19 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
         row->generation=generation;
         if(row->event_offset) {
             qa_application_event_view output;
-            if(!qa_application_event_at(owner->application,row->event_id,row->event_projection,&output) || !output.protocol)
+            if(!qa_application_event_read(owner->application, &(qa_application_event_cursor){.id = row->event_id, .projection = row->event_projection}, &output) || !output.protocol)
                 okay=frontend_fail(error,QA_ERROR_ARGUMENT,"QC unfinished byte stream lost its retained event");
             if(row->event_id<scan) scan=row->event_id;
         } else if(row->event_id<first) { row->event_id=first; row->event_projection=0; }
     }
     for(uint64_t id=scan;okay && id<next;++id) {
         qa_application_event_view output;
-        for(size_t projection=0;okay && qa_application_event_at(owner->application,id,projection,&output) && output.protocol;++projection) {
+        qa_application_event_cursor event_cursor = {.id = id};
+        for (size_t projection = 0;okay && qa_application_event_read(owner->application, &event_cursor, &output) && output.protocol;++projection) {
             qa_application_protocol_event retained=*output.protocol;
             qa_application_event_view following;
-            bool last=!qa_application_event_at(owner->application,id,projection+1,&following) || !following.protocol;
+            qa_application_event_cursor lookahead=event_cursor;
+            bool last=!qa_application_event_read(owner->application, &lookahead, &following) || !following.protocol;
             /* The shared sky publication precedes recipient overrides for this
              * packet; byte offsets belong to the packet, not its global ID. */
             for(unsigned pass=0;okay && pass<2;++pass) for(qc_recipient *row=owner->recipients;okay && row;row=row->next)

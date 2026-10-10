@@ -859,7 +859,8 @@ static bool flush_events(frontend_qw_host *host, qa_net_writer *datagram,
     for (uint64_t i = cursor; i < next; ++i) {
         qa_application_protocol_event event;
         qa_application_event_view output;
-        for (size_t projection = 0; qa_application_event_at(app, i, projection, &output) && output.protocol; ++projection) {
+        qa_application_event_cursor event_cursor = {.id = i};
+        while ( qa_application_event_read(app, &event_cursor, &output) && output.protocol) {
             event = *output.protocol;
             if (event.provider != host->owner || event.signon) continue;
             uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;

@@ -31,6 +31,7 @@ struct qa_save_image;
 struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
 struct qa_application_equipment_event;
+struct qa_unified_presentation_payload;
 typedef struct qa_application_q3_equipment_services qa_application_q3_equipment_services;
 typedef struct qa_application_q3_body_services qa_application_q3_body_services;
 
@@ -581,20 +582,30 @@ typedef struct qa_application_event_view {
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
+    const struct qa_unified_presentation_payload *presentation;
+    qa_actor_id presentation_recipient;
+    uint64_t presentation_time_ns;
     const struct qa_application_q2_audience *q2_audience;
     const struct qa_application_q2_protocol_delivery *q2_delivery;
     uint64_t equipment_owner;
 } qa_application_event_view;
 
-/* Every consumer reads the same tagged record IDs. Projection selects an
- * attached protocol/equipment view; zero also reads records without views.
+typedef struct qa_application_event_cursor {
+    uint64_t id;
+    size_t projection;
+    const void *record, *protocol, *equipment, *presentation;
+    bool started;
+} qa_application_event_cursor;
+
+/* Initialize a cursor with its record ID and optional starting projection.
+ * Reads walk attached views once, including the raw record on the first read.
  * Borrowed fields remain valid until every consumer retires the record. */
 uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
 uint64_t qa_application_events_output_failures(const qa_application *);
-bool qa_application_event_at(const qa_application *, uint64_t,
-    size_t projection, qa_application_event_view *);
+bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,
+    qa_application_event_view *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);
 /* Typed module records encode only at consumption. The writer owns the
  * resulting bytes; already encoded external records keep their payload. */

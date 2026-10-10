@@ -1985,7 +1985,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
         qa_application_event_view output;
-        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         if (event.family==QA_GAME_Q2 && (event.kind==QA_BUILTIN_TELEPORT ||
@@ -2030,7 +2030,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
         qa_application_event_view output;
-        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
         qa_application_q2_map_event source = *output.value.q2_map;
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;

@@ -640,7 +640,7 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
         qa_application_q2_player_event player;
         bool reliable=false,print=false;
         qa_application_event_view output={0};
-        (void)qa_application_event_at(app,cursor,0,&output);
+        (void)qa_application_event_read(app, &(qa_application_event_cursor){.id = cursor, .projection = 0}, &output);
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
             if(!event.signon && delivery.original) {
@@ -979,7 +979,7 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player; qa_bytes bytes={0}; bool ok=true;
         qa_application_event_view output={0};
-        (void)qa_application_event_at(app,cursor,0,&output);
+        (void)qa_application_event_read(app, &(qa_application_event_cursor){.id = cursor, .projection = 0}, &output);
         if(output.protocol) {
             event=*output.protocol; delivery=*output.q2_delivery;
             if(!event.signon && delivery.original)

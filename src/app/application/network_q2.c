@@ -723,7 +723,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         uint64_t events_next = qa_application_events_next(owner->app);
         for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_application_event_view output;
-            if (!qa_application_event_at(owner->app, i, 0, &output) ||
+            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
                 output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
             const qa_builtin_event event = *output.value.builtin;
             if (event.family != QA_GAME_Q2 ||
@@ -753,7 +753,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         }
         for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_application_event_view output;
-            if (!qa_application_event_at(owner->app, i, 0, &output) ||
+            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
                 output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
             const qa_application_q2_map_event record = *output.value.q2_map;
             if (record.provider != owner->host.source.source_owner) continue;

@@ -1103,23 +1103,42 @@ uint64_t qa_application_events_output_failures(const qa_application *app)
 uint64_t qa_application_protocol_events_generation(const qa_application *app)
 { return app ? app->protocol_events_generation : 0; }
 
-bool qa_application_event_at(const qa_application *app, uint64_t id, size_t projection,
+bool qa_application_event_read(const qa_application *app, qa_application_event_cursor *cursor,
     qa_application_event_view *out)
 {
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out) return false;
-    const application_protocol_record *protocol = record->protocols;
-    size_t index = projection;
-    while (protocol && index--) protocol = protocol->next;
-    const application_equipment_event_record *equipment = record->equipment;
-    index = projection;
-    while (equipment && index--) equipment = equipment->next;
-    if (projection && !protocol && !equipment) return false;
+    const application_event_envelope *record;
+    const application_protocol_record *protocol;
+    const application_equipment_event_record *equipment;
+    const application_event_view *view;
+    if (!cursor->started) {
+        record = application_event_stream_at(app, cursor->id);
+        if (!record) return false;
+        protocol = record->protocols; equipment = record->equipment; view = record->views;
+        size_t index = cursor->projection;
+        while (protocol && index--) protocol = protocol->next;
+        index = cursor->projection;
+        while (equipment && index--) equipment = equipment->next;
+        index = cursor->projection;
+        while (view && index--) view = view->next;
+        if (cursor->projection && !protocol && !equipment && !view) return false;
+        cursor->record = record; cursor->started = true;
+    } else {
+        record = cursor->record;
+        protocol = cursor->protocol; equipment = cursor->equipment; view = cursor->presentation;
+        if (!protocol && !equipment && !view) return false;
+    }
     *out = (qa_application_event_view){.kind = record->kind,
         .protocol = protocol ? &protocol->event : NULL,
         .q2_delivery = protocol ? &protocol->q2 : NULL,
         .equipment = equipment ? &equipment->event : NULL,
-        .equipment_owner = equipment ? equipment->owner : 0};
+        .equipment_owner = equipment ? equipment->owner : 0,
+        .presentation = view ? view->event.presentation : NULL,
+        .presentation_recipient = view ? view->event.recipient : (qa_actor_id){0},
+        .presentation_time_ns = view ? view->event.time_ns : 0};
+    cursor->protocol = protocol ? protocol->next : NULL;
+    cursor->equipment = equipment ? equipment->next : NULL;
+    cursor->presentation = view ? view->next : NULL;
+    ++cursor->projection;
     switch (record->kind) {
     case QA_APPLICATION_EVENT_BUILTIN:
         out->value.builtin = &record->raw.builtin.event;

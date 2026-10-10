@@ -151,7 +151,7 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
     uint64_t next = qa_application_events_next(frame->application);
     for (uint64_t i = qa_application_events_local_first(frame->application); i < next; ++i) {
         qa_application_event_view output;
-        if (!qa_application_event_at(frame->application, i, 0, &output) ||
+        if (!qa_application_event_read(frame->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         if (event.family != QA_GAME_Q3) continue;

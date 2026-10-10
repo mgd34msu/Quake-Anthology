@@ -109,7 +109,7 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
     uint64_t next = qa_application_events_next(scope->application);
     for (uint64_t i = qa_application_events_local_first(scope->application); i < next; ++i) {
         qa_application_event_view output;
-        if (!qa_application_event_at(scope->application, i, 0, &output) ||
+        if (!qa_application_event_read(scope->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event queued = *output.value.builtin;
         if (!frontend_source_effects_current(scope))

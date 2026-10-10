@@ -137,11 +137,13 @@ bool frontend_equipment_events_drain(frontend_equipment_events *owner, qa_error 
     uint64_t first = qa_application_events_local_first(application), next = qa_application_events_next(application);
     if (owner->cursor < first) { clear_delivery(owner); owner->cursor = first; }
     owner->busy = true; bool okay = true;
+    qa_application_event_cursor event_cursor = {.id = owner->cursor, .projection = owner->projection};
     while (okay && owner->cursor < next) {
         qa_application_event_view output;
-        if (!qa_application_event_at(application, owner->cursor, owner->projection, &output) || !output.equipment) {
+        if (!qa_application_event_read(application, &event_cursor, &output) || !output.equipment) {
             ++owner->cursor; owner->projection = 0;
             owner->hud_delivered = owner->console_delivered = 0; owner->printed = false;
+            event_cursor = (qa_application_event_cursor){.id = owner->cursor};
             continue;
         }
         const qa_application_equipment_event *event = output.equipment;

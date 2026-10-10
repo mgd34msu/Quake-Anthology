@@ -497,7 +497,8 @@ static bool saved_events_match(application_equipment_runtime *runtime,
     qa_application *app = runtime->options.application;
     for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app); id < next; ++id) {
         qa_application_event_view output;
-        for (size_t projection = 0; qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+        qa_application_event_cursor event_cursor = {.id = id};
+        while ( qa_application_event_read(app, &event_cursor, &output) && output.equipment) {
             if (output.equipment_owner != runtime->events->identity) continue;
             const qa_application_equipment_event *event = output.equipment;
             bool found = false;
@@ -684,7 +685,8 @@ static bool source_capture(void *context, qa_buffer *out, qa_error *error)
     qa_application *app = runtime->options.application;
     for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app); okay && id < next; ++id) {
         qa_application_event_view output;
-        for (size_t projection = 0; okay && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection)
+        qa_application_event_cursor event_cursor = {.id = id};
+        while ( okay && qa_application_event_read(app, &event_cursor, &output) && output.equipment)
             if (output.equipment_owner == runtime->events->identity)
                 okay = application_equipment_runtime_event_current(runtime, output.equipment);
     }

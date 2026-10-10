@@ -955,7 +955,8 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app);
          ok && gear && id < next; ++id) {
         qa_application_event_view output;
-        for (size_t projection = 0; ok && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+        qa_application_event_cursor event_cursor = {.id = id};
+        while ( ok && qa_application_event_read(app, &event_cursor, &output) && output.equipment) {
             if (output.equipment_owner != gear->identity) continue;
             application_equipment_events moved = {.application = &staging,
                 .session = staging.session, .identity = gear->identity};

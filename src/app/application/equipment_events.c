@@ -127,14 +127,16 @@ bool application_equipment_events_capture(const application_equipment_events *qu
     size_t count = 0;
     for (uint64_t id = first; id < next; ++id) {
         qa_application_event_view output;
-        for (size_t projection = 0; qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection)
+        qa_application_event_cursor event_cursor = {.id = id};
+        while ( qa_application_event_read(app, &event_cursor, &output) && output.equipment)
             if (output.equipment_owner == queue->identity) ++count;
     }
     qa_source_save_io io = {0}; uint64_t generation = qa_application_protocol_events_generation(app);
     bool okay = qa_source_save_writer(&io, queue->session, error) && header(&io, &generation, &count);
     for (uint64_t id = first; okay && id < next; ++id) {
         qa_application_event_view output;
-        for (size_t projection = 0; okay && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+        qa_application_event_cursor event_cursor = {.id = id};
+        while ( okay && qa_application_event_read(app, &event_cursor, &output) && output.equipment) {
             if (output.equipment_owner != queue->identity) continue;
             qa_application_equipment_event event = *output.equipment;
             okay = fields(&io, queue, &event);

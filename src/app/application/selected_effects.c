@@ -220,9 +220,10 @@ bool qa_application_effect_event_read(qa_application *app, uint64_t event_id,
 {
     if (!out || !ready(app))
         return application_fail(error, QA_ERROR_ARGUMENT, "Effect event requires its completed canonical queue row");
-    const application_event_envelope *record = application_event_stream_at(app, event_id);
-    if (!record || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
-    const qa_builtin_event *event = &record->raw.builtin.event;
+    qa_application_event_view output;
+    if (!qa_application_event_read(app, &(qa_application_event_cursor){.id = event_id, .projection = 0}, &output) ||
+        output.kind != QA_APPLICATION_EVENT_BUILTIN) return false;
+    const qa_builtin_event *event = output.value.builtin;
     application_provider *provider = event_provider(app, event->provider);
     qa_application_effect_event view = {.event = event, .event_id = event_id,
         .queue_generation = app->protocol_events_generation};
