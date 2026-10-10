@@ -142,9 +142,14 @@ typedef struct application_unified_world_text {
     double expires;
     uint64_t first_frame;
     bool timed, observed, billboard, depth_test;
+    struct application_unified_world_text *next;
+    qa_event_lease *lease;
 } application_unified_world_text;
 bool application_unified_world_text_emit(qa_application *, qa_actor_owner,
     const qa_q2_map_event *, qa_error *);
+bool application_unified_world_text_append(qa_application *, const application_unified_world_text *, qa_error *);
+void application_unified_world_text_publish(qa_application *, application_unified_world_text *, uint64_t);
+void application_unified_world_text_destroy(qa_application *);
 
 /* Views share the raw event's page lease. Absent views consume no wire sequence. */
 bool application_unified_event_emit(qa_application *, qa_actor_owner,

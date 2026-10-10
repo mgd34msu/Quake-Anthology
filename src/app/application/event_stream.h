@@ -53,6 +53,7 @@ typedef struct application_event_envelope {
     } raw;
     application_protocol_record *protocols, *last_protocol;
     application_equipment_event_record *equipment, *last_equipment;
+    application_unified_world_text *world_text;
     application_event_view *views, *last_view;
 } application_event_envelope;
 

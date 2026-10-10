@@ -222,6 +222,8 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         return false;
     }
     application_unified_persistent_publish(app, write->envelope);
+    if (write->envelope->world_text)
+        application_unified_world_text_publish(app, write->envelope->world_text, id);
     for (application_protocol_record *record = write->envelope->protocols; record; record = record->next)
         if (record->event.signon && !application_q1_signon_retain(app, record, error)) return false;
     return true;
@@ -435,8 +437,6 @@ bool application_emit_q2_map(application_provider *provider,
         if (!event->levels[i].map || !valid_string(application, event->levels[i].map) ||
             !valid_string(application, event->levels[i].name) || !isfinite(event->levels[i].time_seconds))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual level or clock");
-    if (event->kind == QA_Q2_MAP_WORLD_TEXT &&
-        !application_unified_world_text_emit(application, provider->owner, event, error)) return false;
     if (event->kind == QA_Q2_MAP_AUTOSAVE &&
         !application_map_autosave_request(application,error)) return false;
     qa_application_q2_audience audience={0},retained={0};
@@ -458,6 +458,8 @@ bool application_emit_q2_map(application_provider *provider,
     bool ready = application_native_q2_delivery_retain(application, &audience, &retained, error);
     application_native_q2_delivery_dispose(&audience);
     if (!ready) goto abort;
+    if (event->kind == QA_Q2_MAP_WORLD_TEXT &&
+        !application_unified_world_text_emit(application, provider->owner, event, error)) goto abort;
     qa_builtin_message_arg *arguments = NULL;
     if (event->argument_count != 0) {
         size_t bytes = event->argument_count * sizeof(*event->arguments);

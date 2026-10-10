@@ -364,7 +364,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_event_ring_destroy(&application->event_ring);
     free(application->unified_event_owners);
     application_unified_events_resources_dispose(application);
-    free(application->unified_world_text);
+    application_unified_world_text_destroy(application);
     free(application->mode_ids);
     free(application->motion);
     free(application->actor_routes);

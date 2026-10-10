@@ -29,6 +29,7 @@ typedef struct event_store {
     application_unified_world_text *world_text;
     size_t world_text_count, world_text_capacity;
     uint64_t world_text_map;
+    bool world_text_borrowed;
     qa_application *application;
 } event_store;
 
@@ -137,7 +138,8 @@ static event_store borrow_store(qa_application *app)
         .registration_count = app->unified_event_registration_count,
         .registration_capacity = app->unified_event_registration_capacity,
         .world_text = app->unified_world_text, .world_text_count = app->unified_world_text_count,
-        .world_text_capacity = app->unified_world_text_capacity, .world_text_map = app->unified_world_text_map,
+        .world_text_capacity = app->unified_world_text_count, .world_text_map = app->unified_world_text_map,
+        .world_text_borrowed = true,
         .application = app
     };
 }
@@ -165,7 +167,13 @@ static void dispose_store(event_store *store)
     }
     free(store->resources);
     free(store->registrations);
-    free(store->world_text);
+    if (store->world_text_borrowed) {
+        while (store->world_text) {
+            application_unified_world_text *row = store->world_text;
+            store->world_text = row->next;
+            qa_event_lease_release(row->lease);
+        }
+    } else free(store->world_text);
     *store = (event_store){0};
 }
 
@@ -426,8 +434,10 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
         for (size_t j = 0; j < row->custody_count; ++j)
             if (!custody_field(io, graph, row->custodies + j)) return false;
     }
-    for (size_t i = 0; i < store->world_text_count; ++i) {
-        application_unified_world_text *row = store->world_text + i;
+    application_unified_world_text *text = store->world_text;
+    for (size_t i = 0; i < store->world_text_count; ++i,
+         text = store->world_text_borrowed ? text->next : text + 1) {
+        application_unified_world_text *row = text;
         if (!provider_field(io, &row->provider, true) || !qa_source_save_string(io, &row->content) ||
             !qa_source_save_string(io, &row->text) || !vector_field(io, &row->origin) ||
             !vector_field(io, &row->angles) || !vector_field(io, &row->color) ||
@@ -906,7 +916,7 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     qa_event_ring_destroy(&app->event_ring);
     free(app->unified_event_owners);
     application_unified_events_resources_dispose(app);
-    free(app->unified_world_text);
+    application_unified_world_text_destroy(app);
     app->event_ring = store->pages;
     app->event_write = NULL;
     app->event_local_cursor = pending_first;
@@ -926,7 +936,7 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     app->unified_event_registration_capacity = store->registration_capacity;
     ++app->unified_event_registration_revision;
     app->unified_world_text = store->world_text; app->unified_world_text_count = store->world_text_count;
-    app->unified_world_text_capacity = store->world_text_capacity;
+    app->unified_world_text_last = store->application->unified_world_text_last;
     ++app->unified_world_text_revision; app->unified_world_text_map = store->world_text_map;
     *store = (event_store){0};
 }
@@ -942,6 +952,8 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     staging.event_write = NULL;
     staging.unified_persistent = NULL;
     staging.unified_persistent_count = staging.unified_persistent_capacity = 0;
+    staging.unified_world_text = staging.unified_world_text_last = NULL;
+    staging.unified_world_text_count = 0;
     staging.presentation_event_sequence = staging.simulation_event_sequence = 0;
     event_store store = {.application = &staging};
     qa_source_save_io io = {0};
@@ -950,6 +962,28 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     qa_source_save_dispose(&io);
     qa_buffer_free(&normalized);
     if (ok) ok = resource_bindings(&store, app, error);
+    if (ok) {
+        application_unified_world_text *saved = store.world_text;
+        for (size_t i = 0; ok && i < store.world_text_count; ++i) {
+            application_event_write write;
+            ok = application_event_stream_begin(&staging, QA_APPLICATION_EVENT_Q2_MAP, &write, error);
+            if (!ok) break;
+            const application_unified_world_text *row = saved + i;
+            write.envelope->raw.q2_map.source = (qa_application_q2_map_event){
+                .provider = row->provider,
+                .event = {.kind = QA_Q2_MAP_WORLD_TEXT, .text = row->text,
+                    .origin = row->origin, .direction = row->angles, .color = row->color,
+                    .alpha = row->alpha, .value = row->cell_size,
+                    .flags = (row->billboard ? 2u : 0u) | (row->depth_test ? 1u : 0u)}};
+            ok = application_unified_world_text_append(&staging, row, error);
+            if (ok) ok = application_event_stream_commit(&staging, &write, error);
+            else application_event_stream_abort(&staging, &write, error);
+        }
+        free(saved);
+        store.world_text = staging.unified_world_text;
+        store.world_text_count = staging.unified_world_text_count;
+        store.world_text_borrowed = true;
+    }
     uint64_t pending_first = ok ? qa_event_ring_next(store.pages) : 0;
     application_equipment_events *gear = application_equipment_runtime_events(app->equipment_runtime);
     for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app);

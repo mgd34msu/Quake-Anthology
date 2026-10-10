@@ -474,31 +474,50 @@ bool application_unified_world_text_emit(qa_application *app, qa_actor_owner own
             return application_fail(error, QA_ERROR_ARGUMENT, "World text lost its primary Source clock");
         clock = source_clock;
     }
-    if (app->unified_world_text_count == app->unified_world_text_capacity) {
-        size_t capacity = app->unified_world_text_capacity ? app->unified_world_text_capacity * 2 : 32;
-        if (capacity < app->unified_world_text_capacity || capacity > SIZE_MAX / sizeof(*app->unified_world_text))
-            return application_fail(error, QA_ERROR_MEMORY, "World text extent overflows");
-        void *rows = realloc(app->unified_world_text, capacity * sizeof(*app->unified_world_text));
-        if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine world text");
-        app->unified_world_text = rows; app->unified_world_text_capacity = capacity;
-    }
     application_unified_world_text row = {.provider = owner, .text = event->text,
         .origin = event->origin, .angles = event->direction, .color = event->color,
         .alpha = event->alpha, .cell_size = event->value, .timed = event->duration > 0,
         .expires = (double)clock.frame.time_ns / 1e9 + event->duration,
         .billboard = (event->flags & 2u) != 0, .depth_test = (event->flags & 1u) != 0};
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), provider->product->identity, &row.content, error)) return false;
-    double now = (double)clock.frame.time_ns / 1e9;
-    size_t count = app->unified_world_text_map == app->map_revision ? app->unified_world_text_count : 0;
-    size_t kept = 0;
-    for (size_t i = 0; i < count; ++i)
-        if (!app->unified_world_text[i].timed || app->unified_world_text[i].expires > now)
-            app->unified_world_text[kept++] = app->unified_world_text[i];
-    app->unified_world_text_count = kept;
-    app->unified_world_text_map = app->map_revision;
-    app->unified_world_text[app->unified_world_text_count++] = row;
-    ++app->unified_world_text_revision;
+    return application_unified_world_text_append(app, &row, error);
+}
+
+bool application_unified_world_text_append(qa_application *app,
+    const application_unified_world_text *source, qa_error *error)
+{
+    application_unified_world_text *row = application_event_stream_alloc(app,
+        sizeof(*row), _Alignof(application_unified_world_text), error);
+    if (!row) return false;
+    *row = *source;
+    row->next = NULL; row->lease = NULL;
+    app->event_write->envelope->world_text = row;
     return true;
+}
+
+void application_unified_world_text_destroy(qa_application *app)
+{
+    while (app->unified_world_text) {
+        application_unified_world_text *row = app->unified_world_text;
+        app->unified_world_text = row->next;
+        qa_event_lease_release(row->lease);
+    }
+    app->unified_world_text_last = NULL;
+    app->unified_world_text_count = 0;
+}
+
+void application_unified_world_text_publish(qa_application *app,
+    application_unified_world_text *row, uint64_t id)
+{
+    if (app->unified_world_text_map != app->map_revision)
+        application_unified_world_text_destroy(app);
+    app->unified_world_text_map = app->map_revision;
+    row->lease = qa_event_ring_retain(app->event_ring, id);
+    if (app->unified_world_text_last) app->unified_world_text_last->next = row;
+    else app->unified_world_text = row;
+    app->unified_world_text_last = row;
+    ++app->unified_world_text_count;
+    ++app->unified_world_text_revision;
 }
 
 static char *event_alias(const qa_application *app, qa_string_id id)
@@ -934,26 +953,33 @@ bool application_unified_world_text_read(qa_application *app, const application_
 {
     double now = (double)source->frame.time_ns / 1e9;
     bool changed = app->unified_world_text_map != source->map_revision;
-    size_t count = changed ? 0 : app->unified_world_text_count, kept = 0;
-    for (size_t i = 0; i < count; ++i) {
-        const application_unified_world_text *row = app->unified_world_text + i;
-        changed |= (row->timed && row->expires <= now) || (!row->timed && (!row->observed || row->first_frame != source->frame.number));
-    }
-    if (changed && app->unified_world_text_revision == UINT64_MAX) return application_fail(e, QA_ERROR_FORMAT, "World text revision is exhausted");
-    for (size_t i = 0; i < count; ++i) {
-        application_unified_world_text row = app->unified_world_text[i];
-        if ((row.timed && row.expires <= now) || (!row.timed && row.observed && row.first_frame != source->frame.number)) continue;
-        if (!row.timed && !row.observed) { row.observed = true; row.first_frame = source->frame.number; }
-        app->unified_world_text[kept++] = row;
+    if (changed) application_unified_world_text_destroy(app);
+    application_unified_world_text **link = &app->unified_world_text, *previous = NULL;
+    while (*link) {
+        application_unified_world_text *row = *link;
+        if ((row->timed && row->expires <= now) ||
+            (!row->timed && row->observed && row->first_frame != source->frame.number)) {
+            *link = row->next;
+            if (app->unified_world_text_last == row) app->unified_world_text_last = previous;
+            --app->unified_world_text_count;
+            qa_event_lease_release(row->lease);
+            changed = true;
+            continue;
+        }
+        if (!row->timed && !row->observed) {
+            row->observed = true; row->first_frame = source->frame.number; changed = true;
+        }
+        previous = row; link = &row->next;
     }
     if (changed) ++app->unified_world_text_revision;
-    app->unified_world_text_count = kept; app->unified_world_text_map = source->map_revision;
+    size_t kept = app->unified_world_text_count;
+    app->unified_world_text_map = source->map_revision;
     if (!kept) return true;
     out->world_text = application_unified_frame_alloc(lease, kept, sizeof(*out->world_text), e);
     if (!out->world_text) return application_fail(e, QA_ERROR_MEMORY, "Projecting retained Source world text");
     out->world_text_count = kept;
-    for (size_t i = 0; i < kept; ++i) {
-        const application_unified_world_text *s = app->unified_world_text + i;
+    const application_unified_world_text *s = app->unified_world_text;
+    for (size_t i = 0; i < kept; ++i, s = s->next) {
         qa_unified_world_text *r = out->world_text + i;
         *r = (qa_unified_world_text){.origin = s->origin, .angles = s->angles,
             .color = {s->color.x, s->color.y, s->color.z, s->alpha}, .cell_size = s->cell_size,
