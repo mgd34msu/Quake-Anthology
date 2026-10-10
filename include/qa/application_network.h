@@ -30,8 +30,13 @@ typedef struct qa_application_network_player {
     qa_net_seat_id seat;
     qa_actor_id actor;
     uint32_t application_seat, client_slot, source_slot;
-    bool retiring, deferred, source_begin_pending, output_incomplete;
+    uint8_t output_incomplete;
+    bool retiring, deferred, source_begin_pending;
 } qa_application_network_player;
+enum {
+    QA_APPLICATION_OUTPUT_ALL = 1,
+    QA_APPLICATION_OUTPUT_UNIFIED = 2
+};
 /* Reads the actual remote roster, including a retained retirement. It neither
  * admits a player nor calls its source owner. The cursor is a physical row. */
 bool qa_application_network_player_next(const qa_application *, size_t *cursor,

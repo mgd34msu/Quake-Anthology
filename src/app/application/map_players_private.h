@@ -54,7 +54,8 @@ typedef struct application_player_record {
     application_player_guest_binding *guests;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
-    bool deferred, remote, dynamic, retiring, source_begin_pending, output_incomplete;
+    uint8_t output_incomplete;
+    bool deferred, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
 
 static inline const qa_actor_player *application_player_identity(const application_player_record *record)

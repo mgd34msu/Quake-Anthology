@@ -235,6 +235,16 @@ bool application_event_stream_decline(qa_application *app,const application_even
     return true;
 }
 
+static bool reliable_capacity_report(qa_application *app, qa_error *error)
+{
+    if (error) *error = (qa_error){0};
+    if (!app->event_reliable_declines)
+        qa_application_feature_report(app, "reliable output", &(qa_error){
+            .code = QA_ERROR_MEMORY, .message = "Output event storage is full; affected client channels will close"});
+    if (app->event_reliable_declines != UINT64_MAX) ++app->event_reliable_declines;
+    return true;
+}
+
 bool application_event_stream_close_recipients(qa_application *app,
     const application_event_write *write, qa_actor_id recipient,
     const qa_application_q2_audience *audience, qa_error *error)
@@ -252,17 +262,21 @@ bool application_event_stream_close_recipients(qa_application *app,
                 (!target->has_connection || qa_net_client_id_equal(player->remote_client, target->connection));
         }
         if (receives) {
-            player->output_incomplete = true;
+            player->output_incomplete |= QA_APPLICATION_OUTPUT_ALL;
             addressed = true;
         }
     }
     if (!addressed) return false;
-    if (error) *error = (qa_error){0};
-    if (!app->event_reliable_declines)
-        qa_application_feature_report(app, "reliable output", &(qa_error){
-            .code = QA_ERROR_MEMORY, .message = "Output event storage is full; affected client channels will close"});
-    if (app->event_reliable_declines != UINT64_MAX) ++app->event_reliable_declines;
-    return true;
+    return reliable_capacity_report(app, error);
+}
+
+bool application_event_stream_close_subscribers(qa_application *app,
+    const application_event_write *write, qa_error *error)
+{
+    if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
+    for (size_t i = 0; app->players && i < app->players->count; ++i)
+        app->players->records[i].output_incomplete |= QA_APPLICATION_OUTPUT_UNIFIED;
+    return reliable_capacity_report(app, error);
 }
 
 static bool protocol_capacity(application_provider *provider,

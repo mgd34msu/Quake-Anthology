@@ -6166,7 +6166,9 @@ static bool incomplete_output_close(qa_frontend_network *network, qa_error *erro
         size_t player_cursor = 0;
         qa_application_network_player player;
         while (qa_application_network_player_next(network->frontend->application, &player_cursor, &player)) {
-            if (!player.output_incomplete || !qa_net_client_id_equal(player.client, client->id)) continue;
+            uint8_t affected = QA_APPLICATION_OUTPUT_ALL |
+                (client->protocol.kind == QA_NET_UNIFIED_1 ? QA_APPLICATION_OUTPUT_UNIFIED : 0);
+            if (!(player.output_incomplete & affected) || !qa_net_client_id_equal(player.client, client->id)) continue;
             if (!qa_network_detach(network->runtime, client->id, "Reliable output overflow", error)) return false;
             break;
         }

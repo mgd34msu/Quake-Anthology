@@ -56,6 +56,7 @@ void application_event_stream_abort(qa_application *, application_event_write *,
 bool application_event_stream_decline(qa_application *, const application_event_write *, bool transient, qa_error *);
 bool application_event_stream_close_recipients(qa_application *, const application_event_write *,
     qa_actor_id recipient, const qa_application_q2_audience *, qa_error *);
+bool application_event_stream_close_subscribers(qa_application *, const application_event_write *, qa_error *);
 const application_event_envelope *application_event_stream_at(const qa_application *, uint64_t);
 bool application_unified_persistent_prepare(qa_application *, application_event_envelope *, qa_error *);
 void application_unified_persistent_publish(qa_application *, application_event_envelope *);

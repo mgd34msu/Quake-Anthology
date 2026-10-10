@@ -704,7 +704,7 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
     if (!clock || !clock->provider || (unsigned)clock->kind > QA_RULESET_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Presentation retirement requires the retained actual primary clock");
     application_event_write write;
-    if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, error)) return false;
+    if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, error)) goto capacity;
     size_t count = app->unified_persistent_count;
     size_t *winners = count ? application_event_stream_alloc(app, count * sizeof(*winners),
         _Alignof(size_t), error) : NULL;
@@ -743,11 +743,13 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
     if (!application_unified_event_append(app, &first, error)) goto abort;
     for (size_t i = 0; i < winner_count; ++i)
         if (!application_unified_event_append(app, &app->unified_persistent[winners[i]].event, error)) goto abort;
-    if (!application_event_stream_commit(app, &write, error)) return false;
+    if (!application_event_stream_commit(app, &write, error)) goto capacity;
     return application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
 abort:
     application_event_stream_abort(app, &write, error);
-    return false;
+capacity:
+    return application_event_stream_close_subscribers(app, &write, error) &&
+        application_unified_persistent_retire(app, owner, (qa_actor_id){0}, error);
 }
 
 bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
