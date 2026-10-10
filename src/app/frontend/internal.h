@@ -412,6 +412,7 @@ bool frontend_event_retire_checked(qa_frontend *,qa_error *);
 bool frontend_event_images(qa_frontend *, qa_actor_owner, qa_game_family, qa_scene_resources **, qa_error *);
 bool frontend_particle_events(qa_frontend *, qa_error *);
 bool frontend_particle_advance(qa_frontend *, qa_error *);
+bool frontend_particle_prepare(qa_frontend *,qa_error *);
 void frontend_particle_retire(qa_frontend *);
 bool frontend_player_events(qa_frontend *, qa_error *);
 void frontend_player_retire(frontend_seat *);

@@ -700,7 +700,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->audio_output_format=device.format;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
-    if (!frontend_local_lobby_init(frontend,error)) goto fail;
+    if (!frontend_particle_prepare(frontend,error) || !frontend_local_lobby_init(frontend,error)) goto fail;
     {
         const qa_ruleset_id *source=NULL; qa_ruleset_id dialect;
         if(options->game) {

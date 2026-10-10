@@ -15,6 +15,7 @@
 #include "source_client_registry.h"
 #include "selected_effects_particles.h"
 #include "q2_entity_effects.h"
+#include "qa/allocation_gate.h"
 #include "q2_temporary_beams.h"
 #include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
@@ -149,6 +150,7 @@ typedef struct frontend_particle_cvars {
     qa_cvar_handle hand, gun, gun_fov;
 } frontend_particle_cvars;
 struct frontend_particle_state {
+    qa_arena storage;
     frontend_particle_owner *owners;
     frontend_particle_cvars cvars[QA_INPUT_LOCAL_SEATS];
     uint64_t sample_ns, previous_sample_ns;
@@ -168,12 +170,29 @@ struct frontend_particle_state {
     frontend_visual_sample *visual_samples;
     size_t visual_sample_capacity;
 };
-static bool particle_state(qa_frontend *frontend, qa_error *error)
+bool frontend_particle_prepare(qa_frontend *frontend, qa_error *error)
 {
     if (frontend->particles) return true;
     frontend->particles = calloc(1, sizeof(*frontend->particles));
     if (!frontend->particles)
         return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend particle continuation");
+    frontend_particle_state *state=frontend->particles;
+    size_t capacity=qa_actors_capacity(qa_session_actor_registry(qa_application_session(frontend->application)));
+    size_t bytes=capacity*(sizeof(*state->q1_trails)+sizeof(*state->visual_samples)+sizeof(*state->source_entities))+
+        3*_Alignof(max_align_t);
+    bool okay=qa_arena_reserve(&state->storage,bytes,error);
+    if (okay) {
+        state->q1_trails=qa_arena_alloc(&state->storage,capacity*sizeof(*state->q1_trails),_Alignof(frontend_q1_trail),error);
+        state->visual_samples=qa_arena_alloc(&state->storage,capacity*sizeof(*state->visual_samples),_Alignof(frontend_visual_sample),error);
+        state->source_entities=qa_arena_alloc(&state->storage,capacity*sizeof(*state->source_entities),_Alignof(frontend_q2_entity_sample),error);
+        okay=state->q1_trails && state->visual_samples && state->source_entities;
+    }
+    if (!okay) { qa_arena_destroy(&state->storage);free(state);frontend->particles=NULL;return false; }
+    memset(state->q1_trails,0,capacity*sizeof(*state->q1_trails));
+    memset(state->visual_samples,0,capacity*sizeof(*state->visual_samples));
+    memset(state->source_entities,0,capacity*sizeof(*state->source_entities));
+    state->q1_trail_capacity=state->visual_sample_capacity=state->source_entity_capacity=capacity;
+    qa_arena_seal(&state->storage);
     frontend->particles->sample_ns = frontend->particles->previous_sample_ns =
         qa_session_elapsed(qa_application_session(frontend->application));
     return true;
@@ -181,7 +200,7 @@ static bool particle_state(qa_frontend *frontend, qa_error *error)
 static const frontend_particle_cvars *particle_cvars_bind(qa_frontend *frontend,
     uint32_t seat, const qa_cvars *registry, qa_error *error)
 {
-    if (!particle_state(frontend,error)) return NULL;
+    if (!frontend_particle_prepare(frontend,error)) return NULL;
     frontend_particle_cvars *bindings=frontend->particles->cvars+seat;
     uint64_t identity=qa_cvars_view_identity(registry);
     if (bindings->view_identity!=identity) {
@@ -200,21 +219,11 @@ static const frontend_particle_cvars *particle_cvars_bind(qa_frontend *frontend,
 bool frontend_particle_visual_read(qa_frontend *frontend,qa_actor_id actor,
     qa_application_visual_view *out,bool *found,qa_error *error)
 {
-    if (!particle_state(frontend,error)) return false;
+    if (!frontend_particle_prepare(frontend,error)) return false;
     frontend_particle_state *state=frontend->particles;
     if ((size_t)actor.slot>=state->visual_sample_capacity) {
-        size_t capacity=state->visual_sample_capacity?state->visual_sample_capacity:128;
-        while (capacity<=(size_t)actor.slot) {
-            if (capacity>SIZE_MAX/2) return frontend_fail(error,QA_ERROR_MEMORY,"Visual actor table overflow");
-            capacity*=2;
-        }
-        if (capacity>SIZE_MAX/sizeof(*state->visual_samples))
-            return frontend_fail(error,QA_ERROR_MEMORY,"Visual actor table overflow");
-        frontend_visual_sample *rows=realloc(state->visual_samples,capacity*sizeof(*rows));
-        if (!rows) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining frame visual samples");
-        memset(rows+state->visual_sample_capacity,0,
-            (capacity-state->visual_sample_capacity)*sizeof(*rows));
-        state->visual_samples=rows;state->visual_sample_capacity=capacity;
+        qa_allocation_gate_capacity_exhausted();
+        return frontend_fail(error,QA_ERROR_MEMORY,"Visual sample actor capacity exhausted");
     }
     frontend_visual_sample *sample=state->visual_samples+actor.slot;
     if (!sample->sampled || sample->frame!=frontend->frame_number ||
@@ -264,7 +273,7 @@ bool frontend_particle_source_begin(qa_frontend *frontend, uint64_t elapsed_ns, 
         if (frontend->particles) frontend->particles->client_clock = frontend->particles->client_pending = false;
         return true;
     }
-    if (!particle_state(frontend, error)) return false;
+    if (!frontend_particle_prepare(frontend, error)) return false;
     frontend_particle_state *state = frontend->particles;
     if (state->client_pending)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 client sampling has an uncompleted committed frame");
@@ -307,14 +316,9 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
     if (!state->source_ready || source.clock.frame.number!=state->server_frame) {
         uint32_t extent;
         if (!qa_application_native_q2_presentation_extent(frontend->application,&source,&extent,error)) return false;
-        if ((uint64_t)extent*sizeof(*state->source_entities)>SIZE_MAX)
-            return frontend_fail(error,QA_ERROR_MEMORY,"Q2 Source sample exceeds native storage");
         if (extent>state->source_entity_capacity) {
-            frontend_q2_entity_sample *entities=realloc(state->source_entities,(size_t)extent*sizeof(*entities));
-            if (!entities) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed Q2 entity samples");
-            memset(entities+state->source_entity_capacity,0,
-                ((size_t)extent-state->source_entity_capacity)*sizeof(*entities));
-            state->source_entities=entities; state->source_entity_capacity=extent;
+            qa_allocation_gate_capacity_exhausted();
+            return frontend_fail(error,QA_ERROR_MEMORY,"Q2 sample actor capacity exhausted");
         }
         for (uint32_t slot=0;slot<extent;++slot) {
             qa_application_native_q2_entity_sample entity={0};
@@ -619,7 +623,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     if (family == QA_GAME_Q2 && (!recipient.registry ||
             !delivery_world_current(frontend, world_source, map_identity)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle owner lost its actual delivered world");
-    if (!particle_state(frontend, error)) return false;
+    if (!frontend_particle_prepare(frontend, error)) return false;
     for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next)
         if (owner->provider == provider && owner->family == family &&
             owner->world_source == world_source && owner->map_identity == map_identity &&
@@ -680,9 +684,7 @@ void frontend_particle_retire(qa_frontend *frontend)
         frontend->particles->owners = owner->next;
         particle_owner_free(owner);
     }
-    free(frontend->particles->source_entities);
-    free(frontend->particles->q1_trails);
-    free(frontend->particles->visual_samples);
+    qa_arena_destroy(&frontend->particles->storage);
     free(frontend->particles); frontend->particles = NULL;
 }
 void frontend_particle_reset_round(qa_frontend *frontend)
@@ -1272,17 +1274,12 @@ bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_vis
     uint32_t effects = view->q1_effects | (view->family == QA_GAME_Q1 ? (uint32_t)view->visual.effects : 0);
     uint32_t flags = model && model->format == QA_MODEL_MDL ? (uint32_t)model->flags : 0;
     if (!(effects & UINT32_C(0xff)) && !(flags & UINT32_C(0xf7))) return true;
-    if (!particle_state(frontend, error)) return false;
+    if (!frontend_particle_prepare(frontend, error)) return false;
     frontend_particle_state *state = frontend->particles;
     size_t slot = view->actor.slot;
     if (slot >= state->q1_trail_capacity) {
-        size_t extent = (size_t)qa_actors_capacity(qa_world_actors(qa_application_world(frontend->application)));
-        size_t capacity = state->q1_trail_capacity ? state->q1_trail_capacity : 64;
-        while (capacity <= slot && capacity < extent) capacity = capacity > extent / 2 ? extent : capacity * 2;
-        frontend_q1_trail *trails = realloc(state->q1_trails, capacity * sizeof(*trails));
-        if (!trails) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Source entity trail origins");
-        memset(trails + state->q1_trail_capacity, 0, (capacity - state->q1_trail_capacity) * sizeof(*trails));
-        state->q1_trails = trails; state->q1_trail_capacity = capacity;
+        qa_allocation_gate_capacity_exhausted();
+        return frontend_fail(error,QA_ERROR_MEMORY,"Q1 trail actor capacity exhausted");
     }
     frontend_q1_trail *trail = state->q1_trails + slot;
     bool same = qa_actor_id_equal(trail->actor, view->actor) && trail->provider == view->provider && trail->model == model;
@@ -2095,7 +2092,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
     if (!frontend || !world || seat>=frontend->options.seats || frontend->resource_inventory)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 explosion lights require their actual physical seat");
     if (frontend_network_local_input_owned(frontend,seat)) return true;
-    if (!particle_state(frontend,error)) return false;
+    if (!frontend_particle_prepare(frontend,error)) return false;
     qa_actor_id recipient;
     if (!frontend_seat_actor_read(frontend,seat,&recipient)) return true;
     frontend_q2_controls controls;
@@ -2240,7 +2237,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Particle draw requires its actual physical seat");
     if (frontend_network_local_input_owned(frontend,seat)) return true;
     const qa_scene_view *view = &world->view;
-    if (!frontend->particles && !particle_state(frontend,error)) return false;
+    if (!frontend->particles && !frontend_particle_prepare(frontend,error)) return false;
     frontend_q2_controls controls;
     if (!q2_controls(frontend,seat,&controls,error)) return false;
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
