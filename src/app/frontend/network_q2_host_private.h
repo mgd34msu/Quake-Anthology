@@ -42,6 +42,7 @@ struct frontend_network_q2_host {
     qa_application_network_q2 *discovery;
     qa_application_network_q2_host source;
     qa_q2_unicast_cache *unicast;
+    qa_q2_messages *event_decoders[2];
     q2_host_peer *peers;
     size_t capacity;
     unsigned calls;

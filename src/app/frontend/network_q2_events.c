@@ -192,7 +192,7 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
 
 bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_actor_owner host_source,
     const qa_application_protocol_event *source, const qa_application_q2_protocol_delivery *delivery,
-    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, uint8_t *storage,
+    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, qa_q2_messages *const decoders[2], uint8_t *storage,
     size_t capacity, qa_bytes *out, qa_error *error)
 {
     if (!publisher || !host_source || !source || !delivery || !client || !codec || !out || out->data || out->size ||
@@ -212,15 +212,14 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     q2_event_packet packet = {.publisher = publisher, .host_source = host_source, .source = source,
         .delivery = delivery, .client = client, .epoch = epoch, .codec = *codec};
     qa_net_writer_init(&packet.writer, storage, capacity, error);
-    qa_net_protocol_id protocol = {.kind = delivery->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
-    qa_q2_message_options options = {.config_strings = delivery->profile == QA_NATIVE_Q2_GAME_API3 ? 2080u : 12448u,
-        .inventory_slots = 256, .native_api2023 = delivery->profile == QA_NATIVE_Q2_GAME_API2023};
-    qa_q2_messages *decoder = NULL;
     qa_q2_server_record record = {.event = source->q2 ? *source->q2 : (qa_q2_server_event){0}};
-    bool ok = source->q2 ? emit(&packet, &record, error) :
-        qa_q2_messages_create(protocol, &options, &decoder, error) &&
-        qa_q2_messages_read(decoder, source->payload, emit, &packet, error);
-    qa_q2_messages_destroy(decoder);
+    bool ok;
+    if (source->q2) ok = emit(&packet, &record, error);
+    else {
+        qa_q2_messages *decoder = decoders[delivery->profile == QA_NATIVE_Q2_GAME_API2023];
+        qa_q2_messages_reset(decoder);
+        ok = qa_q2_messages_read(decoder, source->payload, emit, &packet, error);
+    }
     if (!ok) return false;
     size_t size = qa_net_writer_size(&packet.writer);
     *out = (qa_bytes){size ? storage : NULL, size}; return true;
