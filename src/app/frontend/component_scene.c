@@ -847,7 +847,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
             !qa_material_library_load_scripts(owner->materials,owner->files,&images,e) ||
             !qa_material_library_source_shaders_initialize(owner->materials,&images,e)) return false;
     }
-    qa_q3_presentation_asset_options assets={.provider={owner->files,owner->images,owner->materials,QA_GAME_Q3},
+    qa_q3_presentation_asset_options assets={.provider={owner->files,owner->images,owner->materials,QA_GAME_Q3,qa_application_world(f->application)},
         .sounds=owner->sounds,.movies=owner->media,.context=owner,.print=print,.model_initialize=model_initialize};
     if (!qa_q3_presentation_assets_create(&assets,&owner->assets,e)) return false;
     qa_q3_presentation_options options={.assets=owner->assets,.audio=f->audio,.clock={owner,milliseconds},

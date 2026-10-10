@@ -153,6 +153,15 @@ static void dispose_trace_geometries(qa_world *world)
     world->trace_geometries=NULL;
 }
 
+qa_collision_geometry *qa_world_resource_geometry(const qa_world *world,const struct qa_resource *resource)
+{
+    if(world==NULL || resource==NULL) return NULL;
+    if(qa_collision_resource(world->geometry)==resource) return world->geometry;
+    for(const qa_world_trace_geometry *entry=world->trace_geometries;entry!=NULL;entry=entry->next)
+        if(qa_collision_resource(entry->geometry)==resource) return entry->geometry;
+    return NULL;
+}
+
 qa_trace_scratch *qa_world_trace_scratch(qa_world *world,const qa_collision_geometry *geometry)
 {
     if(world==NULL || geometry==NULL) return NULL;

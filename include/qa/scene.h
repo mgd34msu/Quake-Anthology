@@ -4,6 +4,7 @@
 #include "qa/math.h"
 #include "qa/ruleset.h"
 #include "qa/arena.h"
+#include "qa/collision.h"
 #include "qa/bsp.h"
 #include "qa/image.h"
 #include "qa/q3_color.h"
@@ -767,6 +768,7 @@ bool qa_scene_bounds_visible(qa_bounds, const qa_scene_plane *, size_t);
 typedef enum qa_scene_q1_lightmap_encoding { QA_Q1_LIGHTMAP_RGB,
     QA_Q1_LIGHTMAP_INVERTED_LUMINANCE, QA_Q1_LIGHTMAP_INVERTED_ALPHA } qa_scene_q1_lightmap_encoding;
 typedef struct qa_scene_world_options {
+    qa_collision_geometry *geometry; /* Scene retains the admitted common geometry. */
     qa_scene_image_options images;
     float subdivisions, q1_water_alpha, q2_light_modulate;
     uint32_t q3_overbright;
@@ -897,7 +899,6 @@ bool qa_scene_world_create(const qa_bsp_view *, qa_scene_resources *, qa_materia
 void qa_scene_world_destroy(qa_scene_world *);
 bool qa_scene_world_retain(qa_scene_world *, qa_error *);
 void qa_scene_world_release(qa_scene_world *);
-int32_t qa_scene_world_leaf(const qa_scene_world *, qa_vec3);
 /* Original Q3 compares its area mask once for the parent scene. Portal views
  * share that result while each view can replace the retained PVS marks. */
 bool qa_scene_world_source_begin_scene(qa_scene_world *, const qa_scene_world_input *, qa_error *);

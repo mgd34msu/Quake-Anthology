@@ -45,7 +45,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
     row->images = qa_scene_resources_create(row->content.mounts, error);
     if (!row->images || !frontend_image_policy_initialize(row->frontend, row->images, error)) return false;
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);
-    qa_scene_world_options options = {.images = image_options(QA_IMAGE_USAGE_WALL), .subdivisions = 64,
+    qa_scene_world_options options = {.geometry = row->collision, .images = image_options(QA_IMAGE_USAGE_WALL), .subdivisions = 64,
         .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
     if (!row->materials || !qa_material_library_load_scripts(row->materials, row->content.mounts, &options.images, error) ||
         !qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error) ||
@@ -126,9 +126,16 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
         qa_bsp_view bsp;
         qa_scene_world_options world_options = {.images = image_options(QA_IMAGE_USAGE_WALL), .subdivisions = 64,
             .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
+        qa_collision_geometry *geometry = qa_world_resource_geometry(row->collision_world, m->resource);
+        bool created = geometry == NULL;
         ok = qa_bsp_open(qa_resource_bytes(m->resource), &bsp, error) && qa_bsp_validate(&bsp, error) &&
-            qa_scene_world_create(&bsp, row->images, row->materials, &world_options, &m->world, error) &&
+            (!created || (qa_collision_create(&bsp, &geometry, error) &&
+                qa_collision_bind_resource(geometry, m->resource, error) &&
+                qa_world_prepare_trace_geometry(row->collision_world, geometry, error)));
+        world_options.geometry = geometry;
+        if (ok) ok = qa_scene_world_create(&bsp, row->images, row->materials, &world_options, &m->world, error) &&
             qa_scene_world_source_resource_bind(m->world, m->resource, error);
+        if (created) qa_collision_destroy(geometry);
     } else if (ok) ok = qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
         qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&

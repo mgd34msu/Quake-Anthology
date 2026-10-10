@@ -22,6 +22,7 @@ typedef struct qa_q3_presentation_provider {
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_game_family family;
+    qa_world *geometry_owner; /* Borrowed only for cold resource admission. */
 } qa_q3_presentation_provider;
 typedef enum qa_q3_asset_kind { QA_Q3_ASSET_MODEL, QA_Q3_ASSET_SKIN, QA_Q3_ASSET_SHADER } qa_q3_asset_kind;
 typedef struct qa_q3_presentation_asset_options {

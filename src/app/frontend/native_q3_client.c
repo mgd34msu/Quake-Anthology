@@ -344,7 +344,7 @@ static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
     frontend_native_q3 *row=context;
     if(!name || !out || !frontend_native_q3_current(row))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native asset selection lost its actual source recipient");
-    *out=(qa_q3_presentation_provider){row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3};
+    *out=(qa_q3_presentation_provider){row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3,qa_application_world(row->frontend->application)};
     if(kind==QA_Q3_ASSET_SHADER)return true;
     qa_launch_role role;
     if(!strncmp(name,"models/players/",15))role=QA_ROLE_SKIN;
@@ -358,7 +358,7 @@ static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
     if(!frontend_visual_media_acquire(row->frontend,selected.provider,QA_GAME_Q3,&media,e) ||
         !qa_application_q3_asset_selection_current(row->frontend->application,&selected) ||
         !frontend_native_q3_current(row))return false;
-    *out=(qa_q3_presentation_provider){media.mounts,media.images,media.materials,QA_GAME_Q3};
+    *out=(qa_q3_presentation_provider){media.mounts,media.images,media.materials,QA_GAME_Q3,qa_application_world(row->frontend->application)};
     return true;
 }
 static bool model_initialize(void *context,const qa_q3_model_opening *opening,
@@ -374,7 +374,7 @@ bool frontend_native_q3_asset_options(frontend_native_q3 *row,qa_q3_presentation
 {
     if(!row || !out || !linked(row) || !row->view.mounts || !row->view.images || !row->view.materials || !row->view.sounds || !row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native assets require their real retained media owners");
-    *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3},
+    *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3,qa_application_world(row->frontend->application)},
         .sounds=row->view.sounds,.movies=row->view.movies,.context=row,.select=select_asset,.print=print_row,.model_initialize=model_initialize}; return true;
 }
 static bool prepare_picture(void *context,qa_material_context *material,qa_error *error)

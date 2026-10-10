@@ -112,7 +112,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char 
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 registry creation overlaps resource inventory");
         qa_q3_presentation_asset_options options = {.provider = {
             .mounts = row->files, .images = row->images, .materials = row->materials,
-            .family = QA_GAME_Q3}, .sounds = row->sounds, .movies = row->media};
+            .family = QA_GAME_Q3, .geometry_owner = qa_application_world(owner->frontend->application)}, .sounds = row->sounds, .movies = row->media};
         if (!qa_q3_presentation_assets_create(&options, &row->q3_assets, error)) return false;
     }
     *out = row->q3_assets; return true;
@@ -142,6 +142,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
     if (okay) {
         qa_game_family family = bsp.family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp.family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
         qa_scene_world_options options = world_options(family);
+        options.geometry = qa_executable_recipe_geometry(recipe);
         for (size_t i = 0; i < qa_executable_recipe_sidecar_count(recipe); ++i) {
             const qa_recipe_sidecar *sidecar = qa_executable_recipe_sidecar(recipe, i);
             size_t length = sidecar && sidecar->path ? strlen(sidecar->path) : 0;
@@ -240,10 +241,18 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
     bool brush = length >= 4 && !strcmp(path + length - 4, ".bsp");
     if (okay && brush) {
         qa_bsp_view bsp; qa_scene_world_options world = world_options(family);
+        qa_world *geometry_owner = qa_application_world(owner->frontend->application);
+        qa_collision_geometry *geometry = qa_world_resource_geometry(geometry_owner, row->resource);
+        bool created = geometry == NULL;
         okay = qa_bsp_open(qa_resource_bytes(row->resource), &bsp, error) && qa_bsp_validate(&bsp, error) &&
-            (family != QA_GAME_Q3 || frontend_q3_world_policy_initialize(owner->frontend, &world, error)) &&
+            (!created || (qa_collision_create(&bsp, &geometry, error) &&
+                qa_collision_bind_resource(geometry, row->resource, error) &&
+                (!geometry_owner || qa_world_prepare_trace_geometry(geometry_owner, geometry, error))));
+        world.geometry = geometry;
+        if (okay) okay = (family != QA_GAME_Q3 || frontend_q3_world_policy_initialize(owner->frontend, &world, error)) &&
             qa_scene_world_create(&bsp, files->images, files->materials, &world, &row->world, error) &&
             qa_scene_world_source_resource_bind(row->world, row->resource, error);
+        if (created) qa_collision_destroy(geometry);
     } else if (okay) okay = qa_model_load(qa_resource_bytes(row->resource), &row->decoded, error) &&
         qa_scene_model_create(&row->decoded, files->images, files->materials, &row->options, &row->scene, error) &&
         qa_scene_model_source_resource_bind(row->scene, row->resource, error) &&

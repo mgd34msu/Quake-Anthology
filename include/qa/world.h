@@ -203,6 +203,8 @@ qa_collision_geometry *qa_world_geometry(qa_world *);
 /* Prepare foreign brush models at load or model registration. Query access is
  * a plain lookup and never creates scratch. The world owns its scratch. */
 bool qa_world_prepare_trace_geometry(qa_world *, qa_collision_geometry *, qa_error *);
+/* Cold admission only; borrows the existing loaded geometry owner. */
+qa_collision_geometry *qa_world_resource_geometry(const qa_world *, const struct qa_resource *);
 qa_trace_scratch *qa_world_trace_scratch(qa_world *, const qa_collision_geometry *);
 typedef struct qa_world_geometry_admission qa_world_geometry_admission;
 /* Geometry remains borrowed. Prepare leaves the current world untouched;

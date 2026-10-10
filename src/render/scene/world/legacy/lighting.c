@@ -600,9 +600,10 @@ static qawl_point_light *point_light_entry(const qa_scene_world *world, qa_vec3 
     if (!data || !data->point_light_count) return NULL;
     qawl_point_light *entry = data->last_point_light;
     if (entry && same_point(entry->origin, point)) return entry;
-    int32_t leaf = qa_scene_world_leaf(world, point);
-    if (leaf < 0 || (size_t)leaf >= data->point_light_count) return NULL;
-    entry = &data->point_lights[leaf];
+    qa_collision_leaf leaf;
+    if (!qa_collision_point_leaf(world->options.geometry, point, QA_LEAF_Q1, &leaf, NULL)
+        || leaf.leaf >= data->point_light_count) return NULL;
+    entry = &data->point_lights[leaf.leaf];
     if (!entry->keyed || !same_point(entry->origin, point))
         *entry = (qawl_point_light){.origin = point, .keyed = true};
     data->last_point_light = entry;

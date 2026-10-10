@@ -681,6 +681,10 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
         .subdivisions = 4, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 2,
         .images = {.mipmap = true, .transparent_index = -1, .filter = QA_SCENE_LINEAR_MIPMAP_NEAREST}
     };
+    qa_collision_geometry *geometry = world->options.geometry;
+    world->options.geometry = NULL;
+    if (geometry && !qa_collision_retain(geometry, error)) goto fail;
+    world->options.geometry = geometry;
     world->options.images.family = bsp->family == QA_BSP_Q1 ? QA_GAME_Q1
         : bsp->family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     world->identity = qa_scene_identity();
@@ -718,6 +722,8 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
         world->options.q2_sky = world->sky_name;
     }
     if (!world_topology(world, error)) goto fail;
+    if (!world->options.geometry && world->leaf_count &&
+        !qa_collision_create(&world->bsp, &world->options.geometry, error)) goto fail;
     if (world->bsp.family != QA_BSP_Q3) {
         if (!qa_bsp_select_lighting(&world->bsp, world->options.external_lit, &world->lighting, error)) goto fail;
         qa_bsp_extension extension;
@@ -758,25 +764,13 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->admission_changes);
     free(world->visibility_parent_heads); free(world->visibility_parents);
     free(world->sky_name);
+    qa_collision_destroy(world->options.geometry);
     qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
     qa_resource_release((qa_resource *)world->source_resource);
     qa_material_library_destroy(world->retained_materials);
     qa_scene_resources_destroy(world->retained_resources);
     free(world);
-}
-
-int32_t qa_scene_world_leaf(const qa_scene_world *world, qa_vec3 point)
-{
-    if (world == NULL || !qa_vec_finite(point) || world->leaf_count == 0) return -1;
-    if (world->node_count == 0) return 0;
-    int32_t child = 0;
-    while (child >= 0) {
-        const qa_bsp_node *node = &world->nodes[child];
-        const qa_bsp_plane *plane = &world->planes[node->plane];
-        child = node->children[precise_dot(point, plane->normal) > plane->distance ? 0 : 1];
-    }
-    return (int32_t)(-1 - (int64_t)child);
 }
 
 bool qa_scene_world_source_begin_scene(qa_scene_world *world,
@@ -809,9 +803,11 @@ static bool update_pvs(const qa_scene_world *world, int32_t eye, qa_vec3 origin,
         if (input->use_secondary_cluster) second = input->secondary_cluster;
         else {
             origin.z += world->leaves[eye].contents == 0 ? -16.0f : 16.0f;
-            int32_t probe = qa_scene_world_leaf(world, origin);
-            if (probe >= 0 && (world->leaves[probe].contents & 1) == 0
-                && world->leaves[probe].cluster != selector) second = (int32_t)world->leaves[probe].cluster;
+            qa_collision_leaf leaf;
+            if (qa_collision_point_leaf(world->options.geometry, origin, QA_LEAF_Q1, &leaf, NULL)
+                && !qa_collision_bits_overlap(leaf.contents, qa_collision_bit(QA_CONTENT_SOLID))
+                && world->leaves[leaf.leaf].cluster != selector)
+                second = (int32_t)world->leaves[leaf.leaf].cluster;
         }
     }
     if (scratch->pvs_cached && selector == scratch->pvs_selector && second == scratch->pvs_secondary) return true;
@@ -984,8 +980,12 @@ static bool world_visible(const qa_scene_world *world, const qa_scene_world_inpu
     qa_scene_world_scratch *scratch = input->scratch;
     scratch->visible_count = 0;
     qa_vec3 origin = input->use_pvs_origin ? input->pvs_origin : input->view.origin;
-    int32_t eye = qa_scene_world_leaf(world, origin);
-    if (eye < 0) { scratch->visible_cache.valid = false; return true; }
+    qa_collision_leaf eye_leaf;
+    if (!world->leaf_count ||
+        !qa_collision_point_leaf(world->options.geometry, origin, QA_LEAF_Q1, &eye_leaf, NULL)) {
+        scratch->visible_cache.valid = false; return true;
+    }
+    int32_t eye = (int32_t)eye_leaf.leaf;
     bool source = world->bsp.family == QA_BSP_Q3 && input->source_order;
     if (source) {
         if (input->source_scratch) input->source_scratch->owner->counters.view_cluster=(int32_t)world->leaves[eye].cluster;

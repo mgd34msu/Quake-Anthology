@@ -520,9 +520,17 @@ static bool brush_read(frontend_visual_owner *owner, const char *path, const qa_
     qa_scene_world_options options={.images={.family=owner->family,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.usage=QA_IMAGE_USAGE_WALL,.transparent_index=-1},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
+    qa_world *world=qa_application_world(owner->frontend->application);
+    qa_collision_geometry *geometry=ok?qa_world_resource_geometry(world,brush->resource):NULL;
+    bool created=geometry==NULL;
     if (ok) ok=qa_bsp_open(qa_resource_bytes(brush->resource),&bsp,error) && qa_bsp_validate(&bsp,error) &&
-        qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&brush->world,error) &&
+        (!created || (qa_collision_create(&bsp,&geometry,error) &&
+            qa_collision_bind_resource(geometry,brush->resource,error) &&
+            (!world || qa_world_prepare_trace_geometry(world,geometry,error))));
+    options.geometry=geometry;
+    if (ok) ok=qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&brush->world,error) &&
         qa_scene_world_source_resource_bind(brush->world,brush->resource,error);
+    if (created) qa_collision_destroy(geometry);
     if (!ok) {
         qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush); return false;
     }

@@ -199,7 +199,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     if (!owner->materials || !owner->media || !frontend_material_movies_create(&source,&owner->movies,error)) goto fail;
     qa_game_family family=product->family==QA_GAME_Q3?QA_GAME_Q3:
         product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q1;
-    qa_scene_world_options options={.images={.family=family,.wrap=QA_SCENE_REPEAT,
+    qa_scene_world_options options={.geometry=qa_world_geometry(qa_application_world(f->application)),.images={.family=family,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1,
         .external_lit=qa_map_sidecars_external_lit(owner->sidecars)};

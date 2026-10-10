@@ -1258,7 +1258,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
     if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
-    qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3},
+    qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3, qa_application_world(frontend->application)},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,
@@ -1339,7 +1339,7 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
         !frontend_network_prediction_geometry_prepare(source->frontend,source->owner,source->launch_seat,
             source->geometry,&source->trace_scratch,error)) return false;
     if (!world) return true;
-    qa_scene_world_options options={.images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
+    qa_scene_world_options options={.geometry=source->geometry,.images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
         .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
     if (!frontend_q3_world_policy_initialize(source->frontend,&options,error)) return false;

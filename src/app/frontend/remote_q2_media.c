@@ -272,7 +272,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!qa_scene_image_create(row->images, "remote-q2:white", QA_SCENE_RGBA8, &level, 1,
         QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_vec4){1, 1, 1, 1}, &white, error)) return false;
     row->white = white;
-    qa_scene_world_options options = {.images = image_options(QA_IMAGE_USAGE_WALL),
+    qa_scene_world_options options = {.geometry = row->geometry, .images = image_options(QA_IMAGE_USAGE_WALL),
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1,
         .q2_sky = frontend_remote_q2_config(row, 2)};
     if (!qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error)) return false;

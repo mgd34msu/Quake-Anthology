@@ -85,7 +85,7 @@ static bool content_create(qa_frontend *frontend, const qa_application_equipment
     bool ok = frontend_visual_media_acquire(frontend, source->provider, QA_GAME_Q3, &owner->view.content, error);
     qa_q3_presentation_asset_options assets = {.provider = {
         .mounts = owner->view.content.mounts, .images = owner->view.content.images,
-        .materials = owner->view.content.materials, .family = QA_GAME_Q3}};
+        .materials = owner->view.content.materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     q3n_selected_media_options media = {.content = owner->view.content.mounts,
         .assets = owner->view.assets, .product = owner->view.product};

@@ -141,23 +141,32 @@ static bool extension(const char *path, const char *suffix)
     return true;
 }
 
-static bool decode(q3p_model *model, const char *path, qa_error *error)
+static bool decode(qa_q3_presentation_assets *assets, q3p_model *model, const char *path, qa_error *error)
 {
     qa_bytes bytes = qa_resource_bytes(model->resource);
     qa_scene_image_options images = {.family = model->provider.family, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true,
         .usage = QA_IMAGE_USAGE_SKIN, .transparent_index = -1};
     if (extension(path, ".bsp")) {
-        qa_bsp_view bsp; qa_bsp_model first;
-        qa_scene_world_options options = {.images = images, .subdivisions = 4,
+        qa_bsp_view bsp;
+        qa_world *owner = model->provider.geometry_owner;
+        qa_collision_geometry *geometry = assets->geometry &&
+            qa_collision_resource(assets->geometry) == model->resource ? assets->geometry :
+            qa_world_resource_geometry(owner, model->resource);
+        bool created = geometry == NULL;
+        if (!qa_bsp_open(bytes, &bsp, error)) return false;
+        bool okay = !created || (qa_collision_create(&bsp, &geometry, error) &&
+            qa_collision_bind_resource(geometry, model->resource, error) &&
+            (!owner || qa_world_prepare_trace_geometry(owner, geometry, error)));
+        qa_scene_world_options options = {.geometry = geometry, .images = images, .subdivisions = 4,
             .q1_water_alpha = 1, .q2_light_modulate = 1};
-        if (!qa_bsp_open(bytes, &bsp, error) || !qa_bsp_read_model(&bsp, 0, &first, error)) return false;
         options.images.usage = QA_IMAGE_USAGE_WALL;
-        if (!qa_scene_world_create(&bsp, model->provider.images, model->provider.materials,
-                                     &options, &model->world, error)) return false;
-        model->owns_world = true;
-        if (!qa_scene_world_source_resource_bind(model->world, model->resource, error)) return false;
-        model->bounds = (qa_bounds){first.bounds.min, first.bounds.max}; return true;
+        if (okay) okay = qa_scene_world_create(&bsp, model->provider.images, model->provider.materials,
+            &options, &model->world, error);
+        if (created) qa_collision_destroy(geometry);
+        model->owns_world = model->world != NULL;
+        return okay && qa_scene_world_source_resource_bind(model->world, model->resource, error) &&
+            qa_collision_model_bounds(options.geometry, 0, &model->bounds, error);
     }
     if (bytes.size >= 4 && !memcmp(bytes.data, "IDP3", 4)) {
         lod_reader reader = {model, 0};
@@ -366,7 +375,7 @@ bool qa_q3_register_model(qa_q3_presentation_assets *a, const char *path,
             }
             if (!handle && !source_lods) {
                 qa_error decoded = {0};
-                ok = decode(model, normalized, &decoded);
+                ok = decode(a, model, normalized, &decoded);
                 if (!ok && source_model && (decoded.code == QA_ERROR_NOT_FOUND ||
                     decoded.code == QA_ERROR_FORMAT || decoded.code == QA_ERROR_UNSUPPORTED)) {
                     q3p_model_free(model); model = NULL; ok = true;

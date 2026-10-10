@@ -51,7 +51,8 @@ allocation result or performance result is claimed by this report.
 | Const geometry and caller scratch | `include/qa/collision.h:89,103,120`; `src/world/collision/geometry.c:9,68,404,422`. World, frontend, host, prediction, effects and navigation callers pass their load-owned scratch. | None found in the query caller audit. Mutable world/portal updates remain serial. |
 | Q1/Q2/Q3 kernel scratch | `src/world/collision/q1.c:99,571`, `q2.c:59,122`, `q3.c:34,89`. Continuations, expanded planes, clipping caches and marks are in caller storage. | Loaded brushes and patches contain no query visit marks. |
 | Canonical contents and surface bits | `include/qa/collision_bits.h`, `src/world/collision/contents_bits.c:48,67,83,145,156`; loaders and live-field boundaries import canonical bits. Module/protocol/save boundaries export original representations. | Old pairwise contents converter and callers are deleted. |
-| Entity pose rules | `qa_collision_target.pose_rules` and the single basis/normal/link implementation in `src/world/collision/contents.c:19,25,35` supply original entity-role policy independently of geometry and caller contact/merge rules. All current target/link callers migrate. | The old kernel-owned pose bodies and link expansions are deleted. Current mixed-role parity and loaded-geometry serial/concurrent proof pass. Renderer leaf traversal remains at `src/render/scene/world.c:768,811,986` and `world/legacy/lighting.c:603`; migrate it with retained model geometry before declaring full leaf adoption. |
+| Entity pose rules | `qa_collision_target.pose_rules` and the single basis/normal/link implementation in `src/world/collision/contents.c:19,25,35` supply original entity-role policy independently of geometry and caller contact/merge rules. All current target/link callers migrate. | The old kernel-owned pose bodies and link expansions are deleted. Current mixed-role parity and loaded-geometry serial/concurrent proof pass. |
+| Render point-leaf queries | `qa_collision_point_leaf` supplies visibility selection, Q2 secondary-cluster probing and point-light indexing at `src/render/scene/world.c:807,985` and `world/legacy/lighting.c:604`. Frontend map and standalone brush constructors and Q3 model registration retain common geometry; cold resource lookup uses `src/world/body.c:156`. | `qa_scene_world_leaf` and its renderer-owned BSP walk are deleted. Render topology remains for surface/PVS data. This slice does not establish adoption of every geometry operation. |
 | Visit marks | One `qa_stamp_set` in `include/qa/stamp.h:16`. Q2 trace/expanded, Q3 query/model load, common leaves, render PVS/source/surface and bot routing use it. | Eight historical visit-mark implementations are deleted. Retained render epochs refer to the common set. |
 | Bound native fields | `src/world/live_fields.c:15,96,129`, `src/world/body.c:369,499`; native Q2/Q3, QC and broad-phase callers use live owned backing. | No copied authoritative candidate cache, per-candidate IPC or descriptor re-resolution found. Dynamic finite/bounds/solid checks remain at `body.c:377` and `live_fields.c:143,163,193`; external ABI staging is separate. |
 | Native process backend | `src/compat/native_host/process_resources.c` and `src/compat/native/process.c`; SDK and shipped native modules share the owned backend. | Legacy pipe runner deleted. Q3 ABI staging at `src/compat/q3_host/memory.c:155` is not a broad-phase cache. |
@@ -73,6 +74,13 @@ comparisons preserve masks, defaults, live edits, Source recreation and table
 lifecycle across five dialect views. All three engine builds and seven core
 checks each pass. This removes two fixed-name queries per original trace;
 it is not a trace-timing result or closure of the remaining cvar callers.
+
+TA-3192 render-leaf adoption passed the normal production build and all seven
+existing core suites. Logs: `/tmp/qa-ta3192-leaf-20261010-build.log` and
+`/tmp/qa-ta3192-leaf-20261010-core.log`. The common floating-point split rule
+matches the original render point-leaf rule; this is not a claim of identical
+rounding to the deleted double-precision walk. No installation, live visual
+check or performance result is claimed for this slice.
 
 ## Whole-frame allocation: THE-2874 / THE-873 / THE-882
 

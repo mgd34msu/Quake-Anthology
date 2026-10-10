@@ -35,6 +35,13 @@ bool qa_q3_assets_services_retire(qa_q3_presentation_assets *assets, qa_error *e
         if (!qa_q3_assets_idle(row))
             return q3p_fail(error, QA_ERROR_ARGUMENT, "Registry services remain entered or captured during parent retirement");
     for (qa_q3_presentation_assets *row = assets; row; row = row->parent) {
+        row->options.provider.geometry_owner = NULL;
+        for (q3p_provider_custody *provider = row->providers; provider; provider = provider->next)
+            provider->value.geometry_owner = NULL;
+        for (size_t i = 0; i < row->model_count; ++i)
+            if (row->models[i]) row->models[i]->provider.geometry_owner = NULL;
+        for (size_t i = 0; i < row->skin_count; ++i)
+            if (row->skins[i]) row->skins[i]->provider.geometry_owner = NULL;
         row->options.sounds = NULL; row->options.movies = NULL; row->options.context = NULL;
         row->options.select = NULL; row->options.model_initialize = NULL; row->options.print = NULL;
         row->retired = true;
@@ -123,7 +130,8 @@ bool qa_q3_assets_provider_hold(qa_q3_presentation_assets *assets,
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Source registry provider lacks its actual bank authority");
     for (q3p_provider_custody *row = assets->providers; row; row = row->next)
         if (row->value.mounts == provider->mounts && row->value.images == provider->images &&
-            row->value.materials == provider->materials && row->value.family == provider->family) return true;
+            row->value.materials == provider->materials && row->value.family == provider->family &&
+            row->value.geometry_owner == provider->geometry_owner) return true;
     q3p_provider_custody *row = calloc(1, sizeof(*row));
     if (!row) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source registry provider custody");
     bool vfs = qa_vfs_retain(provider->mounts, error);
