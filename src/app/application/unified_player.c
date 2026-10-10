@@ -279,29 +279,21 @@ static bool copy_inventory(player_observation *o, qa_error *e)
     return true;
 }
 
-static bool armor(qa_unified_armor_state *out, player_observation *o, qa_error *e)
+static bool armor(qa_armor *out, player_observation *o, qa_error *e)
 {
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && !o->q3_combat) {
-        out->kind = o->q3.stats[3] ? QA_ARMOR_Q3 : QA_ARMOR_NONE;
-        out->points = o->q3.stats[3]; out->protection = (float).66;
+        out->regular.kind = o->q3.stats[3] ? QA_ARMOR_Q3 : QA_ARMOR_NONE;
+        out->regular.points = o->q3.stats[3];
+        out->regular.protection.q3_protection = .66f;
         return true;
     }
     if (o->has_q2) {
-        out->kind = o->q2.stats[5] ? QA_ARMOR_Q2 : QA_ARMOR_NONE;
-        out->points = o->q2.stats[5];
-        return !o->q2.stats[5] || application_unified_frame_string(o->lease, &out->item, "q2:remote-armor", e);
+        out->regular.kind = o->q2.stats[5] ? QA_ARMOR_Q2 : QA_ARMOR_NONE;
+        out->regular.points = o->q2.stats[5];
+        return !o->q2.stats[5] || qa_strings_intern_cstr(qa_session_strings(o->app->session),
+            "q2:remote-armor", &out->regular.item, e);
     }
-    qa_regular_armor r = o->combat.armor.regular;
-    out->kind = r.kind; out->points = r.points;
-    if (r.kind != QA_ARMOR_NONE && !item(&out->item, o, r.item, e)) return false;
-    switch (r.kind) {
-    case QA_ARMOR_Q1: out->absorption = r.protection.q1_absorption; break;
-    case QA_ARMOR_Q2: out->normal = r.protection.q2.normal; out->energy = r.protection.q2.energy; break;
-    case QA_ARMOR_Q3: out->protection = r.protection.q3_protection; break;
-    case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
-    }
-    out->powered_kind = o->combat.armor.powered.kind;
-    out->cells = o->combat.armor.powered.cells;
+    *out = o->combat.armor;
     return true;
 }
 

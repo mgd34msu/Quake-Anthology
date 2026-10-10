@@ -26,13 +26,6 @@ typedef struct qa_unified_client_presentation {
     qa_vec3 origin, angles;
     float view_height;
 } qa_unified_client_presentation;
-typedef struct qa_unified_armor_state {
-    qa_regular_armor_kind kind;
-    char *source, *item;
-    double points, absorption, normal, energy, protection;
-    qa_power_kind powered_kind;
-    double cells;
-} qa_unified_armor_state;
 typedef struct qa_unified_powerup_state {
     char *id, *label;
     double seconds;
@@ -75,7 +68,7 @@ typedef struct qa_unified_native_inventory {
 typedef struct qa_unified_q1_team_face { char *content; uint8_t colors; double frags; } qa_unified_q1_team_face;
 typedef struct qa_unified_player_ui {
     double health;
-    qa_unified_armor_state armor;
+    qa_armor armor;
     qa_inventory_entry *inventory;
     size_t inventory_count;
     qa_unified_powerup_state *powerups;

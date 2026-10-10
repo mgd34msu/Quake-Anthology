@@ -247,7 +247,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     qa_q1_program program = variant == QA_HUD_Q1_ROGUE ? QA_Q1_ROGUE :
         variant == QA_HUD_Q1_HIPNOTIC ? QA_Q1_HIPNOTIC : QA_Q1_ID1;
     qa_q1_clientdata client = {.health = qa_source_float_to_i32((float)ui->health),
-        .armor = (uint32_t)qa_source_float_to_i32((float)ui->armor.points),
+        .armor = (uint32_t)qa_source_float_to_i32((float)ui->armor.regular.points),
         .ammo = ui->has_ammo ? (uint32_t)qa_source_float_to_i32((float)ui->ammo_count) : 0};
     for (unsigned bit = 0; bit < 32; ++bit) {
         qa_q1_weapon weapon; qa_q1_weapon_profile profile;
@@ -280,8 +280,8 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     for (size_t j = 0; j < ui->powerup_count; ++j) for (size_t i = 0; i < sizeof(powers) / sizeof(*powers); ++i)
         if (ui->powerups[j].seconds > 0 && !strcmp(ui->powerups[j].id, powers[i].id))
             client.items |= UINT32_C(1) << powers[i].bit;
-    if (ui->armor.kind == QA_ARMOR_Q1 && ui->armor.points > 0) {
-        unsigned grade = ui->armor.absorption >= .8f ? 2u : ui->armor.absorption >= .6f ? 1u : 0u;
+    if (ui->armor.regular.kind == QA_ARMOR_Q1 && ui->armor.regular.points > 0) {
+        unsigned grade = ui->armor.regular.protection.q1_absorption >= .8f ? 2u : ui->armor.regular.protection.q1_absorption >= .6f ? 1u : 0u;
         client.items |= UINT32_C(1) << ((variant == QA_HUD_Q1_ROGUE ? 23u : 13u) + grade);
     }
     const qa_scene_image *face = NULL;
@@ -349,7 +349,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
         okay=frontend_remote_unified_player(replica,&viewer,&slot) && client_presentation_read(r,viewer,&camera,vitals,&has_view,&has_vitals,e);
     }
     r->vitals[0]=(qa_hud_value){.label="Health",.value=ui->health,.warning=ui->health<=25};
-    r->vitals[1]=(qa_hud_value){.label="Armor",.value=ui->armor.points};
+    r->vitals[1]=(qa_hud_value){.label="Armor",.value=ui->armor.regular.points};
     if (okay && ui->has_ammo) {
         const char *label=ui->weapon_status?ui->weapon_status->label:ui->ammo_item;
         okay=copy_text(label,&r->ammo_label,e);

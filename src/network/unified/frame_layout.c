@@ -76,7 +76,7 @@ static const qa_unified_record_layout qa_unified_weapon_status_layout;
 static const qa_unified_record_layout qa_unified_ui_item_layout;
 static const qa_unified_record_layout qa_unified_powerup_state_layout;
 const qa_unified_record_layout qa_unified_inventory_entry_layout;
-static const qa_unified_record_layout qa_unified_armor_state_layout;
+static const qa_unified_record_layout armor_layout;
 static const qa_unified_record_layout qa_unified_player_view_layout;
 const qa_unified_record_layout qa_unified_prediction_layout;
 static const qa_unified_record_layout qa_spatial_actor_layout;
@@ -563,7 +563,7 @@ static const qa_unified_record_layout qa_unified_client_presentation_layout = QA
 
 static const qa_unified_field qa_unified_player_ui_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_player_ui, health, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_RECORD(qa_unified_player_ui, armor, qa_unified_armor_state_layout),
+    QA_UNIFIED_RECORD(qa_unified_player_ui, armor, armor_layout),
     QA_UNIFIED_ARRAY(qa_unified_player_ui, inventory, inventory_count, qa_unified_inventory_entry_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_player_ui, powerups, powerup_count, qa_unified_powerup_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_player_ui, items, item_count, qa_unified_ui_item_layout, 65536),
@@ -656,20 +656,6 @@ static const qa_unified_field qa_unified_inventory_entry_fields[] = {
     QA_UNIFIED_FIELD(qa_inventory_entry, policy, QA_UNIFIED_FIELD_I32),
 };
 const qa_unified_record_layout qa_unified_inventory_entry_layout = QA_UNIFIED_LAYOUT(qa_inventory_entry, qa_unified_inventory_entry_fields);
-
-static const qa_unified_field qa_unified_armor_state_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_armor_state, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, source, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, points, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, absorption, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, normal, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, energy, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, protection, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, powered_kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_armor_state, cells, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout qa_unified_armor_state_layout = QA_UNIFIED_LAYOUT(qa_unified_armor_state, qa_unified_armor_state_fields);
 
 static const qa_unified_field qa_unified_player_view_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_player_view, origin, qa_unified_vector_layout),
