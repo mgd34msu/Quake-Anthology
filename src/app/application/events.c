@@ -286,6 +286,8 @@ bool application_emit_q2_map(application_provider *provider,
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual level or clock");
     if (event->kind == QA_Q2_MAP_WORLD_TEXT &&
         !application_unified_world_text_emit(application, provider->owner, event, error)) return false;
+    if (event->kind == QA_Q2_MAP_AUTOSAVE &&
+        !application_map_autosave_request(application,error)) return false;
     qa_application_q2_audience audience={0},retained={0};
     if (event->kind==QA_Q2_MAP_STEAM || event->kind==QA_Q2_MAP_FORCE_WALL) {
         qa_vec3 multicast_origin=event->origin;
@@ -321,8 +323,7 @@ bool application_emit_q2_map(application_provider *provider,
         if (!levels) goto abort;
         memcpy(levels, event->levels, bytes);
     }
-    if (!application_unified_q2_native_map(provider, event, &retained, error) ||
-        (event->kind == QA_Q2_MAP_AUTOSAVE && !application_map_autosave_request(application, error))) goto abort;
+    if (!application_unified_q2_native_map(provider, event, &retained, error)) goto abort;
     application_q2_map_event_record *record =
         &write.envelope->raw.q2_map;
     *record = (application_q2_map_event_record){.audience=retained,.source={
@@ -493,9 +494,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
     if (!application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
-    if (!application_event_stream_commit(application, &write, error)) return false;
-    return application_q3_weapons_services_q2_muzzle(application, event, error) &&
-        application_native_q1_wire_emit(application, event, error);
+    return application_event_stream_commit(application, &write, error);
 abort:
     application_event_stream_abort(application, &write, error);
     return false;
@@ -517,7 +516,9 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
         if (!application_native_q2_delivery_capture(source,&event->q2_multicast,event->end,
                 &audience,error)) return false;
     }
-    bool ok=emit_event(application,event,&audience,error);
+    bool ok=application_q3_weapons_services_q2_muzzle(application,event,error) &&
+        application_native_q1_wire_emit(application,event,error) &&
+        emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
 }

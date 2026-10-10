@@ -2156,10 +2156,10 @@ static bool q2_event(void *opaque, const qa_q2_map_event *event,
                      qa_error *error)
 {
     application_provider *provider = opaque;
-    return application_emit_q2_map(provider, event, error) &&
-           (event->kind != QA_Q2_MAP_ACHIEVEMENT || event->text == 0 ||
+    return (event->kind != QA_Q2_MAP_ACHIEVEMENT || event->text == 0 ||
             application_record_achievement(provider, (qa_actor_id){0},
-                                           event->text, error));
+                                           event->text, error)) &&
+           application_emit_q2_map(provider,event,error);
 }
 
 static bool q2_area_portal(void *opaque, uint32_t portal, bool open,
@@ -2711,10 +2711,9 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
         if (!name || !value || !application_native_q3_settings_source_set(provider, name, value, error))
             return false;
     }
-    if (!application_emit_q3_map(provider, event, error))
-        return false;
-    return event->kind != QA_Q3_MAP_AREA_PORTAL ||
-           q3_area_portal(provider, event->actor, event->value != 0, error);
+    return (event->kind != QA_Q3_MAP_AREA_PORTAL ||
+            q3_area_portal(provider,event->actor,event->value != 0,error)) &&
+           application_emit_q3_map(provider,event,error);
 }
 
 static bool q3_item_disabled(void *opaque, uint32_t item_index)
