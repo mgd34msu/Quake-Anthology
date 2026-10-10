@@ -821,26 +821,27 @@ static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_n
     for (uint64_t i = *saved_cursor; i < next; ++i) {
         qa_application_protocol_event event;
         *saved_cursor = i + 1;
-        if (!qa_application_protocol_event_at(app, i, &event)) continue;
-        if (event.provider != host->owner || event.signon) continue;
-        if (event.dialect != QA_RULESET_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
-            return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
-        if (event.recipient.registry && !qa_actor_id_equal(event.recipient, actor)) continue;
-        if (event.reliable) {
-            if (!source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, batch_source_emit, &reliable, error)) return false;
-        } else if (!source_full && protocol.kind == QA_NET_NQ15) {
-            if (event.payload.size > sizeof(source) - source_size) source_full = true;
-            else {
-                if (event.payload.size) memcpy(source + source_size, event.payload.data, event.payload.size);
-                source_size += event.payload.size;
-            }
-        } else if (!source_full) {
-            nq_source_datagram converted = {0};
-            if (!source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, source_datagram_emit, &converted, error)) return false;
-            if (converted.full || converted.size > sizeof(source) - source_size) source_full = true;
-            else {
-                memcpy(source + source_size, converted.bytes, converted.size);
-                source_size += converted.size;
+        for (size_t projection = 0; qa_application_protocol_event_at(app, i, projection, &event); ++projection) {
+            if (event.provider != host->owner || event.signon) continue;
+            if (event.dialect != QA_RULESET_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
+                return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
+            if (event.recipient.registry && !qa_actor_id_equal(event.recipient, actor)) continue;
+            if (event.reliable) {
+                if (!source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, batch_source_emit, &reliable, error)) return false;
+            } else if (!source_full && protocol.kind == QA_NET_NQ15) {
+                if (event.payload.size > sizeof(source) - source_size) source_full = true;
+                else {
+                    if (event.payload.size) memcpy(source + source_size, event.payload.data, event.payload.size);
+                    source_size += event.payload.size;
+                }
+            } else if (!source_full) {
+                nq_source_datagram converted = {0};
+                if (!source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, source_datagram_emit, &converted, error)) return false;
+                if (converted.full || converted.size > sizeof(source) - source_size) source_full = true;
+                else {
+                    memcpy(source + source_size, converted.bytes, converted.size);
+                    source_size += converted.size;
+                }
             }
         }
     }

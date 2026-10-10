@@ -221,6 +221,8 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
         return false;
     }
     application_unified_persistent_publish(app, write->envelope);
+    for (application_protocol_record *record = write->envelope->protocols; record; record = record->next)
+        if (record->event.signon && !application_q1_signon_retain(app, record, error)) return false;
     return true;
 }
 
@@ -631,11 +633,22 @@ static bool builtin_capacity(qa_application *app, const qa_builtin_event *event,
     const qa_application_q2_audience *audience, const application_event_write *write, qa_error *error)
 {
     if (application_event_stream_decline(app, write, transient_event(event), error)) return true;
+    if (write->transaction.blocked && app->state == QA_APPLICATION_RUNNING && event->family == QA_GAME_Q1 &&
+        (event->kind == QA_BUILTIN_MESSAGE || event->kind == QA_BUILTIN_CENTERPRINT)) {
+        application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+        if (source && (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_QC)) {
+            qa_application_protocol_event packet = {.recipient = event->actor, .origin = event->origin,
+                .destination = event->actor.registry ? 1 : 2, .reliable = true};
+            if (!protocol_capacity(source, &packet, NULL, write, error)) return false;
+        }
+    }
     switch (event->kind) {
     case QA_BUILTIN_MESSAGE: case QA_BUILTIN_CENTERPRINT:
     case QA_BUILTIN_SOURCE_PROMPT: case QA_BUILTIN_CLEAR_PROMPT:
-        return application_event_stream_close_recipients(app, write, event->actor, audience,
-            QA_APPLICATION_OUTPUT_UNIFIED, error);
+        return event->actor.registry || (audience && audience->captured) ?
+            application_event_stream_close_recipients(app, write, event->actor, audience,
+                QA_APPLICATION_OUTPUT_UNIFIED, error) :
+            application_event_stream_close_subscribers(app, write, error);
     default: return false;
     }
 }
@@ -665,6 +678,7 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         record->event.prompt_choices = choices;
     }
     if (!application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
+        !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
     return application_event_stream_commit(application, &write, error) ||
@@ -691,7 +705,6 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
                 &audience,error)) return false;
     }
     bool ok=application_q3_weapons_services_q2_muzzle(application,event,error) &&
-        application_native_q1_wire_emit(application,event,error) &&
         emit_event(application,event,&audience,error);
     application_native_q2_delivery_dispose(&audience);
     return ok;
@@ -839,9 +852,12 @@ static bool emit_protocol(application_provider *provider,
                 resource->resource_custody, &held, &view, &opening, error)) return false;
         }
     }
-    application_event_write write;
-    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, &write, error))
-        return protocol_capacity(provider, event, delivery, &write, error);
+    application_event_write own_write;
+    bool joined = application->event_write &&
+        application->event_write->envelope->kind == QA_APPLICATION_EVENT_BUILTIN;
+    application_event_write *write = joined ? application->event_write : &own_write;
+    if (!joined && !application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, write, error))
+        return protocol_capacity(provider, event, delivery, write, error);
     uint8_t *payload = event->payload.size ? application_event_stream_alloc(application,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
@@ -874,7 +890,7 @@ static bool emit_protocol(application_provider *provider,
         memcpy(name, resources[i].name, length + 1); resources[i].name = name;
     }
     qa_application_protocol_event copied = *event;
-    copied.event_id = write.envelope->id;
+    copied.event_id = write->envelope->id;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;
     if (provider->kind != APPLICATION_PROVIDER_Q1) {
@@ -908,15 +924,22 @@ static bool emit_protocol(application_provider *provider,
                 &record.q2.audience, error)) goto abort;
         if (delivery->audience.captured) record.event.time_ns = delivery->audience.source_time_ns;
     }
-    write.envelope->raw.protocol = record;
-    if (!application_unified_q2_protocol_event(provider, &record.event,
-            delivery ? &record.q2 : NULL, typed, error)) goto abort;
-    if (!application_event_stream_commit(application, &write, error))
-        return protocol_capacity(provider, event, delivery, &write, error);
-    return !copied.signon || application_q1_signon_retain(provider, &copied, error);
+    application_protocol_record *retained = joined ? application_event_stream_alloc(application,
+        sizeof(*retained), _Alignof(application_protocol_record), error) : &write->envelope->raw.protocol;
+    if (!retained) goto abort;
+    *retained = record;
+    if (write->envelope->last_protocol) write->envelope->last_protocol->next = retained;
+    else write->envelope->protocols = retained;
+    write->envelope->last_protocol = retained;
+    if (!application_unified_q2_protocol_event(provider, &retained->event,
+            delivery ? &retained->q2 : NULL, typed, error)) goto abort;
+    if (joined) return true;
+    return application_event_stream_commit(application, write, error) ||
+        protocol_capacity(provider, event, delivery, write, error);
 abort:
-    application_event_stream_abort(application, &write, error);
-    return protocol_capacity(provider, event, delivery, &write, error);
+    if (joined) return false;
+    application_event_stream_abort(application, write, error);
+    return protocol_capacity(provider, event, delivery, write, error);
 }
 
 bool application_emit_protocol(application_provider *provider,
@@ -965,12 +988,15 @@ bool qa_application_q2_player_event_at(const qa_application *app, uint64_t id,
 uint64_t qa_application_protocol_events_generation(const qa_application *app)
 { return app ? app->protocol_events_generation : 0; }
 
-bool qa_application_protocol_event_at(const qa_application *app, uint64_t id,
+bool qa_application_protocol_event_at(const qa_application *app, uint64_t id, size_t projection,
     qa_application_protocol_event *out)
 {
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_PROTOCOL) return false;
-    *out = record->raw.protocol.event;
+    const application_event_envelope *envelope = application_event_stream_at(app, id);
+    if (!envelope || !out) return false;
+    const application_protocol_record *record = envelope->protocols;
+    while (record && projection--) record = record->next;
+    if (!record) return false;
+    *out = record->event;
     out->event_id = id;
     return true;
 }

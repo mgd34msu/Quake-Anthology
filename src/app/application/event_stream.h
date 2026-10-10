@@ -19,6 +19,7 @@ typedef struct application_q2_map_event_record {
 typedef struct application_protocol_record {
     qa_application_protocol_event event;
     qa_application_q2_protocol_delivery q2;
+    struct application_protocol_record *next;
     /* Sign-on links and leases are custody metadata, never protocol bytes. */
     struct application_protocol_record *signon_next;
     qa_event_lease *signon_lease;
@@ -42,6 +43,7 @@ typedef struct application_event_envelope {
         qa_application_q2_player_event q2_player;
         application_protocol_record protocol;
     } raw;
+    application_protocol_record *protocols, *last_protocol;
     application_event_view *views, *last_view;
 } application_event_envelope;
 

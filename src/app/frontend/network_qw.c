@@ -855,30 +855,31 @@ static bool flush_events(frontend_qw_host *host, qa_net_writer *datagram,
     uint64_t cursor = only ? host->event_cursor : host->reliable_cursor;
     for (uint64_t i = cursor; i < next; ++i) {
         qa_application_protocol_event event;
-        if (!qa_application_protocol_event_at(app, i, &event)) continue;
-        if (event.provider != host->owner || event.signon) continue;
-        for (size_t j = 0; j < QW_CLIENTS; ++j) {
-            qw_frontend_peer *peer = host->peers + j;
-            if (!peer->occupied || peer->retiring || (only && only != peer) ||
-                (!peer->begun && !event.recipient.registry) || (only && event.reliable) || (!only && !event.reliable)) continue;
-            qa_actor_id actor; bool receives;
-            if (!peer_actor(peer, &actor, error) || !qa_application_network_qw_receives(app, actor, &event, &receives, error)) return false;
-            if (!receives) continue;
-            if (event.reliable && !only) {
-                qa_network_qw_server_state state;
-                if (!qa_network_qw_server_state_read(host->runtime, peer->client, &state, error)) return false;
-                (void)qa_event_receipts_retired(&peer->event_receipts, state.reliable_acknowledged);
-                if (qa_event_receipts_full(&peer->event_receipts)) {
-                    if (!source_drop(peer, peer->client, "Reliable event overflow", error)) return false;
-                    continue;
-                }
-                if (!peer_reliable(peer, event.payload, error)) return false;
-                if (peer->retiring) continue;
-                if (!qa_network_qw_server_state_read(host->runtime, peer->client, &state, error)) return false;
-                if (!qa_event_receipts_submit(&peer->event_receipts, i, i + 1, state.reliable_queued)) {
-                    if (!source_drop(peer, peer->client, "Reliable event overflow", error)) return false;
-                }
-            } else if (!event.reliable && datagram && !qa_net_write_data(datagram, event.payload.data, event.payload.size)) return false;
+        for (size_t projection = 0; qa_application_protocol_event_at(app, i, projection, &event); ++projection) {
+            if (event.provider != host->owner || event.signon) continue;
+            for (size_t j = 0; j < QW_CLIENTS; ++j) {
+                qw_frontend_peer *peer = host->peers + j;
+                if (!peer->occupied || peer->retiring || (only && only != peer) ||
+                    (!peer->begun && !event.recipient.registry) || (only && event.reliable) || (!only && !event.reliable)) continue;
+                qa_actor_id actor; bool receives;
+                if (!peer_actor(peer, &actor, error) || !qa_application_network_qw_receives(app, actor, &event, &receives, error)) return false;
+                if (!receives) continue;
+                if (event.reliable && !only) {
+                    qa_network_qw_server_state state;
+                    if (!qa_network_qw_server_state_read(host->runtime, peer->client, &state, error)) return false;
+                    (void)qa_event_receipts_retired(&peer->event_receipts, state.reliable_acknowledged);
+                    if (qa_event_receipts_full(&peer->event_receipts)) {
+                        if (!source_drop(peer, peer->client, "Reliable event overflow", error)) return false;
+                        continue;
+                    }
+                    if (!peer_reliable(peer, event.payload, error)) return false;
+                    if (peer->retiring) continue;
+                    if (!qa_network_qw_server_state_read(host->runtime, peer->client, &state, error)) return false;
+                    if (!qa_event_receipts_submit(&peer->event_receipts, i, i + 1, state.reliable_queued)) {
+                        if (!source_drop(peer, peer->client, "Reliable event overflow", error)) return false;
+                    }
+                } else if (!event.reliable && datagram && !qa_net_write_data(datagram, event.payload.data, event.payload.size)) return false;
+            }
         }
     }
     if (!only) for (size_t p = 0; p < QW_CLIENTS; ++p) {

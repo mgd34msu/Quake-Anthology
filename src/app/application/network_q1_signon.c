@@ -69,13 +69,15 @@ void application_q1_signon_drop(qa_application *app, qa_actor_owner provider)
         qa_event_lease_release(record->signon_lease);
     }
 }
-bool application_q1_signon_retain(application_provider *provider,
-    const qa_application_protocol_event *event, qa_error *error)
+bool application_q1_signon_retain(qa_application *app,
+    application_protocol_record *record, qa_error *error)
 {
-    if (!provider || !event) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 signon source emission");
+    const qa_application_protocol_event *event = &record->event;
     if (!event->signon || (event->dialect != QA_RULESET_NETQUAKE && event->dialect != QA_RULESET_QUAKEWORLD)) return true;
-    qa_application *app = provider->application;
-    if (!app || !provider->launch ||
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < app->provider_count; ++i)
+        if (app->providers[i] && app->providers[i]->owner == event->provider) { provider = app->providers[i]; break; }
+    if (!provider || !provider->launch ||
         (provider->kind != APPLICATION_PROVIDER_QC && !native_source(provider)) || provider->owner != event->provider ||
         provider->launch->selection.clock.kind != event->dialect)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 signon emission lacks its actual primary source owner");
@@ -83,17 +85,10 @@ bool application_q1_signon_retain(application_provider *provider,
         qa_event_ring_retain(app->event_ring, event->event_id) : NULL;
     if (!lease)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon lacks its committed Source event");
-    const application_event_envelope *retained = qa_event_lease_record(lease);
-    if (retained->kind != QA_APPLICATION_EVENT_PROTOCOL ||
-        retained->raw.protocol.event.provider != provider->owner ||
-        retained->raw.protocol.event.dialect != provider->launch->selection.clock.kind ||
-        !event_valid(&retained->raw.protocol.event, error)) {
+    if (!event_valid(event, error)) {
         qa_event_lease_release(lease);
-        if (error && error->code == QA_OK)
-            application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon differs from its committed Source event");
         return false;
     }
-    application_protocol_record *record = (application_protocol_record *)&retained->raw.protocol;
     record->signon_source_serial = provider->launch->identity;
     record->signon_source_revision = app->map_revision;
     append(app, record, lease);
@@ -205,6 +200,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
             *envelope = (application_event_envelope){.id = qa_event_ring_next(app->event_ring),
                 .kind = QA_APPLICATION_EVENT_PROTOCOL};
             record = &envelope->raw.protocol;
+            envelope->protocols = envelope->last_protocol = record;
             ok = record_fields(&io, record, &transaction);
         }
         if (ok) {

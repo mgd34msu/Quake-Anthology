@@ -24,7 +24,7 @@ typedef struct qc_recipient {
     uint64_t native_map_revision;
     uint32_t native_seat;
     bool native;
-    size_t signon_index,signon_offset,event_offset;
+    size_t signon_index,signon_offset,event_offset,event_projection;
     uint64_t event_id;
     uint64_t generation,next_sequence;
     int32_t stats[32];
@@ -168,6 +168,7 @@ static bool row_get(frontend_qc_messages *owner,const qa_application_qc_message_
         row->camera=baseline->camera; row->camera.recipient=recipient; row->camera.source_slot=slot;
         row->signon_index=baseline->signon_index; row->signon_offset=baseline->signon_offset; row->generation=baseline->generation;
         row->event_id=baseline->event_id; row->event_offset=baseline->event_offset; row->next_sequence=baseline->next_sequence;
+        row->event_projection=baseline->event_projection;
         memcpy(row->stats,baseline->stats,sizeof(row->stats)); row->stat_present=baseline->stat_present;
     }
     bool okay;
@@ -354,14 +355,15 @@ static bool signon(frontend_qc_messages *owner,qc_recipient *row,size_t index,
     ++row->signon_index; row->signon_offset=0;
     return true;
 }
-static bool event(frontend_qc_messages *owner,qc_recipient *row,uint64_t id,
+static bool event(frontend_qc_messages *owner,qc_recipient *row,uint64_t id,size_t projection,bool last,
     const qa_application_protocol_event *event,uint64_t generation,qa_error *error)
 {
     row->generation=generation;
-    if(id<row->event_id) return true;
-    if(row->event_offset && id!=row->event_id)
+    if(id<row->event_id || (id==row->event_id && projection<row->event_projection)) return true;
+    if(row->event_offset && (id!=row->event_id || projection!=row->event_projection))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"QC unfinished byte stream lost its retained event");
     row->event_id=id;
+    row->event_projection=projection;
     if(event->provider==row_provider(row) && !event->signon) {
         bool receives=!event->recipient.registry || qa_actor_id_equal(event->recipient,row_actor(row));
         if(row->native && qa_q1_is_qw(row_protocol(row))) {
@@ -371,7 +373,7 @@ static bool event(frontend_qc_messages *owner,qc_recipient *row,uint64_t id,
         } else if(event->multicast)receives=event->destination==0 || event->destination==3;
         if(receives && !packet(owner,row,event,&row->event_offset,error))return false;
     }
-    row->event_id=id+1; row->event_offset=0;
+    row->event_id=last?id+1:id; row->event_projection=last?0:projection+1; row->event_offset=0;
     return true;
 }
 
@@ -468,23 +470,26 @@ bool frontend_qc_messages_drain(frontend_qc_messages *owner,qa_error *error)
         row->generation=generation;
         if(row->event_offset) {
             qa_application_protocol_event retained;
-            if(!qa_application_protocol_event_at(owner->application,row->event_id,&retained))
+            if(!qa_application_protocol_event_at(owner->application,row->event_id,row->event_projection,&retained))
                 okay=frontend_fail(error,QA_ERROR_ARGUMENT,"QC unfinished byte stream lost its retained event");
             if(row->event_id<scan) scan=row->event_id;
-        } else if(row->event_id<first) row->event_id=first;
+        } else if(row->event_id<first) { row->event_id=first; row->event_projection=0; }
     }
     for(uint64_t id=scan;okay && id<next;++id) {
         qa_application_protocol_event retained;
-        if(!qa_application_protocol_event_at(owner->application,id,&retained)) continue;
-        /* The shared sky publication precedes recipient overrides for this
-         * packet; byte offsets belong to the packet, not its global ID. */
-        for(unsigned pass=0;okay && pass<2;++pass) for(qc_recipient *row=owner->recipients;okay && row;row=row->next)
-            if((row_actor(row).registry!=0)==(pass!=0)) okay=event(owner,row,id,&retained,generation,error);
-        okay=okay && generation==qa_application_protocol_events_generation(owner->application) &&
-            first==qa_application_events_local_first(owner->application);
+        for(size_t projection=0;okay && qa_application_protocol_event_at(owner->application,id,projection,&retained);++projection) {
+            qa_application_protocol_event following;
+            bool last=!qa_application_protocol_event_at(owner->application,id,projection+1,&following);
+            /* The shared sky publication precedes recipient overrides for this
+             * packet; byte offsets belong to the packet, not its global ID. */
+            for(unsigned pass=0;okay && pass<2;++pass) for(qc_recipient *row=owner->recipients;okay && row;row=row->next)
+                if((row_actor(row).registry!=0)==(pass!=0)) okay=event(owner,row,id,projection,last,&retained,generation,error);
+            okay=okay && generation==qa_application_protocol_events_generation(owner->application) &&
+                first==qa_application_events_local_first(owner->application);
+        }
     }
     if(okay) for(qc_recipient *row=owner->recipients;row;row=row->next)
-        if(!row->event_offset && row->event_id<next) row->event_id=next;
+        if(!row->event_offset && row->event_id<next) { row->event_id=next; row->event_projection=0; }
     if(okay) okay=world_publish(owner,error);
     owner->busy=false; return okay;
 }
@@ -724,6 +729,7 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
             row->generation=qa_application_protocol_events_generation(owner->application);
             row->event_id=qa_application_events_local_first(owner->application);
             row->event_offset=0;
+            row->event_projection=0;
         }
         qa_net_protocol_id protocol=reading?(qa_net_protocol_id){0}:decoder_protocol(row);
         uint32_t kind=protocol.kind;

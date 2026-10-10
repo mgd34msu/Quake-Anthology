@@ -634,7 +634,7 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t
         qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player;
         bool reliable=false,print=false;
-        if(qa_application_protocol_event_at(app,cursor,&event)) {
+        if(qa_application_protocol_event_at(app,cursor,0,&event)) {
             if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original) {
                 if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
                     &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
@@ -967,7 +967,7 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     while(cursor<next) {
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player; qa_buffer bytes={0}; bool ok=true;
-        if(qa_application_protocol_event_at(app,cursor,&event)) {
+        if(qa_application_protocol_event_at(app,cursor,0,&event)) {
             if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original)
                 ok=frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
                     client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,65535,&bytes,error);

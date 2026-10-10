@@ -580,7 +580,7 @@ bool qa_application_q2_player_event_at(const qa_application *, uint64_t,
                                        qa_application_q2_player_event *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);
 bool qa_application_protocol_event_at(const qa_application *, uint64_t,
-                                      qa_application_protocol_event *);
+                                      size_t projection, qa_application_protocol_event *);
 bool qa_application_clear_events(qa_application *, qa_error *);
 
 /* Discovery builds a complete replacement before swapping the catalog.
