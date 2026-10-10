@@ -403,6 +403,24 @@ static bool valid_arguments(const qa_application *application,
     return true;
 }
 
+static bool q2_map_capacity(application_provider *provider, const qa_q2_map_event *event,
+    const application_event_write *write, qa_error *error)
+{
+    qa_application *app = provider->application;
+    switch (event->kind) {
+    case QA_Q2_MAP_STEAM: case QA_Q2_MAP_FORCE_WALL:
+    case QA_Q2_MAP_SCREEN_BLEND: case QA_Q2_MAP_DYNAMIC_LIGHT:
+        return application_event_stream_decline(app, write, true, error);
+    default:
+        if (event->recipient.registry)
+            return application_event_stream_close_recipients(app, write, event->recipient, NULL,
+                protocol_channels(provider), error);
+        return application_event_stream_close_subscribers(app, write, protocol_channels(provider),
+            event->kind == QA_Q2_MAP_MUSIC || event->kind == QA_Q2_MAP_LIGHTSTYLE ||
+            event->kind == QA_Q2_MAP_WORLD_TEXT, error);
+    }
+}
+
 bool application_emit_q2_map(application_provider *provider,
                              const qa_q2_map_event *event, qa_error *error)
 {
@@ -454,7 +472,7 @@ bool application_emit_q2_map(application_provider *provider,
     application_event_write write;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_MAP, &write, error)) {
         application_native_q2_delivery_dispose(&audience);
-        return false;
+        return q2_map_capacity(provider, event, &write, error);
     }
     bool ready = application_native_q2_delivery_retain(application, &audience, &retained, error);
     application_native_q2_delivery_dispose(&audience);
@@ -487,10 +505,11 @@ bool application_emit_q2_map(application_provider *provider,
     }};
     record->source.event.arguments = arguments;
     record->source.event.levels = levels;
-    return application_event_stream_commit(application, &write, error);
+    return application_event_stream_commit(application, &write, error) ||
+        q2_map_capacity(provider, event, &write, error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return false;
+    return q2_map_capacity(provider, event, &write, error);
 }
 
 bool application_emit_q3_map(application_provider *provider,
@@ -510,10 +529,16 @@ bool application_emit_q3_map(application_provider *provider,
                                 "gameplay emitted an invalid Q3 map event");
     application_event_write write;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q3_MAP, &write, error))
-        return false;
+        goto capacity;
     write.envelope->raw.q3_map = (qa_application_q3_map_event){
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session), .event = *event};
-    return application_event_stream_commit(application, &write, error);
+    if (application_event_stream_commit(application, &write, error)) return true;
+capacity:
+    if (event->kind == QA_Q3_MAP_SOUND)
+        return application_event_stream_decline(application, &write, true, error);
+    return application_event_stream_close_subscribers(application, &write,
+        protocol_channels(provider) | QA_APPLICATION_OUTPUT_UNIFIED,
+        event->kind == QA_Q3_MAP_CONFIGSTRING, error);
 }
 
 static bool record_progress(application_provider *provider,
@@ -773,6 +798,14 @@ static bool event_text(qa_application *application, const char *source,
     return true;
 }
 
+static bool q2_player_capacity(qa_application *app, const application_event_write *write,
+    qa_actor_id recipient, uint16_t channels, qa_error *error)
+{
+    return recipient.registry ?
+        application_event_stream_close_recipients(app, write, recipient, NULL, channels, error) :
+        application_event_stream_close_subscribers(app, write, channels, true, error);
+}
+
 bool application_emit_q2_player(application_provider *provider,
                                  const qa_q2_player_event *event, qa_error *error)
 {
@@ -790,7 +823,7 @@ bool application_emit_q2_player(application_provider *provider,
     qa_actor_id recipient = event->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : event->actor;
     uint16_t channels = event->kind == QA_Q2_PLAYER_PRINT ? protocol_channels(provider) : QA_APPLICATION_OUTPUT_UNIFIED;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
-        return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
+        return q2_player_capacity(application, &write, recipient, channels, error);
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
@@ -824,10 +857,10 @@ bool application_emit_q2_player(application_provider *provider,
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied, .recipients = recipients, .recipient_count = recipient_count};
     return application_event_stream_commit(application, &write, error) ||
-        application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
+        q2_player_capacity(application, &write, recipient, channels, error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
+    return q2_player_capacity(application, &write, recipient, channels, error);
 }
 
 static bool retain_protocol_text(qa_application *app, const char **text, qa_error *error)
