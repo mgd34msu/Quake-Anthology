@@ -144,7 +144,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
     r->owner_provider=row->owner.provider; r->owner_generation=row->owner.generation;
     r->seconds=row->seconds;
     const qa_unified_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
-    const qa_unified_q2_player_event *player=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PLAYER?&row->payload.value.q2_player:NULL;
+    const qa_q2_player_event *player=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PLAYER?&row->payload.value.q2_player:NULL;
     const qa_unified_q2_protocol_event *protocol=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PROTOCOL?&row->payload.value.q2_protocol:NULL;
     qa_actor_id actor=map?map->recipient:player?player->actor:protocol->actor;
     bool okay=r->kind==RR_REPORT || actor_read(o,actor,retained,resolve,&r->actor,e);
@@ -477,7 +477,7 @@ bool frontend_unified_q2_rr_overlay(frontend_unified_q2_rr_hud *o,
     if (!o || !row || o->busy || !current(o,e)) return false;
     if (row->payload.kind!=QA_UNIFIED_PRESENTATION_Q2_PLAYER)
         return fail(e,"RR help interlock received no actual player event");
-    const qa_unified_q2_player_event *player=&row->payload.value.q2_player;
+    const qa_q2_player_event *player=&row->payload.value.q2_player;
     qa_actor_id actor,viewer; uint32_t source_number;
     if (!actor_read(o,player->actor,false,true,&actor,e) ||
         !frontend_remote_unified_player(o->replica,&viewer,&source_number)) return false;

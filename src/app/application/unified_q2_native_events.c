@@ -49,30 +49,8 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
     if (!v || !source(p, &clock, e)) return false;
     if (v->kind == QA_Q2_PLAYER_TRAIL) return true;
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q2_PLAYER};
-    qa_unified_q2_player_event *r = &payload.value.q2_player;
-    *r = (qa_unified_q2_player_event){.kind = v->kind, .actor = v->actor, .target = v->target,
-        .text = (char *)v->text, .skin = (char *)v->skin, .selected_item = alias(p->application, v->selected_item),
-        .view = v->view, .origin = v->origin, .direction = v->direction,
-        .time_ns = v->time_ns, .slot = v->slot, .level = v->level, .lives = v->lives,
-        .damage = v->damage, .alpha = v->alpha, .respawn_status = v->respawn_status, .hand = v->hand,
-        .visible = v->visible, .reliable = v->reliable, .health = v->health, .armor = v->armor,
-        .shield = v->shield, .first = v->first};
+    payload.value.q2_player = *v;
     bool ok = true;
-    if (v->kind == QA_Q2_PLAYER_SCOREBOARD && v->count) {
-        r->scores = application_event_stream_alloc(p->application, v->count * sizeof(*r->scores), _Alignof(qa_q2_score_row), e); r->score_count = v->count;
-        if (!r->scores) ok = false;
-        for (size_t i = 0; ok && i < v->count; ++i) {
-            const qa_q2_score_row *a = v->scores + i;
-            r->scores[i] = *a;
-        }
-    } else if (v->kind == QA_Q2_PLAYER_INVENTORY && v->count) {
-        r->inventory = application_event_stream_alloc(p->application, v->count * sizeof(*r->inventory), _Alignof(qa_inventory_entry), e); r->inventory_count = v->count;
-        if (!r->inventory) ok = false;
-        for (size_t i = 0; ok && i < v->count; ++i) {
-            const qa_inventory_entry *a = v->inventory + i;
-            r->inventory[i] = *a;
-        }
-    }
     qa_actor_id recipient = v->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : v->actor;
     qa_unified_simulation_payload simulation = {.kind = QA_UNIFIED_SIMULATION_MESSAGE};
     int16_t counts[256] = {0};
@@ -81,7 +59,7 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
         size_t items = qa_q2_item_count(p->state.q2);
         for (size_t i = 0; i < items && i + 1 < 256; ++i) {
             const qa_q2_item_definition *item = qa_q2_item_at(p->state.q2, i);
-            for (size_t n = 0; n < v->count; ++n) if (v->inventory[n].item == item->item) {
+            for (size_t n = 0; n < v->inventory_count; ++n) if (v->inventory[n].item == item->item) {
                 double count = v->inventory[n].count;
                 int32_t value = count >= INT32_MIN && count < 2147483648.0 ? (int32_t)count : INT32_MIN;
                 uint16_t bits = (uint16_t)(uint32_t)value;

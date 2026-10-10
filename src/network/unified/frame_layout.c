@@ -1347,6 +1347,11 @@ static const qa_unified_field qa_unified_q2_player_view_fields[] = {
     QA_UNIFIED_FIELD(qa_q2_player_view, armor, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_q2_player_view, ammo_icon, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_q2_player_view, armor_icon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, pickup_icon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, pickup_text, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, help_icon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, selected_item_name, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIXED(qa_q2_player_view, key_icons, message_string_layout, 3),
     QA_UNIFIED_FIELD(qa_q2_player_view, selected_item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_q2_player_view, timer_item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_q2_player_view, ammo_count, QA_UNIFIED_FIELD_I32),
@@ -1371,33 +1376,33 @@ static const qa_unified_field qa_unified_q2_score_row_fields[] = {
 static const qa_unified_record_layout qa_unified_q2_score_row_layout = QA_UNIFIED_LAYOUT(qa_q2_score_row, qa_unified_q2_score_row_fields);
 
 static const qa_unified_field qa_unified_q2_player_event_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_event, actor, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_event, target, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, text, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, skin, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, selected_item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_event, view, qa_unified_q2_player_view_layout),
-    QA_UNIFIED_ARRAY(qa_unified_q2_player_event, scores, score_count, qa_unified_q2_score_row_layout, 65536),
-    QA_UNIFIED_ARRAY(qa_unified_q2_player_event, inventory, inventory_count, qa_unified_inventory_entry_layout, 65536),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_event, origin, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_event, direction, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, time_ns, QA_UNIFIED_FIELD_U64),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, slot, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, level, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, lives, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, damage, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, alpha, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, respawn_status, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, hand, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, visible, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, reliable, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, health, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, armor, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, shield, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_event, first, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_q2_player_event, actor, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_event, target, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_q2_player_event, text, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_q2_player_event, skin, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_q2_player_event, selected_item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_RECORD(qa_q2_player_event, view, qa_unified_q2_player_view_layout),
+    QA_UNIFIED_ARRAY(qa_q2_player_event, scores, score_count, qa_unified_q2_score_row_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_q2_player_event, inventory, inventory_count, qa_unified_inventory_entry_layout, 65536),
+    QA_UNIFIED_RECORD(qa_q2_player_event, origin, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_event, direction, qa_unified_vector_layout),
+    QA_UNIFIED_FIELD(qa_q2_player_event, time_ns, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_q2_player_event, slot, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, level, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, lives, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, damage, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, alpha, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, respawn_status, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, hand, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_event, visible, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, reliable, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, health, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, armor, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, shield, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_event, first, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_q2_player_event_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_player_event, qa_unified_q2_player_event_fields);
+static const qa_unified_record_layout qa_unified_q2_player_event_layout = QA_UNIFIED_LAYOUT(qa_q2_player_event, qa_unified_q2_player_event_fields);
 
 static const qa_unified_field qa_q2_fog_fields[] = {
     QA_UNIFIED_FIELD(qa_q2_fog, density, QA_UNIFIED_FIELD_F32),
@@ -2042,7 +2047,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
         break;
     }
     case QA_UNIFIED_PRESENTATION_Q2_PLAYER: {
-        const qa_unified_q2_player_event *event=&payload->value.q2_player;
+        const qa_q2_player_event *event=&payload->value.q2_player;
         okay=event->kind>=QA_Q2_PLAYER_PRINT && event->kind<=QA_Q2_PLAYER_ALPHA &&
             event->respawn_status>=QA_Q2_RESPAWN_READY && event->respawn_status<=QA_Q2_RESPAWN_NO_LIVES &&
             event->hand>=QA_Q2_RIGHT_HAND && event->hand<=QA_Q2_CENTER_HAND;

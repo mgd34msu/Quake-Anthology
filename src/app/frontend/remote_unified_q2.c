@@ -1028,7 +1028,7 @@ static bool player_names_expand(frontend_unified_q2 *o,qa_buffer *text,qa_error 
     }
     output[extent]=0; qa_buffer_free(text); *text=(qa_buffer){(uint8_t *)output,extent}; return true;
 }
-static bool userinfo(frontend_unified_q2 *o,const qa_unified_q2_player_event *event,bool publish,qa_error *e)
+static bool userinfo(frontend_unified_q2 *o,const qa_q2_player_event *event,bool publish,qa_error *e)
 {
     if (!event->text) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 userinfo lost its Source name");
     if (!publish) return true;
@@ -1079,7 +1079,7 @@ static bool selected_view_provider(frontend_unified_q2 *o,const char *provider)
 }
 static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
-    const qa_unified_q2_player_event *event=&row->payload.value.q2_player;
+    const qa_q2_player_event *event=&row->payload.value.q2_player;
     bool matches;qa_actor_id a;q2_activation *owner=NULL;
     if (!viewer_matches(o,event->actor,&matches,e))return false;
         if (!matches)return true;
@@ -1108,7 +1108,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         for (size_t i=0;okay && i<event->inventory_count;++i){const qa_inventory_entry *from=event->inventory+i;if (from->count<=0)continue;
             q2_inventory_row *v=items+used++;const char *item_name=qa_strings_cstr(o->replica->strings,from->item);
             v->item=text_copy(item_name);v->count=from->count;
-            v->selected=event->selected_item && !strcmp(item_name,event->selected_item);
+            v->selected=event->selected_item == from->item;
             const char *label=!strncmp(item_name,"q2:",3)?item_name+3:item_name;
             v->label=text_copy(label);okay=v->item && v->label;
             if (v->label)for (char *t=v->label;*t;++t)if (*t=='_')*t=' ';
@@ -1342,7 +1342,7 @@ bool frontend_unified_q2_presentation_validate(frontend_unified_q2 *o,const qa_u
     switch(row->payload.kind){
     case QA_UNIFIED_PRESENTATION_MODEL:case QA_UNIFIED_PRESENTATION_VISIBILITY:{qa_actor_id a;return visual_record(o,row,&a,e);}
     case QA_UNIFIED_PRESENTATION_Q2_TEMPORARY:{qa_q2_temp_entity t;qa_actor_id actors[7];return source_profile(row,true,&profile,e) && temporary(o,&row->payload.value.q2_temporary,&t,actors,e);}
-    case QA_UNIFIED_PRESENTATION_Q2_PLAYER:{const qa_unified_q2_player_event *v=&row->payload.value.q2_player;
+    case QA_UNIFIED_PRESENTATION_Q2_PLAYER:{const qa_q2_player_event *v=&row->payload.value.q2_player;
         if (v->kind==QA_Q2_PLAYER_USERINFO)return userinfo(o,v,false,e);
         qa_actor_id a;return !v->actor.registry || source_actor(o,v->actor,&a,e);}
     case QA_UNIFIED_PRESENTATION_Q2_MAP:if (row->payload.value.q2_map.kind==QA_Q2_MAP_ACHIEVEMENT)return achievement(o,row,row->payload.value.q2_map.text,false,e);return true;
@@ -1376,7 +1376,7 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_pr
     case QA_UNIFIED_PRESENTATION_Q2_MAP:return map_receive(o,row,mirrored,e);
     case QA_UNIFIED_PRESENTATION_Q2_PROTOCOL:return protocol_receive(o,row,mirrored,e);
     case QA_UNIFIED_PRESENTATION_BUILTIN:return builtin_receive(o,row,mirrored,e);
-    case QA_UNIFIED_PRESENTATION_Q2_PLAYER:{const qa_unified_q2_player_event *v=&row->payload.value.q2_player;bool matches;
+    case QA_UNIFIED_PRESENTATION_Q2_PLAYER:{const qa_q2_player_event *v=&row->payload.value.q2_player;bool matches;
         if (v->kind==QA_Q2_PLAYER_USERINFO)return userinfo(o,v,true,e);
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;

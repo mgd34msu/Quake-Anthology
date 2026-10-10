@@ -88,7 +88,7 @@ typedef struct qa_q2_player_event {
     qa_q2_player_view view;
     const qa_q2_score_row *scores;
     const qa_inventory_entry *inventory;
-    size_t count;
+    size_t score_count, inventory_count;
     qa_vec3 origin, direction;
     uint64_t time_ns;
     qa_item_id selected_item;

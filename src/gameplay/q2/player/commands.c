@@ -47,7 +47,7 @@ bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
                              &(qa_q2_player_event){.kind = QA_Q2_PLAYER_INVENTORY,
                                                    .actor = a->id,
                                                    .inventory = entries,
-                                                   .count = count,
+                                                   .inventory_count = count,
                                                    .visible = a->client->rule.show_inventory,
                                                    .selected_item = a->client->info.selected_item},
                              e);
@@ -87,7 +87,7 @@ bool q2_player_scoreboard(qa_q2_game *g, q2_actor *a, bool reliable, qa_error *e
                           &(qa_q2_player_event){.kind = QA_Q2_PLAYER_SCOREBOARD,
                                                 .actor = a->id,
                                                 .scores = rows,
-                                                .count = count,
+                                                .score_count = count,
                                                 .reliable = reliable},
                           e);
     list->active = false;

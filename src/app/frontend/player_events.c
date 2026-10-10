@@ -4,22 +4,22 @@
 
 static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_error *error)
 {
-    if (event->count > SIZE_MAX / sizeof(qa_hud_score))
+    if (event->score_count > SIZE_MAX / sizeof(qa_hud_score))
         return frontend_fail(error, QA_ERROR_MEMORY, "Q2 score list overflow");
     size_t bytes = 0;
-    for (size_t i = 0; i < event->count; ++i) {
+    for (size_t i = 0; i < event->score_count; ++i) {
         size_t length = strlen(event->scores[i].name ? event->scores[i].name : "") + 1;
         if (length > SIZE_MAX - bytes) return frontend_fail(error, QA_ERROR_MEMORY, "Q2 score names overflow");
         bytes += length;
     }
-    qa_hud_score *rows = event->count ? calloc(event->count, sizeof(*rows)) : NULL;
+    qa_hud_score *rows = event->score_count ? calloc(event->score_count, sizeof(*rows)) : NULL;
     char *names = bytes ? malloc(bytes) : NULL;
-    if ((event->count && !rows) || (bytes && !names)) {
+    if ((event->score_count && !rows) || (bytes && !names)) {
         free(rows); free(names); return frontend_fail(error, QA_ERROR_MEMORY, "retaining Q2 scores");
     }
     const qa_actor_record *local = qa_actors_get(qa_world_actors(qa_application_world(seat->frontend->application)), event->actor);
     size_t offset = 0;
-    for (size_t i = 0; i < event->count; ++i) {
+    for (size_t i = 0; i < event->score_count; ++i) {
         const qa_q2_score_row *source = &event->scores[i];
         const char *name = source->name ? source->name : "";
         size_t length = strlen(name) + 1; memcpy(names + offset, name, length);
@@ -28,7 +28,7 @@ static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_erro
         offset += length;
     }
     free(seat->q2_scores); free(seat->q2_score_names);
-    seat->q2_scores = rows; seat->q2_score_names = names; seat->q2_score_count = event->count;
+    seat->q2_scores = rows; seat->q2_score_names = names; seat->q2_score_count = event->score_count;
     return true;
 }
 static bool help_line(frontend_seat *seat, unsigned slot, const char *text, qa_error *error)

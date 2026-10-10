@@ -943,7 +943,7 @@ static bool presentation_for(qa_application *app, const application_unified_even
         } else if (v->family == QA_GAME_Q2 && (v->kind == QA_BUILTIN_MESSAGE || v->kind == QA_BUILTIN_CENTERPRINT ||
             (v->kind == QA_BUILTIN_ITEM && v->code == 0))) return own(v->actor, player);
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_PLAYER) {
-        const qa_unified_q2_player_event *v = &p->value.q2_player;
+        const qa_q2_player_event *v = &p->value.q2_player;
         if (v->kind == QA_Q2_PLAYER_STUFFTEXT || v->kind == QA_Q2_PLAYER_TRAIL || v->kind == QA_Q2_PLAYER_RESTART) return false;
         if (v->kind == QA_Q2_PLAYER_USERINFO || v->kind == QA_Q2_PLAYER_FLASHLIGHT || v->kind == QA_Q2_PLAYER_DOGTAG || v->kind == QA_Q2_PLAYER_ALPHA) return true;
         return own(v->actor, player);

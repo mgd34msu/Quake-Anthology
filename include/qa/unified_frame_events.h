@@ -13,24 +13,6 @@
 
 /* Names stay interned until the wire codec resolves them. Payload pointers are
  * owned by the event record or its retained source page leases. */
-typedef struct qa_unified_q2_player_event {
-    qa_q2_player_event_kind kind;
-    qa_actor_id actor, target;
-    char *text, *skin, *selected_item;
-    qa_q2_player_view view;
-    qa_q2_score_row *scores;
-    size_t score_count;
-    qa_inventory_entry *inventory;
-    size_t inventory_count;
-    qa_vec3 origin, direction;
-    uint64_t time_ns;
-    uint32_t slot;
-    int32_t level, lives;
-    float damage, alpha;
-    qa_q2_respawn_status respawn_status;
-    qa_q2_hand hand;
-    bool visible, reliable, health, armor, shield, first;
-} qa_unified_q2_player_event;
 typedef struct qa_unified_q2_campaign_level {
     char *map, *name;
     uint32_t visit_order, total_secrets, found_secrets, total_monsters, killed_monsters;
@@ -172,7 +154,7 @@ typedef struct qa_unified_presentation_payload {
     qa_unified_presentation_kind kind;
     union {
         qa_builtin_event builtin;
-        qa_unified_q2_player_event q2_player;
+        qa_q2_player_event q2_player;
         qa_unified_q2_map_event q2_map;
         qa_unified_q2_protocol_event q2_protocol;
         qa_unified_q2_temporary q2_temporary;

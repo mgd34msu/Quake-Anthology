@@ -235,7 +235,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
                 else {
                     memcpy(name, value, length); name[length] = 0;
                     presentation.kind = QA_UNIFIED_PRESENTATION_Q2_PLAYER;
-                    presentation.value.q2_player = (qa_unified_q2_player_event){.kind = QA_Q2_PLAYER_USERINFO,
+                    presentation.value.q2_player = (qa_q2_player_event){.kind = QA_Q2_PLAYER_USERINFO,
                         .actor = a, .slot = source - 1, .text = name, .skin = (char *)(split ? split + 1 : "")};
                     pres = &presentation; has_source = true;
                 }

@@ -582,10 +582,10 @@ bool application_emit_q2_player(application_provider *provider,
         !event || (unsigned)event->kind > QA_Q2_PLAYER_ALPHA ||
         !qa_vec_finite(event->origin) || !qa_vec_finite(event->direction) ||
         !isfinite(event->damage) || !isfinite(event->alpha) ||
-        (event->kind == QA_Q2_PLAYER_SCOREBOARD && event->count && !event->scores) ||
-        (event->kind == QA_Q2_PLAYER_INVENTORY && event->count && !event->inventory) ||
-        event->count > SIZE_MAX / sizeof(qa_q2_score_row) ||
-        event->count > SIZE_MAX / sizeof(qa_inventory_entry))
+        (event->kind == QA_Q2_PLAYER_SCOREBOARD && event->score_count && !event->scores) ||
+        (event->kind == QA_Q2_PLAYER_INVENTORY && event->inventory_count && !event->inventory) ||
+        event->score_count > SIZE_MAX / sizeof(qa_q2_score_row) ||
+        event->inventory_count > SIZE_MAX / sizeof(qa_inventory_entry))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     application_event_write write;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error)) return false;
@@ -601,21 +601,21 @@ bool application_emit_q2_player(application_provider *provider,
         goto abort;
     copied.scores = NULL;
     copied.inventory = NULL;
-    if (event->scores && event->count) {
+    if (event->scores && event->score_count) {
         qa_q2_score_row *scores = application_event_stream_alloc(application,
-            event->count * sizeof(*scores), _Alignof(qa_q2_score_row), error);
+            event->score_count * sizeof(*scores), _Alignof(qa_q2_score_row), error);
         if (!scores) goto abort;
-        memcpy(scores, event->scores, event->count * sizeof(*scores));
-        for (size_t i = 0; i < event->count; ++i)
+        memcpy(scores, event->scores, event->score_count * sizeof(*scores));
+        for (size_t i = 0; i < event->score_count; ++i)
             if (!event_text(application, event->scores[i].name, &scores[i].name, error))
                 goto abort;
         copied.scores = scores;
     }
-    if (event->inventory && event->count) {
+    if (event->inventory && event->inventory_count) {
         qa_inventory_entry *inventory = application_event_stream_alloc(application,
-            event->count * sizeof(*inventory), _Alignof(qa_inventory_entry), error);
+            event->inventory_count * sizeof(*inventory), _Alignof(qa_inventory_entry), error);
         if (!inventory) goto abort;
-        memcpy(inventory, event->inventory, event->count * sizeof(*inventory));
+        memcpy(inventory, event->inventory, event->inventory_count * sizeof(*inventory));
         copied.inventory = inventory;
     }
     write.envelope->raw.q2_player = (qa_application_q2_player_event){
