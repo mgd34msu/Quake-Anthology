@@ -1227,12 +1227,12 @@ static const qa_unified_record_layout qa_unified_owner_event_layout;
 const qa_unified_record_layout qa_unified_presentation_payload_layout;
 static const qa_unified_record_layout qa_unified_sound_event_layout;
 static const qa_unified_record_layout qa_unified_message_event_layout;
-static const qa_unified_record_layout qa_unified_damage_attack_layout;
-static const qa_unified_record_layout qa_unified_damage_request_layout;
+static const qa_unified_record_layout qa_attack_layout;
+static const qa_unified_record_layout qa_damage_request_layout;
 static const qa_unified_record_layout qa_damage_result_layout;
 static const qa_unified_record_layout qa_damage_inflictor_center_layout;
-static const qa_unified_record_layout qa_unified_damage_mutation_layout;
-static const qa_unified_record_layout qa_unified_damage_event_layout;
+static const qa_unified_record_layout qa_damage_mutation_layout;
+static const qa_unified_record_layout qa_damage_outcome_layout;
 const qa_unified_record_layout qa_unified_simulation_payload_layout;
 static const qa_unified_record_layout qa_damage_cause_layout;
 static const qa_unified_field qa_unified_presentation_owner_fields[] = {
@@ -1628,35 +1628,34 @@ static const qa_unified_field qa_unified_message_event_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_message_event_layout = QA_UNIFIED_LAYOUT(qa_unified_message_event, qa_unified_message_event_fields);
 
-static const qa_unified_field qa_unified_damage_attack_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, sequence, QA_UNIFIED_FIELD_U64),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, time, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, milliseconds, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_RECORD(qa_unified_damage_attack, attacker, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_attack, inflictor, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_attack, projectile, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, weapon, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, weapon_provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, combat_provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, inventory_provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, movement_provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, powerup_owner, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RECORD(qa_unified_damage_attack, cause, qa_damage_cause_layout),
-    QA_UNIFIED_FIELD(qa_unified_damage_attack, q1_death_type, QA_UNIFIED_FIELD_STRING),
+static const qa_unified_field qa_attack_fields[] = {
+    QA_UNIFIED_FIELD(qa_attack, sequence, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_attack, time_ns, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_RECORD(qa_attack, attacker, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_attack, inflictor, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_attack, projectile, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_attack, weapon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_attack, weapon_provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_attack, combat_provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_attack, inventory_provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_attack, movement_provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_attack, powerup_applied, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_attack, powerup_owner, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_RECORD(qa_attack, cause, qa_damage_cause_layout),
 };
-static const qa_unified_record_layout qa_unified_damage_attack_layout = QA_UNIFIED_LAYOUT(qa_unified_damage_attack, qa_unified_damage_attack_fields);
+static const qa_unified_record_layout qa_attack_layout = QA_UNIFIED_LAYOUT(qa_attack, qa_attack_fields);
 
-static const qa_unified_field qa_unified_damage_request_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_damage_request, attack, qa_unified_damage_attack_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_request, target, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_damage_request, amount, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_damage_request, knockback, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_RECORD(qa_unified_damage_request, direction, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_request, point, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_request, normal, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_damage_request, radius, QA_UNIFIED_FIELD_BOOL),
+static const qa_unified_field qa_damage_request_fields[] = {
+    QA_UNIFIED_RECORD(qa_damage_request, attack, qa_attack_layout),
+    QA_UNIFIED_RECORD(qa_damage_request, target, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_damage_request, amount, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_damage_request, knockback, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_RECORD(qa_damage_request, direction, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_damage_request, point, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_damage_request, normal, qa_unified_vector_layout),
+    QA_UNIFIED_FIELD(qa_damage_request, radius, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_damage_request_layout = QA_UNIFIED_LAYOUT(qa_unified_damage_request, qa_unified_damage_request_fields);
+static const qa_unified_record_layout qa_damage_request_layout = QA_UNIFIED_LAYOUT(qa_damage_request, qa_damage_request_fields);
 
 static const qa_unified_field qa_damage_result_fields[] = {
     QA_UNIFIED_FIELD(qa_damage_result, applied_damage, QA_UNIFIED_FIELD_F32),
@@ -1680,30 +1679,80 @@ static const qa_unified_field qa_damage_inflictor_center_fields[] = {
 };
 static const qa_unified_record_layout qa_damage_inflictor_center_layout = QA_UNIFIED_LAYOUT(qa_damage_inflictor_center, qa_damage_inflictor_center_fields);
 
-static const qa_unified_field qa_unified_damage_mutation_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_damage_mutation, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_damage_mutation, health_before, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_damage_mutation, health_after, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_RECORD(qa_unified_damage_mutation, armor_before, qa_unified_armor_state_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_mutation, armor_after, qa_unified_armor_state_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_mutation, before, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_mutation, after, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_mutation, impulse, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_damage_mutation, movement_provider, QA_UNIFIED_FIELD_STRING),
+static const qa_unified_record_layout armor_unprotected_layout = {
+    .size = sizeof(((qa_regular_armor *)0)->protection), .key_offset = SIZE_MAX,
 };
-static const qa_unified_record_layout qa_unified_damage_mutation_layout = QA_UNIFIED_LAYOUT(qa_unified_damage_mutation, qa_unified_damage_mutation_fields);
-
-static const qa_unified_field qa_unified_damage_event_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_damage_event, stale, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_damage_event, survived, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_RECORD(qa_unified_damage_event, request, qa_unified_damage_request_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_event, result, qa_damage_result_layout),
-    QA_UNIFIED_RECORD(qa_unified_damage_event, inflictor_center, qa_damage_inflictor_center_layout),
-    QA_UNIFIED_ARRAY(qa_unified_damage_event, mutations, mutation_count, qa_unified_damage_mutation_layout, 65536),
+static const qa_unified_field armor_q2_protection_fields[] = {
+    MEMBER_FIELD(qa_regular_armor, protection.q2, normal, QA_UNIFIED_FIELD_F64),
+    MEMBER_FIELD(qa_regular_armor, protection.q2, energy, QA_UNIFIED_FIELD_F64),
 };
-static const qa_unified_record_layout qa_unified_damage_event_layout = QA_UNIFIED_LAYOUT(qa_unified_damage_event, qa_unified_damage_event_fields);
+static const qa_unified_record_layout armor_q2_protection_layout =
+    MEMBER_LAYOUT(qa_regular_armor, protection.q2, armor_q2_protection_fields);
+static const qa_unified_record_layout *const armor_protection_variants[] = {
+    &armor_unprotected_layout, &float_layout, &armor_q2_protection_layout,
+    &float_layout, &armor_unprotected_layout,
+};
+static const qa_unified_field regular_armor_fields[] = {
+    QA_UNIFIED_FIELD(qa_regular_armor, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_regular_armor, points, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_regular_armor, item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_VARIANT(qa_regular_armor, protection, kind, armor_protection_variants),
+};
+static const qa_unified_record_layout regular_armor_layout = QA_UNIFIED_LAYOUT(qa_regular_armor, regular_armor_fields);
+static const qa_unified_field powered_armor_fields[] = {
+    QA_UNIFIED_FIELD(qa_powered_armor, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_powered_armor, cells, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_powered_armor, source_owner, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_powered_armor, source_edition, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_powered_armor, source_kind, QA_UNIFIED_FIELD_I32),
+};
+static const qa_unified_record_layout powered_armor_layout = QA_UNIFIED_LAYOUT(qa_powered_armor, powered_armor_fields);
+static const qa_unified_field armor_fields[] = {
+    QA_UNIFIED_RECORD(qa_armor, regular, regular_armor_layout),
+    QA_UNIFIED_RECORD(qa_armor, powered, powered_armor_layout),
+};
+static const qa_unified_record_layout armor_layout = QA_UNIFIED_LAYOUT(qa_armor, armor_fields);
+static const qa_unified_field mutation_health_fields[] = {
+    MEMBER_FIELD(qa_damage_mutation, value.health, before, QA_UNIFIED_FIELD_F32),
+    MEMBER_FIELD(qa_damage_mutation, value.health, after, QA_UNIFIED_FIELD_F32),
+};
+static const qa_unified_record_layout mutation_health_layout = MEMBER_LAYOUT(qa_damage_mutation, value.health, mutation_health_fields);
+static const qa_unified_field mutation_armor_fields[] = {
+    MEMBER_RECORD(qa_damage_mutation, value.armor, before, armor_layout),
+    MEMBER_RECORD(qa_damage_mutation, value.armor, after, armor_layout),
+};
+static const qa_unified_record_layout mutation_armor_layout = MEMBER_LAYOUT(qa_damage_mutation, value.armor, mutation_armor_fields);
+static const qa_unified_field mutation_velocity_fields[] = {
+    MEMBER_RECORD(qa_damage_mutation, value.velocity, before, qa_unified_vector_layout),
+    MEMBER_RECORD(qa_damage_mutation, value.velocity, after, qa_unified_vector_layout),
+    MEMBER_FIELD(qa_damage_mutation, value.velocity, movement, QA_UNIFIED_FIELD_NAME),
+};
+static const qa_unified_record_layout mutation_velocity_layout = MEMBER_LAYOUT(qa_damage_mutation, value.velocity, mutation_velocity_fields);
+static const qa_unified_field mutation_impulse_fields[] = {
+    MEMBER_RECORD(qa_damage_mutation, value.impulse, value, qa_unified_vector_layout),
+    MEMBER_FIELD(qa_damage_mutation, value.impulse, movement, QA_UNIFIED_FIELD_NAME),
+};
+static const qa_unified_record_layout mutation_impulse_layout = MEMBER_LAYOUT(qa_damage_mutation, value.impulse, mutation_impulse_fields);
+static const qa_unified_record_layout *const damage_mutation_variants[] = {
+    &mutation_health_layout, &mutation_armor_layout, &mutation_velocity_layout, &mutation_impulse_layout,
+};
+static const qa_unified_field qa_damage_mutation_fields[] = {
+    QA_UNIFIED_FIELD(qa_damage_mutation, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_VARIANT(qa_damage_mutation, value, kind, damage_mutation_variants),
+};
+static const qa_unified_record_layout qa_damage_mutation_layout = QA_UNIFIED_LAYOUT(qa_damage_mutation, qa_damage_mutation_fields);
 
-static const qa_unified_record_layout *const qa_unified_simulation_payload_variants[] = {&qa_unified_sound_event_layout, &qa_unified_message_event_layout, &qa_unified_damage_event_layout};
+static const qa_unified_field qa_damage_outcome_fields[] = {
+    QA_UNIFIED_FIELD(qa_damage_outcome, stale, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_damage_outcome, survived, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_RECORD(qa_damage_outcome, request, qa_damage_request_layout),
+    QA_UNIFIED_RECORD(qa_damage_outcome, result, qa_damage_result_layout),
+    QA_UNIFIED_RECORD(qa_damage_outcome, inflictor_center, qa_damage_inflictor_center_layout),
+    QA_UNIFIED_ARRAY(qa_damage_outcome, mutations, mutation_count, qa_damage_mutation_layout, 65536),
+};
+static const qa_unified_record_layout qa_damage_outcome_layout = QA_UNIFIED_LAYOUT(qa_damage_outcome, qa_damage_outcome_fields);
+
+static const qa_unified_record_layout *const qa_unified_simulation_payload_variants[] = {&qa_unified_sound_event_layout, &qa_unified_message_event_layout, &qa_damage_outcome_layout};
 static const qa_unified_field qa_unified_simulation_payload_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_simulation_payload, kind, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_simulation_payload, linked_presentation, QA_UNIFIED_FIELD_BOOL),
@@ -1713,7 +1762,7 @@ static const qa_unified_field qa_unified_simulation_payload_fields[] = {
 const qa_unified_record_layout qa_unified_simulation_payload_layout = QA_UNIFIED_LAYOUT(qa_unified_simulation_payload, qa_unified_simulation_payload_fields);
 
 static const qa_unified_field cause_q1_fields[] = {
-    MEMBER_FIELD(qa_damage_cause, source.q1, death_type, QA_UNIFIED_FIELD_U32),
+    MEMBER_FIELD(qa_damage_cause, source.q1, death_type, QA_UNIFIED_FIELD_NAME),
     MEMBER_FIELD(qa_damage_cause, source.q1, armor, QA_UNIFIED_FIELD_I32),
 };
 static const qa_unified_record_layout cause_q1_layout = MEMBER_LAYOUT(qa_damage_cause, source.q1, cause_q1_fields);

@@ -249,37 +249,6 @@ typedef struct qa_unified_message_event {
     uint16_t entity, flash;
     bool monster;
 } qa_unified_message_event;
-typedef struct qa_unified_damage_attack {
-    uint64_t sequence;
-    double time;
-    bool milliseconds;
-    qa_actor_id attacker, inflictor, projectile;
-    char *weapon, *weapon_provider, *combat_provider, *inventory_provider, *movement_provider, *powerup_owner;
-    qa_damage_cause cause;
-    char *q1_death_type;
-} qa_unified_damage_attack;
-typedef struct qa_unified_damage_request {
-    qa_unified_damage_attack attack;
-    qa_actor_id target;
-    float amount, knockback;
-    qa_vec3 direction, point, normal;
-    bool radius;
-} qa_unified_damage_request;
-typedef struct qa_unified_damage_mutation {
-    qa_mutation_kind kind;
-    float health_before, health_after;
-    qa_unified_armor_state armor_before, armor_after;
-    qa_vec3 before, after, impulse;
-    char *movement_provider;
-} qa_unified_damage_mutation;
-typedef struct qa_unified_damage_event {
-    bool stale, survived;
-    qa_unified_damage_request request;
-    qa_damage_result result;
-    qa_damage_inflictor_center inflictor_center;
-    qa_unified_damage_mutation *mutations;
-    size_t mutation_count;
-} qa_unified_damage_event;
 typedef enum qa_unified_simulation_kind { QA_UNIFIED_SIMULATION_SOUND, QA_UNIFIED_SIMULATION_MESSAGE, QA_UNIFIED_SIMULATION_DAMAGE } qa_unified_simulation_kind;
 typedef struct qa_unified_simulation_payload {
     qa_unified_simulation_kind kind;
@@ -288,7 +257,7 @@ typedef struct qa_unified_simulation_payload {
     union {
         qa_unified_sound_event sound;
         qa_unified_message_event message;
-        qa_unified_damage_event damage;
+        qa_damage_outcome damage;
     } value;
 } qa_unified_simulation_payload;
 typedef struct qa_unified_simulation_event {

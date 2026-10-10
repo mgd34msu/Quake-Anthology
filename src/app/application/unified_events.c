@@ -862,61 +862,15 @@ static double source_time(uint64_t ns, qa_ruleset_id clock, bool milliseconds)
     }
     return (double)ns / (milliseconds ? 1e6 : 1e9);
 }
-static qa_unified_armor_state armor_read(qa_application *app, const qa_armor *a)
-{
-    qa_unified_armor_state result = {.kind = a->regular.kind,
-        .item = event_alias(app, a->regular.item), .points = a->regular.points,
-        .powered_kind = a->powered.kind, .cells = a->powered.cells};
-    if (a->regular.kind == QA_ARMOR_Q1) result.absorption = a->regular.protection.q1_absorption;
-    else if (a->regular.kind == QA_ARMOR_Q2) { result.normal = a->regular.protection.q2.normal; result.energy = a->regular.protection.q2.energy; }
-    else if (a->regular.kind == QA_ARMOR_Q3) result.protection = a->regular.protection.q3_protection;
-    return result;
-}
 bool application_unified_damage_emit(qa_application *app, const qa_damage_outcome *outcome, qa_error *e)
 {
     if (!app || !outcome) return application_fail(e, QA_ERROR_ARGUMENT, "Damage event has no actual outcome");
-    const qa_damage_request *request = &outcome->request; const qa_attack *attack = &request->attack;
-    application_provider *source = source_provider(app, attack->weapon_provider);
-    if (!source || !source->launch) return application_fail(e, QA_ERROR_FORMAT, "Damage attack lost its genuine source weapon provider");
-    qa_ruleset_id clock = source->launch->selection.clock.kind;
-    bool ms = clock == QA_RULESET_Q2_RERELEASE || clock == QA_RULESET_Q3;
+    const qa_attack *attack = &outcome->request.attack;
     application_event_write write;
     bool own = app->event_write == NULL;
     if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
     qa_unified_simulation_payload payload = {.kind = QA_UNIFIED_SIMULATION_DAMAGE};
-    qa_unified_damage_event *d = &payload.value.damage;
-    *d = (qa_unified_damage_event){.stale = outcome->stale, .survived = outcome->survived,
-        .result = outcome->result, .inflictor_center = outcome->inflictor_center,
-        .request = {.attack = {.sequence = attack->sequence, .time = source_time(attack->time_ns, clock, ms), .milliseconds = ms,
-            .attacker = attack->attacker, .inflictor = attack->inflictor, .projectile = attack->projectile,
-            .weapon = event_alias(app, attack->weapon), .weapon_provider = event_alias(app, attack->weapon_provider),
-            .combat_provider = event_alias(app, attack->combat_provider), .inventory_provider = event_alias(app, attack->inventory_provider),
-            .movement_provider = event_alias(app, attack->movement_provider),
-            .powerup_owner = attack->powerup_applied ? event_alias(app, attack->powerup_owner) : NULL,
-            .cause = attack->cause, .q1_death_type = attack->cause.kind == QA_CAUSE_Q1 ? event_alias(app, attack->cause.source.q1.death_type) : NULL},
-            .target = request->target, .amount = request->amount, .knockback = request->knockback,
-            .direction = request->direction, .point = request->point, .normal = request->normal, .radius = request->radius}};
-    /* The q1 text is the wire identity; its session-local ordinal has no wire meaning. */
-    if (attack->cause.kind == QA_CAUSE_Q1) d->request.attack.cause.source.q1.death_type = 0;
-    if (outcome->mutation_count) {
-        d->mutations = application_event_stream_alloc(app, outcome->mutation_count * sizeof(*d->mutations),
-            _Alignof(qa_unified_damage_mutation), e);
-        if (!d->mutations) {
-            if (own) application_event_stream_abort(app, &write, e);
-            return false;
-        }
-        d->mutation_count = outcome->mutation_count;
-        for (size_t i = 0; i < outcome->mutation_count; ++i) {
-            const qa_damage_mutation *m = outcome->mutations + i; qa_unified_damage_mutation *v = d->mutations + i;
-            *v = (qa_unified_damage_mutation){.kind = m->kind};
-            switch (m->kind) {
-            case QA_MUTATION_HEALTH: v->health_before = m->value.health.before; v->health_after = m->value.health.after; break;
-            case QA_MUTATION_ARMOR: v->armor_before = armor_read(app, &m->value.armor.before); v->armor_after = armor_read(app, &m->value.armor.after); break;
-            case QA_MUTATION_SOURCE_VELOCITY: v->before = m->value.velocity.before; v->after = m->value.velocity.after; v->movement_provider = event_alias(app, m->value.velocity.movement); break;
-            case QA_MUTATION_IMPULSE: v->impulse = m->value.impulse.value; v->movement_provider = event_alias(app, m->value.impulse.movement); break;
-            }
-        }
-    }
+    payload.value.damage = *outcome;
     bool ok = application_unified_event_emit(app, attack->weapon_provider, NULL, &payload,
         (qa_actor_id){0}, (qa_actor_id){0}, attack->time_ns, 0, false, false, e);
     if (!own) return ok;
