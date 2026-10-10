@@ -2,6 +2,7 @@
 
 #include <stdatomic.h>
 #include <stdio.h>
+#include <string.h>
 
 void *__real_malloc(size_t);
 void *__real_calloc(size_t, size_t);
@@ -18,6 +19,16 @@ static _Atomic uint64_t counters[QA_ALLOCATION_GATE_COUNTERS];
 static qa_allocation_gate_record records[QA_ALLOCATION_GATE_RECORDS];
 static qa_allocation_gate_summary summary;
 static uint64_t frame;
+enum { CVAR_SITES = 256, CVAR_NAME_BYTES = 128 };
+typedef struct cvar_site {
+    uintptr_t caller;
+    uint64_t calls;
+    char name[CVAR_NAME_BYTES];
+} cvar_site;
+static cvar_site frame_sites[CVAR_SITES], total_sites[CVAR_SITES];
+static size_t frame_site_count, total_site_count;
+static uint64_t discarded_sites;
+static atomic_flag site_lock = ATOMIC_FLAG_INIT;
 
 static uint64_t sum(uint64_t a, uint64_t b)
 { return b > UINT64_MAX - a ? UINT64_MAX : a + b; }
@@ -40,6 +51,27 @@ static bool enter(void)
 
 static void leave(void)
 { atomic_fetch_sub_explicit(&in_flight, 1, memory_order_release); }
+
+void qa_allocation_gate_cvar_find(const char *name, uintptr_t caller)
+{
+    if (!enter()) return;
+    count(QA_ALLOCATION_GATE_CVAR_FINDS, 1);
+    while (atomic_flag_test_and_set_explicit(&site_lock, memory_order_acquire)) {}
+    size_t i = 0;
+    const char *key = name ? name : "(null)";
+    for (; i < frame_site_count; ++i)
+        if (frame_sites[i].caller == caller && !strncmp(frame_sites[i].name, key, CVAR_NAME_BYTES - 1)) break;
+    if (i < CVAR_SITES) {
+        if (i == frame_site_count) {
+            frame_sites[i].caller = caller;
+            (void)snprintf(frame_sites[i].name, CVAR_NAME_BYTES, "%s", key);
+            ++frame_site_count;
+        }
+        ++frame_sites[i].calls;
+    }
+    atomic_flag_clear_explicit(&site_lock, memory_order_release);
+    leave();
+}
 
 void qa_allocation_gate_capacity_exhausted(void)
 {
@@ -108,6 +140,8 @@ void __wrap_free(void *pointer)
 void qa_allocation_gate_begin(void)
 {
     ++frame;
+    memset(frame_sites, 0, sizeof(frame_sites));
+    frame_site_count = 0;
     for (size_t i = 0; i < QA_ALLOCATION_GATE_COUNTERS; ++i)
         atomic_store_explicit(&counters[i], 0, memory_order_relaxed);
     atomic_store_explicit(&observing, true, memory_order_release);
@@ -121,6 +155,14 @@ qa_allocation_gate_counts qa_allocation_gate_end(bool playing, bool succeeded)
     for (size_t i = 0; i < QA_ALLOCATION_GATE_COUNTERS; ++i)
         sample.values[i] = atomic_load_explicit(&counters[i], memory_order_relaxed);
     if (!playing || ++summary.playing_frames <= QA_ALLOCATION_GATE_WARMUP) return sample;
+    for (size_t s = 0; s < frame_site_count; ++s) {
+        size_t i = 0;
+        for (; i < total_site_count; ++i)
+            if (total_sites[i].caller == frame_sites[s].caller && !strcmp(total_sites[i].name, frame_sites[s].name)) break;
+        if (i == CVAR_SITES) { discarded_sites += frame_sites[s].calls; continue; }
+        if (i == total_site_count) { total_sites[i] = frame_sites[s]; ++total_site_count; }
+        else total_sites[i].calls += frame_sites[s].calls;
+    }
     ++summary.measured_frames;
     for (size_t i = 0; i < QA_ALLOCATION_GATE_COUNTERS; ++i) {
         summary.total.values[i] = sum(summary.total.values[i], sample.values[i]);
@@ -140,7 +182,7 @@ const qa_allocation_gate_record *qa_allocation_gate_records(void)
 
 static void print_counts(const qa_allocation_gate_counts *counts)
 {
-    (void)fprintf(stderr, " malloc=%llu calloc=%llu realloc=%llu frees=%llu requested_bytes=%llu null_results=%llu size_overflows=%llu capacity_exhaustions=%llu",
+    (void)fprintf(stderr, " malloc=%llu calloc=%llu realloc=%llu frees=%llu requested_bytes=%llu null_results=%llu size_overflows=%llu capacity_exhaustions=%llu cvar_finds=%llu",
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_MALLOC],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_CALLOC],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_REALLOC],
@@ -148,7 +190,8 @@ static void print_counts(const qa_allocation_gate_counts *counts)
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_BYTES],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_NULL_RESULTS],
         (unsigned long long)counts->values[QA_ALLOCATION_GATE_SIZE_OVERFLOWS],
-        (unsigned long long)counts->values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS]);
+        (unsigned long long)counts->values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS],
+        (unsigned long long)counts->values[QA_ALLOCATION_GATE_CVAR_FINDS]);
 }
 
 void qa_allocation_gate_report(void)
@@ -164,7 +207,8 @@ void qa_allocation_gate_report(void)
     bool failed = summary.total.values[QA_ALLOCATION_GATE_MALLOC] ||
         summary.total.values[QA_ALLOCATION_GATE_CALLOC] ||
         summary.total.values[QA_ALLOCATION_GATE_REALLOC] ||
-        summary.total.values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS];
+        summary.total.values[QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS] ||
+        summary.total.values[QA_ALLOCATION_GATE_CVAR_FINDS];
     (void)fprintf(stderr, "allocation_gate summary status=%s playing_frames=%llu measured_frames=%llu recorded_frames=%llu discarded_records=%llu",
         failed ? "fail" : "pass",
         (unsigned long long)summary.playing_frames, (unsigned long long)summary.measured_frames,
@@ -174,4 +218,10 @@ void qa_allocation_gate_report(void)
     (void)fputs("allocation_gate peak", stderr);
     print_counts(&summary.peak);
     (void)fputc('\n', stderr);
+    for (size_t i = 0; i < total_site_count; ++i) {
+        intptr_t delta = (intptr_t)total_sites[i].caller - (intptr_t)(uintptr_t)qa_allocation_gate_cvar_find;
+        (void)fprintf(stderr, "allocation_gate cvar_site name=%s calls=%llu caller_delta=%lld\n",
+            total_sites[i].name, (unsigned long long)total_sites[i].calls, (long long)delta);
+    }
+    (void)fprintf(stderr, "allocation_gate cvar_sites discarded_calls=%llu\n", (unsigned long long)discarded_sites);
 }

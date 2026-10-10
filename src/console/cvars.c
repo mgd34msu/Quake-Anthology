@@ -1,5 +1,6 @@
 #include "cvars_private.h"
 #include "qa/text.h"
+#include "qa/allocation_gate.h"
 
 #include <limits.h>
 #include <math.h>
@@ -1032,7 +1033,12 @@ const qa_cvar_view *qac_cvars_values_find(const qa_cvars *registry,cvar_values *
     return node->alias?alias_view(registry,values,node->owner.alias):qac_cvars_project(registry,values,node->owner.entry);
 }
 const qa_cvar_view *qa_cvars_find(const qa_cvars *registry,const char *name)
-{ return qac_cvars_values_find(registry,qac_cvars_current_values(registry),name); }
+{
+#ifdef QA_ALLOCATION_GATE
+    qa_allocation_gate_cvar_find(name, (uintptr_t)__builtin_return_address(0));
+#endif
+    return qac_cvars_values_find(registry,qac_cvars_current_values(registry),name);
+}
 static bool source_visible(const qa_cvars *registry,const cvar *entry,bool whole_store)
 {
     const cvar *canonical=qac_cvars_canonical((cvar *)entry);

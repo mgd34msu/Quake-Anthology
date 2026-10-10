@@ -214,7 +214,7 @@ remain unchanged. Component evidence and exact remaining scope are in
 ## Cvar handles: THE-2859
 
 The one handle implementation is `include/qa/console.h:213` and
-`src/console/cvars.c:1134`. Resolve at bind or registration, then read the common
+`src/console/cvars.c:1140`. Resolve at bind or registration, then read the common
 value table by handle. The table owns alias and dialect conversion; callers do
 not retain copied values or introduce lookup context checks.
 
@@ -235,9 +235,22 @@ module string syscalls and cold persistence. Remaining fixed packet-policy
 readers in `src/app/frontend/network.c` are covered by the deferred THE-3177
 caller audit; this section does not claim that those have migrated.
 
-The current administration/QuakeWorld slice passes the normal production build
-and seven existing core suites. No new timing, profiler census, install or
-standalone evidence document was added.
+The existing frame allocation gate now counts `qa_cvars_find` in the same
+`qa_frontend_step` interval (`src/console/cvars.c:1035`,
+`src/core/allocation_gate.c:55`). Diagnostic builds retain fixed-storage
+name/caller attribution; normal builds have no lookup observer. Both the
+initial census and its one repeat ran e1m1, base1 and q3dm1 as 600-frame
+localhost listen servers. Every case recorded zero name lookups, heap calls
+and pool overflows in all 480 frames after the 120-frame warm-up. The initial
+census reported no readers to migrate, so this slice changes no cvar reader.
+
+The runs used private Xvfb displays, contained dummy audio and fresh copies of
+the owner's profile. Each exited normally, left the source profile unchanged
+and cleaned up its owned processes. Logs and receipts are in
+`/tmp/qa-cvar-gate-{initial,final}-20261010/`. These cases do not exercise every
+external packet-policy branch or guest string syscall; their remaining fixed
+packet readers remain explicitly listed under THE-3177. No timing gain,
+audio proof, rerelease census or new installation is claimed.
 
 ## Output event ring: THE-870
 

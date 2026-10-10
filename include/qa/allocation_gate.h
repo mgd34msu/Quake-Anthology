@@ -15,6 +15,7 @@ typedef enum qa_allocation_gate_counter {
     QA_ALLOCATION_GATE_NULL_RESULTS,
     QA_ALLOCATION_GATE_SIZE_OVERFLOWS,
     QA_ALLOCATION_GATE_CAPACITY_EXHAUSTIONS,
+    QA_ALLOCATION_GATE_CVAR_FINDS,
     QA_ALLOCATION_GATE_COUNTERS
 } qa_allocation_gate_counter;
 typedef struct qa_allocation_gate_counts {
@@ -43,6 +44,7 @@ void qa_allocation_gate_report(void);
 /* Exhausting reserved arena/pool storage fails the diagnostic gate even when
  * no OS allocation was attempted. Normal builds have no observer call. */
 void qa_allocation_gate_capacity_exhausted(void);
+void qa_allocation_gate_cvar_find(const char *name, uintptr_t caller);
 #else
 static inline void qa_allocation_gate_capacity_exhausted(void) {}
 #endif
