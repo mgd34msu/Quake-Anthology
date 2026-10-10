@@ -1390,13 +1390,26 @@ bool qa_console_execute_now(qa_console *console, const qa_command_context *conte
     if (text == NULL || *text == '\0') return qa_console_drain(console, 0, NULL, error);
     qa_command_context source = *context_for(console, context);
     if (!capture_context(console,&source,&source,error)) return false;
-    qa_command_context inherited;
-    if (!copy_context(&inherited, &source, error)) return false;
+    size_t text_size=strlen(text)+1, script_size=source.script?strlen(source.script)+1:0;
+    bool borrowed=text_size<=16384 && script_size<=4096;
+    _Alignas(max_align_t) uint8_t scratch[20992];qa_arena storage={0};
+    qa_command_context inherited=source;
+    char *raw=NULL;
+    if (borrowed) {
+        if (!qa_arena_init_buffer(&storage,scratch,sizeof(scratch),error)) return false;
+        raw=qa_arena_alloc(&storage,text_size,1,error);
+        if (script_size) inherited.script=qa_arena_alloc(&storage,script_size,1,error);
+        if (!raw || (script_size && !inherited.script)) { qa_arena_destroy(&storage);return false; }
+        memcpy(raw,text,text_size);
+        if (script_size) memcpy((char *)inherited.script,source.script,script_size);
+    } else {
+        if (!copy_context(&inherited,&source,error)) return false;
+        raw=qac_copy(text,error);
+    }
     if (console->frame != NULL) inherited.direct = false;
-    char *raw = qac_copy(text, error);
     bool ok = raw != NULL && dispatch(console, &inherited, raw, error);
-    free(raw);
-    free((char *)inherited.script);
+    if (!borrowed) { free(raw);free((char *)inherited.script); }
+    qa_arena_destroy(&storage);
     return ok;
 }
 
@@ -1468,7 +1481,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
     console->alias_count = 0;
     size_t count = 0;
     bool success = true;
-    _Alignas(max_align_t) uint8_t scratch[16896];qa_arena storage={0};
+    _Alignas(max_align_t) uint8_t scratch[20992];qa_arena storage={0};
     if (!qa_arena_init_buffer(&storage,scratch,sizeof(scratch),error)) {
         console->draining=false;return false;
     }
@@ -1500,28 +1513,40 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             free_chunk(first);
             continue;
         }
-        qa_command_context context;
-        if (!copy_context(&context, &first->context, error)) { success = false; break; }
-        const qa_console_options *options=options_for(console,&context);
         qa_arena_reset(&storage);
+        qa_command_context context=first->context;
+        size_t script_size=context.script?strlen(context.script)+1:0;
+        bool borrowed_script=script_size<=4096;
+        if (script_size && borrowed_script) {
+            char *script=qa_arena_alloc(&storage,script_size,1,error);
+            if (!script) { success=false;break; }
+            memcpy(script,context.script,script_size);context.script=script;
+        } else if (!borrowed_script && !copy_context(&context,&first->context,error)) {
+            success=false;break;
+        }
+        const qa_console_options *options=options_for(console,&context);
         bool borrowed=buffer_limit(console,&context)<=16384;
         qac_text text={0};
         if (borrowed) {
             text.data=qa_arena_alloc(&storage,16385,1,error);text.capacity=16385;
-            if (!text.data) { free((char *)context.script);success=false;break; }
+            if (!text.data) { if (!borrowed_script) free((char *)context.script);success=false;break; }
         }
-        if (!command_text(first, &text, error)) { free((char *)context.script); if (!borrowed) free(text.data); success = false; break; }
+        if (!command_text(first, &text, error)) { if (!borrowed_script) free((char *)context.script); if (!borrowed) free(text.data); success = false; break; }
         size_t offset = qa_command_separator(text.data, text.size, context.dialect);
         size_t consumed = offset < text.size ? offset + 1 : offset;
         if (!options) { success=qac_fail(error,QA_ERROR_ARGUMENT,"queued command cvar view has retired");
             consume(console, consumed);
-            free((char *)context.script); if (!borrowed) free(text.data); break; }
+            if (!borrowed_script) free((char *)context.script);
+            if (!borrowed) free(text.data);
+            break; }
         size_t maximum = options->maximum_command == 0 ? 1024 : options->maximum_command;
         if (offset >= maximum) {
             if (context.dialect != QA_RULESET_Q3) {
                 success = qac_fail(error, QA_ERROR_FORMAT, "command line exceeds source buffer");
                 consume(console, consumed);
-                free((char *)context.script); if (!borrowed) free(text.data); break;
+                if (!borrowed_script) free((char *)context.script);
+                if (!borrowed) free(text.data);
+                break;
             }
             offset = maximum - 1;
             consumed = offset + 1;
@@ -1529,7 +1554,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         text.data[offset] = '\0';
         consume(console, consumed);
         success = dispatch(console, &context, text.data, error);
-        free((char *)context.script);
+        if (!borrowed_script) free((char *)context.script);
         if (!borrowed) free(text.data);
         ++count;
         if (!success) break;
