@@ -155,7 +155,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
         v->visible_count = source->visibility->entity_count;
         v->visible_entities = r->visible_entities; v->area_mask = source->visibility->area_mask;
     }
-    if (ok && restoring) ok = frontend_unified_media_q3_assets_read(o->media,r->content,&v->assets);
+    if (ok && restoring) ok = frontend_unified_media_q3_assets_read(o->media,v->content_product,&v->assets);
     else if (ok) ok = frontend_unified_media_q3_assets(o->media,r->content,&v->assets,e);
     if (ok) { v->entities = r->entities; v->players = r->players; v->player_count = source->client_count; }
     if (!ok) { source_free(r); return e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Q3 received Source disagrees with its admitted recipe"); }
@@ -267,7 +267,7 @@ static bool row_current(const frontend_unified_q3_source_view *v,bool cold)
             r->configstring_revisions == v->configstring_revisions &&
             r->visible_entities == v->visible_entities && r->visible_count == v->visible_count && r->area_mask == v->area_mask &&
             qa_actor_id_equal(r->viewer,v->viewer) &&
-            frontend_unified_media_q3_assets_read(o->media,r->content,&assets) && assets == v->assets;
+            frontend_unified_media_q3_assets_read(o->media,r->content_product,&assets) && assets == v->assets;
     }
     return false;
 }
@@ -292,7 +292,7 @@ bool frontend_unified_q3_source_retirement_current(const frontend_unified_q3_sou
     bool linked = false;
     for (const frontend_unified_q3_source_retirement *p = o->retirements; p; p = p->next) if (p == t) linked = true;
     qa_q3_presentation_assets *assets;
-    return linked && frontend_unified_media_q3_assets_read(o->media,t->row->content,&assets) && assets == t->row->view.assets;
+    return linked && frontend_unified_media_q3_assets_read(o->media,t->row->view.content_product,&assets) && assets == t->row->view.assets;
 }
 bool frontend_unified_q3_source_retirement_departed(const frontend_unified_q3_source_retirement *t)
 {

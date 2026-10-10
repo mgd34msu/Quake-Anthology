@@ -108,12 +108,12 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char 
     }
     *out = row->q3_assets; return true;
 }
-bool frontend_unified_media_q3_assets_read(const frontend_unified_media *owner, const char *content,
+bool frontend_unified_media_q3_assets_read(const frontend_unified_media *owner, const qa_product *product,
     qa_q3_presentation_assets **out)
 {
-    if (!owner || !content || !out || owner->busy) return false;
+    if (!owner || !product || !out || owner->busy) return false;
     for (unified_media_bank *row=owner->banks;row;row=row->next)
-        if (!strcmp(row->content,content)) { *out=row->q3_assets; return row->q3_assets!=NULL; }
+        if (row->product==product) { *out=row->q3_assets; return row->q3_assets!=NULL; }
     return false;
 }
 bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *recipe, uint32_t physical_seat,

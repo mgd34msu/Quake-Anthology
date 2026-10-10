@@ -1248,6 +1248,86 @@ static qa_material_remap_record *remap_find(const qa_material_library *library, 
 }
 static void registration_rollback(qa_material_library *, size_t);
 
+/* End lookup scratch before recursive remap admission. */
+#if defined(__GNUC__)
+__attribute__((noinline))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+static bool registration_resolve(qa_material_library *library, const char *name,
+    qa_scene_image_options *options, qa_material_registration_kind kind,
+    uint64_t world_identity, int32_t lightmap_index, const qa_scene_image *base_image,
+    char **owned_name, const qa_material **out, qa_error *error)
+{
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name, key, error)) return false;
+    unsigned bucket = qa_material_hash(key);
+    if (library->source_profile) {
+        const qa_material_library *owners[] = {library, library->policy_source};
+        for (unsigned owner = 0; owner < 2; ++owner) {
+            if (!owners[owner]) continue;
+            for (const qa_material_record *cached = owners[owner]->records[bucket]; cached; cached = cached->next)
+                if (!cached->source_variant_parent && !strcmp(cached->material.name, key) &&
+                    (cached->material.default_shader || cached->material.lightmap_index == lightmap_index)) {
+                    *out = &cached->material; return true;
+                }
+        }
+    }
+    if (library->source_profile && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW &&
+        !options->source_q3) {
+        if (!library->source_upload) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source registration has no actual renderer upload producer"); return false;
+        }
+        qa_material_source_upload_fn producer = library->source_upload;
+        void *context = library->source_upload_context;
+        if (!producer(context, options->mipmap, options->mipmap, &options->source_upload, error)) return false;
+        if (library->source_upload != producer || library->source_upload_context != context ||
+            !library->source_profile || !qa_q3_image_upload_options_valid(&options->source_upload, error) ||
+            options->source_upload.mipmap != options->mipmap || options->family != QA_GAME_Q3) {
+            if (!error || error->code == QA_OK)
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload producer lost its actual registration binding");
+            return false;
+        }
+        options->source_q3 = true;
+    }
+    for (qa_material_record *record = library->records[bucket]; record; record = record->next) {
+        if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
+            record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
+            record->base_image == base_image &&
+            same_options(&record->options, options)) {
+            *out = &record->material;
+            return true;
+        }
+    }
+    if (library->policy_source) {
+        for (qa_material_record *record = library->policy_source->records[bucket]; record; record = record->next)
+            if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
+                record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
+                record->base_image == base_image && same_options(&record->options, options)) {
+                *out = &record->material; return true;
+            }
+    }
+    /* A remap target can name a fully compiled parent which has not yet
+     * published. Each binding selects that one record, without unfolding its
+     * own remap. Public mutation reentry remains rejected by mutation_begin. */
+    size_t admitting = 0;
+    for (qa_material_record *pending = library->registration_record; pending; pending = pending->admission_parent) {
+        if (pending->kind == kind && pending->world_identity == world_identity &&
+            pending->lightmap_index == lightmap_index && !strcmp(pending->material.name, key) &&
+            pending->base_image == base_image && same_options(&pending->options, options)) {
+            *out = &pending->material; return true;
+        }
+        ++admitting;
+    }
+    if ((!library->source_profile && admitting >= QA_MATERIAL_MAX_REGISTERED - library->count) ||
+        admitting >= QA_MATERIAL_MAX_REGISTERED) {
+        qa_error_set(error, QA_ERROR_FORMAT, library->count, "Source material registration limit reached");
+        return false;
+    }
+    *owned_name = qa_material_string(key, error);
+    return *owned_name != NULL;
+}
+
 static bool register_material(qa_material_library *library, const char *name,
                                 const qa_scene_image_options *input,
                                 qa_material_registration_kind kind,
@@ -1268,77 +1348,11 @@ static bool register_material(qa_material_library *library, const char *name,
         return false;
     }
     options.usage = kind == QA_MATERIAL_PICTURE ? QA_IMAGE_USAGE_PICTURE : QA_IMAGE_USAGE_WALL;
-    if (library->source_profile) {
-        char *source_key = qa_material_name(name, error);
-        if (!source_key) return false;
-        unsigned source_bucket = qa_material_hash(source_key);
-        const qa_material_library *owners[] = {library, library->policy_source};
-        for (unsigned owner = 0; owner < 2; ++owner) {
-            if (!owners[owner]) continue;
-            for (const qa_material_record *cached = owners[owner]->records[source_bucket]; cached; cached = cached->next)
-                if (!cached->source_variant_parent && !strcmp(cached->material.name, source_key) &&
-                    (cached->material.default_shader || cached->material.lightmap_index == lightmap_index)) {
-                    *out = &cached->material; free(source_key); return true;
-                }
-        }
-        free(source_key);
-    }
-    if (library->source_profile && kind != QA_MATERIAL_DEFAULT && kind != QA_MATERIAL_STENCIL_SHADOW &&
-        !options.source_q3) {
-        if (!library->source_upload) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source registration has no actual renderer upload producer"); return false;
-        }
-        qa_material_source_upload_fn producer = library->source_upload;
-        void *context = library->source_upload_context;
-        if (!producer(context, options.mipmap, options.mipmap, &options.source_upload, error)) return false;
-        if (library->source_upload != producer || library->source_upload_context != context ||
-            !library->source_profile || !qa_q3_image_upload_options_valid(&options.source_upload, error) ||
-            options.source_upload.mipmap != options.mipmap || options.family != QA_GAME_Q3) {
-            if (!error || error->code == QA_OK)
-                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload producer lost its actual registration binding");
-            return false;
-        }
-        options.source_q3 = true;
-    }
-    char *key = qa_material_name(name, error);
-    if (!key) return false;
+    char *key = NULL;
+    if (!registration_resolve(library, name, &options, kind, world_identity,
+        lightmap_index, base_image, &key, out, error)) return false;
+    if (*out) return true;
     unsigned bucket = qa_material_hash(key);
-    for (qa_material_record *record = library->records[bucket]; record; record = record->next) {
-        if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
-            record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
-            record->base_image == base_image &&
-            same_options(&record->options, &options)) {
-            *out = &record->material;
-            free(key);
-            return true;
-        }
-    }
-    if (library->policy_source) {
-        for (qa_material_record *record = library->policy_source->records[bucket]; record; record = record->next)
-            if (!library->source_profile && !record->source_variant_parent && record->kind == kind && record->world_identity == world_identity &&
-                record->lightmap_index == lightmap_index && !strcmp(record->material.name, key) &&
-                record->base_image == base_image && same_options(&record->options, &options)) {
-                *out = &record->material; free(key); return true;
-            }
-    }
-    /* A remap target can name a fully compiled parent which has not yet
-     * published. Each binding selects that one record, without unfolding its
-     * own remap. Public mutation reentry remains rejected by mutation_begin. */
-    size_t admitting = 0;
-    for (qa_material_record *pending = library->registration_record; pending; pending = pending->admission_parent) {
-        if (pending->kind == kind && pending->world_identity == world_identity &&
-            pending->lightmap_index == lightmap_index && !strcmp(pending->material.name, key) &&
-            pending->base_image == base_image && same_options(&pending->options, &options)) {
-            *out = &pending->material; free(key); return true;
-        }
-        ++admitting;
-    }
-    if ((!library->source_profile && admitting >= QA_MATERIAL_MAX_REGISTERED - library->count) ||
-        admitting >= QA_MATERIAL_MAX_REGISTERED) {
-        free(key);
-        qa_error_set(error, QA_ERROR_FORMAT, library->count, "Source material registration limit reached");
-        return false;
-    }
     qa_material_record *record = calloc(1, sizeof(*record));
     if (!record) {
         free(key);

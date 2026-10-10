@@ -87,7 +87,9 @@ typedef struct character_selection_owner {
     uint32_t seat;
     qa_launch_instance_lease *metadata;
     qa_native_q3_character_selection selection;
-    char *definition, *model, *skin, *head_model, *head_skin;
+    application_character_names names;
+    const qa_launch_choices *choices;
+    qa_actor_id actor;
 } character_selection_owner;
 
 bool qa_native_q3_character_default_declaration(qa_game_family family,
@@ -384,6 +386,37 @@ static bool same_declaration(const qa_native_q3_character_declaration *a,
         !strcmp(a->head_model, b->head_model) && !strcmp(a->head_skin, b->head_skin);
 }
 
+bool application_character_names_retain(qa_strings *strings,
+    const qa_application_character_declaration *declaration, application_character_names *names,
+    qa_native_q3_character_selection *selection, qa_error *error)
+{
+    qa_strings_retain(strings); names->strings = strings;
+    if (!qa_strings_intern_cstr(strings, declaration->definition, &names->definition, error) ||
+        !qa_strings_intern_cstr(strings, declaration->appearance.model, &names->model, error) ||
+        !qa_strings_intern_cstr(strings, declaration->appearance.skin, &names->skin, error) ||
+        !qa_strings_intern_cstr(strings, declaration->appearance.head_model, &names->head_model, error) ||
+        !qa_strings_intern_cstr(strings, declaration->appearance.head_skin, &names->head_skin, error)) return false;
+    selection->definition = qa_strings_cstr(strings, names->definition);
+    selection->model = qa_strings_cstr(strings, names->model);
+    selection->skin = qa_strings_cstr(strings, names->skin);
+    selection->head_model = qa_strings_cstr(strings, names->head_model);
+    selection->head_skin = qa_strings_cstr(strings, names->head_skin);
+    return true;
+}
+static qa_string_id name_id(const qa_strings *strings, const char *text)
+{ return qa_strings_find(strings, (qa_bytes){(const uint8_t *)text, strlen(text)}); }
+bool application_character_names_match(const application_character_names *names,
+    const qa_application_character_declaration *declaration)
+{
+    return name_id(names->strings, declaration->definition) == names->definition &&
+        name_id(names->strings, declaration->appearance.model) == names->model &&
+        name_id(names->strings, declaration->appearance.skin) == names->skin &&
+        name_id(names->strings, declaration->appearance.head_model) == names->head_model &&
+        name_id(names->strings, declaration->appearance.head_skin) == names->head_skin;
+}
+void application_character_names_release(application_character_names *names)
+{ qa_strings_destroy(names->strings); }
+
 static bool selection_current(void *context, const qa_native_q3_character_selection *selection)
 {
     character_selection_owner *owner = context;
@@ -393,17 +426,19 @@ static bool selection_current(void *context, const qa_native_q3_character_select
     bool found;
     if (!app || !selection || app->destroy_requested || app->routing_snapshot ||
         app->state == QA_APPLICATION_FAULTED || app->publication_generation != owner->selection.publication_generation ||
-        !qa_application_player_actor(app, owner->seat, &actor) ||
-        !published(app, owner->seat, actor, &declaration, &found, NULL) || !found) return false;
+        !qa_application_player_actor(app, owner->seat, &actor)) return false;
     application_provider *provider = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
-    qa_native_q3_character_declaration retained = {owner->model, owner->skin, owner->head_model, owner->head_skin};
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
+    if (choices != owner->choices || !qa_actor_id_equal(actor, owner->actor)) {
+        if (!published(app, owner->seat, actor, &declaration, &found, NULL) || !found ||
+            name_id(owner->names.strings, declaration.provider->instance) != owner->selection.owner ||
+            !application_character_names_match(&owner->names, &declaration)) return false;
+        owner->actor = actor;
+    }
     return provider && provider->application == app && provider->constructed && provider->attached &&
         !provider->close_pending && provider->owner == owner->selection.owner && provider->launch &&
         provider->launch->storage == owner->selection.launch->storage && provider->launch->content == owner->selection.content &&
         provider->launch->selection.product == owner->selection.product &&
-        !strcmp(declaration.provider->instance, provider->launch->selection.instance) &&
-        !strcmp(declaration.definition, owner->selection.definition) &&
-        same_declaration(&retained, &declaration.appearance) &&
         selection->owner == owner->selection.owner && selection->product == owner->selection.product &&
         selection->publication_generation == owner->selection.publication_generation &&
         selection->launch == owner->selection.launch && selection->content == owner->selection.content &&
@@ -418,16 +453,7 @@ static void selection_release(void *context)
     character_selection_owner *owner = context;
     if (!owner) return;
     qa_launch_instance_lease_release(owner->metadata);
-    free(owner->definition); free(owner->model); free(owner->skin);
-    free(owner->head_model); free(owner->head_skin); free(owner);
-}
-
-static char *copy_text(const char *text)
-{
-    size_t length = strlen(text);
-    char *copy = malloc(length + 1);
-    if (copy) memcpy(copy, text, length + 1);
-    return copy;
+    application_character_names_release(&owner->names); free(owner);
 }
 
 bool qa_native_q3_character_selection_create(qa_application *app, uint32_t seat,
@@ -448,22 +474,20 @@ bool qa_native_q3_character_selection_create(qa_application *app, uint32_t seat,
         return application_fail(error, QA_ERROR_ARGUMENT, "Character declaration does not name its actual live provider");
     character_selection_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected CHARACTER declaration");
-    owner->application = app; owner->seat = seat;
-    owner->definition = copy_text(declaration.definition); owner->model = copy_text(constructor->model);
-    owner->skin = copy_text(constructor->skin); owner->head_model = copy_text(constructor->head_model);
-    owner->head_skin = copy_text(constructor->head_skin);
-    if (!owner->definition || !owner->model || !owner->skin || !owner->head_model || !owner->head_skin ||
+    owner->application = app; owner->seat = seat; owner->actor = actor;
+    owner->choices = qa_launch_snapshot_choices(qa_application_launch(app));
+    if (!application_character_names_retain(qa_session_strings(app->session), &declaration,
+            &owner->names, &owner->selection, error) ||
         !qa_launch_instance_retain_metadata(provider->launch, &owner->metadata, error)) {
         selection_release(owner);
         if (!error || error->code == QA_OK) application_fail(error, QA_ERROR_MEMORY, "Copying actual CHARACTER declaration");
         return false;
     }
-    owner->selection = (qa_native_q3_character_selection){.owner = provider->owner,
-        .product = provider->launch->selection.product, .publication_generation = app->publication_generation,
-        .launch = qa_launch_instance_lease_view(owner->metadata), .content = provider->launch->content,
-        .definition = owner->definition, .model = owner->model, .skin = owner->skin,
-        .head_model = owner->head_model, .head_skin = owner->head_skin,
-        .lifetime = owner, .current = selection_current, .release = selection_release};
+    owner->selection.owner = provider->owner; owner->selection.product = provider->launch->selection.product;
+    owner->selection.publication_generation = app->publication_generation;
+    owner->selection.launch = qa_launch_instance_lease_view(owner->metadata);
+    owner->selection.content = provider->launch->content; owner->selection.lifetime = owner;
+    owner->selection.current = selection_current; owner->selection.release = selection_release;
     if (!selection_current(owner, &owner->selection)) {
         selection_release(owner);
         return application_fail(error, QA_ERROR_ARGUMENT, "Character declaration changed during constructor capture");
