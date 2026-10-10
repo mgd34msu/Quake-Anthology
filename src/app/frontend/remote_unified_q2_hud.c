@@ -7,6 +7,7 @@
 #include "qa/caption_save.h"
 #include "qa/text.h"
 #include "qa/network_unified_frame.h"
+#include "qa/pool.h"
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
@@ -19,7 +20,9 @@ static const char *const coop_keys[] = {"", "$g_coop_respawn_in_combat", "$g_coo
     "$g_coop_respawn_blocked", "$g_coop_respawn_waiting", "$g_coop_respawn_no_lives"};
 typedef qa_q2_campaign_level rr_level;
 typedef struct rr_record {
-    qa_unified_presentation_event *event;
+    const qa_unified_presentation_event *event;
+    qa_unified_document *event_document;
+    qa_arena text_storage;
     rr_kind kind;
     char *content, *source_provider, *owner_provider;
     uint64_t owner_generation;
@@ -40,7 +43,7 @@ typedef struct rr_record {
         struct { const char *primary, *secondary; bool visible, slow; } help;
     } value;
 } rr_record;
-typedef struct rr_bar { struct rr_bar *next; rr_record row; } rr_bar;
+typedef struct rr_bar { struct rr_bar *next; size_t slot; rr_record row; } rr_bar;
 typedef struct rr_damage {
     rr_record row;
     qa_vec3 direction, color;
@@ -58,6 +61,8 @@ struct frontend_unified_q2_rr_hud {
     frontend_unified_media *media;
     frontend_unified_events *events;
     qa_localization_pool *localizations;
+    qa_arena storage;
+    qa_pool text_pages, bar_records;
     qa_hud *prints;
     qa_unified_document *frame, *prepared;
     double seconds, prepared_seconds;
@@ -124,16 +129,17 @@ bool frontend_unified_q2_rr_known(const qa_unified_presentation_event *row)
 static void record_clear(rr_record *r)
 {
     if (!r) return;
-    if (r->kind==RR_OBJECTIVE) free(r->value.objective.args);
-    if (r->event) { qa_unified_presentation_event_dispose(r->event); free(r->event); }
+    qa_unified_document_destroy(r->event_document);
+    qa_arena_destroy(&r->text_storage);
     qa_scene_image_release(r->image);
-    free(r->localized); free(r->secondary_localized); *r=(rr_record){0};
+    *r=(rr_record){0};
 }
 static void record_replace(rr_record *destination, rr_record *source)
 { record_clear(destination); *destination=*source; *source=(rr_record){0}; }
 static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_event *row,
     bool retained, bool resolve, rr_record *r, qa_error *e)
 {
+    if (!r->text_storage.pages) qa_arena_init_pool(&r->text_storage, &o->text_pages);
     r->kind=kind_read(row);
     if (r->kind==RR_UNKNOWN) return fail(e,"RR HUD event variant is unknown");
     if (!row->content || !*row->content || !row->provider || !*row->provider || !row->q2_interval_ns ||
@@ -191,7 +197,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         r->value.objective.text=qa_strings_cstr(o->replica->strings,map->text); r->value.objective.talk=(map->flags&1u)!=0;
         okay=okay && map->text && map->argument_count<=65536 && (!map->argument_count || map->arguments);
         if (okay && map->argument_count) {
-            r->value.objective.args=calloc(map->argument_count,sizeof(char *));
+            r->value.objective.args=qa_arena_alloc(&r->text_storage,map->argument_count*sizeof(char *),_Alignof(char *),e);
             if (!r->value.objective.args) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR objective argument view");
         }
         for (size_t i=0; okay && i<map->argument_count; ++i) {
@@ -235,7 +241,7 @@ static bool media_bank(frontend_unified_q2_rr_hud *o, const char *content, bool 
             return out->product && out->product->family==QA_GAME_Q2 && out->files && out->images;
     return fail(e,"RR HUD content has no genuine retained Q2 media bank");
 }
-static bool localized(frontend_unified_q2_rr_hud *o, const rr_record *r, const char *source,
+static bool localized(frontend_unified_q2_rr_hud *o, rr_record *r, const char *source,
     const char *const *args, size_t count, char **out, qa_error *e)
 {
     frontend_unified_bank_view bank={0}; qa_ui_preferences prefs; qa_localization *catalog=NULL;
@@ -246,7 +252,7 @@ static bool localized(frontend_unified_q2_rr_hud *o, const rr_record *r, const c
         qa_localization_acquire(o->localizations,bank.files,prefs.language,&options,&catalog,e);
     if (okay) {
         char result[1024]; size_t size=qa_localize_presentation(catalog,source,args,count,false,result,sizeof(result));
-        *out=malloc(size+1); okay=*out!=NULL;
+        *out=qa_arena_alloc(&r->text_storage,size+1,_Alignof(char),e); okay=*out!=NULL;
         if (okay) memcpy(*out,result,size+1);
         else frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual localized RR HUD text");
     }
@@ -264,16 +270,16 @@ static uint64_t nanoseconds(double seconds)
     long double value=(long double)seconds*1e9L;
     return value<=0?0:value>=UINT64_MAX?UINT64_MAX:(uint64_t)value;
 }
-static bool clone_record(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_event *row,
+static bool retain_record(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_event *row,
     rr_record *r, qa_error *e)
 {
-    r->event=calloc(1,sizeof(*r->event));
-    if (!r->event) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR Source event");
-    if (!qa_unified_presentation_event_clone(row,r->event,e)) return false;
+    if (!qa_unified_document_retain(frontend_unified_events_document(o->events), &r->event_document, e)) return false;
+    r->event=row;
+    qa_arena_destroy(&r->text_storage);
     if (r->kind==RR_OBJECTIVE) {
-        free(r->value.objective.args); r->value.objective.args=NULL; r->value.objective.count=0;
+        r->value.objective.args=NULL; r->value.objective.count=0;
     }
-    return parse(o,r->event,false,false,r,e);
+    return parse(o,row,false,false,r,e);
 }
 static bool controls(frontend_unified_q2_rr_hud *o, bool *pois, bool *damage, double *damage_ms,
     double *edge, double *maximum, qa_error *e)
@@ -328,10 +334,10 @@ static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
     if (index==SIZE_MAX) return true;
     size_t size=strlen(r->value.poi.path);
     if (size>SIZE_MAX-10) return fail(e,"RR POI image path exceeds storage");
-    char *path=malloc(size+10);
+    char *path=qa_arena_alloc(&r->text_storage,size+10,_Alignof(char),e);
     if (!path) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR POI image request");
     snprintf(path,size+10,"pics/%s.pcx",r->value.poi.path);
-    bool okay=picture(o,r,path,e); free(path);
+    bool okay=picture(o,r,path,e);
     frontend_unified_bank_view bank={0}; qa_bytes palette={0};
     if (okay) okay=media_bank(o,r->content,false,&bank,e);
     if (okay) {
@@ -408,7 +414,7 @@ bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o,
     if (okay && ((r.kind!=RR_REPORT && !qa_actor_id_equal(viewer,r.actor)) || retired(o,&r))) {
         record_clear(&r); return true;
     }
-    if (okay) okay=clone_record(o,row,&r,e);
+    if (okay) okay=retain_record(o,row,&r,e);
     if (!okay) { record_clear(&r); return false; }
     o->busy=true;
     okay=controls_admit(o,e);
@@ -431,15 +437,15 @@ bool frontend_unified_q2_rr_presentation(frontend_unified_q2_rr_hud *o,
         while (*next && (*next)->row.value.bar.slot<r.value.bar.slot) next=&(*next)->next;
         if (!r.value.bar.visible) {
             if (*next && (*next)->row.value.bar.slot==r.value.bar.slot) {
-                rr_bar *item=*next; *next=item->next; record_clear(&item->row); free(item);
+                rr_bar *item=*next; *next=item->next; record_clear(&item->row); qa_pool_release(&o->bar_records,item->slot);
             }
         } else {
             okay=localized(o,&r,r.value.bar.name,NULL,0,&r.localized,e);
             if (okay) {
                 if (!*next || (*next)->row.value.bar.slot!=r.value.bar.slot) {
-                    rr_bar *item=calloc(1,sizeof(*item));
+                    size_t slot; rr_bar *item=qa_pool_take(&o->bar_records,&slot);
                     if (!item) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining genuine RR health bar");
-                    else { item->next=*next; *next=item; }
+                    else { *item=(rr_bar){.next=*next,.slot=slot}; *next=item; }
                 }
                 if (okay) record_replace(&(*next)->row,&r);
             }
@@ -497,12 +503,19 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD requires its genuine CLIENT and retained media");
     frontend_unified_q2_rr_hud *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Creating actual received RR HUD owner");
+    qa_arena_init(&o->storage,0);
+    if (!qa_pool_prepare(&o->text_pages,&o->storage,4096,4096,_Alignof(max_align_t),e) ||
+        !qa_pool_prepare(&o->bar_records,&o->storage,
+            qa_actors_capacity(frontend_remote_unified_registry(replica)),sizeof(rr_bar),_Alignof(rr_bar),e)) {
+        qa_arena_destroy(&o->storage); free(o); return false;
+    }
+    qa_arena_seal(&o->storage);
     o->frontend=f; o->replica=replica; o->media=media; o->events=events;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(replica);
     o->prints=f->seats[domain->physical_seat].hud;
     o->localizations=qa_localization_pool_create(e);
     if (!o->localizations || !current(o,e)) {
-        qa_localization_pool_destroy(o->localizations); free(o); return false;
+        qa_localization_pool_destroy(o->localizations); qa_arena_destroy(&o->storage); free(o); return false;
     }
     if (f->source_restoring) controls_bind(o,domain->cvars);
     *out=o; return true;
@@ -519,12 +532,12 @@ bool frontend_unified_q2_rr_destroy(frontend_unified_q2_rr_hud **slot, qa_error 
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"RR HUD still owns active callbacks");
     for (size_t i=0; i<o->poi_count; ++i) record_clear(o->pois+i);
     for (size_t i=0; i<o->damage_count; ++i) record_clear(&o->damage[i].row);
-    while (o->bars) { rr_bar *row=o->bars; o->bars=row->next; record_clear(&row->row); free(row); }
+    while (o->bars) { rr_bar *row=o->bars; o->bars=row->next; record_clear(&row->row); qa_pool_release(&o->bar_records,row->slot); }
     record_clear(&o->path); record_clear(&o->coop); record_clear(&o->report); record_clear(&o->objective);
     record_clear(&o->mission); record_clear(&o->help); record_clear(&o->pending_objective);
     while (o->retired) { rr_retired *row=o->retired; o->retired=row->next; free(row->provider); free(row); }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared);
-    qa_localization_pool_destroy(o->localizations); free(o); *slot=NULL; return true;
+    qa_localization_pool_destroy(o->localizations); qa_arena_destroy(&o->storage); free(o); *slot=NULL; return true;
 }
 static bool owner_parse(const qa_unified_presentation_event *row, const char **provider,
     uint64_t *generation, bool *is_retired, qa_error *e)
@@ -577,7 +590,7 @@ bool frontend_unified_q2_rr_owner_retire(frontend_unified_q2_rr_hud *o,
     rr_bar **bar=&o->bars;
     while (*bar) {
         rr_bar *entry=*bar;
-        if (owned(&entry->row,item)) { *bar=entry->next; record_clear(&entry->row); free(entry); }
+        if (owned(&entry->row,item)) { *bar=entry->next; record_clear(&entry->row); qa_pool_release(&o->bar_records,entry->slot); }
         else bar=&entry->next;
     }
     rr_record *records[]={&o->path,&o->coop,&o->report,&o->objective,&o->mission,&o->help,&o->pending_objective};
