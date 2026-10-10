@@ -569,7 +569,8 @@ static bool footstep(void *ctx,const frontend_remote_q2_effects_pose *pose_value
 }
 static frontend_remote_q2_effects_source source(q2_bank *b)
 {
-    return (frontend_remote_q2_effects_source){.identity=frontend_unified_events_audio_owner(b->owner->events),
+    return (frontend_remote_q2_effects_source){.actor_capacity=qa_actors_capacity(b->owner->replica->actors),
+        .identity=frontend_unified_events_audio_owner(b->owner->events),
         .content_generation=frontend_remote_unified_epoch(b->owner->replica),
         .profile=b->profile,
         .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,

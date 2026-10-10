@@ -190,9 +190,26 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     frontend_q2_effect_particles_initialize(&owner->particles,&owner->random,
         source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
     *out = owner;
-    owner->sampled_lights=calloc(Q2FX_LIGHT_CAPACITY,sizeof(*owner->sampled_lights));
-    if (!owner->sampled_lights) return q2fx_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 sampled light rows");
-    owner->light_capacity=Q2FX_LIGHT_CAPACITY;
+    owner->source_beam_capacity=source->actor_capacity;
+    owner->source_light_capacity=(size_t)source->actor_capacity*2;
+    owner->flashlight_capacity=source->actor_capacity;
+    owner->light_capacity=Q2FX_LIGHT_CAPACITY+owner->source_light_capacity+owner->flashlight_capacity;
+    size_t bytes=owner->source_beam_capacity*sizeof(*owner->source_beams)+
+        owner->source_light_capacity*sizeof(*owner->source_lights)+
+        owner->flashlight_capacity*sizeof(*owner->flashlights)+owner->light_capacity*sizeof(*owner->sampled_lights)+
+        4*_Alignof(max_align_t);
+    if (!qa_arena_reserve(&owner->semantic_storage,bytes,error) ||
+        !frontend_q2_entity_cache_prepare(&owner->entity_trails,source->actor_capacity,error)) return false;
+    owner->source_beams=qa_arena_alloc(&owner->semantic_storage,
+        owner->source_beam_capacity*sizeof(*owner->source_beams),_Alignof(q2fx_source_beam),error);
+    owner->source_lights=qa_arena_alloc(&owner->semantic_storage,
+        owner->source_light_capacity*sizeof(*owner->source_lights),_Alignof(q2fx_source_light),error);
+    owner->flashlights=qa_arena_alloc(&owner->semantic_storage,
+        owner->flashlight_capacity*sizeof(*owner->flashlights),_Alignof(q2fx_flashlight),error);
+    owner->sampled_lights=qa_arena_alloc(&owner->semantic_storage,
+        owner->light_capacity*sizeof(*owner->sampled_lights),_Alignof(qa_scene_light),error);
+    if (!owner->source_beams || !owner->source_lights || !owner->flashlights || !owner->sampled_lights) return false;
+    qa_arena_seal(&owner->semantic_storage);
     qa_scene_image *image = NULL; qa_bytes palette;
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_GAME_Q2, &image, error)) return false;
     owner->particle_image = image;
@@ -209,8 +226,8 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     frontend_remote_q2_effects *owner = *slot;
     if (!owner) return true;
     if (!frontend_remote_q2_effects_idle(owner)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects still own an active source callback or policy");
-    qa_scene_image_release(owner->particle_image); free(owner->entity_trails.rows); free(owner->draws);
-    free(owner->sampled_lights); free(owner->source_beams); free(owner->source_lights); free(owner->flashlights);
+    qa_scene_image_release(owner->particle_image); qa_arena_destroy(&owner->entity_trails.storage); free(owner->draws);
+    qa_arena_destroy(&owner->semantic_storage);
     free(owner); *slot = NULL; return true;
 }
 static uint32_t random_word(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }

@@ -63,6 +63,7 @@ typedef enum frontend_remote_q2_effects_presentation_kind {
 } frontend_remote_q2_effects_presentation_kind;
 typedef struct frontend_remote_q2_effects_source {
     qa_session *session;
+    uint32_t actor_capacity;
     uint64_t identity, content_generation;
     frontend_remote_q2_effects_profile profile;
     /* Zero transport belongs to a genuine semantic Source whose rules/ABI

@@ -1,4 +1,5 @@
 #include "q2_entity_effects.h"
+#include "qa/allocation_gate.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,21 +49,22 @@ qa_vec3 frontend_q2_effect_random_direction(qa_builtin_random *random,bool is_re
     z=(float)(2*((double)(qa_builtin_random_integer(random)&32767)/32767)-1);
     return qa_vec_normalize(qa_v3(x,y,z));
 }
-bool frontend_q2_entity_cache_reserve(frontend_q2_entity_cache *cache,uint32_t slot,qa_error *error)
+bool frontend_q2_entity_cache_prepare(frontend_q2_entity_cache *cache,uint32_t capacity,qa_error *error)
 {
-    size_t required=(size_t)slot+1;
-    if (required<=cache->capacity) return true;
-    size_t capacity=cache->capacity?cache->capacity:128;
-    while (capacity<required) {
-        if (capacity>SIZE_MAX/2) { capacity=required; break; }
-        capacity*=2;
-    }
-    if (capacity>SIZE_MAX/sizeof(*cache->rows)) return fail(error,QA_ERROR_MEMORY,"Q2 entity trail storage overflows");
-    frontend_q2_entity_trail *rows=realloc(cache->rows,capacity*sizeof(*rows));
-    if (!rows) return fail(error,QA_ERROR_MEMORY,"Retaining Q2 entity trail slots");
-    memset(rows+cache->capacity,0,(capacity-cache->capacity)*sizeof(*rows));
-    cache->rows=rows;cache->capacity=capacity;return true;
+    size_t bytes=(size_t)capacity*sizeof(*cache->rows);
+    if (!qa_arena_reserve(&cache->storage,bytes,error)) return false;
+    cache->rows=qa_arena_alloc(&cache->storage,bytes,_Alignof(frontend_q2_entity_trail),error);
+    if (!cache->rows) return false;
+    memset(cache->rows,0,bytes);cache->capacity=capacity;
+    qa_arena_seal(&cache->storage);return true;
 }
+frontend_q2_entity_trail *frontend_q2_entity_cache_at(frontend_q2_entity_cache *cache,uint32_t slot,qa_error *error)
+{
+    if (slot<cache->capacity) return cache->rows+slot;
+    qa_allocation_gate_capacity_exhausted();
+    fail(error,QA_ERROR_MEMORY,"Q2 entity trail actor capacity exhausted");return NULL;
+}
+
 static void barrel(frontend_q2_entity_effects *o,qa_vec3 origin,double seconds)
 {
     static const qa_vec3 offsets[6]={{-10,0,40},{10,0,40},{0,16,30},{16,0,25},{0,-16,20},{-16,0,15}};

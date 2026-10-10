@@ -82,8 +82,8 @@ bool q2fx_entities(frontend_remote_q2_effects *o,const frontend_remote_q2_effect
         .hand=s->hand,.per_pixel_lighting=s->per_pixel_lighting,.frame_seconds=s->frame_seconds};
     for (size_t i=0;i<s->entity_count;++i) {
         const frontend_q2_entity_pose *row=&s->entities[i];
-        if (!frontend_q2_entity_cache_reserve(&o->entity_trails,row->actor.slot,e) ||
-            !frontend_q2_entity_effect(&effects,&sample,row,&o->entity_trails.rows[row->actor.slot],advance,e)) return false;
+        frontend_q2_entity_trail *trail=frontend_q2_entity_cache_at(&o->entity_trails,row->actor.slot,e);
+        if (!trail || !frontend_q2_entity_effect(&effects,&sample,row,trail,advance,e)) return false;
     }
     return true;
 }

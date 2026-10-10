@@ -228,6 +228,7 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
 {
     if (!row || !out) return false;
     *out = (frontend_remote_q2_effects_source){.session = qa_application_session(row->options.domain.application),
+        .actor_capacity = qa_actors_capacity(qa_session_actor_registry(qa_application_session(row->options.domain.application))),
         .identity = row->identity, .content_generation = row->content_generation, .protocol = row->options.domain.protocol,
         .profile = remote_q2_rerelease_presentation(row) ? FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE : FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
         .map = row->map, .files = row->content.mounts, .images = row->images, .materials = row->materials, .world = row->world,

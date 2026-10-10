@@ -73,6 +73,7 @@ struct frontend_remote_q2_effects {
     q2fx_laser lasers[Q2FX_LASER_CAPACITY];
     q2fx_light lights[Q2FX_POOL];
     q2fx_sustain sustains[Q2FX_POOL];
+    qa_arena semantic_storage;
     frontend_q2_entity_cache entity_trails;
     size_t sampled_particle_count;
     qa_scene_light *sampled_lights;

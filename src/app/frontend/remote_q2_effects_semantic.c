@@ -1,4 +1,5 @@
 #include "remote_q2_effects_private.h"
+#include "qa/allocation_gate.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,17 +14,13 @@ static bool intake(frontend_remote_q2_effects *o, qa_actor_id actor, qa_error *e
     bool present;
     return o && frontend_remote_q2_effects_idle(o) && q2fx_source_current(o,e) && live(o,actor,&present,e);
 }
-static void *reserve(void *rows, size_t *capacity, size_t count, size_t size, qa_error *e)
+static void *reserve(void *rows, size_t capacity, size_t count, qa_error *e)
 {
-    if (count<*capacity) return rows;
-    size_t maximum=SIZE_MAX/size;
-    if (count>=maximum) { q2fx_fail(e,QA_ERROR_MEMORY,"Q2 semantic effect rows exceed physical capacity"); return NULL; }
-    size_t next=*capacity>maximum/2?maximum:*capacity?*capacity*2:8;
-    if (next<=count) next=count+1;
-    void *memory=realloc(rows,next*size);
-    if (!memory) { q2fx_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 semantic effect rows"); return NULL; }
-    *capacity=next; return memory;
+    if (count<capacity) return rows;
+    qa_allocation_gate_capacity_exhausted();
+    q2fx_fail(e,QA_ERROR_MEMORY,"Q2 semantic effect actor capacity exhausted");return NULL;
 }
+
 static void beam_remove(frontend_remote_q2_effects *o, size_t index)
 {
     --o->source_beam_count;
@@ -36,7 +33,7 @@ static bool beam_set(frontend_remote_q2_effects *o, const q2fx_source_beam *valu
     for (size_t i=0;i<o->source_beam_count;++i)
         if (qa_actor_id_equal(o->source_beams[i].beam.actor,value->beam.actor)) { index=i; break; }
     if (index==o->source_beam_count) {
-        q2fx_source_beam *rows=reserve(o->source_beams,&o->source_beam_capacity,o->source_beam_count,sizeof(*rows),e);
+        q2fx_source_beam *rows=reserve(o->source_beams,o->source_beam_capacity,o->source_beam_count,e);
         if (!rows) return false;
         o->source_beams=rows;
     }
@@ -81,7 +78,7 @@ static bool light_set(frontend_remote_q2_effects *o, const frontend_remote_q2_ef
         if (o->source_lights[index].revision==UINT64_MAX) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 Source light revision exhausted");
         identity=o->source_lights[index].identity; revision=o->source_lights[index].revision+1;
     } else {
-        q2fx_source_light *rows=reserve(o->source_lights,&o->source_light_capacity,index,sizeof(*rows),e);
+        q2fx_source_light *rows=reserve(o->source_lights,o->source_light_capacity,index,e);
         if (!rows) return false;
         o->source_lights=rows;
         identity=qa_scene_identity(); revision=0; ++o->source_light_count;
@@ -111,7 +108,7 @@ bool frontend_remote_q2_effects_flashlight(frontend_remote_q2_effects *o, qa_act
         }
     } else if (index<o->flashlight_count) o->flashlights[index].hand=hand;
     else {
-        q2fx_flashlight *rows=reserve(o->flashlights,&o->flashlight_capacity,index,sizeof(*rows),e);
+        q2fx_flashlight *rows=reserve(o->flashlights,o->flashlight_capacity,index,e);
         if (!rows) return false;
         o->flashlights=rows;
         o->flashlights[o->flashlight_count++]=(q2fx_flashlight){actor,qa_scene_identity(),hand};
@@ -228,15 +225,6 @@ bool q2fx_semantic_prepare(frontend_remote_q2_effects *o, const frontend_remote_
 }
 static bool lights(frontend_remote_q2_effects *o, const frontend_remote_q2_effects_sample *s, qa_error *e)
 {
-    if (o->source_light_count>SIZE_MAX-o->flashlight_count ||
-        o->source_light_count+o->flashlight_count>SIZE_MAX-Q2FX_LIGHT_CAPACITY) return false;
-    size_t maximum=Q2FX_LIGHT_CAPACITY+o->source_light_count+o->flashlight_count;
-    if (maximum>SIZE_MAX/sizeof(*o->sampled_lights)) return false;
-    if (maximum>o->light_capacity) {
-        qa_scene_light *rows=realloc(o->sampled_lights,maximum*sizeof(*rows));
-        if (!rows) return q2fx_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 Source scene lights");
-        o->sampled_lights=rows; o->light_capacity=maximum;
-    }
     o->light_count=o->transient_light_count;
     for (size_t i=0;i<o->flashlight_count;++i) {
         const q2fx_flashlight *f=o->flashlights+i; frontend_remote_q2_effects_pose pose;

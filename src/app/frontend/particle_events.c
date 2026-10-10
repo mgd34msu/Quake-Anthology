@@ -574,7 +574,7 @@ static bool q2_owner_sample(qa_frontend *frontend, const frontend_particle_owner
 static void particle_owner_free(frontend_particle_owner *owner)
 {
     qa_scene_image_release(owner->particle_image);
-    free(owner->entity_trails.rows); free(owner->q1); free(owner->q2_particles); free(owner);
+    qa_arena_destroy(&owner->entity_trails.storage); free(owner->q1); free(owner->q2_particles); free(owner);
 }
 static void particle_clients_retire(qa_frontend *frontend)
 {
@@ -662,11 +662,13 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
             owner->q2 = owner->q2_particles->values.q2;
         }
     }
-    bool ok = (owner->q1 || owner->q2) && particle_images(frontend, provider, family, &owner->images, error) &&
+    bool ok = (owner->q1 || owner->q2) &&
+        (family != QA_GAME_Q2 || frontend_q2_entity_cache_prepare(&owner->entity_trails,
+            qa_actors_capacity(qa_world_actors(qa_application_world(frontend->application))),error)) && particle_images(frontend, provider, family, &owner->images, error) &&
         qa_scene_particle_image(owner->images, family == QA_GAME_Q1 ? QA_GAME_Q1 : QA_GAME_Q2, &owner->particle_image, error);
     if (!ok) {
         if (!owner->q1 && !owner->q2) frontend_fail(error, QA_ERROR_MEMORY, "allocating bounded source particle pool");
-        qa_scene_image_release(owner->particle_image); free(owner->entity_trails.rows); free(owner->q1); free(owner->q2_particles); free(owner); return false;
+        qa_scene_image_release(owner->particle_image); qa_arena_destroy(&owner->entity_trails.storage); free(owner->q1); free(owner->q2_particles); free(owner); return false;
     }
     owner->next = frontend->particles->owners; frontend->particles->owners = owner; *out = owner; return true;
 }
@@ -788,8 +790,8 @@ static bool q2_entity_admit(qa_frontend *frontend,frontend_particle_owner *owner
     const frontend_q2_entity_pose *pose,const qa_scene_world_input *world,
     const frontend_q2_controls *controls,bool frame_particles,qa_error *error)
 {
-    if (!frontend_q2_entity_cache_reserve(&owner->entity_trails,pose->actor.slot,error)) return false;
-    frontend_q2_entity_trail *trail=&owner->entity_trails.rows[pose->actor.slot];
+    frontend_q2_entity_trail *trail=frontend_q2_entity_cache_at(&owner->entity_trails,pose->actor.slot,error);
+    if (!trail) return false;
     if (qa_actor_id_equal(trail->actor,pose->actor) && trail->sample_frame==frontend->frame_number) return true;
     q2_entity_context context={frontend,owner};
     frontend_q2_entity_effects effects={.particles=owner->q2_particles,.random=&owner->random,
