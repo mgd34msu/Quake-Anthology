@@ -158,8 +158,39 @@ typedef enum qa_q1_path_result {
     QA_Q1_PATH_BLOCKED,
     QA_Q1_PATH_IN_PROGRESS
 } qa_q1_path_result;
+typedef enum qa_q1_source_setting {
+    QA_Q1_SOURCE_SKILL,
+    QA_Q1_SOURCE_DEATHMATCH,
+    QA_Q1_SOURCE_COOP,
+    QA_Q1_SOURCE_TEAMPLAY,
+    QA_Q1_SOURCE_GAMECFG,
+    QA_Q1_SOURCE_SV_CHEATS,
+    QA_Q1_SOURCE_HORDE,
+    QA_Q1_SOURCE_NOEXIT,
+    QA_Q1_SOURCE_SAMELEVEL,
+    QA_Q1_SOURCE_TIMELIMIT,
+    QA_Q1_SOURCE_FRAGLIMIT,
+    QA_Q1_SOURCE_GRAVITY,
+    QA_Q1_SOURCE_STOPSPEED,
+    QA_Q1_SOURCE_MAXSPEED,
+    QA_Q1_SOURCE_SPECTATORMAXSPEED,
+    QA_Q1_SOURCE_ACCELERATE,
+    QA_Q1_SOURCE_AIRACCELERATE,
+    QA_Q1_SOURCE_WATERACCELERATE,
+    QA_Q1_SOURCE_FRICTION,
+    QA_Q1_SOURCE_WATERFRICTION,
+    QA_Q1_SOURCE_PAUSABLE,
+    QA_Q1_SOURCE_MAXCLIENTS,
+    QA_Q1_SOURCE_MAXSPECTATORS,
+    QA_Q1_SOURCE_HOSTNAME,
+    QA_Q1_SOURCE_SPECTALK,
+    QA_Q1_SOURCE_SETTING_COUNT
+} qa_q1_source_setting;
+const qa_cvar_view *qa_q1_source_read(const qa_q1_game *, qa_q1_source_setting);
+
 typedef struct qa_q1_host {
     void *context;
+    const qa_cvars *cvars;
     qa_monster_missions missions;
     bool (*monster_admit)(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
     /* Read the admitted source client's current selected attack input. */

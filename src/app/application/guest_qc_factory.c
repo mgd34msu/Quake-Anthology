@@ -12,6 +12,9 @@ static void controls_bind(struct application_qc_state *engine)
         engine->cvar_handles.qw_movement[i] = qa_cvars_resolve(engine->cvars, names[i]);
     engine->cvar_handles.sv_aim = qa_cvars_resolve(engine->cvars, "sv_aim");
     engine->cvar_handles.teamplay = qa_cvars_resolve(engine->cvars, "teamplay");
+    engine->cvar_handles.deathmatch = qa_cvars_resolve(engine->cvars, "deathmatch");
+    engine->cvar_handles.pausable = qa_cvars_resolve(engine->cvars, "pausable");
+    engine->cvar_handles.hostname = qa_cvars_resolve(engine->cvars, "hostname");
 }
 
 bool application_qc_console_prepare(qa_application *app, application_provider *provider,

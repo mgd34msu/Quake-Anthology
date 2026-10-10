@@ -1483,17 +1483,16 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     uint32_t slot = 0; qa_q1_source_client_view from = {0};
     bool okay = !sender.registry || (client(source, sender, &slot, error) &&
         qa_q1_source_client_read(source->provider->state.q1, sender, &from));
-    qa_cvars *cvars = application_native_q1_console_registry(source->provider);
-    const qa_cvar_view *hostname = !sender.registry && cvars ? qa_cvars_find(cvars, "hostname") : NULL;
+    const qa_cvar_view *hostname = !sender.registry ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_HOSTNAME) : NULL;
     const application_player_record *player = sender.registry ? roster(source->provider->application, sender) : NULL;
     if (okay && sender.registry && (!player || player->deferred || player->source_begin_pending ||
         (qw && !player->userinfo)))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "Chat lost its admitted Source player");
     if (okay && !qw && !sender.registry && !hostname)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 server chat lost its Source hostname");
-    const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
+    const qa_cvar_view *teamplay = qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_TEAMPLAY);
     bool filtered = sender.registry && team_only && teamplay && teamplay->number != 0;
-    const qa_cvar_view *spectalk = qw && cvars ? qa_cvars_find(cvars, "sv_spectalk") : NULL;
+    const qa_cvar_view *spectalk = qw ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_SPECTALK) : NULL;
     if (okay && qw && !spectalk)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source spectator policy");
     bool spectator_only = qw && player && player->spectator && (team_only || (spectalk && spectalk->number == 0));
@@ -1559,8 +1558,7 @@ bool application_native_q1_wire_pause(qa_application *app, qa_actor_id actor,
     uint32_t slot; qa_q1_source_client_view view;
     bool okay = app->operation == APPLICATION_IDLE && client(&source, actor, &slot, error) &&
         qa_q1_source_client_read(source.provider->state.q1, actor, &view);
-    qa_cvars *cvars = application_native_q1_console_registry(source.provider);
-    const qa_cvar_view *policy = cvars ? qa_cvars_find(cvars, "pausable") : NULL;
+    const qa_cvar_view *policy = qa_q1_source_read(source.provider->state.q1, QA_Q1_SOURCE_PAUSABLE);
     const char *denial = policy && policy->number == 0 ? "Pause not allowed.\n" : NULL;
     bool paused = !qa_application_q1_paused(app);
     const char *suffix = paused ? " paused the game\n" : " unpaused the game\n";

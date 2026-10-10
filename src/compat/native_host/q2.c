@@ -20,6 +20,32 @@ static bool call_text(qa_native_host *host, const qa_native_import_call *call, s
     return native_host_string_read(host, address, out, error);
 }
 
+static bool call_string_span(qa_native_host *host, const qa_native_import_call *call,
+                             size_t index, const char **out, qa_buffer *owned,
+                             qa_error *error)
+{
+    if (index >= call->argument_count)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, index,
+                                "native import string argument is missing");
+    qa_native_address address = native_argument_address(call, index);
+    if (!address) {
+        *out = "";
+        return true;
+    }
+    qa_bytes text;
+    if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes,
+                                &text, error))
+        return false;
+    if (text.data) {
+        *out = (const char *)text.data;
+        return true;
+    }
+    if (!native_host_string_read(host, address, owned, error))
+        return false;
+    *out = (const char *)owned->data;
+    return true;
+}
+
 static bool emit_print(qa_native_host *host, qa_native_host_print_kind kind,
                        qa_native_address entity, int32_t level, const char *text,
                        qa_error *error)
@@ -360,23 +386,36 @@ static bool tagged_memory(qa_native_host *host, const qa_native_import_call *cal
 static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                         qa_native_value *result, qa_error *error)
 {
-    qa_buffer name = {0}, value = {0};
-    if (!call_text(host, call, 0, &name, error) ||
-        !call_text(host, call, 1, &value, error)) {
-        qa_buffer_free(&name);
-        qa_buffer_free(&value);
+    qa_buffer name_copy = {0}, value_copy = {0};
+    const char *name, *value;
+    if (!call_string_span(host, call, 0, &name, &name_copy, error) ||
+        !call_string_span(host, call, 1, &value, &value_copy, error)) {
+        if (name_copy.data) qa_buffer_free(&name_copy);
+        if (value_copy.data) qa_buffer_free(&value_copy);
         return false;
     }
     bool registration = !strcmp(call->name, "cvar");
+    bool declaration = host->cvars && !qa_cvars_find(host->cvars, name);
+    /* Declaration and set callbacks may reenter the guest before the common
+     * table retains their text. Existing Cvar_Get ignores the supplied default. */
+    if ((declaration && !name_copy.data && !call_text(host, call, 0, &name_copy, error)) ||
+        ((declaration || !registration) && !value_copy.data &&
+         !call_text(host, call, 1, &value_copy, error))) {
+        if (name_copy.data) qa_buffer_free(&name_copy);
+        if (value_copy.data) qa_buffer_free(&value_copy);
+        return false;
+    }
+    if (name_copy.data) name = (const char *)name_copy.data;
+    if (value_copy.data) value = (const char *)value_copy.data;
     uint32_t flags = registration
                          ? (host->profile == QA_NATIVE_Q2_GAME_API3
                                 ? (uint32_t)native_argument_i32(call, 2)
                                 : native_argument_u32(call, 2))
                          : !strcmp(call->name, "cvar_forceset") ? 1u : 0u;
-    bool ok = native_host_cvar(host, (const char *)name.data, (const char *)value.data,
-                               flags, !registration, &result->as.address, error);
-    qa_buffer_free(&name);
-    qa_buffer_free(&value);
+    bool ok = native_host_cvar(host, name, value, flags, !registration,
+                               &result->as.address, error);
+    if (name_copy.data) qa_buffer_free(&name_copy);
+    if (value_copy.data) qa_buffer_free(&value_copy);
     return ok;
 }
 

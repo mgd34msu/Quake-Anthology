@@ -186,11 +186,10 @@ static bool actor_read(death_call *call, qa_actor_id actor,
     return current(call, error);
 }
 
-static bool source_policy(death_call *call, const char *name, double *out, qa_error *error)
+static bool source_policy(death_call *call, qa_q1_source_setting setting, double *out, qa_error *error)
 {
     if (!current(call, error)) return false;
-    qa_cvars *cvars = application_native_q1_console_registry(call->source);
-    const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
+    const qa_cvar_view *value = qa_q1_source_read(call->operation.game, setting);
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source obituary lost its actual GAME cvar");
     *out = (float)(value->number);
@@ -265,7 +264,7 @@ static bool qw_obituary(death_call *call, const qa_q1_obituary_input *input, qa_
     double deathmatch;
     if (!current(call, error) || !qw_team(call, attacker, &attacker_team, error) ||
         !qw_team(call, victim, &victim_team, error) ||
-        !source_policy(call, "deathmatch", &deathmatch, error)) return false;
+        !source_policy(call, QA_Q1_SOURCE_DEATHMATCH, &deathmatch, error)) return false;
     bool same_team = attacker_team == victim_team && !qw_is(call, attacker_team, "");
     qa_string_id type = input->death_type;
     qa_string_id killer_class = input->attacker ? input->attacker->classname : 0;
@@ -432,14 +431,14 @@ bool application_native_q1_source_before_reaction(qa_application *app,
         if (okay) okay = classname(&call, outcome->request.attack.inflictor,
             &inflictor_raw, &input.inflictor_classname, error);
     }
-    if (okay) okay = source_policy(&call, "teamplay", &input.teamplay, error);
+    if (okay) okay = source_policy(&call, QA_Q1_SOURCE_TEAMPLAY, &input.teamplay, error);
     if (okay && options.program == QA_Q1_ROGUE) {
         qa_mode_id mode;
         double gamecfg;
         okay = application_native_q1_composition_mode(app, source, &mode, error) &&
             qa_modes_q1_rogue_initialize(app->modes, mode, actor, error) &&
             qa_modes_q1_source_read(app->modes, mode, actor, QA_Q1_ROGUE_STEAM,
-                &input.victim_saved_team, error) && source_policy(&call, "gamecfg", &gamecfg, error);
+                &input.victim_saved_team, error) && source_policy(&call, QA_Q1_SOURCE_GAMECFG, &gamecfg, error);
         if (okay) {
             input.gamecfg = (uint32_t)qa_source_float_to_i32((float)gamecfg);
             input.tag_context = source;

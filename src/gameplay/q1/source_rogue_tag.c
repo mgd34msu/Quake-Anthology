@@ -118,11 +118,9 @@ bool q1_source_rogue_tag_spawn(qa_q1_game *game, q1_actor *source, bool *handled
     qa_error *error) {
     *handled = game->options.program == QA_Q1_ROGUE && q1_classnamed(game, source->id, "dmatch_tag_token");
     if (!*handled) return true;
-    qa_string_id name;
     float mode;
-    if (!game->services.cvar ||
-        !qa_strings_intern_cstr(qa_session_strings(game->services.session), "teamplay", &name, error) ||
-        !game->services.cvar(q1_cvar_context(game), name, &mode, error)) return false;
+    if (!game->host.cvars ||
+        !q1_source_value(game, QA_Q1_SOURCE_TEAMPLAY, 0, &mode, error)) return false;
     if (q1_entity(game, source->id) != source)
         return fail(error, source->id, "Rogue token retired during source policy read");
     if (mode != 3) return q1_remove(game, source, error);

@@ -96,7 +96,8 @@ static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
         if (slot < host->retained_capacity && host->retained_clients[slot])
             ++retained_count;
     }
-    bool captured = !host->cvars || qa_cvars_save_capture(host->cvars, &registry, error);
+    bool captured = !host->cvars || ((!host->classic || native_host_refresh_cvars(host, error)) &&
+        qa_cvars_save_capture(host->cvars, &registry, error));
     if (captured && host->kind != NATIVE_HOST_Q2_GAME) {
         native_host_memory_state objects = {host->strings, host->cvar_shadows};
         qa_source_save_io objects_io = {0};
@@ -482,6 +483,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         native_host_memory_state previous={host->strings,host->cvar_shadows};
         host->strings=memory.strings; host->cvar_shadows=memory.cvar_shadows;
         memory=(native_host_memory_state){0}; native_host_memory_dispose(&previous);
+        ok=native_host_restore_cvars(host,error);
     }
     if (ok && !bind_memory && host->cvars) ok=native_host_refresh_cvars(host,error);
     if (ok) {

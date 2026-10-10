@@ -75,13 +75,14 @@ bool application_native_q1_qw_world(qa_application *app, qa_application_network_
         value.map=text(app,world.map); value.level=text(app,world.level); value.cd_track=world.cd_track;
         value.map_bytes=qa_resource_bytes(map.resource);
         value.protocol=(qa_net_protocol_id){.kind=QA_NET_QW28}; value.max_clients=source.receipt.client_slots;
-        static const char *const names[]={"sv_gravity","sv_stopspeed","sv_maxspeed","sv_spectatormaxspeed",
-            "sv_accelerate","sv_airaccelerate","sv_wateraccelerate","sv_friction","sv_waterfriction"};
+        static const qa_q1_source_setting settings[]={QA_Q1_SOURCE_GRAVITY,QA_Q1_SOURCE_STOPSPEED,
+            QA_Q1_SOURCE_MAXSPEED,QA_Q1_SOURCE_SPECTATORMAXSPEED,QA_Q1_SOURCE_ACCELERATE,
+            QA_Q1_SOURCE_AIRACCELERATE,QA_Q1_SOURCE_WATERACCELERATE,QA_Q1_SOURCE_FRICTION,QA_Q1_SOURCE_WATERFRICTION};
         float *const values[]={&value.movement.gravity,&value.movement.stop_speed,&value.movement.max_speed,
             &value.movement.spectator_max_speed,&value.movement.accelerate,&value.movement.air_accelerate,
             &value.movement.water_accelerate,&value.movement.friction,&value.movement.water_friction};
-        for (size_t i=0;okay && i<sizeof(names)/sizeof(*names);++i) {
-            const qa_cvar_view *variable=qa_cvars_find(value.source.cvars,names[i]);
+        for (size_t i=0;okay && i<sizeof(settings)/sizeof(*settings);++i) {
+            const qa_cvar_view *variable=qa_q1_source_read(source.provider->state.q1,settings[i]);
             if (!variable || !isfinite(variable->number))
                 okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld move cvar is absent or nonfinite");
             else *values[i]=variable->number;
@@ -393,7 +394,7 @@ bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,qa_buf
     uint32_t slot;const application_player_record *row;qa_q1_source_client_view client;
     bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error) &&
         qa_q1_source_client_read(source.provider->state.q1,actor,&client);
-    const qa_cvar_view *policy=qa_cvars_find(application_native_q1_console_registry(source.provider),"pausable");
+    const qa_cvar_view *policy=qa_q1_source_read(source.provider->state.q1,QA_Q1_SOURCE_PAUSABLE);
     const char *denial=policy && policy->number==0?"Pause not allowed.\n":okay && row->spectator?"Spectators can not pause.\n":NULL;
     const char *suffix=app->q1_paused?" unpaused the game\n":" paused the game\n";
     size_t prefix=okay && !denial?strlen(client.name):0;
@@ -604,11 +605,13 @@ bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     application_native_q1_wire_end(&source);return okay;
 }
 
-bool application_native_q1_qw_admission_limits(qa_cvars *cvars,uint32_t clients,uint32_t spectators,
+static bool admission_limits(application_provider *provider,uint32_t clients,uint32_t spectators,
     bool spectator,bool *allowed,qa_error *error) {
+    qa_cvars *cvars=application_native_q1_console_registry(provider);
     if (!cvars || !allowed || clients>32 || spectators>32 || clients>32-spectators)
         return application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld admission needs its actual physical client counts");
-    const qa_cvar_view *client_limit=qa_cvars_find(cvars,"maxclients"),*spectator_limit=qa_cvars_find(cvars,"maxspectators");
+    const qa_cvar_view *client_limit=qa_q1_source_read(provider->state.q1,QA_Q1_SOURCE_MAXCLIENTS),
+        *spectator_limit=qa_q1_source_read(provider->state.q1,QA_Q1_SOURCE_MAXSPECTATORS);
     if (!client_limit || !spectator_limit || !isfinite(client_limit->number) || !isfinite(spectator_limit->number))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld admission limits are absent or nonfinite");
     float maximum_clients=client_limit->number,maximum_spectators=spectator_limit->number;
@@ -644,7 +647,7 @@ bool application_native_q1_qw_admission(qa_application *app,bool spectator,bool 
         if (!row || row->client_slot!=i) {okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld admission lost an occupied physical row");break;}
         if (row->spectator) ++spectators;else ++clients;
     }
-    if (okay) okay=application_native_q1_qw_admission_limits(application_native_q1_console_registry(source.provider),
+    if (okay) okay=admission_limits(source.provider,
         clients,spectators,spectator,allowed,error);
     if (okay && (!qa_q1_wire_receipt_current(&source.receipt) || source.provider->close_pending ||
         source.provider!=application_world_provider(app,QA_ROLE_ENTITIES,"")))

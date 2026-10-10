@@ -158,7 +158,7 @@ static bool emit_sound(qa_qc_game *game, bool ambient, qa_error *error) {
 }
 static bool print(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     if (builtin == QA_QC_BUILTIN_DPRINT) {
-        const qa_cvar_view *developer = qa_cvars_find(game->options.cvars, "developer");
+        const qa_cvar_view *developer = qa_cvars_read(game->options.cvars, game->developer);
         if (!developer || developer->number == 0) return true;
     }
     uint32_t first = 0; float level = 2;

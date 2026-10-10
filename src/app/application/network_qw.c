@@ -224,13 +224,11 @@ bool qa_application_network_qw_world_read(qa_application *app,
         return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source world lacks its admitted map or product directory");
     value.protocol = engine->protocol;
     value.max_clients = engine->max_clients;
-    static const char *const names[] = {"sv_gravity", "sv_stopspeed", "sv_maxspeed", "sv_spectatormaxspeed",
-        "sv_accelerate", "sv_airaccelerate", "sv_wateraccelerate", "sv_friction", "sv_waterfriction"};
-    float *const values[] = {&value.movement.gravity, &value.movement.stop_speed, &value.movement.max_speed,
-        &value.movement.spectator_max_speed, &value.movement.accelerate, &value.movement.air_accelerate,
-        &value.movement.water_accelerate, &value.movement.friction, &value.movement.water_friction};
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
-        const qa_cvar_view *variable = qa_cvars_find(engine->cvars, names[i]);
+    float *const values[] = {&value.movement.gravity, &value.movement.stop_speed, &value.movement.spectator_max_speed,
+        &value.movement.accelerate, &value.movement.air_accelerate, &value.movement.water_accelerate,
+        &value.movement.friction, &value.movement.water_friction, &value.movement.max_speed};
+    for (size_t i = 0; i < sizeof(values) / sizeof(*values); ++i) {
+        const qa_cvar_view *variable = qa_cvars_read(engine->cvars, engine->cvar_handles.qw_movement[i]);
         if (!variable || !isfinite(variable->number))
             return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source move cvar is absent or nonfinite");
         *values[i] = variable->number;
@@ -479,7 +477,7 @@ bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
     struct application_qc_state *engine = qw_source(app, NULL, error);
     uint32_t slot;
     if (!engine || app->operation != APPLICATION_IDLE || !qw_client_binding(engine, actor, &slot, error)) return false;
-    const qa_cvar_view *policy = qa_cvars_find(engine->cvars, "pausable");
+    const qa_cvar_view *policy = qa_cvars_read(engine->cvars, engine->cvar_handles.pausable);
     const char *denial = policy && policy->number == 0 ? "Pause not allowed.\n" :
         engine->clients[slot].spectator ? "Spectators can not pause.\n" : NULL;
     int32_t reference; const char *name = NULL;

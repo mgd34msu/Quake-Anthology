@@ -198,14 +198,11 @@ bool q1_source_rogue_rune_think(qa_q1_game *g, q1_actor *e, q1_think_kind kind, 
 static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!current(g, error)) return false;
     q1_actor *owner = world(g, error);
-    qa_string_id name;
     float cfg, deathmatch;
-    if (!owner || !g->services.cvar ||
-        !qa_strings_intern_cstr(qa_session_strings(g->services.session), "deathmatch", &name, error) ||
-        !g->services.cvar(q1_cvar_context(g), name, &deathmatch, error) || !current(g, error)) return false;
+    if (!owner || !g->host.cvars ||
+        !q1_source_value(g, QA_Q1_SOURCE_DEATHMATCH, 0, &deathmatch, error) || !current(g, error)) return false;
     if (deathmatch != 0) {
-        if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), "gamecfg", &name, error) ||
-            !g->services.cvar(q1_cvar_context(g), name, &cfg, error) || !current(g, error) ||
+        if (!q1_source_value(g, QA_Q1_SOURCE_GAMECFG, 0, &cfg, error) || !current(g, error) ||
             world(g, error) != owner) return false;
         uint32_t integer = (uint32_t)qa_source_float_to_i32(cfg);
         if ((integer & 1) && owner->rogue_runes_spawned == 0) {

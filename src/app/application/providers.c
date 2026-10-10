@@ -537,6 +537,7 @@ static bool construct_q1(qa_application *application,
     if (!application_native_q1_wire_create(provider, error)) return false;
     qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q1_host host = {.context = provider,
+                       .cvars = application_native_q1_console_registry(provider),
                        .source_console_print = application_native_q1_source_console_print,
                        .source_logfrag_write = application_native_q1_source_logfrag_write,
                        .world_info = application_native_q1_world_info,
@@ -576,8 +577,6 @@ static bool construct_q1(qa_application *application,
                        .monster_path_release = application_bots_npc_released};
     qa_builtin_services services = application_builtin_services(
         application, world, application->physics);
-    services.cvar_context = provider;
-    services.cvar = application_native_q1_cvar;
     if (!qa_q1_game_create(&services, &options, &host,
                            &provider->state.q1, error) ||
         !qa_q1_game_retain(provider->state.q1, &provider->q1_lifetime, error) ||

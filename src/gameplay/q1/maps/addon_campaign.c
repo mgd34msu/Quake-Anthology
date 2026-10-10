@@ -142,9 +142,7 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     *g->maps->options.server_flags |= bits | (mg3 ? 0 : bits << 6);
     if (!mg3 && (bits & 2)) {
         float horde = 0;
-        qa_string_id name;
-        if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-            (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &horde, error)))
+        if (!q1_source_value(g, QA_Q1_SOURCE_HORDE, 0, &horde, error))
             return false;
         if (!campaign_actor(g, id))
             return true;

@@ -147,10 +147,8 @@ bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *han
     if (impulse == 10 || impulse == 12) return cycle(g, player, impulse == 12, error);
     if (impulse == 9 || impulse == 99) {
         if (g->options.deathmatch || g->options.coop) {
-            qa_string_id name;
             float enabled = 0;
-            if (!qa_builtin_resource(&g->services, "sv_cheats", &name, error) ||
-                (g->services.cvar && !g->services.cvar(q1_cvar_context(g), name, &enabled, error)))
+            if (!q1_source_value(g, QA_Q1_SOURCE_SV_CHEATS, 0, &enabled, error))
                 return false;
             if (!current(g, player->id, player, error)) return false;
             if (enabled == 0)

@@ -57,77 +57,70 @@ bool qa_native_write(qa_native_instance *instance, qa_native_address destination
     return qa_native_guest_write(instance->guest, destination, bytes, error);
 }
 
-static bool grow_string(uint8_t **data, size_t *capacity, size_t required, qa_error *error) {
-    if (required <= *capacity)
-        return true;
-    size_t next = *capacity ? *capacity : 256u;
-    while (next < required) {
-        if (next > SIZE_MAX / 2u) {
-            next = required;
-            break;
-        }
-        next *= 2u;
-    }
-    uint8_t *grown = realloc(*data, next);
-    if (!grown)
-        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native string copy");
-    *data = grown;
-    *capacity = next;
-    return true;
-}
-
-bool qa_native_read_string(const qa_native_instance *instance, qa_native_address source,
-                           size_t maximum, qa_buffer *out, qa_error *error) {
+bool qa_native_string_span(const qa_native_instance *instance, qa_native_address source,
+                           size_t maximum, qa_bytes *out, qa_error *error)
+{
     if (!instance || !out || !source || !maximum)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native string address, limit and output are required");
     if (maximum > UINT64_MAX - source)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native string address range overflows");
-    uint8_t *copy = NULL;
-    size_t used = 0, capacity = 0;
+    const qa_native_guest *guest = instance->guest;
+    size_t used = 0, first_offset = 0;
+    uint64_t first_backing = 0;
+    const uint8_t *first_bytes = NULL;
+    bool contiguous = true;
     while (used < maximum) {
-        uint8_t block[256];
+        qa_bytes byte;
+        if (!qa_native_borrow(instance, source + used, 1, &byte, error))
+            return false;
+        const qa_native_guest_mapping *mapping = guest_mapping(guest, source + used);
+        const guest_backing *backing = guest_backing_at(guest, mapping->backing);
+        size_t offset = (size_t)(mapping->backing_offset + source + used - mapping->base);
         size_t amount = maximum - used;
-        if (amount > sizeof(block))
-            amount = sizeof(block);
-        qa_error block_error = {0};
-        if (qa_native_read(instance, source + used, block, amount, &block_error)) {
-            const uint8_t *end = memchr(block, 0, amount);
-            size_t content = end ? (size_t)(end - block) : amount;
-            if (!grow_string(&copy, &capacity, used + content + 1u, error)) {
-                free(copy);
-                return false;
-            }
-            memcpy(copy + used, block, content);
-            used += content;
-            if (end) {
-                copy[used] = 0;
-                *out = (qa_buffer){copy, used};
-                return true;
-            }
-            continue;
+        if (amount > mapping->bytes - (source + used - mapping->base))
+            amount = (size_t)(mapping->bytes - (source + used - mapping->base));
+        size_t available = backing->file ? (size_t)backing->source.accessible_bytes : backing->bytes;
+        if (amount > available - offset)
+            amount = available - offset;
+        if (!used) {
+            first_backing = mapping->backing;
+            first_offset = offset;
+            first_bytes = byte.data;
+        } else if (mapping->backing != first_backing || offset != first_offset + used) {
+            contiguous = false;
         }
-        for (size_t index = 0; index < amount; ++index) {
-            uint8_t byte;
-            if (!qa_native_read(instance, source + used, &byte, 1, error)) {
-                free(copy);
-                return false;
-            }
-            if (!grow_string(&copy, &capacity, used + 2u, error)) {
-                free(copy);
-                return false;
-            }
-            if (!byte) {
-                copy[used] = 0;
-                *out = (qa_buffer){copy, used};
-                return true;
-            }
-            copy[used++] = byte;
+        const uint8_t *end = memchr(byte.data, 0, amount);
+        if (end) {
+            *out = (qa_bytes){contiguous ? first_bytes : NULL,
+                              used + (size_t)(end - byte.data)};
+            return true;
         }
+        used += amount;
     }
-    free(copy);
     return native_fail(error, QA_ERROR_FORMAT, maximum,
                        "native string has no terminator within its limit");
+}
+
+bool qa_native_read_string(const qa_native_instance *instance, qa_native_address source,
+                           size_t maximum, qa_buffer *out, qa_error *error)
+{
+    if (!out)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "native string address, limit and output are required");
+    qa_bytes text;
+    if (!qa_native_string_span(instance, source, maximum, &text, error))
+        return false;
+    uint8_t *copy = malloc(text.size + 1u);
+    if (!copy)
+        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native string copy");
+    if (text.data) memcpy(copy, text.data, text.size + 1u);
+    else if (!qa_native_read(instance, source, copy, text.size + 1u, error)) {
+        free(copy);
+        return false;
+    }
+    *out = (qa_buffer){copy, text.size};
+    return true;
 }
 
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,

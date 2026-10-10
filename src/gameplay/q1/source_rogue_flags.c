@@ -174,11 +174,8 @@ bool qa_q1_source_rogue_flag_carry(qa_q1_game *g, qa_actor_id actor,
     qa_q1_game_operation_end(&operation);
     return okay;
 }
-static bool policy(qa_q1_game *g, const char *text, float *out, qa_error *error) {
-    qa_string_id name;
-    return g->services.cvar &&
-        qa_strings_intern_cstr(qa_session_strings(g->services.session), text, &name, error) &&
-        g->services.cvar(q1_cvar_context(g), name, out, error);
+static bool policy(qa_q1_game *g, qa_q1_source_setting setting, float *out, qa_error *error) {
+    return g->host.cvars && q1_source_value(g, setting, 0, out, error);
 }
 bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     bool red = q1_classnamed(g, e->id, "item_flag_team1"), blue = q1_classnamed(g, e->id, "item_flag_team2");
@@ -186,7 +183,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     if (!*handled) return true;
     qa_actor_id actor = e->id;
     float mode, deathmatch;
-    if (!policy(g, "teamplay", &mode, error) || !policy(g, "deathmatch", &deathmatch, error) ||
+    if (!policy(g, QA_Q1_SOURCE_TEAMPLAY, &mode, error) || !policy(g, QA_Q1_SOURCE_DEATHMATCH, &deathmatch, error) ||
         q1_entity(g, actor) != e) return false;
     bool ctf = mode == 4 || mode == 5 || mode == 6;
     if (red || blue ? deathmatch == 0 || !ctf : mode != 5) return q1_remove(g, e, error);

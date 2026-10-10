@@ -77,23 +77,19 @@ bool qa_q1_rogue_state(qa_q1_game *game, qa_actor_id player, qa_actor_id *out,
         qa_actor_id unique;
         if (!qa_q1_rogue_state_find(game, player, &unique, &found, error) ||
             !found || !qa_actor_id_equal(unique, state)) goto finish;
-        qa_string_id name;
         float mode;
-        if (!game->services.cvar) {
+        if (!game->host.cvars) {
             fail(error, player, "Rogue state requires its genuine source policy reader");
             goto finish;
         }
-        if (!qa_strings_intern_cstr(qa_session_strings(game->services.session), "teamplay", &name, error))
-            goto finish;
-        if (!game->services.cvar(q1_cvar_context(game), name, &mode, error) ||
+        if (!q1_source_value(game, QA_Q1_SOURCE_TEAMPLAY, 0, &mode, error) ||
             !player_current(&operation, player, client, slot, error) ||
             !qa_q1_rogue_state_current(game, player, state, error)) goto finish;
         bool ctf = mode == 4 || mode == 5 || mode == 6;
         bool keep_color = true;
         if (ctf) {
             float gamecfg;
-            if (!qa_strings_intern_cstr(qa_session_strings(game->services.session), "gamecfg", &name, error) ||
-                !game->services.cvar(q1_cvar_context(game), name, &gamecfg, error) ||
+            if (!q1_source_value(game, QA_Q1_SOURCE_GAMECFG, 0, &gamecfg, error) ||
                 !player_current(&operation, player, client, slot, error) ||
                 !qa_q1_rogue_state_current(game, player, state, error)) goto finish;
             uint32_t bits = (uint32_t)qa_source_float_to_i32(gamecfg);
