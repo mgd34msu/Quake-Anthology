@@ -562,6 +562,7 @@ bool qa_native_invoke_original_cancellable(qa_native_entry_observer *binding,
 struct qa_native_call_scope {
     struct qa_native_call_scope *previous;
     qa_native_instance *instance;
+    qa_unified_frame_lease *storage;
     qa_native_guest_cpu cpu;
     guest_host_x86_64_state hardware;
     guest_callback_recovery recovery;
@@ -591,11 +592,14 @@ bool qa_native_call_scope_open(qa_native_instance *instance,qa_native_entry_canc
         !instance->guest||
         !guest_mutable(instance->guest,error))
         return native_fail(error,QA_ERROR_UNSUPPORTED,0,"Source cancellation requires its live stopped processor");
-    qa_native_call_scope *scope=calloc(1,sizeof(*scope));
-    if(!scope)return native_fail(error,QA_ERROR_MEMORY,0,"Retaining actual Source call processor");
-    if(!qa_native_guest_cpu_read(instance->guest,&scope->cpu,error)) { free(scope); return false; }
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(instance->observation_storage,error);
+    if(!storage)return false;
+    qa_native_call_scope *scope=qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),_Alignof(qa_native_call_scope),error);
+    if(!scope){qa_unified_frame_lease_release(storage);return false;}
+    scope->storage=storage;
+    if(!qa_native_guest_cpu_read(instance->guest,&scope->cpu,error)) { qa_unified_frame_lease_release(storage); return false; }
     if(instance->guest->options.backend==QA_NATIVE_GUEST_HOST_X86_64 &&
-        !guest_host_child_cpu_read(instance->guest->child,&scope->hardware,error)) { free(scope); return false; }
+        !guest_host_child_cpu_read(instance->guest->child,&scope->hardware,error)) { qa_unified_frame_lease_release(storage); return false; }
     scope->instance=instance; scope->previous=instance->call_scope; scope->run=instance->guest->run;
     scope->active_depth=instance->active_depth; scope->callback_depth=instance->callback_depth;
     scope->write_depth=instance->write_depth; scope->region_depth=instance->region_depth;
@@ -635,7 +639,7 @@ bool qa_native_call_scope_close(qa_native_call_scope **out,qa_error *error)
     if(!call_scope_current(scope,true,error))return false;
     scope->instance->guest->recovery=scope->recovery.previous;
     scope->instance->call_scope=scope->previous;
-    guest_host_x86_64_state_free(&scope->hardware); free(scope); *out=NULL;
+    guest_host_x86_64_state_free(&scope->hardware); qa_unified_frame_lease_release(scope->storage); *out=NULL;
     return true;
 }
 bool qa_native_call_scope_abandon(qa_native_call_scope *scope,qa_error *error)

@@ -10,6 +10,7 @@ struct qa_native_region_snapshot {
 struct qa_native_region_scope {
     struct qa_native_region_scope *next;
     qa_native_instance *instance;
+    qa_unified_frame_lease *storage;
     qa_native_guest *guest;
     qa_native_module *module;
     qa_native_address image, target;
@@ -84,15 +85,18 @@ bool qa_native_region_scope_open(qa_native_instance *instance,
     if (target < instance->image_base || target - instance->image_base >= instance->image_bytes ||
         !qa_native_range_check(instance, target, 1, QA_NATIVE_MEMORY_EXECUTE, error))
         return fail(error, "Region target is outside its actual executable source image");
-    qa_native_region_scope *scope = calloc(1, sizeof(*scope));
-    if (!scope) return native_fail(error, QA_ERROR_MEMORY, 0, "Retaining dynamic source region scope");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(instance->observation_storage,error);
+    if (!storage) return false;
+    qa_native_region_scope *scope=qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),_Alignof(qa_native_region_scope),error);
+    if (!scope) { qa_unified_frame_lease_release(storage); return false; }
+    scope->storage=storage;
     scope->instance = instance; scope->module = instance->module; scope->guest = instance->guest;
     scope->image = instance->image_base; scope->target = target; scope->region = *actual;
     scope->callback = callback; scope->context = context;
     scope->parent_calls = instance->active_depth; scope->parent_callbacks = instance->callback_depth;
     scope->parent_regions = instance->region_depth;
     if (!guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
-        target, target, 0, false, error)) { free(scope); return false; }
+        target, target, 0, false, error)) { qa_unified_frame_lease_release(storage); return false; }
     scope->next = instance->region_scopes; instance->region_scopes = scope;
     *out = scope; return true;
 }
@@ -122,9 +126,9 @@ bool qa_native_region_scope_capture(qa_native_region_scope *scope,
     const qa_native_region_scope_event *event, qa_native_region_snapshot **out, qa_error *error) {
     if (!out || *out || !event_current(scope, event))
         return fail(error, "Processor capture requires the exact borrowed stopped region event");
-    qa_native_region_snapshot *snapshot = calloc(1, sizeof(*snapshot));
-    if (!snapshot) return native_fail(error, QA_ERROR_MEMORY, 0, "Retaining full stopped processor snapshot");
-    if (!qa_native_guest_cpu_read(scope->guest, &snapshot->cpu, error)) { free(snapshot); return false; }
+    qa_native_region_snapshot *snapshot=qa_unified_frame_lease_alloc(scope->storage,1,sizeof(*snapshot),_Alignof(qa_native_region_snapshot),error);
+    if (!snapshot) return false;
+    if (!qa_native_guest_cpu_read(scope->guest, &snapshot->cpu, error)) return false;
     snapshot->scope = scope; snapshot->depth = scope->entered_depth;
     snapshot->next = scope->snapshots; scope->snapshots = snapshot;
     *out = snapshot; return true;
@@ -228,8 +232,5 @@ bool qa_native_region_scope_close(qa_native_region_scope **owner, qa_error *erro
         !guest_native_interest(scope->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,
         scope->target, scope->target, 0, true, error)) return false;
     *at = scope->next;
-    while (scope->snapshots) {
-        qa_native_region_snapshot *snapshot = scope->snapshots; scope->snapshots = snapshot->next; free(snapshot);
-    }
-    free(scope); *owner = NULL; return true;
+    qa_unified_frame_lease_release(scope->storage); *owner = NULL; return true;
 }
