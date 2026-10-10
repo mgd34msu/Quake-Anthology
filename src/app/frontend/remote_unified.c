@@ -558,7 +558,7 @@ static bool transport_player(void *context, qa_net_client_id client,
         .source_owner = movement->source_owner, .source_slot = owner->source_entity};
     return true;
 }
-static bool events_decode(void *context,qa_bytes bytes,qa_unified_document **out,bool *ready,qa_error *error)
+static bool events_decode(void *context,qa_bytes bytes,qa_unified_held **out,bool *ready,qa_error *error)
 {
     frontend_remote_unified *owner=context;
     return owner->options.consumers.events_decode(owner->options.consumers.context,bytes,out,ready,error);

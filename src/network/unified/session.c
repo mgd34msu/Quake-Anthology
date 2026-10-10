@@ -141,14 +141,16 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bo
     qa_unified_document_kind kind = delivery->kind == QA_UNIFIED_RELIABLE ? QA_UNIFIED_CONTROL_DOCUMENT :
         s->server ? QA_UNIFIED_INPUT_DOCUMENT : QA_UNIFIED_FRAME_DOCUMENT;
     qa_unified_document *document=NULL;
+    qa_unified_held *held=NULL;
     if (!s->server) {
         bool missing=false;
         bool ready=true,okay;
         if (kind==QA_UNIFIED_CONTROL_DOCUMENT && delivery->payload.size>=4 &&
             !memcmp(delivery->payload.data,"QUEV",4) && s->hooks.events_decode)
-            okay=s->hooks.events_decode(s->hooks.context,delivery->payload,&document,&ready,e);
+            okay=s->hooks.events_decode(s->hooks.context,delivery->payload,&held,&ready,e);
         else okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
             delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload, s->strings, NULL,&document,e);
+        if (held) document=held->document;
         if (okay && !ready) return true;
         if (!okay || missing) {
             if (missing) {
@@ -162,16 +164,18 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bo
     const qa_unified_frame *frame=qa_unified_document_frame(document);
     qa_unified_frame_lease *lease=frame?frame->lease:NULL;
     if (lease && !qa_unified_frame_lease_retain(lease,e)) { qa_unified_document_destroy(document); return false; }
-    qa_unified_held *held=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e) : calloc(1,sizeof(*held));
+    if (!held) held=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e) : calloc(1,sizeof(*held));
     if (!held) { qa_unified_document_destroy(document); qa_unified_frame_lease_release(lease);
         return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Retaining production document delivery"); }
     held->lease=lease; held->document=document;
     held->kind = kind;
-    held->wire.data=lease ? qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e) :
-        malloc(delivery->payload.size?delivery->payload.size:1);
-    if (!held->wire.data) { qa_unified_session_delivery_free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
-    held->wire.size = delivery->payload.size;
-    if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
+    if (!held->event_lease) {
+        held->wire.data=lease ? qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e) :
+            malloc(delivery->payload.size?delivery->payload.size:1);
+        if (!held->wire.data) { qa_unified_session_delivery_free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
+        held->wire.size = delivery->payload.size;
+        if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);
+    }
     held->bytes = delivery->payload.size; held->sequence = delivery->sequence; held->required = delivery->required_reliable;
     if (s->tail) s->tail->next = held; else s->held = held;
     s->tail = held; s->held_bytes += held->bytes; ++s->held_count;

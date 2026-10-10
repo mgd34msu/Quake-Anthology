@@ -199,9 +199,11 @@ void qa_unified_session_delivery_free(qa_unified_held *held)
 {
     if (!held) return;
     qa_unified_frame_lease *lease=held->lease;
+    qa_event_lease *event_lease=held->event_lease;
     commit_free(&held->commit);
     qa_unified_document_destroy(held->document);
-    if (lease) qa_unified_frame_lease_release(lease);
+    if (event_lease) qa_event_lease_release(event_lease);
+    else if (lease) qa_unified_frame_lease_release(lease);
     else { qa_buffer_free(&held->wire); free(held); }
 }
 

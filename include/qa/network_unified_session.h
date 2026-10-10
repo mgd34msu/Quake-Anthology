@@ -3,6 +3,7 @@
 
 #include "qa/network_runtime.h"
 #include "qa/strings.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct qa_unified_input_batch {
     uint32_t epoch;
@@ -35,6 +36,20 @@ typedef struct qa_unified_session_commit {
     qa_unified_document *followups[8];
     size_t followup_count;
 } qa_unified_session_commit;
+
+typedef struct qa_unified_held {
+    qa_unified_frame_lease *lease;
+    qa_event_lease *event_lease;
+    struct qa_unified_held *next;
+    qa_unified_document *document;
+    qa_unified_document_kind kind;
+    qa_buffer wire;
+    size_t bytes;
+    uint32_t sequence, required;
+    qa_unified_session_commit commit;
+    uint32_t response_first, response_last;
+    bool source_finished, responses_queued;
+} qa_unified_held;
 /* Successful Source callbacks transfer distinct immutable reply/followup
  * documents. The lower owner retains them until the entire reliable response
  * batch is queued and the delivery's phase transition completes. */
@@ -42,7 +57,7 @@ typedef struct qa_unified_session_hooks {
     qa_strings *strings;
     void *context;
     bool (*player)(void *, qa_net_client_id, qa_unified_session_player *, qa_error *);
-    bool (*events_decode)(void *, qa_bytes, qa_unified_document **, bool *ready, qa_error *);
+    bool (*events_decode)(void *, qa_bytes, qa_unified_held **, bool *ready, qa_error *);
     bool (*control)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
         const qa_unified_document *, qa_unified_session_commit *, qa_error *);
     bool (*input)(void *, qa_network_runtime *, qa_net_client_id,

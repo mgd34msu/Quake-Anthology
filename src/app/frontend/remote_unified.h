@@ -44,7 +44,7 @@ typedef struct frontend_remote_unified_consumers {
     bool (*offer_publish)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
     bool (*offer_ready)(void *, frontend_remote_unified *, qa_executable_recipe *, qa_error *);
     bool (*control)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
-    bool (*events_decode)(void *, qa_bytes, qa_unified_document **, bool *ready, qa_error *);
+    bool (*events_decode)(void *, qa_bytes, qa_unified_held **, bool *ready, qa_error *);
     bool (*frame)(void *, frontend_remote_unified *, const qa_unified_document *,
         frontend_unified_frame_preparation *, qa_error *);
     bool (*publish)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);

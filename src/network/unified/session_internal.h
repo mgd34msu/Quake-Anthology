@@ -13,18 +13,6 @@ typedef struct qa_unified_frame_receipt {
     uint32_t sequence;
 } qa_unified_frame_receipt;
 
-typedef struct qa_unified_held {
-    qa_unified_frame_lease *lease;
-    struct qa_unified_held *next;
-    qa_unified_document *document;
-    qa_unified_document_kind kind;
-    qa_buffer wire;
-    size_t bytes;
-    uint32_t sequence, required;
-    qa_unified_session_commit commit;
-    uint32_t response_first, response_last;
-    bool source_finished, responses_queued;
-} qa_unified_held;
 struct qa_unified_session {
     qa_network_runtime *runtime;
     qa_net_client_id id;

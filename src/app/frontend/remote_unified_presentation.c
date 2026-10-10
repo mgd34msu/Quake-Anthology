@@ -381,7 +381,7 @@ static bool offer_ready(void *context, frontend_remote_unified *replica, qa_exec
         frontend_unified_q3_events(p->q3,p->events,error) &&
         frontend_unified_q3_components(p->q3,p->components,error);
 }
-static bool events_decode(void *context,qa_bytes bytes,qa_unified_document **out,bool *ready,qa_error *error)
+static bool events_decode(void *context,qa_bytes bytes,qa_unified_held **out,bool *ready,qa_error *error)
 {
     unified_presentation *p=context;
     return frontend_unified_events_decode(p->events,bytes,out,ready,error);

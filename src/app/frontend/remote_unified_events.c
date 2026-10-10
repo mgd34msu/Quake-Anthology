@@ -23,9 +23,9 @@ typedef struct unified_component_owner {
     bool retired, cancelled;
 } unified_component_owner;
 typedef struct unified_received_event {
+    qa_unified_held delivery;
     struct unified_received_event *next_retained;
     qa_event_lease *lease;
-    qa_unified_document *document;
     bool *mirrored;
     bool published;
     unified_component_owner component;
@@ -73,7 +73,7 @@ static void metadata_retire(frontend_unified_events *o)
     uint64_t first=qa_event_ring_first(o->records),next=qa_event_ring_next(o->records);
     while (first<next) {
         const unified_received_event *record=qa_event_ring_at(o->records,first);
-        if (record->document) break;
+        if (record->delivery.document) break;
         o->presentation_cursor=o->simulation_cursor=++first;
         qa_event_ring_retire(o->records,first);
     }
@@ -328,21 +328,28 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
         if (!record->mirrored) return false;
         memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
     }
-    if (!qa_unified_document_retain(document,&record->document,error)) return false;
+    if (!qa_unified_document_retain(document,&record->delivery.document,error)) return false;
     uint64_t id=qa_event_ring_commit(transaction,record);
     events->received=qa_event_ring_retain(o->records,id);
     return true;
 }
 
 bool frontend_unified_events_decode(frontend_unified_events *o,qa_bytes bytes,
-    qa_unified_document **out,bool *ready,qa_error *error)
+    qa_unified_held **out,bool *ready,qa_error *error)
 {
     *ready=false;
     if (!o) return true;
     qa_event_transaction transaction;
     unified_received_event *record=record_begin(o,&transaction,error);
     qa_unified_document *document=NULL;
-    bool okay=record && qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,bytes,o->strings,
+    if (record) {
+        record->delivery.wire.data=qa_event_ring_alloc(&transaction,bytes.size,1,error);
+        if (record->delivery.wire.data) {
+            memcpy(record->delivery.wire.data,bytes.data,bytes.size);
+            record->delivery.wire.size=bytes.size;
+        }
+    }
+    bool okay=record && record->delivery.wire.data && qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,bytes,o->strings,
         &transaction,&document,error) && record_finish(o,&transaction,record,document,error);
     if (!okay) {
         qa_unified_document_destroy(document);
@@ -350,7 +357,9 @@ bool frontend_unified_events_decode(frontend_unified_events *o,qa_bytes bytes,
         if (transaction.blocked) { if (error) *error=(qa_error){0}; return true; }
         return false;
     }
-    *out=document; *ready=true;
+    record->delivery.event_lease=qa_unified_document_events(document)->received;
+    qa_event_lease_retain(record->delivery.event_lease);
+    *out=&record->delivery; *ready=true;
     return true;
 }
 
@@ -444,7 +453,7 @@ void frontend_unified_events_frame_abort(frontend_unified_events *o)
 { if (o && !o->busy) {o->prepared=false;qa_unified_document_destroy(o->prepared_document);o->prepared_document=NULL;} }
 static bool mirrored(frontend_unified_events *o,uint64_t sequence)
 {
-    const qa_unified_frame_events *events=qa_unified_document_events(o->delivery->document);
+    const qa_unified_frame_events *events=qa_unified_document_events(o->delivery->delivery.document);
     for (size_t i=0;i<events->presentation_count;++i)
         if (events->presentation[i].sequence==sequence) return o->delivery->mirrored[i];
     return false;
@@ -531,7 +540,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
         uint64_t id=qa_event_ring_first(o->records);
         if (id==qa_event_ring_next(o->records)) break;
         unified_received_event *record=(unified_received_event *)qa_event_ring_at(o->records,id);
-        const qa_unified_frame_events *events=qa_unified_document_events(record->document);
+        const qa_unified_frame_events *events=qa_unified_document_events(record->delivery.document);
         if (!record->published || !o->has_frame || events->frame>o->frame) break;
         if (!rows_valid(o,events,true,e)) { okay=false; break; }
         o->delivery=record;
@@ -563,7 +572,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
         }
         o->delivery=NULL;
         if (o->presentation_cursor>id && o->simulation_cursor>id) {
-            qa_unified_document_destroy(record->document);
+            qa_unified_document_destroy(record->delivery.document);
             qa_event_ring_retire(o->records,o->presentation_cursor<o->simulation_cursor?
                 o->presentation_cursor:o->simulation_cursor);
         }
@@ -595,7 +604,7 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     if (o->owns_audio && o->frontend->audio && !qa_audio_engine_stop_owner(o->frontend->audio,o->options.audio_owner,d->physical_seat,e)) return false;
     for (uint64_t id=qa_event_ring_first(o->records);id<qa_event_ring_next(o->records);++id) {
         const unified_received_event *record=qa_event_ring_at(o->records,id);
-        qa_unified_document_destroy(record->document);
+        qa_unified_document_destroy(record->delivery.document);
     }
     for (unified_event_resource *r=o->resources;r;r=r->next) qa_audio_asset_release(r->asset);
     while (o->retained) {
@@ -678,7 +687,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     }
     default: return true;
     }
-    const qa_unified_frame_events *events=o->delivery?qa_unified_document_events(o->delivery->document):NULL;
+    const qa_unified_frame_events *events=o->delivery?qa_unified_document_events(o->delivery->delivery.document):NULL;
     if (!o->busy || !events || o->presentation_at>=events->presentation_count ||
         events->presentation+o->presentation_at!=row)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage is outside its actual retained presentation delivery");
