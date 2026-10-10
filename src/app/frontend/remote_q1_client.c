@@ -311,6 +311,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->baseskin = qa_cvars_resolve(d->cvars, "baseskin");
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&row->sky_controls);
     row->fraction = 1; row->revision = row->next_event = 1;
+    if (!remote_q1_effects_prepare(row,error)) { free(row);return false; }
     qa_catalog_retain(d->catalog);
     frontend_remote_q1 **tail = &f->remote_q1; while (*tail) tail = &(*tail)->next;
     *tail = row; *out = row;
@@ -566,7 +567,7 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     frontend_remote_q1 **link = &row->frontend->remote_q1;
     while (*link && *link != row) link = &(*link)->next;
     if (*link != row) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 owner is outside its real frontend parent list");
-    ++row->busy; bool ok = remote_q1_effects_clear(row, error); --row->busy;
+    ++row->busy; bool ok = remote_q1_effects_destroy(row, error); --row->busy;
     if (!ok) return false;
     remote_q1_clear(row); remote_q1_demo_clear(row);
     free(row->current.rows); free(row->previous.rows); free(row->statics.rows);

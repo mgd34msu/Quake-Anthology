@@ -2,6 +2,7 @@
 #include "remote_q1_private.h"
 #include "remote_q1_hud.h"
 #include "internal.h"
+#include "qa/allocation_gate.h"
 #include "selected_effects_particles.h"
 #include "selected_effects_q1_temporary.h"
 #include "legacy_render_policy.h"
@@ -12,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { LIGHTS = 64, BEAMS = 32 };
+enum { LIGHTS = 64, BEAMS = 32, EFFECT_RECORDS = 65536 };
 typedef struct remote_light {
     qa_vec3 origin, color;
     double birth, die;
@@ -41,6 +42,7 @@ typedef struct remote_ambient {
     uint64_t identity;
 } remote_ambient;
 struct frontend_remote_q1_effects {
+    qa_arena storage;
     frontend_received_music *music;
     bool music_retiring;
     frontend_fx_particles particles;
@@ -60,13 +62,30 @@ struct frontend_remote_q1_effects {
     bool sampled;
 };
 
-static bool owner(frontend_remote_q1 *row, qa_error *error)
+static void reset(frontend_remote_q1_effects *fx)
+{
+    fx->particles=(frontend_fx_particles){.family=QA_GAME_Q1};
+    qa_builtin_random_seed(&fx->random,1);
+    fx->image=NULL;fx->audio=NULL;fx->ambient_count=fx->trail_count=0;
+    memset(fx->lights,0,sizeof(fx->lights));memset(fx->scene_lights,0,sizeof(fx->scene_lights));
+    memset(fx->beams,0,sizeof(fx->beams));fx->sample=0;
+    fx->sampled_seconds=fx->previous_sample=fx->bonus_until=0;fx->sampled=false;
+}
+bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
 {
     if (row->effects) return true;
     frontend_remote_q1_effects *fx = calloc(1, sizeof(*fx));
     if (!fx) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 effects");
-    fx->particles.family = QA_GAME_Q1;
-    qa_builtin_random_seed(&fx->random, 1);
+    size_t ambient_bytes=EFFECT_RECORDS*sizeof(*fx->ambient),trail_bytes=EFFECT_RECORDS*sizeof(*fx->trails);
+    bool okay=qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
+    if (okay) {
+        fx->ambient=qa_arena_alloc(&fx->storage,ambient_bytes,_Alignof(remote_ambient),error);
+        fx->trails=qa_arena_alloc(&fx->storage,trail_bytes,_Alignof(remote_trail),error);
+        okay=fx->ambient && fx->trails;
+    }
+    if (!okay) { qa_arena_destroy(&fx->storage);free(fx);return false; }
+    qa_arena_seal(&fx->storage);fx->ambient_capacity=fx->trail_capacity=EFFECT_RECORDS;
+    reset(fx);
     row->effects = fx;
     return true;
 }
@@ -98,7 +117,6 @@ static bool music_origin(frontend_remote_q1 *row,frontend_music_origin *out,qa_e
 static bool music_track(frontend_remote_q1 *row,uint8_t track,qa_error *error)
 {
     if(!row->frontend->audio)return true;
-    if(!owner(row,error))return false;
     frontend_music_origin origin;
     if(!music_origin(row,&origin,error) || (!row->effects->music &&
         !frontend_received_music_create(row->frontend,&origin,&row->effects->music,error)))return false;
@@ -136,15 +154,10 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
     bool ok;
     if(ambient) {
         if(play.sample->loop_start==QA_AUDIO_NO_LOOP) { qa_audio_asset_release(asset); return true; }
-        if(!owner(row,error)) { qa_audio_asset_release(asset); return false; }
         frontend_remote_q1_effects *fx=row->effects;
         if(fx->ambient_count==fx->ambient_capacity) {
-            size_t capacity=fx->ambient_capacity?fx->ambient_capacity*2:16;
-            if(capacity>65536) capacity=65536;
-            if(fx->ambient_count==capacity) { qa_audio_asset_release(asset); return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 static sound capacity exhausted"); }
-            remote_ambient *values=realloc(fx->ambient,capacity*sizeof(*values));
-            if(!values) { qa_audio_asset_release(asset); return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining remote Q1 ambient sound"); }
-            fx->ambient=values; fx->ambient_capacity=capacity;
+            qa_allocation_gate_capacity_exhausted();qa_audio_asset_release(asset);
+            return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 static sound capacity exhausted");
         }
         fx->ambient[fx->ambient_count++]=(remote_ambient){.asset=asset,.origin=origin,
             .volume=volume,.attenuation=attenuation,.identity=qa_scene_identity()};
@@ -230,14 +243,12 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
         return remote_q1_live(row, error);
     }
     case QA_NQ_PARTICLE:
-        if (!owner(row,error)) return false;
         frontend_fx_q1_particle_event(&row->effects->particles, &row->effects->random,
             vector(message->data.particle.origin), vector(message->data.particle.direction),
             message->data.particle.color, message->data.particle.count, row->seconds);
         return true;
-    case QA_NQ_TEMPENTITY: return owner(row,error) && temporary(row,&message->data.temporary,error);
+    case QA_NQ_TEMPENTITY: return temporary(row,&message->data.temporary,error);
     case QA_NQ_BONUSFLASH:
-        if (!owner(row,error)) return false;
         row->effects->bonus_until = row->seconds + .5; return true;
     case QA_NQ_STUFFTEXT: {
         if(!message->data.text) return remote_q1_fail(error,QA_ERROR_FORMAT,"Received Q1 server command has no text");
@@ -252,8 +263,7 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
             if(ok && tokens.count) {
                 const char *name=tokens.values[0];
                 if((name[0]=='b' || name[0]=='B') && (name[1]=='f' || name[1]=='F') && !name[2]) {
-                    ok=owner(row,error);
-                    if(ok) row->effects->bonus_until=row->seconds+.5;
+                    row->effects->bonus_until=row->seconds+.5;
                 }
             }
             qa_command_tokens_free(&tokens);
@@ -305,9 +315,15 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
             remote_ambient *value=fx->ambient+i;
             qa_audio_asset_release(value->asset);
         }
-        qa_scene_image_release(fx->image); free(fx->ambient); free(fx->trails); free(fx); row->effects = NULL;
+        qa_scene_image_release(fx->image);reset(fx);
     }
     remote_q1_hud_clear(row);
+    return true;
+}
+bool remote_q1_effects_destroy(frontend_remote_q1 *row,qa_error *error)
+{
+    if (!remote_q1_effects_clear(row,error)) return false;
+    if (row->effects) { qa_arena_destroy(&row->effects->storage);free(row->effects);row->effects=NULL; }
     return true;
 }
 bool remote_q1_effects_music(const frontend_remote_q1 *row,uint64_t *bus,qa_audio_music **player)
@@ -347,12 +363,8 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         size_t at=0; while(at<fx->trail_count && fx->trails[at].entity!=entity->number) ++at;
         if(at==fx->trail_count) {
             if(at==fx->trail_capacity) {
-                size_t capacity=fx->trail_capacity?fx->trail_capacity*2:32;
-                if(capacity>65536) capacity=65536;
-                if(at==capacity) return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 trail table exceeds received actors");
-                remote_trail *values=realloc(fx->trails,capacity*sizeof(*values));
-                if(!values) return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining Q1 trails");
-                fx->trails=values; fx->trail_capacity=capacity;
+                qa_allocation_gate_capacity_exhausted();
+                return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 trail table exceeds received actors");
             }
             fx->trails[fx->trail_count++]=(remote_trail){entity->number,entity->model,point,fx->sample};
         }
@@ -377,7 +389,7 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
 bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
     const qa_scene_light **out,size_t *count,qa_error *error)
 {
-    if(!row || !out || !count || !remote_q1_mutable(row) || !isfinite(seconds) || !remote_q1_live(row,error) || !owner(row,error)) return false;
+    if(!row || !out || !count || !remote_q1_mutable(row) || !isfinite(seconds) || !remote_q1_live(row,error)) return false;
     frontend_remote_q1_effects *fx=row->effects;
     if(!fx->sampled || seconds!=fx->sampled_seconds) {
         if(fx->sample==UINT64_MAX) return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 effect samples exhausted");
