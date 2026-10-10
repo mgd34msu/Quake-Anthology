@@ -192,11 +192,11 @@ static bool emit(void *context, const qa_q2_server_record *record, qa_error *err
 
 bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_actor_owner host_source,
     const qa_application_protocol_event *source, const qa_application_q2_protocol_delivery *delivery,
-    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, size_t capacity,
-    qa_buffer *out, qa_error *error)
+    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, uint8_t *storage,
+    size_t capacity, qa_bytes *out, qa_error *error)
 {
     if (!publisher || !host_source || !source || !delivery || !client || !codec || !out || out->data || out->size ||
-        !capacity || !epoch || !client->seats || !client->seat_count || client->seat_count > QA_Q2_MAX_SEATS ||
+        !storage || !capacity || !epoch || !client->seats || !client->seat_count || client->seat_count > QA_Q2_MAX_SEATS ||
         (source->payload.size && !source->payload.data) || (source->reference_count && !source->references) ||
         (source->resource_count && !source->resources) || !delivery->original ||
         (delivery->profile != QA_NATIVE_Q2_GAME_API3 && delivery->profile != QA_NATIVE_Q2_GAME_API2023) ||
@@ -209,11 +209,9 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     for (size_t i = 0; i < client->seat_count; ++i)
         if (client->seats[i].remote_index >= QA_Q2_MAX_SEATS)
             return fail(error, QA_ERROR_FORMAT, "Q2 event connection seat exceeds its admitted marker range");
-    qa_buffer bytes = {.data = malloc(capacity)};
-    if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Allocating admitted Q2 Source event packet");
     q2_event_packet packet = {.publisher = publisher, .host_source = host_source, .source = source,
         .delivery = delivery, .client = client, .epoch = epoch, .codec = *codec};
-    qa_net_writer_init(&packet.writer, bytes.data, capacity, error);
+    qa_net_writer_init(&packet.writer, storage, capacity, error);
     qa_net_protocol_id protocol = {.kind = delivery->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
     qa_q2_message_options options = {.config_strings = delivery->profile == QA_NATIVE_Q2_GAME_API3 ? 2080u : 12448u,
         .inventory_slots = 256, .native_api2023 = delivery->profile == QA_NATIVE_Q2_GAME_API2023};
@@ -223,17 +221,16 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
         qa_q2_messages_create(protocol, &options, &decoder, error) &&
         qa_q2_messages_read(decoder, source->payload, emit, &packet, error);
     qa_q2_messages_destroy(decoder);
-    if (!ok) { qa_buffer_free(&bytes); return false; }
-    bytes.size = qa_net_writer_size(&packet.writer);
-    if (!bytes.size) qa_buffer_free(&bytes);
-    *out = bytes; return true;
+    if (!ok) return false;
+    size_t size = qa_net_writer_size(&packet.writer);
+    *out = (qa_bytes){size ? storage : NULL, size}; return true;
 }
 
 bool frontend_network_q2_print_packet(const qa_application_q2_player_event *source,
-    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, size_t capacity,
-    qa_buffer *out, qa_error *error)
+    const qa_net_client *client, uint64_t epoch, const qa_q2_codec *codec, uint8_t *storage,
+    size_t capacity, qa_bytes *out, qa_error *error)
 {
-    if (!source || !client || !codec || !out || out->data || out->size || !capacity || !epoch ||
+    if (!source || !client || !codec || !out || out->data || out->size || !storage || !capacity || !epoch ||
         source->event.kind != QA_Q2_PLAYER_PRINT || !source->event.text ||
         source->event.level < 0 || source->event.level > UINT8_MAX ||
         (source->recipient_count && !source->recipients) ||
@@ -258,10 +255,8 @@ bool frontend_network_q2_print_packet(const qa_application_q2_player_event *sour
     bool kex = codec->protocol.kind == QA_NET_Q2KEX_2023;
     if (!kex && client->seat_count != 1)
         return fail(error, QA_ERROR_FORMAT, "Q2 print needs its genuine single-seat wire");
-    qa_buffer bytes = {.data = malloc(capacity)};
-    if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Allocating admitted Q2 Source print packet");
     q2_event_packet packet = {.codec = *codec};
-    qa_net_writer_init(&packet.writer, bytes.data, capacity, error);
+    qa_net_writer_init(&packet.writer, storage, capacity, error);
     qa_q2_server_event event = {.kind = QA_Q2_SVC_PRINT,
         .data.print = {(uint8_t)source->event.level, source->event.text}};
     bool ok;
@@ -275,7 +270,8 @@ bool frontend_network_q2_print_packet(const qa_application_q2_player_event *sour
                 qa_q2_server_event_write(&packet.codec, &packet.writer, &event);
         if (ok) ok = marker(&packet, 1);
     }
-    if (!ok) { qa_buffer_free(&bytes); return false; }
-    bytes.size = qa_net_writer_size(&packet.writer); *out = bytes;
+    if (!ok) return false;
+    size_t size = qa_net_writer_size(&packet.writer);
+    *out = (qa_bytes){size ? storage : NULL, size};
     return true;
 }

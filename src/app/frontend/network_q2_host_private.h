@@ -23,7 +23,9 @@ typedef struct q2_host_peer {
     qa_event_receipts event_receipts;
     uint64_t event_pending_first, event_pending_after;
     uint64_t event_transport_first, event_transport_after, event_transport_before;
-    qa_buffer event_packet;
+    qa_bytes event_packet;
+    uint8_t *event_storage;
+    size_t event_capacity;
     bool event_pending,event_reliable,event_player;
     bool reserved,committed,retiring;
     bool material_scripts;
@@ -57,6 +59,7 @@ struct frontend_network_q2_host {
     frontend_demo_sink demo_sink;
     qa_actor_id demo_actor;
     qa_q2_codec demo_codec;
+    uint8_t demo_bytes[65535];
     char **demo_configs;
     size_t demo_config_count;
     uint64_t demo_event_cursor, demo_player_event_cursor;

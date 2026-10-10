@@ -252,7 +252,7 @@ static bool abort_claim(void *context,const qa_q2_server_admission *claim,qa_err
     if(peer->host!=host) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 cleanup names another Source claim");
     if(!retire_source(host,peer,error)) return false;
     qa_q2_unicast_remove_client(host->unicast,peer->client);
-    configs_free(peer); qa_buffer_free(&peer->event_packet);
+    configs_free(peer); free(peer->event_storage);
     qa_application_network_q2_destroy(peer->source); qa_application_network_q2_destroy(peer->travel_source);
     qa_application_network_q2_destroy(peer->import_source);
     *peer=(q2_host_peer){.host=host}; return true;
@@ -328,6 +328,11 @@ static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_c
     frontend_network_q2_host *host=context; q2_host_peer *peer=claim?claim->source_claim:NULL;
     if(!peer || peer->host!=host || !peer->reserved || peer->committed || !current(host,error)) return false;
     peer->client=id; peer->committed=true;
+    qa_network_q2_state transport;
+    if(!qa_network_q2_state_read(host->options.runtime,id,&transport,error)) return false;
+    peer->event_capacity=transport.channel.capacity;
+    peer->event_storage=malloc(peer->event_capacity);
+    if(!peer->event_storage) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating admitted Q2 event packet storage");
     peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
     peer->event_cursor=qa_application_events_local_first(host->options.frontend->application);
     peer->player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
@@ -495,7 +500,7 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
         peer->admission.policy.server_count=transport.server_count+1;
         peer->admission.policy.source_interval_ns=actual.source.clock_config.interval_ns;
         peer->admission.connection.composition=host->options.composition;
-        configs_free(peer); qa_buffer_free(&peer->event_packet); peer->event_pending=false; peer->event_player=false;
+        configs_free(peer); peer->event_packet=(qa_bytes){0}; peer->event_pending=false; peer->event_player=false;
         peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
         peer->event_cursor=qa_application_events_local_first(host->options.frontend->application);
         peer->player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
@@ -611,11 +616,11 @@ static bool publish_event_packet(q2_host_peer *peer,qa_error *error)
         peer->event_transport_after=peer->event_pending_after;
     } else if(!qa_event_receipts_submit(&peer->event_receipts,peer->event_pending_first,
         peer->event_pending_after,peer->event_reliable?transport.reliable.queued:0)) return event_drop(peer,error);
-    qa_buffer_free(&peer->event_packet); peer->event_pending=false;
+    peer->event_packet=(qa_bytes){0}; peer->event_pending=false;
     peer->event_player=false;
     return true;
 }
-static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t capacity,qa_error *error)
+static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_error *error)
 {
     qa_application *app=peer->host->options.frontend->application;
     if(peer->event_pending && !publish_event_packet(peer,error)) return false;
@@ -638,12 +643,13 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,size_t
             if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original) {
                 if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
                     &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
-                    capacity,&peer->event_packet,error)) return false;
+                    peer->event_storage,peer->event_capacity,&peer->event_packet,error)) return false;
                 reliable=event.reliable;
             }
         } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT) {
             if(!frontend_network_q2_print_packet(&player,client,
-                qa_network_epoch(peer->host->options.runtime,peer->client),codec,capacity,&peer->event_packet,error)) return false;
+                qa_network_epoch(peer->host->options.runtime,peer->client),codec,peer->event_storage,
+                peer->event_capacity,&peer->event_packet,error)) return false;
             reliable=true; print=true;
         }
         ++cursor;
@@ -693,7 +699,7 @@ bool frontend_network_q2_host_publish(frontend_network_q2_host *host,uint64_t no
             if(error) *error=publication;
             return false;
         }
-        if(!publish_events(peer,client,transport.channel.capacity,&publication)) {
+        if(!publish_events(peer,client,&publication)) {
             if(publication.code==QA_ERROR_UNSUPPORTED || queue_pressure(&publication)) {
                 if(!event_drop(peer,error)) return false;
                 continue;
@@ -966,27 +972,25 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     host->demo_event_cursor=host->demo_player_event_cursor=cursor;
     while(cursor<next) {
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
-        qa_application_q2_player_event player; qa_buffer bytes={0}; bool ok=true;
+        qa_application_q2_player_event player; qa_bytes bytes={0}; bool ok=true;
         if(qa_application_protocol_event_at(app,cursor,0,&event)) {
             if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original)
                 ok=frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
-                    client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,65535,&bytes,error);
+                    client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
+                    host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
         } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT)
             ok=frontend_network_q2_print_packet(&player,client,qa_network_epoch(host->options.runtime,client->id),
-                &host->demo_codec,65535,&bytes,error);
+                &host->demo_codec,host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
         if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);
-        qa_buffer_free(&bytes); if(!ok) return false;
+        if(!ok) return false;
         ++cursor;
         host->demo_event_cursor=host->demo_player_event_cursor=cursor;
     }
     qa_q2_wire_frame frame;
     if(!qa_application_network_q2_frame(host->discovery,&host->demo_actor,1,&frame,error)) return false;
-    uint8_t *bytes=malloc(65535);
-    if(!bytes) return frontend_fail(error,QA_ERROR_MEMORY,"Encoding Q2 native demo frame");
-    qa_net_writer writer; qa_net_writer_init(&writer,bytes,65535,error);
+    qa_net_writer writer; qa_net_writer_init(&writer,host->demo_bytes,sizeof(host->demo_bytes),error);
     bool ok=qa_q2_frame_write(&host->demo_codec,&writer,&frame,NULL,(qa_q2_entity_span){0},host->source.client_slots) &&
-        demo_host_packet(host,(qa_bytes){bytes,qa_net_writer_size(&writer)},error);
-    free(bytes);
+        demo_host_packet(host,(qa_bytes){host->demo_bytes,qa_net_writer_size(&writer)},error);
     if(ok) { host->demo_frame=source_frame; host->demo_frame_set=true; }
     return ok && generation==qa_application_protocol_events_generation(app);
 }

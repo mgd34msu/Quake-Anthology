@@ -86,7 +86,7 @@ void frontend_network_q2_host_restore_abort(frontend_network_q2_host **owned)
     for(size_t i=0;h->peers && i<h->capacity;++i) {
         q2_host_peer *p=&h->peers[i];
         qa_application_network_q2_destroy(p->source); qa_application_network_q2_destroy(p->travel_source);
-        qa_application_network_q2_destroy(p->import_source); qa_buffer_free(&p->event_packet);
+        qa_application_network_q2_destroy(p->import_source); free(p->event_storage);
         for(size_t j=0;p->configs && j<p->config_count;++j) free(p->configs[j]);
         free(p->configs);
         for(size_t j=0;p->signon_configs && j<p->signon_config_count;++j) free(p->signon_configs[j]);
