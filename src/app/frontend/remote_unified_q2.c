@@ -88,7 +88,7 @@ typedef struct q2_bank {
     const qa_font *native_font;
     q2_alias *aliases;
     size_t alias_count;
-    char *styles[256];
+    const char *styles[256];
     uint64_t style_sequences[256];
 } q2_bank;
 struct q2_native_picture {
@@ -137,7 +137,9 @@ struct frontend_unified_q2 {
     qa_unified_document *status_metadata, *prepared_status_metadata;
     qa_hud *hud;
     frontend_unified_q2_rr_hud *rr_hud;
-    char *help, *layout, *help_text[2];
+    char *help,*help_text[2];
+    const char *layout;
+    qa_unified_document *layout_document;
     bool help_visible;
     bool inventory_visible,score_visible;
     const qa_inventory_entry *items;
@@ -170,8 +172,6 @@ struct frontend_unified_q2 {
     bool viewer_origin_present;
     qa_localization_pool *localizations;
     q2_activation *help_owner[2];
-    char **config;
-    size_t config_count;
     int32_t inventory[256];
     qa_hud_q2_table table;
     double seconds, prepared_seconds;
@@ -352,7 +352,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
         o->view_owner=NULL;o->view_profile=0;o->view_layouts=0;o->view_gun_offset=qa_v3(0,0,0);o->view_actor=(qa_actor_id){0};
         o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_vec4){0};o->view_damage_blend=(qa_vec4){0}; }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a) {
-        for (size_t i=0;i<256;++i) {free(b->styles[i]);b->styles[i]=NULL;b->style_sequences[i]=0;}
+        for (size_t i=0;i<256;++i) {b->styles[i]=NULL;b->style_sequences[i]=0;}
         if (b->effects && !frontend_remote_q2_effects_retire_presentation(b->effects,e)) return false;
     }
     o->music_retiring=true;
@@ -1234,7 +1234,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     case QA_Q2_MAP_MUSIC:return music_receive(o,row,resource?resource:event_text,e);
     case QA_Q2_MAP_ACHIEVEMENT:return achievement(o,row,event_text,true,e);
     case QA_Q2_MAP_LIGHTSTYLE:{if (v->style<0 || v->style>=256 || !source_bank(o,row,false,&b,e))return false;
-        char *text=text_copy(event_text?event_text:"");if (!text)return false;free(b->styles[v->style]);b->styles[v->style]=text;b->style_sequences[v->style]=row->sequence;return true;}
+        b->styles[v->style]=event_text?event_text:"";b->style_sequences[v->style]=row->sequence;return true;}
     case QA_Q2_MAP_SKY:return sky_receive(o,row,v,e);
     case QA_Q2_MAP_STORY:{qa_unified_document *document=NULL;
         if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
@@ -1421,12 +1421,13 @@ bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simu
      * simulation state; do not keep a second history just to re-validate it. */
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_MUZZLE_FLASH) return true;
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_INVENTORY){for(size_t i=0;i<256;++i)o->inventory[i]=v->counts[i];return true;}
-    char *text=text_copy(v->text);if (!text)return false;
-    if (v->kind==QA_UNIFIED_MESSAGE_Q2_LAYOUT){free(o->layout);o->layout=text;return true;}
-    size_t index=v->index;
-    if (index>=o->config_count){size_t n=index+1;void *p=realloc(o->config,n*sizeof(*o->config));if (!p){free(text);return false;}
-        o->config=p;memset(o->config+o->config_count,0,(n-o->config_count)*sizeof(*o->config));o->config_count=n;}
-    free(o->config[index]);o->config[index]=text;
+    if (v->kind==QA_UNIFIED_MESSAGE_Q2_LAYOUT) {
+        qa_unified_document *document=NULL;
+        if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
+        qa_unified_document_destroy(o->layout_document);o->layout_document=document;o->layout=v->text;
+    }
+    /* Configstrings are already retained by reliable HUD metadata and native
+     * components. This simulation notification has no second config store. */
     return true;
 }
 
@@ -1898,14 +1899,12 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m->path); free(m); }
         q2_native_picture *picture=b->native_pictures;
         while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture->name);free(picture);picture=next;}
-        for (size_t i=0;i<256;++i) free(b->styles[i]);
         o->banks=b->next; free(b->aliases); free(b->source_provider); free(b->content); free(b);
     }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
-    if (o->config) for (size_t i=0;i<o->config_count;++i) free(o->config[i]);
-    free(o->config); free(o->help); free(o->help_text[0]); free(o->help_text[1]);
+    free(o->help); free(o->help_text[0]); free(o->help_text[1]);
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
     qa_unified_document_destroy(o->story_document);sky_clear(o);
@@ -1914,7 +1913,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
-    qa_arena_destroy(&o->pose_storage);free(o->layout);free(o);*slot=NULL;return true;
+    qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);free(o);*slot=NULL;return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
