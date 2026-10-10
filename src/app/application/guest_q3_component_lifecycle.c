@@ -1,4 +1,5 @@
 #include "guest_q3_component_private.h"
+#include "control_frame.h"
 
 static bool slot(application_q3_component *c,int32_t pointer,uint32_t *out,qa_error *e)
 {
@@ -55,6 +56,15 @@ static bool finish_call(application_q3_component *c,component_call_lease *lease,
     if(lease->scope&&!application_q3_component_records_leave(c->records,&lease->scope,lease->succeeded,lease->result,e)) return false;
     return q3component_player_events_publish(c,lease->succeeded,e);
 }
+static component_call_lease *call_create(application_q3_component *c,qa_error *e)
+{
+    qa_unified_frame_lease *storage=application_control_storage_acquire(c->options.application,e);
+    if(!storage) return NULL;
+    component_call_lease *lease=qa_unified_frame_lease_alloc(storage,1,sizeof(*lease),
+        _Alignof(component_call_lease),e);
+    if(!lease) { qa_unified_frame_lease_release(storage); return NULL; }
+    lease->storage=storage; return lease;
+}
 static bool drain(application_q3_component *c,qa_error *e)
 {
     if(c->draining) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component cleanup is already consuming its retained source call");
@@ -62,7 +72,7 @@ static bool drain(application_q3_component *c,qa_error *e)
     while(c->calls) {
         component_call_lease *lease=c->calls;
         if(!finish_call(c,lease,e)) { c->draining=false; return false; }
-        c->calls=lease->next; free(lease);
+        c->calls=lease->next; qa_unified_frame_lease_release(lease->storage);
     }
     c->draining=false;
     return true;
@@ -70,12 +80,12 @@ static bool drain(application_q3_component *c,qa_error *e)
 bool q3component_call(application_q3_component *c,uint32_t entry,const int32_t *words,size_t count,int32_t *result,qa_error *e)
 {
     if(!q3component_current(c,e)||!drain(c,e)||!application_q3_component_records_prepare(c->records,e)) return false;
-    component_call_lease *lease=calloc(1,sizeof(*lease)); if(!lease) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component call cleanup");
+    component_call_lease *lease=call_create(c,e); if(!lease) return false;
     bool ok=application_q3_component_records_enter(c->records,entry,words,count,&lease->scope,e);
     if(ok) ok=qa_qvm_invoke(c->vm,entry,words,count,&lease->result,e);
     lease->succeeded=ok; int32_t raw=lease->result; qa_error first=e?*e:(qa_error){0},cleanup={0};
     bool closed=finish_call(c,lease,&cleanup);
-    if(!closed) { lease->next=c->calls; c->calls=lease; } else free(lease);
+    if(!closed) { lease->next=c->calls; c->calls=lease; } else qa_unified_frame_lease_release(lease->storage);
     if(!ok) { if(e) *e=first; return false; }
     if(!closed) { if(e) *e=cleanup; return false; }
     if(result) *result=raw;
@@ -98,23 +108,23 @@ static bool hook(void *context,const qa_qvm_call *call,int32_t *result,qa_error 
     if(!q3component_current(c,e)) return false;
     if(!application_q3_mod_actors_entry_begin(c->actor_semantics,call,e)) return false;
     bool source=call->caller_instruction!=UINT32_MAX;
-    component_call_lease *lease=calloc(1,sizeof(*lease));
+    component_call_lease *lease=call_create(c,e);
     if(!lease) {
         application_q3_mod_actors_entry_end(c->actor_semantics,call);
-        return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component function scope");
+        return false;
     }
     int32_t words[62]; size_t count=call->argument_count;
     bool ok=count<=62;
     for(size_t i=0;ok&&i<count;++i) ok=qa_qvm_call_argument(call,i,words+i,e);
     if(ok&&source&&(binding->allocate||binding->release)) ok=application_q3_component_records_prepare(c->records,e)&&application_q3_component_records_enter(c->records,call->instruction,words,count,&lease->scope,e);
-    if(ok&&binding->middleware) ok=application_q3_mod_entry_begin(c->mod,call,&lease->middleware,e);
+    if(ok&&binding->middleware) ok=application_q3_mod_entry_begin(c->mod,call,lease->storage,&lease->middleware,e);
     bool actor=false;
     if(ok) ok=application_q3_mod_actors_match(c->actor_semantics,call,&actor,e);
     if(ok) ok=actor?application_q3_mod_actors_hook_run(c->actor_semantics,call,hook_body,binding,&lease->result,e):
         hook_body(binding,call,&lease->result,e);
     lease->succeeded=ok; int32_t raw=lease->result; qa_error first=e?*e:(qa_error){0},cleanup={0};
     bool closed=finish_call(c,lease,&cleanup);
-    if(!closed) { lease->next=c->calls; c->calls=lease; } else free(lease);
+    if(!closed) { lease->next=c->calls; c->calls=lease; } else qa_unified_frame_lease_release(lease->storage);
     application_q3_mod_actors_entry_end(c->actor_semantics,call);
     if(!ok) { if(e) *e=first; return false; }
     if(!closed) { if(e) *e=cleanup; return false; }

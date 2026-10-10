@@ -13,6 +13,7 @@ typedef struct component_hook {
 } component_hook;
 typedef struct component_call_lease {
     struct component_call_lease *next;
+    qa_unified_frame_lease *storage;
     void *scope;
     application_q3_mod_entry *middleware;
     bool succeeded;

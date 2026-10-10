@@ -121,7 +121,7 @@ bool application_q3_mod_stage_run(application_q3_mod *, application_q3_mod_stage
 size_t application_q3_mod_entry_count(const application_q3_mod *);
 bool application_q3_mod_entry_instruction(const application_q3_mod *, size_t, uint32_t *);
 bool application_q3_mod_entry_begin(application_q3_mod *, const qa_qvm_call *,
-    application_q3_mod_entry **, qa_error *);
+    qa_unified_frame_lease *, application_q3_mod_entry **, qa_error *);
 bool application_q3_mod_entry_end(application_q3_mod_entry **,
     bool succeeded, int32_t result, qa_error *);
 /* Application identity is the actual open scope, even for recursive same-actor

@@ -36,7 +36,7 @@ struct application_q3_mod_entry {
     application_q3_mod_capture *capture;
     selected_entry *selected;
     size_t count;
-    bool pooled;
+    qa_unified_frame_lease *capture_storage;
 };
 static bool active(const application_q3_mod_capture *c)
 {
@@ -228,20 +228,21 @@ static bool pointer(application_q3_mod *o, const mod_pointer *p, const qa_qvm_ca
     *out=(uint32_t)address; return true;
 }
 bool application_q3_mod_entry_begin(application_q3_mod *o, const qa_qvm_call *call,
-    application_q3_mod_entry **out, qa_error *e)
+    qa_unified_frame_lease *storage, application_q3_mod_entry **out, qa_error *e)
 {
     if (!o || !out || *out || !call || call->vm!=o->vm || !q3mod_current(o,e))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Input entry requires its actual source token and empty scope");
-    qa_unified_frame_lease *storage=o->application?o->application->storage:NULL;
-    application_q3_mod_entry *scope=storage?qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),
-        _Alignof(application_q3_mod_entry),e):calloc(1,sizeof(*scope));
+    application_q3_mod_entry *scope=qa_unified_frame_lease_alloc(storage,1,sizeof(*scope),
+        _Alignof(application_q3_mod_entry),e);
     if (!scope) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original input entry boundary");
-    scope->owner=o;scope->pooled=storage!=NULL; scope->capture=active(o->capture)?o->capture:NULL;
+    scope->owner=o; scope->capture=active(o->capture)?o->capture:NULL;
     if (scope->capture) {
         application_q3_mod_capture *c=scope->capture;
+        if (!qa_unified_frame_lease_retain(c->application->storage,e)) return false;
+        scope->capture_storage=c->application->storage;
         scope->selected=c->binding->output_count?qa_unified_frame_lease_alloc(storage,c->binding->output_count,
             sizeof(*scope->selected),_Alignof(selected_entry),e):NULL;
-        if (c->binding->output_count && !scope->selected) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original handler selection");
+        if (c->binding->output_count && !scope->selected) goto fail;
         for (size_t i=0;i<c->binding->output_count;++i) {
             const mod_output *d=c->binding->outputs+i;
             if (d->kind==MOD_FIELD || d->entry!=call->instruction) continue;
@@ -251,7 +252,7 @@ bool application_q3_mod_entry_begin(application_q3_mod *o, const qa_qvm_call *ca
             selected_entry *selected=scope->selected+scope->count++;
             selected->definition=d;
             if (d->kind==MOD_COMMAND) {
-                input_command *command=qa_unified_frame_lease_alloc(storage,1,sizeof(*command),_Alignof(input_command),e);
+                input_command *command=qa_unified_frame_lease_alloc(c->application->storage,1,sizeof(*command),_Alignof(input_command),e);
                 if (!command) { q3mod_fail(e,QA_ERROR_MEMORY,"Retaining actual user-command baseline"); goto fail; }
                 command->definition=d;
                 uint8_t qualification[24];
@@ -299,7 +300,7 @@ bool application_q3_mod_entry_end(application_q3_mod_entry **in, bool succeeded,
         }
     }
     --scope->owner->calls;
-    if (!scope->pooled) free(scope);
+    qa_unified_frame_lease_release(scope->capture_storage);
     *in=NULL; return ok;
 }
 bool application_q3_mod_input_run(application_q3_mod *o, size_t index,
