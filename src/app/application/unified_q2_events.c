@@ -404,16 +404,12 @@ bool application_unified_q2_protocol_event(application_provider *provider,
         return application_fail(e, QA_ERROR_ARGUMENT, "Q2 protocol projection lost its actual GAME Source");
     q2_projection p = {.provider = provider, .engine = engine, .message = message, .delivery = delivery,
         .time_ns = delivery && delivery->audience.captured ? delivery->audience.source_time_ns : clock.frame.time_ns};
-    qa_net_protocol_id protocol = {.kind = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
-    qa_q2_message_options options = {.config_strings = engine->configstring_count, .inventory_slots = 256,
-        .native_api2023 = engine->profile == QA_NATIVE_Q2_GAME_API2023};
-    qa_q2_messages *decoder = NULL;
-    bool ok = qa_q2_messages_create(protocol, &options, &decoder, e) &&
-        qa_q2_messages_read(decoder, message->payload, validate, NULL, e);
+    qa_q2_messages *decoder = engine->event_decoder;
+    qa_q2_messages_reset(decoder);
+    bool ok = qa_q2_messages_read(decoder, message->payload, validate, NULL, e);
     if (ok) {
         qa_q2_messages_reset(decoder);
         ok = qa_q2_messages_read(decoder, message->payload, receive, &p, e);
     }
-    qa_q2_messages_destroy(decoder);
     return ok;
 }

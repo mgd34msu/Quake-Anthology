@@ -382,6 +382,12 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     engine->configstrings = calloc(engine->configstring_count, sizeof(*engine->configstrings));
     if (!engine->configstrings)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");
+    if (!cgame) {
+        qa_net_protocol_id protocol = {.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+        qa_q2_message_options options = {.config_strings = engine->configstring_count,
+            .inventory_slots = 256, .native_api2023 = rerelease};
+        if (!qa_q2_messages_create(protocol, &options, &engine->event_decoder, error)) return false;
+    }
     if (!qa_strings_intern_cstr(qa_session_strings(app->session),
             "native-q2:entity", &engine->definition, error)) return false;
     engine->platform.content_files = provider->launch->content;
@@ -823,6 +829,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     qa_native_declaration_destroy(engine->declaration);
     qa_command_tokens_free(&engine->arguments);
     application_network_q2_retire_bindings(engine);
+    qa_q2_messages_destroy(engine->event_decoder);
     free(engine->configstrings); free(engine->entity_text); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;

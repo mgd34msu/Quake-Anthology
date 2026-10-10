@@ -11,6 +11,7 @@ struct qa_q2_messages {
     qa_q2_codec codec;
     qa_q2_message_options options;
     char **configs;
+    int16_t *inventory;
     size_t config_capacity;
     qa_q2_entity *baselines;
     size_t baseline_count, baseline_capacity;

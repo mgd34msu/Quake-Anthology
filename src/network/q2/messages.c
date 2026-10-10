@@ -66,6 +66,7 @@ void qa_q2_messages_destroy(qa_q2_messages *m) {
     qa_q2_messages_reset(m);
     for (size_t i = 0; i < QA_Q2_MAX_SEATS; ++i) qa_q2_frame_history_destroy(m->histories[i]);
     free(m->configs);
+    free(m->inventory);
     free(m->baselines);
     free(m);
 }
@@ -83,10 +84,11 @@ bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_opti
     if (!m->options.history_capacity) m->options.history_capacity = 16;
     if (!m->options.max_inflated_bytes) m->options.max_inflated_bytes = 64u * 1024u * 1024u;
     m->configs = calloc(options->config_strings, sizeof(*m->configs));
+    m->inventory = malloc(options->inventory_slots * sizeof(*m->inventory));
     m->config_capacity = options->config_strings;
-    if (!m->configs || !qa_q2_codec_init(&m->codec, protocol, error)) {
-        if (!m->configs) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 config strings");
-        free(m->configs); free(m); return false;
+    if (!m->configs || !m->inventory || !qa_q2_codec_init(&m->codec, protocol, error)) {
+        if (!m->configs || !m->inventory) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 decoder buffers");
+        free(m->configs); free(m->inventory); free(m); return false;
     }
     *out = m;
     return true;
@@ -392,7 +394,6 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
             continue;
         }
         qa_buffer owned = {0};
-        int16_t *inventory = NULL;
         bool ok = true, end = false;
         switch (opcode) {
         case 6: event.kind = QA_Q2_SVC_NOP; break;
@@ -445,10 +446,8 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
         }
         case 5:
             event.kind = QA_Q2_SVC_INVENTORY;
-            inventory = malloc(m->options.inventory_slots * sizeof(*inventory));
-            if (!inventory) { ok = qa_net_reader_fail(r, "Cannot read Q2 inventory"); break; }
-            for (size_t i = 0; i < m->options.inventory_slots; ++i) inventory[i] = qa_net_read_i16(r);
-            event.data.inventory.counts = inventory; event.data.inventory.count = m->options.inventory_slots;
+            for (size_t i = 0; i < m->options.inventory_slots; ++i) m->inventory[i] = qa_net_read_i16(r);
+            event.data.inventory.counts = m->inventory; event.data.inventory.count = m->options.inventory_slots;
             break;
         case 16: ok = read_download(m, r, 0, &event, &owned); break;
         case 21:
@@ -511,7 +510,7 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
             break;
         }
         if (ok && !r->failed) ok = emit_record(m, r, start, opcode, &event, emit, user);
-        qa_buffer_free(&owned); free(inventory);
+        qa_buffer_free(&owned);
         if (!ok) return qa_net_reader_fail(r, "Invalid or unbound Q2 server service");
         if (r->failed) return false;
     }

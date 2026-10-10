@@ -71,6 +71,7 @@ struct application_native_q2 {
     qa_actor_definition definition;
     application_native_q2_client clients[257];
     qa_string_id *configstrings;
+    qa_q2_messages *event_decoder;
     uint32_t configstring_count, resource_base[3], resource_limit[3];
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
