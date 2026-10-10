@@ -52,7 +52,7 @@ bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *,boo
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
     uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);
 void frontend_view_q1_bonus(frontend_q1_view_motion *);
-bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *,const char *,qa_error *);
+bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *,const char *,qa_arena *,qa_error *);
 bool frontend_view_q1_local_bonus(qa_frontend *,qa_actor_id,qa_error *);
 bool frontend_view_q1_local_bonus_commands(qa_frontend *,qa_actor_id,const char *,qa_error *);
 qa_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,

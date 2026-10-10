@@ -242,15 +242,13 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
     case QA_NQ_STUFFTEXT: {
         if(!message->data.text) return remote_q1_fail(error,QA_ERROR_FORMAT,"Received Q1 server command has no text");
         size_t length=strlen(message->data.text);
-        char *text=malloc(length+1);
-        if(!text) return remote_q1_fail(error,QA_ERROR_MEMORY,"Reading received Q1 effect commands");
-        memcpy(text,message->data.text,length+1);
+        const char *text=message->data.text;
         bool ok=true;
         for(size_t at=0;ok && at<length;) {
             size_t count=qa_command_separator(text+at,length-at,QA_RULESET_NETQUAKE);
-            text[at+count]=0;
             qa_command_tokens tokens={0};
-            ok=qa_command_tokenize(text+at,QA_RULESET_NETQUAKE,false,&tokens, NULL, NULL,error);
+            ok=qa_command_tokenize_span(text+at,count,QA_RULESET_NETQUAKE,false,&tokens,
+                qa_arena_alloc_callback,&row->frontend->frame.storage,error);
             if(ok && tokens.count) {
                 const char *name=tokens.values[0];
                 if((name[0]=='b' || name[0]=='B') && (name[1]=='f' || name[1]=='F') && !name[2]) {
@@ -261,7 +259,7 @@ bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *mes
             qa_command_tokens_free(&tokens);
             at+=count+1;
         }
-        free(text); return ok;
+        return ok;
     }
     case QA_NQ_CENTERPRINT: case QA_NQ_FINALE: case QA_NQ_CUTSCENE: {
         uint32_t seat = row->options.domain.physical_seat;

@@ -289,21 +289,19 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
 }
 void frontend_view_q1_bonus(frontend_q1_view_motion *state)
 { state->bonus_percent = 50; }
-bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char *text, qa_error *error)
+bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char *text, qa_arena *storage, qa_error *error)
 {
     if (!state || !text) return fail(error, "Q1 bonus command lost its actual client text");
     for (const char *at = text; *at;) {
         size_t length = strlen(at), size = qa_command_separator(at, length, QA_RULESET_NETQUAKE);
-        char *line = malloc(size + 1);
-        if (!line) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 client command");
-        memcpy(line, at, size); line[size] = 0;
         qa_command_tokens tokens = {0};
-        bool okay = qa_command_tokenize(line, QA_RULESET_NETQUAKE, false, &tokens, NULL, NULL, error);
+        bool okay = qa_command_tokenize_span(at, size, QA_RULESET_NETQUAKE, false, &tokens,
+            qa_arena_alloc_callback, storage, error);
         if (okay && tokens.count && strlen(tokens.values[0]) == 2 &&
             (tokens.values[0][0] == 'b' || tokens.values[0][0] == 'B') &&
             (tokens.values[0][1] == 'f' || tokens.values[0][1] == 'F'))
             frontend_view_q1_bonus(state);
-        qa_command_tokens_free(&tokens); free(line);
+        qa_command_tokens_free(&tokens);
         if (!okay) return false;
         at += size < length ? size + 1 : size;
     }
@@ -323,7 +321,7 @@ static bool local_bonus(qa_frontend *f, qa_actor_id actor, const char *commands,
         if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
             seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
         }
-        if (commands) return frontend_view_q1_bonus_commands(&seat->q1_view_motion, commands, error);
+        if (commands) return frontend_view_q1_bonus_commands(&seat->q1_view_motion, commands, &f->frame.storage, error);
         frontend_view_q1_bonus(&seat->q1_view_motion); return true;
     }
     return true;

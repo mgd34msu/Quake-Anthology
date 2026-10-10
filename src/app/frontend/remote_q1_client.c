@@ -449,7 +449,7 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
     case QA_NQ_INTERMISSION: case QA_NQ_FINALE: case QA_NQ_CUTSCENE: row->intermission = true; break;
     case QA_NQ_STUFFTEXT:
         ok=reconnect(row,message->data.text,error) &&
-            frontend_view_q1_bonus_commands(&row->view_motion,message->data.text,error); break;
+            frontend_view_q1_bonus_commands(&row->view_motion,message->data.text,&row->frontend->frame.storage,error); break;
     case QA_NQ_BONUSFLASH: frontend_view_q1_bonus(&row->view_motion); break;
     default: break;
     }

@@ -825,25 +825,24 @@ static bool q1_service_message(qa_frontend_network *n,const qa_application_clien
     const char *pending=message->data.text;
     while(pending && *pending) {
         size_t length=strlen(pending),offset=qa_command_separator(pending,length,QA_RULESET_NETQUAKE);
-        char *line=malloc(offset+1); qa_command_tokens tokens={0};
-        if(!line) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining received Source command diagnostic");
-        memcpy(line,pending,offset); line[offset]=0;
-        bool ok=qa_command_tokenize(line,QA_RULESET_NETQUAKE,false,&tokens, NULL, NULL,error);
-        const char *trimmed=line;
-        while(*trimmed && (unsigned char)*trimmed<=32) ++trimmed;
-        size_t trimmed_length=strlen(trimmed);
+        qa_command_tokens tokens={0};
+        bool ok=qa_command_tokenize_span(pending,offset,QA_RULESET_NETQUAKE,false,&tokens,
+            qa_arena_alloc_callback,&n->frontend->frame.storage,error);
+        const char *trimmed=pending;
+        while(trimmed<pending+offset && (unsigned char)*trimmed<=32) ++trimmed;
+        size_t trimmed_length=(size_t)(pending+offset-trimmed);
         while(trimmed_length && (unsigned char)trimmed[trimmed_length-1]<=32) --trimmed_length;
         bool reconnect=trimmed_length==9 && !memcmp(trimmed,"reconnect",9);
         bool bonus=ok && tokens.count && strlen(tokens.values[0])==2 &&
             (tokens.values[0][0]=='b' || tokens.values[0][0]=='B') &&
             (tokens.values[0][1]=='f' || tokens.values[0][1]=='F') && !tokens.values[0][2];
         if(ok && tokens.count && !bonus && !reconnect) {
-            size_t size=offset+28; char *text=malloc(size);
+            size_t size=offset+28; char *text=qa_arena_alloc(&n->frontend->frame.storage,size,1,error);
             if(!text) ok=frontend_fail(error,QA_ERROR_MEMORY,"Formatting received Source command diagnostic");
-            else { snprintf(text,size,"Unhandled server command: %s\n",line);
-                frontend_console_print(n->frontend,&source->context.command,text); free(text); }
+            else { snprintf(text,size,"Unhandled server command: %.*s\n",(int)offset,pending);
+                frontend_console_print(n->frontend,&source->context.command,text); }
         }
-        qa_command_tokens_free(&tokens); free(line);
+        qa_command_tokens_free(&tokens);
         if(!ok) return false;
         pending+=offset<length?offset+1:offset;
     }

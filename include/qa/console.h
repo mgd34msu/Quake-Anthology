@@ -43,6 +43,9 @@ typedef struct qa_command_tokens {
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
     bool console_text, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error);
+/* The input span need not end with NUL; tokens use the same parser and ownership. */
+bool qa_command_tokenize_span(const char *, size_t, qa_ruleset_id, bool, qa_command_tokens *,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *, qa_error *);
 void qa_command_tokens_free(qa_command_tokens *tokens);
 /* Copy literal tokens without reparsing. A supplied allocator owns the backing
  * until its enclosing frame retires; NULL retains independent heap storage. */

@@ -171,10 +171,17 @@ bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
     bool console_text, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
+    if (!text) return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command tokenizer arguments");
+    return qa_command_tokenize_span(text,strlen(text),dialect,console_text,out,allocate,context,error);
+}
+
+bool qa_command_tokenize_span(const char *text, size_t length, qa_ruleset_id dialect,
+    bool console_text, qa_command_tokens *out,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
+{
     if (text == NULL || out == NULL || !qac_dialect_valid(dialect))
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command tokenizer arguments");
     *out = (qa_command_tokens){.borrowed = allocate != NULL};
-    size_t length = strlen(text);
     if (length > (SIZE_MAX - 1) / 2)
         return qac_fail(error, QA_ERROR_MEMORY, "command tokenizer input is too large");
     size_t maximum = dialect == QA_RULESET_Q3 ? 1024 : 80;
