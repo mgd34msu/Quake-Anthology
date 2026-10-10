@@ -77,8 +77,6 @@ typedef struct unified_q3_ballistic {
     int32_t bolt_weapon;
     bool projectile, flash, bolt, last_fire;
     q3n_selected_weapon_state view_state;
-    q3n_selected_weapon_attachment *attachments;
-    size_t attachment_capacity;
 } unified_q3_ballistic;
 struct frontend_unified_q3 {
     qa_frontend *frontend;
@@ -179,7 +177,8 @@ static bool fragments(void *context, const q3n_frame *f, const qa_vec3 *points, 
 {
     unified_q3_bank *b = context;
     if (f->unified_effects != &b->source || !effect_current(&b->source)) return false;
-    qa_scene_mark_fragment *rows = fragment_capacity ? calloc(fragment_capacity,sizeof(*rows)) : NULL;
+    qa_scene_mark_fragment *rows=fragment_capacity && fragment_capacity<=SIZE_MAX/sizeof(*rows)?
+        qa_arena_alloc(&b->owner->frontend->frame.storage,fragment_capacity*sizeof(*rows),_Alignof(qa_scene_mark_fragment),e):NULL;
     if (fragment_capacity && !rows) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Preparing real Q3 mark fragments");
     qa_scene_mark_result result={0}; qa_scene_world *w=frontend_unified_media_world(b->owner->media);
     bool okay = w && qa_scene_world_mark_fragments(w,points,count,projection,output,capacity,
@@ -188,7 +187,8 @@ static bool fragments(void *context, const q3n_frame *f, const qa_vec3 *points, 
         okay=rows[i].first_point<=UINT32_MAX && rows[i].point_count<=UINT32_MAX;
         if (okay) out[i]=(q3n_mark_fragment){(uint32_t)rows[i].first_point,(uint32_t)rows[i].point_count};
     }
-    free(rows); if (okay) *returned=result.fragment_count; return okay;
+    if(okay)*returned=result.fragment_count;
+    return okay;
 }
 static qa_actor_owner provider(frontend_unified_q3 *o, const char *content,const char *instance)
 {
@@ -521,22 +521,19 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             media=(q3n_selected_weapon_media){.assets=b->assets};
             okay=qa_q3_register_model(b->assets,model->path,&media.gun,e) &&
                 qa_q3_register_model(b->assets,model->anchor->path,&media.hands,e);
-            if (okay && model->attachment_count>state->attachment_capacity) {
-                q3n_selected_weapon_attachment *attachments=realloc(state->attachments,
-                    model->attachment_count*sizeof(*attachments));
-                if (!attachments) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected weapon attachments");
-                else {state->attachments=attachments;state->attachment_capacity=model->attachment_count;}
-            }
+            q3n_selected_weapon_attachment *attachments=okay && model->attachment_count?
+                qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(*attachments),_Alignof(q3n_selected_weapon_attachment),e):NULL;
+            if(okay && model->attachment_count && !attachments)okay=false;
             for (size_t i=0;okay && i<model->attachment_count;++i) {
-                state->attachments[i].tag=model->attachments[i].tag;
-                okay=qa_q3_register_model(b->assets,model->attachments[i].path,&state->attachments[i].model,e);
+                attachments[i].tag=model->attachments[i].tag;
+                okay=qa_q3_register_model(b->assets,model->attachments[i].path,&attachments[i].model,e);
             }
             q3n_selected_weapon_authored_view authored={.camera=camera,.anchor_tag=model->anchor->tag,
                 .anchor_offset=model->anchor->offset,
                 .field_of_view=camera.field_of_view,
                 .fov_above=model->anchor->fov_above,.fov_scale=model->anchor->fov_scale,
                 .frame=(int32_t)model->visual.frame,.old_frame=(int32_t)model->visual.old_frame,.back_lerp=model->back_lerp,
-                .attachments=state->attachments,.attachment_count=model->attachment_count};
+                .attachments=attachments,.attachment_count=model->attachment_count};
             if (okay) okay=q3n_weapons_selected_authored_view(b->weapons,&media,&state->view_state,
                 &request,&authored,submitted,e);
         }
@@ -1163,7 +1160,7 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         o->banks=b->next; free(b->content);free(b->activation); free(b);
     }
     qa_arena_destroy(&o->character_storage);
-    while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v->attachments);free(v);}
+    while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o); *address=NULL; return true;
 }
