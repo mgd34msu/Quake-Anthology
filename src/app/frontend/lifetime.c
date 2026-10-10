@@ -676,6 +676,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
     frontend->platform_events=qa_platform_events_create(error);
     if (!frontend->platform_events) goto fail;
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
+    if(!qa_scene_frame_prepare(&frontend->frame,0,error))goto fail;
     if (!frontend_input_profile_default_options(frontend,error)) goto fail;
     if (native_runtime) {
         frontend->native_runtime=native_runtime;

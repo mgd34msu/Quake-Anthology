@@ -1,4 +1,5 @@
 #include "qa/scene.h"
+#include "frame_internal.h"
 #include "resources_internal.h"
 #include "models/internal.h"
 #include "qa/material_source_scratch.h"
@@ -9,7 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool reserve(void **data, size_t *capacity, size_t needed, size_t stride, qa_error *error)
+bool scene_frame_reserve(qa_scene_frame *frame,unsigned array,void **data,
+    size_t *capacity,size_t needed,size_t stride,qa_error *error)
 {
     if (needed <= *capacity) return true;
     if (stride == 0 || needed > (size_t)PTRDIFF_MAX / stride) {
@@ -21,14 +23,50 @@ static bool reserve(void **data, size_t *capacity, size_t needed, size_t stride,
         if (next > (size_t)PTRDIFF_MAX / stride / 2) { next = needed; break; }
         next *= 2;
     }
-    void *replacement = realloc(*data, next * stride);
+    qa_scene_frame_storage *storage=frame->reserved;
+    size_t slot=0,pages=0;
+    void *replacement=NULL;bool reused=false;
+    if(storage){
+        size_t bytes=next*stride;
+        pages=bytes/storage->pages.stride+(bytes%storage->pages.stride!=0);
+        if(storage->arrays[array].pages){
+            slot=storage->arrays[array].slot;
+            replacement=qa_pool_grow_run(&storage->pages,&slot,storage->arrays[array].pages,pages);
+            reused=replacement!=NULL;
+        }
+        if(!replacement)replacement=qa_pool_take_run(&storage->pages,pages,&slot);
+    }else replacement=realloc(*data,next*stride);
     if (replacement == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot grow scene frame storage");
         return false;
     }
+    if(storage){
+        if(*data && replacement!=*data)memmove(replacement,*data,*capacity*stride);
+        if(!reused && storage->arrays[array].pages)
+            qa_pool_release_run(&storage->pages,storage->arrays[array].slot,storage->arrays[array].pages);
+        storage->arrays[array].slot=slot;storage->arrays[array].pages=pages;
+    }
     *data = replacement;
     *capacity = next;
     return true;
+}
+
+bool qa_scene_frame_prepare(qa_scene_frame *frame,size_t bytes,qa_error *error)
+{
+    if(!frame || frame->commands || frame->images || frame->geometries || frame->models ||
+        frame->groups || frame->sort_groups || frame->sort_commands || frame->storage.first || frame->reserved){
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"scene reservation requires an empty initialized frame");return false;
+    }
+    if(!bytes)bytes=64u*1024u*1024u;
+    qa_scene_frame_storage *storage=calloc(1,sizeof(*storage));
+    if(!storage){qa_error_set(error,QA_ERROR_MEMORY,0,"allocating scene reservation owner");return false;}
+    size_t page_bytes=16384,count=bytes/page_bytes+(bytes%page_bytes!=0);
+    if(!qa_pool_prepare(&storage->pages,&storage->backing,count,page_bytes,_Alignof(max_align_t),error)){
+        qa_arena_destroy(&storage->backing);free(storage);return false;
+    }
+    qa_arena_seal(&storage->backing);
+    qa_arena_init_pool(&frame->storage,&storage->pages);
+    frame->reserved=storage;return true;
 }
 
 void qa_scene_frame_init(qa_scene_frame *frame, uint64_t owner)
@@ -82,13 +120,12 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
     if (frame == NULL) return;
     qa_scene_frame_reset(frame, 0);
     qa_arena_destroy(&frame->storage);
-    free(frame->commands);
-    free(frame->images);
-    free(frame->geometries);
-    free(frame->models);
-    free(frame->groups);
-    free(frame->sort_groups);
-    free(frame->sort_commands);
+    if(frame->reserved){
+        qa_arena_destroy(&frame->reserved->backing);free(frame->reserved);
+    }else{
+        free(frame->commands);free(frame->images);free(frame->geometries);free(frame->models);
+        free(frame->groups);free(frame->sort_groups);free(frame->sort_commands);
+    }
     *frame = (qa_scene_frame){0};
 }
 
@@ -108,7 +145,7 @@ static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *er
         return false;
     }
     void *data = frame->images;
-    if (!reserve(&data, &frame->image_capacity, frame->image_count + 1,
+    if (!scene_frame_reserve(frame,SCENE_IMAGES,&data, &frame->image_capacity, frame->image_count + 1,
                  sizeof(*frame->images), error)) return false;
     frame->images = data;
     qa_scene_image_retain(image);
@@ -130,7 +167,7 @@ bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geo
         return false;
     }
     void *data = frame->geometries;
-    if (!reserve(&data, &frame->geometry_capacity, frame->geometry_count + 1,
+    if (!scene_frame_reserve(frame,SCENE_GEOMETRIES,&data, &frame->geometry_capacity, frame->geometry_count + 1,
                  sizeof(*frame->geometries), error)) return false;
     frame->geometries = data;
     qa_scene_geometry_retain(geometry);
@@ -156,7 +193,7 @@ bool qa_scene_frame_model(qa_scene_frame *frame, qa_scene_model *model,
         return false;
     }
     void *data = frame->models;
-    if (!reserve(&data, &frame->model_capacity, frame->model_count + 1,
+    if (!scene_frame_reserve(frame,SCENE_MODELS,&data, &frame->model_capacity, frame->model_count + 1,
         sizeof(*frame->models), error)) return false;
     frame->models = data;
     qa_scene_model_pin pin = {0};
@@ -279,7 +316,7 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
         return false;
     }
     void *data = frame->commands;
-    if (!reserve(&data, &frame->command_capacity, frame->command_count + 1,
+    if (!scene_frame_reserve(frame,SCENE_COMMANDS,&data, &frame->command_capacity, frame->command_count + 1,
                  sizeof(*frame->commands), error)) return false;
     frame->commands = data;
     if (copied.kind == QA_SCENE_COMMAND_DRAW) {
@@ -386,7 +423,7 @@ bool qa_scene_frame_group(qa_scene_frame *frame, size_t first, qa_scene_group_ki
     }
     frame->picture_view_end = 0;
     void *data = frame->groups;
-    if (!reserve(&data, &frame->group_capacity, frame->group_count + 1,
+    if (!scene_frame_reserve(frame,SCENE_GROUPS,&data, &frame->group_capacity, frame->group_count + 1,
                  sizeof(*frame->groups), error)) return false;
     frame->groups = data;
     size_t ordinal = frame->group_count++;

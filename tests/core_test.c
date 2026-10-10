@@ -139,6 +139,46 @@ static void test_spans(void)
     CHECK(!qa_bytes_slice(source, SIZE_MAX, SIZE_MAX, &result, NULL));
 }
 
+static void test_reserved_scene_frame(void)
+{
+    qa_scene_frame frame;qa_error error={0};
+    qa_scene_frame_init(&frame,19);
+    CHECK(qa_scene_frame_prepare(&frame,2*4096*sizeof(qa_scene_command)+1024*1024,&error));
+    CHECK(frame.storage.sealed && frame.storage.pages);
+    for(unsigned pass=0;pass<2;++pass){
+        qa_scene_frame_reset(&frame,pass+1);
+        uint8_t *held=qa_arena_alloc(&frame.storage,33000,64,&error);
+        CHECK(held);memset(held,0x36,33000);
+        size_t count=pass?1500:1000;
+        for(unsigned half=0;half<2;++half){
+            for(size_t i=0;i<count;++i){
+                size_t first=frame.command_count;
+                qa_scene_command view={.kind=QA_SCENE_COMMAND_VIEW};
+                view.data.view.viewport.x=(int32_t)(half*count+i);
+                bool admitted=qa_scene_frame_emit(&frame,&view,&error);
+                if(!admitted)fprintf(stderr,"scene storage: pass=%u half=%u command=%zu capacity=%zu pages=%zu/%zu: %s\n",
+                    pass,half,i,frame.command_capacity,frame.storage.pages->active,frame.storage.pages->capacity,error.message);
+                CHECK(admitted);
+                CHECK(qa_scene_frame_group(&frame,first,QA_SCENE_GROUP_COMPILED,NULL,(float)(count-i),0,0,0,&error));
+            }
+            CHECK(qa_scene_frame_finish(&frame,NULL,NULL,&error));
+            CHECK(frame.commands[half*count].data.view.viewport.x==(int32_t)((half+1)*count-1));
+            CHECK(frame.commands[(half+1)*count-1].data.view.viewport.x==(int32_t)(half*count));
+            CHECK(held[0]==0x36 && held[32999]==0x36);
+        }
+    }
+    CHECK(frame.storage.pages->overflow==0);
+    qa_scene_frame_destroy(&frame);
+    qa_scene_frame_init(&frame,19);
+    CHECK(qa_scene_frame_prepare(&frame,256*1024,&error));
+    qa_scene_command view={.kind=QA_SCENE_COMMAND_VIEW};
+    while(qa_scene_frame_emit(&frame,&view,&error))view.data.view.viewport.x++;
+    CHECK(error.code==QA_ERROR_MEMORY && frame.command_count>0);
+    CHECK(frame.storage.pages->overflow==1);
+    CHECK(frame.commands[frame.command_count-1].data.view.viewport.x==(int32_t)frame.command_count-1);
+    qa_scene_frame_destroy(&frame);
+}
+
 static void test_arena(void)
 {
     qa_arena arena = {0};
@@ -235,6 +275,21 @@ static void test_arena(void)
         CHECK(slot==i);
     }
     CHECK(pages.active==pages.capacity && first_slot[64]==73);
+    qa_pool_reset(&pages);
+    size_t left_slot,move_slot,guard_slot;
+    size_t overflows=pages.overflow;
+    CHECK(qa_pool_take_run(&pages,2,&left_slot));
+    uint8_t *moving=qa_pool_take_run(&pages,2,&move_slot);
+    uint8_t *guard=qa_pool_take(&pages,&guard_slot);
+    CHECK(moving && guard && move_slot==2 && guard_slot==4);
+    memset(moving,0x25,2*pages.stride);guard[0]=0x62;
+    qa_pool_release_run(&pages,left_slot,2);
+    uint8_t *grown=qa_pool_grow_run(&pages,&move_slot,2,4);
+    CHECK(grown && move_slot==0 && pages.active==5);
+    memmove(grown,moving,2*pages.stride);
+    CHECK(grown[0]==0x25 && grown[2*pages.stride-1]==0x25 && guard[0]==0x62);
+    CHECK(!qa_pool_grow_run(&pages,&move_slot,4,5));
+    CHECK(move_slot==0 && pages.active==5 && guard[0]==0x62 && pages.overflow==overflows);
     qa_pool_reset(&pages);
     qa_arena_destroy(&backing);
 
@@ -1440,6 +1495,7 @@ int main(int argc, char **argv)
     test_binary();
     test_spans();
     test_arena();
+    test_reserved_scene_frame();
     test_metadata_retention();
     test_files();
     test_localization_lookup_generation();

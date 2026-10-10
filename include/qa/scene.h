@@ -679,6 +679,7 @@ typedef struct qa_scene_frame {
      * records outlive preparation of every pending source group. */
     qa_material_order *material_order;
     qa_arena storage;
+    struct qa_scene_frame_storage *reserved;
     qa_scene_command *commands;
     size_t command_count, command_capacity;
     /* Derived picture run, invalidated by command publication and grouping.
@@ -698,6 +699,9 @@ typedef struct qa_scene_frame {
     size_t sort_command_capacity;
 } qa_scene_frame;
 void qa_scene_frame_init(qa_scene_frame *, uint64_t owner);
+/* Prepare an empty frame at load. Transient geometry and persistent arrays use
+ * the same reserved page pool, without heap fallback; zero selects 64 MiB. */
+bool qa_scene_frame_prepare(qa_scene_frame *, size_t bytes, qa_error *);
 bool qa_scene_frame_material_order(qa_scene_frame *, qa_material_order *, qa_error *);
 void qa_scene_frame_reset(qa_scene_frame *, uint64_t sequence);
 void qa_scene_frame_destroy(qa_scene_frame *);

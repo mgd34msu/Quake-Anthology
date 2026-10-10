@@ -1,4 +1,5 @@
 #include "qa/material.h"
+#include "frame_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -155,20 +156,13 @@ bool qa_scene_frame_finish(qa_scene_frame *frame, const qa_scene_view *view,
         }
         size_t group_capacity = frame->group_count*3;
         size_t command_capacity = frame->command_capacity != 0 ? frame->command_capacity : 1;
-        if (group_capacity > frame->sort_group_capacity) {
-            qa_scene_group **grown = realloc(frame->sort_groups, group_capacity*sizeof(*grown));
-            if (grown == NULL) {
-                qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene sort groups"); return false;
-            }
-            frame->sort_groups = grown; frame->sort_group_capacity = group_capacity;
-        }
-        if (command_capacity > frame->sort_command_capacity) {
-            qa_scene_command *grown = realloc(frame->sort_commands, command_capacity*sizeof(*grown));
-            if (grown == NULL) {
-                qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene sort commands"); return false;
-            }
-            frame->sort_commands = grown; frame->sort_command_capacity = command_capacity;
-        }
+        void *group_data=frame->sort_groups,*command_data=frame->sort_commands;
+        if(!scene_frame_reserve(frame,SCENE_SORT_GROUPS,&group_data,&frame->sort_group_capacity,
+            group_capacity,sizeof(*frame->sort_groups),error))return false;
+        frame->sort_groups=group_data;
+        if(!scene_frame_reserve(frame,SCENE_SORT_COMMANDS,&command_data,&frame->sort_command_capacity,
+            command_capacity,sizeof(*frame->sort_commands),error))return false;
+        frame->sort_commands=command_data;
         qa_scene_group **scratch = frame->sort_groups;
         qa_scene_command *commands = frame->sort_commands;
         bool ok = true;
@@ -193,6 +187,13 @@ bool qa_scene_frame_finish(qa_scene_frame *frame, const qa_scene_view *view,
             size_t capacity = frame->command_capacity;
             frame->command_capacity = frame->sort_command_capacity;
             frame->sort_command_capacity = capacity;
+            if(frame->reserved){
+                size_t slot=frame->reserved->arrays[SCENE_COMMANDS].slot;
+                size_t pages=frame->reserved->arrays[SCENE_COMMANDS].pages;
+                frame->reserved->arrays[SCENE_COMMANDS]=frame->reserved->arrays[SCENE_SORT_COMMANDS];
+                frame->reserved->arrays[SCENE_SORT_COMMANDS].slot=slot;
+                frame->reserved->arrays[SCENE_SORT_COMMANDS].pages=pages;
+            }
             frame->group_count = 0;
         }
         if (!ok) return false;
