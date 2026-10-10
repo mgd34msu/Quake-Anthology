@@ -67,7 +67,7 @@ static bool raw_trace(control_client *client,const uint8_t *bytes,qa_trace_resul
         return raw_fail(error,QA_ERROR_FORMAT,"Native Pmove touch returned invalid physical trace geometry");
     *out=trace; return true;
 }
-static bool raw_result(control_frame *frame,const uint8_t *bytes,qa_movement_result *out,qa_error *error)
+static bool raw_result(control_frame *frame,const uint8_t *bytes,qa_movement_contact contacts[32],qa_movement_result *out,qa_error *error)
 {
     qa_movement_result result={.status=QA_MOVEMENT_ACTIVE,.actor=frame->client.actor,
         .command_sequence=frame->client.engine->current_command_sequence,
@@ -92,11 +92,9 @@ static bool raw_result(control_frame *frame,const uint8_t *bytes,qa_movement_res
     size_t count=qa_load_u32le(bytes+RR_PM_TOUCHES);
     if(count>32) return raw_fail(error,QA_ERROR_FORMAT,"Native Pmove touch count exceeds its SDK array");
     if(count) {
-        result.contacts=calloc(count,sizeof(*result.contacts));
-        if(!result.contacts) return raw_fail(error,QA_ERROR_MEMORY,"Retaining actual Source Pmove traces");
-        result.contact_count=result.contact_capacity=count;
+        result.contacts=contacts; result.contact_count=count; result.contact_capacity=32;
         for(size_t i=0;i<count;++i) if(!raw_trace(&frame->client,bytes+RR_PM_TOUCHES+8+i*RR_PM_TRACE,&result.contacts[i].trace,error)) {
-            qa_movement_result_free(&result); return false;
+            return false;
         }
     }
     *out=result; return true;
@@ -184,9 +182,9 @@ static bool raw_native_commit(control_frame *frame,qa_error *error)
     uint8_t bytes[RR_PM_BYTES];
     if(!qa_native_read(frame->client.native,frame->address,bytes,sizeof(bytes),error)) return false;
     qa_movement_result result={0};
-    if(!raw_result(frame,bytes,&result,error)) return false;
+    qa_movement_contact contacts[32]={0};
+    if(!raw_result(frame,bytes,contacts,&result,error)) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(frame->client.engine);
-    bool ok=movement.commit(movement.context,frame->client.host,frame->address,&result,error);
-    qa_movement_result_free(&result); return ok;
+    return movement.commit(movement.context,frame->client.host,frame->address,&result,error);
 }
 #endif

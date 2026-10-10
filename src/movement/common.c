@@ -351,6 +351,23 @@ bool qa_movement_world_trace(void *world, const qa_trace_query *q, qa_trace_resu
 bool qa_movement_world_contents(void *world, const qa_point_query *q, qa_point_contents *r, qa_error *e) { return qa_world_point_contents(world,q,r,e); }
 void qa_movement_result_free(qa_movement_result *r) { if (r) { free(r->contacts); memset(r,0,sizeof(*r)); } }
 
+bool qa_movement_result_copy(const qa_movement_result *source, qa_movement_result *out, qa_error *error) {
+    if (source == out) return true;
+    size_t capacity = out->contact_capacity;
+    qa_movement_contact *contacts = out->contacts;
+    if (source->contact_count > capacity) {
+        capacity = source->contact_count < 32 ? 32 : source->contact_count;
+        if (capacity > SIZE_MAX / sizeof(*contacts)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Movement contact capacity overflow"); return false;
+        }
+        contacts = realloc(contacts, capacity * sizeof(*contacts));
+        if (!contacts) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating movement contacts"); return false; }
+    }
+    if (source->contact_count) memmove(contacts, source->contacts, source->contact_count * sizeof(*contacts));
+    *out = *source; out->contacts = contacts; out->contact_capacity = capacity;
+    return true;
+}
+
 static bool move_stage(const qa_movement_input *input, const qa_movement_services *services, qa_movement_result *out, qa_error *error, unsigned stage) {
     if (!input||!services||!out||!services->trace||!services->point_contents||
         !valid_kind(input->profile.kind)||(stage&&input->profile.kind!=QA_RULESET_NETQUAKE)||

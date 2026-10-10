@@ -474,19 +474,7 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
     control->player.ground = result->ground; control->player.water_level = result->water_level;
     control->player.water_type = result->water_type; control->player.view_height = result->view_height;
     control->player.view_angles = result->view_angles; control->player.view_offset = result->view_offset;
-    if (raw) {
-        qa_movement_result copy=*result;
-        copy.contacts=NULL;
-        copy.contact_capacity=copy.contact_count;
-        if (result->contact_count) {
-            if (result->contact_count>SIZE_MAX/sizeof(*result->contacts))
-                return application_fail(error,QA_ERROR_FORMAT,"Native Q2 Pmove contact count exceeds its result storage");
-            copy.contacts=malloc(result->contact_count*sizeof(*copy.contacts));
-            if (!copy.contacts) return application_fail(error,QA_ERROR_MEMORY,"Retaining actual native Q2 Pmove contacts");
-            memcpy(copy.contacts,result->contacts,result->contact_count*sizeof(*copy.contacts));
-        }
-        qa_movement_result_free(&control->result); control->result=copy;
-    }
+    if (raw) return qa_movement_result_copy(result, &control->result, error);
     return true;
 }
 

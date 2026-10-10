@@ -1852,16 +1852,7 @@ static bool native_q2_command_move(void *context, const qa_movement_input *input
         (result->contact_count && !result->contacts) ||
         result->contact_count > SIZE_MAX / sizeof(*result->contacts))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lacks its completed selected movement result");
-    qa_movement_contact *contacts = NULL;
-    if (result->contact_count) {
-        contacts = malloc(result->contact_count * sizeof(*contacts));
-        if (!contacts) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected Native Q2 movement contacts");
-        memcpy(contacts, result->contacts, result->contact_count * sizeof(*contacts));
-    }
-    qa_movement_result_free(out);
-    *out = *result;
-    out->contacts = contacts; out->contact_capacity = out->contact_count;
-    return true;
+    return qa_movement_result_copy(result, out, error);
 }
 
 static bool native_q2_command_arsenal(void *context, qa_actor_id actor,

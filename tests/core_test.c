@@ -15,6 +15,7 @@
 #include "qa/localization.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
+#include "qa/movement.h"
 #include "qa/q1_save.h"
 #include "qa/scene.h"
 #include "qa/tools.h"
@@ -405,6 +406,31 @@ static void test_localization_lookup_generation(void)
     CHECK(!strcmp(qa_localization_find(second,"GREETING")->format,"second"));
     qa_localization_release(first);qa_localization_release(second);
     for (size_t i=0;i<2;++i){CHECK(unlink(paths[i])==0);CHECK(rmdir(folders[i])==0);CHECK(rmdir(directories[i])==0);}
+}
+
+static void test_retained_movement_result(void)
+{
+    qa_error error = {0}; qa_movement_contact contacts[32] = {0};
+    contacts[0].trace.fraction = 0.25f; contacts[0].substep = 7;
+    qa_movement_result source = {.status = QA_MOVEMENT_ACTIVE,
+        .command_sequence = 17, .state = {.kind = QA_RULESET_Q2_RERELEASE},
+        .contacts = contacts, .contact_count = 1, .contact_capacity = 32};
+    source.state.data.q2r.origin = qa_v3(1, 2, 3);
+    qa_movement_result out = {0}; CHECK(qa_movement_result_copy(&source, &out, &error));
+    qa_movement_contact *storage = out.contacts;
+    CHECK(storage != contacts && out.contact_count == 1 && out.contact_capacity >= 32);
+    CHECK(out.command_sequence == 17 && out.state.data.q2r.origin.z == 3);
+    CHECK(out.contacts[0].trace.fraction == 0.25f && out.contacts[0].substep == 7);
+    contacts[0].trace.fraction = 0.75f; source.contact_count = 32; source.command_sequence = 18;
+    CHECK(out.contacts[0].trace.fraction == 0.25f);
+    CHECK(qa_movement_result_copy(&source, &out, &error));
+    CHECK(out.contacts == storage && out.contact_count == 32 && out.command_sequence == 18);
+    CHECK(out.contacts[0].trace.fraction == 0.75f);
+    source.contact_count = 0; source.contacts = NULL; source.contact_capacity = 0;
+    CHECK(qa_movement_result_copy(&source, &out, &error));
+    CHECK(out.contacts == storage && out.contact_count == 0 && out.contact_capacity >= 32);
+    CHECK(qa_movement_result_copy(&out, &out, &error) && out.contacts == storage);
+    qa_movement_result_free(&out); CHECK(!out.contacts && !out.contact_capacity);
 }
 
 static void test_shared_audio_preparation(void)
@@ -1324,6 +1350,7 @@ int main(int argc, char **argv)
     test_files();
     test_localization_lookup_generation();
     test_shared_audio_preparation();
+    test_retained_movement_result();
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();
