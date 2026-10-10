@@ -150,10 +150,9 @@ struct frontend_unified_q1 {
     q1_entity_trail *trails;
     size_t trail_capacity;
     qa_scene_light *scene_lights;
-    size_t scene_capacity;
     float scene_styles[256];
     qa_hud_score *scores;
-    size_t score_capacity,score_count;
+    size_t score_count;
     char localized_text[65538];
 };
 static const char *const powers[Q1_POWERS]={"quad","invulnerability","invisibility","suit",
@@ -827,7 +826,8 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *o,qa_scene_world_input
     for (const q1_group *g=o->groups;g;g=g->next) ++groups;
     if(groups>(SIZE_MAX-capacity)/Q1_LIGHTS)return fail(e,"Q1 private scene light roster exceeds storage");
     capacity+=groups*Q1_LIGHTS;
-    if(capacity>o->scene_capacity){qa_scene_light *lights=realloc(o->scene_lights,capacity*sizeof(*lights));if(!lights)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 reached scene lights");o->scene_lights=lights;o->scene_capacity=capacity;}
+    o->scene_lights=capacity?qa_arena_alloc(&o->frontend->frame.storage,capacity*sizeof(*o->scene_lights),_Alignof(qa_scene_light),e):NULL;
+    if(capacity && !o->scene_lights)return false;
     size_t count=input->light_count;if(count)memcpy(o->scene_lights,input->lights,count*sizeof(*input->lights));
     uint64_t sequences[256]={0};bool received[256]={0};q1_group *sky=NULL;
     for(size_t i=0;i<256;++i)o->scene_styles[i]=input->q1_styles && i<input->style_count?input->q1_styles[i]:256;
@@ -996,7 +996,8 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
     if(!o || !d || ui!=o->frontend->seats[d->physical_seat].ui || !frame || o->busy || o->prepared || !mutable(o,e) ||
         !frontend_remote_unified_player(o->replica,&player,&source))return false;
     size_t count=0;for(q1_group *g=o->groups;g;g=g->next)for(size_t i=0;i<256;++i)if(g->clients[i].present)++count;
-    if(count>o->score_capacity){qa_hud_score *scores=realloc(o->scores,count*sizeof(*scores));if(!scores)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 scoreboard scratch");o->scores=scores;o->score_capacity=count;}
+    o->scores=count?qa_arena_alloc(&frame->storage,count*sizeof(*o->scores),_Alignof(qa_hud_score),e):NULL;
+    if(count && !o->scores)return false;
     o->score_count=0;
     for(q1_group *g=o->groups;g;g=g->next){bool earlier=false;
         for(q1_group *old=o->groups;old!=g;old=old->next)if(!strcmp(old->content,g->content)){earlier=true;break;}
@@ -1050,5 +1051,5 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
     prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
-    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->scene_lights);free(o->scores);free(o->prompt_lines);free(o);*slot=NULL;return true;
+    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->prompt_lines);free(o);*slot=NULL;return true;
 }

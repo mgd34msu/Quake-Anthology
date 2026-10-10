@@ -56,7 +56,7 @@ struct unified_presentation {
     unified_q3_client_row *q3_clients,*retired_q3;
     unified_audio_identity *audio;
     size_t audio_capacity;
-    qa_scene_light *draw_lights,*reflected_lights;
+    qa_scene_light *draw_lights;
     size_t q2_light_offset,q2_light_count,draw_light_count;
     uint64_t light_frame;
     uint64_t audio_owner;
@@ -331,8 +331,7 @@ static bool close_children(unified_presentation *p, qa_error *error)
         !frontend_remote_unified_prediction_destroy(&p->prediction,error)) return false;
     if (!frontend_unified_media_destroy(p->media,error)) return false;
     p->media = NULL; p->received = false;
-    free(p->draw_lights); p->draw_lights=NULL;
-    free(p->reflected_lights); p->reflected_lights=NULL;
+    p->draw_lights=NULL;
     p->q2_light_offset=0; p->q2_light_count=0; p->draw_light_count=0;
     memset(p->audio, 0, p->audio_capacity * sizeof(*p->audio));
     p->audio_owner = 0;
@@ -1060,7 +1059,7 @@ static bool lights(void *context, const qa_scene_view *view, const qa_scene_worl
         k>limit-input->light_count-n-m || native_count>limit-input->light_count-n-m-k)
         return frontend_unified_fail(error,QA_ERROR_MEMORY,"Unified light pool exceeds actual draw storage");
     size_t total=n+m+k+native_count+input->light_count;
-    qa_scene_light *joined=malloc(total*sizeof(*joined));
+    qa_scene_light *joined=qa_arena_alloc(&p->frontend->frame.storage,total*sizeof(*joined),_Alignof(qa_scene_light),error);
     if (!joined) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Joining received family light pools");
     if (input->light_count) memcpy(joined,input->lights,input->light_count*sizeof(*joined));
     if (n) memcpy(joined+input->light_count,q2,n*sizeof(*joined));
@@ -1070,12 +1069,12 @@ static bool lights(void *context, const qa_scene_view *view, const qa_scene_worl
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         const qa_scene_light *span; size_t length;
         if (!frontend_unified_q3_runtime_factory_scene_lights(row->factory,&span,&length,error)) {
-            free(joined); return false;
+            return false;
         }
         if (length) memcpy(joined+offset,span,length*sizeof(*joined));
         offset+=length;
     }
-    free(p->draw_lights); p->draw_lights=joined; p->draw_light_count=total;
+    p->draw_lights=joined; p->draw_light_count=total;
     *out=joined; *count=total; return true;
 }
 static bool reflected_lights(void *context,qa_scene_world_input *input,qa_scene_frame *frame,qa_error *error)
@@ -1091,13 +1090,12 @@ static bool reflected_lights(void *context,qa_scene_world_input *input,qa_scene_
     if (count>SIZE_MAX/sizeof(*q2)-p->q2_light_offset-tail)
         return frontend_unified_fail(error,QA_ERROR_MEMORY,"Reflected Source lights exceed draw storage");
     size_t total=p->q2_light_offset+count+tail;
-    qa_scene_light *joined=total?malloc(total*sizeof(*joined)):NULL;
+    qa_scene_light *joined=total?qa_arena_alloc(&frame->storage,total*sizeof(*joined),_Alignof(qa_scene_light),error):NULL;
     if (total && !joined) return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining reflected Source light metadata");
     if (p->q2_light_offset) memcpy(joined,p->draw_lights,p->q2_light_offset*sizeof(*joined));
     if (count) memcpy(joined+p->q2_light_offset,q2,count*sizeof(*joined));
     if (tail) memcpy(joined+p->q2_light_offset+count,
         p->draw_lights+p->q2_light_offset+p->q2_light_count,tail*sizeof(*joined));
-    free(p->reflected_lights); p->reflected_lights=joined;
     input->lights=joined; input->light_count=total; return true;
 }
 static bool world_models(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_error *error)
