@@ -105,11 +105,11 @@ typedef struct q2_native {
     q2_bank *bank;
     qa_unified_component_identity identity;
     qa_source_owner presentation_owner;
-    char *provider,*layout;
+    const char *provider,*layout;
+    qa_unified_document *record_document,*config_document;
+    const qa_unified_component_q2 *config_source;
     uint64_t owner_generation,generation;
     qa_net_protocol_id protocol;
-    char **configs;
-    size_t config_count;
     const qa_unified_q2_hud_configuration *configuration;
     int32_t inventory[256],player_number;
     bool hud,replace_status,camera;
@@ -182,7 +182,8 @@ struct frontend_unified_q2 {
     qa_scene_light *lights;
     size_t light_count;
     qa_vec3 sampled_styles[256];
-    q2_native *native;
+    q2_native *native,*native_buffers[2];
+    size_t native_capacity;
     q2_native status, prepared_status;
     size_t native_count;
     uint64_t native_revision;
@@ -728,13 +729,20 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->frontend=f; o->replica=r; o->media=media; o->events=events;
     *out=o;
     o->effect_pose_capacity=r->options.identity_capacity;
-    size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows))+_Alignof(q2_visual);
+    o->native_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
+    size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows))+
+        2*o->native_capacity*sizeof(q2_native)+4*_Alignof(max_align_t);
     if(!qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
         !(o->effect_poses=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->effect_poses),_Alignof(frontend_remote_q2_effects_pose),e)) ||
         !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e))) {
         qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;
     }
     memset(o->visual_rows,0,o->effect_pose_capacity*sizeof(*o->visual_rows));
+    for (size_t i=0;i<2 && o->native_capacity;++i) {
+        o->native_buffers[i]=qa_arena_alloc(&o->pose_storage,o->native_capacity*sizeof(q2_native),_Alignof(q2_native),e);
+        if (!o->native_buffers[i]) {qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;}
+        memset(o->native_buffers[i],0,o->native_capacity*sizeof(q2_native));
+    }
     qa_arena_seal(&o->pose_storage);
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
@@ -756,18 +764,9 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
 }
 static void native_clear(q2_native *v)
 {
-    qa_unified_component_identity_dispose(&v->identity);
-    free(v->provider); free(v->layout);
-    for (size_t i=0;i<v->config_count;++i) free(v->configs[i]);
-    free(v->configs);
+    qa_unified_document_destroy(v->record_document);
+    qa_unified_document_destroy(v->config_document);
     *v=(q2_native){0};
-}
-static bool native_text(const char *text,char **out,qa_error *e)
-{
-    if (!text) return false;
-    size_t size=strlen(text)+1; *out=malloc(size);
-    if (!*out) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 Source text");
-    memcpy(*out,text,size); return true;
 }
 static const char *native_config(void *context,int32_t index)
 {
@@ -782,7 +781,14 @@ static const char *native_config(void *context,int32_t index)
         }
         return low<v->configuration->configstring_count && rows[low].index==(uint32_t)index?rows[low].value:"";
     }
-    return (size_t)index<v->config_count && v->configs[index]?v->configs[index]:"";
+    const qa_unified_component_q2 *source=v->config_source;
+    size_t low=0,high=source?source->configstring_count:0;
+    while (low<high) {
+        size_t middle=low+(high-low)/2;
+        if (source->configstrings[middle].index<(uint32_t)index) low=middle+1;else high=middle;
+    }
+    return source && low<source->configstring_count && source->configstrings[low].index==(uint32_t)index?
+        source->configstrings[low].value:"";
 }
 static const qa_scene_image *native_picture(void *context,const char *name,qa_error *e)
 {
@@ -820,30 +826,25 @@ static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     }
     v->font=v->bank->native_font;return true;
 }
-static bool native_configs(const qa_unified_component_q2 *row,const q2_native *old,q2_native *v,qa_error *e)
-{
-    qa_q2_config_layout layout; qa_q2_codec codec={.protocol=v->protocol};
-    if (!qa_q2_config_layout_read(&codec,&layout,e)) return false;
-    v->config_count=layout.max_configs; v->configs=calloc(v->config_count,sizeof(*v->configs));
-    if (!v->configs) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 configstrings");
-    if (!row->replace_configstrings) {
-        if (!old || old->config_count!=v->config_count) return false;
-        for (size_t i=0;i<v->config_count;++i) if (old->configs[i] && !native_text(old->configs[i],v->configs+i,e)) return false;
-        return true;
-    }
-    for (size_t i=0;i<row->configstring_count;++i) {
-        const qa_unified_component_configstring *config=row->configstrings+i;
-        if (config->index>=v->config_count || v->configs[config->index] || !native_text(config->value,v->configs+config->index,e)) return false;
-    }
-    return true;
-}
-static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *row,
+static bool native_configs(const qa_unified_component_q2 *row,const qa_unified_document *document,
     const q2_native *old,q2_native *v,qa_error *e)
 {
-    bool okay=native_text(row->owner.provider,&v->provider,e) && qa_unified_component_identity_clone(&row->identity,&v->identity,e);
+    if (row->replace_configstrings) {
+        v->config_source=row;
+        return qa_unified_document_retain(document,&v->config_document,e);
+    }
+    if (!old) return false;
+    v->config_source=old->config_source;
+    return qa_unified_document_retain(old->config_document,&v->config_document,e);
+}
+static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *row,const qa_unified_document *document,
+    const q2_native *old,q2_native *v,qa_error *e)
+{
+    v->provider=row->owner.provider;v->layout=row->layout;v->identity=row->identity;
+    bool okay=qa_unified_document_retain(document,&v->record_document,e);
     if (!okay) return false;
     v->owner_generation=row->owner.generation; v->generation=row->generation;
-    v->presentation_owner=(qa_source_owner){v->provider,v->owner_generation};
+    v->presentation_owner=row->owner;
     if (old && (old->owner_generation!=v->owner_generation || old->generation!=v->generation)) old=NULL;
     if (old) {
         if (!qa_unified_component_identity_equal(&v->identity,&old->identity))
@@ -886,7 +887,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     if (row->hud!=hud) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component changed its qualified presentation policy");
     if (!v->hud) return true;
     okay=row->protocol.kind==v->protocol.kind && row->protocol.flags==v->protocol.flags && row->protocol.revision==v->protocol.revision &&
-        native_configs(row,old,v,e) && native_text(row->layout,&v->layout,e);
+        native_configs(row,document,old,v,e);
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
@@ -899,13 +900,16 @@ bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unif
     const qa_unified_components_control *update=control&&control->kind==QA_UNIFIED_CONTROL_COMPONENTS?&control->value.components:NULL;
     if (!update || o->native_revision==UINT64_MAX || update->revision!=o->native_revision+1) return false;
     uint64_t revision=update->revision; size_t count=update->native_count;
-    q2_native *next=count?calloc(count,sizeof(*next)):NULL;
-    if (count && !next) return false;
+    if (count>o->native_capacity) {
+        qa_allocation_gate_capacity_exhausted();
+        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 component count exceeds the loaded recipe capacity");
+    }
+    q2_native *next=o->native==o->native_buffers[0]?o->native_buffers[1]:o->native_buffers[0];
     bool okay=true;
     for (size_t i=0;okay && i<count;++i) {
         const qa_unified_component_q2 *row=update->native+i; const q2_native *old=NULL;
         for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) old=o->native+k;
-        okay=native_read(o,row,old,next+i,e);
+        okay=native_read(o,row,d,old,next+i,e);
         for (size_t k=0;okay && k<i;++k) okay=strcmp(next[k].provider,next[i].provider)!=0;
     }
     for (size_t i=0;okay && i<count;++i) okay=frontend_unified_events_component_admit(o->events,&next[i].presentation_owner,next[i].bank->content,e);
@@ -916,10 +920,10 @@ bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unif
     }
     if (okay) {
         for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
-        free(o->native); o->native=next; o->native_count=count; o->native_revision=revision; return true;
+        o->native=next; o->native_count=count; o->native_revision=revision; return true;
     }
     for (size_t i=0;i<count;++i) native_clear(next+i);
-    free(next); return false;
+    return false;
 }
 static bool native_frame_read(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1904,7 +1908,6 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
-    free(o->native);
     if (o->config) for (size_t i=0;i<o->config_count;++i) free(o->config[i]);
     free(o->config); free(o->help); free(o->help_text[0]); free(o->help_text[1]);
     qa_localization_pool_destroy(o->localizations);
