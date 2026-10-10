@@ -6,6 +6,7 @@
 #include "qa/pool.h"
 #include "qa/network_unified_frame_pool.h"
 #include "qa/network_unified_control.h"
+#include "qa/unified_frame_metadata.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
@@ -240,6 +241,49 @@ static void test_arena(void)
     CHECK(read && read->kind==control.kind && read->epoch==control.epoch);
     CHECK(!strcmp(read->value.disconnect,control.value.disconnect));
     qa_unified_document_destroy(retained);
+}
+
+static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
+    qa_unified_frame_metadata *owned)
+{
+    qa_error error={0};qa_buffer wire={0};qa_unified_document *source=NULL,*decoded=NULL;
+    CHECK(qa_unified_document_create_metadata(&owned,&source,&error));
+    CHECK(qa_unified_document_encode(source,&wire,&error));
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error);CHECK(lease);
+    CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,
+        (qa_bytes){wire.data,wire.size},NULL,lease,NULL,&decoded,&error));
+    qa_unified_frame_lease_release(lease);qa_unified_document_destroy(source);qa_buffer_free(&wire);
+    return decoded;
+}
+static void test_metadata_retention(void)
+{
+    qa_error error={0};qa_unified_frame_pool *pool=qa_unified_frame_pool_create(256*1024,4,&error);CHECK(pool);
+    qa_unified_frame_metadata *value=calloc(1,sizeof(*value));CHECK(value);
+    *value=(qa_unified_frame_metadata){.epoch=1,.q1_revision=1,.replace_configurations=true,
+        .replace_styles=true,.replace_q3=true,.replace_q1=true};
+    value->q1=calloc(1,sizeof(*value->q1));CHECK(value->q1);value->q1->level=strdup("start");CHECK(value->q1->level);
+    qa_unified_document *current=metadata_decode(pool,value);
+    for (uint64_t i=1;i<=64;++i) {
+        value=calloc(1,sizeof(*value));CHECK(value);
+        *value=(qa_unified_frame_metadata){.epoch=1,.frame=i,.q1_revision=1,.style_revision=i,.replace_styles=true,.style_count=1};
+        value->styles=calloc(1,sizeof(*value->styles));CHECK(value->styles);
+        value->styles[0]=(qa_unified_style_pattern){.family=QA_GAME_Q1,.pattern=strdup(i&1?"m":"a")};CHECK(value->styles[0].pattern);
+        qa_unified_document *update=metadata_decode(pool,value),*merged=NULL;
+        CHECK(qa_unified_metadata_apply(current,update,&merged,&error));
+        qa_unified_document_destroy(current);qa_unified_document_destroy(update);current=merged;
+        const qa_unified_frame_metadata *read=qa_unified_document_metadata(current);
+        CHECK(read->frame==i && read->style_revision==i && !strcmp(read->q1->level,"start"));
+        CHECK(!strcmp(read->styles[0].pattern,i&1?"m":"a"));
+    }
+    value=calloc(1,sizeof(*value));CHECK(value);
+    *value=(qa_unified_frame_metadata){.epoch=1,.frame=65,.q1_revision=2,.style_revision=64,.replace_q1=true};
+    value->q1=calloc(1,sizeof(*value->q1));CHECK(value->q1);value->q1->level=strdup("e1m1");CHECK(value->q1->level);
+    qa_unified_document *update=metadata_decode(pool,value),*merged=NULL;
+    CHECK(qa_unified_metadata_apply(current,update,&merged,&error));
+    qa_unified_document_destroy(current);qa_unified_document_destroy(update);qa_unified_frame_pool_destroy(&pool);
+    const qa_unified_frame_metadata *read=qa_unified_document_metadata(merged);
+    CHECK(read->frame==65 && !strcmp(read->q1->level,"e1m1") && !strcmp(read->styles[0].pattern,"a"));
+    qa_unified_document_destroy(merged);
 }
 
 static void test_files(void)
@@ -1107,6 +1151,7 @@ int main(int argc, char **argv)
     test_binary();
     test_spans();
     test_arena();
+    test_metadata_retention();
     test_files();
     test_campaign_unit();
     test_recovery_checkpoints();

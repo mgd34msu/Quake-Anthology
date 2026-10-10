@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_UNIFIED_PRIVATE_H
 #define QA_FRONTEND_REMOTE_UNIFIED_PRIVATE_H
 #include "internal.h"
+#include "qa/pool.h"
 #include "remote_unified.h"
 #include "qa/strings.h"
 #include "q1_sky.h"
@@ -19,6 +20,7 @@ typedef struct frontend_unified_metadata {
 typedef struct frontend_unified_metadata_cut {
     struct frontend_unified_metadata_cut *next;
     qa_unified_document *document;
+    size_t slot;
 } frontend_unified_metadata_cut;
 struct frontend_remote_unified {
     frontend_remote_unified *next;
@@ -34,6 +36,8 @@ struct frontend_remote_unified {
     qa_unified_document *prepared_source_metadata;
     frontend_unified_metadata_cut *metadata_head, *metadata_tail;
     size_t pending_metadata_bytes;
+    qa_arena metadata_storage;
+    qa_pool metadata_cuts;
     qa_actor_registry *actors;
     qa_strings *strings;
     frontend_unified_metadata *metadata;

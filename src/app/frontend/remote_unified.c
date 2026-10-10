@@ -112,6 +112,13 @@ bool frontend_remote_unified_bind(frontend_remote_unified *owner, qa_net_client_
         !owner->options.current(owner->options.context, &candidate, error) ||
         !qa_unified_session_find(candidate.runtime, client, &installed, error) || installed != session)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified attach changed its genuine CLIENT tuple");
+    if (!owner->metadata_cuts.values) {
+        const qa_unified_limits *limits=qa_unified_session_limits(session);
+        size_t capacity=(limits->queued_reliable_bytes+limits->message_bytes)/(sizeof(frontend_unified_metadata_cut)+sizeof(qa_unified_frame_metadata));
+        if (!qa_pool_prepare(&owner->metadata_cuts,&owner->metadata_storage,capacity,
+            sizeof(frontend_unified_metadata_cut),_Alignof(frontend_unified_metadata_cut),error)) return false;
+        qa_arena_seal(&owner->metadata_storage);
+    }
     owner->options.domain = candidate; owner->session = session; owner->bound = true; return true;
 }
 
@@ -724,6 +731,7 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
     qa_unified_document_destroy(owner->offer); qa_unified_document_destroy(owner->frame);
     qa_unified_document_destroy(owner->prepared_frame);
     frontend_remote_unified_metadata_clear(owner);
+    qa_arena_destroy(&owner->metadata_storage);
     qa_catalog_release(owner->options.domain.catalog);
     if (owner->options.consumers.dispose) owner->options.consumers.dispose(owner->options.consumers.context);
     free(owner); *slot = NULL; return true;

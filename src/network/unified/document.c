@@ -23,6 +23,8 @@ struct qa_unified_document {
     qa_unified_input_batch *inputs;
     qa_unified_frame_events *events;
     qa_unified_frame_metadata *metadata;
+    qa_unified_document *metadata_owners[4];
+    bool metadata_borrowed;
     qa_unified_handshake handshake;
     qa_unified_control *control;
     size_t bytes;
@@ -176,13 +178,15 @@ bool qa_unified_document_retain(const qa_unified_document *source,
 
 void qa_unified_document_destroy(qa_unified_document *d) {
     if (!d || --d->references) return;
+    for (size_t i=0;i<4;++i) qa_unified_document_destroy(d->metadata_owners[i]);
     if (d->lease) { qa_unified_frame_lease_release(d->lease); return; }
     if (d->frame && d->frame->lease) { qa_unified_frame_destroy(d->frame); return; }
     if (d->events && (d->events->lease || d->events->page_owned)) { qa_unified_frame_events_destroy(d->events); return; }
     qa_unified_frame_destroy(d->frame);
     if (d->inputs) { qa_unified_inputs_free(d->inputs); free(d->inputs); }
     qa_unified_frame_events_destroy(d->events);
-    qa_unified_frame_metadata_destroy(d->metadata);
+    if (d->metadata_borrowed) free(d->metadata);
+    else qa_unified_frame_metadata_destroy(d->metadata);
     if (d->control) { qa_unified_record_dispose(&qa_unified_control_layout,d->control); free(d->control); }
     qa_json_destroy(d->json); qa_buffer_free(&d->source); free(d);
 }
@@ -493,11 +497,27 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
     }
     if (next->replace_configurations && next->replace_styles && next->replace_q3 && next->replace_q1)
         return qa_unified_document_retain(update,out,error);
-    qa_unified_frame_metadata *owned=calloc(1,sizeof(*owned));
-    if (!owned) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete Unified metadata"); return false; }
-    bool okay=qa_unified_record_clone(&qa_unified_metadata_layout,&merged,owned,error) &&
-        qa_unified_document_create_metadata(&owned,out,error);
-    qa_unified_frame_metadata_destroy(owned); return okay;
+    size_t bytes;
+    if (!qa_unified_metadata_check(&merged,&bytes,error)) return false;
+    qa_unified_frame_lease *lease=update->lease;
+    qa_unified_frame_metadata *record=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*record),
+        _Alignof(qa_unified_frame_metadata),error) : malloc(sizeof(*record));
+    if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining complete Unified metadata"); return false; }
+    *record=merged;
+    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,lease,NULL,error);
+    if (!d || (lease && !qa_unified_frame_lease_retain(lease,error))) {
+        if (!lease) { free(record);free(d); } return false;
+    }
+    d->lease=lease;d->metadata=record;d->metadata_borrowed=true;
+    bool replaced[4]={next->replace_configurations,next->replace_styles,next->replace_q3,next->replace_q1};
+    for (size_t i=0;i<4;++i) {
+        const qa_unified_document *source=replaced[i]?update:previous;
+        if (source->metadata_owners[i]) source=source->metadata_owners[i];
+        if (!qa_unified_document_retain(source,d->metadata_owners+i,error)) {
+            qa_unified_document_destroy(d);return false;
+        }
+    }
+    *out=d;return true;
 }
 bool qa_unified_document_write(const qa_unified_document *d,size_t maximum,
     qa_unified_builder *out,qa_error *error)

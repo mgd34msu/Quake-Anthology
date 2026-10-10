@@ -30,12 +30,13 @@ bool frontend_remote_unified_metadata_control(frontend_remote_unified *owner,
         qa_unified_document_destroy(retained);
         return frontend_unified_fail(error,QA_ERROR_MEMORY,"Unified pending metadata exceeds its actual session custody budget");
     }
-    frontend_unified_metadata_cut *cut=malloc(sizeof(*cut));
+    size_t slot;
+    frontend_unified_metadata_cut *cut=qa_pool_take(&owner->metadata_cuts,&slot);
     if(!cut) {
         qa_unified_document_destroy(retained);
         return frontend_unified_fail(error,QA_ERROR_MEMORY,"Retaining ordered Unified metadata publication");
     }
-    *cut=(frontend_unified_metadata_cut){.document=retained};
+    *cut=(frontend_unified_metadata_cut){.document=retained,.slot=slot};
     if(owner->metadata_tail)owner->metadata_tail->next=cut;
     else owner->metadata_head=cut;
     owner->metadata_tail=cut;owner->pending_metadata_bytes+=bytes+sizeof(*cut);return true;
@@ -90,7 +91,7 @@ void frontend_remote_unified_metadata_commit(frontend_remote_unified *owner,cons
         if(metadata->frame>frame->world->source.number)break;
         owner->metadata_head=cut->next;
         owner->pending_metadata_bytes-=qa_unified_document_memory(cut->document)+sizeof(*cut);
-        qa_unified_document_destroy(cut->document);free(cut);
+        qa_unified_document_destroy(cut->document);qa_pool_release(&owner->metadata_cuts,cut->slot);
     }
     if(!owner->metadata_head)owner->metadata_tail=NULL;
 }
@@ -106,7 +107,7 @@ void frontend_remote_unified_metadata_clear(frontend_remote_unified *owner)
     frontend_remote_unified_metadata_abort(owner);
     while(owner->metadata_head) {
         frontend_unified_metadata_cut *cut=owner->metadata_head;owner->metadata_head=cut->next;
-        qa_unified_document_destroy(cut->document);free(cut);
+        qa_unified_document_destroy(cut->document);qa_pool_release(&owner->metadata_cuts,cut->slot);
     }
     owner->metadata_tail=NULL;owner->pending_metadata_bytes=0;
     qa_unified_document_destroy(owner->source_metadata);owner->source_metadata=NULL;
