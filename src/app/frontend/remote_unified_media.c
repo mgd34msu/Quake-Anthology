@@ -1,4 +1,5 @@
 #include "remote_unified_private.h"
+#include "ui_features.h"
 #include "remote_unified_media_private.h"
 #include "capture.h"
 #include "shared_resource_policy.h"
@@ -161,6 +162,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
         okay = content && bank(owner, content->identity, &row, error) &&
             qa_audio_bank_register(row->sounds, resource.path, content->family, &asset, error);
         if (okay && asset) okay = qa_audio_asset_resample(asset, rate, content->family, &pcm, error);
+        if (okay && asset) okay = frontend_ui_audio_prepare_asset(frontend, asset, error);
         qa_audio_sample_release(pcm); qa_audio_asset_release(asset);
     }
     if (!okay) {

@@ -39,6 +39,8 @@ typedef struct qa_sound_caption_options {
 } qa_sound_caption_options;
 qa_sound_captions *qa_sound_captions_create(const qa_sound_caption_options *, qa_error *);
 void qa_sound_captions_destroy(qa_sound_captions *);
+/* Warm the same sound catalog and timeline during content loading. */
+bool qa_sound_captions_prepare_asset(qa_sound_captions *, qa_audio_asset *, const char *language, qa_error *);
 /* Forward mixer notifications synchronously on the owning thread. Only source
  * leases and event state are retained here; loading is deferred to prepare. */
 bool qa_sound_captions_event(qa_sound_captions *, const qa_audio_voice_event *, qa_error *);

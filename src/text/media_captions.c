@@ -230,6 +230,33 @@ void qa_sound_captions_destroy(qa_sound_captions *captions) {
     qa_arena_destroy(&captions->voice_storage);
     free(captions);
 }
+static sound_catalog *sound_catalog_read(qa_sound_captions *captions, qa_audio_asset *asset, qa_error *e)
+{
+    sound_catalog *catalog = captions->catalogs;
+    while (catalog && catalog->asset != asset) catalog = catalog->next;
+    if (catalog) return catalog;
+    qa_vfs *source = NULL;
+    catalog = calloc(1, sizeof(*catalog));
+    if (!catalog || !captions->options.content_view(captions->options.context, asset, &source, e) || !source ||
+        !(catalog->view = qa_vfs_clone(source, e)) ||
+        !(catalog->captions = qa_media_captions_create(&captions->options.captions, e))) {
+        if (catalog) { qa_vfs_destroy(catalog->view); qa_media_captions_destroy(catalog->captions); free(catalog); }
+        if (!e || e->code == QA_OK) fail(e, QA_ERROR_MEMORY, "Retaining original sound caption content");
+        return NULL;
+    }
+    catalog->asset = qa_audio_asset_retain(asset);
+    catalog->next = captions->catalogs; captions->catalogs = catalog;
+    return catalog;
+}
+bool qa_sound_captions_prepare_asset(qa_sound_captions *captions, qa_audio_asset *asset,
+    const char *language, qa_error *e)
+{
+    if (!captions || captions->visiting || captions->language_ticket || !asset || !language)
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid sound caption asset preparation");
+    sound_catalog *catalog = sound_catalog_read(captions, asset, e);
+    return catalog && qa_media_captions_prepare(catalog->captions, catalog->view,
+        qa_audio_asset_name(asset), language, e);
+}
 bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_event *event,
                              qa_error *e) {
     if (!captions || captions->visiting || captions->language_ticket || !event)
@@ -263,22 +290,8 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
     voice->start = event->output_frame;
     voice->rate = event->sample_rate;
     voice->offset = event->source_offset_seconds;
-    sound_catalog *catalog = captions->catalogs;
-    while (catalog && catalog->asset != event->asset) catalog = catalog->next;
-    if (!catalog) {
-        qa_vfs *source = NULL;
-        catalog = calloc(1, sizeof(*catalog));
-        if (!catalog || !captions->options.content_view(captions->options.context, event->asset, &source, e) || !source ||
-            !(catalog->view = qa_vfs_clone(source, e)) ||
-            !(catalog->captions = qa_media_captions_create(&captions->options.captions, e))) {
-            if (catalog) { qa_vfs_destroy(catalog->view); qa_media_captions_destroy(catalog->captions); free(catalog); }
-            voice_free(captions, voice);
-            if (e && e->code != QA_OK) return false;
-            return fail(e, QA_ERROR_MEMORY, "Retaining original sound caption content");
-        }
-        catalog->asset = qa_audio_asset_retain(event->asset);
-        catalog->next = captions->catalogs; captions->catalogs = catalog;
-    }
+    sound_catalog *catalog = sound_catalog_read(captions, event->asset, e);
+    if (!catalog) { voice_free(captions, voice); return false; }
     voice->catalog = catalog;
     if (*link) {
         caption_voice *old = *link;

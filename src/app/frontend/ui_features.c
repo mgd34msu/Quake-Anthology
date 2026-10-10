@@ -95,6 +95,17 @@ void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
         (int32_t)((f->time_ns / 1000000) & INT32_MAX), error);
     qa_audio_asset_release(asset);
 }
+bool frontend_ui_audio_prepare_asset(qa_frontend *f, qa_audio_asset *asset, qa_error *error)
+{
+    if (!f->ui_features || f->options.dedicated) return true;
+    for (unsigned i = 0; i < f->options.seats; ++i) {
+        qa_ui_preferences preferences;
+        if (!qa_ui_preferences_read(qa_application_cvars(f->application),
+                qa_application_ui_preference_handles(f->application), i, &preferences, error) ||
+            !qa_sound_captions_prepare_asset(f->ui_features->seats[i].captions, asset, preferences.language, error)) return false;
+    }
+    return true;
+}
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
 {
     qa_frontend *f = context; frontend_ui_features *owner = f ? f->ui_features : NULL;
