@@ -247,7 +247,7 @@ static bool reliable_capacity_report(qa_application *app, qa_error *error)
 
 bool application_event_stream_close_recipients(qa_application *app,
     const application_event_write *write, qa_actor_id recipient,
-    const qa_application_q2_audience *audience, uint8_t channels, qa_error *error)
+    const qa_application_q2_audience *audience, uint16_t channels, qa_error *error)
 {
     bool captured = audience && audience->captured;
     if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING ||
@@ -279,14 +279,59 @@ bool application_event_stream_close_subscribers(qa_application *app,
     return reliable_capacity_report(app, error);
 }
 
+static uint16_t protocol_channels(const application_provider *provider)
+{
+    switch (provider->launch->selection.clock.kind) {
+    case QA_RULESET_NETQUAKE:
+        return (1u << QA_NET_NQ15) | (1u << QA_NET_FITZ666) | (1u << QA_NET_RMQ999);
+    case QA_RULESET_QUAKEWORLD:
+        return (1u << QA_NET_QW28) | (1u << QA_NET_QW29);
+    case QA_RULESET_Q2_CLASSIC: case QA_RULESET_Q2_RERELEASE:
+        return (1u << QA_NET_Q2_34) | (1u << QA_NET_R1Q2_35) | (1u << QA_NET_Q2PRO_36) |
+            (1u << QA_NET_Q2REPRO_1038) | (1u << QA_NET_Q2KEX_2023) |
+            (1u << QA_NET_Q2KEX_DEMO_2022) | (1u << QA_NET_Q2PRIVATE_4038) |
+            QA_APPLICATION_OUTPUT_UNIFIED;
+    case QA_RULESET_Q3: return 1u << QA_NET_Q3_68;
+    }
+    return 0;
+}
+
 static bool protocol_capacity(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
     const application_event_write *write, qa_error *error)
 {
-    return event->reliable && !event->signon &&
-        application_event_stream_close_recipients(provider->application, write,
-            event->recipient, delivery ? &delivery->audience : NULL, QA_APPLICATION_OUTPUT_ALL, error);
+    qa_application *app = provider->application;
+    if (!event->reliable || event->signon || !write->transaction.blocked ||
+        app->state != QA_APPLICATION_RUNNING) return false;
+    uint16_t channels = protocol_channels(provider);
+    if (event->recipient.registry || (delivery && delivery->audience.captured))
+        return application_event_stream_close_recipients(app, write,
+            event->recipient, delivery ? &delivery->audience : NULL, channels, error);
+    if (event->multicast || event->destination != 2 ||
+        (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC))
+        return false;
+    for (size_t i = 0; app->players && i < app->players->count; ++i) {
+        application_player_record *player = app->players->records + i;
+        bool receives = false;
+        if (provider->kind == APPLICATION_PROVIDER_QC) {
+            const struct application_qc_state *engine = provider->state.qc.engine;
+            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+                const application_qc_client *client = engine->clients + slot;
+                if (client->connected && qa_actor_id_equal(client->actor, player->actor) &&
+                    (provider->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD || client->spawned)) {
+                    receives = true;
+                    break;
+                }
+            }
+        } else {
+            uint32_t slot;
+            receives = qa_q1_native_client_slot_prepared(provider->state.q1, player->actor, &slot, NULL) &&
+                (provider->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD || !player->source_begin_pending);
+        }
+        if (receives) player->output_incomplete |= channels;
+    }
+    return reliable_capacity_report(app, error);
 }
 
 const application_event_envelope *application_event_stream_at(const qa_application *app,
@@ -684,7 +729,7 @@ bool application_emit_q2_player(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     application_event_write write;
     qa_actor_id recipient = event->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : event->actor;
-    uint8_t channels = event->kind == QA_Q2_PLAYER_PRINT ? QA_APPLICATION_OUTPUT_ALL : QA_APPLICATION_OUTPUT_UNIFIED;
+    uint16_t channels = event->kind == QA_Q2_PLAYER_PRINT ? protocol_channels(provider) : QA_APPLICATION_OUTPUT_UNIFIED;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
         return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
     const qa_application_network_q2_recipient_view *recipients = NULL;

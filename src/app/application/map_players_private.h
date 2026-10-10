@@ -54,7 +54,7 @@ typedef struct application_player_record {
     application_player_guest_binding *guests;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
-    uint8_t output_incomplete;
+    uint16_t output_incomplete;
     bool deferred, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
 
