@@ -208,6 +208,7 @@ struct qa_frontend_network {
     frontend_network_menu_status browser_status;
     uint64_t browser_receipt, browser_expired[4];
     uint64_t input_serial;
+    uint64_t output_failures_seen;
     uint64_t nonce;
     uint64_t preparation_nonce;
     uint32_t rotation_random;
@@ -6160,6 +6161,8 @@ bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
 }
 static bool incomplete_output_close(qa_frontend_network *network, qa_error *error)
 {
+    uint64_t failures = qa_application_events_output_failures(network->frontend->application);
+    if (failures == network->output_failures_seen) return true;
     uint32_t cursor = 0;
     const qa_net_client *client;
     while (qa_net_connections_next(qa_network_connections(network->runtime), &cursor, &client)) {
@@ -6173,6 +6176,7 @@ static bool incomplete_output_close(qa_frontend_network *network, qa_error *erro
             break;
         }
     }
+    network->output_failures_seen = failures;
     return true;
 }
 bool frontend_network_prepare(qa_frontend *f, qa_error *error)

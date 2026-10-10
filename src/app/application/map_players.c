@@ -3831,6 +3831,7 @@ bool qa_application_network_local_bind(qa_application *application,
             !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
         if (!qa_net_client_id_equal(record->remote_client, peer->id) ||
             record->remote_seat.owner != seat.owner || record->remote_seat.index != seat.index) {
+            if (!qa_net_client_id_equal(record->remote_client, peer->id)) record->output_incomplete = 0;
             record->remote_client = peer->id;
             record->remote_seat = seat;
             ++application->players->revision;

@@ -567,6 +567,7 @@ typedef enum qa_application_event_kind {
 uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
+uint64_t qa_application_events_output_failures(const qa_application *);
 bool qa_application_event_kind_at(const qa_application *, uint64_t,
     qa_application_event_kind *);
 bool qa_application_event_at(const qa_application *, uint64_t,

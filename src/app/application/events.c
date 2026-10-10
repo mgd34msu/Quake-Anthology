@@ -840,6 +840,8 @@ uint64_t qa_application_events_local_first(const qa_application *app)
 { return app ? app->event_local_cursor : 1; }
 uint64_t qa_application_events_next(const qa_application *app)
 { return app && app->event_ring ? qa_event_ring_next(app->event_ring) : 1; }
+uint64_t qa_application_events_output_failures(const qa_application *app)
+{ return app ? app->event_reliable_declines : 0; }
 
 bool qa_application_event_kind_at(const qa_application *app, uint64_t id,
     qa_application_event_kind *out)
