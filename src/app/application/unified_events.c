@@ -828,14 +828,19 @@ bool application_unified_damage_emit(qa_application *app, const qa_damage_outcom
     const qa_attack *attack = &outcome->request.attack;
     application_event_write write;
     bool own = app->event_write == NULL;
-    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e)) return false;
+    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e))
+        return application_event_stream_decline(app,&write,true,e);
     qa_unified_simulation_payload payload = {.kind = QA_UNIFIED_SIMULATION_DAMAGE};
     payload.value.damage = *outcome;
     bool ok = application_unified_event_emit(app, attack->weapon_provider, NULL, &payload,
         (qa_actor_id){0}, (qa_actor_id){0}, attack->time_ns, 0, false, false, e);
     if (!own) return ok;
-    if (!ok) { application_event_stream_abort(app, &write, e); return false; }
-    return application_event_stream_commit(app, &write, e);
+    if (!ok) {
+        application_event_stream_abort(app,&write,e);
+        return application_event_stream_decline(app,&write,true,e);
+    }
+    return application_event_stream_commit(app,&write,e) ||
+        application_event_stream_decline(app,&write,true,e);
 }
 
 typedef struct actor_check { qa_application *app; bool checkpoint, rebind; } actor_check;

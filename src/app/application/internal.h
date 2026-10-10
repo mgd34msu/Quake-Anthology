@@ -343,6 +343,7 @@ struct qa_application {
     qa_event_ring *event_ring;
     struct application_q2_audience_scratch *event_q2_capture;
     application_event_write *event_write;
+    uint64_t event_transient_declines;
     uint64_t event_local_cursor, event_peer_cursor;
     uint64_t protocol_events_generation;
     uint64_t simulation_event_sequence;

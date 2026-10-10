@@ -221,6 +221,19 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
     return true;
 }
 
+bool application_event_stream_decline(qa_application *app,const application_event_write *write,
+    bool transient,qa_error *error)
+{
+    if (!transient || !write->transaction.blocked || app->state != QA_APPLICATION_RUNNING)
+        return false;
+    if (error) *error=(qa_error){0};
+    if (!app->event_transient_declines)
+        qa_application_feature_report(app,"transient output",&(qa_error){
+            .code=QA_ERROR_MEMORY,.message="Output event storage is full; new transient effects are omitted"});
+    if (app->event_transient_declines != UINT64_MAX) ++app->event_transient_declines;
+    return true;
+}
+
 const application_event_envelope *application_event_stream_at(const qa_application *app,
     uint64_t id)
 {
@@ -468,11 +481,24 @@ bool application_record_level(application_provider *provider,
                            QA_PROGRESS_LEVEL_COMPLETED, map, error);
 }
 
+static bool transient_event(const qa_builtin_event *event)
+{
+    switch (event->kind) {
+    case QA_BUILTIN_SOUND: return (event->flags & 1u) == 0;
+    case QA_BUILTIN_PARTICLES: case QA_BUILTIN_IMPACT: case QA_BUILTIN_EXPLOSION:
+    case QA_BUILTIN_MUZZLE: case QA_BUILTIN_TRAIL:
+        return true;
+    default: return false;
+    }
+}
+
 static bool emit_event(qa_application *application, const qa_builtin_event *event,
     const qa_application_q2_audience *audience, qa_error *error)
 {
+    bool transient=transient_event(event);
     application_event_write write;
-    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_BUILTIN, &write, error)) return false;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_BUILTIN, &write, error))
+        return application_event_stream_decline(application,&write,transient,error);
     application_event_record *record = &write.envelope->raw.builtin;
     record->event = *event;
     if (event->argument_count) {
@@ -494,10 +520,11 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
     if (!application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
-    return application_event_stream_commit(application, &write, error);
+    return application_event_stream_commit(application, &write, error) ||
+        application_event_stream_decline(application,&write,transient,error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return false;
+    return application_event_stream_decline(application,&write,transient,error);
 }
 
 bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *error)
