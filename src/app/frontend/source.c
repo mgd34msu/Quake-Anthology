@@ -169,23 +169,12 @@ static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options 
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool companion_capture(qa_frontend *,uint32_t,qa_scene_rect,qa_error *);
-static void companion_packet_free(source_companion_packet *packet)
-{
-    if (!packet) return;
-    free((void *)packet->view.entities); free((void *)packet->view.entity_actors);
-    free((void *)packet->view.entity_views); free((void *)packet->view.polygons);
-    free((void *)packet->view.polygon_actors); free((void *)packet->view.polygon_views);
-    free((void *)packet->view.vertices); free((void *)packet->view.lights);
-    free((void *)packet->view.light_actors); free((void *)packet->view.light_views);
-    free((void *)packet->view.weapons); free(packet);
-}
 static void companion_clear(source_companion *capture)
 {
-    while (capture && capture->first) {
-        source_companion_packet *packet=capture->first; capture->first=packet->next;
-        companion_packet_free(packet);
+    if (capture) {
+        capture->first=capture->last=NULL;
+        capture->view.packet_count=0; capture->completed=false;
     }
-    if (capture) { capture->last=NULL; capture->view.packet_count=0; capture->completed=false; }
 }
 bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
     frontend_source_client_registry *out,bool *present,qa_error *error)
@@ -846,18 +835,20 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         for(size_t i=0;i<polygon_count;++i)
             if(polygons[i].first>vertex_count || polygons[i].count>vertex_count-polygons[i].first)
                 return frontend_fail(error,QA_ERROR_FORMAT,"Companion polygon exceeds its actual vertex span");
-        source_companion_packet *packet=calloc(1,sizeof(*packet));
+        qa_arena *storage=&capture->frame.storage;
+        source_companion_packet *packet=qa_arena_alloc(storage,sizeof(*packet),_Alignof(source_companion_packet),error);
         if (!packet) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion Draw packet");
-        qa_q3_ref_entity *refs=entity_count?malloc(entity_count*sizeof(*refs)):NULL;
-        qa_actor_id *actors=entity_count?calloc(entity_count,sizeof(*actors)):NULL;
-        bool *views=entity_count?calloc(entity_count,sizeof(*views)):NULL;
-        qa_q3_scene_polygon *polys=polygon_count?malloc(polygon_count*sizeof(*polys)):NULL;
-        qa_actor_id *poly_actors=polygon_count?calloc(polygon_count,sizeof(*poly_actors)):NULL;
-        bool *poly_views=polygon_count?calloc(polygon_count,sizeof(*poly_views)):NULL;
-        qa_scene_vertex *verts=vertex_count?malloc(vertex_count*sizeof(*verts)):NULL;
-        qa_scene_light *lit=light_count?malloc(light_count*sizeof(*lit)):NULL;
-        qa_actor_id *lit_actors=light_count?calloc(light_count,sizeof(*lit_actors)):NULL;
-        bool *lit_views=light_count?calloc(light_count,sizeof(*lit_views)):NULL;
+        *packet=(source_companion_packet){0};
+        qa_q3_ref_entity *refs=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*refs),_Alignof(qa_q3_ref_entity),error):NULL;
+        qa_actor_id *actors=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*actors),_Alignof(qa_actor_id),error):NULL;
+        bool *views=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*views),_Alignof(bool),error):NULL;
+        qa_q3_scene_polygon *polys=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*polys),_Alignof(qa_q3_scene_polygon),error):NULL;
+        qa_actor_id *poly_actors=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*poly_actors),_Alignof(qa_actor_id),error):NULL;
+        bool *poly_views=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*poly_views),_Alignof(bool),error):NULL;
+        qa_scene_vertex *verts=vertex_count?qa_arena_alloc(storage,vertex_count*sizeof(*verts),_Alignof(qa_scene_vertex),error):NULL;
+        qa_scene_light *lit=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit),_Alignof(qa_scene_light),error):NULL;
+        qa_actor_id *lit_actors=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit_actors),_Alignof(qa_actor_id),error):NULL;
+        bool *lit_views=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit_views),_Alignof(bool),error):NULL;
         packet->view=(frontend_source_companion_packet){.definition=*definition,.entities=refs,
             .entity_actors=actors,.entity_views=views,.entity_count=entity_count,
             .polygons=polys,.polygon_actors=poly_actors,.polygon_views=poly_views,.polygon_count=polygon_count,
@@ -866,9 +857,11 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         if ((entity_count && (!refs || !actors || !views)) ||
             (polygon_count && (!polys || !poly_actors || !poly_views)) ||
             (vertex_count && !verts) || (light_count && (!lit || !lit_actors || !lit_views))) {
-            companion_packet_free(packet);
             return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion scene values");
         }
+        if (entity_count) { memset(actors,0,entity_count*sizeof(*actors)); memset(views,0,entity_count*sizeof(*views)); }
+        if (polygon_count) { memset(poly_actors,0,polygon_count*sizeof(*poly_actors)); memset(poly_views,0,polygon_count*sizeof(*poly_views)); }
+        if (light_count) { memset(lit_actors,0,light_count*sizeof(*lit_actors)); memset(lit_views,0,light_count*sizeof(*lit_views)); }
         if (entity_count) memcpy(refs,entities,entity_count*sizeof(*refs));
         if (polygon_count) memcpy(polys,polygons,polygon_count*sizeof(*polys));
         if (vertex_count) memcpy(verts,vertices,vertex_count*sizeof(*verts));
@@ -878,19 +871,17 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
              !frontend_equipment_source_scene_views(scope->lease->equipment,entity_count,views,error) ||
              !frontend_equipment_source_scene_polygons(scope->lease->equipment,polygon_count,poly_actors,poly_views,error) ||
              !frontend_equipment_source_scene_lights(scope->lease->equipment,light_count,lit_actors,lit_views,error))) {
-            companion_packet_free(packet); return false;
+            return false;
         }
         const qa_application_q3_equipment_source_weapon *weapons=NULL;
         size_t weapon_count=0;
         if (scope->lease->equipment && !frontend_equipment_source_scene_weapons(scope->lease->equipment,
-            &weapons,&weapon_count,error)) { companion_packet_free(packet); return false; }
+            &weapons,&weapon_count,error)) return false;
         if (weapon_count>SIZE_MAX/sizeof(*weapons) || (weapon_count && !weapons)) {
-            companion_packet_free(packet);
             return frontend_fail(error,QA_ERROR_FORMAT,"Companion completed weapon scopes exceed their actual span");
         }
-        qa_application_q3_equipment_source_weapon *held=weapon_count?malloc(weapon_count*sizeof(*held)):NULL;
+        qa_application_q3_equipment_source_weapon *held=weapon_count?qa_arena_alloc(storage,weapon_count*sizeof(*held),_Alignof(qa_application_q3_equipment_source_weapon),error):NULL;
         if (weapon_count && !held) {
-            companion_packet_free(packet);
             return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed companion weapon scopes");
         }
         if (weapon_count) memcpy(held,weapons,weapon_count*sizeof(*held));
