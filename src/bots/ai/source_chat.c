@@ -120,14 +120,14 @@ static bool map_title(qa_bots *b,char out[128],qa_error *e) {
     out[0]=0;
     qa_cvars *registry=b->services.configuration?b->services.configuration(b->services.context):NULL;
     if(!registry) return bot_ai_fail(e,"Source chat map title lacks its actual server-info registry");
-    qa_buffer info={0};char full[1024];
-    bool ok=qa_cvars_info(registry,QA_CVAR_SERVERINFO,0,&info,e);
-    if(ok) ok=qa_q3_info_value(info.data?(const char *)info.data:"","mapname",full,sizeof(full),e);
+    char info[1024],full[1024];
+    bool ok=qa_cvars_info_write(registry,QA_CVAR_SERVERINFO,0,info,e);
+    if(ok) ok=qa_q3_info_value(info,"mapname",full,sizeof(full),e);
     if(ok) {
         size_t length=strlen(full);if(length>127) length=127;
         memcpy(out,full,length);out[length]=0;
     }
-    qa_buffer_free(&info);return ok;
+    return ok;
 }
 static const char *weapon_name(bool missionpack,int32_t method) {
     switch(method) {

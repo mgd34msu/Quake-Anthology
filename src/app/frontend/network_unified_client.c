@@ -17,7 +17,7 @@ struct frontend_network_unified_client_service {
     frontend_remote_unified *replica;
     qa_net_client_id client;
     uint64_t epoch;
-    qa_buffer userinfo;
+    char userinfo[1024];
     bool binding, configuration_released, restored, published, retired;
 };
 static bool parent(const frontend_network_unified_client_service *o)
@@ -240,10 +240,9 @@ static bool domain_current(void *context,const frontend_remote_unified_domain *d
 static bool userinfo(void *context,const frontend_remote_unified_domain *d,const char **out,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
-    qa_buffer value={0};
-    if (!out || !o || o->retired || !domain_current(o,d,e) || !qa_cvars_info(d->cvars,QA_CVAR_USERINFO,0,&value,e)) return false;
-    if (!domain_current(o,d,e)) { qa_buffer_free(&value); return false; }
-    qa_buffer_free(&o->userinfo); o->userinfo=value; *out=(const char *)o->userinfo.data; return true;
+    if (!out || !o || o->retired || !domain_current(o,d,e) ||
+        !qa_cvars_info_write(d->cvars,QA_CVAR_USERINFO,0,o->userinfo,e) || !domain_current(o,d,e)) return false;
+    *out=o->userinfo; return true;
 }
 static bool disconnected(void *context,const frontend_remote_unified_domain *d,const char *reason,qa_error *e)
 {
@@ -511,5 +510,5 @@ bool frontend_network_unified_client_destroy(frontend_network_unified_client_ser
     if (!frontend_network_unified_client_idle(o) || !frontend_client_source_destroy(&o->physical,e)) return false;
     if (!o->configuration_released && o->options.configuration.released)
         o->options.configuration.released(o->options.configuration.context);
-    qa_buffer_free(&o->userinfo); free(o); *owned=NULL; return true;
+    free(o); *owned=NULL; return true;
 }

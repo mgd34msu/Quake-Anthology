@@ -157,10 +157,9 @@ bool q3g_publish_information(q3g_role *role, bool force, qa_error *error)
     qa_cvars_mark_modified_flags(cvars, modified & ~information);
     for (uint32_t index = 0; index < 2; ++index) {
         if (!force && !(modified & masks[index])) continue;
-        qa_buffer text = {0};
-        bool ok = qa_cvars_info(cvars, masks[index], index ? 8192 : 1024, &text, error) &&
-            q3g_set_configstring(role, index, (const char *)text.data, error);
-        qa_buffer_free(&text);
+        char text[8192];
+        bool ok = qa_cvars_info_write(cvars, masks[index], index ? sizeof(text) : 1024, text, error) &&
+            q3g_set_configstring(role, index, text, error);
         if (!ok) {
             qa_cvars_mark_modified_flags(cvars, modified & information);
             return false;

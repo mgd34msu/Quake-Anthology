@@ -736,6 +736,34 @@ static void test_shared_cvar_archive(void)
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 
+static void test_cvar_info_storage(void)
+{
+    for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
+        qa_error error = {0};
+        qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = dialect,
+            .side = QA_CVAR_SIDE_SERVER}, &error);
+        CHECK(cvars && qa_cvars_register(cvars, "qa_info_first", "first", QA_CVAR_SERVERINFO, 0, "", &error));
+        CHECK(qa_cvars_register(cvars, "qa_info_second", "second", QA_CVAR_SERVERINFO, 0, "", &error));
+        CHECK(qa_cvars_register(cvars, "qa_info_bytes", "\301text", QA_CVAR_SERVERINFO, 0, "", &error));
+        char small[1024], large[8192], value[64];
+        CHECK(qa_cvars_info_write(cvars, QA_CVAR_SERVERINFO, sizeof(small), small, &error));
+        CHECK(qa_cvars_info_write(cvars, QA_CVAR_SERVERINFO, sizeof(large), large, &error));
+        CHECK(qa_q3_info_value(small, "qa_info_first", value, sizeof(value), &error) && !strcmp(value, "first"));
+        CHECK(qa_q3_info_value(small, "qa_info_second", value, sizeof(value), &error) && !strcmp(value, "second"));
+        CHECK(qa_q3_info_value(small, "qa_info_bytes", value, sizeof(value), &error));
+        CHECK(!strcmp(value, dialect == QA_RULESET_Q3 ? "\301text" : "Atext"));
+        const char *small_first = strstr(small, "\\qa_info_first\\"), *small_second = strstr(small, "\\qa_info_second\\");
+        const char *large_first = strstr(large, "\\qa_info_first\\"), *large_second = strstr(large, "\\qa_info_second\\");
+        CHECK(small_first && small_second && large_first && large_second);
+        CHECK((small_first < small_second) == (dialect == QA_RULESET_Q3 ?
+            large_first > large_second : large_first < large_second));
+        qa_buffer owned = {0};
+        CHECK(qa_cvars_info(cvars, QA_CVAR_SERVERINFO, sizeof(small), &owned, &error));
+        CHECK(owned.size == strlen(small) && !memcmp(owned.data, small, owned.size + 1));
+        qa_buffer_free(&owned); qa_cvars_destroy(cvars);
+    }
+}
+
 static qa_input_seat *shared_input_seat(void *user, const qa_command_context *context)
 {
     return context->seat == 0 ? *(qa_input_seat **)user : NULL;
@@ -1209,6 +1237,7 @@ int main(int argc, char **argv)
     test_nq_send_admission();
     test_q3_send_admission();
     test_shared_cvar_archive();
+    test_cvar_info_storage();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();

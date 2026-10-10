@@ -486,13 +486,11 @@ bool application_native_q3_settings_source_modes(application_provider *p, qa_err
 static bool q3_source_info(application_provider *p, qa_error *error) {
     if (!application_native_q3_console_borrow(p, error)) return false;
     qa_cvars *cvars = application_native_q3_console_registry(p);
-    qa_buffer system = {0}, server = {0};
-    bool okay = qa_cvars_info(cvars, QA_CVAR_SYSTEMINFO, 8192, &system, error) &&
-        qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &server, error) &&
-        qa_q3_configstring_write(p->state.q3, 1, (const char *)system.data, error) &&
-        qa_q3_configstring_write(p->state.q3, 0, (const char *)server.data, error);
-    qa_buffer_free(&system);
-    qa_buffer_free(&server);
+    char system[8192], server[1024];
+    bool okay = qa_cvars_info_write(cvars, QA_CVAR_SYSTEMINFO, sizeof(system), system, error) &&
+        qa_cvars_info_write(cvars, QA_CVAR_SERVERINFO, sizeof(server), server, error) &&
+        qa_q3_configstring_write(p->state.q3, 1, system, error) &&
+        qa_q3_configstring_write(p->state.q3, 0, server, error);
     application_native_q3_console_release(p);
     return okay;
 }

@@ -335,10 +335,10 @@ static bool restore_stage(void *context,qa_fs_root *root,const char *path,uint64
 }
 static bool identity(void *context,qa_q2_client_identity *out,qa_error *error)
 {
-    frontend_network_q2_client *owner=context; qa_buffer info={0};
-    if(!out || !source_current(owner,&owner->domain,error) ||
-        !qa_cvars_info(owner->domain.cvars,QA_CVAR_USERINFO,sizeof(out->userinfo),&info,error)) return false;
-    memset(out,0,sizeof(*out)); memcpy(out->userinfo,info.data,info.size); qa_buffer_free(&info);
+    frontend_network_q2_client *owner=context;
+    if(!out || !source_current(owner,&owner->domain,error)) return false;
+    memset(out,0,sizeof(*out));
+    if(!qa_cvars_info_write(owner->domain.cvars,QA_CVAR_USERINFO,sizeof(out->userinfo),out->userinfo,error)) return false;
     if(owner->options.protocol.kind==QA_NET_Q2KEX_2023) out->social_count=1;
     return true;
 }

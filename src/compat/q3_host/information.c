@@ -64,11 +64,12 @@ q3_service_result q3_information(q3_call *call, int32_t *result, qa_error *error
             q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 userinfo owner is unbound");
     } else if (trap == 22) {
         int32_t capacity = q3_integer(call, 1);
+        char info[8192];
         ok = capacity > 0 || q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 serverinfo buffer is empty");
         if (ok) ok = call->host->options.cvars ?
-            qa_cvars_info(call->host->options.cvars, QA_CVAR_SERVERINFO, 8192, &text, error) :
+            qa_cvars_info_write(call->host->options.cvars, QA_CVAR_SERVERINFO, sizeof(info), info, error) :
             q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 cvar owner is unbound");
-        if (ok) ok = q3_write_string(call, call->arguments[0], (const char *)text.data, capacity, error);
+        if (ok) ok = q3_write_string(call, call->arguments[0], info, capacity, error);
     } else {
         if (call->native && call->native_profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) {
             q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Quake Live user-command layout is not established");

@@ -44,12 +44,12 @@ static bool set_cvar(void *context,const char *name,const char *value,qa_error *
     return okay;
 }
 static bool server_info(void *context,char *out,size_t capacity,qa_error *error) {
-    application_bots *bots=context;application_provider *actual;qa_buffer text={0};
+    application_bots *bots=context;application_provider *actual;char text[8192];
     if(!out || !capacity || !source(bots,&actual,error)) return false;
     qa_cvars *owner=registry(bots,"mapname");
-    if(!owner || !qa_cvars_info(owner,QA_CVAR_SERVERINFO,8192,&text,error)) return false;
-    size_t size=text.size;if(size>=capacity) size=capacity-1;
-    memcpy(out,text.data,size);out[size]=0;qa_buffer_free(&text);return true;
+    if(!owner || !qa_cvars_info_write(owner,QA_CVAR_SERVERINFO,sizeof(text),text,error)) return false;
+    size_t size=strlen(text);if(size>=capacity) size=capacity-1;
+    memcpy(out,text,size);out[size]=0;return true;
 }
 static bool clock_read(void *context,qa_bot_catalog_clock *out,qa_error *error) {
     application_bots *bots=context;application_provider *actual;

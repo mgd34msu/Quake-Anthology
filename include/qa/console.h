@@ -284,6 +284,10 @@ bool qa_cvars_restore_metadata(qa_cvars *, const qa_cvar_registry_state *,
 /* Outputs are owned NUL-terminated text; size excludes the terminator. */
 bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
                     qa_buffer *out, qa_error *error);
+/* The same formatter writes into caller-owned storage without allocation.
+ * Capacity includes NUL; zero uses the dialect's 512/1024-byte default. */
+bool qa_cvars_info_write(const qa_cvars *, uint32_t flags, size_t capacity,
+    char *out, qa_error *error);
 /* Source .cfg commands cannot encode literal quotes or line breaks inside a
  * value. Such values return FORMAT; structured settings retain them separately. */
 bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error);

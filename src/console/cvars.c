@@ -2177,67 +2177,75 @@ bool qa_cvars_take_userinfo_modified(qa_cvars *registry)
     cvar_values *values=qac_cvars_current_values(registry); bool modified=values->userinfo_modified; values->userinfo_modified=false; return modified;
 }
 
-bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
-                    qa_buffer *out, qa_error *error)
+bool qa_cvars_info_write(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
+    char *out, qa_error *error)
 {
-    if (registry == NULL || out == NULL)
+    if (!registry || !out)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar info arguments");
     qa_ruleset_id dialect = qa_cvars_dialect(registry);
-    if (maximum_length == 0) maximum_length = dialect == QA_RULESET_Q3 ? 1024 : 512;
-    qac_text result = {0};
-    cvar_values *values=qac_cvars_current_values(registry);
-    for (const qa_cvar_view *value=qa_cvars_next(registry,NULL); value; value=qa_cvars_next(registry,value)) {
-        if ((value->flags & flags) == 0 || (qac_q2(dialect) && (value->flags & QA_Q2_CVAR_PRIVATE) != 0)) continue;
-        size_t key_length = strlen(value->name);
-        size_t value_length = strlen(value->value);
-        if (*value->value == '\0' || strchr(value->name, '\\') != NULL || strchr(value->value, '\\') != NULL ||
-            strchr(value->name, '"') != NULL || strchr(value->value, '"') != NULL ||
-            (dialect != QA_RULESET_QUAKEWORLD && strchr(value->name, ';') != NULL) ||
-            (dialect == QA_RULESET_Q3 && strchr(value->value, ';') != NULL) ||
+    if (!maximum_length) maximum_length = dialect == QA_RULESET_Q3 ? 1024 : 512;
+    size_t used = 0;
+    out[0] = 0;
+    cvar_values *values = qac_cvars_current_values(registry);
+    for (const qa_cvar_view *value = qa_cvars_next(registry, NULL); value; value = qa_cvars_next(registry, value)) {
+        if (!(value->flags & flags) || (qac_q2(dialect) && (value->flags & QA_Q2_CVAR_PRIVATE))) continue;
+        size_t key_length = strlen(value->name), value_length = strlen(value->value);
+        if (!*value->value || strchr(value->name, '\\') || strchr(value->value, '\\') ||
+            strchr(value->name, '"') || strchr(value->value, '"') ||
+            (dialect != QA_RULESET_QUAKEWORLD && strchr(value->name, ';')) ||
+            (dialect == QA_RULESET_Q3 && strchr(value->value, ';')) ||
             (dialect == QA_RULESET_QUAKEWORLD && *value->name == '*') ||
             (dialect != QA_RULESET_Q3 && (key_length >= 64 || value_length >= 64))) continue;
-        qac_text pair = {0};
-        if (!qac_text_add(&pair, "\\", 1, error) || !qac_text_string(&pair, value->name, error) ||
-            !qac_text_add(&pair, "\\", 1, error) || !qac_text_string(&pair, value->value, error)) {
-            free(pair.data);
-            free(result.data);
-            return false;
-        }
+        if (key_length > SIZE_MAX - 2 - value_length)
+            return qac_fail(error, QA_ERROR_MEMORY, "console text exceeds address space");
+        size_t pair_size = key_length + value_length + 2;
+        char pair[130];
         if (dialect != QA_RULESET_Q3) {
+            pair[0] = '\\'; memcpy(pair + 1, value->name, key_length);
+            pair[key_length + 1] = '\\'; memcpy(pair + key_length + 2, value->value, value_length);
             size_t count = 0;
             bool userinfo = (flags & QA_CVAR_USERINFO) != 0;
-            bool strip = dialect != QA_RULESET_QUAKEWORLD || (userinfo ? !qac_equal(value->name, "name") : !values->high_characters);
-            for (size_t i = 0; i < pair.size; ++i) {
-                unsigned char c = (unsigned char)pair.data[i];
+            bool strip = dialect != QA_RULESET_QUAKEWORLD ||
+                (userinfo ? !qac_equal(value->name, "name") : !values->high_characters);
+            for (size_t i = 0; i < pair_size; ++i) {
+                unsigned char c = (unsigned char)pair[i];
                 if (strip) {
                     c &= 127;
                     if (c < 32 || (dialect != QA_RULESET_QUAKEWORLD && c == 127)) continue;
-                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qac_equal(value->name, "team") && c >= 'A' && c <= 'Z') c += 32;
+                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qac_equal(value->name, "team") &&
+                        c >= 'A' && c <= 'Z') c += 32;
                 }
                 if (dialect == QA_RULESET_QUAKEWORLD && c <= 13) continue;
-                pair.data[count++] = (char)c;
+                pair[count++] = (char)c;
             }
-            pair.size = count;
-            pair.data[count] = '\0';
+            pair_size = count;
         }
-        if (pair.size >= maximum_length || result.size >= maximum_length - pair.size) {
+        if (pair_size >= maximum_length || used >= maximum_length - pair_size) {
             print_message(live_target((qa_cvars *)registry), NULL, "Info string length exceeded\n");
-            free(pair.data);
             continue;
         }
-        if (dialect == QA_RULESET_Q3 && maximum_length != 8192) {
-            if (!qac_text_add(&pair, result.data, result.size, error)) {
-                free(pair.data); free(result.data); return false;
-            }
-            free(result.data);
-            result = pair;
-        } else {
-            bool ok = qac_text_add(&result, pair.data, pair.size, error);
-            free(pair.data);
-            if (!ok) { free(result.data); return false; }
-        }
+        bool prepend = dialect == QA_RULESET_Q3 && maximum_length != 8192;
+        if (prepend) memmove(out + pair_size, out, used + 1);
+        char *target = out + (prepend ? 0 : used);
+        if (dialect == QA_RULESET_Q3) {
+            target[0] = '\\'; memcpy(target + 1, value->name, key_length);
+            target[key_length + 1] = '\\'; memcpy(target + key_length + 2, value->value, value_length);
+        } else memcpy(target, pair, pair_size);
+        used += pair_size; out[used] = 0;
     }
-    if (!qac_text_finish(&result, out, error)) { free(result.data); return false; }
+    return true;
+}
+
+bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
+    qa_buffer *out, qa_error *error)
+{
+    if (!registry || !out)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar info arguments");
+    if (!maximum_length) maximum_length = qa_cvars_dialect(registry) == QA_RULESET_Q3 ? 1024 : 512;
+    char *text = malloc(maximum_length);
+    if (!text) return qac_fail(error, QA_ERROR_MEMORY, "allocating console info string");
+    if (!qa_cvars_info_write(registry, flags, maximum_length, text, error)) { free(text); return false; }
+    *out = (qa_buffer){(uint8_t *)text, strlen(text)};
     return true;
 }
 
