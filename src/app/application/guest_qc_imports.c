@@ -307,11 +307,14 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         for (uint32_t i = 1; i <= engine->max_clients; ++i)
             if (engine->clients[i].connected && qa_actor_id_equal(actor, engine->clients[i].actor)) connected = true;
         if (!connected) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC stuffcmd target is not a connected client");
-        uint8_t *bytes = malloc(strlen(text) + 2);
-        if (bytes == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC client command");
-        bytes[0] = 9; memcpy(bytes + 1, text, strlen(text) + 1);
-        qa_application_protocol_event event = {.recipient = actor, .payload = {bytes, strlen(text) + 2}, .destination = 1, .reliable = true};
-        bool ok = application_emit_protocol(engine->provider, &event, error); free(bytes); return ok;
+        qa_nq_message message = {.op = QA_NQ_STUFFTEXT, .data.text = text};
+        qa_qw_service service = {.kind = QA_QW_STUFFTEXT, .data.text.value = text};
+        qa_application_protocol_event event = {.recipient = actor,
+            .encoding_protocol = engine->protocol, .standard_quake = true,
+            .destination = 1, .reliable = true};
+        if (engine->profile == QA_QC_QUAKEWORLD) event.qw = &service;
+        else event.nq = &message;
+        return application_emit_protocol(engine->provider, &event, error);
     }
     case QA_QC_BUILTIN_LIGHTSTYLE: {
         float style; const char *pattern;
@@ -324,18 +327,13 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         if (!qa_builtin_resource(&engine->services, pattern, &light.resource, error))
             return false;
         size_t length = strlen(pattern);
-        char *copy = malloc(length + 1); uint8_t *bytes = malloc(length + 3);
-        if (copy == NULL || bytes == NULL) { free(copy); free(bytes); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC lightstyle"); }
-        memcpy(copy, pattern, length + 1); bytes[0] = 12; bytes[1] = (uint8_t)style; memcpy(bytes + 2, pattern, length + 1);
-        qa_application_protocol_event event = {.payload = {bytes, length + 3}, .destination = engine->loading ? 3 : 2,
-                                               .reliable = !engine->loading, .signon = engine->loading};
+        char *copy = malloc(length + 1);
+        if (copy == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC lightstyle");
+        memcpy(copy, pattern, length + 1);
         const char *prior = engine->lightstyles[(uint32_t)style];
         if (!prior || strcmp(prior, copy)) ++engine->lightstyle_revision;
         free(engine->lightstyles[(uint32_t)style]); engine->lightstyles[(uint32_t)style] = copy;
-        bool ok = application_emit_protocol(engine->provider, &event, error) &&
-            qa_builtin_emit(&engine->services, &light, error);
-        free(bytes);
-        return ok;
+        return qa_builtin_emit(&engine->services, &light, error);
     }
     case QA_QC_BUILTIN_CHANGELEVEL: {
         const char *map; int32_t self; qa_actor_id actor = {0};

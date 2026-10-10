@@ -1015,9 +1015,20 @@ static bool emit_text(qa_application *app, application_provider *wire,
     qa_q1_game_operation_end(&operation);
     return okay;
 }
+static bool emit_light(application_provider *p, const qa_builtin_event *event, qa_error *error) {
+    qa_nq_message message = {.op = QA_NQ_LIGHTSTYLE,
+        .data.indexed_text = {.index = (uint8_t)event->code,
+            .text = text(p->application, event->resource)}};
+    bool signon = p->kind == APPLICATION_PROVIDER_QC && p->state.qc.engine->loading;
+    return emit_message(p, event, &message, (qa_actor_id){0}, !signon, signon, NULL, error);
+}
 bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event *event,
     qa_error *error) {
     if (!event || event->family != QA_GAME_Q1) return true;
+    if (event->kind == QA_BUILTIN_LIGHT)
+        for (application_provider *source = app->live_providers; source; source = source->next_live)
+            if (source->owner == event->provider && source->kind == APPLICATION_PROVIDER_QC)
+                return emit_light(source, event, error);
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
         p->launch->selection.clock.kind == QA_RULESET_NETQUAKE && event->provider == p->owner &&
@@ -1070,9 +1081,7 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
         has_reference = true; break;
     case QA_BUILTIN_LIGHT:
         if (event->provider != p->owner) return true;
-        message.op = QA_NQ_LIGHTSTYLE;
-        message.data.indexed_text.index = (uint8_t)event->code;
-        message.data.indexed_text.text = text(app, event->resource); reliable = true; break;
+        return emit_light(p, event, error);
     case QA_BUILTIN_PARTICLES:
         message.op = QA_NQ_PARTICLE; vector(message.data.particle.origin, event->origin);
         message.data.particle.direction[0] = particle_direction(event->direction.x);
