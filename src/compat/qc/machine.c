@@ -839,6 +839,7 @@ bool qa_qc_execute_region(qa_qc_instance *instance,
         qc_store_word(instance->globals, 4u + i, saved_staging[i]);
     instance->argument_count = saved_arguments;
     --instance->execution_depth;
+    if (outer) qa_arena_reset(&instance->scratch);
     if (outer && instance->cancelling != NULL) {
         instance->cancelling = NULL;
         return runtime_fail(instance, error,
@@ -944,6 +945,7 @@ bool qa_qc_execute(qa_qc_instance *instance, uint32_t function,
     ++instance->execution_depth;
     bool ok = qc_machine_call(instance, function, argument_count, error);
     --instance->execution_depth;
+    if (outer) qa_arena_reset(&instance->scratch);
     if (outer && instance->cancelling != NULL) {
         instance->cancelling = NULL;
         return runtime_fail(instance, error,

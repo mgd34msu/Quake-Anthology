@@ -558,6 +558,33 @@ bool qa_qc_arg_vector(const qa_qc_instance *instance, uint32_t argument,
     return true;
 }
 
+qa_arena *qa_qc_scratch(qa_qc_instance *instance)
+{ return instance ? &instance->scratch : NULL; }
+
+bool qa_qc_argument_text(qa_qc_instance *instance, uint32_t first, const char **out, qa_error *error)
+{
+    if (!instance || !out) return memory_fail(error, QA_ERROR_ARGUMENT, 0, "Missing QuakeC argument text source");
+    size_t size = 1; uint32_t count = qa_qc_argument_count(instance);
+    for (uint32_t i = first; i < count; ++i) {
+        const char *part;
+        if (!qa_qc_arg_string(instance, i, &part, error)) return false;
+        size_t length = strlen(part);
+        if (length > SIZE_MAX - size)
+            return memory_fail(error, QA_ERROR_MEMORY, 0, "QuakeC string overflow");
+        size += length;
+    }
+    char *text = qa_arena_alloc(&instance->scratch, size, 1, error);
+    if (!text) return false;
+    size_t used = 0;
+    for (uint32_t i = first; i < count; ++i) {
+        const char *part;
+        if (!qa_qc_arg_string(instance, i, &part, error)) return false;
+        size_t length = strlen(part);
+        memcpy(text + used, part, length); used += length;
+    }
+    text[used] = 0; *out = text; return true;
+}
+
 bool qa_qc_arg_string(const qa_qc_instance *instance, uint32_t argument,
                       const char **out, qa_error *error)
 {

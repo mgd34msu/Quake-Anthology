@@ -23,31 +23,6 @@ static bool self_reference(qa_qc_game *game, int32_t *out, qa_error *error) {
     if (!self || self->type != QA_QC_ENTITY) return qc_game_fail(error, QA_ERROR_FORMAT, "Missing QC self global");
     return qa_qc_global_int(game->vm, self->offset, out, error);
 }
-static bool concatenate(qa_qc_instance *vm, uint32_t first, char **out, qa_error *error) {
-    size_t size = 1; uint32_t count = qa_qc_argument_count(vm);
-    for (uint32_t i = first; i < count; ++i) {
-        const char *value;
-        if (!qa_qc_arg_string(vm, i, &value, error)) return false;
-        size_t length = strlen(value);
-        if (length > SIZE_MAX - size) {
-            qc_game_fail(error, QA_ERROR_MEMORY, "QC print string overflow");
-            return false;
-        }
-        size += length;
-    }
-    char *text = malloc(size);
-    if (!text) {
-        qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC print text");
-        return false;
-    }
-    size_t used = 0;
-    for (uint32_t i = first; i < count; ++i) {
-        const char *value;
-        if (!qa_qc_arg_string(vm, i, &value, error)) { free(text); return false; }
-        size_t length = strlen(value); memcpy(text + used, value, length); used += length;
-    }
-    text[used] = 0; *out = text; return true;
-}
 static bool resource(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     const char *name; int32_t id;
     if (!qa_qc_arg_string(game->vm, 0, &name, error) || !qa_qc_arg_int(game->vm, 0, &id, error)) return false;
@@ -175,10 +150,9 @@ static bool print(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     if (!isfinite(level) || level < INT32_MIN || (double)level > INT32_MAX)
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "Invalid QC print level");
     event.code = (int32_t)level; event.flags = builtin == QA_QC_BUILTIN_DPRINT ? 1u : 0u;
-    char *text;
-    if (!concatenate(game->vm, first, &text, error)) return false;
+    const char *text;
+    if (!qa_qc_argument_text(game->vm, first, &text, error)) return false;
     bool ok = qa_builtin_resource(&game->options.services, text, &event.text, error);
-    free(text);
     event.time_ns = qa_session_elapsed(game->options.services.session);
     return ok && qa_builtin_emit(&game->options.services, &event, error);
 }
@@ -260,14 +234,13 @@ bool qc_game_builtin(void *context, qa_qc_instance *vm, qa_qc_builtin builtin,
         size_t length = strlen(key);
         if (length > SIZE_MAX - sizeof(prefix) - sizeof(suffix))
             return qc_game_fail(error, QA_ERROR_MEMORY, "QC cvar diagnostic overflow");
-        char *text = malloc(length + sizeof(prefix) + sizeof(suffix) - 1);
+        char *text = qa_arena_alloc(qa_qc_scratch(game->vm), length + sizeof(prefix) + sizeof(suffix) - 1, 1, error);
         if (!text) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QC cvar diagnostic");
         memcpy(text, prefix, sizeof(prefix) - 1); memcpy(text + sizeof(prefix) - 1, key, length);
         memcpy(text + sizeof(prefix) - 1 + length, suffix, sizeof(suffix));
         qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE, .family = QA_GAME_Q1,
             .provider = game->options.vm.host.owner, .time_ns = qa_session_elapsed(game->options.services.session)};
         bool ok = qa_builtin_resource(&game->options.services, text, &event.text, error);
-        free(text);
         return ok && qa_builtin_emit(&game->options.services, &event, error);
     }
     case QA_QC_BUILTIN_LOCALCMD: {

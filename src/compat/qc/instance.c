@@ -267,6 +267,7 @@ static void free_instance(qa_qc_instance *instance)
     free(instance->bindings); free(instance->extensions);
     free(instance->inline_regions);
     qc_strings_destroy(&instance->strings);
+    qa_arena_destroy(&instance->scratch);
     free(instance->globals); free(instance->entities); free(instance->slots);
     free(instance->actor_slots);
     free(instance->projected_words);
@@ -352,6 +353,11 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
     }
     memcpy(instance->globals, program->initial_globals, global_bytes);
+    qa_arena_init(&instance->scratch, 0);
+    if (!qa_arena_reserve(&instance->scratch, options->temporary_bytes ? options->temporary_bytes : 16u * 1024u * 1024u, error)) {
+        free_instance(instance); return false;
+    }
+    qa_arena_seal(&instance->scratch);
     if (!qc_strings_create(&instance->strings,
             (qa_bytes){program->strings, program->string_bytes},
             program->info.api == QA_QC_API_QUAKEWORLD, error)

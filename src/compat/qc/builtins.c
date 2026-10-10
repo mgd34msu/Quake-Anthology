@@ -207,30 +207,6 @@ static uint32_t random_word(qa_qc_instance *instance)
 
 
 
-static bool var_string(qa_qc_instance *instance, char **out, qa_error *error)
-{
-    size_t total = 1;
-    for (uint32_t i = 0; i < instance->argument_count; ++i) {
-        const char *part;
-        if (!qa_qc_arg_string(instance, i, &part, error)) return false;
-        size_t length = strlen(part);
-        if (length > SIZE_MAX - total) return qc_fail(error, QA_ERROR_MEMORY, 0, "QuakeC string overflow");
-        total += length;
-    }
-    char *text = malloc(total);
-    if (text == NULL) return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC message");
-    size_t used = 0;
-    for (uint32_t i = 0; i < instance->argument_count; ++i) {
-        const char *part;
-        if (!qa_qc_arg_string(instance, i, &part, error)) { free(text); return false; }
-        size_t length = strlen(part);
-        memcpy(text + used, part, length); used += length;
-    }
-    text[used] = '\0';
-    *out = text;
-    return true;
-}
-
 static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *error)
 {
     int32_t reference;
@@ -291,10 +267,9 @@ static bool pure_builtin(qa_qc_instance *instance, int32_t number,
         return qa_qc_return_vector(instance, qa_vec_normalize(vector), error);
     case 10: {
         if (!instance) return false;
-        char *message;
-        if (!var_string(instance, &message, error)) return false;
+        const char *message;
+        if (!qa_qc_argument_text(instance, 0, &message, error)) return false;
         qa_error_set(error, QA_ERROR_FORMAT, 0, "QuakeC error: %s", message);
-        free(message);
         return false;
     }
     case 12:

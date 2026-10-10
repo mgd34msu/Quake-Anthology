@@ -99,6 +99,7 @@ struct qa_qc_instance {
     uint64_t projection_revision;
     uint64_t *profiles;
     qc_strings strings;
+    qa_arena scratch;
     qc_frame *frames;
     uint32_t *locals;
     uint32_t entity_count, frame_count, local_count;

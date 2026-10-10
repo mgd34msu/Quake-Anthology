@@ -6,6 +6,7 @@
 #include "qa/session.h"
 #include "qa/vfs.h"
 #include "qa/world.h"
+#include "qa/arena.h"
 
 /* QuakeC is an external-program compatibility lane. Native anthology gameplay
  * does not depend on this API. A program is immutable and may back several
@@ -440,6 +441,7 @@ typedef struct qa_qc_options {
      * reserve world/client rows below it before source execution begins. */
     uint32_t first_dynamic_slot;
     uint32_t statement_limit, call_limit, local_word_limit;
+    size_t temporary_bytes;
     bool require_complete_host_profile;
     const qa_qc_inline_region *inline_regions;
     size_t inline_region_count;
@@ -550,6 +552,10 @@ bool qa_qc_arg_vector(const qa_qc_instance *, uint32_t argument,
                       qa_vec3 *out, qa_error *error);
 bool qa_qc_arg_string(const qa_qc_instance *, uint32_t argument,
                       const char **out, qa_error *error);
+/* Borrowed until the outer execution returns. Nested host entries share the
+ * instance's load-sized common arena without resetting an outer argument. */
+qa_arena *qa_qc_scratch(qa_qc_instance *);
+bool qa_qc_argument_text(qa_qc_instance *, uint32_t first, const char **out, qa_error *);
 bool qa_qc_return_int(qa_qc_instance *, int32_t value, qa_error *error);
 bool qa_qc_return_float(qa_qc_instance *, float value, qa_error *error);
 bool qa_qc_return_vector(qa_qc_instance *, qa_vec3 value, qa_error *error);
