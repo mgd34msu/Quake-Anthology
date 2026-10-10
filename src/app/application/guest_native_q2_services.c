@@ -31,7 +31,8 @@ static bool protocol(struct application_native_q2 *engine, const qa_q2_server_ev
     qa_application_q2_protocol_delivery delivery = {.profile = engine->profile, .original = true};
     if (engine->initialized && engine->map_ready && engine->calls &&
         !application_native_q2_message_capture(engine, &packet, &delivery, error)) return false;
-    bool ok = application_emit_q2_protocol(engine->provider, &event, &delivery, NULL, error);
+    qa_q2_server_record record = {.opcode = bytes[0], .raw = event.payload, .event = *source};
+    bool ok = application_emit_q2_protocol(engine->provider, &event, &delivery, NULL, &record, error);
     application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }
@@ -204,7 +205,7 @@ static bool message(void *opaque, const qa_native_host_message *source, qa_error
     if (duplicate) {
         application_native_q2_delivery_dispose(&delivery.audience); return true;
     }
-    bool emitted = application_emit_q2_protocol(engine->provider,&event,&delivery,source,error);
+    bool emitted = application_emit_q2_protocol(engine->provider,&event,&delivery,source,NULL,error);
     if (emitted && keyed) emitted = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     application_native_q2_delivery_dispose(&delivery.audience);
@@ -302,7 +303,9 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
     named.channel = event.data.sound.channel; named.recipients = recipients;
     named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
-    bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, NULL, error);
+    qa_q2_server_record record = {.opcode = bytes[0], .raw = publication.payload, .event = event};
+    record.event.data.sound.flags = bytes[1];
+    bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, NULL, &record, error);
     if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     if (ok && named.audience_captured && engine->platform.sound)

@@ -5,7 +5,8 @@
 #include "qa/network_q2_messages.h"
 
 bool application_unified_q2_protocol_event(application_provider *,
-    const qa_application_protocol_event *, const qa_application_q2_protocol_delivery *, qa_error *);
+    const qa_application_protocol_event *, const qa_application_q2_protocol_delivery *,
+    const qa_q2_server_record *, qa_error *);
 bool application_unified_q2_protocol_validate(void *, const qa_q2_server_record *, qa_error *);
 
 

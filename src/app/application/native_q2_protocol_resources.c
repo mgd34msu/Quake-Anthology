@@ -113,7 +113,8 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
 
 bool application_native_q2_protocol_resources_capture(struct application_native_q2 *engine,
     qa_bytes payload, const qa_application_protocol_reference *references, size_t reference_count,
-    const qa_native_host_message *source, application_native_q2_protocol_resources *out, qa_error *error)
+    const qa_native_host_message *source, const qa_q2_server_record *typed,
+    application_native_q2_protocol_resources *out, qa_error *error)
 {
     if (!engine || !out || out->rows || out->count || out->capacity || out->references ||
         out->reference_count || out->reference_capacity || (reference_count && !references) ||
@@ -123,8 +124,12 @@ bool application_native_q2_protocol_resources_capture(struct application_native_
     qa_application *app = engine->provider->application;
     qa_q2_messages *decoder = engine->event_decoder;
     resource_capture capture = {.engine = engine, .out = out, .payload = payload, .counting = true};
-    qa_q2_messages_reset(decoder);
-    if (!qa_q2_messages_read(decoder, payload, capture_record, &capture, error)) return false;
+    if (typed) {
+        if (!capture_record(&capture, typed, error)) return false;
+    } else {
+        qa_q2_messages_reset(decoder);
+        if (!qa_q2_messages_read(decoder, payload, capture_record, &capture, error)) return false;
+    }
     size_t provided = source ? source->reference_count : reference_count;
     if (out->reference_capacity > SIZE_MAX / sizeof(*out->references) - provided)
         return application_fail(error, QA_ERROR_MEMORY, "Q2 emitted entity receipt extent overflows");
@@ -146,6 +151,7 @@ bool application_native_q2_protocol_resources_capture(struct application_native_
         if (!out->rows) return false;
     }
     capture.ordinal = 0; capture.counting = false;
+    if (typed) return capture_record(&capture, typed, error);
     qa_q2_messages_reset(decoder);
     return qa_q2_messages_read(decoder, payload, capture_record, &capture, error);
 }

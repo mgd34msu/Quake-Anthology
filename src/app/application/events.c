@@ -809,7 +809,7 @@ abort:
 static bool emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
-    const qa_native_host_message *source, qa_error *error)
+    const qa_native_host_message *source, const qa_q2_server_record *typed, qa_error *error)
 {
     qa_application *application = provider ? provider->application : NULL;
     if (!application || !application->session || application->destroy_requested || !event ||
@@ -846,10 +846,16 @@ static bool emit_protocol(application_provider *provider,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
     if (event->payload.size) memcpy(payload, event->payload.data, event->payload.size);
+    qa_q2_server_record typed_record;
+    if (typed) {
+        typed_record = *typed;
+        typed_record.raw = (qa_bytes){payload, event->payload.size};
+        typed = &typed_record;
+    }
     application_native_q2_protocol_resources captured = {0};
     if (delivery && !application_native_q2_protocol_resources_capture(provider->state.native.q2_engine,
         (qa_bytes){payload, event->payload.size}, event->references, event->reference_count,
-        source, &captured, error)) goto abort;
+        source, typed, &captured, error)) goto abort;
     qa_application_protocol_reference *references = delivery ? captured.references : event->reference_count ?
         application_event_stream_alloc(application, event->reference_count * sizeof(*references),
                          _Alignof(qa_application_protocol_reference), error) : NULL;
@@ -904,7 +910,7 @@ static bool emit_protocol(application_provider *provider,
     }
     write.envelope->raw.protocol = record;
     if (!application_unified_q2_protocol_event(provider, &record.event,
-            delivery ? &record.q2 : NULL, error)) goto abort;
+            delivery ? &record.q2 : NULL, typed, error)) goto abort;
     if (!application_event_stream_commit(application, &write, error))
         return protocol_capacity(provider, event, delivery, &write, error);
     return !copied.signon || application_q1_signon_retain(provider, &copied, error);
@@ -915,18 +921,18 @@ abort:
 
 bool application_emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event, qa_error *error)
-{ return emit_protocol(provider, event, NULL, NULL, error); }
+{ return emit_protocol(provider, event, NULL, NULL, NULL, error); }
 
 bool application_emit_q2_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
-    const qa_native_host_message *source, qa_error *error)
+    const qa_native_host_message *source, const qa_q2_server_record *typed, qa_error *error)
 {
     if (!provider || !delivery || !delivery->original ||
         (delivery->profile != QA_NATIVE_Q2_GAME_API3 && delivery->profile != QA_NATIVE_Q2_GAME_API2023) ||
         (delivery->audience.captured && delivery->audience.source != provider->owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 protocol lost its actual source receipt");
-    return emit_protocol(provider, event, delivery, source, error);
+    return emit_protocol(provider, event, delivery, source, typed, error);
 }
 
 uint64_t qa_application_events_first(const qa_application *app)

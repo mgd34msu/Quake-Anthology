@@ -9,5 +9,6 @@ typedef struct application_native_q2_protocol_resources {
 } application_native_q2_protocol_resources;
 bool application_native_q2_protocol_resources_capture(struct application_native_q2 *,
     qa_bytes, const qa_application_protocol_reference *, size_t reference_count,
-    const qa_native_host_message *, application_native_q2_protocol_resources *, qa_error *);
+    const qa_native_host_message *, const qa_q2_server_record *,
+    application_native_q2_protocol_resources *, qa_error *);
 #endif

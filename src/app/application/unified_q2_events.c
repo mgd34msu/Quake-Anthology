@@ -384,7 +384,8 @@ bool application_unified_q2_protocol_validate(void *opaque, const qa_q2_server_r
 
 bool application_unified_q2_protocol_event(application_provider *provider,
     const qa_application_protocol_event *message,
-    const qa_application_q2_protocol_delivery *delivery, qa_error *e)
+    const qa_application_q2_protocol_delivery *delivery,
+    const qa_q2_server_record *typed, qa_error *e)
 {
     if (!provider || !provider->product || provider->product->family != QA_GAME_Q2 ||
         provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->state.native.q2_engine) return true;
@@ -406,6 +407,7 @@ bool application_unified_q2_protocol_event(application_provider *provider,
         return application_fail(e, QA_ERROR_ARGUMENT, "Q2 protocol projection lost its actual GAME Source");
     q2_projection p = {.provider = provider, .engine = engine, .message = message, .delivery = delivery,
         .time_ns = delivery && delivery->audience.captured ? delivery->audience.source_time_ns : clock.frame.time_ns};
+    if (typed) return receive(&p, typed, e);
     qa_q2_messages *decoder = engine->event_decoder;
     qa_q2_messages_reset(decoder);
     bool ok = delivery || qa_q2_messages_read(decoder, message->payload,
