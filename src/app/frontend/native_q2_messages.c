@@ -19,13 +19,21 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
             bool temporary = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_TEMPORARY;
             bool muzzle = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL &&
                 presentation->value.q2_protocol.kind == QA_Q2_SVC_MUZZLEFLASH;
-            if (!temporary && !muzzle) continue;
+            bool print = presentation->kind == QA_UNIFIED_PRESENTATION_Q2_PROTOCOL &&
+                (presentation->value.q2_protocol.kind == QA_Q2_SVC_PRINT ||
+                 presentation->value.q2_protocol.kind == QA_Q2_SVC_CENTERPRINT);
+            if (!temporary && !muzzle && !print) continue;
             const qa_application_q2_recipient *recipient = NULL;
             for (size_t i = 0; i < delivery->audience.count; ++i)
                 if (qa_actor_id_equal(delivery->audience.recipients[i].actor, view->event.recipient)) {
                     recipient = delivery->audience.recipients + i; break;
                 }
             if (!recipient) continue;
+            if (print) {
+                frontend_native_q2_print_event(frontend, record->event.provider,
+                    &presentation->value.q2_protocol, view->event.recipient);
+                continue;
+            }
             qa_application_q2_audience audience = delivery->audience;
             audience.recipients = recipient; audience.count = 1;
             if (muzzle) {

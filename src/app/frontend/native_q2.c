@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "native_q2_save.h"
+#include "native_q2_messages.h"
 #include "capture.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
@@ -430,15 +431,22 @@ static void platform_print_body(void *context, const qa_native_host_print *print
     }
     if (!print || !print->text || print->kind == QA_NATIVE_HOST_PRINT_DEBUG) return;
     fputs(print->text, stdout);
-    if (frontend->options.dedicated) return;
+}
+void frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
+    const qa_unified_q2_protocol_event *print, qa_actor_id recipient)
+{
+    if (frontend->options.dedicated || frontend->native_print) return;
+    frontend_native_q2 *source = frontend->native_q2;
+    while (source && source->owner != owner) source = source->next;
+    if (!source) return;
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
         qa_actor_id actor;
-        if (print->kind != QA_NATIVE_HOST_PRINT_BROADCAST &&
-            (!frontend_seat_actor_read(frontend,seat,&actor) ||
-                !qa_actor_id_equal(actor, print->client))) continue;
+        if (frontend_network_local_input_owned(frontend,seat) ||
+            !frontend_seat_actor_read(frontend,seat,&actor) ||
+            !qa_actor_id_equal(actor,recipient)) continue;
         qa_error error = {0};
         bool ok;
-        if (print->kind == QA_NATIVE_HOST_PRINT_CENTER) {
+        if (print->kind == QA_Q2_SVC_CENTERPRINT || print->level == 4 || print->level == 5) {
             const qa_cvar_view *time = qa_cvars_read(source->cvars, source->hud_cvars.center_time);
             double seconds = time && isfinite(time->number) ? fmax(0, fmin(time->number, 86400)) : 2.5;
             ok = qa_hud_center_print(frontend->seats[seat].hud, print->text, frontend->time_ns,
