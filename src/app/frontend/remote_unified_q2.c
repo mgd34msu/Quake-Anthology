@@ -1279,7 +1279,9 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
             .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
         bool okay=bank(o,row->content,NULL,NULL,0,false,&b,e);
         if (okay && v->resource && *v->resource)okay=qa_scene_image_load_exact(b->images,v->resource,&opts,&image,e);
-        if (okay)okay=qa_hud_pickup(o->hud,v->text?v->text:"",image,nanoseconds(row->seconds+3),e);
+        if (okay)okay=qa_hud_pickup(o->hud,&(qa_hud_pickup_state){.text=v->text?v->text:"",.icon=image,
+            .starts_ns=nanoseconds(row->seconds),.until_ns=nanoseconds(row->seconds+3),
+            .blend_ns=nanoseconds(row->seconds),.family=QA_GAME_Q2},e);
         qa_scene_image_release(image);return okay;}
     case QA_BUILTIN_BEAM:{if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
         const char *name=v->resource;double ms=row->seconds*1000;

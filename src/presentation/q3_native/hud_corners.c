@@ -173,13 +173,14 @@ static bool pickup(q3n_hud_draw *d,float y)
 {
     if(q3n_frame_snapshot_player(d->frame)->stats[0]<=0)return true;
     y-=48;
-    const q3n_event_state *g=q3n_events_state(d->frame->events); float color[4];
-    if(!g->item_pickup || !q3nh_fade(d->frame->time,g->item_pickup_time,3000,color))return true;
-    size_t count; const qa_q3_item *items=qa_q3_items(d->owner->product,&count);
-    if(g->item_pickup<0 || (size_t)g->item_pickup>=count)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD pickup item is invalid");
-    if(!q3n_media_register_item(d->frame->media,(uint32_t)g->item_pickup,d->error) || !q3nh_color(d,color) ||
-       !q3nh_picture(d,8,y,48,48,q3n_media_read(d->frame->media)->items[g->item_pickup].icon) ||
-       !q3nh_big(d,64,y+16,items[g->item_pickup].name?items[g->item_pickup].name:"",color[0]))return false;
+    const qa_hud_pickup_state *g=qa_hud_pickup_read(d->owner->options.messages); float color[4];
+    if(!g || g->family!=QA_GAME_Q3 || !g->source_item ||
+       !q3nh_fade(d->frame->time,(int32_t)(uint32_t)(g->starts_ns/UINT64_C(1000000)),3000,color))return true;
+    size_t count; qa_q3_items(d->owner->product,&count);
+    if(g->source_item>=count)return true;
+    if(!q3n_media_register_item(d->frame->media,g->source_item,d->error) || !q3nh_color(d,color) ||
+       !q3nh_picture(d,8,y,48,48,q3n_media_read(d->frame->media)->items[g->source_item].icon) ||
+       !q3nh_big(d,64,y+16,g->text,color[0]))return false;
     return q3nh_color(d,NULL);
 }
 bool q3nh_corners(q3n_hud_draw *d)

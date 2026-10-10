@@ -846,6 +846,7 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     q3n_weapon_options weapons={.assets=r->assets,.product=basis.product,.context=o,
         .particle_explosion=particle_explosion};
     q3n_event_options events={.assets=r->assets,.product=basis.product,.context=o,.print=print,.center_print=center,
+        .messages=f->seats[r->physical_seat].hud,
         .trace=trace,.point_contents=point_contents,.mark_fragments=mark_fragments,.weapon_event=q3n_weapons_event};
     if(basis.product==QA_Q3_TEAM_ARENA)events.voice_chat=voice;
     q3n_view_options view={.application=f->application,.assets=r->assets,.remote_client=services.client,.seat=basis.client.seat,

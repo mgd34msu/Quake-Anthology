@@ -19,6 +19,13 @@ typedef struct qa_hud_center_state {
     uint32_t lines;
     qa_hud_center_policy policy;
 } qa_hud_center_state;
+typedef struct qa_hud_pickup_state {
+    const char *text;
+    const qa_scene_image *icon;
+    uint64_t starts_ns, until_ns, blend_ns;
+    qa_game_family family;
+    uint32_t source_item;
+} qa_hud_pickup_state;
 typedef struct qa_hud_value {
     const char *label;
     double value, maximum;
@@ -133,7 +140,10 @@ size_t qa_hud_center_length(const qa_hud_center_state *, uint64_t time_ns);
 float qa_hud_center_alpha(const qa_hud_center_state *, uint64_t time_ns, uint64_t duration_ns);
 bool qa_hud_clear_notify(qa_hud *, qa_error *);
 bool qa_hud_clear_center(qa_hud *, qa_error *);
-bool qa_hud_pickup(qa_hud *, const char *, const qa_scene_image *, uint64_t until_ns, qa_error *);
+bool qa_hud_pickup(qa_hud *, const qa_hud_pickup_state *, qa_error *);
+const qa_hud_pickup_state *qa_hud_pickup_read(const qa_hud *);
+void qa_hud_clear_pickup(qa_hud *);
+void qa_hud_pickup_clear_time(qa_hud *);
 void qa_hud_hit_marker(qa_hud *, float damage, uint64_t until_ns);
 /* Retains the typed source status for the event's full actor and provider.
  * The actual physical-seat dispatcher qualifies the recipient before calling. */

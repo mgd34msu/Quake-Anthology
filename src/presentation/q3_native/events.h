@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_EVENTS_H
 
 #include "effects.h"
+#include "qa/hud.h"
 
 typedef struct q3n_event_settings {
     bool footsteps, autoswitch, demo_playback, no_predict, synchronous_clients;
@@ -10,7 +11,7 @@ typedef struct q3n_event_settings {
 } q3n_event_settings;
 typedef struct q3n_event_state {
     float land_change, step_change;
-    int32_t land_time, step_time, item_pickup, item_pickup_time, item_pickup_blend_time;
+    int32_t land_time, step_time;
     int32_t powerup_active, powerup_time;
     char killer_name[32];
 } q3n_event_state;
@@ -19,6 +20,7 @@ typedef struct q3n_event_options {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
     q3n_compiled_source *compiled_source;
+    qa_hud *messages;
     void *context;
     void (*local_allocated)(void *,int32_t slot);
     void (*print)(void *, const char *);
@@ -52,7 +54,6 @@ bool q3n_events_create_effects(const q3n_event_options *, q3n_events **, qa_erro
 void q3n_events_destroy(q3n_events *);
 bool q3n_events_idle(const q3n_events *);
 const q3n_event_state *q3n_events_state(const q3n_events *);
-void q3n_events_clear_pickup_time(q3n_events *);
 void q3n_events_clear_killer(q3n_events *);
 /* One genuine CGAME rand stream, shared with all presentation children. */
 int32_t q3n_events_rand(q3n_events *);

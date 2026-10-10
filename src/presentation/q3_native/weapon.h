@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_WEAPON_H
 
 #include "frame.h"
+#include "qa/hud.h"
 
 typedef struct q3n_weapon_settings {
     int32_t brass_time, fov, gun_frame;
@@ -100,6 +101,7 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *, const q3n_selected_weapon
     const q3n_selected_weapon_authored_view *, bool *submitted, qa_error *);
 typedef enum q3n_impact_sound { Q3N_IMPACT_DEFAULT, Q3N_IMPACT_METAL, Q3N_IMPACT_FLESH } q3n_impact_sound;
 typedef struct q3n_weapon_drawing {
+    qa_hud *messages;
     void *context;
     bool (*fade_color)(void *,int32_t start,int32_t duration,float color[4],bool *visible,qa_error *);
     bool (*set_color)(void *,const float color_or_null[4],qa_error *);

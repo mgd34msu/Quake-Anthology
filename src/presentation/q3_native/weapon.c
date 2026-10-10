@@ -1026,7 +1026,7 @@ bool q3n_weapons_draw_selection(const q3n_frame *f,const q3n_weapon_drawing *dra
     if (!drawing->fade_color(drawing->context,f->weapons->selection.time,1400,color,&visible,e) || !frame_valid(f,e)) return false;
     if (!visible) return true;
     if (!drawing->set_color(drawing->context,color,e) || !frame_valid(f,e)) return false;
-    q3n_events_clear_pickup_time(f->events);
+    qa_hud_pickup_clear_time(drawing->messages);
     uint32_t bits=owned(f); int32_t count=0;
     for (int32_t i=1;i<16;++i) if (bits&(1u<<(uint32_t)i)) ++count;
     int32_t x=320-count*20;

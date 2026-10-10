@@ -10,9 +10,9 @@ struct qa_hud {
     size_t notice_count, notice_capacity;
     qa_hud_center_state center;
     qa_cvar_handle center_time;
-    char *pickup;
-    const qa_scene_image *pickup_icon;
-    uint64_t pickup_until, hit_until;
+    qa_hud_pickup_state pickup;
+    char pickup_text[1024];
+    uint64_t hit_until;
     float hit_damage;
     qa_builtin_ctf_status ctf_status;
     qa_actor_id ctf_actor;
@@ -65,7 +65,7 @@ bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
     qa_hud_clear_notify(hud, NULL); qa_hud_clear_center(hud, NULL);
-    free(hud->notices); free(hud->pickup); qa_scene_image_release(hud->pickup_icon); free(hud);
+    free(hud->notices); qa_scene_image_release(hud->pickup.icon); free(hud);
     return true;
 }
 bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
@@ -125,14 +125,21 @@ float qa_hud_center_alpha(const qa_hud_center_state *center, uint64_t now, uint6
     return center->policy.fade_ns && remaining < center->policy.fade_ns ?
         (float)remaining / (float)center->policy.fade_ns : 1;
 }
-bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, uint64_t until,
-                    qa_error *error) {
+bool qa_hud_pickup(qa_hud *hud, const qa_hud_pickup_state *pickup, qa_error *error) {
     if (!hud || hud->drawing) return ui_fail(error, "HUD pickup callback is active");
-    char *copy = copy_text(text, error); if (!copy) return false;
-    qa_scene_image_retain(icon); qa_scene_image_release(hud->pickup_icon);
-    free(hud->pickup); hud->pickup = copy; hud->pickup_icon = icon; hud->pickup_until = until;
+    size_t length = 0;
+    while (length + 1 < sizeof(hud->pickup_text) && pickup->text[length]) ++length;
+    qa_scene_image_retain(pickup->icon); qa_scene_image_release(hud->pickup.icon);
+    memmove(hud->pickup_text, pickup->text, length); hud->pickup_text[length] = 0;
+    hud->pickup = *pickup; hud->pickup.text = hud->pickup_text;
     return true;
 }
+const qa_hud_pickup_state *qa_hud_pickup_read(const qa_hud *hud)
+{ return hud && hud->pickup.text ? &hud->pickup : NULL; }
+void qa_hud_clear_pickup(qa_hud *hud)
+{ if (hud) { qa_scene_image_release(hud->pickup.icon); hud->pickup = (qa_hud_pickup_state){0}; } }
+void qa_hud_pickup_clear_time(qa_hud *hud)
+{ if (hud) { hud->pickup.starts_ns = 0; hud->pickup.until_ns = 0; } }
 void qa_hud_hit_marker(qa_hud *hud, float damage, uint64_t until) {
     if (hud && !hud->drawing && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
 }
@@ -1079,9 +1086,10 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
                 1, QA_FONT_ALIGN_LEFT, error)) return false;
         }
         if (!center_draw(hud, frame, scene, target, error)) return false;
-        if (hud->pickup && hud->pickup_until > frame->time_ns &&
-            (!icon(hud, scene, target, hud->pickup_icon, (qa_scene_rect_f){304, 328, 32, 32},
-                (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup, (qa_scene_vec4){1, 1, .5f, 1},
+        if (hud->pickup.text && hud->pickup.until_ns > frame->time_ns &&
+            !(frame->center_owned && hud->pickup.family == QA_GAME_Q3) &&
+            (!icon(hud, scene, target, hud->pickup.icon, (qa_scene_rect_f){304, 328, 32, 32},
+                (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup.text, (qa_scene_vec4){1, 1, .5f, 1},
                    1, QA_FONT_ALIGN_CENTER, error))) return false;
         if (hud->hit_damage > 0 && hud->hit_until > frame->time_ns &&
             !text(hud, scene, target, 320, 256, "X", (qa_scene_vec4){1, 1, 1, 1}, 1,

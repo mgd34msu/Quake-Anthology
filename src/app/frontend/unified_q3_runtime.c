@@ -302,6 +302,7 @@ bool frontend_unified_q3_runtime_build_children(frontend_unified_q3_runtime *o,q
     if(weapons.view_replacement)weapons.view_replacement=weapon_view;
     if(weapons.held_replacement)weapons.held_replacement=weapon_held;
     q3n_event_options events=o->options.events; events.compiled_source=source; events.context=o;
+    events.messages=o->options.hud.messages;
     events.print=event_print; events.center_print=event_center; events.trace=event_trace; events.point_contents=event_contents;
     events.mark_fragments=event_marks; events.weapon_event=q3n_weapons_event;
     if(events.local_allocated)events.local_allocated=local_allocated;

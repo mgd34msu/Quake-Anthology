@@ -15,7 +15,8 @@ bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_er
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 events require their genuine presentation services");
     q3n_events *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 event continuation");
-    o->options=*options; o->smoke_seed=0x92; q3ne_local_reset(o); *out=o; return true;
+    o->options=*options; o->smoke_seed=0x92; q3ne_local_reset(o);
+    qa_hud_clear_pickup(options->messages); *out=o; return true;
 }
 bool q3n_events_create_effects(const q3n_event_options *options, q3n_events **out, qa_error *error)
 {
@@ -47,7 +48,6 @@ bool q3n_events_create_compiled(const q3n_event_options *options,q3n_events **ou
 void q3n_events_destroy(q3n_events *o) { if(o && !o->busy)free(o); }
 bool q3n_events_idle(const q3n_events *o) { return !o || !o->busy; }
 const q3n_event_state *q3n_events_state(const q3n_events *o) { return o?&o->state:NULL; }
-void q3n_events_clear_pickup_time(q3n_events *o) { if(o)o->state.item_pickup_time=0; }
 void q3n_events_clear_killer(q3n_events *o) { if(o && !o->busy)o->state.killer_name[0]=0; }
 int32_t q3n_events_rand(q3n_events *o) { o->seed=69069u*o->seed+1u; return (int32_t)(o->seed&32767u); }
 float q3n_events_random(q3n_events *o) { return ((float)q3n_events_rand(o) / 32767); }
@@ -395,8 +395,11 @@ static bool pickup(const q3n_frame *f, const qa_q3_entity *s, bool global, qa_er
     } else if(!qa_q3_register_sound(f->assets,item->sound,false,&sound,error) || !q3ne_current(f,error))return false;
     if(emit && !q3ne_sound(f,sound,NULL,number,0,false,error))return false;
     if(s->number==q3n_frame_snapshot_player(f)->clientNum) {
-        q3n_event_state *state=&f->events->state;
-        state->item_pickup=s->eventParm; state->item_pickup_time=state->item_pickup_blend_time=f->time;
+        uint64_t starts=(uint64_t)(uint32_t)f->time*UINT64_C(1000000);
+        if(f->events->options.messages && !qa_hud_pickup(f->events->options.messages,
+            &(qa_hud_pickup_state){.text=item->name?item->name:"",.starts_ns=starts,
+                .until_ns=starts+UINT64_C(3000000000),.blend_ns=starts,
+                .family=QA_GAME_Q3,.source_item=(uint32_t)s->eventParm},error))return false;
         if(item->kind==QA_Q3_ITEM_WEAPON && f->event_settings->autoswitch && item->tag!=2)
             q3n_weapons_set_selected(f->weapons,item->tag,f->time);
     }

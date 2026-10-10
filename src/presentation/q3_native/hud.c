@@ -205,7 +205,9 @@ static bool crosshair(q3n_hud_draw *d)
     float color[4]; q3nh_health(p->stats[0],p->stats[q3nh_armor_stat(d->owner->product)],color);
     if(!q3nh_color(d,s->crosshair_health?color:NULL))return false;
     float size=(s->crosshair_size * (d->frame->preferences.crosshair_size / 8));
-    int32_t elapsed=q3ne_sub(d->frame->time,q3n_events_state(d->frame->events)->item_pickup_blend_time);
+    const qa_hud_pickup_state *pickup=qa_hud_pickup_read(d->owner->options.messages);
+    int32_t elapsed=q3ne_sub(d->frame->time,pickup?
+        (int32_t)(uint32_t)(pickup->blend_ns/UINT64_C(1000000)):0);
     if(!d->frame->preferences.reduced_flashes && elapsed>0 && elapsed<200)size=(size * (1 + ((float)elapsed / 200)));
     float w=(size * ((float)d->viewport.width / 640)),h=(size * ((float)d->viewport.height / 480));
     float x=((((float)s->crosshair_x * ((float)d->viewport.width / 640)) + (float)d->frame->refdef.x) + (0.5f * ((float)d->frame->refdef.width + -w)));
@@ -417,7 +419,9 @@ static bool active_status(q3n_hud_draw *d)
     }
     if(!crosshair(d) || !crosshair_names(d))return false;
     q3nh_anchor(d,320,480);
-    q3n_weapon_drawing drawing={d,weapon_fade,weapon_color,weapon_picture,weapon_strlen,weapon_string};
+    q3n_weapon_drawing drawing={.context=d,.fade_color=weapon_fade,.set_color=weapon_color,
+        .picture=weapon_picture,.string_length=weapon_strlen,.big_string=weapon_string,
+        .messages=d->owner->options.messages};
     if(!d->weapon_hud.selected && !q3n_weapons_draw_selection(d->frame,&drawing,d->error))return false;
     if(d->owner->product==QA_Q3_ARENA) {
         q3nh_anchor(d,640,240);

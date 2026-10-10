@@ -144,6 +144,7 @@ bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native *
     q3n_weapon_options weapons=options->weapons;
     weapons.assets=o->assets; weapons.product=o->product; weapons.particle_explosion=particle_explosion;
     q3n_event_options events=options->events;
+    events.messages=options->hud.messages;
     events.assets=o->assets; events.product=o->product; events.weapon_event=q3n_weapons_event;
     q3n_view_options view=options->view;
     view.application=options->application; view.source=restoring?NULL:&source; view.client=options->client; view.assets=o->assets; view.seat=o->seat;
