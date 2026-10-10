@@ -2976,6 +2976,7 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
     }
     if (!n->q3_client_attached) {
         if (qa_application_startup_pending(n->frontend->application)) return true;
+        if (!qa_net_transport_send_ready(qa_network_transport(n->runtime), &n->q3_client_admission.address)) return true;
         if (!client_authorization_prepare(n, (qa_bytes){0}, error) || !client_initial_session(n,error)) return false;
         qa_application_q3_client_context role;
         qa_buffer info = {0};
@@ -6256,12 +6257,16 @@ bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *even
 {
     const qa_frontend_network *n = f ? f->network : NULL;
     if (!n || event->data.packet.source_id != n->input_serial || event->data.packet.destination == 1) return true;
+    qa_network_runtime *runtime = n->runtime;
     if (event->data.packet.destination >= 2) {
         uint32_t physical = (uint32_t)(event->data.packet.destination - 2);
-        return physical >= f->options.seats || !n->local_clients[physical].runtime ||
-            qa_network_receive_ready(n->local_clients[physical].runtime);
+        if (physical >= f->options.seats || !n->local_clients[physical].runtime) return true;
+        runtime = n->local_clients[physical].runtime;
     }
-    return qa_network_receive_ready(n->runtime);
+    return qa_network_receive_ready(runtime) &&
+        (event->data.packet.result != QA_NET_POLL_PACKET ||
+         event->data.packet.from.kind != QA_NET_LOOPBACK ||
+         qa_net_transport_send_ready(qa_network_transport(runtime), &event->data.packet.from));
 }
 bool frontend_network_local_input_owned(const qa_frontend *f, uint32_t physical)
 {

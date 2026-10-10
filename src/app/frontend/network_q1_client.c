@@ -689,6 +689,7 @@ static bool tick(frontend_network_q1_client *o,uint64_t now,qa_error *error)
     size_t executed=0;
     if(!frontend_client_source_drain(o->physical,1024,&executed,error)) return false;
     if(o->options.demo_playback || handshake(o).phase==QA_Q1_CONNECT_CONNECTED) return attach(o,error);
+    if (!qa_net_transport_send_ready(qa_network_transport(o->options.runtime), &o->options.remote)) return true;
     uint8_t data[65535]; qa_net_writer writer; qa_net_writer_init(&writer,data,sizeof(data),error);
     bool present=false;
     bool ok=o->qw?qa_qw_connect_next(o->qw,now,&present,&writer,error):qa_nq_connect_next(o->nq,now,&present,&writer,error);

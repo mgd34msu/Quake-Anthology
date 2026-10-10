@@ -229,6 +229,9 @@ bool qa_qw_channel_demo_sequences(qa_qw_channel *channel, uint32_t outgoing,
 bool qa_q1_peer_send(qa_q1_peer *peer, qa_bytes bytes, qa_error *error) {
     return peer ? qa_net_transport_send(peer->transport, &peer->remote, bytes, error) == QA_NET_SEND_ACCEPTED : invalid(error, "Missing Quake peer");
 }
+bool qa_q1_peer_send_ready(const qa_q1_peer *peer) {
+    return qa_net_transport_send_ready(peer->transport, &peer->remote);
+}
 bool qa_q1_peer_receive(qa_q1_peer *peer, const qa_net_address *from, qa_bytes bytes,
                          uint64_t now_ns, qa_q1_delivery *out, qa_error *error) {
     if (!peer || !from || !out) return invalid(error, "Invalid Quake peer receive arguments");

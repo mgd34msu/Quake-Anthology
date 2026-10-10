@@ -75,6 +75,7 @@ static bool retire(nq_server *peer, const char *reason, bool notify, qa_error *e
         peer->retiring = true;
     }
     if (r->marked) return true;
+    if (!r->sent && !qa_q1_peer_send_ready(&peer->native)) return true;
     r->busy = true;
     bool previous = peer->runtime->callback; peer->runtime->callback = true;
     bool ok = true;
@@ -159,6 +160,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
 {
     nq_server *peer = context; (void)runtime; (void)id;
     if (peer->retiring) return retire(peer, peer->retirement.reason, peer->retirement.notify, error);
+    if (!qa_q1_peer_send_ready(&peer->native)) return true;
     if (peer->first && qa_nq_channel_ready(peer->native.channel.nq)) {
         nq_pending *pending = peer->first;
         if (!qa_nq_channel_queue(peer->native.channel.nq, (qa_bytes){pending->bytes.data, pending->bytes.size}, error)) return false;
@@ -232,6 +234,7 @@ bool qa_network_nq_server_frame(qa_network_runtime *runtime, qa_net_client_id id
     nq_server *peer = get(runtime, id, error);
     if (!peer) return false;
     if (peer->retiring || peer->stage != 4) return true;
+    if (!qa_q1_peer_send_ready(&peer->native)) return true;
     qa_bytes packet;
     return qa_nq_channel_unreliable(peer->native.channel.nq, bytes, &packet, error) &&
         qa_q1_peer_send(&peer->native, packet, error);

@@ -223,7 +223,8 @@ bool qa_unified_bootstrap_process(qa_unified_bootstrap *b, uint64_t now, bool *w
     }
     if (ok && !b->options.server && !b->closed) {
         bool pending_offer = !b->peer_count || !qa_unified_session_epoch(b->peers[0].session);
-        if (!*waiting && pending_offer && (!b->sent || now - b->last_handshake >= UINT64_C(1000000000))) {
+        if (!*waiting && pending_offer && (!b->sent || now - b->last_handshake >= UINT64_C(1000000000)) &&
+            qa_net_transport_send_ready(qa_network_transport(b->runtime), &b->options.remote)) {
             ok = send_handshake(b, &b->options.remote, b->has_token ? QA_UNIFIED_CONNECT : QA_UNIFIED_HELLO,
                 b->nonce, b->token, e);
             if (ok) { b->last_handshake = now; b->sent = true; }

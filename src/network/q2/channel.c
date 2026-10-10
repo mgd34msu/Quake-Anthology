@@ -284,6 +284,7 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
         return false;
     }
     *included=false;
+    if (!qa_net_transport_send_ready(t,to)) return true;
     size_t capacity=kex(c)?65535:c->packet_bytes;
     uint8_t*bytes=c->packet;
     qa_net_writer w;
@@ -303,6 +304,7 @@ bool qa_q2_channel_send(qa_q2_channel*c,qa_net_transport*t,const qa_net_address*
             c->sent_ns=now;
         }
         if(unreliable.size) {
+            if (!qa_net_transport_send_ready(t,to)) return true;
             if(unreliable.size>c->capacity) {
                 qa_error_set(e,QA_ERROR_ARGUMENT,0,"KEX game message exceeds capacity");
                 return false;

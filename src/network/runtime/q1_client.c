@@ -181,6 +181,7 @@ static bool retire_client(q1_runtime_client *c, const char *reason, bool notify,
     unsigned required = c->qw ? 3u : 1u;
     bool ok = true;
     while (ok && r->notify && r->transmissions < required) {
+        if (!qa_q1_peer_send_ready(&c->native)) return true;
         if (!r->packet.size) {
             uint8_t data[6]; qa_net_writer writer; qa_bytes packet;
             qa_net_writer_init(&writer, data, sizeof(data), e);
@@ -215,17 +216,20 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     }
     if (c->held) return true;
     if (c->demo) return true;
+    if (!qa_q1_peer_send_ready(&c->native)) return true;
     if (!queue_next(c, e)) return false;
     if (!c->qw) {
         bool present; qa_bytes packet;
         if (!qa_nq_channel_next(c->native.channel.nq, now, &present, &packet, e) ||
             (present && !qa_q1_peer_send(&c->native, packet, e))) return false;
     }
+    if (!qa_q1_peer_send_ready(&c->native)) return true;
     size_t consumed = 0;
     uint8_t *data = malloc(c->policy.message_bytes);
     if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding Q1 CLIENT input"); return false; }
     bool ok = true;
     while (ok && consumed < c->command_count &&
+        qa_q1_peer_send_ready(&c->native) &&
         (!c->qw || qa_qw_channel_can_send(c->native.channel.qw, now))) {
         qa_net_writer writer; qa_net_writer_init(&writer, data, c->policy.message_bytes, e);
         q1_client_move *move = &c->commands[consumed]; uint32_t sequence = c->moves;
@@ -269,6 +273,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
         memmove(c->commands, c->commands + consumed, c->command_count * sizeof(*c->commands));
     }
     if (ok && c->qw && !consumed && ((c->started && !c->active) || qa_qw_channel_pending(c->native.channel.qw)) &&
+        qa_q1_peer_send_ready(&c->native) &&
         qa_qw_channel_can_send(c->native.channel.qw, now)) ok = transmit(c, (qa_bytes){0}, now, e);
     return ok;
 }

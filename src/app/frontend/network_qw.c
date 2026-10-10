@@ -800,6 +800,7 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
         .status = source_status,.log=source_log};
     while (host->pending_count) {
         qw_pending_control *pending = host->pending; qw_reply reply = {host, pending};
+        if (!qa_net_transport_send_ready(qa_network_transport(host->runtime), &pending->address)) return true;
         if (pending->reply.size) {
             if (!qa_network_send_address(host->runtime,&pending->address,
                 (qa_bytes){pending->reply.data,pending->reply.size},error)) return false;

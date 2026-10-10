@@ -312,6 +312,10 @@ bool qa_net_transport_ready(const qa_net_transport *transport)
 {
     return transport != NULL && (transport->ops.ready == NULL || transport->ops.ready(transport->state));
 }
+bool qa_net_transport_send_ready(const qa_net_transport *transport, const qa_net_address *to)
+{
+    return !transport || !transport->ops.send_ready || transport->ops.send_ready(transport->state, to);
+}
 qa_net_send_result qa_net_transport_send(qa_net_transport *transport, const qa_net_address *to, qa_bytes payload, qa_error *error)
 {
     if (transport == NULL || !valid_address(to) || (payload.size != 0 && payload.data == NULL) ||
@@ -380,6 +384,11 @@ static bool host_reliable_receipt(const void *context, const qa_net_address *to,
 {
     const host_state *state = context;
     return qa_net_transport_reliable_receipt(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0], to, out);
+}
+static bool host_send_ready(const void *context, const qa_net_address *to)
+{
+    const host_state *state = context;
+    return qa_net_transport_send_ready(state->children[to->kind == QA_NET_LOOPBACK ? 1 : 0], to);
 }
 
 static bool host_collect(void *context, uint64_t now_ns, qa_net_transport_event *out, qa_error *error)
@@ -464,7 +473,8 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
     }
     const qa_net_transport_ops ops = {.send = host_send, .collect = host_collect,
         .dispatch = host_dispatch, .maintenance = host_maintenance,
-        .ready = host_ready, .close = host_close, .reliable_receipt = host_reliable_receipt};
+        .ready = host_ready, .close = host_close, .reliable_receipt = host_reliable_receipt,
+        .send_ready = host_send_ready};
     if (!qa_net_transport_create(external ? &external->address : &local->address,
         limits, &ops, state, out, error)) {
         free(state);
@@ -708,6 +718,14 @@ static bool loop_ready(const void *context)
     const loop_endpoint *endpoint = context;
     return !endpoint->closed && !endpoint->hub->closed;
 }
+static bool loop_send_ready(const void *context, const qa_net_address *to)
+{
+    const loop_endpoint *endpoint = context;
+    for (const loop_endpoint *peer = endpoint->hub->head; peer; peer = peer->next)
+        if (qa_net_address_equal(&peer->address, to, true))
+            return peer->count < endpoint->hub->limits.queue_packets;
+    return true; /* Let send report an invalid or unbound destination. */
+}
 
 bool qa_net_loopback_create(qa_net_limits limits, qa_net_loopback **out, qa_error *error)
 {
@@ -748,7 +766,7 @@ bool qa_net_loopback_bind(qa_net_loopback *hub, const char *name, qa_net_transpo
     endpoint->hub = hub;
     endpoint->address = address;
     const qa_net_transport_ops ops = { .send = loop_send, .collect = loop_receive,
-        .close = loop_close, .ready = loop_ready };
+        .close = loop_close, .ready = loop_ready, .send_ready = loop_send_ready };
     if (!qa_net_transport_create(&address, hub->limits, &ops, endpoint, out, error)) {
         free(endpoint->packets);
         free(endpoint->storage);

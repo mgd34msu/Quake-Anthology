@@ -94,6 +94,7 @@ static bool retire(qw_server *peer, const char *reason, bool notify, qa_error *e
     r->busy = true;
     bool ok = true;
     while (ok && !r->sent) {
+        if (!qa_q1_peer_send_ready(&peer->native)) { r->busy = false; return true; }
         if (!r->packet.size) {
             uint8_t disconnect = 2; qa_bytes packet;
             ok = qa_qw_channel_transmit(peer->native.channel.qw, (qa_bytes){&disconnect, 1},
@@ -205,6 +206,7 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
 static bool send(qw_server *peer, qa_bytes services, const qa_qw_source_frame *frame, qa_error *error)
 {
     if (!peer->reply || peer->retiring) return true;
+    if (!qa_q1_peer_send_ready(&peer->native)) return true;
     bool source_paused;
     if (!paused(peer, &source_paused, error)) return false;
     peer->reply = false;

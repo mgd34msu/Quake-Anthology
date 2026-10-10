@@ -57,6 +57,7 @@ typedef struct qa_q1_peer {
     bool reply_send_failed;
 } qa_q1_peer;
 bool qa_q1_peer_send(qa_q1_peer *, qa_bytes, qa_error *);
+bool qa_q1_peer_send_ready(const qa_q1_peer *);
 bool qa_q1_peer_receive(qa_q1_peer *, const qa_net_address *, qa_bytes, uint64_t,
                          qa_q1_delivery *, qa_error *);
 

@@ -139,6 +139,7 @@ typedef struct qa_net_transport_ops {
     bool (*dispatch)(void *, const qa_net_transport_event *, qa_net_datagram *, bool *present, qa_error *);
     bool (*maintenance)(void *, uint64_t now_ns, qa_error *);
     bool (*reliable_receipt)(const void *, const qa_net_address *, qa_network_reliable_receipt *);
+    bool (*send_ready)(const void *, const qa_net_address *);
 } qa_net_transport_ops;
 bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               const qa_net_transport_ops *, void *owned_state,
@@ -165,6 +166,9 @@ void qa_net_loopback_close(qa_net_loopback *);
 const qa_net_address *qa_net_transport_address(const qa_net_transport *);
 size_t qa_net_transport_limit(const qa_net_transport *);
 bool qa_net_transport_ready(const qa_net_transport *);
+/* Single-caller capacity preflight, before destructive protocol encoding.
+ * A full destination remains open for receive and maintenance. */
+bool qa_net_transport_send_ready(const qa_net_transport *, const qa_net_address *);
 /* Admission is distinct from remote acknowledgement. Full leaves the
  * prepared datagram owned by its sender; neither false success nor IO error. */
 qa_net_send_result qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);

@@ -626,6 +626,11 @@ bool frontend_nq_pump(frontend_nq_host *host, qa_error *error)
         .player_info = player_info, .next_rule = next_rule, .connect = connect_source};
     for (size_t i = 0; i < count; ++i) {
         nq_pending_control *pending = host->pending + i; uint8_t response[NQ_MESSAGE];
+        if (!qa_net_transport_send_ready(qa_network_transport(host->runtime), &pending->address)) {
+            host->pending_count = count - i;
+            memmove(host->pending, pending, host->pending_count * sizeof(*host->pending));
+            return true;
+        }
         qa_error local = {0}; qa_net_writer writer; qa_net_writer_init(&writer, response, sizeof(response), &local); bool present;
         if (!qa_nq_control_answer((qa_bytes){pending->bytes, pending->size}, &pending->address,
             pending->received_ns, &callbacks, &present, &writer, &local)) {
