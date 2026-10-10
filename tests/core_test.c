@@ -12,6 +12,8 @@
 #include "qa/binary.h"
 #include "qa/campaign.h"
 #include "qa/recovery.h"
+#include "qa/localization.h"
+#include "qa/vfs.h"
 #include "qa/q1_save.h"
 #include "qa/scene.h"
 #include "qa/tools.h"
@@ -334,6 +336,42 @@ static void test_files(void)
     CHECK(unlink(path) == 0);
     CHECK(unlink(fifo_path) == 0);
     CHECK(rmdir(directory) == 0);
+}
+
+static void test_localization_lookup_generation(void)
+{
+    qa_error error={0};char directories[2][64]={"/tmp/qa-localization-a-XXXXXX","/tmp/qa-localization-b-XXXXXX"};
+    const char *values[]={"GREETING = \"first\"\n","GREETING = \"second\"\n"};
+    char folders[2][128],paths[2][160];
+    for (size_t i=0;i<2;++i) {
+        CHECK(mkdtemp(directories[i]));
+        CHECK(snprintf(folders[i],sizeof(folders[i]),"%s/localization",directories[i])>0);
+        CHECK(mkdir(folders[i],0700)==0);
+        CHECK(snprintf(paths[i],sizeof(paths[i]),"%s/loc_english.txt",folders[i])>0);
+        int fd=open(paths[i],O_WRONLY|O_CREAT|O_EXCL,0600);CHECK(fd>=0);
+        CHECK(write(fd,values[i],strlen(values[i]))==(ssize_t)strlen(values[i]));CHECK(close(fd)==0);
+    }
+    qa_resource_pool *resources=qa_resource_pool_create(&error);CHECK(resources);
+    qa_vfs *view=qa_vfs_create(resources,&error);CHECK(view);
+    qa_localization_pool *pool=qa_localization_pool_create(&error);CHECK(pool);
+    qa_mount_id mounts[2];
+    CHECK(qa_vfs_mount_directory(view,directories[0],QA_ARCHIVE_EXACT,false,mounts,&error));
+    qa_localization_options options={.profile=QA_LOCALIZATION_Q2_RERELEASE,.platform="LINUX"};
+    qa_localization *first=NULL,*again=NULL,*second=NULL;
+    CHECK(qa_localization_acquire(pool,view,"english",&options,&first,&error));
+    CHECK(!strcmp(qa_localization_find(first,"GREETING")->format,"first"));
+    options.platform="linux";
+    CHECK(qa_localization_acquire(pool,view,"english",&options,&again,&error));CHECK(again==first);
+    qa_localization_release(again);
+    CHECK(qa_vfs_mount_directory(view,directories[1],QA_ARCHIVE_EXACT,false,mounts+1,&error));
+    qa_mount_id order[]={mounts[1],mounts[0]};CHECK(qa_vfs_set_order(view,order,2,&error));
+    CHECK(qa_localization_acquire(pool,view,"english",&options,&second,&error));
+    CHECK(!strcmp(qa_localization_find(second,"GREETING")->format,"second"));
+    CHECK(!strcmp(qa_localization_find(first,"GREETING")->format,"first"));
+    qa_vfs_destroy(view);qa_localization_pool_destroy(pool);qa_resource_pool_destroy(resources);
+    CHECK(!strcmp(qa_localization_find(second,"GREETING")->format,"second"));
+    qa_localization_release(first);qa_localization_release(second);
+    for (size_t i=0;i<2;++i){CHECK(unlink(paths[i])==0);CHECK(rmdir(folders[i])==0);CHECK(rmdir(directories[i])==0);}
 }
 
 static void test_campaign_unit(void)
@@ -1157,6 +1195,7 @@ int main(int argc, char **argv)
     test_arena();
     test_metadata_retention();
     test_files();
+    test_localization_lookup_generation();
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();

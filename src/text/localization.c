@@ -21,7 +21,9 @@ typedef struct loc_cache {
     qa_localization *catalog;
     qa_localization_profile profile;
     bool platform_present;
-    char *platform;
+    char *platform,*language;
+    qa_vfs *view;
+    uint64_t lookup_generation;
     qa_resource *resources[4];
 } loc_cache;
 struct qa_localization_pool {
@@ -403,7 +405,8 @@ static void cache_free(loc_cache *entry) {
     qa_localization_release(entry->catalog);
     for (size_t i = 0; i < 4; ++i)
         qa_resource_release(entry->resources[i]);
-    free(entry->platform);
+    qa_vfs_destroy(entry->view);
+    free(entry->language);free(entry->platform);
     free(entry);
 }
 void qa_localization_pool_destroy(qa_localization_pool *pool) {
@@ -438,9 +441,17 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid localization resource language");
         return false;
     }
+    const char *platform = options->platform ? options->platform : "";
+    uint64_t generation=qa_vfs_lookup_generation(view);
+    for (loc_cache *entry=pool->first;entry;entry=entry->next) {
+        if (entry->view==view && entry->lookup_generation==generation &&
+            !strcmp(entry->language,language) && entry->profile==options->profile &&
+            entry->platform_present==(options->platform!=NULL) && equal_folded(entry->platform,platform)) {
+            qa_localization_retain(entry->catalog);*out=entry->catalog;return true;
+        }
+    }
     qa_resource *resources[4] = {0};
     qa_bytes layers[4] = {0};
-    const char *platform = options->platform ? options->platform : "";
     size_t n = strlen(platform);
     char *folded = malloc(n + 1);
     if (!folded) {
@@ -479,38 +490,37 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
         layers[i] = qa_resource_bytes(resources[i]);
     }
     if (ok) {
-        loc_cache *entry;
-        for (entry = pool->first; entry; entry = entry->next) {
-            bool same = entry->profile == options->profile &&
-                entry->platform_present == (options->platform != NULL) && !strcmp(entry->platform, folded);
-            for (size_t i = 0; same && i < 4; ++i)
-                same = entry->resources[i] == resources[i];
-            if (same)
-                break;
+        loc_cache *shared;
+        for (shared=pool->first;shared;shared=shared->next) {
+            bool same=shared->profile==options->profile &&
+                shared->platform_present==(options->platform!=NULL) && !strcmp(shared->platform,folded);
+            for (size_t i=0;same && i<4;++i)same=shared->resources[i]==resources[i];
+            if (same)break;
         }
+        loc_cache *entry=calloc(1,sizeof(*entry));
         if (!entry) {
-            entry = calloc(1, sizeof(*entry));
-            if (!entry) {
-                qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating localization cache entry");
-                ok = false;
-            } else if (!qa_localization_create(layers, count, options, &entry->catalog, error)) {
-                free(entry);
-                ok = false;
-            } else {
-                entry->profile = options->profile;
-                entry->platform_present = options->platform != NULL;
-                entry->platform = folded; folded = NULL;
-                for (size_t i = 0; i < 4; ++i) {
-                    entry->resources[i] = resources[i];
-                    qa_resource_retain(resources[i]);
-                }
-                entry->next = pool->first;
-                pool->first = entry;
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating localization cache entry");ok=false;
+        } else {
+            size_t length=strlen(language)+1;
+            entry->language=malloc(length);
+            if (!entry->language) {
+                qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining localization language");ok=false;
+            } else memcpy(entry->language,language,length);
+            if (ok) {
+                ok=qa_vfs_retain(view,error);
+                if (ok)entry->view=view;
             }
-        }
-        if (ok) {
-            qa_localization_retain(entry->catalog);
-            *out = entry->catalog;
+            if (ok && shared) {entry->catalog=shared->catalog;qa_localization_retain(entry->catalog);}
+            else if (ok)ok=qa_localization_create(layers,count,options,&entry->catalog,error);
+            if (ok) {
+                entry->lookup_generation=generation;entry->profile=options->profile;
+                entry->platform_present=options->platform!=NULL;entry->platform=folded;folded=NULL;
+                for (size_t i=0;i<4;++i) {
+                    entry->resources[i]=resources[i];qa_resource_retain(resources[i]);
+                }
+                entry->next=pool->first;pool->first=entry;
+                qa_localization_retain(entry->catalog);*out=entry->catalog;
+            } else cache_free(entry);
         }
     }
     for (size_t i = 0; i < 4; ++i)
