@@ -40,12 +40,12 @@ static bool resource(application_unified_json *j, const qa_product *product, con
         application_unified_json_natural(j, qa_resource_bytes(r).size, error) && text(j, "}", error);
 }
 
-static bool provider(qa_unified_frame_lease *lease, qa_unified_provider_state *out, const application_provider *p, qa_error *error)
+bool application_unified_provider_state(qa_unified_provider_state *out, const application_provider *p, qa_error *error)
 {
     if (!p || !p->constructed || !p->attached || p->close_pending || !p->launch || !p->product)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified configuration lost its published provider");
-    return application_unified_frame_string(lease, &out->provider, p->launch->selection.instance, error) &&
-        application_unified_frame_string(lease, &out->content, p->product->identity, error);
+    *out = (qa_unified_provider_state){.provider = p->owner, .content = p->content_name};
+    return true;
 }
 
 static int configuration_compare(const void *left, const void *right)
@@ -207,12 +207,12 @@ static bool configurations(qa_application *app, const application_unified_source
         v->weapons = application_unified_frame_alloc(lease, 1, sizeof(*v->weapons), error);
         if (!v->weapons) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual arsenal configuration");
         v->weapon_count = 1;
-        if (!provider(lease, &v->movement, application_provider_for(app, row->actor, QA_ROLE_MOVEMENT, ""), error) ||
-            !provider(lease, &v->character, application_provider_for(app, row->actor, QA_ROLE_CHARACTER, ""), error) ||
-            !provider(lease, &v->appearance, application_provider_for(app, row->actor, QA_ROLE_BODY, ""), error) ||
-            !provider(lease, v->weapons, application_provider_for(app, row->actor, QA_ROLE_ARSENAL, ""), error) ||
-            !provider(lease, &v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error) ||
-            !provider(lease, &v->hud, application_provider_for(app, row->actor, QA_ROLE_HUD, ""), error) ||
+        if (!application_unified_provider_state(&v->movement, application_provider_for(app, row->actor, QA_ROLE_MOVEMENT, ""), error) ||
+            !application_unified_provider_state(&v->character, application_provider_for(app, row->actor, QA_ROLE_CHARACTER, ""), error) ||
+            !application_unified_provider_state(&v->appearance, application_provider_for(app, row->actor, QA_ROLE_BODY, ""), error) ||
+            !application_unified_provider_state(v->weapons, application_provider_for(app, row->actor, QA_ROLE_ARSENAL, ""), error) ||
+            !application_unified_provider_state(&v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error) ||
+            !application_unified_provider_state(&v->hud, application_provider_for(app, row->actor, QA_ROLE_HUD, ""), error) ||
             !q2_configuration(app, source, lease, v, error)) return false;
     }
     if (out->configuration_count > 1)

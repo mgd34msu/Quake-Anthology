@@ -159,9 +159,8 @@ static const qa_recipe_provider *frame_provider(const frontend_remote_unified *o
         if (!selected || !selected->provider || !selected->content) return NULL;
         for (size_t p = 0; p < qa_executable_recipe_provider_count(owner->recipe); ++p) {
             const qa_recipe_provider *provider = qa_executable_recipe_provider(owner->recipe, p);
-            const qa_product *product = provider ? qa_catalog_product(owner->options.domain.catalog, provider->selection.product) : NULL;
-            if (provider && product && (provider->roles & QA_ROLE_BIT(role)) &&
-                !strcmp(selected->provider, provider->selection.instance) && !strcmp(selected->content, product->identity)) return provider;
+            if (provider && (provider->roles & QA_ROLE_BIT(role)) &&
+                selected->provider == provider->instance_name && selected->content == provider->content_name) return provider;
         }
         return NULL;
     }
@@ -331,7 +330,7 @@ static bool prepare_offer(frontend_remote_unified *owner, const qa_unified_docum
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified preparation changed its retained offer");
     if (!owner->offer && !qa_unified_document_retain(document, &owner->offer, error)) return false;
     if (!owner->preparing_recipe && !qa_executable_recipe_prepare(document, owner->options.domain.catalog,
-        owner->options.domain.resources, &owner->preparing_recipe, error)) return false;
+        owner->options.domain.resources, owner->strings, &owner->preparing_recipe, error)) return false;
     owner->preparing = true; owner->consumers_live = true;
     bool okay = owner->options.consumers.prepare(owner->options.consumers.context,
         owner, owner->preparing_recipe, ready, error);

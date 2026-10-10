@@ -921,6 +921,18 @@ static bool q3_console_prepare(application_provider *provider,
     return application_native_q3_settings_prepare_definitions(provider, product, error);
 }
 
+static bool provider_product_bind(application_provider *provider, qa_catalog *catalog,
+    const qa_product *product, qa_error *error)
+{
+    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
+        product->identity, &provider->content_name, error)) return false;
+    qa_catalog_retain(catalog);
+    qa_catalog_release(provider->product_catalog);
+    provider->product_catalog = catalog;
+    provider->product = product;
+    return true;
+}
+
 static bool provider_console_prepare(qa_application *application,
     application_provider *provider, qa_world *world, qa_catalog *catalog,
     const qa_product *product, const qa_launch_choices *choices, qa_console **console,
@@ -938,10 +950,7 @@ static bool provider_console_prepare(qa_application *application,
     if (provider->native_q3_console)
         return application_native_q3_remote_roles_prepare(provider, choices, error) &&
             application_native_q3_console_at(provider, console, cvars, command);
-    qa_catalog_retain(catalog);
-    qa_catalog_release(provider->product_catalog);
-    provider->product_catalog = catalog;
-    provider->product = product;
+    if (!provider_product_bind(provider, catalog, product, error)) return false;
     if (provider->client_only_owned || application_native_client_only(provider))
         return true;
     application_native_profile profile;
@@ -1442,10 +1451,7 @@ static bool construct_provider(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "invalid detached provider construction");
     provider->constructed = true;
-    qa_catalog_retain(catalog);
-    qa_catalog_release(provider->product_catalog);
-    provider->product_catalog = catalog;
-    provider->product = product;
+    if (!provider_product_bind(provider, catalog, product, error)) return false;
     if (provider->client_only_owned || application_native_client_only(provider))
         return true;
     bool ok;
@@ -1519,10 +1525,7 @@ bool application_provider_construct_q3_restored(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Invalid detached saved original Q3 provider construction");
     provider->constructed = true;
-    qa_catalog_retain(catalog);
-    qa_catalog_release(provider->product_catalog);
-    provider->product_catalog = catalog;
-    provider->product = product;
+    if (!provider_product_bind(provider, catalog, product, error)) return false;
     if (!application_guest_q3_save_prepare(provider, world, product, choices, record, error)) {
         qa_error ignored = {0};
         (void)application_provider_deconstruct(provider, &ignored);

@@ -28,6 +28,7 @@ typedef struct recipe_resource {
 struct qa_executable_recipe {
     qa_catalog *catalog;
     qa_resource_pool *pool;
+    qa_strings *strings;
     uint64_t catalog_generation;
     qa_arena arena;
     qa_recipe_choices choices;

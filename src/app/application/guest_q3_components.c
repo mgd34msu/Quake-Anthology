@@ -144,6 +144,7 @@ bool application_q3_components_create(const application_q3_components_options *o
         if(!row) return application_fail(e,QA_ERROR_MEMORY,"Retaining physical component GAME row");
         owner->rows[owner->count++]=row; row->roster=owner; row->provider=selected; row->publication.metadata=metadata;
         row->publication.catalog=selected->product_catalog; row->publication.product=selected->product;
+        row->publication.provider_name=selected->owner; row->publication.content_name=selected->content_name;
         if(!qa_launch_instance_retain_metadata(selected->launch,&row->metadata_lease,e)) return false;
         row->publication.descriptor=qa_launch_instance_lease_view(row->metadata_lease); row->publication.content=row->publication.descriptor->content;
         if(!qa_vfs_acquire_receipt(row->publication.content,metadata->program_path,&row->program,&row->program_acquisition,e)||

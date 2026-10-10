@@ -3,8 +3,11 @@
 
 #include "internal.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/network_unified_frame.h"
 #include <stdlib.h>
 #include <string.h>
+
+bool application_unified_provider_state(qa_unified_provider_state *, const application_provider *, qa_error *);
 
 static inline void *application_unified_frame_alloc(qa_unified_frame_lease *lease,
     size_t count, size_t stride, qa_error *error)

@@ -11,7 +11,7 @@
 /* These are copied observations of the actual Source. Actor IDs retain the
  * Source registry; a frontend resolves them through its admitted aliases. */
 typedef struct qa_unified_provider_state {
-    char *provider, *content;
+    qa_string_id provider, content;
 } qa_unified_provider_state;
 typedef struct qa_unified_actor_state {
     qa_actor_id actor;

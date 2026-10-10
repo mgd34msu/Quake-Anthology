@@ -60,6 +60,7 @@ typedef struct qa_recipe_sidecar {
 } qa_recipe_sidecar;
 typedef struct qa_recipe_provider {
     qa_launch_provider selection;
+    qa_string_id instance_name, content_name;
     qa_actor_owner source_owner;
     uint64_t roles;
     bool registered;
@@ -80,7 +81,7 @@ bool qa_application_unified_offer(qa_application *, uint32_t epoch,
 /* Resolves only against installed catalog capabilities. Native paths and
  * process-local pool/mount/product IDs never appear in the wire identity. */
 bool qa_executable_recipe_prepare(const qa_unified_document *, qa_catalog *,
-    qa_resource_pool *, qa_executable_recipe **owned, qa_error *);
+    qa_resource_pool *, qa_strings *, qa_executable_recipe **owned, qa_error *);
 bool qa_executable_recipe_current(const qa_executable_recipe *, const qa_catalog *);
 bool qa_executable_recipe_close(qa_executable_recipe *, qa_error *);
 /* Enumerates every genuine holder, including admitted lookup-policy views. */

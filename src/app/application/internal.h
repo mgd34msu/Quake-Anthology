@@ -79,6 +79,7 @@ typedef struct application_provider {
     const qa_product *product;
     qa_catalog *product_catalog;
     qa_actor_owner owner;
+    qa_string_id content_name;
     qa_source_frame event_retirement_frame;
     bool event_retirement_frame_present;
     bool event_activation_deferred, event_activation_bound;

@@ -112,14 +112,6 @@ static const application_q3_catalog_weapon *q3_active(const player_observation *
     return NULL;
 }
 
-static bool provider(qa_unified_provider_state *out, player_observation *o, application_provider *p, qa_error *e)
-{
-    if (!p || !p->constructed || !p->attached || p->close_pending || !p->launch || !p->product)
-        return application_fail(e, QA_ERROR_ARGUMENT, "Unified player lost its selected provider");
-    return application_unified_frame_string(o->lease, &out->provider, p->launch->selection.instance, e) &&
-        application_unified_frame_string(o->lease, &out->content, p->product->identity, e);
-}
-
 static void qc_bindings_clear(player_observation *o)
 {
     o->qc_bindings = NULL; o->qc_binding_count = 0;
@@ -598,13 +590,12 @@ static bool native_inventory_presentation(qa_unified_inventory_presentation *out
         if (o->app->providers[i]->owner == p->source) { owner = o->app->providers[i]; break; }
     application_q3_component_publication component = {0};
     const qa_product *product = owner ? owner->product : NULL;
-    if (owner) { if (!provider(&out->source, o, owner, e)) return false; }
+    if (owner) { if (!application_unified_provider_state(&out->source, owner, e)) return false; }
     else {
         if (!application_q3_components_event_source_read(o->app, p->source, &component, e) ||
             !component.descriptor || !component.product || !component.content || !current(o, e)) return false;
         product = component.product;
-        if (!application_unified_frame_string(o->lease, &out->source.provider, component.descriptor->selection.instance, e) ||
-            !application_unified_frame_string(o->lease, &out->source.content, product->identity, e)) return false;
+        out->source = (qa_unified_provider_state){component.provider_name, component.content_name};
     }
     out->kind = (qa_unified_inventory_presentation_kind)p->kind;
     if (p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON || p->kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION)
@@ -807,7 +798,7 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     if (!out->weapon_status) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual selected weapon status");
     *out->weapon_status = value;
     qa_unified_weapon_status *v = out->weapon_status;
-    return provider(&v->source, o, owner, e) &&
+    return application_unified_provider_state(&v->source, owner, e) &&
         application_unified_frame_string(o->lease, &v->item, direct_item ? direct_item : selected ? identity(o, selected) : NULL, e) &&
         application_unified_frame_string(o->lease, &v->label, label, e) &&
         application_unified_frame_string(o->lease, &v->ammo_item, direct_ammo ? direct_ammo : ammo ? identity(o, ammo) : NULL, e);

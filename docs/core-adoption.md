@@ -219,10 +219,10 @@ All three engine builds and seven core checks per configuration pass. This is
 bounded ID-adoption evidence, not a frame-time claim.
 
 Confirmed hot identity bypasses remain in
-`remote_unified_prediction.c:37`, `remote_unified_render.c:257`,
+`remote_unified_render.c:257`,
 `remote_unified_media.c:40,116,192,200`, `visuals.c:505,537`,
-`src/render/scene/models.c:814`, `native_q3_remote_character.c:20,57` and
-`remote_unified_input.c:24`. Move their already admitted identity into IDs or
+`src/render/scene/models.c:814` and `native_q3_remote_character.c:20,57`.
+Move their already admitted identity into IDs or
 resource handles; do not replace comparisons with per-frame interning or hashes.
 Ordinary provider routing already caches the resolved actor/provider in
 `src/app/application/services.c:268`; selector/reconfiguration text is separate.
@@ -236,7 +236,23 @@ requires an absent script. Nullable script text has one pointer-equal fast
 path and one fallback comparison. This removes the comparison copy from
 `remote_unified_input.c`; it does not claim that all script names are interned.
 The normal build and seven existing core suites pass. Other listed identity
-and render-leaf adoption gaps remain open under TA-3192.
+gaps remain open under TA-3192.
+
+TA-3192 provider observations now carry `qa_string_id` for instance and content
+in `include/qa/network_unified_frame.h`. Application provider construction and
+recipe admission/restore resolve these names in the retained session table.
+One `application_unified_provider_state` replaces the two copied publication
+helpers. Frame routing, prediction-profile checks and Q3 character-source
+selection compare IDs; their provider string comparisons and per-frame provider
+string copies are deleted. Q2 HUD asset admission resolves text for its existing
+content interface. Other asset/event name comparisons still need migration.
+
+`QA_UNIFIED_FIELD_NAME` uses the same nullable UTF-8 wire encoding as the former
+string fields and interns on decode. This change touches no legacy protocol
+codec. The normal build and seven existing core suites pass; logs are
+`/tmp/qa-ta3192-provider-names-20261010-build.log` and
+`/tmp/qa-ta3192-provider-names-20261010-core.log`. This is bounded build/core
+verification, without an installed gameplay, protocol-session or timing claim.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

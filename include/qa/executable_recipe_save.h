@@ -10,5 +10,5 @@ bool qa_executable_recipe_checkpoint(const qa_executable_recipe *,
  * and saved collision continuation; never opens a catalog/path or prepares
  * an offer, Source application, provider, or renderer. */
 bool qa_executable_recipe_restore(qa_application_content_graph *, qa_bytes,
-    qa_executable_recipe **, qa_error *);
+    qa_strings *, qa_executable_recipe **, qa_error *);
 #endif

@@ -244,7 +244,10 @@ static bool execution_read(qa_executable_recipe *r, const qa_json_document *json
     s->clock = clock_read(&reader); s->options = recipe_binary(&reader); instance->source_owner = recipe_unsigned(&reader);
     instance->roles = recipe_word(&reader); instance->registered = recipe_boolean(&reader);
     qa_json_id artifact = recipe_take(&reader), declaration = recipe_take(&reader), interfaces = recipe_take(&reader), behaviors = recipe_take(&reader);
-    if (reader.failed || !instance->source_owner || (instance->roles >> QA_ROLE_COUNT)) return recipe_fail(error, "Executable descriptor lacks genuine source ownership or roles");
+    if (reader.failed || !s->product || !instance->source_owner || (instance->roles >> QA_ROLE_COUNT)) return recipe_fail(error, "Executable descriptor lacks genuine source ownership or roles");
+    const qa_product *content_product = qa_catalog_product(r->catalog, s->product);
+    if (!qa_strings_intern_cstr(r->strings, s->instance, &instance->instance_name, error) ||
+        !qa_strings_intern_cstr(r->strings, content_product->identity, &instance->content_name, error)) return false;
     for (size_t i = 0; i < index; ++i) if (!strcmp(r->providers[i].selection.instance, s->instance) || r->providers[i].source_owner == instance->source_owner) return recipe_fail(error, "Duplicate executable instance or source owner");
     const qa_launch_provider *selected = NULL; qa_launch_provider mod_selection = {0};
     for (size_t i = 0; i < r->choices.provider_count; ++i) if (!strcmp(r->choices.providers[i].instance, s->instance)) selected = &r->choices.providers[i];
@@ -502,9 +505,9 @@ static bool sidecars_check(const qa_executable_recipe *r, const qa_json_document
     return true;
 }
 bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *catalog,
-    qa_resource_pool *pool, qa_executable_recipe **out, qa_error *error)
+    qa_resource_pool *pool, qa_strings *strings, qa_executable_recipe **out, qa_error *error)
 {
-    if (!offer || !catalog || !pool || !out || *out || qa_catalog_resources(catalog) != pool) return recipe_fail(error, "Remote composition requires its genuine installed catalog and pool");
+    if (!offer || !catalog || !pool || !strings || !out || *out || qa_catalog_resources(catalog) != pool) return recipe_fail(error, "Remote composition requires its genuine installed catalog and pool");
     const qa_json_document *json = qa_unified_document_json(offer); qa_json_id root = qa_unified_document_root(offer);
     qa_json_id value = qa_json_get(json, root, "value"), identity = qa_json_get(json, value, "composition"), composition = qa_json_get(json, identity, "composition");
     qa_json_id recipe = qa_json_get(json, composition, "recipe"); uint32_t version;
@@ -521,6 +524,7 @@ bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *
     qa_executable_recipe *r = calloc(1, sizeof(*r));
     if (!r) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Preparing remote executable composition"); return false; }
     r->catalog = catalog; qa_catalog_retain(catalog); r->pool = pool; qa_resource_pool_retain(pool); r->catalog_generation = qa_catalog_generation(catalog);
+    r->strings = strings; qa_strings_retain(strings);
     bool ok = unsigned_field(json, qa_json_get(json, value, "epoch"), &r->epoch, error) && r->epoch &&
         unsigned_field(json, qa_json_get(json, value, "maxClients"), &r->max_clients, error) && r->max_clients && r->max_clients <= 256;
     qa_buffer mode = {0};
@@ -659,7 +663,7 @@ bool qa_executable_recipe_close(qa_executable_recipe *r, qa_error *error)
     for (size_t i = 0; i < r->resource_count; ++i) { if (r->resources[i]->owns_resource) qa_resource_release((qa_resource *)r->resources[i]->value.resource); qa_vfs_acquisition_dispose(&r->resources[i]->acquisition); free(r->resources[i]); }
     for (size_t i = 0; i < r->view_count; ++i) { if (r->views[i].owns_files) qa_vfs_destroy(r->views[i].files); qa_vfs_destroy(r->views[i].admitted_policy); qa_catalog_release((qa_catalog *)r->views[i].catalog); }
     free(r->resources); free(r->views); free(r->providers); free(r->order); free(r->sidecars); qa_buffer_free(&r->composition); qa_arena_destroy(&r->arena);
-    qa_catalog_release(r->catalog); qa_resource_pool_destroy(r->pool); free(r); return true;
+    qa_catalog_release(r->catalog); qa_resource_pool_destroy(r->pool); qa_strings_destroy(r->strings); free(r); return true;
 }
 bool qa_executable_recipe_content_visit(const qa_executable_recipe *recipe, const qa_application_content_visitor *visitor, qa_error *error)
 {

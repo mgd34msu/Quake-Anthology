@@ -749,7 +749,7 @@ static bool character_source(frontend_unified_q3 *o, const qa_unified_character_
     for(size_t i=0;i<frontend_unified_q3_sources_count(sources);++i) {
         frontend_unified_q3_source_view source;
         if(!frontend_unified_q3_sources_read(sources,i,&source,e))return false;
-        if(strcmp(source.instance,selected->provider) || strcmp(source.content,selected->content))continue;
+        if(source.provider->instance_name != selected->provider || source.provider->content_name != selected->content)continue;
         for(size_t j=0;j<source.player_count;++j)
             if(qa_actor_id_equal(source.players[j].actor,id)) {
                 *out=source;*player=source.players+j;return true;

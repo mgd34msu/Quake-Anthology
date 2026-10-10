@@ -981,7 +981,8 @@ static bool status_prepare(frontend_unified_q2 *o,const qa_unified_frame *frame,
     q2_native *status=&o->prepared_status;
     status->configuration=selected->q2_hud;status->protocol=selected->q2_hud->protocol;
     status->hud=true;status->replace_status=true;
-    if (!bank(o,selected->hud.content,NULL,selected->hud.provider,
+    if (!bank(o,qa_strings_cstr(o->replica->strings,selected->hud.content),NULL,
+        qa_strings_cstr(o->replica->strings,selected->hud.provider),
         product->edition==QA_EDITION_RERELEASE?FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE:FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
         false,&status->bank,e)) return false;
     return native_font(o,status,e) && qa_unified_document_retain(document,&o->prepared_status_metadata,e);

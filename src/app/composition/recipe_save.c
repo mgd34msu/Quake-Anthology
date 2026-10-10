@@ -205,11 +205,12 @@ bool qa_executable_recipe_checkpoint(const qa_executable_recipe *source,
     return okay;
 }
 bool qa_executable_recipe_restore(qa_application_content_graph *graph, qa_bytes bytes,
-    qa_executable_recipe **out, qa_error *error)
+    qa_strings *strings, qa_executable_recipe **out, qa_error *error)
 {
-    if (!graph || !out || *out) return recipe_fail(error, "Recipe import requires its actual restored graph and empty output");
+    if (!graph || !strings || !out || *out) return recipe_fail(error, "Recipe import requires its actual restored graph and empty output");
     qa_executable_recipe *recipe = calloc(1, sizeof(*recipe));
     if (!recipe) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring executable recipe owner"); return false; }
+    recipe->strings = strings; qa_strings_retain(strings);
     qa_source_save_io io = {0}; qa_collision_portal_checkpoint portals = {0};
     bool okay = qa_source_save_reader(&io, NULL, bytes, error) && graph_fields(&io, recipe, graph, &portals) &&
         qa_source_save_finish(&io, NULL) && geometry_restore(recipe, &portals, error) &&

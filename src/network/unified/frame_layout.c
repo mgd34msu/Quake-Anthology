@@ -615,8 +615,8 @@ static const qa_unified_field qa_unified_inventory_presentation_fields[] = {
 static const qa_unified_record_layout qa_unified_inventory_presentation_layout = QA_UNIFIED_LAYOUT(qa_unified_inventory_presentation, qa_unified_inventory_presentation_fields);
 
 static const qa_unified_field qa_unified_provider_state_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_provider_state, provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_provider_state, content, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_provider_state, provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_provider_state, content, QA_UNIFIED_FIELD_NAME),
 };
 const qa_unified_record_layout qa_unified_provider_layout = QA_UNIFIED_LAYOUT(qa_unified_provider_state, qa_unified_provider_state_fields);
 

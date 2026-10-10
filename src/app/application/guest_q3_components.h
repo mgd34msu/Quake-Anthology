@@ -36,6 +36,7 @@ typedef struct application_q3_component_publication {
     const qa_product *product;
     const qa_launch_instance *descriptor;
     qa_actor_owner owner;
+    qa_string_id provider_name, content_name;
     uint64_t generation;
     application_q3_component *game;
     application_q3_component_source *source;
