@@ -946,6 +946,10 @@ bool frontend_remote_prediction_create(const frontend_remote_prediction_options 
     frontend_remote_prediction *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Allocating private selected movement prediction");
     owner->options = *options;
+    if (!qa_movement_result_reserve(&owner->scratch,
+        (size_t)qa_actors_capacity(qa_session_actors(options->session)) + 1, error)) {
+        free(owner); return false;
+    }
     owner->initial = initial_player(&options->initial_configuration);
     *out = owner;
     return true;

@@ -247,6 +247,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!qa_collision_create(&bsp, &row->geometry, error) || !qa_collision_bind_resource(row->geometry, row->map, error)) return false;
     qa_actor_registry *actors = qa_session_actor_registry(qa_application_session(row->options.domain.application));
     row->collision_capacity = qa_actors_capacity(actors);
+    if (!qa_movement_result_reserve(&row->prediction_scratch, row->collision_capacity + 1, error)) return false;
     row->collision_actors = calloc(row->collision_capacity, sizeof(*row->collision_actors));
     row->collision_models = calloc(row->layout.max_models, sizeof(*row->collision_models));
     if (!row->collision_actors || !row->collision_models ||

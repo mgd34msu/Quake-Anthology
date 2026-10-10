@@ -336,6 +336,8 @@ bool qa_movement_physics_netquake(const qa_movement_input *, const qa_movement_s
 /* Results own their contact buffer. Free a previous result before replacing
  * it with a new move result. Empty/zeroed results may be freed. */
 void qa_movement_result_free(qa_movement_result *);
+/* Reserve caller-owned contacts during load; subsequent moves reuse them. */
+bool qa_movement_result_reserve(qa_movement_result *, size_t, qa_error *);
 /* Copy state and contacts into a retained destination. Its independent contact
  * storage is reused across commands; the first copy reserves a Q2 touch batch. */
 bool qa_movement_result_copy(const qa_movement_result *, qa_movement_result *, qa_error *);

@@ -115,9 +115,8 @@ static bool create(frontend_remote_unified *replica,bool importing,
     uint32_t capacity=qa_actors_capacity(registry);
     p->pending_rows=calloc(capacity,sizeof(*p->pending_rows));
     p->pending_used=calloc(capacity,sizeof(*p->pending_used));
-    p->movement.contact_capacity=(size_t)capacity+1;
-    p->movement.contacts=calloc(p->movement.contact_capacity,sizeof(*p->movement.contacts));
-    if(!p->pending_rows || !p->pending_used || !p->movement.contacts) {
+    if(!p->pending_rows || !p->pending_used ||
+        !qa_movement_result_reserve(&p->movement,(size_t)capacity+1,e)) {
         qa_movement_result_free(&p->movement);
         free(p->pending_rows); free(p->pending_used); free(p);
         return fail(e,QA_ERROR_MEMORY,"Allocating private prediction collision rows");

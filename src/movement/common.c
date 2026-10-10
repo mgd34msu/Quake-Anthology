@@ -301,12 +301,12 @@ bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touc
         if (qa_move_same_ground(qa_move_ground(&r->contacts[i].trace),qa_move_ground(trace))) return true;
     if (r->contact_count==r->contact_capacity) {
         size_t capacity=r->contact_capacity?r->contact_capacity*2:32;
-        if (capacity<r->contact_capacity||capacity>SIZE_MAX/sizeof(*r->contacts)) {
+        if (capacity<r->contact_capacity) {
             qa_error_set(c->error,QA_ERROR_MEMORY,0,"Movement contact capacity overflow"); c->failed=true; return false;
         }
-        qa_movement_contact *contacts=realloc(r->contacts,capacity*sizeof(*contacts));
-        if (!contacts) { qa_error_set(c->error,QA_ERROR_MEMORY,0,"Allocating movement contacts"); c->failed=true; return false; }
-        r->contacts=contacts; r->contact_capacity=capacity;
+        if (!qa_movement_result_reserve(r,capacity,c->error)) {
+            c->failed=true; return false;
+        }
     }
     r->contacts[r->contact_count++]=(qa_movement_contact){*trace,c->substep};
     if (touch_now) return qa_move_touch(c,trace);
@@ -351,18 +351,23 @@ bool qa_movement_world_trace(void *world, const qa_trace_query *q, qa_trace_resu
 bool qa_movement_world_contents(void *world, const qa_point_query *q, qa_point_contents *r, qa_error *e) { return qa_world_point_contents(world,q,r,e); }
 void qa_movement_result_free(qa_movement_result *r) { if (r) { free(r->contacts); memset(r,0,sizeof(*r)); } }
 
+bool qa_movement_result_reserve(qa_movement_result *result, size_t capacity, qa_error *error) {
+    if (capacity <= result->contact_capacity) return true;
+    if (capacity > SIZE_MAX / sizeof(*result->contacts)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Movement contact capacity overflow"); return false;
+    }
+    qa_movement_contact *contacts = realloc(result->contacts, capacity * sizeof(*contacts));
+    if (!contacts) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating movement contacts"); return false; }
+    result->contacts = contacts; result->contact_capacity = capacity;
+    return true;
+}
+
 bool qa_movement_result_copy(const qa_movement_result *source, qa_movement_result *out, qa_error *error) {
     if (source == out) return true;
+    if (source->contact_count > out->contact_capacity && !qa_movement_result_reserve(out,
+        source->contact_count < 32 ? 32 : source->contact_count, error)) return false;
     size_t capacity = out->contact_capacity;
     qa_movement_contact *contacts = out->contacts;
-    if (source->contact_count > capacity) {
-        capacity = source->contact_count < 32 ? 32 : source->contact_count;
-        if (capacity > SIZE_MAX / sizeof(*contacts)) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Movement contact capacity overflow"); return false;
-        }
-        contacts = realloc(contacts, capacity * sizeof(*contacts));
-        if (!contacts) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating movement contacts"); return false; }
-    }
     if (source->contact_count) memmove(contacts, source->contacts, source->contact_count * sizeof(*contacts));
     *out = *source; out->contacts = contacts; out->contact_capacity = capacity;
     return true;

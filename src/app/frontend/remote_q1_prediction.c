@@ -17,6 +17,7 @@ typedef struct packet_receipt {
     bool invalid;
 } packet_receipt;
 struct frontend_remote_q1_prediction {
+    qa_movement_result scratch;
     qa_qw_movement_state received, predicted;
     sent_command history[64];
     packet_receipt packets[64];
@@ -31,7 +32,12 @@ static bool retain(frontend_remote_q1 *row,qa_error *error)
 {
     if(row->prediction) return true;
     row->prediction=calloc(1,sizeof(*row->prediction));
-    return row->prediction!=NULL || remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining QW command prediction");
+    if (!row->prediction) return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining QW command prediction");
+    if (!qa_movement_result_reserve(&row->prediction->scratch,
+        (size_t)qa_actors_capacity(row->options.domain.actors)+1,error)) {
+        free(row->prediction); row->prediction=NULL; return false;
+    }
+    return true;
 }
 void remote_q1_prediction_clear(frontend_remote_q1 *row)
 {
@@ -41,6 +47,7 @@ void remote_q1_prediction_clear(frontend_remote_q1 *row)
     free(row->collision_models); row->collision_models=NULL;
     row->collision_count=row->collision_capacity=0;
     qa_collision_destroy(row->collision); row->collision = NULL;
+    if (row->prediction) qa_movement_result_free(&row->prediction->scratch);
     free(row->prediction); row->prediction = NULL;
 }
 bool remote_q1_collision_acquire(frontend_remote_q1 *row, qa_collision_geometry **out, qa_error *error)
@@ -174,7 +181,7 @@ static bool replay(frontend_remote_q1 *row,qa_error *error)
     profile.data.qw.parameters=(qa_q1_movement_parameters){v->gravity,v->stop_speed,v->max_speed,
         v->spectator_max_speed,v->accelerate,v->air_accelerate,v->water_accelerate,v->friction,v->water_friction,v->entity_gravity};
     qa_movement_services services={.context=row,.trace=trace,.point_contents=contents,.is_bsp=is_brush};
-    qa_movement_result result={0}; bool ok=true;
+    qa_movement_result *result=&p->scratch; bool ok=true;
     for(size_t i=0;ok && i<p->count;++i) {
         sent_command *entry=p->history+i;
         qa_movement_input input=qa_movement_input_default(QA_RULESET_QUAKEWORLD,actor);
@@ -188,12 +195,11 @@ static bool replay(frontend_remote_q1 *row,qa_error *error)
             .milliseconds=entry->command.msec,.angles=vector(entry->command.angles),
             .forward_move=entry->command.forward,.side_move=entry->command.side,.up_move=entry->command.up,
             .buttons=entry->command.buttons,.impulse=entry->command.impulse};
-        ok=qa_movement_move(&input,&services,&result,error);
-        if(ok && result.status!=QA_MOVEMENT_ACTIVE) ok=remote_q1_fail(error,QA_ERROR_ARGUMENT,"Received QW prediction actor was retired");
-        if(ok) { state=result.state.data.qw; state.old_buttons=entry->command.buttons;
+        ok=qa_movement_move(&input,&services,result,error);
+        if(ok && result->status!=QA_MOVEMENT_ACTIVE) ok=remote_q1_fail(error,QA_ERROR_ARGUMENT,"Received QW prediction actor was retired");
+        if(ok) { state=result->state.data.qw; state.old_buttons=entry->command.buttons;
             entry->continuation=state; entry->predicted=true; }
     }
-    qa_movement_result_free(&result);
     if(ok) p->predicted=state;
     return ok;
 }

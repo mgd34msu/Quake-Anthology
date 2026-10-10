@@ -92,6 +92,7 @@ struct frontend_remote_q2 {
     uint64_t prediction_command;
     int32_t prediction_frame;
     qa_movement_ground prediction_ground;
+    qa_movement_result prediction_scratch;
     qa_collision_plane prediction_plane;
     unsigned busy;
     bool bound, selected, content_admitted, media_ready, retired, retiring, importing, restore_media_ready;

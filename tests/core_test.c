@@ -416,7 +416,11 @@ static void test_retained_movement_result(void)
         .command_sequence = 17, .state = {.kind = QA_RULESET_Q2_RERELEASE},
         .contacts = contacts, .contact_count = 1, .contact_capacity = 32};
     source.state.data.q2r.origin = qa_v3(1, 2, 3);
-    qa_movement_result out = {0}; CHECK(qa_movement_result_copy(&source, &out, &error));
+    qa_movement_result out = {0};
+    CHECK(qa_movement_result_reserve(&out, 32, &error));
+    qa_movement_contact *reserved = out.contacts;
+    CHECK(qa_movement_result_reserve(&out, 16, &error) && out.contacts == reserved);
+    CHECK(qa_movement_result_copy(&source, &out, &error) && out.contacts == reserved);
     qa_movement_contact *storage = out.contacts;
     CHECK(storage != contacts && out.contact_count == 1 && out.contact_capacity >= 32);
     CHECK(out.command_sequence == 17 && out.state.data.q2r.origin.z == 3);

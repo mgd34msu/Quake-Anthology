@@ -685,7 +685,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
     qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->effect_poses); free(row->entity_animations);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
-    *link = row->next; free(row); *owned = NULL; return true;
+    *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;
 }
 bool frontend_remote_q2_destroy_all(qa_frontend *f, qa_error *error)
 {

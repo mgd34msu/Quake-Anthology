@@ -195,7 +195,8 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         profile.data.q2r.n64_physics = strtod(frontend_remote_q2_config(row, 12103), NULL) != 0; }
     else { profile.data.q2.air_accelerate = (float)air; profile.data.q2.strafejump_hack = row->data.strafejump_hack; }
     qa_movement_services services = {.context = row, .trace = remote_q2_trace, .point_contents = contents, .is_bsp = is_brush};
-    qa_movement_result result = {0}; bool ok = true; qa_vec3 pml = row->prediction_pml;
+    qa_movement_result *result = &row->prediction_scratch; bool ok = true; qa_vec3 pml = row->prediction_pml;
+    result->command_sequence = 0; result->contact_count = 0;
     ++row->busy;
     uint32_t player_index; int32_t player_number;
     if (!frontend_remote_q2_wire_seat(row, &player_index, error) ||
@@ -221,27 +222,27 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
             .impulse = command->impulse, .light_level = command->lightlevel};
         input.command.angles = qa_q2_usercmd_angles(command);
         for (size_t i = 0; i < 3; ++i) input.command.angle_words[i] = command->angles[i];
-        ok = qa_movement_move(&input, &services, &result, error) && result.status == QA_MOVEMENT_ACTIVE;
-        if (ok) { state = result.state; sent->origin = qa_movement_origin(&state); sent->predicted = true; }
+        ok = qa_movement_move(&input, &services, result, error) && result->status == QA_MOVEMENT_ACTIVE;
+        if (ok) { state = result->state; sent->origin = qa_movement_origin(&state); sent->predicted = true; }
     }
     if (ok) {
         row->prediction_origin = qa_movement_origin(&state); row->prediction_pml = pml;
-        row->prediction_angles = result.command_sequence ? result.view_angles : vector(received->viewangles);
+        row->prediction_angles = result->command_sequence ? result->view_angles : vector(received->viewangles);
         qa_collision_plane plane = {0};
-        for (size_t i = 0; i < result.contact_count; ++i) {
-            const qa_trace_result *hit = &result.contacts[i].trace;
-            if (hit->hit == result.ground.hit && hit->model == result.ground.model &&
-                qa_actor_id_equal(hit->actor, result.ground.actor) && hit->plane.normal.z >= .7f) plane = hit->plane;
+        for (size_t i = 0; i < result->contact_count; ++i) {
+            const qa_trace_result *hit = &result->contacts[i].trace;
+            if (hit->hit == result->ground.hit && hit->model == result->ground.model &&
+                qa_actor_id_equal(hit->actor, result->ground.actor) && hit->plane.normal.z >= .7f) plane = hit->plane;
         }
         const remote_q2_sent_command *old = &row->commands[(row->last_command - 1) & 63];
-        if (result.command_sequence && old->valid && old->predicted && old->command_number + 1 == row->last_command &&
-            result.ground.hit != QA_TRACE_HIT_NONE && (row->prediction_command != row->last_command ||
+        if (result->command_sequence && old->valid && old->predicted && old->command_number + 1 == row->last_command &&
+            result->ground.hit != QA_TRACE_HIT_NONE && (row->prediction_command != row->last_command ||
                 row->prediction_frame != row->frame.server_frame)) {
             float change = row->prediction_origin.z - old->origin.z;
             bool stepped = rerelease ? fabsf(change) > 1 && fabsf(change) < 20 &&
-                ((received->pmove.flags & 4) || result.step_clip) && state.data.q2r.type <= 1 &&
-                (row->prediction_ground.hit != result.ground.hit || row->prediction_ground.model != result.ground.model ||
-                    !qa_actor_id_equal(row->prediction_ground.actor, result.ground.actor) ||
+                ((received->pmove.flags & 4) || result->step_clip) && state.data.q2r.type <= 1 &&
+                (row->prediction_ground.hit != result->ground.hit || row->prediction_ground.model != result->ground.model ||
+                    !qa_actor_id_equal(row->prediction_ground.actor, result->ground.actor) ||
                     row->prediction_plane.normal.x != plane.normal.x || row->prediction_plane.normal.y != plane.normal.y ||
                     row->prediction_plane.normal.z != plane.normal.z || row->prediction_plane.distance != plane.distance) :
                 change > 63.0f / 8 && change < 20;
@@ -253,10 +254,10 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
                 row->prediction_step_ns = row->sample_ns;
             }
         }
-        if (result.command_sequence) { row->prediction_ground = result.ground; row->prediction_plane = plane; }
+        if (result->command_sequence) { row->prediction_ground = result->ground; row->prediction_plane = plane; }
         row->prediction_command = row->last_command; row->prediction_frame = row->frame.server_frame;
         row->predicted = true;
     }
-    qa_movement_result_free(&result); --row->busy;
+    --row->busy;
     return ok && remote_q2_live(row, error);
 }
