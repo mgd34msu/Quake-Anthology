@@ -19,6 +19,7 @@
 #include "../../presentation/q3_native/selected_media.h"
 #include "../../presentation/q3/internal.h"
 #include "qa/hud.h"
+#include "qa/pool.h"
 #include "qa/vfs_view_save.h"
 #include "qa/scene_marks.h"
 #include "qa/scene_world_save.h"
@@ -89,6 +90,9 @@ struct frontend_unified_q3 {
     unified_q3_bank *banks;
     qa_q3_source_scene_bank *scene_bank;
     unified_q3_character *characters;
+    qa_arena character_storage;
+    qa_pool character_records;
+    unified_q3_character **characters_by_slot;
     unified_q3_character **character_order;
     size_t character_count;
     unified_q3_ballistic *ballistics;
@@ -308,7 +312,19 @@ bool frontend_unified_q3_create(qa_frontend *f, frontend_remote_unified *r,
     frontend_unified_q3 *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating persistent Unified Q3 CLIENT");
     o->frontend=f; o->replica=r; o->media=m; o->epoch=frontend_remote_unified_epoch(r);
-    if (!retained_current(o,e)) { free(o); return false; } *out=o; return true;
+    size_t capacity=qa_actors_capacity(frontend_remote_unified_registry(r));
+    size_t stride=sizeof(unified_q3_character)+2*sizeof(size_t);
+    if(capacity>(SIZE_MAX-32)/stride){free(o);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 character reservation overflows storage");}
+    qa_arena_init(&o->character_storage,0);
+    bool okay=qa_arena_reserve(&o->character_storage,capacity*stride+32,e) &&
+        qa_pool_prepare(&o->character_records,&o->character_storage,capacity,sizeof(unified_q3_character),_Alignof(unified_q3_character),e);
+    if(okay){
+        o->characters_by_slot=qa_arena_alloc(&o->character_storage,capacity*sizeof(*o->characters_by_slot),_Alignof(unified_q3_character *),e);
+        okay=o->characters_by_slot!=NULL;
+    }
+    if(okay){memset(o->characters_by_slot,0,capacity*sizeof(*o->characters_by_slot));qa_arena_seal(&o->character_storage);}
+    if(!okay || !retained_current(o,e)){qa_arena_destroy(&o->character_storage);free(o);return false;}
+    *out=o;return true;
 }
 bool frontend_unified_q3_audio(frontend_unified_q3 *o, uint64_t owner, void *context,
     bool (*resolve)(void *,qa_actor_id,uint64_t *,qa_error *), qa_error *e)
@@ -737,12 +753,14 @@ static bool character_read(frontend_unified_q3 *o,const qa_unified_character_sta
         qa_q3_configstring(source.game_state,544u+index),source.configstring_revisions[544u+index],
         source.max_clients,source.game_type,&settings,e))return false;
     const q3n_client_info *client=q3n_clients_get(bank->clients,index);
-    unified_q3_character *c=o->characters;
-    while(c && !qa_actor_id_equal(c->actor,id))c=c->next;
-    if(!c) {
-        c=calloc(1,sizeof(*c));
-        if(!c)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining full actor Q3 character pose");
-        c->actor=id;c->reset=true;c->next=o->characters;o->characters=c;
+    unified_q3_character *c=o->characters_by_slot[id.slot];
+    if(!c){
+        size_t slot;c=qa_pool_take(&o->character_records,&slot);
+        if(!c)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Loaded Q3 character capacity exhausted");
+        *c=(unified_q3_character){.actor=id,.reset=true,.next=o->characters};
+        o->characters=c;o->characters_by_slot[id.slot]=c;
+    }else if(!qa_actor_id_equal(c->actor,id)){
+        *c=(unified_q3_character){.actor=id,.reset=true,.next=c->next};
     }
     if(c->bank!=bank || c->media_revision!=client->media_revision)c->reset=true;
     c->bank=bank;c->client=*client;c->media_revision=client->media_revision;
@@ -1144,8 +1162,7 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); q3n_clients_destroy(b->clients);
         o->banks=b->next; free(b->content);free(b->activation); free(b);
     }
-    while (o->characters) { unified_q3_character *c=o->characters; o->characters=c->next;
-        free(c); }
+    qa_arena_destroy(&o->character_storage);
     while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v->attachments);free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o); *address=NULL; return true;
