@@ -1,12 +1,10 @@
 #include "remote_unified_components_private.h"
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 void q3remote_component_admissions_clear(remote_component *row)
 {
-    if(row->admissions) for(size_t i=0;i<row->admission_count;++i) { free(row->admissions[i].polygons); free(row->admissions[i].lights); }
-    free(row->admissions); row->admissions=NULL; row->admission_count=0;
+    row->admissions=NULL; row->admission_count=0;
     row->submission_bank=NULL; row->submission_cycle=0; row->submitted=false; row->admissions_ready=false;
 }
 void frontend_unified_components_submission_release(frontend_unified_components *owner,const qa_q3_source_scene_bank *bank)
@@ -26,8 +24,10 @@ static bool prepare(remote_component *row,qa_q3_source_scene_bank *bank,uint64_t
     if(!frontend_component_scene_packet_count(row->parent->frontend,row->frontend_identity,row->draw_sequence,&count,error)) return false;
     if(count>SIZE_MAX/sizeof(*row->admissions))
         return q3remote_component_fail(error,QA_ERROR_MEMORY,"Component packet receipt extent overflow");
-    row->admissions=count?calloc(count,sizeof(*row->admissions)):NULL;
+    qa_arena *storage=&row->parent->frontend->frame.storage;
+    row->admissions=count?qa_arena_alloc(storage,count*sizeof(*row->admissions),_Alignof(remote_component_packet_admission),error):NULL;
     if(count&&!row->admissions) return q3remote_component_fail(error,QA_ERROR_MEMORY,"Retaining component packet admissions");
+    if(count)memset(row->admissions,0,count*sizeof(*row->admissions));
     row->admission_count=count;
     for(size_t i=0;i<count;++i) {
         frontend_component_scene_packet packet;
@@ -36,14 +36,16 @@ static bool prepare(remote_component *row,qa_q3_source_scene_bank *bank,uint64_t
         receipt->source_time=packet.definition.time;
         if(packet.polygon_count>SIZE_MAX/sizeof(*receipt->polygons))
             return q3remote_component_fail(error,QA_ERROR_MEMORY,"Component polygon receipt extent overflow");
-        receipt->polygons=packet.polygon_count?calloc(packet.polygon_count,sizeof(*receipt->polygons)):NULL;
+        receipt->polygons=packet.polygon_count?qa_arena_alloc(storage,packet.polygon_count*sizeof(*receipt->polygons),_Alignof(remote_component_polygon_admission),error):NULL;
         if(packet.polygon_count&&!receipt->polygons)
             return q3remote_component_fail(error,QA_ERROR_MEMORY,"Retaining component polygon admissions");
+        if(packet.polygon_count)memset(receipt->polygons,0,packet.polygon_count*sizeof(*receipt->polygons));
         receipt->polygon_count=packet.polygon_count;
         if(packet.light_count>SIZE_MAX/sizeof(*receipt->lights))
             return q3remote_component_fail(error,QA_ERROR_MEMORY,"Component light receipt extent overflow");
-        receipt->lights=packet.light_count?calloc(packet.light_count,sizeof(*receipt->lights)):NULL;
+        receipt->lights=packet.light_count?qa_arena_alloc(storage,packet.light_count*sizeof(*receipt->lights),_Alignof(remote_component_light_admission),error):NULL;
         if(packet.light_count&&!receipt->lights) return q3remote_component_fail(error,QA_ERROR_MEMORY,"Retaining component light admissions");
+        if(packet.light_count)memset(receipt->lights,0,packet.light_count*sizeof(*receipt->lights));
         receipt->light_count=packet.light_count;
     }
     row->submission_bank=bank; row->submission_cycle=cycle; return true;
@@ -77,7 +79,8 @@ static bool admit(remote_component *row,const frontend_component_scene_packet *p
         if(polygon->first>packet->vertex_count||polygon->count>packet->vertex_count-polygon->first||
             !packet->vertices||polygon->count>SIZE_MAX/sizeof(qa_q3_poly_vertex))
             return q3remote_component_fail(error,QA_ERROR_FORMAT,"Component polygon leaves its retained vertex span");
-        qa_q3_poly_vertex *raw=malloc(polygon->count*sizeof(*raw));
+        qa_q3_poly_vertex *raw=qa_arena_alloc(&row->parent->frontend->frame.storage,
+            polygon->count*sizeof(*raw),_Alignof(qa_q3_poly_vertex),error);
         if(!raw) return q3remote_component_fail(error,QA_ERROR_MEMORY,"Retaining actual component polygon vertices");
         for(size_t j=0;j<polygon->count;++j) {
             const qa_scene_vertex *vertex=packet->vertices+polygon->first+j;
@@ -88,7 +91,7 @@ static bool admit(remote_component *row,const frontend_component_scene_packet *p
         bool accepted=false;
         bool okay=qa_q3_source_scene_bank_membership(bank,&membership)&&
             qa_q3_source_scene_bank_poly(bank,row->assets,polygon->shader,raw,polygon->count,&polygon->fog,&accepted,error);
-        free(raw); if(!okay) return false;
+        if(!okay) return false;
         saved->ordinal=membership.polygons; saved->admitted=accepted; saved->reached=true;
     }
     return true;
