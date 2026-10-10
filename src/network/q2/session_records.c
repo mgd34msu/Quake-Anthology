@@ -68,7 +68,7 @@ invalid:
 static void record_free(q2_owned_record *owner)
 {
     qa_buffer_free(&owner->raw); qa_buffer_free(&owner->text); qa_buffer_free(&owner->values);
-    if (owner->frame) { qa_q2_frame_free(owner->frame); free(owner->frame); }
+    if (owner->frame) { qa_q2_frame_free(owner->frame); if (!owner->frame_pooled) free(owner->frame); }
     memset(owner, 0, sizeof(*owner));
 }
 
@@ -118,7 +118,9 @@ bool q2_record_retain(void *context, const qa_q2_server_record *record, qa_error
         if (!text_copy(record->event.data.config.value, &owner.text, error)) goto failure;
         copy.event.data.config.value = (const char *)owner.text.data; break;
     case QA_Q2_SVC_FRAME:
-        owner.frame = calloc(1, sizeof(*owner.frame));
+        owner.frame_pooled=record->event.data.frame && record->event.data.frame->lease;
+        owner.frame = owner.frame_pooled?qa_unified_frame_lease_alloc(record->event.data.frame->lease,
+            1,sizeof(*owner.frame),_Alignof(qa_q2_wire_frame),error):calloc(1, sizeof(*owner.frame));
         if (!owner.frame) { q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 decoded frame"); goto failure; }
         if (!qa_q2_frame_clone(record->event.data.frame, owner.frame, error)) goto failure;
         copy.event.data.frame = owner.frame; break;

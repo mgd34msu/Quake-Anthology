@@ -1513,10 +1513,13 @@ static void test_q2_owned_frames(void)
         CHECK(qa_q2_frame_history_accept(history,&frame,&error));
         const qa_q2_wire_frame *stored=qa_q2_frame_history_latest(history);CHECK(stored && stored->lease);
         qa_q2_wire_frame held={0};CHECK(qa_q2_frame_clone(stored,&held,&error));
+        qa_q2_wire_frame *leased=qa_unified_frame_lease_alloc(stored->lease,1,sizeof(*leased),_Alignof(qa_q2_wire_frame),&error);
+        CHECK(leased && qa_q2_frame_clone(stored,leased,&error));
         held.entities[0].origin[0]=9;CHECK(stored->entities[0].origin[0]==1);
         qa_q2_frame_history_clear(history);qa_q2_frame_history_destroy(history);history=NULL;
         CHECK(held.entities[0].origin[0]==9 && held.players[0].area_bits.data[1]==4);
         qa_q2_frame_free(&held);
+        CHECK(leased->entities[0].origin[0]==1);qa_q2_frame_free(leased);
         CHECK(qa_q2_frame_history_create(2,&history,&error));
         qa_q2_codec encoder,decoder;
         CHECK(qa_q2_codec_init(&encoder,(qa_net_protocol_id){.kind=protocols[i]},&error));

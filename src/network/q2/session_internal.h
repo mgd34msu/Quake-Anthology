@@ -15,6 +15,7 @@ typedef struct q2_game_state {
 typedef struct q2_owned_record {
     qa_buffer raw, text, values;
     qa_q2_wire_frame *frame;
+    bool frame_pooled;
 } q2_owned_record;
 typedef struct q2_records {
     qa_q2_server_record *records;

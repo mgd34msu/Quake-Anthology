@@ -25,7 +25,10 @@ static const qa_q2_entity *baseline_find(qa_q2_entity_span entries, uint32_t num
 
 void qa_q2_frame_free(qa_q2_wire_frame *frame) {
     if (!frame) return;
-    if (frame->lease) { qa_unified_frame_lease_release(frame->lease);memset(frame,0,sizeof(*frame));return; }
+    if (frame->lease) {
+        qa_unified_frame_lease *lease=frame->lease;memset(frame,0,sizeof(*frame));
+        qa_unified_frame_lease_release(lease);return;
+    }
     for (size_t i = 0; i < frame->player_count && i < QA_Q2_MAX_SEATS; ++i)
         free((void *)frame->players[i].area_bits.data);
     free(frame->entities);
