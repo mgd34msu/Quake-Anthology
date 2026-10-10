@@ -20,14 +20,14 @@ bool bot_ai_source_command_read(qa_bots *bots, bot_ai_state *state,
     uint8_t *command;
     if (!out || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
-    *out = (qa_usercmd){.kind = QA_RULESET_Q3,
-        .server_time_ms = bot_source_i32_read(command),
-        .buttons = bot_source_word_read(command + 16), .weapon = command[20]};
+    qa_q3_usercmd raw = {.serverTime = bot_source_i32_read(command),
+        .buttons = bot_source_i32_read(command + 16), .weapon = command[20]};
     for (uint32_t axis = 0; axis < 3; ++axis)
-        out->angle_words[axis] = bot_source_i32_read(command + 4 + axis * 4);
-    int8_t forward, right, up;
-    memcpy(&forward, command + 21, 1); memcpy(&right, command + 22, 1); memcpy(&up, command + 23, 1);
-    out->forward_move = forward; out->side_move = right; out->up_move = up;
+        raw.angles[axis] = bot_source_i32_read(command + 4 + axis * 4);
+    memcpy(&raw.forwardmove, command + 21, 1);
+    memcpy(&raw.rightmove, command + 22, 1);
+    memcpy(&raw.upmove, command + 23, 1);
+    qa_usercmd_from_q3(&raw, 0, out);
     return true;
 }
 
@@ -36,22 +36,23 @@ bool bot_ai_source_command_write(qa_bots *bots, bot_ai_state *state,
     uint8_t *command;
     if (!value || !bytes(bots, state, &command, error)) return false;
     command+=QA_BOT_SOURCE_COMMAND;
-    bot_source_i32_write(command, value->server_time_ms);
-    bot_source_word_write(command + 16, value->buttons);
-    command[20] = value->weapon;
-    for (uint32_t axis = 0; axis < 3; ++axis) {
-        uint32_t word = (uint32_t)value->angle_words[axis] & 65535u;
-        value->angle_words[axis] = word >= 32768u ? (int32_t)word - 65536 : (int32_t)word;
-        bot_source_i32_write(command + 4 + axis * 4, value->angle_words[axis]);
-    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        value->angle_words[axis] = qa_input_signed_word((uint32_t)value->angle_words[axis]);
     float *moves[] = {&value->forward_move, &value->side_move, &value->up_move};
     for (unsigned axis = 0; axis < 3; ++axis) {
         uint32_t byte = (uint32_t)qa_source_float_to_i32(*moves[axis]) & 255u;
         *moves[axis] = (float)(byte >= 128u ? (int32_t)byte - 256 : (int32_t)byte);
     }
-    command[21] = (uint8_t)(int32_t)value->forward_move;
-    command[22] = (uint8_t)(int32_t)value->side_move;
-    command[23] = (uint8_t)(int32_t)value->up_move;
+    qa_q3_usercmd raw;
+    qa_usercmd_to_q3(value, &raw);
+    bot_source_i32_write(command, raw.serverTime);
+    bot_source_i32_write(command + 16, raw.buttons);
+    command[20] = raw.weapon;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        bot_source_i32_write(command + 4 + axis * 4, raw.angles[axis]);
+    command[21] = (uint8_t)raw.forwardmove;
+    command[22] = (uint8_t)raw.rightmove;
+    command[23] = (uint8_t)raw.upmove;
     return true;
 }
 
