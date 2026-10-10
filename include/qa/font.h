@@ -191,7 +191,7 @@ typedef enum qa_font_coordinate_space {
 typedef struct qa_font_draw_options {
     uint32_t seat;
     qa_scene_rect target;
-    qa_scene_vec2 origin;
+    qa_vec2 origin;
     qa_font_coordinate_space space;
     float shadow_offset;
 } qa_font_draw_options;

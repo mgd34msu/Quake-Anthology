@@ -873,7 +873,7 @@ bool qa_render_source_attributes_resolve(qa_render_controls *controls,qa_scene_d
     return true;
 }
 void qa_render_source_attributes_vertex(qa_render_controls *controls,const qa_scene_draw *draw,
-    qa_render_primitive_mode mode,size_t index,const qa_scene_vertex *vertex,qa_scene_vec4 *color,qa_scene_vec2 uv[2])
+    qa_render_primitive_mode mode,size_t index,const qa_scene_vertex *vertex,qa_scene_vec4 *color,qa_vec2 uv[2])
 {
     qa_render_source_attributes *attributes=&controls->attributes;
     *color=draw->vertex_inputs.constant_color?draw->vertex_inputs.color:vertex->color;
@@ -890,7 +890,7 @@ void qa_render_source_attributes_vertex(qa_render_controls *controls,const qa_sc
     for (size_t unit=0;unit<2;++unit) {
         if (unit==0 && source_direct_coordinates(draw)) continue;
         if (!draw->source_arrays || !attributes->coordinate_array[unit])
-            uv[unit]=attributes->coordinates_known[unit]?attributes->coordinates[unit]:(qa_scene_vec2){0,0};
+            uv[unit]=attributes->coordinates_known[unit]?attributes->coordinates[unit]:(qa_vec2){0,0};
         else {
             uint32_t bank=attributes->coordinate_bank[unit];
             if (attributes->coordinate_kind[unit]==MATERIAL_SOURCE_COORDINATES_TESS)
@@ -930,7 +930,7 @@ void qa_render_source_attributes_finish(qa_render_controls *controls,const qa_sc
     while (qa_render_strip_next(draw->mesh.indices,draw->mesh.index_count,&cursor,&strip))
         for (size_t ordinal=0;ordinal<strip.triangles+2;++ordinal) {
             uint32_t index=qa_render_strip_vertex(&strip,ordinal);
-            qa_scene_vec4 color; qa_scene_vec2 uv[2];
+            qa_scene_vec4 color; qa_vec2 uv[2];
             qa_render_source_attributes_vertex(controls,draw,mode,index,draw->mesh.vertices+index,&color,uv);
             if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS || attributes->color_array) {
                 attributes->color=color; attributes->color_known=true;

@@ -62,7 +62,7 @@ static bool active_stage(const qa_material_stage *stage)
     return stage->video || stage->lightmap || stage->retain_texture ||
            (stage->image_count != 0 && stage->images != NULL && stage->images[0] != NULL);
 }
-static qa_scene_vec4 attenuate_fog(qa_scene_vec4 color, qa_scene_fog_effect effect, qa_scene_vec2 uv)
+static qa_scene_vec4 attenuate_fog(qa_scene_vec4 color, qa_scene_fog_effect effect, qa_vec2 uv)
 {
     float attenuation = 1.0f - qa_material_fog_factor(uv.x, uv.y);
     if (effect == QA_FOG_RGB || effect == QA_FOG_RGBA) {
@@ -262,7 +262,7 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
 {
     qa_material_source_scratch *source = context->source_scratch;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
-        qa_scene_vec2 uv;
+        qa_vec2 uv;
         if (!material_texcoord_generate(stage, geometry->vertices + i, context, &uv, error) ||
             !material_texcoord_finite(uv, error)) return false;
         source->coordinates[bundle][i] = uv;
@@ -274,7 +274,7 @@ static bool source_coordinates(const qa_material_stage *stage, const qa_scene_me
         material_tcmod_state state;
         material_tcmod_prepare(stage->tcmods + mod, context, time, &state);
         for (size_t i = 0; i < geometry->vertex_count; ++i) {
-            qa_scene_vec2 uv;
+            qa_vec2 uv;
             if (!material_texcoord_modify(stage->tcmods + mod, 0, geometry->vertices[i].position,
                 &state, source->coordinates[bundle] + i, &uv, error) ||
                 !material_texcoord_finite(uv, error)) return false;
@@ -522,8 +522,8 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
         for (size_t v = 0; v < geometry->vertex_count; ++v) {
             vertices[v] = geometry->vertices[v];
             qa_vec3 distance = qa_vec_sub(light->origin, vertices[v].position);
-            vertices[v].texcoord = (qa_scene_vec2){0.5f + distance.x * scale, 0.5f + distance.y * scale};
-            qa_scene_vec2 uv = vertices[v].texcoord;
+            vertices[v].texcoord = (qa_vec2){0.5f + distance.x * scale, 0.5f + distance.y * scale};
+            qa_vec2 uv = vertices[v].texcoord;
             uint8_t mask = (uint8_t)((uv.x < 0 ? 1u : uv.x > 1 ? 2u : 0u) |
                                      (uv.y < 0 ? 4u : uv.y > 1 ? 8u : 0u));
             float modulation;
@@ -612,7 +612,7 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
     }
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         vertices[i] = geometry->vertices[i];
-        vertices[i].texcoord = volume ? qa_material_fog_coordinates(context, vertices[i].position) : (qa_scene_vec2){0, 0};
+        vertices[i].texcoord = volume ? qa_material_fog_coordinates(context, vertices[i].position) : (qa_vec2){0, 0};
         vertices[i].color = volume ? (qa_scene_vec4){context->fog_volume_color.x, context->fog_volume_color.y, context->fog_volume_color.z, 1} :
             (qa_scene_vec4){1, 1, 1, 1};
         if (volume && context->source_scratch) {
@@ -794,7 +794,7 @@ static bool source_decoded_entity(qa_material_source_scratch *source, qa_materia
     context->local_view_origin = source->view_origin;
     if (context->entity == 1022) {
         context->entity_color = (qa_scene_vec4){1, 1, 1, 1};
-        context->entity_texcoord = (qa_scene_vec2){0}; context->time_offset = 0;
+        context->entity_texcoord = (qa_vec2){0}; context->time_offset = 0;
         context->source_entity_cell = context->source_depth_hack = false;
         context->non_normalized_axis = context->projection_shadow = false;
         return true;
@@ -871,7 +871,7 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
         if (mesh->vertex_count && !vertices) return false;
         for (size_t i = 0; i < mesh->vertex_count; ++i) {
-            vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_scene_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_scene_vec2){0};
+            vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_scene_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_vec2){0};
         }
         draw.mesh.vertices = vertices; draw.textures[0] = context->source_white; draw.texture_count = 1;
         if (context->source_diagnostics.no_bind &&

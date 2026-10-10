@@ -653,7 +653,7 @@ bool qa_input_seat_release(qa_input_seat *s, double time, qa_error *error) {
         for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
             qa_input_button_release(&s->buttons[i], time);
         qa_gamepad_clear(&s->gamepad);
-        s->mouse = (qa_input_pair){0};
+        s->mouse = (qa_vec2){0};
         s->impulse = 0;
     }
     return success;
@@ -765,7 +765,7 @@ bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *co
             return false;
         }
         if (!used && s->focus == QA_INPUT_GAME) {
-            qa_input_pair next = {s->mouse.x + event->delta.x, s->mouse.y + event->delta.y};
+            qa_vec2 next = {s->mouse.x + event->delta.x, s->mouse.y + event->delta.y};
             if (!isfinite(next.x) || !isfinite(next.y)) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Pointer displacement overflow");
                 return false;
@@ -821,7 +821,7 @@ bool qa_input_seat_sample(qa_input_seat *s, double now, double frame, qa_seat_in
                                     error))
             return false;
     }
-    s->mouse = (qa_input_pair){0};
+    s->mouse = (qa_vec2){0};
     s->impulse = 0;
     *out = result;
     return true;

@@ -28,7 +28,7 @@ static bool impact(const q3n_frame *f, const q3n_impact_mark *r, qa_error *error
         for(uint32_t j=0;j<vertices;++j) {
             qa_q3_poly_vertex *v=&mark.vertices[j]; v->position=output[fragment.first+j];
             qa_vec3 delta=q3ne_difference(v->position,r->origin);
-            v->texcoord=(qa_scene_vec2){(0.5f + (q3ne_dot(delta,axis1) * scale)),(0.5f + (q3ne_dot(delta,axis2) * scale))};
+            v->texcoord=(qa_vec2){(0.5f + (q3ne_dot(delta,axis1) * scale)),(0.5f + (q3ne_dot(delta,axis2) * scale))};
             for(unsigned k=0;k<4;++k)v->color[k]=q3ne_byte((r->color[k] * 255));
         }
         if(r->temporary) {

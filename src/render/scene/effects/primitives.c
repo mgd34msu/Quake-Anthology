@@ -8,7 +8,7 @@ static void rail_vertex(qa_scene_vertex *vertex, qa_vec3 position, float s, floa
                          qa_scene_vec4 color, bool dim)
 {
     vertex->position = position;
-    vertex->texcoord = (qa_scene_vec2){s, t};
+    vertex->texcoord = (qa_vec2){s, t};
     vertex->color.x = dim ? truncf(color.x * 255 * 0.25f) / 255 : color.x;
     vertex->color.y = dim ? truncf(color.y * 255 * 0.25f) / 255 : color.y;
     vertex->color.z = dim ? truncf(color.z * 255 * 0.25f) / 255 : color.z;
@@ -134,7 +134,7 @@ bool qa_scene_flare(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 or
     uint32_t *indices;
     if (!qa_effect_mesh(frame, 5, 12, &mesh, &vertices, &indices, error)) return false;
     const float horizontal[5] = {0, -1, -1, 1, 1}, vertical[5] = {0, -1, 1, 1, -1};
-    const qa_scene_vec2 uv[5] = {{0.5f, 0.5f}, {0, 1}, {0, 0}, {1, 0}, {1, 1}};
+    const qa_vec2 uv[5] = {{0.5f, 0.5f}, {0, 1}, {0, 0}, {1, 0}, {1, 1}};
     for (unsigned i = 0; i < 5; ++i) {
         vertices[i].position = qa_vec_add(origin, qa_vec_add(qa_vec_scale(right, horizontal[i] * size), qa_vec_scale(up, vertical[i] * size)));
         vertices[i].normal = qa_vec_scale(direction, -1);

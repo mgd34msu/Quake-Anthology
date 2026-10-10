@@ -1,6 +1,6 @@
 #include "internal.h"
 
-bool ui_inside(qa_scene_rect_f rect, qa_input_pair point) {
+bool ui_inside(qa_scene_rect_f rect, qa_vec2 point) {
     return point.x >= rect.x && point.y >= rect.y &&
            point.x < rect.x + rect.width && point.y < rect.y + rect.height;
 }
@@ -377,7 +377,7 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
     if (!ui->depth) return true;
     if (event->kind == QA_INPUT_EVENT_MOUSE) {
         ui->pointer = event->position; ui->has_pointer = true;
-        ui->cursor = (qa_input_pair){(event->position.x - ui->bias_x) / ui->scale,
+        ui->cursor = (qa_vec2){(event->position.x - ui->bias_x) / ui->scale,
                                      (event->position.y - ui->bias_y) / ui->scale};
     }
     bool primary = event->kind == QA_INPUT_EVENT_BUTTON && event->input.kind == QA_PHYSICAL_MOUSE && event->input.code == 1;

@@ -1,7 +1,7 @@
 #include "internal.h"
 #include <math.h>
 
-qa_scene_vec2 qa_material_fog_coordinates(const qa_material_context *context, qa_vec3 local_position)
+qa_vec2 qa_material_fog_coordinates(const qa_material_context *context, qa_vec3 local_position)
 {
     qa_scene_vec4 point = qa_scene_matrix_point(context->model, local_position);
     qa_vec3 position = qa_v3(point.x, point.y, point.z);
@@ -9,14 +9,14 @@ qa_scene_vec2 qa_material_fog_coordinates(const qa_material_context *context, qa
     float offset = qa_vec_dot(qa_vec_scale(context->view.origin, -1.0f), context->view.axis[0]);
     offset = offset * context->fog_tc_scale + 1.0f / 512.0f;
     float s = qa_vec_dot(position, distance_vector) + offset;
-    if (!context->fog_has_surface) return (qa_scene_vec2){s, 31.0f / 32.0f};
+    if (!context->fog_has_surface) return (qa_vec2){s, 31.0f / 32.0f};
     float eye_depth = qa_vec_dot(context->view.origin, context->fog_surface.normal) - context->fog_surface.distance;
     float depth = qa_vec_dot(position, context->fog_surface.normal) - context->fog_surface.distance;
     float t;
     if (eye_depth < 0.0f) t = depth < 1.0f ? 1.0f / 32.0f :
         1.0f / 32.0f + (30.0f / 32.0f * depth) / (depth - eye_depth);
     else t = depth < 0.0f ? 1.0f / 32.0f : 31.0f / 32.0f;
-    return (qa_scene_vec2){s, t};
+    return (qa_vec2){s, t};
 }
 static bool table_index(double value, unsigned *out, qa_error *error)
 {
@@ -36,7 +36,7 @@ void material_tcmod_prepare(const qa_material_tcmod *mod, const qa_material_cont
     case QA_TCMOD_ENTITY_TRANSLATE: {
         float x = (mod->kind == QA_TCMOD_SCROLL ? mod->values[0] : context->entity_texcoord.x) * time;
         float y = (mod->kind == QA_TCMOD_SCROLL ? mod->values[1] : context->entity_texcoord.y) * time;
-        state->scroll = (qa_scene_vec2){x - floorf(x), y - floorf(y)};
+        state->scroll = (qa_vec2){x - floorf(x), y - floorf(y)};
         break;
     }
     case QA_TCMOD_ROTATE: {
@@ -45,7 +45,7 @@ void material_tcmod_prepare(const qa_material_tcmod *mod, const qa_material_cont
         state->rotation_valid = table_index(state->rotation, &index, NULL);
         if (!state->rotation_valid) break;
         state->sine = qa_material_sine(index); state->cosine = qa_material_sine(index + 256u);
-        state->translate = (qa_scene_vec2){(float)(0.5 - 0.5 * state->cosine + 0.5 * state->sine),
+        state->translate = (qa_vec2){(float)(0.5 - 0.5 * state->cosine + 0.5 * state->sine),
             (float)(0.5 - 0.5 * state->sine - 0.5 * state->cosine)};
         break;
     }
@@ -68,13 +68,13 @@ void material_tcmods_prepare(const qa_material_stage *stage, const qa_material_c
     }
 }
 bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_vertex *vertex,
-                               const qa_material_context *context, qa_scene_vec2 *out, qa_error *error)
+                               const qa_material_context *context, qa_vec2 *out, qa_error *error)
 {
-    qa_scene_vec2 result;
+    qa_vec2 result;
     switch (stage->tcgen) {
     case QA_TC_TEXTURE: result = vertex->texcoord; break;
     case QA_TC_LIGHTMAP: result = vertex->lightmap; break;
-    case QA_TC_IDENTITY: result = (qa_scene_vec2){0, 0}; break;
+    case QA_TC_IDENTITY: result = (qa_vec2){0, 0}; break;
     case QA_TC_FOG:
         if (context->fog_tc_scale <= 0.0f) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Fog texture coordinates require a fog volume");
@@ -83,7 +83,7 @@ bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_v
         result = qa_material_fog_coordinates(context, vertex->position);
         break;
     case QA_TC_VECTOR:
-        result = (qa_scene_vec2){qa_vec_dot(vertex->position, stage->tc_vectors[0]),
+        result = (qa_vec2){qa_vec_dot(vertex->position, stage->tc_vectors[0]),
                                 qa_vec_dot(vertex->position, stage->tc_vectors[1])};
         break;
     case QA_TC_ENVIRONMENT: {
@@ -91,7 +91,7 @@ bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_v
         float dot = qa_vec_dot(vertex->normal, viewer);
         float reflected_y = (vertex->normal.y * 2.0f) * dot - viewer.y;
         float reflected_z = (vertex->normal.z * 2.0f) * dot - viewer.z;
-        result = (qa_scene_vec2){0.5f + reflected_y * 0.5f, 0.5f - reflected_z * 0.5f};
+        result = (qa_vec2){0.5f + reflected_y * 0.5f, 0.5f - reflected_z * 0.5f};
         break;
     }
     default:
@@ -102,23 +102,23 @@ bool material_texcoord_generate(const qa_material_stage *stage, const qa_scene_v
     return true;
 }
 bool material_texcoord_modify(const qa_material_tcmod *mod, size_t mod_index, qa_vec3 position,
-                             const material_tcmod_state *state, const qa_scene_vec2 *input,
-                             qa_scene_vec2 *out, qa_error *error)
+                             const material_tcmod_state *state, const qa_vec2 *input,
+                             qa_vec2 *out, qa_error *error)
 {
-    qa_scene_vec2 result = *input;
+    qa_vec2 result = *input;
     float s = result.x, t = result.y;
     switch (mod->kind) {
     case QA_TCMOD_NONE: break;
     case QA_TCMOD_SCALE:
-        result = (qa_scene_vec2){s * mod->values[0], t * mod->values[1]};
+        result = (qa_vec2){s * mod->values[0], t * mod->values[1]};
         break;
     case QA_TCMOD_SCROLL:
     case QA_TCMOD_ENTITY_TRANSLATE: {
-        result = (qa_scene_vec2){s + state->scroll.x, t + state->scroll.y};
+        result = (qa_vec2){s + state->scroll.x, t + state->scroll.y};
         break;
     }
     case QA_TCMOD_TRANSFORM:
-        result = (qa_scene_vec2){s * mod->values[0] + t * mod->values[2] + mod->values[4],
+        result = (qa_vec2){s * mod->values[0] + t * mod->values[2] + mod->values[4],
                                 s * mod->values[1] + t * mod->values[3] + mod->values[5]};
         break;
     case QA_TCMOD_ROTATE: {
@@ -132,7 +132,7 @@ bool material_texcoord_modify(const qa_material_tcmod *mod, size_t mod_index, qa
         break;
     }
     case QA_TCMOD_STRETCH: {
-        result = (qa_scene_vec2){s * state->scale + t * 0.0f + state->translate.x,
+        result = (qa_vec2){s * state->scale + t * 0.0f + state->translate.x,
                                 s * 0.0f + t * state->scale + state->translate.x};
         break;
     }
@@ -142,7 +142,7 @@ bool material_texcoord_modify(const qa_material_tcmod *mod, size_t mod_index, qa
         float position_sum = position.x + position.z;
         if (!table_index(((double)position_sum / 1024.0 + state->now) * 1024.0, &sx, error) ||
             !table_index(((double)position.y / 1024.0 + state->now) * 1024.0, &sy, error)) return false;
-        result = (qa_scene_vec2){s + qa_material_sine(sx) * mod->wave.amplitude,
+        result = (qa_vec2){s + qa_material_sine(sx) * mod->wave.amplitude,
                                 t + qa_material_sine(sy) * mod->wave.amplitude};
         break;
     }
@@ -155,9 +155,9 @@ bool material_texcoord_modify(const qa_material_tcmod *mod, size_t mod_index, qa
 }
 bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
                                const qa_material_context *context, float time,
-                               const material_tcmod_state *states, qa_scene_vec2 *out, qa_error *error)
+                               const material_tcmod_state *states, qa_vec2 *out, qa_error *error)
 {
-    qa_scene_vec2 result;
+    qa_vec2 result;
     if (!material_texcoord_generate(stage, vertex, context, &result, error)) return false;
     for (size_t i = 0; i < stage->tcmod_count; ++i) {
         const qa_material_tcmod *mod = &stage->tcmods[i];
@@ -173,7 +173,7 @@ bool material_texcoord_vertex(const qa_material_stage *stage, const qa_scene_ver
 }
 bool qa_material_stage_texcoord(const qa_material_stage *stage, const qa_scene_vertex *vertex,
                                 const qa_material_context *context, float time,
-                                qa_scene_vec2 *out, qa_error *error)
+                                qa_vec2 *out, qa_error *error)
 {
     return material_texcoord_vertex(stage, vertex, context, time, NULL, out, error);
 }

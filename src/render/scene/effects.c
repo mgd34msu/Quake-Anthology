@@ -230,7 +230,7 @@ bool qa_scene_sprite_geometry(qa_scene_frame *frame, const qa_scene_view *view, 
     uint32_t *indices;
     if (!qa_effect_mesh(frame, 4, 6, &mesh, &vertices, &indices, error)) return false;
     const float horizontal[4] = {1, -1, -1, 1}, vertical[4] = {1, 1, -1, -1};
-    const qa_scene_vec2 uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    const qa_vec2 uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     for (size_t i = 0; i < 4; ++i) {
         vertices[i].position = qa_vec_add(qa_vec_add(origin, qa_vec_scale(left, horizontal[i])), qa_vec_scale(up, vertical[i]));
         vertices[i].normal = qa_vec_scale(view->axis[0], -1);

@@ -1,14 +1,11 @@
 #ifndef QA_INPUT_H
 #define QA_INPUT_H
 
+#include "qa/math.h"
 #include "qa/console.h"
 #include "qa/movement.h"
 
 #define QA_INPUT_LOCAL_SEATS 4
-
-typedef struct qa_input_pair {
-    float x, y;
-} qa_input_pair;
 
 /* Zero initializes a button. A source identifies one physical press for this
  * seat. Clear retains storage; destroy releases it. Do not copy live buttons.
@@ -32,14 +29,14 @@ typedef struct qa_mouse_tuning {
     bool filter, free_look, look_spring, look_strafe, invert_pitch;
 } qa_mouse_tuning;
 typedef struct qa_mouse_input {
-    qa_input_pair previous;
+    qa_vec2 previous;
 } qa_mouse_input;
 typedef struct qa_mouse_move {
     float yaw, pitch, side, forward;
 } qa_mouse_move;
 qa_mouse_tuning qa_mouse_defaults(void);
 bool qa_mouse_tuning_valid(const qa_mouse_tuning *);
-bool qa_mouse_sample(qa_mouse_input *, const qa_mouse_tuning *, qa_input_pair raw, double frame_ms,
+bool qa_mouse_sample(qa_mouse_input *, const qa_mouse_tuning *, qa_vec2 raw, double frame_ms,
                      bool strafe, bool mouse_look, float zoom, qa_mouse_move *out, qa_error *);
 
 typedef struct qa_pitch_drift {
@@ -87,10 +84,10 @@ typedef struct qa_gamepad_input {
     qa_gyro_capture capture;
 } qa_gamepad_input;
 typedef struct qa_gamepad_sample {
-    qa_input_pair move, look_degrees;
+    qa_vec2 move, look_degrees;
 } qa_gamepad_sample;
 typedef struct qa_gamepad_preview {
-    qa_input_pair move_raw, move_curved, look_raw, look_curved;
+    qa_vec2 move_raw, move_curved, look_raw, look_curved;
 } qa_gamepad_preview;
 typedef enum qa_gyro_state { QA_GYRO_IDLE, QA_GYRO_CALIBRATING, QA_GYRO_READY } qa_gyro_state;
 typedef struct qa_gyro_status {
@@ -101,7 +98,7 @@ typedef struct qa_gyro_status {
 } qa_gyro_status;
 qa_gamepad_tuning qa_gamepad_defaults(void);
 bool qa_gamepad_tuning_valid(const qa_gamepad_tuning *);
-qa_input_pair qa_stick_apply(qa_input_pair, const qa_stick_curve *);
+qa_vec2 qa_stick_apply(qa_vec2, const qa_stick_curve *);
 float qa_controller_axis_normalize(qa_controller_axis, int16_t raw);
 bool qa_gamepad_axis(qa_gamepad_input *, qa_controller_axis, float value, bool aiming, qa_error *);
 void qa_gamepad_preview_read(const qa_gamepad_input *, const qa_gamepad_tuning *,
@@ -163,7 +160,7 @@ typedef struct qa_input_action_sample {
 } qa_input_action_sample;
 typedef struct qa_seat_input_sample {
     qa_input_action_sample buttons[QA_INPUT_ACTION_COUNT];
-    qa_input_pair mouse;
+    qa_vec2 mouse;
     qa_gamepad_sample gamepad;
     double frame_ms;
     bool game_focus, any_key_down;
@@ -364,7 +361,7 @@ typedef struct qa_input_event {
     qa_physical_input input;
     bool down, repeat;
     float value;
-    qa_input_pair position, delta;
+    qa_vec2 position, delta;
     const char *text;
     int touchpad, finger;
 } qa_input_event;

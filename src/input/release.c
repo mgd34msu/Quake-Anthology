@@ -145,7 +145,7 @@ static void enter_metadata(qa_input_release *owner)
     }
     if (owner->scope.all) {
         for (size_t i=0;i<QA_INPUT_ACTION_COUNT;++i) qa_input_button_release(&seat->buttons[i],owner->time_ms);
-        seat->mouse=(qa_input_pair){0}; seat->impulse=0;
+        seat->mouse=(qa_vec2){0}; seat->impulse=0;
     }
     if (owner->scope.all || owner->scope.clear_gamepad || owner->scope.controller>=0)
         qa_gamepad_clear(&seat->gamepad);

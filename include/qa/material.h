@@ -107,7 +107,7 @@ typedef struct qa_material_context {
     /* Color and light channel units are normalized: one equals source byte 255. */
     qa_scene_vec4 entity_color;
     qa_vec3 ambient, directed, light_direction, local_view_origin;
-    qa_scene_vec2 entity_texcoord;
+    qa_vec2 entity_texcoord;
     float identity_light, time_offset, shadow_plane;
     /* Entity setup packs ambient alpha as one; the unlit world default is zero. */
     float ambient_alpha;

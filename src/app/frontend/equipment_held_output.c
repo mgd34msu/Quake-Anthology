@@ -130,7 +130,7 @@ bool frontend_equipment_held_output_pass(frontend_equipment_held_output *output,
     pass.frame = pass.old_frame = (int32_t)output->media.held->reference_frame;
     pass.back_lerp = 0; pass.skin = pass.custom_skin = 0;
     pass.custom_shader = source->custom_shader; pass.shader_time = source->shader_time;
-    pass.shader_texcoord = (qa_scene_vec2){0};
+    pass.shader_texcoord = (qa_vec2){0};
     pass.non_normalized_axes = false;
     memset(pass.color, 255, sizeof(pass.color));
     if (material) memcpy(pass.color, source->color, sizeof(pass.color));

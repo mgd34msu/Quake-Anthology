@@ -44,7 +44,7 @@ typedef struct qa_hud_wheel_status {
     qa_hud_wheel_mode mode;
     uint64_t selected, carousel_selected;
     float opacity;
-    qa_input_pair cursor;
+    qa_vec2 cursor;
 } qa_hud_wheel_status;
 typedef struct qa_hud_wheel_draw_options {
     qa_scene_rect viewport;

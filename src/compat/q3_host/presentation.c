@@ -159,7 +159,7 @@ static bool polygons(q3_call *call, qa_q3_presentation *seat, bool multiple,
         for (size_t i = 0; i < vertices; ++i) {
             const uint8_t *vertex = bytes + i * 24;
             polygon[i].position = record_vector(vertex);
-            polygon[i].texcoord = (qa_scene_vec2){qa_load_f32le(vertex + 12),
+            polygon[i].texcoord = (qa_vec2){qa_load_f32le(vertex + 12),
                                                  qa_load_f32le(vertex + 16)};
             memcpy(polygon[i].color, vertex + 20, 4);
         }

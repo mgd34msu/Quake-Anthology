@@ -20,7 +20,7 @@ struct qa_ui {
     ui_field *fields;
     size_t field_count, field_capacity;
     qa_input_ui_token input_token;
-    qa_input_pair cursor, pointer;
+    qa_vec2 cursor, pointer;
     float scale, bias_x, bias_y, text_scale;
     qa_ui_color_mode color_mode;
     qa_scene_rect viewport;
@@ -48,7 +48,7 @@ bool ui_move(qa_ui *, int, qa_error *);
 bool ui_change(qa_ui *, const qa_ui_control *, int, qa_error *);
 bool ui_text(qa_ui *, const qa_ui_control *, const char *, qa_error *);
 bool ui_activate(qa_ui *, const qa_ui_control *, qa_error *);
-bool ui_inside(qa_scene_rect_f, qa_input_pair);
+bool ui_inside(qa_scene_rect_f, qa_vec2);
 bool ui_fill(qa_ui *, qa_scene_frame *, qa_scene_rect, qa_scene_rect_f, qa_scene_vec4, qa_error *);
 bool ui_draw_text(qa_ui *, qa_scene_frame *, qa_scene_rect, float, float, const char *,
                   qa_scene_vec4, float, qa_font_alignment, qa_error *);

@@ -165,7 +165,7 @@ static bool world_quad(qa_scene_frame *frame, const qa_scene_view *view, const q
         qa_vec_add(qa_vec_add(base, right), down),
         qa_vec_add(base, down),
     };
-    qa_scene_vec2 uv[4] = {
+    qa_vec2 uv[4] = {
         {glyph->uv.x, glyph->uv.y},
         {glyph->uv.z, glyph->uv.y},
         {glyph->uv.z, glyph->uv.w},

@@ -313,7 +313,7 @@ static bool menu_panel(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport,
         (qa_scene_vec4){0, 0, 1, 1}, color, error);
 }
 bool qa_ui_menu_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
-                       qa_scene_vec2 origin, const char *text,
+                       qa_vec2 origin, const char *text,
                        const qa_ui_text_style *style, qa_error *error) {
     if (!ui || !ui->drawing || !frame || !style || !isfinite(origin.x) || !isfinite(origin.y) ||
         !isfinite(style->scale) || style->scale < 0 || !isfinite(style->fit_width) || style->fit_width < 0)
@@ -359,7 +359,7 @@ static bool menu_title(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                        const qa_ui_menu *menu, qa_error *error) {
     qa_ui_text_style style = {.scale = menu->narrow ? 6 : 4,
         .accent = true, .heading = true, .source = menu->source_title};
-    return qa_ui_menu_text(ui, frame, target, (qa_scene_vec2){64, 44}, menu->title, &style, error);
+    return qa_ui_menu_text(ui, frame, target, (qa_vec2){64, 44}, menu->title, &style, error);
 }
 static bool menu_text_controls(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                                 const qa_ui_menu *menu, bool overlay, qa_error *error) {
@@ -368,7 +368,7 @@ static bool menu_text_controls(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect t
         if (!control.visible || control.kind != QA_UI_TEXT || control.value.text.overlay != overlay) continue;
         qa_scene_rect clipped = control.scrolls && menu->scrollable
             ? clip_rect(ui, target, menu->scroll_rect) : target;
-        if (!qa_ui_menu_text(ui, frame, clipped, (qa_scene_vec2){control.rect.x, control.rect.y},
+        if (!qa_ui_menu_text(ui, frame, clipped, (qa_vec2){control.rect.x, control.rect.y},
             control.label, &control.value.text, error)) return false;
     }
     return true;
@@ -414,7 +414,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     ui->bias_x = (float)viewport.x + ((float)viewport.width - 640 * ui->scale) * .5f;
     ui->bias_y = (float)viewport.y + ((float)viewport.height - 480 * ui->scale) * .5f;
     if (ui->has_pointer)
-        ui->cursor = (qa_input_pair){(ui->pointer.x - ui->bias_x) / ui->scale,
+        ui->cursor = (qa_vec2){(ui->pointer.x - ui->bias_x) / ui->scale,
                                      (ui->pointer.y - ui->bias_y) / ui->scale};
     qa_ui_menu menu;
     if (!ui_active(ui, &menu, error)) return false;

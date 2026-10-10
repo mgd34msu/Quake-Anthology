@@ -130,7 +130,7 @@ static bool colored_mesh(qa_scene_q1_sky *sky, const qa_scene_mesh *source,
             qa_vec3 direction = qa_vec_sub(vertices[i].position, sky->input.view.origin);
             direction.z *= 3;
             float length = qa_vec_length(direction), scale = length > 0 ? 378 / length : 0;
-            vertices[i].texcoord = (qa_scene_vec2){(float)(scroll + direction.x * scale) / 128,
+            vertices[i].texcoord = (qa_vec2){(float)(scroll + direction.x * scale) / 128,
                 (float)(scroll + direction.y * scale) / 128};
         }
     }
@@ -184,7 +184,7 @@ static bool face_mesh(qa_scene_q1_sky *sky, unsigned face, const qa_scene_sky_bo
             vertex->color = (qa_scene_vec4){1, 1, 1, 1};
             if (boxed) {
                 float w = (float)image->levels[0].width, h = (float)image->levels[0].height;
-                vertex->texcoord = (qa_scene_vec2){horizontal[v] * (w - 1) / w + .5f / w,
+                vertex->texcoord = (qa_vec2){horizontal[v] * (w - 1) / w + .5f / w,
                     1 - (height[v] * (h - 1) / h + .5f / h)};
             }
         }

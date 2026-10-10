@@ -12,7 +12,7 @@ bool qa_mouse_tuning_valid(const qa_mouse_tuning *t) {
     return t && isfinite(t->sensitivity) && isfinite(t->acceleration) && isfinite(t->yaw) &&
            isfinite(t->pitch) && isfinite(t->side) && isfinite(t->forward);
 }
-bool qa_mouse_sample(qa_mouse_input *input, const qa_mouse_tuning *t, qa_input_pair raw,
+bool qa_mouse_sample(qa_mouse_input *input, const qa_mouse_tuning *t, qa_vec2 raw,
                      double frame, bool strafe, bool look, float zoom, qa_mouse_move *out,
                      qa_error *error) {
     if (!input || !out || !qa_mouse_tuning_valid(t) || !isfinite(raw.x) || !isfinite(raw.y) ||

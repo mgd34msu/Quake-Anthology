@@ -90,7 +90,7 @@ typedef struct qa_q3_ref_entity {
     int32_t flags, model, frame, old_frame, skin, custom_skin, custom_shader;
     qa_vec3 lighting_origin, axis[3], origin, old_origin;
     float shadow_plane, back_lerp, shader_time, radius, rotation;
-    qa_scene_vec2 shader_texcoord;
+    qa_vec2 shader_texcoord;
     uint8_t color[4];
     bool non_normalized_axes;
 } qa_q3_ref_entity;
@@ -103,7 +103,7 @@ typedef struct qa_q3_refdef {
 } qa_q3_refdef;
 typedef struct qa_q3_poly_vertex {
     qa_vec3 position;
-    qa_scene_vec2 texcoord;
+    qa_vec2 texcoord;
     uint8_t color[4];
 } qa_q3_poly_vertex;
 typedef struct qa_q3_scene_polygon {

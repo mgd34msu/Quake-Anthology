@@ -115,7 +115,7 @@ static bool append_polygon(polygon_mesh *mesh, const qa_vec3 *points, size_t cou
     float scale = mesh->texture->quake64_shift > 0 && !legacy->warp && !mesh->surface->sky
         ? 2.0f * (float)mesh->texture->quake64_shift : 1.0f;
     for (size_t i = 0; i < count; ++i) {
-        qa_scene_vec2 uv = {project(points[i], mesh->info->projection[0]),
+        qa_vec2 uv = {project(points[i], mesh->info->projection[0]),
                            project(points[i], mesh->info->projection[1])};
         if (!legacy->warp) {
             uv.x /= (float)mesh->texture->width * scale;
@@ -129,7 +129,7 @@ static bool append_polygon(polygon_mesh *mesh, const qa_vec3 *points, size_t cou
                             (float)(legacy->atlas ? legacy->atlas->height : legacy->height)},
             .color = {1, 1, 1, 1}
         };
-        qa_scene_vec2 lightmap = mesh->vertices[mesh->vertex_count + i].lightmap;
+        qa_vec2 lightmap = mesh->vertices[mesh->vertex_count + i].lightmap;
         if (!isfinite(uv.x) || !isfinite(uv.y) || !isfinite(lightmap.x) || !isfinite(lightmap.y)) {
             qa_error_set(error, QA_ERROR_FORMAT, mesh->surface->source_index, "Brush texture projection overflows");
             return false;

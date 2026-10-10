@@ -719,7 +719,7 @@ static bool gamepad_controls(frontend_seat *seat)
         binding_of(item)->offset=offset;
         item=slider(seat,i?"Look outer threshold":"Move outer threshold",curve->kind==QA_STICK_RADIAL?curve->outer_threshold:0,0,.49,.01,SET_GAMEPAD_FLOAT);
         binding_of(item)->offset=offset+offsetof(qa_stick_curve,outer_threshold); item->enabled=curve->kind==QA_STICK_RADIAL;
-        qa_input_pair raw=i?preview.look_raw:preview.move_raw,curved=i?preview.look_curved:preview.move_curved;
+        qa_vec2 raw=i?preview.look_raw:preview.move_raw,curved=i?preview.look_curved:preview.move_curved;
         for(size_t axis=0;axis<2;++axis) {
             item=slider(seat,i?(axis?"Look Y live":"Look X live"):(axis?"Move Y live":"Move X live"),axis?curved.y:curved.x,-1,1,.01,SET_GAMEPAD_FLOAT);
             item->enabled=false; char text[80]; snprintf(text,sizeof(text),"Raw %.2f / %.2f",(double)(axis?raw.y:raw.x),(double)(axis?curved.y:curved.x));

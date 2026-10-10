@@ -25,7 +25,7 @@ typedef struct qa_render_source_texture {
 typedef struct qa_render_source_attributes {
     qa_scene_vec4 color;
     qa_scene_vec4 zero_border;
-    qa_scene_vec2 coordinates[2];
+    qa_vec2 coordinates[2];
     bool color_known, coordinates_known[2];
     bool color_array, coordinate_array[2], texture_enabled[2];
     bool actual_empty[2];
@@ -164,7 +164,7 @@ void qa_render_source_attributes_init(qa_render_source_attributes *);
 bool qa_render_source_attributes_resolve(qa_render_controls *, qa_scene_draw *, const qa_scene_image *const[2],
     qa_render_primitive_mode, qa_error *);
 void qa_render_source_attributes_vertex(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode,
-    size_t index, const qa_scene_vertex *, qa_scene_vec4 *, qa_scene_vec2[2]);
+    size_t index, const qa_scene_vertex *, qa_scene_vec4 *, qa_vec2[2]);
 void qa_render_source_attributes_finish(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode);
 /* The caller supplies its already validated triangle indices. */
 bool qa_render_strip_next(const uint32_t *, size_t, size_t *, qa_render_strip *);

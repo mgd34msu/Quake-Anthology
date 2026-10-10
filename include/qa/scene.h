@@ -1,6 +1,7 @@
 #ifndef QA_SCENE_H
 #define QA_SCENE_H
 
+#include "qa/math.h"
 #include "qa/ruleset.h"
 #include "qa/arena.h"
 #include "qa/bsp.h"
@@ -31,7 +32,6 @@ typedef struct qa_scene_source_diagnostics {
 } qa_scene_source_diagnostics;
 typedef bool (*qa_scene_source_diagnostics_read_fn)(void *, qa_scene_source_diagnostics *, qa_error *);
 
-typedef struct qa_scene_vec2 { float x, y; } qa_scene_vec2;
 typedef struct qa_scene_vec4 { float x, y, z, w; } qa_scene_vec4;
 typedef struct qa_scene_matrix { float m[16]; } qa_scene_matrix;
 typedef struct qa_scene_rect { int32_t x, y; uint32_t width, height; } qa_scene_rect;
@@ -379,7 +379,7 @@ const qa_scene_image *qa_scene_missing(const qa_scene_resources *);
 
 typedef struct qa_scene_vertex {
     qa_vec3 position, normal;
-    qa_scene_vec2 texcoord, lightmap;
+    qa_vec2 texcoord, lightmap;
     qa_scene_vec4 color;
 } qa_scene_vertex;
 /* Takes both malloc-compatible arrays only on success, without copying. Finish
@@ -764,7 +764,7 @@ typedef struct qa_scene_world_options {
 } qa_scene_world_options;
 typedef struct qa_scene_world_entity {
     qa_vec3 ambient, directed, light_direction;
-    qa_scene_vec2 shader_texcoord;
+    qa_vec2 shader_texcoord;
     float shader_time, shadow_plane;
     bool non_normalized_axis, projection_shadow;
 } qa_scene_world_entity;
@@ -1007,7 +1007,7 @@ struct qa_scene_model_input {
     float beam_segment_length;
     uint8_t left_hand;
     float shader_time, q1_overbright;
-    qa_scene_vec2 shader_texcoord;
+    qa_vec2 shader_texcoord;
     const char *const *render_texts;
     size_t render_text_count;
     const qa_scene_image *(*video_frame)(void *, uint64_t initial_image_identity, double, qa_error *);

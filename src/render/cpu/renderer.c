@@ -1916,7 +1916,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
     }
   }
   if (ok && renderer->source_image_count) {
-    controls->attributes.coordinates[0]=(qa_scene_vec2){0,1}; controls->attributes.coordinates_known[0]=true;
+    controls->attributes.coordinates[0]=(qa_vec2){0,1}; controls->attributes.coordinates_known[0]=true;
   }
   qa_scene_frame_destroy(&frame);
   if (ok && controls->source_print) {

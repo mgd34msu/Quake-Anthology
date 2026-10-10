@@ -879,7 +879,7 @@ static bool finish_calibration(qa_input_platform *p, qa_error *error) {
     }
     return ok;
 }
-static qa_input_pair position(qa_input_platform *p, int x, int y) {
+static qa_vec2 position(qa_input_platform *p, int x, int y) {
     SDL_Window *window = SDL_GetWindowFromID(p->window);
     int w = 0, h = 0, dw = 0, dh = 0;
     if (window) {
@@ -898,7 +898,7 @@ static qa_input_pair position(qa_input_platform *p, int x, int y) {
             }
         }
     }
-    return (qa_input_pair){w > 0 ? (float)x * (float)dw / (float)w : (float)x,
+    return (qa_vec2){w > 0 ? (float)x * (float)dw / (float)w : (float)x,
                            h > 0 ? (float)y * (float)dh / (float)h : (float)y};
 }
 static bool disconnect(qa_input_platform *p, int32_t instance, double time, qa_error *error) {
@@ -1005,7 +1005,7 @@ static bool system_event(qa_input_platform *p, const qa_sys_event *event, qa_byt
                 qa_input_seat_focus(r->seat) == QA_INPUT_GAME, error) && finish_calibration(p, error);
         case QA_SYS_CONTROLLER_TOUCH:
             translated.kind = QA_INPUT_EVENT_TOUCH;
-            translated.position = (qa_input_pair){event->data.controller.x, event->data.controller.y};
+            translated.position = (qa_vec2){event->data.controller.x, event->data.controller.y};
             translated.value = event->data.controller.pressure;
             translated.touchpad = event->data.controller.touchpad; translated.finger = event->data.controller.finger;
             translated.down = event->data.controller.down;
@@ -1051,7 +1051,7 @@ static bool system_event(qa_input_platform *p, const qa_sys_event *event, qa_byt
         if (event->data.mouse.action == QA_SYS_MOUSE_MOVE) {
             translated.kind = QA_INPUT_EVENT_MOUSE;
             translated.position = position(p, event->data.mouse.x, event->data.mouse.y);
-            translated.delta = (qa_input_pair){(float)event->data.mouse.dx, (float)event->data.mouse.dy};
+            translated.delta = (qa_vec2){(float)event->data.mouse.dx, (float)event->data.mouse.dy};
         } else if (event->data.mouse.action == QA_SYS_MOUSE_BUTTON) {
             if (qa_input_seat_focus(seat) != QA_INPUT_GAME) {
                 qa_input_event motion = {.kind = QA_INPUT_EVENT_MOUSE, .time_ms = time,
@@ -1064,7 +1064,7 @@ static bool system_event(qa_input_platform *p, const qa_sys_event *event, qa_byt
         } else {
             float sign = event->data.mouse.flipped ? -1 : 1;
             translated.kind = QA_INPUT_EVENT_WHEEL;
-            translated.delta = (qa_input_pair){event->data.mouse.wheel_x * sign, event->data.mouse.wheel_y * sign};
+            translated.delta = (qa_vec2){event->data.mouse.wheel_x * sign, event->data.mouse.wheel_y * sign};
         }
         break;
     default: return true;

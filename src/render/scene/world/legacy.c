@@ -377,7 +377,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
             qa_vec3 p = qa_vec_sub(vertices[i].position, context->local_view_origin);
             p.z *= 3;
             float length = qa_vec_length(p), scale = length > 0 ? 378 / length : 0;
-            vertices[i].texcoord = (qa_scene_vec2){(float)(scroll + p.x * scale) / 128,
+            vertices[i].texcoord = (qa_vec2){(float)(scroll + p.x * scale) / 128,
                                                   (float)(scroll + p.y * scale) / 128};
             vertices[i].color = (qa_scene_vec4){1,1,1,1};
         }
@@ -476,11 +476,11 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         !transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
     double seconds = q1 ? input->seconds : (double)(float)input->seconds;
     for (size_t i = 0; vertices && i < mesh.vertex_count; ++i) {
-        qa_scene_vec2 uv = vertices[i].texcoord;
+        qa_vec2 uv = vertices[i].texcoord;
         if (legacy->warp) {
             float scroll = !q1 && legacy->flowing ?
                 (float)(-64 * (seconds * 0.5 - legacy_integer(seconds * 0.5))) : 0;
-            vertices[i].texcoord = (qa_scene_vec2){(float)((uv.x + turbulence(uv.y * 0.125 + seconds, q1) + scroll) / 64),
+            vertices[i].texcoord = (qa_vec2){(float)((uv.x + turbulence(uv.y * 0.125 + seconds, q1) + scroll) / 64),
                                                   (float)((uv.y + turbulence(uv.x * 0.125 + seconds, q1)) / 64)};
         } else if (legacy->flowing) {
             float scroll = (float)(-64 * (seconds / 40 - legacy_integer(seconds / 40)));

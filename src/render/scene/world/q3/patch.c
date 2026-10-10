@@ -14,9 +14,9 @@ static qa_scene_vertex midpoint(qa_scene_vertex a, qa_scene_vertex b) {
     qa_scene_vertex p;
     p.position = qa_vec_scale(qa_vec_add(a.position, b.position), 0.5f);
     p.normal = qa_vec_normalize(qa_vec_add(a.normal, b.normal));
-    p.texcoord = (qa_scene_vec2){(a.texcoord.x + b.texcoord.x) * 0.5f,
+    p.texcoord = (qa_vec2){(a.texcoord.x + b.texcoord.x) * 0.5f,
                                (a.texcoord.y + b.texcoord.y) * 0.5f};
-    p.lightmap = (qa_scene_vec2){(a.lightmap.x + b.lightmap.x) * 0.5f,
+    p.lightmap = (qa_vec2){(a.lightmap.x + b.lightmap.x) * 0.5f,
                                (a.lightmap.y + b.lightmap.y) * 0.5f};
     p.color = (qa_scene_vec4){floorf((roundf(a.color.x * 255) + roundf(b.color.x * 255)) * 0.5f) / 255,
                             floorf((roundf(a.color.y * 255) + roundf(b.color.y * 255)) * 0.5f) / 255,

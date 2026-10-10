@@ -188,7 +188,7 @@ bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
         return false;
     }
     ui->options = *options;
-    ui->cursor = (qa_input_pair){320, 240};
+    ui->cursor = (qa_vec2){320, 240};
     ui->scale = 1;
     ui->text_scale = 1;
     *out = ui;

@@ -124,7 +124,7 @@ typedef struct qa_ui_options {
 typedef struct qa_ui_state {
     uint32_t seat;
     qa_ui_id menu, control;
-    qa_input_pair cursor;
+    qa_vec2 cursor;
     size_t depth;
     bool fullscreen, binding_capture;
 } qa_ui_state;
@@ -162,7 +162,7 @@ bool qa_ui_draw(qa_ui *, qa_scene_frame *, qa_scene_rect viewport, float scale,
 /* Authored 640x480 text, using the active menu transform, palette and typography.
  * Only call from a live UI draw callback; text and style are borrowed for this call.
  * Explicit startup text scales follow menuScale independently of body textScale. */
-bool qa_ui_menu_text(qa_ui *, qa_scene_frame *, qa_scene_rect target, qa_scene_vec2 origin,
+bool qa_ui_menu_text(qa_ui *, qa_scene_frame *, qa_scene_rect target, qa_vec2 origin,
     const char *, const qa_ui_text_style *, qa_error *);
 const qa_error *qa_ui_error(const qa_ui *);
 

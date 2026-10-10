@@ -56,7 +56,7 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
             vertex->position = corner == 1 ? qa_vec_add(sample->origin, qa_vec_scale(batch->view.axis[2], 1.5f * scale)) :
                 corner == 2 ? qa_vec_add(sample->origin, qa_vec_scale(batch->view.axis[1], -1.5f * scale)) : sample->origin;
             vertex->normal = normal;
-            vertex->texcoord = (qa_scene_vec2){uv + (corner == 1 ? 1 : 0), uv + (corner == 2 ? 1 : 0)};
+            vertex->texcoord = (qa_vec2){uv + (corner == 1 ? 1 : 0), uv + (corner == 2 ? 1 : 0)};
             vertex->color = color;
             if (!i && !corner) draw->mesh.bounds.mins = draw->mesh.bounds.maxs = vertex->position;
             else draw->mesh.bounds = qa_bounds_union(draw->mesh.bounds, (qa_bounds){vertex->position, vertex->position});

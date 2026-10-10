@@ -67,7 +67,7 @@ bool scene_model_sprite_submit(qa_scene_model *model, const qa_scene_model_input
     static const uint32_t indices[6] = {0, 1, 3, 3, 1, 2};
     qa_vec3 right_axis = qa_vec_scale(axes[1], input->view.mirror ? 1 : -1);
     float xs[4] = {left, right, right, left}, ys[4] = {top, top, bottom, bottom};
-    const qa_scene_vec2 uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    const qa_vec2 uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     qa_bounds bounds = model_bounds_empty();
     for (unsigned i = 0; i < 4; ++i) {
         vertices[i] = (qa_scene_vertex){.position = qa_vec_add(origin,

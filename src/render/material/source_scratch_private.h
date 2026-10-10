@@ -40,7 +40,7 @@ typedef struct material_source_operation {
 } material_source_operation;
 typedef struct material_source_entity {
     qa_scene_vec4 color;
-    qa_scene_vec2 texcoord;
+    qa_vec2 texcoord;
     qa_scene_matrix model;
     qa_vec3 ambient, directed, light_direction;
     float ambient_alpha, time_offset, shadow_plane;
@@ -61,7 +61,7 @@ struct qa_material_source_scratch {
     qa_scene_vertex vertices[QA_SOURCE_TESS_VERTICES];
     uint32_t indices[QA_SOURCE_TESS_INDEXES];
     qa_scene_vec4 colors[QA_SOURCE_TESS_VERTICES];
-    qa_scene_vec2 coordinates[2][QA_SOURCE_TESS_VERTICES];
+    qa_vec2 coordinates[2][QA_SOURCE_TESS_VERTICES];
     size_t vertex_count, index_count;
     bool entered;
     bool collecting, dispatching, submitting, pictures, issuing;

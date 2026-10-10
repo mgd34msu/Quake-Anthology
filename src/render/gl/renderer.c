@@ -628,7 +628,7 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
         if (attributes->coordinate_array[unit]) gl->EnableVertexAttribArray(2+unit);
         else gl->DisableVertexAttribArray(2+unit);
         if (attributes->coordinates_known[unit]) {
-            qa_scene_vec2 uv=attributes->coordinates[unit];
+            qa_vec2 uv=attributes->coordinates[unit];
             gl->VertexAttrib4f(2+unit,uv.x,uv.y,0,1);
         }
     }
@@ -790,7 +790,7 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
             if (!discrete) gl->ArrayElement((GLint)index);
             else {
                 const qa_scene_vertex *v = draw->mesh.vertices + index;
-                qa_scene_vec4 color; qa_scene_vec2 uv[2];
+                qa_scene_vec4 color; qa_vec2 uv[2];
                 qa_render_source_attributes_vertex(&renderer->controls,draw,QA_RENDER_PRIMITIVES_DISCRETE_STRIPS,index,v,&color,uv);
                 gl->VertexAttrib4f(1, v->normal.x, v->normal.y, v->normal.z, 1);
                 gl->VertexAttrib4f(2, uv[0].x, uv[0].y, 0, 1);
@@ -961,7 +961,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     size_t vertex_storage=draw.source_vertex_storage?draw.source_vertex_storage:draw.mesh.vertex_count;
     if (draw.source_arrays && vertex_storage<=QA_SOURCE_TESS_VERTICES) {
         for (size_t i=0;i<vertex_storage;++i) {
-            qa_scene_vec4 color; qa_scene_vec2 uv[2];
+            qa_scene_vec4 color; qa_vec2 uv[2];
             qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,i,draw.mesh.vertices+i,&color,uv);
             renderer->source_vertices[i]=draw.mesh.vertices[i];
             renderer->source_vertices[i].color=color; renderer->source_vertices[i].texcoord=uv[0];
@@ -982,7 +982,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                       !source_pipeline && !draw.source_primitives,&index_offset,&base_vertex,error)) return false;
     if (draw.skinning && !gl_skeletal_bind(renderer, &draw, error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
-        qa_scene_vec4 color; qa_scene_vec2 uv[2];
+        qa_scene_vec4 color; qa_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
         if (draw.source_arrays && !renderer->controls.attributes.color_array) {
             renderer->gl.DisableVertexAttribArray(4);
@@ -2240,7 +2240,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         }
     }
     if (ok && renderer->source_image_count) {
-        controls->attributes.coordinates[0]=(qa_scene_vec2){0,1};
+        controls->attributes.coordinates[0]=(qa_vec2){0,1};
         controls->attributes.coordinates_known[0]=true; renderer->gl.TexCoord2f(0,1);
     }
     qa_scene_frame_destroy(&frame);

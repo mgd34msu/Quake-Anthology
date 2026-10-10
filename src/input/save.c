@@ -27,7 +27,7 @@ static bool allocate(qa_source_save_io *io, void **out, size_t count, size_t siz
     if (count && !*out) { qa_error_set(io->error,QA_ERROR_MEMORY,io->offset,"Allocating saved input state"); return false; }
     return true;
 }
-static bool pair(qa_source_save_io *io, qa_input_pair *value)
+static bool pair(qa_source_save_io *io, qa_vec2 *value)
 { return qa_source_save_f32(io,&value->x) && qa_source_save_f32(io,&value->y) && isfinite(value->x) && isfinite(value->y); }
 static bool physical(qa_source_save_io *io, qa_physical_input *value)
 {

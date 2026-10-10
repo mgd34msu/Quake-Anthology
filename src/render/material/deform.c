@@ -104,7 +104,7 @@ static void stamp_quad(deform_mesh *geometry, size_t start, qa_vec3 center,
         qa_vec_sub(qa_vec_sub(center, left), up),
         qa_vec_sub(qa_vec_add(center, left), up)
     };
-    qa_scene_vec2 coords[4] = {
+    qa_vec2 coords[4] = {
         {s, t}, {s + step, t}, {s + step, t + step}, {s, t + step}
     };
     for (size_t corner = 0; corner < 4; ++corner) {

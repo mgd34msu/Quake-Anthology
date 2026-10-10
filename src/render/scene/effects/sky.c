@@ -146,7 +146,7 @@ static bool submit_face(qa_scene_frame *frame, const qa_scene_view *view,
             direction = qa_effect_rotate(direction, axis, rotation);
         vertices[i].position = qa_vec_add(view->origin, direction);
         vertices[i].normal = qa_vec_normalize(qa_vec_scale(direction, -1));
-        vertices[i].texcoord = (qa_scene_vec2){
+        vertices[i].texcoord = (qa_vec2){
             fmaxf(seam, fminf(1 - seam, (horizontal[i] + 1) * 0.5f)),
             1 - fmaxf(seam, fminf(1 - seam, (vertical[i] + 1) * 0.5f))};
         vertices[i].color = color;
@@ -199,7 +199,7 @@ bool qa_scene_q2_sky(qa_scene_frame *frame, const qa_scene_view *view,
     return true;
 }
 
-static qa_scene_vec2 cloud_coordinate(unsigned face, float s, float t, float height)
+static qa_vec2 cloud_coordinate(unsigned face, float s, float t, float height)
 {
     qa_vec3 direction = qa_effect_sky_vector(face, s, t, 1024.0f / 1.75f);
     float radius = 4096, xx = direction.x * direction.x, yy = direction.y * direction.y;
@@ -218,7 +218,7 @@ static qa_scene_vec2 cloud_coordinate(unsigned face, float s, float t, float hei
     /* Negative source cloud heights can produce NaN. Do not turn that into a
      * zero direction before the material boundary checks its coordinates. */
     if (length != 0) intersection = qa_vec_scale(intersection, 1 / length);
-    return (qa_scene_vec2){(float)acos(intersection.x), (float)acos(intersection.y)};
+    return (qa_vec2){(float)acos(intersection.x), (float)acos(intersection.y)};
 }
 
 bool qa_scene_q3_sky_geometry(qa_scene_frame *frame, qa_vec3 origin, float far_clip,
@@ -249,7 +249,7 @@ bool qa_scene_q3_sky_geometry(qa_scene_frame *frame, qa_vec3 origin, float far_c
             qa_vec3 direction = qa_effect_sky_vector(face, (float)s / 4, (float)t / 4, far_clip / 1.75f);
             vertices[cursor].position = qa_vec_add(origin, direction);
             vertices[cursor].normal = qa_vec_normalize(qa_vec_scale(direction, -1));
-            vertices[cursor].texcoord = (qa_scene_vec2){((float)s / 4 + 1) * 0.5f, 1 - ((float)t / 4 + 1) * 0.5f};
+            vertices[cursor].texcoord = (qa_vec2){((float)s / 4 + 1) * 0.5f, 1 - ((float)t / 4 + 1) * 0.5f};
             vertices[cursor++].color = (qa_scene_vec4){1, 1, 1, 1};
         }
         cursor = 0;

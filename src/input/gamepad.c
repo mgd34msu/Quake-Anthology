@@ -32,22 +32,22 @@ bool qa_gamepad_tuning_valid(const qa_gamepad_tuning *t) {
            t->trigger_threshold >= 0 && t->trigger_threshold <= 1 &&
            (t->gyro_yaw_axis == QA_GYRO_YAW_Y || t->gyro_yaw_axis == QA_GYRO_YAW_Z);
 }
-qa_input_pair qa_stick_apply(qa_input_pair value, const qa_stick_curve *curve) {
+qa_vec2 qa_stick_apply(qa_vec2 value, const qa_stick_curve *curve) {
     if (curve->kind == QA_STICK_AXIAL) {
         float x = powf(clamp((fabsf(value.x) - curve->deadzone) / (1 - curve->deadzone), 0, 1),
                        curve->exponent);
         float y = powf(clamp((fabsf(value.y) - curve->deadzone) / (1 - curve->deadzone), 0, 1),
                        curve->exponent);
-        return (qa_input_pair){copysignf(x, value.x), copysignf(y, value.y)};
+        return (qa_vec2){copysignf(x, value.x), copysignf(y, value.y)};
     }
     float magnitude = hypotf(value.x, value.y);
     if (magnitude <= curve->deadzone)
-        return (qa_input_pair){0};
+        return (qa_vec2){0};
     float scale = powf(fminf(1, (magnitude - curve->deadzone) /
                                     (1 - curve->deadzone - curve->outer_threshold)),
                        curve->exponent) /
                   magnitude;
-    return (qa_input_pair){value.x * scale, value.y * scale};
+    return (qa_vec2){value.x * scale, value.y * scale};
 }
 float qa_controller_axis_normalize(qa_controller_axis axis, int16_t raw) {
     return clamp((float)raw / 32767, axis >= QA_AXIS_LEFT_TRIGGER ? 0 : -1, 1);
@@ -63,10 +63,10 @@ bool qa_gamepad_axis(qa_gamepad_input *input, qa_controller_axis axis, float val
         input->axes[axis] = input->preview_axes[axis];
     return true;
 }
-static void sticks(const float *axes, const qa_gamepad_tuning *t, qa_input_pair *move,
-                   qa_input_pair *look) {
-    qa_input_pair left = {axes[QA_AXIS_LEFT_X], axes[QA_AXIS_LEFT_Y]};
-    qa_input_pair right = {axes[QA_AXIS_RIGHT_X], axes[QA_AXIS_RIGHT_Y]};
+static void sticks(const float *axes, const qa_gamepad_tuning *t, qa_vec2 *move,
+                   qa_vec2 *look) {
+    qa_vec2 left = {axes[QA_AXIS_LEFT_X], axes[QA_AXIS_LEFT_Y]};
+    qa_vec2 right = {axes[QA_AXIS_RIGHT_X], axes[QA_AXIS_RIGHT_Y]};
     *move = t->swap_sticks ? right : left;
     *look = t->swap_sticks ? left : right;
 }
@@ -150,7 +150,7 @@ bool qa_gamepad_sample_read(const qa_gamepad_input *input, const qa_gamepad_tuni
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid controller sample");
         return false;
     }
-    qa_input_pair move, look;
+    qa_vec2 move, look;
     sticks(input->axes, t, &move, &look);
     move = qa_stick_apply(move, &t->move);
     look = qa_stick_apply(look, &t->look);

@@ -220,7 +220,7 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     vertices[1].position=ma(vertices[0].position,(2 * height),up);
     vertices[2].position=ma(vertices[1].position,(2 * width),right);
     vertices[3].position=ma(vertices[2].position,(-2 * height),up);
-    const qa_scene_vec2 uv[4]={{0,0},{0,1},{1,1},{1,0}};
+    const qa_vec2 uv[4]={{0,0},{0,1},{1,1},{1,0}};
     for (size_t i=0;i<4;++i) { vertices[i].texcoord=uv[i]; memset(vertices[i].color,255,4); }
     return !p->shader || (qa_q3_presentation_poly(f->presentation,p->shader,vertices,4,error) && current(f,error));
 }

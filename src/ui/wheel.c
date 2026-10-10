@@ -13,7 +13,7 @@ struct qa_hud_wheel {
     carousel_state carousel;
     bool open, busy;
     uint64_t selected, carousel_selected, deselect_until, carousel_until, lock_until, last_update;
-    qa_input_pair position, analog;
+    qa_vec2 position, analog;
     float opacity;
 };
 static bool wheel_fail(qa_error *error, const char *message) {
@@ -96,7 +96,7 @@ bool qa_hud_wheel_open(qa_hud_wheel *w, qa_hud_wheel_mode mode,
     bool ok = observe(w, mode, false, error); *opened = false;
     if (ok && w->count) {
         w->mode = mode; w->open = true; w->selected = 0; w->deselect_until = 0;
-        w->position = w->analog = (qa_input_pair){0}; *opened = true; changed(w);
+        w->position = w->analog = (qa_vec2){0}; *opened = true; changed(w);
     }
     w->busy = false; return ok;
 }
@@ -123,7 +123,7 @@ bool qa_hud_wheel_close(qa_hud_wheel *w, bool select, qa_error *error) {
 }
 static void move(qa_hud_wheel *w, double x, double y) {
     double distance = hypot(x, y), factor = distance > w->options.radius ? w->options.radius / distance : 1;
-    w->position = (qa_input_pair){(float)(x * factor), (float)(y * factor)};
+    w->position = (qa_vec2){(float)(x * factor), (float)(y * factor)};
 }
 bool qa_hud_wheel_input(qa_hud_wheel *w, uint32_t seat, const qa_input_event *event,
                         bool *handled, qa_error *error) {

@@ -54,7 +54,7 @@ struct qa_input_seat {
     qa_input_seat_options options;
     qa_input_button buttons[QA_INPUT_ACTION_COUNT];
     qa_gamepad_input gamepad;
-    qa_input_pair mouse;
+    qa_vec2 mouse;
     qa_input_focus focus;
     bool focused;
     qa_input_catcher *catchers;
