@@ -45,8 +45,9 @@ typedef struct q2_visual {
     struct q2_visual *next;
     qa_actor_id actor;
     q2_activation *activation;
-    char *content, *path, *source_provider;
-    qa_unified_presentation_event *model;
+    const char *content, *path, *source_provider;
+    const qa_unified_presentation_event *model;
+    qa_unified_document *model_document;
     uint64_t effects;
     uint32_t event;
     uint64_t event_frame;
@@ -124,10 +125,11 @@ struct frontend_unified_q2 {
     frontend_unified_events *events;
     q2_bank *banks;
     q2_activation *activations;
-    q2_visual *visuals;
+    q2_visual *visuals,*visual_rows;
     q2_loop *loops;
     q2_player_name *names;
-    qa_unified_presentation_event *story;
+    const qa_unified_presentation_event *story;
+    qa_unified_document *story_document;
     q2_activation *story_owner,*sky_owner,*fog_owner;
     char *sky_name,*sky_content;
     qa_scene_image *sky_images[6];
@@ -198,14 +200,12 @@ static bool source_actor(frontend_unified_q2 *o,qa_actor_id source,qa_actor_id *
     return frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(o->frame),source,
         o->frontend->capture || o->frontend->source_restoring,out,e);
 }
-static void record_free(qa_unified_presentation_event *row)
-{ if (row) { qa_unified_presentation_event_dispose(row); free(row); } }
-static bool record_copy(const qa_unified_presentation_event *row,qa_unified_presentation_event **out,qa_error *e)
+static bool record_name(frontend_unified_q2 *o,const char *name,const char **out,qa_error *e)
 {
-    qa_unified_presentation_event *copy=calloc(1,sizeof(*copy));
-    if (!copy) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 Source presentation");
-    if (!qa_unified_presentation_event_clone(row,copy,e)) { record_free(copy); return false; }
-    *out=copy; return true;
+    *out=NULL;if (!name) return true;
+    qa_string_id id;
+    if (!qa_strings_intern_cstr(o->replica->strings,name,&id,e)) return false;
+    *out=qa_strings_cstr(o->replica->strings,id);return true;
 }
 static bool current(const frontend_unified_q2 *o,qa_error *e)
 {
@@ -241,12 +241,13 @@ static bool activation(frontend_unified_q2 *o,const qa_source_owner *token,q2_ac
     }
     *out=a; return true;
 }
-static void visual_free(q2_visual *v)
-{ record_free(v->model); free(v->content); free(v->path); free(v->source_provider); free(v); }
+static void visual_clear(q2_visual *v)
+{ qa_unified_document_destroy(v->model_document);*v=(q2_visual){0}; }
 static q2_visual *visual_read(frontend_unified_q2 *o,qa_actor_id a)
 {
-    for (q2_visual *v=o->visuals;v;v=v->next) if (qa_actor_id_equal(v->actor,a)) return v;
-    return NULL;
+    if (a.slot>=o->effect_pose_capacity) return NULL;
+    q2_visual *v=o->visual_rows+a.slot;
+    return qa_actor_id_equal(v->actor,a)?v:NULL;
 }
 static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_event *row,qa_actor_id a,q2_visual **out,qa_error *e)
 {
@@ -254,12 +255,18 @@ static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_
     if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 presentation uses a retired actual Source owner");
     q2_visual *v=visual_read(o,a);
-    if (!v) { v=calloc(1,sizeof(*v)); if (!v) return false; v->actor=a; v->visible=true; v->next=o->visuals; o->visuals=v; }
-    if (v->activation!=owner) {
-        record_free(v->model); v->model=NULL;
-        free(v->path); v->path=NULL; v->effects=0; v->event=0; v->event_frame=0; v->visible=true;
+    if (!v) {
+        v=o->visual_rows+a.slot;
+        bool linked=v->actor.registry!=0;q2_visual *next=v->next;
+        visual_clear(v);v->actor=a;v->visible=true;
+        if (linked) v->next=next;
+        else { v->next=o->visuals;o->visuals=v; }
     }
-    v->activation=owner; *out=v; return true;
+    if (v->activation!=owner) {
+        qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;
+        v->path=NULL;v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
+    }
+    v->activation=owner;*out=v;return true;
 }
 static bool bank(frontend_unified_q2 *,const char *,q2_activation *,const char *,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
 static bool source_bank(frontend_unified_q2 *,const qa_unified_presentation_event *,bool,q2_bank **,qa_error *);
@@ -289,25 +296,28 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
     if (!visual_record(o,row,&a,e) || !visual_prepare(o,row,a,&v,e)) return false;
     bool is_model=row->payload.kind==QA_UNIFIED_PRESENTATION_MODEL;
     const qa_unified_model_state *m=is_model?&row->payload.value.model:NULL;
-    qa_unified_presentation_event *copy=NULL;
+    qa_unified_document *document=NULL;
     if (is_model) {
         qa_scene_model *scene=NULL;
-        if (!m->path || !record_copy(row,&copy,e) || !bank(o,row->content,NULL,NULL,0,false,&b,e) ||
-            !model(b,m->path,true,&scene,e)) { record_free(copy); return false; }
+        if (!m->path || !bank(o,row->content,NULL,NULL,0,false,&b,e) ||
+            !model(b,m->path,true,&scene,e)) return false;
         for (size_t i=0;i<m->attachment_count;++i)
-            if (!model(b,m->attachments[i].path,true,&scene,e)) { record_free(copy); return false; }
+            if (!model(b,m->attachments[i].path,true,&scene,e)) return false;
     }
-    if (row->q2_profile && !source_bank(o,row,true,&b,e)) { record_free(copy); return false; }
-    const char *provider=row->q2_profile?row->provider:NULL;
-    bool same_source=(v->source_provider!=NULL)==(provider!=NULL) && (!provider || !strcmp(v->source_provider,provider));
-    if (!same_source || (v->content && strcmp(v->content,row->content))) {
-        record_free(v->model); v->model=NULL; free(v->path); v->path=NULL;
-        v->effects=0; v->event=0; v->event_frame=0; v->visible=true;
+    if (row->q2_profile && !source_bank(o,row,true,&b,e)) return false;
+    const char *content,*provider,*path=NULL;
+    if (!record_name(o,row->content,&content,e) || !record_name(o,row->q2_profile?row->provider:NULL,&provider,e) ||
+        (is_model && !record_name(o,m->path,&path,e))) return false;
+    if (is_model && !qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e)) return false;
+    if (v->source_provider!=provider || v->content!=content) {
+        qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;v->path=NULL;
+        v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
     }
-    char *content=text_copy(row->content),*source=text_copy(provider),*path=is_model?text_copy(m->path):NULL;
-    if (!content || (provider && !source) || (is_model && !path)) { free(content);free(source);free(path);record_free(copy);return false; }
-    free(v->content);v->content=content;free(v->source_provider);v->source_provider=source;
-    if (is_model) { free(v->path);v->path=path;record_free(v->model);v->model=copy;v->effects=m->visual.effects; }
+    v->content=content;v->source_provider=provider;
+    if (is_model) {
+        qa_unified_document_destroy(v->model_document);v->model_document=document;
+        v->path=path;v->model=row;v->effects=m->visual.effects;
+    }
     else if (row->payload.kind==QA_UNIFIED_PRESENTATION_VISIBILITY) v->visible=row->payload.value.visibility.visible;
     else { const qa_builtin_event *event=&row->payload.value.builtin;
         v->event=event->kind==QA_BUILTIN_ITEM?2u:(uint32_t)event->code;v->event_frame=o->frame_number; }
@@ -332,11 +342,11 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
         *loop=l->next;free(l);
     }
     q2_visual **next=&o->visuals;
-    while (*next) { q2_visual *v=*next;if (v->activation==a) { *next=v->next;visual_free(v); }else next=&v->next; }
+    while (*next) { q2_visual *v=*next;if (v->activation==a) { *next=v->next;visual_clear(v); }else next=&v->next; }
     for (size_t i=0;i<2;++i) if (o->help_owner[i]==a) { free(o->help_text[i]);o->help_text[i]=NULL;o->help_owner[i]=NULL; }
     if (o->inventory_owner==a) inventory_clear(o);
     if (o->score_owner==a) scores_clear(o);
-    if (o->story_owner==a) { record_free(o->story);o->story=NULL;o->story_owner=NULL; }
+    if (o->story_owner==a) { qa_unified_document_destroy(o->story_document);o->story_document=NULL;o->story=NULL;o->story_owner=NULL; }
     if (o->sky_owner==a) sky_clear(o);
     if (o->fog_owner==a) { o->fog_received=false;o->fog_owner=NULL;o->fog_start=(qa_scene_fog){0};o->fog_target=(qa_scene_fog){0};o->fog_started_ms=0;o->fog_duration_ms=0; }
     if (o->view_owner==a) { o->view_content=NULL;o->view_provider=NULL;
@@ -718,11 +728,13 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->frontend=f; o->replica=r; o->media=media; o->events=events;
     *out=o;
     o->effect_pose_capacity=r->options.identity_capacity;
-    size_t pose_bytes=o->effect_pose_capacity*sizeof(*o->effect_poses);
+    size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows))+_Alignof(q2_visual);
     if(!qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
-        !(o->effect_poses=qa_arena_alloc(&o->pose_storage,pose_bytes,_Alignof(frontend_remote_q2_effects_pose),e))) {
+        !(o->effect_poses=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->effect_poses),_Alignof(frontend_remote_q2_effects_pose),e)) ||
+        !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e))) {
         qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;
     }
+    memset(o->visual_rows,0,o->effect_pose_capacity*sizeof(*o->visual_rows));
     qa_arena_seal(&o->pose_storage);
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
@@ -1235,9 +1247,10 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     case QA_Q2_MAP_LIGHTSTYLE:{if (v->style<0 || v->style>=256 || !source_bank(o,row,false,&b,e))return false;
         char *text=text_copy(event_text?event_text:"");if (!text)return false;free(b->styles[v->style]);b->styles[v->style]=text;b->style_sequences[v->style]=row->sequence;return true;}
     case QA_Q2_MAP_SKY:return sky_receive(o,row,v,e);
-    case QA_Q2_MAP_STORY:{qa_unified_presentation_event *copy=NULL;
-        if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired) || !record_copy(row,&copy,e))return false;
-        record_free(o->story);o->story=copy;o->story_owner=owner;return true;}
+    case QA_Q2_MAP_STORY:{qa_unified_document *document=NULL;
+        if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
+            !qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e)) return false;
+        qa_unified_document_destroy(o->story_document);o->story_document=document;o->story=row;o->story_owner=owner;return true;}
     case QA_Q2_MAP_FOG:return fog_receive(o,row,v->recipient,&v->fog,(double)v->duration*1000,e);
     case QA_Q2_MAP_HELP:{qa_buffer text={0};
         if (v->slot<1 || v->slot>2 || !activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
@@ -1896,14 +1909,13 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     free(o->config); free(o->help); free(o->help_text[0]); free(o->help_text[1]);
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
-    qa_arena_destroy(&o->pose_storage);
-    record_free(o->story); sky_clear(o);
+    qa_unified_document_destroy(o->story_document);sky_clear(o);
     qa_scene_image_release(o->marker_image);
-    while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_free(v); }
+    while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
-    free(o->layout); free(o); *slot=NULL; return true;
+    qa_arena_destroy(&o->pose_storage);free(o->layout);free(o);*slot=NULL;return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {

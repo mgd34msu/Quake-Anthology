@@ -54,6 +54,9 @@ struct frontend_unified_events {
     bool has_frame, prepared, busy, owns_audio, families_ready;
 };
 
+const qa_unified_document *frontend_unified_events_document(const frontend_unified_events *o)
+{ return o && o->delivery ? o->delivery->delivery.document : NULL; }
+
 static unified_received_event *record_begin(frontend_unified_events *o,
     qa_event_transaction *transaction,qa_error *error)
 {

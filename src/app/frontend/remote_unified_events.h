@@ -22,6 +22,9 @@ bool frontend_unified_events_create(qa_frontend *, frontend_remote_unified *,
     frontend_unified_media *, const frontend_unified_event_options *, frontend_unified_events **, qa_error *);
 /* Reliable controls are completely parsed and retained before return. They
  * may arrive before the first frame. Resource declarations precede sounds. */
+/* Borrow the currently delivered immutable event document. A persistent
+ * presentation owner retains it instead of copying the event and its payload. */
+const qa_unified_document *frontend_unified_events_document(const frontend_unified_events *);
 bool frontend_unified_events_control(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_decode(frontend_unified_events *, qa_bytes, qa_unified_held **, bool *ready, qa_error *);
 /* Literal reliable component metadata is retained independently of the live
