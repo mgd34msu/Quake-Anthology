@@ -1858,10 +1858,10 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
         for (size_t i=0;okay && i<o->item_count;++i) {
             char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
             size_t label_size=strlen(o->items[i].label); if (label_size>SIZE_MAX-64) { okay=false; break; }
-            char *row=malloc(label_size+64); if (!row) { okay=false; break; }
+            char *row=qa_arena_alloc(&frame->storage,label_size+64,1,e); if (!row) { okay=false; break; }
             snprintf(row,label_size+64,"%s  %s",count,o->items[i].label);
             okay=overlay_text(ui,viewport,frame,row,160,108+(float)i*16,
-                o->items[i].selected?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e); free(row);
+                o->items[i].selected?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e);
         }
     }
     if (okay && (o->score_visible || qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)))

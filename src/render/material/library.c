@@ -1507,20 +1507,20 @@ static bool generated_picture(qa_material_library *library, const char *name,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "generated picture requires a color image and library");
         return false;
     }
-    char *key = qa_material_name(name, error);
-    if (key == NULL) return false;
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name,key,error)) return false;
     qa_material_generated *generated = library->generated;
     while (generated != NULL && strcmp(generated->name, key) != 0) generated = generated->next;
     if (generated == NULL) {
         generated = calloc(1, sizeof(*generated));
         if (generated == NULL) {
-            free(key); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain generated material image"); return false;
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain generated material image"); return false;
         }
-        generated->name = key; key = NULL;
+        generated->name = qa_material_string(key,error);
+        if (!generated->name) { free(generated);return false; }
         generated->image = image; qa_scene_image_retain(image);
         generated->next = library->generated; library->generated = generated;
     }
-    free(key);
     if (generated->picture != NULL) { *out = generated->picture; return true; }
     typedef struct prepared_picture { qa_material_record *record; qa_material material; } prepared_picture;
     size_t count = 0;
