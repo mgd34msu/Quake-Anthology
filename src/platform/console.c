@@ -13,7 +13,7 @@ static bool publish_lines(qa_dedicated_console *console, qa_platform_events *eve
         if (!qa_dedicated_console_line_peek(console, &line, &present, error)) return false;
         if (!present) return true;
         qa_platform_event_result result = qa_platform_events_push(events,
-            QA_PLATFORM_EVENT_CONSOLE_LINE, time_ns, 0, 0, line, (qa_bytes){0});
+            &(qa_sys_event){.kind = QA_PLATFORM_EVENT_CONSOLE_LINE, .time_ns = time_ns}, line, (qa_bytes){0});
         if (result == QA_PLATFORM_EVENT_FULL) { *deferred = true; return true; }
         qa_dedicated_console_line_commit(console);
     }

@@ -493,8 +493,8 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
             qa_recovery_input input;
             ok=qa_recovery_input_decode(record->payload,&input,error);
             if (ok) {
-                qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_USERCMD,
-                    f->wall_time_ns,(int32_t)input.seat,0,
+                qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,
+                    &(qa_sys_event){.kind=QA_PLATFORM_EVENT_USERCMD,.time_ns=f->wall_time_ns,.data.usercmd.seat=input.seat},
                     (qa_bytes){(const uint8_t *)&input.command,sizeof(input.command)}, (qa_bytes){0});
                 queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
                 ok=!queue_pending && frontend_platform_drain(f,error);
@@ -517,8 +517,8 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                     frontend_replay_command queued={.console=console,
                         .context=actual,
                         .wall_ns=command.wall_ns,.time_ns=command.time_ns,.frame_number=command.frame_number};
-                    qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_CONSOLE_COMMAND,
-                        command.wall_ns,0,0,(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
+                    qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,
+                        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=command.wall_ns},(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
                         (qa_bytes){(const uint8_t *)command.text,strlen(command.text)+1});
                     queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
                     ok=!queue_pending && frontend_platform_drain(f,error);

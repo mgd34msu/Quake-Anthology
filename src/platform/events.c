@@ -4,7 +4,7 @@
 #include <string.h>
 
 struct qa_platform_events {
-    qa_platform_event events[QA_PLATFORM_EVENT_CAPACITY];
+    qa_sys_event events[QA_PLATFORM_EVENT_CAPACITY];
     uint32_t reservations[QA_PLATFORM_EVENT_CAPACITY];
     uint8_t bytes[QA_PLATFORM_EVENT_BYTE_CAPACITY];
     uint32_t head, count, byte_head, byte_tail, byte_count;
@@ -55,14 +55,15 @@ static uint32_t reservation(const qa_platform_events *events, uint32_t length)
 }
 
 qa_platform_event_result qa_platform_events_admit(qa_platform_events *events,
-    qa_platform_event_kind kind, size_t maximum_payload)
+    qa_sys_event_kind kind, size_t maximum_payload)
 {
     if (maximum_payload > QA_PLATFORM_EVENT_BYTE_CAPACITY) {
         increment(&events->stats.oversize[kind]);
         return QA_PLATFORM_EVENT_OVERSIZE;
     }
     uint32_t reserved = reservation(events, (uint32_t)maximum_payload);
-    bool records = events->count == QA_PLATFORM_EVENT_CAPACITY;
+    uint32_t limit = QA_PLATFORM_EVENT_CAPACITY - (kind == QA_PLATFORM_EVENT_TIME ? 0u : 1u);
+    bool records = events->count >= limit;
     bool bytes = reserved > QA_PLATFORM_EVENT_BYTE_CAPACITY - events->byte_count;
     if (records || bytes) {
         if (records) increment(&events->stats.full_records);
@@ -73,9 +74,10 @@ qa_platform_event_result qa_platform_events_admit(qa_platform_events *events,
     return QA_PLATFORM_EVENT_ACCEPTED;
 }
 
-qa_platform_event_result qa_platform_events_push(qa_platform_events *events, qa_platform_event_kind kind,
-    uint64_t time_ns, int32_t value, int32_t value2, qa_bytes payload, qa_bytes tail)
+qa_platform_event_result qa_platform_events_push(qa_platform_events *events, const qa_sys_event *event,
+    qa_bytes payload, qa_bytes tail)
 {
+    qa_sys_event_kind kind = event->kind;
     if (kind == QA_PLATFORM_EVENT_QUIT) qa_platform_events_latch_quit(events);
     size_t size = tail.size > QA_PLATFORM_EVENT_BYTE_CAPACITY ||
         payload.size > QA_PLATFORM_EVENT_BYTE_CAPACITY - tail.size ?
@@ -89,8 +91,8 @@ qa_platform_event_result qa_platform_events_push(qa_platform_events *events, qa_
     uint32_t offset = (events->byte_tail + reserved - length) % QA_PLATFORM_EVENT_BYTE_CAPACITY;
     if (payload.size) memmove(events->bytes + offset, payload.data, payload.size);
     if (tail.size) memmove(events->bytes + offset + payload.size, tail.data, tail.size);
-    events->events[slot] = (qa_platform_event){.kind = kind, .time_ns = time_ns,
-        .value = value, .value2 = value2, .offset = offset, .length = length};
+    events->events[slot] = *event;
+    events->events[slot].offset = offset; events->events[slot].length = length;
     events->reservations[slot] = reserved;
     events->byte_tail = (offset + length) % QA_PLATFORM_EVENT_BYTE_CAPACITY;
     events->byte_count += reserved;
@@ -101,11 +103,11 @@ qa_platform_event_result qa_platform_events_push(qa_platform_events *events, qa_
     return QA_PLATFORM_EVENT_ACCEPTED;
 }
 
-bool qa_platform_events_pending(const qa_platform_events *events, qa_platform_event_kind kind, int32_t value)
+bool qa_platform_events_pending(const qa_platform_events *events, qa_sys_event_kind kind, int32_t value)
 {
     for (uint32_t i = 0; i < events->count; ++i) {
-        const qa_platform_event *event = &events->events[(events->head + i) % QA_PLATFORM_EVENT_CAPACITY];
-        if (event->kind == kind && event->value == value) return true;
+        const qa_sys_event *event = &events->events[(events->head + i) % QA_PLATFORM_EVENT_CAPACITY];
+        if (event->kind == kind && event->data.input_frame.operation == value) return true;
     }
     return false;
 }
@@ -118,7 +120,7 @@ qa_platform_event_stats qa_platform_events_statistics(const qa_platform_events *
     return stats;
 }
 
-bool qa_platform_events_peek(const qa_platform_events *events, qa_platform_event *event, qa_bytes *payload)
+bool qa_platform_events_peek(const qa_platform_events *events, qa_sys_event *event, qa_bytes *payload)
 {
     if (!events->count) return false;
     *event = events->events[events->head];
@@ -135,7 +137,8 @@ void qa_platform_events_consume(qa_platform_events *events)
 
 qa_platform_event_result qa_platform_events_frame(qa_platform_events *events, uint64_t time_ns)
 {
-    return qa_platform_events_push(events, QA_PLATFORM_EVENT_TIME, time_ns, 0, 0, (qa_bytes){0}, (qa_bytes){0});
+    return qa_platform_events_push(events, &(qa_sys_event){.kind = QA_PLATFORM_EVENT_TIME, .time_ns = time_ns},
+        (qa_bytes){0}, (qa_bytes){0});
 }
 
 bool qa_platform_events_quit_requested(const qa_platform_events *events)

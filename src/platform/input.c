@@ -936,233 +936,138 @@ static bool window_focus(qa_input_platform *p, bool focused, double time, qa_err
         }
     return qa_input_platform_sync_focus(p, error) && finish_calibration(p, error) && ok;
 }
-static bool native_event(qa_input_platform *p, const SDL_Event *event, double time,
-    bool *handled, qa_error *error) {
+static bool system_event(qa_input_platform *p, const qa_sys_event *event, qa_bytes payload,
+    double time, bool *handled, qa_error *error) {
     if (handled) *handled = true;
-    switch (event->type) {
-    case SDL_CONTROLLERDEVICEADDED:
-        return discover(p, event->cdevice.which, error) && resolve(p, time, NULL, error);
-    case SDL_CONTROLLERDEVICEREMOVED:
-        return disconnect(p, event->cdevice.which, time, error);
-    case SDL_CONTROLLERDEVICEREMAPPED: {
-        struct device *d = device(p, event->cdevice.which);
-        if (d)
-            describe(d);
-        return resolve(p, time, NULL, error);
-    }
-    case SDL_CONTROLLERAXISMOTION:
-    case SDL_CONTROLLERBUTTONDOWN:
-    case SDL_CONTROLLERBUTTONUP:
-    case SDL_CONTROLLERSENSORUPDATE:
-    case SDL_CONTROLLERTOUCHPADDOWN:
-    case SDL_CONTROLLERTOUCHPADMOTION:
-    case SDL_CONTROLLERTOUCHPADUP: {
-        int32_t instance = event->caxis.which;
-        struct seat_route *r = route_for(p, instance);
-        if (instance == p->joystick_instance) {
-            if (event->type == SDL_CONTROLLERSENSORUPDATE && p->source_slot >= 0)
-                r = &p->seats[p->source_slot];
-            else {
-                if (handled)
-                    *handled = false;
-                return true;
-            }
+    if (event->kind == QA_PLATFORM_EVENT_DEVICE) {
+        int32_t instance = event->data.device.id;
+        if (event->data.device.controller) {
+            if (event->data.device.action == QA_SYS_DEVICE_ADDED)
+                return discover(p, instance, error) && resolve(p, time, NULL, error);
+            if (event->data.device.action == QA_SYS_DEVICE_REMOVED)
+                return disconnect(p, instance, time, error);
+            struct device *d = device(p, instance);
+            if (d) describe(d);
+            return resolve(p, time, NULL, error);
         }
-        if (!r || !r->seat) {
-            if (handled)
-                *handled = false;
-            return true;
-        }
-        qa_input_event translated = {.time_ms = time, .input = {.device = instance}};
-        if (event->type == SDL_CONTROLLERAXISMOTION) {
-            if (event->caxis.axis >= QA_AXIS_COUNT)
-                return true;
-            translated.kind = QA_INPUT_EVENT_AXIS;
-            translated.input.kind = QA_PHYSICAL_AXIS;
-            translated.input.code = event->caxis.axis;
-            translated.value = qa_controller_axis_normalize((qa_controller_axis)event->caxis.axis,
-                                                            event->caxis.value);
-        } else if (event->type == SDL_CONTROLLERBUTTONDOWN ||
-                   event->type == SDL_CONTROLLERBUTTONUP) {
-            translated.kind = QA_INPUT_EVENT_BUTTON;
-            translated.input.kind = QA_PHYSICAL_BUTTON;
-            translated.input.code = event->cbutton.button;
-            translated.down = event->cbutton.state == SDL_PRESSED;
-        } else if (event->type == SDL_CONTROLLERSENSORUPDATE) {
-            if (event->csensor.sensor != SDL_SENSOR_GYRO) {
-                if (handled)
-                    *handled = false;
-                return true;
-            }
-            if (!qa_input_seat_focused(r->seat))
-                return true;
-            double sensor_time = (double)event->csensor.timestamp;
-#if SDL_VERSION_ATLEAST(2, 26, 0)
-            if (event->csensor.timestamp_us)
-                sensor_time = (double)event->csensor.timestamp_us / 1000;
-#endif
-            if (!qa_gamepad_gyro(
-                    qa_input_seat_gamepad(r->seat),
-                    qa_v3(event->csensor.data[0], event->csensor.data[1], event->csensor.data[2]),
-                    sensor_time, qa_input_seat_focus(r->seat) == QA_INPUT_GAME, error))
-                return false;
-            return finish_calibration(p, error);
-        } else {
-            translated.kind = QA_INPUT_EVENT_TOUCH;
-            translated.position = (qa_input_pair){event->ctouchpad.x, event->ctouchpad.y};
-            translated.value = event->ctouchpad.pressure;
-            translated.touchpad = event->ctouchpad.touchpad;
-            translated.finger = event->ctouchpad.finger;
-            translated.down = event->type != SDL_CONTROLLERTOUCHPADUP;
-        }
-        return qa_input_seat_event(r->seat, &translated, NULL, error);
-    }
-    case SDL_JOYBUTTONDOWN:
-    case SDL_JOYBUTTONUP:
-        if (event->jbutton.which == p->joystick_instance)
-            return qa_source_joystick_button(&p->source, event->jbutton.button,
-                                             event->jbutton.state == SDL_PRESSED,
-                                             p->windows_joystick, source_key, p, error);
-        if (handled)
-            *handled = false;
-        return true;
-    case SDL_JOYAXISMOTION:
-        if (event->jaxis.which == p->joystick_instance) {
-            if (event->jaxis.axis < 16)
-                p->source.axes[event->jaxis.axis] = event->jaxis.value;
-            return true;
-        }
-        if (handled)
-            *handled = false;
-        return true;
-    case SDL_JOYHATMOTION:
-        if (event->jhat.which == p->joystick_instance) {
-            if (!event->jhat.hat)
-                p->source.hat = event->jhat.value;
-            return true;
-        }
-        if (handled)
-            *handled = false;
-        return true;
-    case SDL_JOYDEVICEREMOVED:
-        if (event->jdevice.which == p->joystick_instance) {
+        if (event->data.device.action == QA_SYS_DEVICE_REMOVED && instance == p->joystick_instance) {
             bool ok = source_device_release(p, time, error);
-            SDL_JoystickClose(p->joystick);
-            p->joystick = NULL;
-            p->joystick_instance = -1;
+            SDL_JoystickClose(p->joystick); p->joystick = NULL; p->joystick_instance = -1;
             p->joystick_rumble = (input_motor_output){0};
             report(p, "SDL source joystick disconnected.\n");
             return ok;
         }
-        if (handled)
-            *handled = false;
-        return true;
-    default:
-        break;
-    }
-    uint32_t window = 0;
-    switch (event->type) {
-    case SDL_WINDOWEVENT:
-        window = event->window.windowID;
-        break;
-    case SDL_KEYDOWN:
-    case SDL_KEYUP:
-        window = event->key.windowID;
-        break;
-    case SDL_TEXTINPUT:
-        window = event->text.windowID;
-        break;
-    case SDL_MOUSEMOTION:
-        window = event->motion.windowID;
-        break;
-    case SDL_MOUSEBUTTONDOWN:
-    case SDL_MOUSEBUTTONUP:
-        window = event->button.windowID;
-        break;
-    case SDL_MOUSEWHEEL:
-        window = event->wheel.windowID;
-        break;
-    default:
-        if (handled)
-            *handled = false;
+        if (handled) *handled = false;
         return true;
     }
-    if (!p->window || window != p->window) {
-        if (handled)
-            *handled = false;
-        return true;
-    }
-    if (event->type == SDL_WINDOWEVENT) {
-        if (event->window.event != SDL_WINDOWEVENT_FOCUS_GAINED &&
-            event->window.event != SDL_WINDOWEVENT_FOCUS_LOST) {
-            if (handled)
-                *handled = false;
+    if (event->kind == QA_PLATFORM_EVENT_CONTROLLER_AXIS || event->kind == QA_PLATFORM_EVENT_CONTROLLER_BUTTON) {
+        int32_t instance = event->data.controller.device;
+        if (event->data.controller.joystick) {
+            if (instance == p->joystick_instance) {
+                if (event->data.controller.action == QA_SYS_CONTROLLER_BUTTON)
+                    return qa_source_joystick_button(&p->source, event->data.controller.button,
+                        event->data.controller.down, p->windows_joystick, source_key, p, error);
+                if (event->data.controller.action == QA_SYS_CONTROLLER_AXIS && event->data.controller.axis < 16)
+                    p->source.axes[event->data.controller.axis] = event->data.controller.value;
+                if (event->data.controller.action == QA_SYS_CONTROLLER_HAT && !event->data.controller.hat)
+                    p->source.hat = (uint8_t)event->data.controller.value;
+                return true;
+            }
+            if (handled) *handled = false;
             return true;
         }
-        return window_focus(p, event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED, time, error);
+        struct seat_route *r = route_for(p, instance);
+        if (instance == p->joystick_instance) {
+            if (event->data.controller.action == QA_SYS_CONTROLLER_SENSOR && p->source_slot >= 0)
+                r = &p->seats[p->source_slot];
+            else { if (handled) *handled = false; return true; }
+        }
+        if (!r || !r->seat) { if (handled) *handled = false; return true; }
+        qa_input_event translated = {.time_ms = time, .input = {.device = instance}};
+        switch (event->data.controller.action) {
+        case QA_SYS_CONTROLLER_AXIS:
+            if (event->data.controller.axis >= QA_AXIS_COUNT) return true;
+            translated.kind = QA_INPUT_EVENT_AXIS; translated.input.kind = QA_PHYSICAL_AXIS;
+            translated.input.code = event->data.controller.axis;
+            translated.value = qa_controller_axis_normalize((qa_controller_axis)event->data.controller.axis,
+                event->data.controller.value);
+            break;
+        case QA_SYS_CONTROLLER_BUTTON:
+            translated.kind = QA_INPUT_EVENT_BUTTON; translated.input.kind = QA_PHYSICAL_BUTTON;
+            translated.input.code = event->data.controller.button; translated.down = event->data.controller.down;
+            break;
+        case QA_SYS_CONTROLLER_SENSOR:
+            if (event->data.controller.sensor != SDL_SENSOR_GYRO) { if (handled) *handled = false; return true; }
+            if (!qa_input_seat_focused(r->seat)) return true;
+            return qa_gamepad_gyro(qa_input_seat_gamepad(r->seat),
+                qa_v3(event->data.controller.values[0], event->data.controller.values[1], event->data.controller.values[2]),
+                (double)event->data.controller.sensor_time_ns / 1000000.0,
+                qa_input_seat_focus(r->seat) == QA_INPUT_GAME, error) && finish_calibration(p, error);
+        case QA_SYS_CONTROLLER_TOUCH:
+            translated.kind = QA_INPUT_EVENT_TOUCH;
+            translated.position = (qa_input_pair){event->data.controller.x, event->data.controller.y};
+            translated.value = event->data.controller.pressure;
+            translated.touchpad = event->data.controller.touchpad; translated.finger = event->data.controller.finger;
+            translated.down = event->data.controller.down;
+            break;
+        case QA_SYS_CONTROLLER_HAT: return true;
+        }
+        return qa_input_seat_event(r->seat, &translated, NULL, error);
     }
-    if (p->keyboard < 0 || !p->seats[p->keyboard].seat) {
-        if (handled)
-            *handled = false;
-        return true;
+    uint32_t window;
+    switch (event->kind) {
+    case QA_PLATFORM_EVENT_WINDOW: window = event->data.window.id; break;
+    case QA_PLATFORM_EVENT_KEY: window = event->data.key.window; break;
+    case QA_PLATFORM_EVENT_CHAR: window = event->data.character.window; break;
+    case QA_PLATFORM_EVENT_MOUSE: window = event->data.mouse.window; break;
+    default: if (handled) *handled = false; return true;
     }
+    if (!p->window || window != p->window) { if (handled) *handled = false; return true; }
+    if (event->kind == QA_PLATFORM_EVENT_WINDOW) {
+        if (event->data.window.action != QA_SYS_WINDOW_FOCUS_GAINED && event->data.window.action != QA_SYS_WINDOW_FOCUS_LOST) {
+            if (handled) *handled = false;
+            return true;
+        }
+        return window_focus(p, event->data.window.action == QA_SYS_WINDOW_FOCUS_GAINED, time, error);
+    }
+    if (p->keyboard < 0 || !p->seats[p->keyboard].seat) { if (handled) *handled = false; return true; }
     qa_input_seat *seat = p->seats[p->keyboard].seat;
     qa_input_event translated = {.time_ms = time};
-    switch (event->type) {
-    case SDL_KEYDOWN:
-    case SDL_KEYUP: {
-        int scancode = (int)event->key.keysym.scancode;
-        if (scancode < 0 || scancode >= SDL_NUM_SCANCODES)
-            return true;
-        int code = p->keys[scancode]
-                       ? p->keys[scancode]
-                       : qa_input_sdl_key(event->key.keysym.sym, event->key.keysym.mod);
-        if (!code)
-            return true;
-        translated.kind = QA_INPUT_EVENT_KEY;
-        translated.down = event->type == SDL_KEYDOWN;
-        translated.repeat = event->key.repeat != 0;
+    switch (event->kind) {
+    case QA_PLATFORM_EVENT_KEY: {
+        uint32_t scan = event->data.key.code;
+        if (scan >= SDL_NUM_SCANCODES) return true;
+        int code = p->keys[scan] ? p->keys[scan] : qa_input_sdl_key(event->data.key.symbol, event->data.key.modifiers);
+        if (!code) return true;
+        translated.kind = QA_INPUT_EVENT_KEY; translated.down = event->data.key.down; translated.repeat = event->data.key.repeat;
         translated.input = (qa_physical_input){.kind = QA_PHYSICAL_KEY, .code = (uint32_t)code};
-        p->keys[scancode] = translated.down ? code : 0;
+        p->keys[scan] = translated.down ? code : 0;
         break;
     }
-    case SDL_TEXTINPUT:
-        translated.kind = QA_INPUT_EVENT_TEXT;
-        translated.text = event->text.text;
+    case QA_PLATFORM_EVENT_CHAR:
+        translated.kind = QA_INPUT_EVENT_TEXT; translated.text = (const char *)payload.data;
         break;
-    case SDL_MOUSEMOTION:
-        translated.kind = QA_INPUT_EVENT_MOUSE;
-        translated.position = position(p, event->motion.x, event->motion.y);
-        translated.delta = (qa_input_pair){(float)event->motion.xrel, (float)event->motion.yrel};
-        break;
-    case SDL_MOUSEBUTTONDOWN:
-    case SDL_MOUSEBUTTONUP:
-        if (qa_input_seat_focus(seat) != QA_INPUT_GAME) {
-            qa_input_event motion = {.kind = QA_INPUT_EVENT_MOUSE,
-                                     .time_ms = time,
-                                     .position = position(p, event->button.x, event->button.y)};
-            if (!qa_input_seat_event(seat, &motion, NULL, error))
-                return false;
+    case QA_PLATFORM_EVENT_MOUSE:
+        if (event->data.mouse.action == QA_SYS_MOUSE_MOVE) {
+            translated.kind = QA_INPUT_EVENT_MOUSE;
+            translated.position = position(p, event->data.mouse.x, event->data.mouse.y);
+            translated.delta = (qa_input_pair){(float)event->data.mouse.dx, (float)event->data.mouse.dy};
+        } else if (event->data.mouse.action == QA_SYS_MOUSE_BUTTON) {
+            if (qa_input_seat_focus(seat) != QA_INPUT_GAME) {
+                qa_input_event motion = {.kind = QA_INPUT_EVENT_MOUSE, .time_ms = time,
+                    .position = position(p, event->data.mouse.x, event->data.mouse.y)};
+                if (!qa_input_seat_event(seat, &motion, NULL, error)) return false;
+            }
+            translated.kind = QA_INPUT_EVENT_BUTTON;
+            translated.input = (qa_physical_input){.kind = QA_PHYSICAL_MOUSE, .code = event->data.mouse.button};
+            translated.down = event->data.mouse.down;
+        } else {
+            float sign = event->data.mouse.flipped ? -1 : 1;
+            translated.kind = QA_INPUT_EVENT_WHEEL;
+            translated.delta = (qa_input_pair){event->data.mouse.wheel_x * sign, event->data.mouse.wheel_y * sign};
         }
-        translated.kind = QA_INPUT_EVENT_BUTTON;
-        translated.input =
-            (qa_physical_input){.kind = QA_PHYSICAL_MOUSE, .code = event->button.button};
-        translated.down = event->type == SDL_MOUSEBUTTONDOWN;
         break;
-    case SDL_MOUSEWHEEL: {
-        float sign = event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1;
-        translated.kind = QA_INPUT_EVENT_WHEEL;
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-        translated.delta =
-            (qa_input_pair){event->wheel.preciseX * sign, event->wheel.preciseY * sign};
-#else
-        translated.delta =
-            (qa_input_pair){(float)event->wheel.x * sign, (float)event->wheel.y * sign};
-#endif
-        break;
-    }
-    default:
-        return true;
+    default: return true;
     }
     return qa_input_seat_event(seat, &translated, NULL, error) && qa_input_platform_sync_focus(p, error);
 }
@@ -2589,77 +2494,113 @@ enum { INPUT_FRAME_INITIALIZE, INPUT_FRAME_SAMPLE };
 void qa_input_platform_collect(qa_input_platform *p, qa_platform_events *events, uint64_t now_ns) {
     if (p && p->native_startup != INPUT_NATIVE_READY &&
         !qa_platform_events_pending(events, QA_PLATFORM_EVENT_INPUT_FRAME, INPUT_FRAME_INITIALIZE))
-        (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME,
-        now_ns, INPUT_FRAME_INITIALIZE, 0, (qa_bytes){0}, (qa_bytes){0});
+        (void)qa_platform_events_push(events, &(qa_sys_event){.kind = QA_PLATFORM_EVENT_INPUT_FRAME,
+            .time_ns = now_ns, .data.input_frame.operation = INPUT_FRAME_INITIALIZE}, (qa_bytes){0}, (qa_bytes){0});
     double now = (double)now_ns / 1000000.0;
     bool subframe = p && integer(p, INPUT_CVAR_SUBFRAME, 1) != 0;
-    SDL_Event event;
+    SDL_Event native;
     SDL_PumpEvents();
     if (SDL_HasEvent(SDL_QUIT)) qa_platform_events_latch_quit(events);
-    while (qa_platform_events_admit(events, QA_PLATFORM_EVENT_INPUT_FRAME, sizeof(event)) == QA_PLATFORM_EVENT_ACCEPTED &&
-        SDL_PollEvent(&event)) {
-        qa_platform_event_kind kind;
-        int32_t value = 0, value2 = 0;
-        switch (event.type) {
+    while (qa_platform_events_admit(events, QA_PLATFORM_EVENT_INPUT_FRAME, SDL_TEXTINPUTEVENT_TEXT_SIZE) == QA_PLATFORM_EVENT_ACCEPTED &&
+        SDL_PollEvent(&native)) {
+        qa_sys_event event = {0}; qa_bytes payload = {0};
+        switch (native.type) {
         case SDL_QUIT:
-            (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_QUIT, now_ns, 0, 0, (qa_bytes){0}, (qa_bytes){0});
+            (void)qa_platform_events_push(events, &(qa_sys_event){.kind = QA_PLATFORM_EVENT_QUIT, .time_ns = now_ns},
+                (qa_bytes){0}, (qa_bytes){0});
             return;
-        case SDL_KEYDOWN:
-        case SDL_KEYUP:
-            kind = QA_PLATFORM_EVENT_KEY;
-            value = event.key.keysym.sym; value2 = event.type == SDL_KEYDOWN;
+        case SDL_KEYDOWN: case SDL_KEYUP:
+            event.kind = QA_PLATFORM_EVENT_KEY; event.data.key.window = native.key.windowID;
+            event.data.key.code = (uint32_t)native.key.keysym.scancode; event.data.key.symbol = native.key.keysym.sym;
+            event.data.key.modifiers = native.key.keysym.mod;
+            event.data.key.down = native.type == SDL_KEYDOWN; event.data.key.repeat = native.key.repeat != 0;
             break;
         case SDL_TEXTINPUT:
-            kind = QA_PLATFORM_EVENT_CHAR;
+            event.kind = QA_PLATFORM_EVENT_CHAR; event.data.character.window = native.text.windowID;
+            payload = (qa_bytes){(const uint8_t *)native.text.text, strlen(native.text.text) + 1};
             break;
         case SDL_MOUSEMOTION:
-        case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP:
+            event.kind = QA_PLATFORM_EVENT_MOUSE; event.data.mouse.action = QA_SYS_MOUSE_MOVE;
+            event.data.mouse.window = native.motion.windowID; event.data.mouse.device = native.motion.which;
+            event.data.mouse.buttons = native.motion.state; event.data.mouse.x = native.motion.x; event.data.mouse.y = native.motion.y;
+            event.data.mouse.dx = native.motion.xrel; event.data.mouse.dy = native.motion.yrel;
+            break;
+        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
+            event.kind = QA_PLATFORM_EVENT_MOUSE; event.data.mouse.action = QA_SYS_MOUSE_BUTTON;
+            event.data.mouse.window = native.button.windowID; event.data.mouse.device = native.button.which;
+            event.data.mouse.button = native.button.button; event.data.mouse.clicks = native.button.clicks;
+            event.data.mouse.x = native.button.x; event.data.mouse.y = native.button.y; event.data.mouse.down = native.type == SDL_MOUSEBUTTONDOWN;
+            break;
         case SDL_MOUSEWHEEL:
-            kind = QA_PLATFORM_EVENT_MOUSE;
+            event.kind = QA_PLATFORM_EVENT_MOUSE; event.data.mouse.action = QA_SYS_MOUSE_WHEEL;
+            event.data.mouse.window = native.wheel.windowID; event.data.mouse.device = native.wheel.which;
+            event.data.mouse.flipped = native.wheel.direction == SDL_MOUSEWHEEL_FLIPPED;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            event.data.mouse.wheel_x = native.wheel.preciseX; event.data.mouse.wheel_y = native.wheel.preciseY;
+#else
+            event.data.mouse.wheel_x = (float)native.wheel.x; event.data.mouse.wheel_y = (float)native.wheel.y;
+#endif
             break;
-        case SDL_CONTROLLERAXISMOTION:
-        case SDL_CONTROLLERSENSORUPDATE:
-        case SDL_JOYAXISMOTION:
+        case SDL_CONTROLLERAXISMOTION: case SDL_JOYAXISMOTION:
+            event.kind = QA_PLATFORM_EVENT_CONTROLLER_AXIS; event.data.controller.action = QA_SYS_CONTROLLER_AXIS;
+            event.data.controller.joystick = native.type == SDL_JOYAXISMOTION;
+            event.data.controller.device = native.caxis.which; event.data.controller.axis = native.caxis.axis;
+            event.data.controller.value = native.caxis.value;
+            break;
         case SDL_JOYHATMOTION:
-            kind = QA_PLATFORM_EVENT_CONTROLLER_AXIS;
+            event.kind = QA_PLATFORM_EVENT_CONTROLLER_AXIS; event.data.controller.action = QA_SYS_CONTROLLER_HAT;
+            event.data.controller.joystick = true; event.data.controller.device = native.jhat.which;
+            event.data.controller.hat = native.jhat.hat; event.data.controller.value = native.jhat.value;
             break;
-        case SDL_CONTROLLERBUTTONDOWN:
-        case SDL_CONTROLLERBUTTONUP:
-        case SDL_CONTROLLERTOUCHPADDOWN:
-        case SDL_CONTROLLERTOUCHPADMOTION:
-        case SDL_CONTROLLERTOUCHPADUP:
-        case SDL_JOYBUTTONDOWN:
-        case SDL_JOYBUTTONUP:
-            kind = QA_PLATFORM_EVENT_CONTROLLER_BUTTON;
+        case SDL_CONTROLLERSENSORUPDATE:
+            event.kind = QA_PLATFORM_EVENT_CONTROLLER_AXIS; event.data.controller.action = QA_SYS_CONTROLLER_SENSOR;
+            event.data.controller.device = native.csensor.which; event.data.controller.sensor = native.csensor.sensor;
+            memcpy(event.data.controller.values, native.csensor.data, sizeof(event.data.controller.values));
+            event.data.controller.sensor_time_ns = (uint64_t)native.csensor.timestamp * UINT64_C(1000000);
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+            if (native.csensor.timestamp_us) event.data.controller.sensor_time_ns = native.csensor.timestamp_us * UINT64_C(1000);
+#endif
+            break;
+        case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP: case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP:
+            event.kind = QA_PLATFORM_EVENT_CONTROLLER_BUTTON; event.data.controller.action = QA_SYS_CONTROLLER_BUTTON;
+            event.data.controller.joystick = native.type == SDL_JOYBUTTONDOWN || native.type == SDL_JOYBUTTONUP;
+            event.data.controller.device = native.cbutton.which; event.data.controller.button = native.cbutton.button;
+            event.data.controller.down = native.cbutton.state == SDL_PRESSED;
+            break;
+        case SDL_CONTROLLERTOUCHPADDOWN: case SDL_CONTROLLERTOUCHPADMOTION: case SDL_CONTROLLERTOUCHPADUP:
+            event.kind = QA_PLATFORM_EVENT_CONTROLLER_BUTTON; event.data.controller.action = QA_SYS_CONTROLLER_TOUCH;
+            event.data.controller.device = native.ctouchpad.which; event.data.controller.touchpad = native.ctouchpad.touchpad;
+            event.data.controller.finger = native.ctouchpad.finger; event.data.controller.x = native.ctouchpad.x;
+            event.data.controller.y = native.ctouchpad.y; event.data.controller.pressure = native.ctouchpad.pressure;
+            event.data.controller.down = native.type != SDL_CONTROLLERTOUCHPADUP;
             break;
         case SDL_WINDOWEVENT:
-            kind = QA_PLATFORM_EVENT_WINDOW;
-            value = (int32_t)event.window.windowID;
-            value2 = event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED;
+            event.kind = QA_PLATFORM_EVENT_WINDOW; event.data.window.id = native.window.windowID;
+            event.data.window.action = native.window.event == SDL_WINDOWEVENT_FOCUS_GAINED ? QA_SYS_WINDOW_FOCUS_GAINED :
+                native.window.event == SDL_WINDOWEVENT_FOCUS_LOST ? QA_SYS_WINDOW_FOCUS_LOST :
+                native.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ? QA_SYS_WINDOW_RESIZED : QA_SYS_WINDOW_OTHER;
+            event.data.window.width = native.window.data1; event.data.window.height = native.window.data2;
             break;
-        case SDL_CONTROLLERDEVICEADDED:
-        case SDL_CONTROLLERDEVICEREMOVED:
-        case SDL_CONTROLLERDEVICEREMAPPED:
-        case SDL_JOYDEVICEADDED:
-        case SDL_JOYDEVICEREMOVED:
-            kind = QA_PLATFORM_EVENT_DEVICE;
+        case SDL_CONTROLLERDEVICEADDED: case SDL_CONTROLLERDEVICEREMOVED: case SDL_CONTROLLERDEVICEREMAPPED:
+        case SDL_JOYDEVICEADDED: case SDL_JOYDEVICEREMOVED:
+            event.kind = QA_PLATFORM_EVENT_DEVICE;
+            event.data.device.controller = native.type == SDL_CONTROLLERDEVICEADDED || native.type == SDL_CONTROLLERDEVICEREMOVED ||
+                native.type == SDL_CONTROLLERDEVICEREMAPPED;
+            event.data.device.id = native.cdevice.which;
+            event.data.device.action = native.type == SDL_CONTROLLERDEVICEADDED || native.type == SDL_JOYDEVICEADDED ? QA_SYS_DEVICE_ADDED :
+                native.type == SDL_CONTROLLERDEVICEREMAPPED ? QA_SYS_DEVICE_REMAPPED : QA_SYS_DEVICE_REMOVED;
             break;
-        case SDL_DROPFILE:
-        case SDL_DROPTEXT:
-            SDL_free(event.drop.file);
-            continue;
+        case SDL_DROPFILE: case SDL_DROPTEXT:
+            SDL_free(native.drop.file); continue;
 #if SDL_VERSION_ATLEAST(2, 0, 22)
         case SDL_TEXTEDITING_EXT:
-            SDL_free(event.editExt.text);
-            continue;
+            SDL_free(native.editExt.text); continue;
 #endif
-        default:
-            continue;
+        default: continue;
         }
-        double time = qa_input_event_time(event.common.timestamp, SDL_GetTicks(), now, subframe);
-        (void)qa_platform_events_push(events, kind, (uint64_t)(time * 1000000.0), value, value2,
-            (qa_bytes){(const uint8_t *)&event, sizeof(event)}, (qa_bytes){0});
+        double time = qa_input_event_time(native.common.timestamp, SDL_GetTicks(), now, subframe);
+        event.time_ns = (uint64_t)(time * 1000000.0);
+        (void)qa_platform_events_push(events, &event, payload, (qa_bytes){0});
     }
 }
 
@@ -2725,7 +2666,8 @@ bool qa_input_platform_sample(qa_input_platform *p, qa_platform_events *events,
         }
         sample->midi_bytes += (uint32_t)count;
     }
-    (void)qa_platform_events_push(events, QA_PLATFORM_EVENT_INPUT_FRAME, now_ns, INPUT_FRAME_SAMPLE, 0,
+    (void)qa_platform_events_push(events, &(qa_sys_event){.kind = QA_PLATFORM_EVENT_INPUT_FRAME,
+        .time_ns = now_ns, .data.input_frame.operation = INPUT_FRAME_SAMPLE},
         (qa_bytes){(const uint8_t *)&sampled, sizeof(*sample) + sample->midi_bytes}, (qa_bytes){0});
     return true;
 }
@@ -2868,7 +2810,7 @@ static bool sampled_frame(qa_input_platform *p, const input_frame_sample *sample
     return finish_calibration(p, error) && qa_input_platform_sync_focus(p, error);
 }
 
-bool qa_input_platform_dispatch(qa_input_platform *p, const qa_platform_event *event,
+bool qa_input_platform_dispatch(qa_input_platform *p, const qa_sys_event *event,
     qa_bytes payload, bool *handled, qa_error *error) {
     if (!native_owner(p, error)) return false;
     double time = (double)event->time_ns / 1000000.0;
@@ -2876,15 +2818,13 @@ bool qa_input_platform_dispatch(qa_input_platform *p, const qa_platform_event *e
     p->now = time;
     if (event->kind == QA_PLATFORM_EVENT_INPUT_FRAME) {
         if (handled) *handled = true;
-        if (event->value == INPUT_FRAME_INITIALIZE) return true;
+        if (event->data.input_frame.operation == INPUT_FRAME_INITIALIZE) return true;
         input_frame_sample sample;
         memcpy(&sample, payload.data, sizeof(sample));
         qa_bytes midi = {payload.data + sizeof(sample), sample.midi_bytes};
         return sampled_frame(p, &sample, midi, time, error);
     }
-    SDL_Event native;
-    memcpy(&native, payload.data, sizeof(native));
-    return native_event(p, &native, time, handled, error);
+    return system_event(p, event, payload, time, handled, error);
 }
 void qa_input_platform_midi_info(qa_input_platform *p) {
     if (!p || !p->native_owned) return;

@@ -77,7 +77,7 @@ void qa_input_platform_collect(qa_input_platform *, qa_platform_events *, uint64
 bool qa_input_platform_sample(qa_input_platform *, qa_platform_events *, uint64_t now_ns, qa_error *);
 /* Only the platform decoder sees SDL. Dispatch reads the retained timestamp
  * and copied payload; it does not sample input or read a timestamp again. */
-bool qa_input_platform_dispatch(qa_input_platform *, const qa_platform_event *, qa_bytes,
+bool qa_input_platform_dispatch(qa_input_platform *, const qa_sys_event *, qa_bytes,
     bool *handled, qa_error *);
 bool qa_input_platform_restart(qa_input_platform *, double now_ms, qa_error *);
 typedef struct qa_input_platform_settings {

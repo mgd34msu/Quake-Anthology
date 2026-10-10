@@ -16,7 +16,7 @@ typedef struct qa_network_event_source {
  * continuation work; dispatch never polls the source again. */
 bool qa_network_events_collect(const qa_network_event_source *, qa_platform_events *,
     uint64_t now_ns, uint32_t budget, qa_error *);
-void qa_network_event_packet(const qa_platform_event *, qa_bytes, uint64_t *source_id,
+void qa_network_event_packet(const qa_sys_event *, qa_bytes, uint64_t *source_id,
     qa_net_transport_event *);
 
 #endif

@@ -35,11 +35,9 @@ static bool key(qa_frontend *f,SDL_Keycode symbol,SDL_Scancode scan,bool down,qa
 {
     qa_display_info info;
     if (!qa_display_info_get(f->display,&info,error)) return false;
-    SDL_Event event;SDL_zero(event);event.type=down?SDL_KEYDOWN:SDL_KEYUP;
-    event.key.windowID=info.window_id;event.key.state=down?SDL_PRESSED:SDL_RELEASED;
-    event.key.keysym.sym=symbol;event.key.keysym.scancode=scan;
-    qa_platform_events_push(f->platform_events,QA_PLATFORM_EVENT_KEY,f->wall_time_ns,
-        symbol,down,(qa_bytes){(const uint8_t *)&event,sizeof(event)}, (qa_bytes){0});
+    qa_sys_event event={.kind=QA_PLATFORM_EVENT_KEY,.time_ns=f->wall_time_ns,
+        .data.key={.window=info.window_id,.symbol=symbol,.code=(uint32_t)scan,.down=down}};
+    qa_platform_events_push(f->platform_events,&event,(qa_bytes){0},(qa_bytes){0});
     return frontend_platform_drain(f,error);
 }
 static bool command(qa_frontend *f,const char *text,qa_error *error)

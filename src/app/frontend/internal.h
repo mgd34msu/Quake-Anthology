@@ -481,12 +481,12 @@ bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error
 bool frontend_network_prepare(qa_frontend *, qa_error *);
 bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_error *);
 bool frontend_network_receive_ready(const qa_frontend *);
-bool frontend_network_event_ready(const qa_frontend *, const qa_platform_event *);
+bool frontend_network_event_ready(const qa_frontend *, const qa_sys_event *);
 bool frontend_network_local_input_owned(const qa_frontend *, uint32_t physical);
 bool frontend_network_q3_input_owned(const qa_frontend *, uint32_t physical);
 bool frontend_network_local_seat(const qa_frontend *, const qa_net_address *,
     qa_net_seat_id *, uint32_t *application_seat);
-bool frontend_network_receive(qa_frontend *, const qa_platform_event *, qa_bytes, bool *consumed, qa_error *);
+bool frontend_network_receive(qa_frontend *, const qa_sys_event *, qa_bytes, bool *consumed, qa_error *);
 bool frontend_network_maintenance(qa_frontend *, qa_error *);
 bool frontend_network_client_attempts_advance(qa_frontend *, qa_error *);
 bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, bool *source_ready, qa_error *);

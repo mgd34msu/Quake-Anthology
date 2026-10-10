@@ -409,7 +409,7 @@ static bool runtime_console(qa_frontend *frontend, qa_console **console,
 }
 bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
 {
-    qa_platform_event event; qa_bytes payload;
+    qa_sys_event event; qa_bytes payload;
     while (qa_platform_events_peek(frontend->platform_events,&event,&payload)) {
         bool ok=true,consumed=true;
         switch (event.kind) {
@@ -434,7 +434,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             qa_usercmd command;
             memcpy(&command,payload.data,sizeof(command));
             qa_actor_id actor; uint32_t ordinal;
-            uint32_t seat=(uint32_t)event.value;
+            uint32_t seat=event.data.usercmd.seat;
             if(!qa_application_player_actor(frontend->application,seat,&actor) ||
                 !frontend_seat_ordinal_read(frontend,seat,&ordinal))
                 ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery input has no local player");
@@ -456,8 +456,8 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
         }
         default:
             if (!frontend->options.dedicated && !qa_application_should_stop(frontend->application)) {
-                if (event.kind==QA_PLATFORM_EVENT_WINDOW && event.value2 &&
-                    (uint32_t)event.value==frontend->observed_display.window_id)
+                if (event.kind==QA_PLATFORM_EVENT_WINDOW && event.data.window.action==QA_SYS_WINDOW_RESIZED &&
+                    event.data.window.id==frontend->observed_display.window_id)
                     ok=qa_display_info_get(frontend->display,&frontend->observed_display,error);
                 if (ok) ok=qa_input_platform_dispatch(frontend->input,&event,payload,NULL,error) &&
                     (qa_application_should_stop(frontend->application) || frontend_ui_features_sync(frontend,error));

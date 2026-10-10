@@ -6209,12 +6209,12 @@ bool frontend_network_receive_ready(const qa_frontend *f)
     const qa_frontend_network *n=f?f->network:NULL;
     return !n || qa_network_receive_ready(n->runtime);
 }
-bool frontend_network_event_ready(const qa_frontend *f, const qa_platform_event *event)
+bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *event)
 {
     const qa_frontend_network *n = f ? f->network : NULL;
-    if (!n || event->value2 == 1) return true;
-    if (event->value2 >= 2) {
-        uint32_t physical = (uint32_t)(event->value2 - 2);
+    if (!n || event->data.packet.destination == 1) return true;
+    if (event->data.packet.destination >= 2) {
+        uint32_t physical = (uint32_t)(event->data.packet.destination - 2);
         return physical >= f->options.seats || !n->local_clients[physical].runtime ||
             qa_network_receive_ready(n->local_clients[physical].runtime);
     }
@@ -6225,7 +6225,7 @@ bool frontend_network_local_input_owned(const qa_frontend *f, uint32_t physical)
     return f && f->network && physical < f->options.seats &&
         f->network->local_clients[physical].runtime != NULL;
 }
-bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_bytes bytes,
+bool frontend_network_receive(qa_frontend *f,const qa_sys_event *event,qa_bytes bytes,
     bool *consumed,qa_error *error)
 {
     *consumed=true;
@@ -6238,12 +6238,12 @@ bool frontend_network_receive(qa_frontend *f,const qa_platform_event *event,qa_b
     const qa_net_transport_event *physical=input.packet.kind==QA_NET_POLL_EMPTY ? NULL : &input;
     ++n->busy;
     bool ok=true;
-    if(event->value2==1) {
+    if(event->data.packet.destination==1) {
         if(n->kex_browser) ok=frontend_kex_browser_dispatch(n->kex_browser,physical,error);
     } else {
         qa_network_runtime *runtime = n->runtime;
-        if (event->value2 >= 2) {
-            uint32_t seat = (uint32_t)(event->value2 - 2);
+        if (event->data.packet.destination >= 2) {
+            uint32_t seat = (uint32_t)(event->data.packet.destination - 2);
             runtime = seat < f->options.seats ? n->local_clients[seat].runtime : NULL;
         }
         if (!runtime) { --n->busy; return true; }
