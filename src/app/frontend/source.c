@@ -1220,6 +1220,11 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
 {
     qa_frontend *frontend = source->frontend;
     source->construction_started = true;
+    if(!source->companion){
+        source->companion=calloc(1,sizeof(*source->companion));
+        if(!source->companion)return frontend_fail(error,QA_ERROR_MEMORY,"Creating private companion output");
+        if(!qa_scene_frame_init(&source->companion->frame,source->identity,0,error))return false;
+    }
     if (profile) {
         if (!frontend_key_profile_state(profile) || !frontend_key_profile_retain(profile,error)) return false;
         source->key_profile=profile; source->keys=frontend_key_profile_state(profile);
@@ -2222,11 +2227,6 @@ static bool companion_capture(qa_frontend *f,uint32_t physical,qa_scene_rect rec
     frontend_source *source=lease->source;
     qa_q3_presentation_binding previous;
     if (!qa_q3_presentation_binding_read(source->presentation,&previous,error)) return false;
-    if (!source->companion) {
-        source->companion=calloc(1,sizeof(*source->companion));
-        if (!source->companion) return frontend_fail(error,QA_ERROR_MEMORY,"Creating private companion output");
-        qa_scene_frame_init(&source->companion->frame,source->identity);
-    }
     source_companion *capture=source->companion;
     qa_scene_frame_reset(&capture->frame,f->frame_number);
     if (!qa_scene_frame_material_order(&capture->frame,f->order,error) ||

@@ -275,6 +275,7 @@ typedef struct gl_presented_target {
 
 struct qa_gl_renderer {
     qa_gl_options options;
+    qa_scene_frame service_frame, image_frame;
     qa_render_controls controls;
     gl_api gl;
     qa_gl_capabilities capabilities;

@@ -74,8 +74,7 @@ bool frontend_native_q2_baseline_create(void *context, const qa_application_opti
     frontend->frame_number=active->frame_number;
     frontend->width=active->width; frontend->height=active->height;
     frontend->native_output_context=baseline; frontend->native_print=retain_print; frontend->native_clipboard=retain_clipboard;
-    qa_scene_frame_init(&frontend->frame,QA_FRONTEND_COMMAND_OWNER);
-    if(!qa_scene_frame_prepare(&frontend->frame,0,error)){free(baseline);return false;}
+    if(!qa_scene_frame_init(&frontend->frame,QA_FRONTEND_COMMAND_OWNER,0,error)){free(baseline);return false;}
     qa_audio_engine_options audio={.sample_rate=48000,.output_channels=2,.mix_frames=1024,.initial_voices=128};
     if (!qa_audio_engine_create(&audio,&frontend->audio,error)) {
         qa_scene_frame_destroy(&frontend->frame); free(baseline); return false;

@@ -320,6 +320,10 @@ qa_gl_renderer *gl_renderer_allocate(const qa_gl_options *options, const qa_disp
         return NULL;
     }
     renderer->options = *options;
+    if(!qa_scene_frame_init(&renderer->service_frame,options->owner,8u*1024u*1024u,error) ||
+        !qa_scene_frame_init(&renderer->image_frame,options->owner,8u*1024u*1024u,error)){
+        qa_scene_frame_destroy(&renderer->service_frame);free(renderer);return NULL;
+    }
     qa_render_controls_init_gl(&renderer->controls, renderer);
     qa_scene_state_default(&renderer->pipeline);
     renderer->pipeline.depth_test=QA_DEPTH_LESS;
@@ -352,6 +356,8 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
     qa_gl_renderer *renderer = gl_renderer_allocate(options, &info, error);
     if (!renderer) return NULL;
     if (!gl_api_load(renderer, error)) {
+        qa_scene_frame_destroy(&renderer->service_frame);
+        qa_scene_frame_destroy(&renderer->image_frame);
         free(renderer);
         return NULL;
     }
@@ -361,6 +367,8 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
         !gl_resources_create(renderer, error)) {
         gl_resources_destroy(renderer);
         gl_programs_destroy(renderer);
+        qa_scene_frame_destroy(&renderer->service_frame);
+        qa_scene_frame_destroy(&renderer->image_frame);
         free(renderer);
         return NULL;
     }
@@ -389,6 +397,8 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
 {
     if (renderer == NULL || renderer->closed) return;
     if (renderer->surface_ticket || renderer->controls.ticket || renderer->controls.image_ticket || renderer->controls.source.entered) { renderer->destroy_pending=true; return; }
+    qa_scene_frame_destroy(&renderer->service_frame);
+    qa_scene_frame_destroy(&renderer->image_frame);
     material_source_release(&renderer->controls.source);
     qa_render_source_texture_release(&renderer->controls.zero_texture);
     renderer->closed = true;
@@ -1560,13 +1570,12 @@ bool qa_gl_swap(qa_gl_renderer *renderer, qa_error *error)
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL swap requires its actual idle renderer/display");
         return false;
     }
-    qa_scene_frame frame;
-    qa_scene_frame_init(&frame,renderer->options.owner);
-    frame.source_backend=renderer->source_frame;
-    bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
-    bool skip=frame.source_backend && frame.source_skip_backend;
-    bool front=frame.source_backend && frame.source_front_buffer;
-    qa_scene_frame_destroy(&frame);
+    qa_scene_frame *frame=&renderer->service_frame;qa_scene_frame_reset(frame,0);
+    frame->source_backend=renderer->source_frame;
+    bool ok=qa_material_source_swap_end(&renderer->controls.source,frame,error);
+    bool skip=frame->source_backend && frame->source_skip_backend;
+    bool front=frame->source_backend && frame->source_front_buffer;
+    qa_scene_frame_reset(frame,0);
     if (ok && skip) {
         uint32_t width=0,height=0;
         if (!gl_dimensions(renderer,&width,&height,error)) return false;
@@ -2209,7 +2218,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
     renderer->gl.Clear(GL_COLOR_BUFFER_BIT);
     renderer->gl.Finish();
     uint64_t start=(qa_platform_time_ns() / UINT64_C(1000000));
-    qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
+    qa_scene_frame *frame=&renderer->image_frame;qa_scene_frame_reset(frame,0);
     bool ok=true;
     for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
         gl_texture_entry *entry=renderer->source_images[i];
@@ -2229,12 +2238,12 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         }
         ok=gl_source_texture_bind(renderer,binding,error);
         if (!ok) break;
-        size_t first=frame.command_count;
-        ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
+        size_t first=frame->command_count;
+        ok=qa_scene_frame_picture_f(frame,binding,target,(qa_scene_rect_f){x,y,w,h},
             (qa_vec4){0,0,1,1},controls->attributes.color,error);
-        for (size_t c=first;ok && c<frame.command_count;++c) {
-            if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
-      qa_scene_draw *draw=&frame.commands[c].data.draw;
+        for (size_t c=first;ok && c<frame->command_count;++c) {
+            if (frame->commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
+      qa_scene_draw *draw=&frame->commands[c].data.draw;
             draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
             ok=draw_scene(renderer,draw,NULL,error);
         }
@@ -2243,7 +2252,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         controls->attributes.coordinates[0]=(qa_vec2){0,1};
         controls->attributes.coordinates_known[0]=true; renderer->gl.TexCoord2f(0,1);
     }
-    qa_scene_frame_destroy(&frame);
+    qa_scene_frame_reset(frame,0);
     renderer->gl.Finish();
     if (ok) ok=gl_check(renderer,"Source image grid",error);
     if (ok && controls->source_print) {

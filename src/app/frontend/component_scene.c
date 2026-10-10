@@ -812,8 +812,8 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     }
     owner->next=f->component_scenes; f->component_scenes=owner;
     *request->frontend=(application_q3_component_scene_frontend){.owner=owner,.idle=idle,.destroy=destroy,.identity_read=identity_read,.begin=begin,.finish=finish,.completed=completed,.retire=retire};
-    qa_scene_frame_init(&owner->frame,owner->identity);
-    if (!qa_scene_frame_material_order(&owner->frame,f->order,e) ||
+    if (!qa_scene_frame_init(&owner->frame,owner->identity,0,e) ||
+        !qa_scene_frame_material_order(&owner->frame,f->order,e) ||
         (request->descriptor && !qa_launch_instance_retain_metadata(request->descriptor,&owner->descriptor,e))) return false;
     struct frontend_component_scene_restore *saved=NULL;
     if (request->restoring) {

@@ -26,7 +26,7 @@ bool scene_frame_reserve(qa_scene_frame *frame,unsigned array,void **data,
     qa_scene_frame_storage *storage=frame->reserved;
     size_t slot=0,pages=0;
     void *replacement=NULL;bool reused=false;
-    if(storage){
+    {
         size_t bytes=next*stride;
         pages=bytes/storage->pages.stride+(bytes%storage->pages.stride!=0);
         if(storage->arrays[array].pages){
@@ -35,12 +35,12 @@ bool scene_frame_reserve(qa_scene_frame *frame,unsigned array,void **data,
             reused=replacement!=NULL;
         }
         if(!replacement)replacement=qa_pool_take_run(&storage->pages,pages,&slot);
-    }else replacement=realloc(*data,next*stride);
+    }
     if (replacement == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot grow scene frame storage");
         return false;
     }
-    if(storage){
+    {
         if(*data && replacement!=*data)memmove(replacement,*data,*capacity*stride);
         if(!reused && storage->arrays[array].pages)
             qa_pool_release_run(&storage->pages,storage->arrays[array].slot,storage->arrays[array].pages);
@@ -51,12 +51,10 @@ bool scene_frame_reserve(qa_scene_frame *frame,unsigned array,void **data,
     return true;
 }
 
-bool qa_scene_frame_prepare(qa_scene_frame *frame,size_t bytes,qa_error *error)
+bool qa_scene_frame_init(qa_scene_frame *frame,uint64_t owner,size_t bytes,qa_error *error)
 {
-    if(!frame || frame->commands || frame->images || frame->geometries || frame->models ||
-        frame->groups || frame->sort_groups || frame->sort_commands || frame->storage.first || frame->reserved){
-        qa_error_set(error,QA_ERROR_ARGUMENT,0,"scene reservation requires an empty initialized frame");return false;
-    }
+    if(!frame){qa_error_set(error,QA_ERROR_ARGUMENT,0,"scene construction requires its destination");return false;}
+    *frame=(qa_scene_frame){.owner=owner};
     if(!bytes)bytes=64u*1024u*1024u;
     qa_scene_frame_storage *storage=calloc(1,sizeof(*storage));
     if(!storage){qa_error_set(error,QA_ERROR_MEMORY,0,"allocating scene reservation owner");return false;}
@@ -67,13 +65,6 @@ bool qa_scene_frame_prepare(qa_scene_frame *frame,size_t bytes,qa_error *error)
     qa_arena_seal(&storage->backing);
     qa_arena_init_pool(&frame->storage,&storage->pages);
     frame->reserved=storage;return true;
-}
-
-void qa_scene_frame_init(qa_scene_frame *frame, uint64_t owner)
-{
-    if (frame == NULL) return;
-    *frame = (qa_scene_frame){.owner = owner};
-    qa_arena_init(&frame->storage, 262144);
 }
 
 bool qa_scene_frame_material_order(qa_scene_frame *frame, qa_material_order *order, qa_error *error)
@@ -122,9 +113,6 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
     qa_arena_destroy(&frame->storage);
     if(frame->reserved){
         qa_arena_destroy(&frame->reserved->backing);free(frame->reserved);
-    }else{
-        free(frame->commands);free(frame->images);free(frame->geometries);free(frame->models);
-        free(frame->groups);free(frame->sort_groups);free(frame->sort_commands);
     }
     *frame = (qa_scene_frame){0};
 }

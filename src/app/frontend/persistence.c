@@ -358,8 +358,7 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
         if (!f->seats) ok=frontend_fail(error,QA_ERROR_MEMORY,"Allocating stable detached frontend seats");
         else {
             for (unsigned i=0;i<f->options.seats;++i) { f->seats[i].frontend=f; f->seats[i].id=i; }
-            qa_scene_frame_init(&f->frame,QA_FRONTEND_COMMAND_OWNER);
-            ok=qa_scene_frame_prepare(&f->frame,0,error);
+            ok=qa_scene_frame_init(&f->frame,QA_FRONTEND_COMMAND_OWNER,0,error);
             f->native_runtime=source->native_runtime;
             qa_native_runtime_retain(f->native_runtime);
             if (source->default_user_root) {

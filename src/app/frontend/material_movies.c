@@ -361,7 +361,9 @@ bool frontend_material_movie_row_create(frontend_material_movies *owner, qa_medi
     if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual shader movie owner");
     size_t size = strlen(path) + 1;
     row->path = malloc(size); row->target = target;
-    qa_scene_frame_init(&row->publication, owner->source.frontend->frame.owner);
+    if(!qa_scene_frame_init(&row->publication,owner->source.frontend->frame.owner,1024*1024,error)){
+        frontend_material_movie_row_free(row);return false;
+    }
     bool ok = row->path != NULL;
     if (ok) memcpy(row->path, path, size);
     else { frontend_material_movie_row_free(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining shader movie cache key"); }
@@ -378,7 +380,9 @@ bool frontend_material_movie_row_create(frontend_material_movies *owner, qa_medi
         qa_cinematic_destroy(row->playback); row->playback = NULL;
         qa_cinematic_asset_release(row->asset); row->asset = NULL; row->initial = NULL;
         qa_scene_frame_destroy(&row->publication);
-        qa_scene_frame_init(&row->publication, owner->source.frontend->frame.owner);
+        if(!qa_scene_frame_init(&row->publication,owner->source.frontend->frame.owner,1024*1024,error)){
+            frontend_material_movie_row_free(row);return false;
+        }
         row->target = 0; row->failed = true;
         if (failure.code == QA_OK) frontend_fail(&failure, QA_ERROR_FORMAT, "Shader movie registration failed without an image");
         row->failure = failure; if (error) *error = failure;

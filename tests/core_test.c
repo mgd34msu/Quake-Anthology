@@ -142,8 +142,7 @@ static void test_spans(void)
 static void test_reserved_scene_frame(void)
 {
     qa_scene_frame frame;qa_error error={0};
-    qa_scene_frame_init(&frame,19);
-    CHECK(qa_scene_frame_prepare(&frame,2*4096*sizeof(qa_scene_command)+1024*1024,&error));
+    CHECK(qa_scene_frame_init(&frame,19,2*4096*sizeof(qa_scene_command)+1024*1024,&error));
     CHECK(frame.storage.sealed && frame.storage.pages);
     for(unsigned pass=0;pass<2;++pass){
         qa_scene_frame_reset(&frame,pass+1);
@@ -169,8 +168,7 @@ static void test_reserved_scene_frame(void)
     }
     CHECK(frame.storage.pages->overflow==0);
     qa_scene_frame_destroy(&frame);
-    qa_scene_frame_init(&frame,19);
-    CHECK(qa_scene_frame_prepare(&frame,256*1024,&error));
+    CHECK(qa_scene_frame_init(&frame,19,256*1024,&error));
     qa_scene_command view={.kind=QA_SCENE_COMMAND_VIEW};
     while(qa_scene_frame_emit(&frame,&view,&error))view.data.view.viewport.x++;
     CHECK(error.code==QA_ERROR_MEMORY && frame.command_count>0);

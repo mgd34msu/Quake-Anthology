@@ -170,6 +170,10 @@ qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error) {
     return NULL;
   }
   renderer->options = *options;
+  if(!qa_scene_frame_init(&renderer->service_frame,options->owner,8u*1024u*1024u,error) ||
+    !qa_scene_frame_init(&renderer->image_frame,options->owner,8u*1024u*1024u,error)){
+    qa_scene_frame_destroy(&renderer->service_frame);free(renderer);return NULL;
+  }
   qa_render_controls_init_cpu(&renderer->controls, renderer);
   qa_scene_state_default(&renderer->pipeline);
   renderer->clear_depth = 1;
@@ -206,6 +210,8 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
   cpu_raster_pool_destroy(renderer);
   cpu_brush_destroy(renderer);
   cpu_surface_cache_destroy(renderer);
+  qa_scene_frame_destroy(&renderer->service_frame);
+  qa_scene_frame_destroy(&renderer->image_frame);
   material_source_release(&renderer->controls.source);
   qa_render_source_texture_release(&renderer->controls.zero_texture);
   for (size_t i = 0; i < 2; ++i)
@@ -723,12 +729,11 @@ static bool cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
 }
 bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
   if (!cpu_surface_idle(renderer,error)) return false;
-  qa_scene_frame frame;
-  qa_scene_frame_init(&frame,renderer->options.owner);
-  frame.source_backend=renderer->source_frame;
-  bool ok=qa_material_source_swap_end(&renderer->controls.source,&frame,error);
-  bool skip=frame.source_backend && frame.source_skip_backend;
-  qa_scene_frame_destroy(&frame);
+  qa_scene_frame *frame=&renderer->service_frame;qa_scene_frame_reset(frame,0);
+  frame->source_backend=renderer->source_frame;
+  bool ok=qa_material_source_swap_end(&renderer->controls.source,frame,error);
+  bool skip=frame->source_backend && frame->source_skip_backend;
+  qa_scene_frame_reset(frame,0);
   if (ok && skip) qa_render_source_report(&renderer->controls,renderer->display.width,renderer->display.height);
   return ok && (skip || cpu_present_frame(renderer,error));
 }
@@ -1890,7 +1895,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
   clear.color=renderer->clear_color;
   clear_view(renderer,&clear);
   uint64_t start=(qa_platform_time_ns() / UINT64_C(1000000));
-  qa_scene_frame frame; qa_scene_frame_init(&frame,renderer->options.owner);
+  qa_scene_frame *frame=&renderer->image_frame;qa_scene_frame_reset(frame,0);
   bool ok=true;
   for (uint32_t i=0;ok && i<renderer->source_image_count;++i) {
     const cpu_source_image *entry=renderer->source_images+i;
@@ -1905,12 +1910,12 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
       for (uint32_t j=renderer->source_image_count;j>0;--j)
         if (renderer->source_images[j-1].image->source_dlight) { binding=renderer->source_images[j-1].image; break; }
     cpu_source_bind(renderer,binding);
-    size_t first=frame.command_count;
-    ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
+    size_t first=frame->command_count;
+    ok=qa_scene_frame_picture_f(frame,binding,target,(qa_scene_rect_f){x,y,w,h},
       (qa_vec4){0,0,1,1},controls->attributes.color,error);
-    for (size_t c=first;ok && c<frame.command_count;++c) {
-      if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
-      qa_scene_draw *draw=&frame.commands[c].data.draw;
+    for (size_t c=first;ok && c<frame->command_count;++c) {
+      if (frame->commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
+      qa_scene_draw *draw=&frame->commands[c].data.draw;
       draw->source_direct=QA_SOURCE_DIRECT_IMAGE_GRID;
       ok=cpu_draw(renderer,draw,error);
     }
@@ -1918,7 +1923,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
   if (ok && renderer->source_image_count) {
     controls->attributes.coordinates[0]=(qa_vec2){0,1}; controls->attributes.coordinates_known[0]=true;
   }
-  qa_scene_frame_destroy(&frame);
+  qa_scene_frame_reset(frame,0);
   if (ok && controls->source_print) {
     char text[100]; snprintf(text,sizeof(text),"%llu msec to draw all images\n",(unsigned long long)((qa_platform_time_ns() / UINT64_C(1000000))-start));
     controls->source_print(controls->source_print_context,text);

@@ -71,6 +71,7 @@ typedef struct cpu_skin_slot {
 } cpu_skin_slot;
 struct qa_cpu_renderer {
   qa_cpu_options options;
+  qa_scene_frame service_frame, image_frame;
   qa_render_controls controls;
   qa_output_domains output_domains;
   cpu_framebuffer display, opacity;
