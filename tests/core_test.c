@@ -15,6 +15,7 @@
 #include "qa/platform_events.h"
 #include "qa/network_q3.h"
 #include "qa/network_q1_channel.h"
+#include "qa/network_q1_nq.h"
 #include "qa/network_q2_kex.h"
 
 #include <fcntl.h>
@@ -725,6 +726,130 @@ static void test_platform_event_retirement(void)
     qa_platform_events_destroy(events);
 }
 
+static void test_loopback_admission(void)
+{
+    qa_error error = {0};
+    qa_net_loopback *hub;
+    qa_net_transport *a, *b;
+    CHECK(qa_net_loopback_create((qa_net_limits){64008, 2}, &hub, &error));
+    CHECK(qa_net_loopback_bind(hub, "a", &a, &error));
+    CHECK(qa_net_loopback_bind(hub, "b", &b, &error));
+    uint8_t message[64000];
+    for (size_t i = 0; i < sizeof(message); ++i) message[i] = (uint8_t)i;
+    CHECK(qa_net_transport_send(a, qa_net_transport_address(b), (qa_bytes){message, sizeof(message)},
+        &error) == QA_NET_SEND_ACCEPTED);
+    uint8_t next = 42, blocked = 43;
+    CHECK(qa_net_transport_send(a, qa_net_transport_address(b), (qa_bytes){&next, 1},
+        &error) == QA_NET_SEND_ACCEPTED);
+    CHECK(!qa_net_transport_send_ready(a, qa_net_transport_address(b)));
+    CHECK(qa_net_transport_send(a, qa_net_transport_address(b), (qa_bytes){&blocked, 1},
+        &error) == QA_NET_SEND_FULL);
+    CHECK(error.code == QA_OK && qa_net_transport_full_count(a) == 1);
+    CHECK(qa_net_transport_ready(b));
+    qa_net_transport_event event;
+    CHECK(qa_net_transport_collect(b, 1, &event, &error));
+    CHECK(event.packet.kind == QA_NET_POLL_PACKET && event.packet.payload.size == sizeof(message));
+    CHECK(!memcmp(event.packet.payload.data, message, sizeof(message)));
+    CHECK(qa_net_transport_send(a, qa_net_transport_address(b), (qa_bytes){&blocked, 1},
+        &error) == QA_NET_SEND_ACCEPTED);
+    CHECK(qa_net_transport_collect(b, 2, &event, &error) && event.packet.kind == QA_NET_POLL_PACKET);
+    CHECK(event.packet.payload.size == 1 && event.packet.payload.data[0] == next);
+    CHECK(qa_net_transport_collect(b, 3, &event, &error) && event.packet.kind == QA_NET_POLL_PACKET);
+    CHECK(event.packet.payload.size == 1 && event.packet.payload.data[0] == blocked);
+    CHECK(qa_net_transport_collect(b, 4, &event, &error) && event.packet.kind == QA_NET_POLL_EMPTY);
+    qa_net_transport_close(a); qa_net_transport_close(b); qa_net_loopback_close(hub);
+}
+static void test_loopback_nq_signon(void)
+{
+    const qa_net_protocol protocols[] = {QA_NET_NQ15, QA_NET_FITZ666, QA_NET_RMQ999};
+    for (size_t p = 0; p < sizeof(protocols) / sizeof(protocols[0]); ++p) {
+        qa_error error = {0};
+        qa_net_protocol_id protocol = {.kind = protocols[p]};
+        qa_nq_options options = {.standard_quake = true};
+        const char *models[192], *sounds[192];
+        for (unsigned i = 0; i < 192; ++i) {
+            models[i] = "progs/long_model_precache_name_for_signon.mdl";
+            sounds[i] = "ambient/long_sound_precache_name_for_signon.wav";
+        }
+        uint8_t message[32768];
+        qa_net_writer writer;
+        qa_net_writer_init(&writer, message, sizeof(message), &error);
+        qa_nq_message info = {.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = protocol,
+            .max_clients = 1, .level = "start", .models = models, .model_count = 192,
+            .sounds = sounds, .sound_count = 192}};
+        CHECK(qa_nq_write(&writer, protocol, options, &info, NULL, 0));
+        qa_nq_message signon = {.op = QA_NQ_SIGNON, .data.value = 1};
+        CHECK(qa_nq_write(&writer, protocol, options, &signon, NULL, 0));
+        size_t size = qa_net_writer_size(&writer);
+        CHECK(size > 8000);
+        qa_net_loopback *hub;
+        qa_q1_peer server = {.kind = QA_Q1_PEER_NETQUAKE}, client = {.kind = QA_Q1_PEER_NETQUAKE};
+        CHECK(qa_net_loopback_create((qa_net_limits){64008, 1}, &hub, &error));
+        CHECK(qa_net_loopback_bind(hub, "server", &server.transport, &error));
+        CHECK(qa_net_loopback_bind(hub, "client", &client.transport, &error));
+        server.remote = *qa_net_transport_address(client.transport);
+        client.remote = *qa_net_transport_address(server.transport);
+        CHECK(qa_nq_channel_create(64000, 2048, &server.channel.nq, &error));
+        CHECK(qa_nq_channel_create(64000, 2048, &client.channel.nq, &error));
+        CHECK(qa_nq_channel_queue(server.channel.nq, (qa_bytes){message, size}, &error));
+        uint8_t occupied = 99, saved[2056];
+        CHECK(qa_net_transport_send(server.transport, &server.remote, (qa_bytes){&occupied, 1},
+            &error) == QA_NET_SEND_ACCEPTED);
+        bool present;
+        qa_bytes packet;
+        CHECK(qa_nq_channel_prepare(server.channel.nq, 1, &present, &packet, &error) && present);
+        memcpy(saved, packet.data, packet.size);
+        CHECK(!qa_q1_peer_send(&server, packet, 1, &error));
+        CHECK(qa_net_transport_full_count(server.transport) == 1 && error.code == QA_OK);
+        qa_net_transport_event event;
+        CHECK(qa_net_transport_collect(client.transport, 2, &event, &error));
+        CHECK(event.packet.payload.size == 1 && event.packet.payload.data[0] == occupied);
+        CHECK(qa_nq_channel_prepare(server.channel.nq, 2, &present, &packet, &error) && present);
+        CHECK(!memcmp(saved, packet.data, packet.size));
+        CHECK(qa_q1_peer_send(&server, packet, 2, &error));
+        CHECK(qa_net_transport_send(client.transport, &client.remote, (qa_bytes){&occupied, 1},
+            &error) == QA_NET_SEND_ACCEPTED);
+        unsigned deliveries = 0;
+        for (unsigned fragment = 0; !qa_nq_channel_ready(server.channel.nq); ++fragment) {
+            CHECK(fragment < 32);
+            CHECK(qa_net_transport_collect(client.transport, fragment + 3, &event, &error));
+            CHECK(event.packet.kind == QA_NET_POLL_PACKET);
+            qa_q1_delivery delivery;
+            CHECK(qa_q1_peer_receive(&client, &event.packet.from, event.packet.payload,
+                fragment + 3, &delivery, &error));
+            if (delivery.present) {
+                ++deliveries;
+                CHECK(delivery.payload.size == size && !memcmp(delivery.payload.data, message, size));
+                qa_nq_decoder *decoder;
+                CHECK(qa_nq_decoder_create(protocol, options, &decoder, &error));
+                qa_net_reader reader;
+                qa_net_reader_init(&reader, delivery.payload, &error);
+                qa_nq_message decoded;
+                CHECK(qa_nq_read(decoder, &reader, &decoded) && decoded.op == QA_NQ_SERVERINFO);
+                CHECK(decoded.data.serverinfo.model_count == 192 && decoded.data.serverinfo.sound_count == 192);
+                CHECK(qa_nq_read(decoder, &reader, &decoded) && decoded.op == QA_NQ_SIGNON && decoded.data.value == 1);
+                CHECK(qa_net_reader_finish(&reader));
+                qa_nq_decoder_destroy(decoder);
+            }
+            if (!fragment) {
+                CHECK(client.reply_send_failed && qa_net_transport_full_count(client.transport) == 1);
+                CHECK(qa_net_transport_collect(server.transport, 3, &event, &error));
+                CHECK(event.packet.payload.size == 1 && event.packet.payload.data[0] == occupied);
+                CHECK(qa_nq_channel_prepare(client.channel.nq, 3, &present, &packet, &error) && present);
+                CHECK(qa_q1_peer_send(&client, packet, 3, &error));
+            }
+            CHECK(qa_net_transport_collect(server.transport, fragment + 4, &event, &error));
+            CHECK(event.packet.kind == QA_NET_POLL_PACKET);
+            CHECK(qa_q1_peer_receive(&server, &event.packet.from, event.packet.payload,
+                fragment + 4, &delivery, &error));
+        }
+        CHECK(deliveries == 1);
+        qa_nq_channel_destroy(server.channel.nq); qa_nq_channel_destroy(client.channel.nq);
+        qa_net_transport_close(server.transport); qa_net_transport_close(client.transport);
+        qa_net_loopback_close(hub);
+    }
+}
+
 typedef struct kex_delivery {
     bool occupied, blocked;
     unsigned accepted;
@@ -878,6 +1003,8 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_platform_event_retirement();
+    test_loopback_admission();
+    test_loopback_nq_signon();
     test_kex_send_admission();
     test_nq_send_admission();
     test_q3_send_admission();

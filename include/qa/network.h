@@ -166,6 +166,7 @@ void qa_net_loopback_close(qa_net_loopback *);
 const qa_net_address *qa_net_transport_address(const qa_net_transport *);
 size_t qa_net_transport_limit(const qa_net_transport *);
 bool qa_net_transport_ready(const qa_net_transport *);
+uint64_t qa_net_transport_full_count(const qa_net_transport *);
 /* Single-caller capacity preflight, before destructive protocol encoding.
  * A full destination remains open for receive and maintenance. */
 bool qa_net_transport_send_ready(const qa_net_transport *, const qa_net_address *);

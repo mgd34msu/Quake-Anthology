@@ -361,3 +361,30 @@ pressure does not wait for every recipient before another source frame.
 No separate wholesale-clear bypass was found in current output retirement.
 Current normal/core checks pass; prior installed inventory proof belongs to
 THE-909's existing Linear record and was not rerun for this close-out.
+
+## Loopback admission: THE-2864
+
+One endpoint FIFO is implemented in `src/network/transport.c:658`, with all
+packet and byte storage allocated by `qa_net_loopback_bind` at load. Host
+routing forwards to that same endpoint. The overwrite-oldest branch and its
+synthetic dropped-packet record are deleted. Full leaves existing data intact,
+keeps receive open, and increments `qa_net_transport_full_count`.
+
+Connected send callers use `qa_net_send_result`. NQ, QW and Q2 check capacity
+before destructive command encoding. NQ fragments and ACKs stay in their channel
+until `qa_q1_peer_send` admits them (`src/network/q1/channels.c:83,96,242`).
+Q3 uses the same prepare/commit rule. Unified receipt flags and retransmission
+counters advance only after acceptance. The rerelease channel retains unsent
+fragments in its existing pending list (`src/network/q2/kex_channel.c:55,76`);
+reliable completion still requires a peer ACK. Its immediately accepted single
+transient packet keeps the direct, allocation-free emission path. Handshake
+preflight retains the input/request when a local reply cannot be admitted.
+No second loopback queue or raw-loopback overwrite bypass remains.
+
+The normal build and seven core suites pass. Existing core tests now verify a
+64 KB FIFO packet surviving Full and retry (`tests/core_test.c:729`), and native
+serverinfo plus signon over 8 KB delivered once through a one-packet loopback
+queue in NQ 15, Fitz 666 and RMQ 999, including a blocked ACK (`:762`). Q3 and
+rerelease fragment checks also exercise repeated preparation and blocked retry
+turns. This is native transport/channel proof; the application was not launched
+and no new `qfiles/qa-c` was installed for this slice.

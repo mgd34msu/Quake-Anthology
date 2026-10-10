@@ -111,6 +111,26 @@ static qa_net_send_result send_body(qa_kex_channel*c,uint8_t kind,qa_bytes paylo
         free(compressed);
         return QA_NET_SEND_FULL;
     }
+    /* A single transient packet needs no retained node when the transport
+     * accepts it immediately. Older unsent fragments keep their FIFO order. */
+    if(mode!=QA_KEX_RELIABLE&&!fragmented) {
+        struct pending *unsent=c->head;
+        while(unsent&&unsent->sent)unsent=unsent->next;
+        if(!unsent) {
+            uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
+            qa_net_writer writer;
+            qa_net_writer_init(&writer,bytes,sizeof(bytes),e);
+            qa_kex_packet packet={.flags=(uint8_t)mode,.sequence=(uint16_t)(c->sequence+(mode!=QA_KEX_UNSEQUENCED)),
+                .reliable=c->reliable,.kind=kind,.has_kind=true,.payload=data};
+            if(!qa_kex_packet_write(&writer,&packet)) { free(compressed); return QA_NET_SEND_FAILED; }
+            qa_net_send_result result=c->emit(c->user,(qa_bytes){bytes,qa_net_writer_size(&writer)},e);
+            if(result!=QA_NET_SEND_FULL) {
+                if(result==QA_NET_SEND_ACCEPTED)c->sequence=packet.sequence;
+                free(compressed);
+                return result;
+            }
+        }
+    }
     struct pending *staged_head=NULL,*staged_tail=NULL;
     uint16_t sequence=c->sequence,reliable=c->reliable;
     size_t at=0;

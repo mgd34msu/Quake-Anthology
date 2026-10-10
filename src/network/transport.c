@@ -19,6 +19,7 @@ struct qa_net_transport {
     qa_net_limits limits;
     qa_net_transport_ops ops;
     void *state;
+    uint64_t full_sends;
 };
 
 static bool fail(qa_error *error, qa_status status, const char *message)
@@ -312,6 +313,10 @@ bool qa_net_transport_ready(const qa_net_transport *transport)
 {
     return transport != NULL && (transport->ops.ready == NULL || transport->ops.ready(transport->state));
 }
+uint64_t qa_net_transport_full_count(const qa_net_transport *transport)
+{
+    return transport ? transport->full_sends : 0;
+}
 bool qa_net_transport_send_ready(const qa_net_transport *transport, const qa_net_address *to)
 {
     return !transport || !transport->ops.send_ready || transport->ops.send_ready(transport->state, to);
@@ -321,7 +326,9 @@ qa_net_send_result qa_net_transport_send(qa_net_transport *transport, const qa_n
     if (transport == NULL || !valid_address(to) || (payload.size != 0 && payload.data == NULL) ||
         payload.size > transport->limits.datagram_bytes || (to->kind != QA_NET_LOOPBACK && to->port == 0))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid datagram destination or payload");
-    return transport->ops.send(transport->state, to, payload, error);
+    qa_net_send_result result = transport->ops.send(transport->state, to, payload, error);
+    if (result == QA_NET_SEND_FULL && transport->full_sends != UINT64_MAX) ++transport->full_sends;
+    return result;
 }
 bool qa_net_transport_reliable_receipt(const qa_net_transport *transport,
     const qa_net_address *to, qa_network_reliable_receipt *out)
@@ -636,8 +643,7 @@ struct loop_endpoint {
     loop_packet *packets;
     size_t head, count;
     uint8_t *storage, *borrowed;
-    bool closed, dropped;
-    qa_net_address dropped_from;
+    bool closed;
 };
 
 static void loop_clear(loop_endpoint *endpoint)
@@ -647,7 +653,6 @@ static void loop_clear(loop_endpoint *endpoint)
     }
     endpoint->head = 0;
     endpoint->count = 0;
-    endpoint->dropped = false;
 }
 
 static qa_net_send_result loop_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
@@ -659,13 +664,7 @@ static qa_net_send_result loop_send(void *context, const qa_net_address *to, qa_
     while (peer != NULL && !qa_net_address_equal(&peer->address, to, true)) peer = peer->next;
     if (peer == NULL || peer->closed) return fail(error, QA_ERROR_NOT_FOUND, "Loopback peer is not bound");
     size_t capacity = endpoint->hub->limits.queue_packets;
-    if (peer->count == capacity) {
-        loop_packet *oldest = &peer->packets[peer->head];
-        peer->dropped_from = oldest->from;
-        peer->dropped = true;
-        peer->head = (peer->head + 1) % capacity;
-        --peer->count;
-    }
+    if (peer->count == capacity) return QA_NET_SEND_FULL;
     size_t tail = (peer->head + peer->count) % capacity;
     loop_packet *packet = &peer->packets[tail];
     if (bytes.size != 0) memmove(packet->bytes, bytes.data, bytes.size);
@@ -681,13 +680,6 @@ static bool loop_receive(void *context, uint64_t now_ns, qa_net_transport_event 
     loop_endpoint *endpoint = context;
     if (endpoint->closed || endpoint->hub->closed) return fail(error, QA_ERROR_IO, "Loopback endpoint is closed");
     *out = (qa_net_datagram){0};
-    if (endpoint->dropped) {
-        endpoint->dropped = false;
-        out->kind = QA_NET_POLL_DROPPED;
-        out->from = endpoint->dropped_from;
-        out->received_ns = now_ns;
-        return true;
-    }
     if (endpoint->count == 0) return true;
     loop_packet packet = endpoint->packets[endpoint->head];
     endpoint->packets[endpoint->head].size = 0;
