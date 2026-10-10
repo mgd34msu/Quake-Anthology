@@ -144,7 +144,40 @@ const qa_q3_item *qa_q3_find_item(qa_q3_product product, const char *classname, 
         }
     return NULL;
 }
+bool qa_q3_model_names_bind(qa_strings *strings, qa_q3_product product,
+    qa_q3_model_names *out, qa_error *error)
+{
+    qa_q3_model_names names = {.product = product};
+    size_t count;
+    const qa_q3_item *table = qa_q3_items(product, &count);
+    for (size_t i = 0; i < count; ++i) {
+        if (table[i].model && !qa_strings_intern_cstr(strings, table[i].model,
+            &names.items[i][0], error)) return false;
+        if (table[i].secondary_model && !qa_strings_intern_cstr(strings, table[i].secondary_model,
+            &names.items[i][1], error)) return false;
+        if (table[i].kind == QA_Q3_ITEM_WEAPON) {
+            qa_q3_weapon weapon = (qa_q3_weapon)table[i].tag;
+            const char *identity = qa_q3_weapon_identity_name(weapon);
+            char key[64];
+            snprintf(key, sizeof(key), "q3:weapon/%s", identity);
+            if (!qa_strings_intern_cstr(strings, key, &names.weapon_items[weapon], error)) return false;
+            names.weapons[weapon] = names.items[i][0];
+        }
+    }
+    if (!qa_strings_intern_cstr(strings, "models/powerups/teleporter/tele_exit.md3", &names.portals[0], error) ||
+        !qa_strings_intern_cstr(strings, "models/powerups/teleporter/tele_enter.md3", &names.portals[1], error)) return false;
+    *out = names;
+    return true;
+}
+qa_string_id qa_q3_model_names_weapon(const qa_q3_model_names *names, qa_q3_weapon weapon)
+{
+    return names->weapons[weapon];
+}
+const qa_q3_model_names *qa_q3_game_model_names(const qa_q3_game *game)
+{ return &game->model_names; }
 bool q3_item_register(qa_q3_game *game, qa_error *error) {
+    if (!qa_q3_model_names_bind(qa_session_strings(game->options.services.session),
+        game->options.product, &game->model_names, error)) return false;
     size_t count;
     qa_q3_items(game->options.product, &count);
     for (size_t i = 1; i < count; ++i) {

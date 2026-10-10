@@ -15,7 +15,8 @@ typedef struct qa_application_equipment_view {
     uint64_t gear_service_owner;
     qa_game_family family;
     qa_item_id item, ammo;
-    const char *label, *view_model;
+    const char *label;
+    qa_string_id view_model;
     const qa_resource *view_source;
     const qa_vfs *view_content;
     int32_t frame, skin;
@@ -60,8 +61,8 @@ bool qa_application_equipment_request_weapon(qa_application *, qa_actor_id,
     qa_actor_owner, qa_item_id, bool *accepted, qa_error *);
 /* Pure product qualification for an actual retained equipment registry during
  * capture/import. Reads its real constructed provider; no source call runs. */
-bool qa_application_equipment_q3_product_read(const qa_application *, qa_actor_owner,
-    qa_q3_product *, qa_error *);
+bool qa_application_equipment_q3_metadata_read(const qa_application *, qa_actor_owner,
+    const qa_q3_model_names **, qa_error *);
 /* Reads only completed registrations in the selected original GAME's matching
  * CG receiver role for this actual launch seat ID. The renderer retains its own current
  * recipient lease. Handles borrow the returned CG registry. Genuine absence

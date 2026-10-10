@@ -125,6 +125,7 @@ struct qa_q3_game {
     qa_string_id source_noclass, source_freed;
     qa_item_id weapon_items[QA_Q3_WEAPON_COUNT], ammo_items[QA_Q3_WEAPON_COUNT];
     qa_item_id item_ids[52];
+    qa_q3_model_names model_names;
     int32_t previous_ms, now_ms;
     uint64_t attack_sequence;
     qa_q3_ranking_hit ranking_hit;

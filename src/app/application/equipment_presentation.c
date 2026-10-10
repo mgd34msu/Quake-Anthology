@@ -23,8 +23,8 @@
 #include <stdio.h>
 #include <string.h>
 
-bool qa_application_equipment_q3_product_read(const qa_application *app,
-    qa_actor_owner owner, qa_q3_product *out, qa_error *error)
+bool qa_application_equipment_q3_metadata_read(const qa_application *app,
+    qa_actor_owner owner, const qa_q3_model_names **out, qa_error *error)
 {
     if (!app || !out || !owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment registry requires its actual Q3 product owner");
@@ -38,13 +38,13 @@ bool qa_application_equipment_q3_product_read(const qa_application *app,
         found->product->family != QA_GAME_Q3)
         return application_fail(error, QA_ERROR_FORMAT, "Equipment registry lost its actual constructed Q3 provider");
     if (found->kind == APPLICATION_PROVIDER_Q3) {
-        *out = !strcmp(found->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+        *out = qa_q3_game_model_names(found->state.q3);
         return true;
     }
     const struct application_q3_guest *engine = q3g_engine(found);
     if (!engine || !engine->game)
         return application_fail(error, QA_ERROR_FORMAT, "Equipment registry has no actual original Q3 GAME owner");
-    *out = engine->product; return true;
+    *out = &engine->model_names; return true;
 }
 
 static application_provider *qc_item_provider(qa_application *app,qa_actor_owner owner)
@@ -331,7 +331,7 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
         if(!isfinite(frame) || frame<INT32_MIN || frame>INT32_MAX)
             return application_fail(error,QA_ERROR_FORMAT,"Declared QC weapon frame exceeds its actual presentation extent");
         out->has_frame=true;out->frame=(int32_t)frame;
-        if(resource) { out->view_model=qa_strings_cstr(qa_session_strings(engine->services.session), resource->name);out->view_source=resource->source;out->visible=true; }
+        if(resource) { out->view_model=resource->name;out->view_source=resource->source;out->visible=true; }
         if(out->item) {
             qa_item_admission admission;bool found;
             if(!application_qc_items_item_read(provider,actor,out->item,&admission,
@@ -368,7 +368,7 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
         }
     if (!resource || !resource->source)
         return application_fail(error, QA_ERROR_NOT_FOUND, "QC weaponmodel has no actual retained MODEL precache");
-    out->view_model = qa_strings_cstr(qa_session_strings(engine->services.session), resource->name); out->view_source = resource->source; out->visible = true;
+    out->view_model = resource->name; out->view_source = resource->source; out->visible = true;
     return true;
 }
 
@@ -491,13 +491,13 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
             .primary = gear.primary, .gear_namespace = gear.source.gear_owner,
             .gear_service_owner = gear.source.service_owner, .family = QA_GAME_Q3,
             .item = gear.source.weapon_item, .label = "Grapple",
-            .view_model = gear.source.definition->presentation.view_model,
+            .view_model = gear.source.view_model,
             .q3_source = gear.gear.player, .has_q3_source = true,
             .q3_weapon = (qa_q3_weapon)gear.source.definition->presentation.weapon_index,
             .q3_time_ms = gear.gear.time_ms, .selected = true, .equipment_slot = true,
             .has_frame = true, .rate = 10,
             .has_weapon_status = true, .has_ammo_to_start = true};
-        if (!view.item || !view.view_model || !view.view_model[0])
+        if (!view.item || !view.view_model || !qa_strings_text(qa_session_strings(app->session), view.view_model).size)
             return application_fail(error, QA_ERROR_NOT_FOUND,
                 "Active gear slot has no actual admitted weapon identity or authored view model");
         if (!primary_visibility(app, actor, &view.visible, error)) return false;
@@ -524,9 +524,9 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         if (!qa_q1_player_read(provider->state.q1, actor, &state))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 equipment has no actual arsenal state");
         view.item = qa_q1_weapon_item(provider->state.q1, state.weapon);
-        view.view_model = qa_strings_cstr(qa_session_strings(app->session), state.weapon_model);
+        view.view_model = state.weapon_model;
         view.frame = state.weapon_frame; view.has_frame = true; view.kick_angles = state.punch_angles;
-        view.visible = !state.holstered && view.view_model && view.view_model[0];
+        view.visible = !state.holstered && qa_strings_text(qa_session_strings(app->session), view.view_model).size;
         view.has_start_requirement = true;
     } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state state;
@@ -534,7 +534,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(provider->state.q2, state.weapon);
         if (definition) {
             view.item = identity(app, definition->item);
-            view.view_model = state.view_model ? qa_strings_cstr(qa_session_strings(app->session), state.view_model) : definition->view_model;
+            view.view_model = qa_q2_weapon_view_model(provider->state.q2, &state);
             required = definition->quantity;
             low_threshold = definition->warning;
             view.has_start_requirement = true;
@@ -551,7 +551,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         bool rerelease = provider->product->edition == QA_EDITION_RERELEASE;
         view.kick_origin = qa_vec_scale(state.kick_origin, rerelease ? factor : impulse);
         view.kick_angles = qa_vec_scale(state.kick_angles, factor);
-        view.visible = state.handoff != QA_Q2_PRIMARY_HOLSTERED && view.view_model && view.view_model[0];
+        view.visible = state.handoff != QA_Q2_PRIMARY_HOLSTERED && qa_strings_text(qa_session_strings(app->session), view.view_model).size;
     } else if (provider->kind == APPLICATION_PROVIDER_QC) {
         if (!application_guest_weapon_read(provider, actor, &view.item, error)) return false;
         if (!qa_application_equipment_current(app, &view))
@@ -614,11 +614,9 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         if (!qa_q3_weapon_identity_name(view.q3_weapon) ||
             (q3_product == QA_Q3_ARENA && view.q3_weapon > QA_Q3_W_GRAPPLE) || !view.item)
             return application_fail(error, QA_ERROR_FORMAT, "Selected Q3 equipment leaves its actual admitted namespace");
-        size_t count = 0; const qa_q3_item *items = qa_q3_items(q3_product, &count);
-        for (size_t i = 0; i < count; ++i)
-            if (items[i].kind == QA_Q3_ITEM_WEAPON && items[i].tag == (int32_t)view.q3_weapon) {
-                view.view_model = items[i].model; break;
-            }
+        const qa_q3_model_names *names = provider->kind == APPLICATION_PROVIDER_Q3 ?
+            qa_q3_game_model_names(provider->state.q3) : &q3g_engine(provider)->model_names;
+        view.view_model = qa_q3_model_names_weapon(names, view.q3_weapon);
     }
     if (!view.original_qvm && !declared_source_catalog && !item_definition(app, &view, error)) return false;
     if (view.ammo) {

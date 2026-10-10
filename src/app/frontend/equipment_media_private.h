@@ -10,7 +10,8 @@ struct frontend_equipment_media {
     uint64_t gear_service_owner;
     qa_game_family family;
     qa_item_id item;
-    char *view_path, *saved_parent_path;
+    qa_string_id view_path;
+    qa_strings *strings;
     frontend_visual_owner_view owner;
     frontend_visual_model_view view, held_parent;
     frontend_held_declaration declaration;

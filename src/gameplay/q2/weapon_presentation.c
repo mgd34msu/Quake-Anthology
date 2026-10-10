@@ -207,6 +207,9 @@ void q2_recoil(q2_weapon_call *c, qa_vec3 *origin, qa_vec3 *angles) {
     *origin = qa_vec_scale(s->kick_origin, c->rerelease ? factor : impulse);
     *angles = qa_vec_scale(s->kick_angles, factor);
 }
+qa_string_id qa_q2_weapon_view_model(const qa_q2_game *game, const qa_q2_weapon_state *state)
+{ return state->view_model ? state->view_model : game->view_models[state->weapon]; }
+
 bool q2_present(q2_weapon_call *c, qa_error *e) {
     if (c->game->hooks.weapon_view == NULL || !q2_actor_live(c->game, c->actor->id))
         return true;
@@ -219,9 +222,7 @@ bool q2_present(q2_weapon_call *c, qa_error *e) {
                                       .rate = s->gun_rate,
                                       .player_model = d == NULL ? 0 : d->player_model,
                                       .model = s->handoff == QA_Q2_PRIMARY_HOLSTERED ? 0
-                                               : s->view_model != 0
-                                                   ? s->view_model
-                                                   : c->game->view_models[s->weapon]};
+                                               : qa_q2_weapon_view_model(c->game, s)};
     q2_recoil(c, &view.kick_origin, &view.kick_angles);
     return c->game->hooks.weapon_view(c->game->hooks.context, &view, e);
 }

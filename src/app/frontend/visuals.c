@@ -1137,7 +1137,8 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         return frontend_equipment_q3_local_view(frontend, seat, &weapon, world, frame, error);
     if (weapon.selected || weapon.provider != weapon.primary ||
         (weapon.family != QA_GAME_Q1 && weapon.family != QA_GAME_Q2) ||
-        !weapon.visible || !weapon.view_model || !weapon.view_model[0]) return true;
+        !weapon.visible || !qa_strings_text(qa_session_strings(
+            qa_application_session(frontend->application)), weapon.view_model).size) return true;
     qa_application_camera_view camera;
     if (!qa_application_control_camera(frontend->application, actor, &camera))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy view weapon lost its actual local camera");
@@ -1194,7 +1195,8 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     frontend_visual_model_view model;
     if (!frontend_visual_media_acquire(frontend, weapon.provider, weapon.family, &media, error) ||
         !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
-            weapon.view_model, weapon.view_source, &model, error)) return false;
+            qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),
+                weapon.view_model), weapon.view_source, &model, error)) return false;
     if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
     qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
     qa_model_transform placement; qa_model_transform_identity(&placement);

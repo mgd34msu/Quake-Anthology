@@ -14,9 +14,11 @@
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     const frontend_equipment_media *row)
 {
+    if (!frontend || !frontend->application || row->strings != qa_session_strings(
+        qa_application_session(frontend->application))) return false;
     if(row->source_slot) {
         application_q3_component_publication source;bool found=false;
-        if(!frontend||!frontend->application||row->gear_namespace||row->gear_service_owner||
+        if(row->gear_namespace||row->gear_service_owner||
             !application_q3_components_checkpoint_publication_read(frontend->application,row->provider,&source,&found,NULL)||
             !found||source.generation!=row->source_generation||!source.product||source.product->family!=row->family||
             !qa_vfs_lookup_equal(source.content,row->owner.mounts))return false;
@@ -32,26 +34,15 @@ bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     if (!row->gear_namespace) {
         if (row->gear_service_owner) return false;
         if (row->family != QA_GAME_Q3) return true;
-        qa_q3_product product;
-        if (!frontend || !frontend->application || !qa_application_equipment_q3_product_read(
-                frontend->application, row->provider, &product, NULL)) return false;
-        const char *item = qa_strings_cstr(qa_session_strings(
-            qa_application_session(frontend->application)), row->item);
-        size_t count = 0; const qa_q3_item *items = qa_q3_items(product, &count);
-        for (size_t i = 0; item && i < count; ++i) {
-            if (items[i].kind != QA_Q3_ITEM_WEAPON || !items[i].model ||
-                strcmp(items[i].model, row->view_path)) continue;
-            const char *name = qa_q3_weapon_identity_name((qa_q3_weapon)items[i].tag);
-            char key[64];
-            if (name) {
-                snprintf(key, sizeof(key), "q3:weapon/%s", name);
-                if (!strcmp(item, key)) return true;
-            }
-        }
+        const qa_q3_model_names *names;
+        if (!qa_application_equipment_q3_metadata_read(
+                frontend->application, row->provider, &names, NULL)) return false;
+        for (unsigned weapon = 1; weapon < QA_Q3_WEAPON_COUNT; ++weapon)
+            if (names->weapon_items[weapon] == row->item && names->weapons[weapon] == row->view_path) return true;
         return false;
     }
     qa_application_equipment_content content;
-    if (row->family != QA_GAME_Q3 || !frontend || !frontend->application ||
+    if (row->family != QA_GAME_Q3 ||
         !qa_application_equipment_content_read(frontend->application, row->gear_namespace, &content, NULL) ||
         content.selected_owner != row->provider || content.service_owner != row->gear_service_owner ||
         !qa_vfs_lookup_equal(content.files, row->owner.mounts)) return false;
@@ -59,8 +50,7 @@ bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,
     application_equipment_runtime_source source;
     return application_equipment_runtime_source_read(runtime, content.selected_owner, &source, NULL) &&
         source.gear_owner == row->gear_namespace && source.weapon_item == row->item && source.definition &&
-        source.definition->presentation.view_model &&
-        !strcmp(source.definition->presentation.view_model, row->view_path);
+        source.view_model && source.view_model == row->view_path;
 }
 
 static bool movie_current(void *context,const frontend_material_movie_source *source)
@@ -103,7 +93,7 @@ bool frontend_equipment_media_dispose(frontend_equipment_media *media,qa_error *
     qa_buffer_free(&media->source_held);
     qa_buffer_free(&media->source_icon);
     qa_resource_release(media->icon_source);
-    free(media->saved_parent_path); free(media->view_path); free(media);return true;
+    qa_strings_destroy(media->strings); free(media);return true;
 }
 
 bool frontend_equipment_idle(const qa_frontend *frontend)
@@ -175,12 +165,13 @@ void frontend_equipment_destroy(qa_frontend *frontend)
 static bool held_declaration(qa_frontend *frontend, const qa_application_equipment_view *view,
     frontend_equipment_media *row, qa_error *error)
 {
-    size_t length = strlen(view->view_model);
+    const char *model_path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->view_model);
+    size_t length = strlen(model_path);
     if (length > SIZE_MAX - sizeof(".held.json"))
         return frontend_fail(error, QA_ERROR_MEMORY, "Equipment declaration path exceeds address space");
     char *path = malloc(length + sizeof(".held.json"));
     if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment declaration path");
-    memcpy(path, view->view_model, length);
+    memcpy(path, model_path, length);
     memcpy(path + length, ".held.json", sizeof(".held.json"));
     bool found = false;
     uint64_t size;
@@ -193,7 +184,7 @@ static bool held_declaration(qa_frontend *frontend, const qa_application_equipme
     } else if (ok) {
         const char *item = view->item ?
             qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->item) : NULL;
-        ok = frontend_held_stock(view->family, view->view_model, item, &row->declaration, &found, error);
+        ok = frontend_held_stock(view->family, model_path, item, &row->declaration, &found, error);
         if (ok && !found)
             ok = frontend_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment has no authored held declaration");
     }
@@ -240,7 +231,7 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
 static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_view *view,
     frontend_held_declaration *authored, frontend_equipment_media **out, qa_error *error)
 {
-    if (!frontend || !view || !out || !view->selected || !view->view_model || !view->view_model[0] ||
+    if (!frontend || !view || !out || !view->selected || !view->view_model || !qa_strings_text(qa_session_strings(qa_application_session(frontend->application)), view->view_model).size ||
         (view->family == QA_GAME_Q3 && (!authored || !authored->source)) ||
         !qa_application_equipment_current(frontend->application, view) ||
         (frontend->equipment && frontend->equipment->admitting))
@@ -256,7 +247,7 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
     for (frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
         if (row->provider == view->provider && row->family == view->family && row->item == view->item &&
             row->gear_namespace == view->gear_namespace && row->gear_service_owner == view->gear_service_owner &&
-            !strcmp(row->view_path, view->view_model) && (view->family == QA_GAME_Q3 ||
+            row->strings == qa_session_strings(qa_application_session(frontend->application)) && row->view_path == view->view_model && (view->family == QA_GAME_Q3 ||
                 !view->view_source || row->view.resource == view->view_source)) {
             *out = row; return true;
         }
@@ -264,14 +255,14 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
     if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating physical selected equipment media row");
     row->provider = view->provider; row->family = view->family; row->item = view->item;
     row->gear_namespace = view->gear_namespace; row->gear_service_owner = view->gear_service_owner;
-    size_t length = strlen(view->view_model) + 1;
-    row->view_path = malloc(length);
-    if (!row->view_path) { (void)frontend_equipment_media_dispose(row,error); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
-    memcpy(row->view_path, view->view_model, length);
+    row->strings = qa_session_strings(qa_application_session(frontend->application));
+    qa_strings_retain(row->strings);
+    row->view_path = view->view_model;
     frontend->equipment->admitting = true;
     bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error);
     if (ok && view->family != QA_GAME_Q3)
-        ok = frontend_visual_model_acquire(frontend, view->provider, view->family, view->view_model,
+        ok = frontend_visual_model_acquire(frontend, view->provider, view->family,
+            qa_strings_cstr(row->strings, view->view_model),
             view->view_source, &row->view, error);
     if (ok) {
         qa_resource_retain((qa_resource *)row->view.resource);
@@ -324,6 +315,7 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
     if(!row)return frontend_fail(error,QA_ERROR_MEMORY,"Retaining declared component held model");
     row->source_slot=true;row->source_generation=view->source_generation;
     row->frontend=f;
+    row->strings=qa_session_strings(qa_application_session(f->application));qa_strings_retain(row->strings);
     row->provider=view->provider;row->family=view->family;row->item=view->item;
     f->equipment->admitting=true;
     bool ok=true;
@@ -337,12 +329,11 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         ok=row->source_icon.data!=NULL;
         if(ok){row->source_icon.size=view->source_icon.size;memcpy(row->source_icon.data,view->source_icon.data,view->source_icon.size);}
         else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source icon declaration");}
-    row->view_path=calloc(1,1);
     row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family==QA_GAME_Q1?QA_GAME_Q1:
         view->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3};
     if(ok)row->owner.mounts=qa_vfs_clone(view->view_content,error);
     if(ok)row->owner.images=row->owner.mounts?qa_scene_resources_create(row->owner.mounts,error):NULL;
-    if(ok)ok=row->view_path&&row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);
+    if(ok)ok=row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);
     if(ok)row->owner.materials=qa_material_library_create(row->owner.images,f->order,error);
     if(ok)ok=row->owner.materials!=NULL;
     if(ok)row->media=qa_media_library_create(row->owner.images,error);
@@ -366,10 +357,9 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         if(ok){row->source_model=calloc(1,sizeof(*row->source_model));
             if(!row->source_model)ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining component held model arrays");}
         if(ok)ok=qa_model_load(qa_resource_bytes(resource),row->source_model,error);
-        if(ok){size_t length=strlen(path)+1;row->saved_parent_path=malloc(length);
-            if(!row->saved_parent_path)ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component held path");
-            else memcpy(row->saved_parent_path,path,length);}
-        row->held_parent.path=row->saved_parent_path;row->held_parent.model=row->source_model;
+        qa_string_id name=QA_STRING_NONE;
+        if(ok)ok=qa_strings_intern_cstr(row->strings,path,&name,error);
+        row->held_parent.path=qa_strings_cstr(row->strings,name);row->held_parent.model=row->source_model;
         if(ok)ok=frontend_held_model_prepare(&row->declaration,path,resource,row->source_model,&row->held,error)&&
             qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,&row->held_scene,error)&&
             qa_scene_model_source_resource_bind(row->held_scene,resource,error);
@@ -692,7 +682,7 @@ bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
     bool *authored, qa_error *error)
 {
     if (!frontend || !view || !out || *out || !authored || view->family != QA_GAME_Q3 ||
-        !view->selected || !view->view_model || !view->view_model[0] ||
+        !view->selected || !view->view_model || !qa_strings_text(qa_session_strings(qa_application_session(frontend->application)), view->view_model).size ||
         !qa_application_equipment_current(frontend->application, view) ||
         (frontend->equipment && frontend->equipment->admitting))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 held admission requires its actual selected source and empty output");
@@ -705,7 +695,7 @@ bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
             row; row = row->next) {
         if (row->provider == view->provider && row->family == view->family && row->item == view->item &&
             row->gear_namespace == view->gear_namespace && row->gear_service_owner == view->gear_service_owner &&
-            !strcmp(row->view_path, view->view_model)) {
+            row->strings == qa_session_strings(qa_application_session(frontend->application)) && row->view_path == view->view_model) {
             if (!row->bound || !row->declaration.source)
                 return frontend_fail(error, QA_ERROR_FORMAT, "Q3 held media lost its retained authored declaration");
             *out = row; *authored = true; return true;
@@ -713,12 +703,13 @@ bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
     }
     frontend_visual_owner_view owner;
     if (!frontend_visual_media_acquire(frontend, view->provider, view->family, &owner, error)) return false;
-    size_t length = strlen(view->view_model);
+    const char *model_path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->view_model);
+    size_t length = strlen(model_path);
     if (length > SIZE_MAX - sizeof(".held.json"))
         return frontend_fail(error, QA_ERROR_MEMORY, "Q3 held declaration path exceeds address space");
     char *path = malloc(length + sizeof(".held.json"));
     if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q3 held declaration path");
-    memcpy(path, view->view_model, length);
+    memcpy(path, model_path, length);
     memcpy(path + length, ".held.json", sizeof(".held.json"));
     bool found = false;
     uint64_t size;
@@ -740,7 +731,7 @@ bool frontend_equipment_media_read(const frontend_equipment_media *row,
 {
     if (!row || !out) return false;
     *out = (frontend_equipment_media_view){row->provider, row->family, row->item,
-        row->view_path, row->owner, row->view, row->held_parent, &row->declaration,
+        row->view_path, row->strings, row->owner, row->view, row->held_parent, &row->declaration,
         &row->held, row->held_scene, row->gear_namespace, row->gear_service_owner,
         row->source_slot,row->source_generation,{row->source_held.data,row->source_held.size},
         {row->source_icon.data,row->source_icon.size},row->icon,row->media,row->movies};

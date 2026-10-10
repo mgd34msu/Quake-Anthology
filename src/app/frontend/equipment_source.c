@@ -498,7 +498,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
             } else if (owner->companion_selected) {
                 if (!current_owner(owner))
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected weapon capture lost its actual Source receipt");
-            } else if (owner->selection.view_model && owner->selection.view_model[0]) {
+            } else if (qa_strings_text(qa_session_strings(qa_application_session(owner->options.frontend->application)), owner->selection.view_model).size) {
                 if (owner->selection.equipment_slot) {
                     application_equipment_gear_presentation gear; bool selected;
                     if (!application_equipment_gear_presentation_read(owner->options.frontend->application,
@@ -649,7 +649,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
             parent_assets,owner->options.assets,parent,&packet->output,error)) {free(packet);return false;}
         packet->next=owner->active;owner->active=packet;*token=packet;*selected=true;return true;
     }
-    if (!source.selected || !source.view_model || !source.view_model[0]) return true;
+    if (!source.selected || !qa_strings_text(qa_session_strings(qa_application_session(owner->options.frontend->application)), source.view_model).size) return true;
     equipment_packet *packet = calloc(1, sizeof(*packet));
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held source invocation");
     bool okay;
@@ -772,7 +772,7 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
         frontend_equipment_media *media=NULL;
         return frontend_equipment_media_prepare_source_held(owner->options.frontend,&source,&media,authored,error);
     }
-    if (!source.selected || source.family != QA_GAME_Q3 || !source.view_model || !source.view_model[0]) return true;
+    if (!source.selected || source.family != QA_GAME_Q3 || !qa_strings_text(qa_session_strings(qa_application_session(owner->options.frontend->application)), source.view_model).size) return true;
     frontend_equipment_media *media = NULL;
     if (!frontend_equipment_media_prepare_q3_held(owner->options.frontend, &source,
             &media, authored, error)) return false;

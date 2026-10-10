@@ -12,7 +12,7 @@ typedef struct qa_application_native_q2_equipment_view {
     qa_item_id item;
     int32_t gun_index, frame, skin, rate;
     qa_vec3 gun_offset, gun_angles, view_kick_angles;
-    const char *view_model;
+    qa_string_id view_model;
     const qa_vfs *view_content;
     bool visible, has_skin, has_rate;
 } qa_application_native_q2_equipment_view;

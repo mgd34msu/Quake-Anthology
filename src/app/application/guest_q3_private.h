@@ -159,6 +159,7 @@ struct application_q3_guest {
     struct application_guest_q3_console *console;
     struct application_guest_q3_client_console *client_preparation;
     qa_q3_product product;
+    qa_q3_model_names model_names;
     qa_q3_gamestate gamestate;
     q3g_client clients[64];
     uint32_t seats[64];

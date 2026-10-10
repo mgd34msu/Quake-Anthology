@@ -208,7 +208,8 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     qa_unified_frame_visuals *out = frame->visuals;
     qa_application_equipment_view e;
     if (!qa_application_equipment_read(app, actor, &e, error)) return false;
-    if (!e.view_model || !e.view_model[0]) return true;
+    const char *model_name = qa_strings_cstr(qa_session_strings(app->session), e.view_model);
+    if (!model_name || !*model_name) return true;
     application_provider *provider = NULL;
     for (size_t i = 0; i < app->provider_count; ++i)
         if (app->providers[i]->owner == e.provider) provider = app->providers[i];
@@ -255,7 +256,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             !qa_world_body_read(source->world, actor, &body, error))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 weapon lost its actual command or motion owner");
         bool firing = (control.buttons & 1u) != 0 && combat.health > 0;
-        if (!model(frame, capacity, &v, e.view_model, product->identity, NULL, true, &e, equipment_source, error)) return false;
+        if (!model(frame, capacity, &v, model_name, product->identity, NULL, true, &e, equipment_source, error)) return false;
         qa_unified_model_state *row = out->models + out->model_count - 1;
         row->q3_weapon = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->q3_weapon), error);
         if (!row->q3_weapon) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 weapon presentation");
@@ -290,7 +291,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
         return true;
     }
 
-    return model(frame, capacity, &v, e.view_model, product->identity, NULL, true,&e,equipment_source,error);
+    return model(frame, capacity, &v, model_name, product->identity, NULL, true,&e,equipment_source,error);
 }
 
 bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,

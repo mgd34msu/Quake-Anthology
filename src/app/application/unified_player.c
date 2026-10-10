@@ -1043,8 +1043,11 @@ bool application_unified_player_values(qa_application *app, const application_un
     if (ok && app->equipment) {
         ok = qa_equipment_weapon_view_read(app->equipment, o.ui_actor, &o.gear, &o.has_gear, error) && current(&o, error);
     }
-    if (ok && o.arsenal->kind == APPLICATION_PROVIDER_Q3)
-        ok = qa_application_equipment_q3_product_read(app, o.arsenal->owner, &o.q3_product, error) && current(&o, error);
+    if (ok && o.arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        const qa_q3_model_names *names;
+        ok = qa_application_equipment_q3_metadata_read(app, o.arsenal->owner, &names, error) && current(&o, error);
+        if (ok) o.q3_product = names->product;
+    }
     bool gear = o.has_gear && o.gear.active;
     struct application_q3_guest *selected_q3 = o.arsenal->kind != APPLICATION_PROVIDER_Q3 ? q3g_engine(o.arsenal) : NULL;
     if (ok && selected_q3 && o.arsenal != o.primary) {

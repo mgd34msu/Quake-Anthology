@@ -13,7 +13,8 @@ typedef struct frontend_equipment_media_view {
     qa_actor_owner provider;
     qa_game_family family;
     qa_item_id item;
-    const char *view_path;
+    qa_string_id view_path;
+    const qa_strings *strings;
     frontend_visual_owner_view owner;
     frontend_visual_model_view view, held_parent;
     const frontend_held_declaration *declaration;

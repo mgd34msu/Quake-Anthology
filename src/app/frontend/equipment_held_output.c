@@ -58,7 +58,8 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
         retained.gear_service_owner != source->gear_service_owner ||
         retained.item != source->item || retained.source_slot!=source->source_slot ||
         (source->source_slot ? retained.source_generation!=source->source_generation :
-            (!source->view_model || strcmp(retained.view_path, source->view_model))))
+            (!source->view_model || retained.strings != qa_session_strings(qa_application_session(frontend->application)) ||
+                retained.view_path != source->view_model)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held replacement requires its actual selected media and source actor");
     if (parent->kind != QA_Q3_REF_MODEL || !qa_vec_finite(parent->origin) ||
         !qa_vec_finite(parent->lighting_origin) || !qa_vec_finite(parent->axis[0]) ||

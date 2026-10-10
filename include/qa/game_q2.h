@@ -327,6 +327,7 @@ bool qa_q2_weapon_definition_ordinal(const qa_q2_game *, qa_q2_weapon, size_t *)
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
 bool qa_q2_weapon_bind(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_error *);
 bool qa_q2_weapon_read(qa_q2_game *, qa_actor_id, qa_q2_weapon_state *, qa_error *);
+qa_string_id qa_q2_weapon_view_model(const qa_q2_game *, const qa_q2_weapon_state *);
 bool qa_q2_weapon_restore(qa_q2_game *, qa_actor_id, const qa_q2_weapon_state *, qa_error *);
 bool qa_q2_weapon_select(qa_q2_game *, qa_actor_id, qa_q2_weapon, bool allow_empty,
                          qa_q2_selection *, qa_error *);

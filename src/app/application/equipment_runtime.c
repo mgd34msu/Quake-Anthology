@@ -603,6 +603,9 @@ static bool create_gear(equipment_source *source, const saved_source *saved, qa_
         qa_item_id weapon_item = saved ? saved->weapon_item : 0;
         if (!saved) okay = qa_builtin_resource(&runtime->options.services,
             "q3:weapon/grapple", &weapon_item, error);
+        if (okay && source->view.definition->presentation.view_model)
+            okay = qa_strings_intern_cstr(qa_session_strings(runtime->options.services.session),
+                source->view.definition->presentation.view_model, &source->view.view_model, error);
         source->component = (qa_component){.owner = source->view.gear_owner,
             .clock = runtime->options.world_source->component.clock, .state = source, .prepare_frame = prepare_frame};
         application_q3_gear_options options = {.profile = profile,

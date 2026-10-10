@@ -219,6 +219,8 @@ bool application_guest_q3_create_empty(qa_application *application, application_
         engine->startup_restart = startup.restart;
     }
     engine->product = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    if (!qa_q3_model_names_bind(qa_session_strings(application->session), engine->product,
+        &engine->model_names, error)) { free(engine); return false; }
     qa_q3_gamestate_init(&engine->gamestate);
     for (size_t i = 0; i < 64; ++i) {
         qa_q3_reliable_init(&engine->clients[i].reliable);

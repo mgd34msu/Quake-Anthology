@@ -78,10 +78,10 @@ static bool content_prepare(qa_frontend *frontend, const application_equipment_g
     qa_application_equipment_content actual; const application_q3_grapple_definition *definition = NULL;
     bool okay = frontend_equipment_gear_source(frontend, source->source.source.gear_owner, &actual, &definition, error);
     if (okay && fresh) {
-        frontend_visual_owner_view content; qa_q3_product product;
+        frontend_visual_owner_view content; const qa_q3_model_names *names;
         okay = frontend_visual_media_acquire(frontend, actual.selected_owner, QA_GAME_Q3, &content, error) &&
-            qa_application_equipment_q3_product_read(frontend->application, actual.selected_owner, &product, error) &&
-            frontend_equipment_gear_content_create(frontend, &actual, definition, &content, product, &owner, error);
+            qa_application_equipment_q3_metadata_read(frontend->application, actual.selected_owner, &names, error) &&
+            frontend_equipment_gear_content_create(frontend, &actual, definition, &content, names->product, &owner, error);
     }
     if (okay && (owner->restoring || owner->admitting || definition != source->source.source.definition ||
         definition != owner->view.definition || !qa_application_equipment_content_current(frontend->application, &owner->view.source) ||
