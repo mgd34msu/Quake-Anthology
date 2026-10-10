@@ -238,6 +238,8 @@ bool q2_client_receive(q2_session *session, qa_bytes bytes, uint32_t acknowledge
     if (client->receive_held || client->batch.count || client->preparation_held)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver has an unconsumed Source preparation");
     q2_records records = {.received_ns = now};
+    records.lease=qa_unified_frame_lease_acquire(client->record_pool,error);
+    if (!records.lease) return false;
     if (!qa_q2_messages_read(client->messages, bytes, q2_record_retain, &records, error)) { q2_records_free(&records); return false; }
     session->codec = *qa_q2_messages_codec(client->messages);
     if (client->recording.append) {
@@ -466,5 +468,6 @@ bool q2_client_restart(q2_session *session, qa_error *error)
 void q2_client_clear(q2_client *client)
 {
     q2_records_free(&client->batch); q2_game_state_free(&client->preparing);
+    qa_unified_frame_pool_destroy(&client->record_pool);
     qa_q2_messages_destroy(client->messages); free(client->commands); free(client->drop_reason);
 }

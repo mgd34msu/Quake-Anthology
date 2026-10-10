@@ -15,13 +15,14 @@ typedef struct q2_game_state {
 typedef struct q2_owned_record {
     qa_buffer raw, text, values;
     qa_q2_wire_frame *frame;
-    bool frame_pooled;
+    bool frame_pooled, payload_pooled;
 } q2_owned_record;
 typedef struct q2_records {
     qa_q2_server_record *records;
     q2_owned_record *owned;
     size_t count, capacity, cursor;
     uint64_t received_ns;
+    qa_unified_frame_lease *lease;
 } q2_records;
 typedef struct q2_command_group {
     qa_q2_usercmd commands[QA_NETWORK_MAX_SEATS];
@@ -59,6 +60,7 @@ typedef struct q2_client {
     qa_q2_messages *messages;
     qa_q2_packet_sink recording;
     q2_records batch;
+    qa_unified_frame_pool *record_pool;
     q2_game_state preparing;
     qa_q2_serverdata server_data;
     qa_q2_usercmd oldest[QA_NETWORK_MAX_SEATS], previous[QA_NETWORK_MAX_SEATS];
@@ -93,7 +95,6 @@ typedef struct q2_session {
 
 bool q2_fail(qa_error *, qa_status, const char *);
 bool q2_session_storage_prepare(q2_session *,qa_error *);
-bool q2_buffer_copy(qa_bytes, qa_buffer *, qa_error *);
 void q2_game_state_free(q2_game_state *);
 bool q2_game_state_clone(const qa_q2_game_state *, q2_game_state *, qa_error *);
 void q2_records_free(q2_records *);

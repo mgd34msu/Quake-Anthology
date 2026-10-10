@@ -26,6 +26,7 @@
 #include "qa/network_q1_nq.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
+#include "../src/network/q2/session_internal.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -1499,6 +1500,32 @@ static void test_q3_send_admission(void)
     qa_q3_channel_destroy(receiver);
 }
 
+static void test_q2_retained_records(void)
+{
+    qa_error error={0};
+    qa_unified_frame_pool *pool=qa_unified_frame_pool_create(0,2,&error);
+    CHECK(pool);
+    for (size_t pass=0;pass<3;++pass) {
+        q2_records batch={.lease=qa_unified_frame_lease_acquire(pool,&error)};
+        CHECK(batch.lease);
+        uint8_t raw[]={1,2,3};char text[]="notice";
+        qa_q2_server_record record={.raw={raw,sizeof(raw)},
+            .event={.kind=QA_Q2_SVC_PRINT,.data.print.text=text}};
+        for (size_t i=0;i<65;++i) CHECK(q2_record_retain(&batch,&record,&error));
+        raw[0]=9;text[0]='x';
+        int16_t counts[]={3,7};
+        record=(qa_q2_server_record){.event={.kind=QA_Q2_SVC_INVENTORY,
+            .data.inventory={.counts=counts,.count=2}}};
+        CHECK(q2_record_retain(&batch,&record,&error));counts[0]=0;
+        if (pass==2) qa_unified_frame_pool_destroy(&pool);
+        for (size_t i=0;i<65;++i) {
+            CHECK(batch.records[i].raw.data[0]==1);
+            CHECK(!strcmp(batch.records[i].event.data.print.text,"notice"));
+        }
+        CHECK(batch.records[65].event.data.inventory.counts[0]==3);
+        q2_records_free(&batch);
+    }
+}
 static void test_q2_owned_frames(void)
 {
     const qa_net_protocol protocols[]={QA_NET_Q2_34,QA_NET_Q2REPRO_1038};
@@ -1566,6 +1593,7 @@ int main(int argc, char **argv)
     test_recovery_checkpoints();
     test_q1_original_codec();
     test_q2_owned_frames();
+    test_q2_retained_records();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);

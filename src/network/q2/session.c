@@ -223,6 +223,10 @@ const qa_network_peer_ops qa_network_q2_peer_ops = {
 
 bool q2_session_storage_prepare(q2_session *session,qa_error *error)
 {
+    if (!session->server) {
+        session->state.client.record_pool=qa_unified_frame_pool_create(0,2,error);
+        if (!session->state.client.record_pool) return false;
+    }
     if (!session->channel) return true;
     qa_q2_channel_status status;qa_q2_channel_get_status(session->channel,&status);
     size_t buffers=session->server?4:3;
