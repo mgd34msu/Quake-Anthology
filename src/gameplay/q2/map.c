@@ -47,6 +47,8 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     if (game->capacity)
         memset(game->actors, 0, game->capacity * sizeof(*game->actors));
     game->first_actor = game->last_actor = game->retired_actors = NULL;
+    qa_arena_reset(&game->entity_fields);
+    game->entity_fields.sealed = false;
     qa_pool_reset(&game->actor_records);
     game->actor_sequence = 0;
     q2_wire_reset(game);

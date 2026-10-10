@@ -11,7 +11,7 @@ void qa_q2_entity_checkpoint_free(qa_q2_entity_checkpoint *s) {
     free(s->value.trail);
     *s = (qa_q2_entity_checkpoint){0};
 }
-static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to,
+static bool copy_arrays(qa_q2_game *g, const qa_q2_entity_state *from, qa_q2_entity_state *to,
                         bool runtime, qa_error *e) {
     to->fields = NULL;
     to->mover = NULL;
@@ -19,7 +19,12 @@ static bool copy_arrays(const qa_q2_entity_state *from, qa_q2_entity_state *to,
     to->q64 = NULL;
     to->trail = NULL;
     void *copy;
-    if (!q2_saved_array(from->fields, from->field_count, sizeof(*from->fields), &copy, e))
+    if (runtime) {
+        size_t bytes = from->field_count * sizeof(*from->fields);
+        copy = bytes ? qa_arena_alloc(&g->entity_fields, bytes, _Alignof(q2_field), e) : NULL;
+        if (bytes && !copy) return false;
+        if (bytes) memcpy(copy, from->fields, bytes);
+    } else if (!q2_saved_array(from->fields, from->field_count, sizeof(*from->fields), &copy, e))
         return false;
     to->fields = copy;
     if (!q2_saved_array(from->mover, from->mover ? 1 : 0, sizeof(*from->mover), &copy, e))
@@ -61,7 +66,7 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
     }
     saved.present = true;
     saved.value = *s;
-    if (!copy_arrays(s, &saved.value, false, e))
+    if (!copy_arrays(g, s, &saved.value, false, e))
         goto fail;
     if (!q2_save_reference(g, s->activator, &saved.activator, e) ||
         !q2_save_reference(g, s->owner, &saved.owner, e) ||
@@ -196,7 +201,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     q2_entity_state *s = q2_entity_state_take(g, e);
     if (!s) return false;
     *s = saved->value;
-    if (!copy_arrays(&saved->value, s, true, e))
+    if (!copy_arrays(g, &saved->value, s, true, e))
         goto fail;
     if (!q2_resolve_reference(g, saved->activator, &s->activator, e) ||
         !q2_resolve_reference(g, saved->owner, &s->owner, e) ||

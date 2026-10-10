@@ -11,7 +11,7 @@ typedef struct dosbox_packet {
     qa_net_address from;
     uint64_t received_ns;
     size_t size;
-    uint8_t data[];
+    uint8_t data[DOSBOX_PAYLOAD_BYTES];
 } dosbox_packet;
 typedef struct dosbox_socket dosbox_socket;
 
@@ -31,7 +31,8 @@ struct dosbox_socket {
     uint8_t packet_type;
     size_t slot, head, count;
     bool dropped;
-    dosbox_packet *packets[DOSBOX_QUEUE], *borrowed;
+    dosbox_packet packets[DOSBOX_QUEUE];
+    uint8_t borrowed[DOSBOX_PAYLOAD_BYTES];
 };
 
 static bool dosbox_node_is(const qa_net_address *address, uint8_t byte) {
@@ -73,24 +74,17 @@ static void dosbox_accept(dosbox_socket *socket, const qa_net_ipx_packet *packet
         socket->dropped_from = packet->from;
         return;
     }
-    dosbox_packet *queued = malloc(sizeof(*queued) + packet->payload.size);
-    if (!queued) {
-        socket->dropped = true;
-        socket->dropped_from = packet->from;
-        return;
-    }
-    queued->from = packet->from;
-    queued->received_ns = now_ns;
-    queued->size = packet->payload.size;
-    if (queued->size) memcpy(queued->data, packet->payload.data, queued->size);
     if (socket->count == DOSBOX_QUEUE) {
-        socket->dropped_from = socket->packets[socket->head]->from;
-        free(socket->packets[socket->head]);
+        socket->dropped_from = socket->packets[socket->head].from;
         socket->head = (socket->head + 1) % DOSBOX_QUEUE;
         --socket->count;
         socket->dropped = true;
     }
-    socket->packets[(socket->head + socket->count) % DOSBOX_QUEUE] = queued;
+    dosbox_packet *queued = &socket->packets[(socket->head + socket->count) % DOSBOX_QUEUE];
+    queued->from = packet->from;
+    queued->received_ns = now_ns;
+    queued->size = packet->payload.size;
+    if (queued->size) memcpy(queued->data, packet->payload.data, queued->size);
     ++socket->count;
 }
 
@@ -229,8 +223,6 @@ static qa_net_send_result dosbox_send(void *opaque, const qa_net_address *to, qa
 }
 
 static bool dosbox_take(dosbox_socket *socket, uint64_t now_ns, qa_net_datagram *out) {
-    free(socket->borrowed);
-    socket->borrowed = NULL;
     *out = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY};
     if (socket->dropped) {
         socket->dropped = false;
@@ -240,12 +232,12 @@ static bool dosbox_take(dosbox_socket *socket, uint64_t now_ns, qa_net_datagram 
         return true;
     }
     if (!socket->count) return false;
-    dosbox_packet *packet = socket->packets[socket->head];
+    dosbox_packet *packet = &socket->packets[socket->head];
     socket->head = (socket->head + 1) % DOSBOX_QUEUE;
     --socket->count;
-    socket->borrowed = packet;
+    if (packet->size) memcpy(socket->borrowed, packet->data, packet->size);
     *out = (qa_net_datagram){QA_NET_POLL_PACKET, packet->from,
-                           {packet->data, packet->size}, packet->received_ns};
+                           {socket->borrowed, packet->size}, packet->received_ns};
     return true;
 }
 
@@ -288,9 +280,6 @@ static void dosbox_close_socket(void *opaque) {
     qa_net_dosbox *network = socket->network;
     network->sockets[socket->slot] = NULL;
     --network->socket_count;
-    for (size_t i = 0; i < socket->count; ++i)
-        free(socket->packets[(socket->head + i) % DOSBOX_QUEUE]);
-    free(socket->borrowed);
     free(socket);
     dosbox_release(network);
 }

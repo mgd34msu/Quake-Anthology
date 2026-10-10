@@ -33,7 +33,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     q2_entity_state *s = q2_entity_state_take(g, e);
     if (!s) return false;
     if (fields->count) {
-        s->fields = calloc(fields->count, sizeof(*s->fields));
+        s->fields = qa_arena_alloc(&g->entity_fields,
+            fields->count * sizeof(*s->fields), _Alignof(q2_field), e);
         if (!s->fields) {
             q2_entity_state_release(g, s);
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q2 authored fields");

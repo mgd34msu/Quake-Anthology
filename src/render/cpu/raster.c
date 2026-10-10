@@ -229,7 +229,9 @@ qa_render_workers *qa_render_workers_create(qa_error *error) {
   pool->count = qa_jobs_count(pool->jobs) - 1;
   pool->slice_capacity = (size_t)qa_jobs_count(pool->jobs) * 4;
   pool->slices = calloc(pool->slice_capacity, sizeof(*pool->slices));
-  if (!pool->slices) {
+  pool->triangle_capacity = 8192;
+  pool->triangles = malloc(pool->triangle_capacity * sizeof(*pool->triangles));
+  if (!pool->slices || !pool->triangles) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating retained raster slices");
     qa_render_workers_release(pool);
     return NULL;
@@ -821,14 +823,10 @@ static void triangle(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   }
   struct qa_render_workers *pool = output->pool;
   if (pool->triangle_count == pool->triangle_capacity) {
-    size_t maximum = SIZE_MAX / sizeof(cpu_triangle);
-    if (pool->triangle_capacity == maximum) { output->failed = true; return; }
-    size_t capacity = pool->triangle_capacity ? pool->triangle_capacity : 16;
-    capacity = capacity > maximum / 2 ? maximum : capacity * 2;
-    cpu_triangle *triangles = realloc(pool->triangles, capacity * sizeof(*triangles));
-    if (!triangles) { output->failed = true; return; }
-    pool->triangles = triangles;
-    pool->triangle_capacity = capacity;
+    /* Flush the queued batch and draw this mesh through the same rasterizer
+     * directly when it exceeds the retained triangle storage. */
+    output->failed = true;
+    return;
   }
   size_t first = pool->triangle_count++;
   pool->triangles[first] = prepared;

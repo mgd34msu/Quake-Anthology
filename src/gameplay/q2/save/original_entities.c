@@ -251,7 +251,8 @@ static bool entity_strings(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
             if (s->fields[j].key == key) break;
         if (j == s->field_count) {
             if (!value) continue;
-            q2_field *fields = realloc(s->fields, (j + 1) * sizeof(*fields));
+            q2_field *fields = qa_arena_grow(&g->entity_fields, s->fields,
+                j * sizeof(*fields), (j + 1) * sizeof(*fields), _Alignof(q2_field), io->error);
             if (!fields) {
                 qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 target fields");
                 return false;

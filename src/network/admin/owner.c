@@ -461,11 +461,20 @@ bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,q
         if (length>65536-size) return fail(error,"Q3 master names exceed their retained extent");
         size+=length;
     }
+    if (admin->master_names.size==size) {
+        size_t at=0;
+        bool unchanged=true;
+        for (size_t i=0;i<5;++i) {
+            size_t length=strlen(values[i])+1;
+            if (memcmp(admin->master_names.data+at,values[i],length)) { unchanged=false; break; }
+            at+=length;
+        }
+        if (unchanged) return true;
+    }
     uint8_t *names=malloc(size);
     if (!names) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining actual Q3 master names"); return false; }
     size_t at=0;
     for (size_t i=0;i<5;++i) { size_t length=strlen(values[i])+1; memcpy(names+at,values[i],length); at+=length; }
-    if (admin->master_names.size==size && !memcmp(admin->master_names.data,names,size)) { free(names); return true; }
     qa_net_address addresses[5]; size_t count=0; at=0;
     for (size_t i=0;i<5;++i) {
         const char *name=(const char *)names+at; at+=strlen(name)+1; if (!*name) continue;

@@ -199,6 +199,7 @@ struct qa_q2_game {
     qa_arena actor_storage;
     qa_pool actor_records;
     qa_arena entity_storage;
+    qa_arena entity_fields;
     qa_pool entity_records;
     q2_actor *first_actor, *last_actor;
     size_t capacity;

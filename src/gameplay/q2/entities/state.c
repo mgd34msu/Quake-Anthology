@@ -65,7 +65,6 @@ q2_player_trail_node *q2_entity_trail_prepare(q2_entity_state *s) {
     return s->trail;
 }
 void q2_entity_state_release(qa_q2_game *g, q2_entity_state *s) {
-    free(s->fields);
     free(s->mover);
     free(s->turret);
     free(s->q64);
@@ -80,6 +79,7 @@ void q2_entities_close(qa_q2_game *g) {
     free(g->entity_runtime);
     g->entity_runtime = NULL;
     qa_arena_destroy(&g->entity_storage);
+    qa_arena_destroy(&g->entity_fields);
 }
 void q2_entity_release_state(q2_actor *a) {
     if (!a->entity)

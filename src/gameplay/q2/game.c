@@ -174,6 +174,7 @@ static void released(void *context, qa_session *session, qa_actor_record record)
 static bool prepare_frame(void *context, qa_session *session, const qa_source_frame *frame,
                           qa_error *e) {
     qa_q2_game *g = context;
+    qa_arena_seal(&g->entity_fields);
     if (session != g->services.session || g->current_actor.registry ||
         frame->kind != qa_q2_component(g).clock.kind) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 command preparation lost its real Source clock");

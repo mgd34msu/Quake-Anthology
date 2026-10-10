@@ -76,61 +76,40 @@ it is not a trace-timing result or closure of the remaining cvar callers.
 
 ## Whole-frame allocation: THE-2874 / THE-873 / THE-882
 
-One arena (`src/core/arena.c`) and fixed pool (`src/core/pool.c`) supply reserved
-storage; sealed overflow returns failure and records exhaustion. Actor pages,
-spatial snapshots, visibility scratch and several scene/native workspaces are
-load-sized. These component migrations do not establish a zero-allocation frame.
+The common arena is `src/core/arena.c`; the fixed pool is `src/core/pool.c`.
+Sealed storage never falls back to the heap and records capacity exhaustion.
+Actor pages, spatial snapshots, visibility scratch, frame leases and retained
+scene/native workspaces use storage prepared at load.
 
-The current diagnostic observes engine/static-object allocation calls across
-threads inside `qa_frontend_step`. DSO/libc internals, other allocation APIs,
-outer save drain, pacing and shutdown are excluded. Broaden the observation to
-the complete gameplay frame before closing the whole-frame requirement.
+The 2026-10-10 THE-2874 census used the existing link-time allocation gate and
+600-frame listen servers bound to localhost, with copied owner settings,
+private X displays and dummy audio. Each case had 120 warm-up and 480 measured
+playing frames. Changes were limited to reported callers and the named DOSBox
+receive allocation.
 
-Attachment release now uses one load-sized ticket per actor slot in the existing
-world snapshot arena. The generic heap child array and sorting call are deleted;
-nested releases and slot reuse preserve captured order. Actual-source comparisons
-record 4,239 allocation/free pairs becoming zero. This is release-path proof,
-not whole-frame proof. The SDK attachment-transport operation now borrows a fixed common-pool slot
-reserved at world load in the existing snapshot arena. Its visit arrays and
-captured chain use actor capacity; nested traversal uses the same configured
-depth as spatial snapshots. Runtime allocation and the three heap cleanup
-paths are deleted. Exhaustion counts through the common pool. The operation
-has no current engine caller; this removes the SDK bypass without claiming a
-whole-frame allocation result.
-
-A temporary call-site census of the `73c9ffbe` diagnostic artifact completed
-800-frame private copied-profile runs in all five editions, with 678 measured
-steps each. All exited normally, with no null request, size overflow or reserved
-capacity exhaustion. Every edition still fails the allocation target.
-
-| Actual remaining caller | Required migration |
+| Reported caller | Adopted storage or read path |
 | --- | --- |
-| Unified frame and delivery custody | `611cfc59` / `03b0f8de` reserve shared pages and lease slots at construction; `96ff5164` decodes held typed control/input/metadata into those leases. The production holding path has no heap fallback. Standalone/cold document owners still use heap storage; remaining gameplay producers and metadata merges need migration. |
-| Unified render preparation | Three load-sized render leases hold derived model records. The render object retains the received document and borrows its paths, provider names, HUD labels and area bits. Per-frame heap records, string clones and area copies are deleted. |
-| `src/app/frontend/remote_unified_q2.c:194,206` | Retain immutable changed configuration and reuse player records, preserving original status layouts. |
-| Q3 retained history | `src/app/frontend/unified_q3_client.c:192` already owns load-sized snapshot, reliable-command and gamestate pools. Candidate histories share references and acquire replacement slots; no history heap fallback remains. |
-| `src/render/scene/models/images.c:8`, `src/render/material/library.c:204` | Keep admitted image/material handles through model submission rather than creating copied names. |
+| `src/render/cpu/raster.c:220,811` | Worker creation reserves an 8,192-triangle batch. The triangle append no longer reallocates. Overflow uses the existing flush/direct raster path and preserves drawing. |
+| `src/gameplay/q2/entities/state.c:67` | Authored fields belong to the common map arena. Spawn, checkpoint restore and original-save import use that ownership. Map entry resets it and source preparation seals it; entity-slot reuse no longer frees an individual field array. |
+| `src/network/admin/owner.c:450` | Master refresh compares current names with retained names before copying. Unchanged frames allocate and free nothing. |
+| `src/network/dosbox.c:71,225` | Socket creation owns 256 fixed packet slots and a borrowed receive buffer. Delivery, queue overflow and receive no longer allocate or free packets. |
 
-The census is diagnostic attribution, not a timing comparison. These migrations remain open until every gameplay caller is adopted. Current
-verification follows the owner normal-build/core-test rule; the earlier census
-is not a current whole-frame allocation result.
+| Listen-server case | Initial post-warm-up calls | Final post-warm-up calls |
+| --- | --- | --- |
+| Q1 classic e1m1 | Zero | Zero |
+| Q2 classic base1 | One realloc and one free | Zero |
+| Q3 q3dm1 | 480 malloc/free pairs | Zero |
 
-The selected-equipment caller now uses the existing inventory lookup. Actual
-inventory component comparisons preserve active/inactive group selection,
-mixed-source overlap, missing items, labels, ammunition and weapon status.
-Across 600 unchanged publications, its 600 catalog allocations and frees
-become zero. GCC/Clang plain and sanitizer pairs, all three engine builds and
-seven core checks per build pass. This removes one attributed caller; the
-whole-frame requirement remains open.
+Every final frame reports zero malloc, calloc, realloc, frees, requested bytes,
+null results, size overflow and capacity exhaustion. All three runs quit with
+exit 0; owner profile bytes remained unchanged and owned processes exited.
+The normal production build and seven existing core suites pass.
 
-Native Q3 SystemInfo now retains its reliable configstring revision. Unchanged
-frames do no text copying, parsing or cvar writes. Existing video reset and
-retained-round admission invalidate it; restored services begin invalid without
-adding a save field. Component comparisons cover changed revisions, manual
-timescale edits, retry after failure and the actual service save codec. Over
-600 unchanged frames, 1,200 allocation/free pairs and 1,200 cvar writes become
-zero. Three engine builds and seven core checks per build pass. A changed
-revision still copies its text; other frame allocation callers remain open.
+The observation covers engine/static calls across threads inside
+`qa_frontend_step`. DSO/libc internals, other allocation APIs, outer save drain,
+pacing and shutdown are excluded. These three native cases do not establish
+zero allocation for other editions, combined configurations or guest modules.
+No timing comparison or new installation was performed.
 
 ## Jobs: THE-2871
 
