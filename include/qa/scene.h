@@ -508,6 +508,13 @@ typedef struct qa_scene_vertex_inputs {
 typedef struct qa_scene_brush_surface {
     bool present;
     uint32_t polygon_vertices;
+    const uint32_t *polygon_indices;
+    uint64_t identity;
+    const struct qa_scene_brush_surface *parts;
+    size_t part_count;
+    /* Authored meshes retain normalized UVs until the stage binds an image. */
+    bool normalized_texture;
+    float texture_maxs[2];
     qa_scene_plane plane;
     float texel_projection[2][4];
     float texture_mins[2];

@@ -42,7 +42,7 @@ static void brush_geometry(qaw_surface *surface, const qa_bsp_texinfo *info,
     if (legacy->warp || legacy->flowing || legacy->fence || surface->sky || count > UINT32_MAX) return;
     qa_scene_brush_surface brush = {.polygon_vertices = (uint32_t)count,
         .plane = surface->plane, .texture_size = {texture->width, texture->height},
-        .light_revision = legacy->brush.light_revision,
+        .light_revision = surface->brush.draw.light_revision,
         .lightmap_rect = {(int32_t)legacy->atlas_x, (int32_t)legacy->atlas_y, legacy->width, legacy->height}};
     double scale = texture->quake64_shift > 0 ? 2.0 * texture->quake64_shift : 1;
     for (size_t axis = 0; axis < 2; ++axis) {
@@ -87,7 +87,7 @@ static void brush_geometry(qaw_surface *surface, const qa_bsp_texinfo *info,
             }
         }
     }
-    legacy->brush = brush;
+    surface->brush.draw = brush;
 }
 
 static bool append_polygon(polygon_mesh *mesh, const qa_vec3 *points, size_t count, qa_error *error)

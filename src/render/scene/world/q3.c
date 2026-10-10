@@ -321,7 +321,13 @@ bool qaw_build_q3(qa_scene_world *world, qa_error *error) {
     bool ok = true;
     for (size_t i = 0; i < world->surface_count && ok; ++i) ok = load_surface(world, data, &materials, i, error);
     qa_bsp_materials_free(&materials);
-    return ok && qaw_patch_prepare(world, error);
+    if (!ok || !qaw_patch_prepare(world, error)) return false;
+    for (size_t i = 0; i < world->surface_count; ++i) {
+        qaw_surface *surface = world->surfaces + i;
+        if (!surface->skip && !surface->flare && !surface->sky &&
+            !qaw_brush_prepare(&surface->mesh, surface->lightmap, &surface->brush, error)) return false;
+    }
+    return true;
 }
 
 void qaw_destroy_q3(qa_scene_world *world) {
@@ -562,6 +568,7 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
     qa_scene_mesh mesh = surface->mesh;
     if (empty_source) mesh = (qa_scene_mesh){.primitive = QA_SCENE_TRIANGLES};
     if (surface->patch && !empty_source && !qaw_patch_lod(surface, &local, input->curve_error, frame, &mesh, error)) return false;
+    if (mesh.identity == surface->mesh.identity) local.brush = &surface->brush.draw;
     const qa_material *material = surface->material;
     if (material->remapped) material = material->remapped;
     if (local.source_scratch) {

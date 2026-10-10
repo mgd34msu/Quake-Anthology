@@ -739,6 +739,7 @@ void qa_scene_world_destroy(qa_scene_world *world)
     if (world->bsp.family == QA_BSP_Q3) qaw_destroy_q3(world);
     else qaw_destroy_legacy(world);
     for (size_t i = 0; i < world->surface_count && world->surfaces != NULL; ++i) {
+        qaw_brush_destroy(&world->surfaces[i].brush);
         if (world->surfaces[i].mesh.geometry != NULL)
             qa_scene_geometry_release(world->surfaces[i].mesh.geometry);
         else {

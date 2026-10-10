@@ -20,6 +20,10 @@ typedef struct cpu_surface_stamp {
   qa_scene_texture_environment environment;
   qa_scene_lighting_kind lighting;
   uint8_t texture_count;
+  float projection[2][3];
+  float mins[2];
+  uint32_t extents[2], texture_size[2];
+  qa_scene_rect lightmap_rect;
 } cpu_surface_stamp;
 
 typedef struct cpu_surface_slot cpu_surface_slot;
@@ -166,7 +170,7 @@ static void entry_clear(struct cpu_surface_cache *cache,
 }
 
 static cpu_surface_entry *entry_admit(struct cpu_surface_cache *cache,
-    const qa_scene_mesh *mesh, qa_error *error) {
+    const qa_scene_mesh *mesh, uint64_t identity, qa_error *error) {
   cpu_surface_entry *entry = cache->last;
   if (entry && !qa_scene_geometry_active(entry->geometry) &&
       !entry_pinned(cache, entry)) {
@@ -190,7 +194,7 @@ static cpu_surface_entry *entry_admit(struct cpu_surface_cache *cache,
     entry_clear(cache, entry);
   }
   entry->geometry = mesh->geometry;
-  entry->identity = mesh->identity;
+  entry->identity = identity;
   entry->revision = mesh->revision;
   qa_scene_geometry_cache_retain(entry->geometry);
   render_resource_put(&cache->index, entry->identity, entry->revision,
@@ -222,6 +226,13 @@ static cpu_surface_stamp surface_stamp(const qa_scene_draw *draw,
     stamp.light_alpha = light->alpha;
     stamp.light_linear = light->magnification_linear;
   }
+  for (unsigned axis = 0; axis < 2; ++axis) {
+    memcpy(stamp.projection[axis], draw->brush.lightmap_from_texel[axis], sizeof(stamp.projection[axis]));
+    stamp.mins[axis] = draw->brush.texture_mins[axis];
+    stamp.extents[axis] = draw->brush.texture_extents[axis];
+    stamp.texture_size[axis] = draw->brush.texture_size[axis];
+  }
+  stamp.lightmap_rect = draw->brush.lightmap_rect;
   return stamp;
 }
 
@@ -237,6 +248,12 @@ static bool stamp_equal(const cpu_surface_stamp *a,
          a->light_linear == b->light_linear &&
          a->color.x == b->color.x && a->color.y == b->color.y &&
          a->color.z == b->color.z && a->color.w == b->color.w &&
+         !memcmp(a->projection, b->projection, sizeof(a->projection)) &&
+         !memcmp(a->mins, b->mins, sizeof(a->mins)) &&
+         !memcmp(a->extents, b->extents, sizeof(a->extents)) &&
+         !memcmp(a->texture_size, b->texture_size, sizeof(a->texture_size)) &&
+         a->lightmap_rect.x == b->lightmap_rect.x && a->lightmap_rect.y == b->lightmap_rect.y &&
+         a->lightmap_rect.width == b->lightmap_rect.width && a->lightmap_rect.height == b->lightmap_rect.height &&
          a->environment == b->environment && a->lighting == b->lighting &&
          a->texture_count == b->texture_count;
 }
@@ -392,9 +409,10 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
     if (!cache->batch) ++cache->batch;
     cache->active = true;
   }
+  uint64_t identity = draw->brush.identity ? draw->brush.identity : draw->mesh.identity;
   cpu_surface_entry *entry = render_resource_get(&cache->index,
-      draw->mesh.identity, draw->mesh.revision, draw->mesh.geometry);
-  if (!entry) entry = entry_admit(cache, &draw->mesh, error);
+      identity, draw->mesh.revision, draw->mesh.geometry);
+  if (!entry) entry = entry_admit(cache, &draw->mesh, identity, error);
   if (!entry) return false;
   entry_touch(cache, entry);
   cpu_surface_slot *slot = entry->mips + mip;
@@ -403,6 +421,7 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
     ++cache->hits;
   } else {
     if (slot->block && block_pinned(cache, slot->block)) return false;
+    if (slot->block && slot->block->bytes < (size_t)width * height * 4) block_clear(cache, slot->block);
     if (!slot->block)
       slot->block = block_allocate(cache, (size_t)width * height * 4);
     if (!slot->block) return false;

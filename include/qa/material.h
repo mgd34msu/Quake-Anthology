@@ -114,6 +114,7 @@ typedef struct qa_material_context {
     double seconds;
     int64_t milliseconds;
     const qa_scene_image *lightmap;
+    const qa_scene_brush_surface *brush;
     qa_scene_fog fog;
     /* Q3 brush fog uses camera depth and an optional inward boundary plane.
      * A zero scale disables this volume path. Global scene fog is independent. */

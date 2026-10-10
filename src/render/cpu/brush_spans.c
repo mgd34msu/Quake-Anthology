@@ -143,7 +143,7 @@ static bool clip_brush(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                   sizeof(*context->clip[i]), error)) return false;
   const float *mvp = draw->mvp.m, *model = draw->model.m;
   for (size_t i = 0; i < count; ++i) {
-    qa_vec3 point = draw->mesh.vertices[i].position;
+    qa_vec3 point = draw->mesh.vertices[draw->brush.polygon_indices ? draw->brush.polygon_indices[i] : i].position;
     if (!qa_vec_finite(point)) {
       qa_error_set(error, QA_ERROR_ARGUMENT, i, "Nonfinite CPU brush vertex");
       return false;
@@ -223,7 +223,7 @@ static bool span_fog_supported(const qa_scene_fog *fog) {
 static bool ordinary_brush(const qa_cpu_renderer *renderer, const qa_scene_draw *draw) {
   const qa_scene_state *state = &draw->state;
   return draw->brush.present && draw->brush.polygon_vertices >= 3 &&
-      draw->brush.polygon_vertices == draw->mesh.vertex_count &&
+      (draw->brush.polygon_indices || draw->brush.polygon_vertices == draw->mesh.vertex_count) &&
       draw->mesh.primitive == QA_SCENE_TRIANGLES && draw->single_coverage &&
       draw->mesh.identity && draw->mesh.geometry && !draw->source_arrays &&
       !draw->source_primitives && !draw->source_direct && !draw->source_stage_state &&
@@ -309,6 +309,25 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
 bool cpu_brush_draw_queued(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                            qa_error *error, bool *handled) {
   *handled = false;
+  qa_scene_draw bound;
+  if (draw->brush.normalized_texture && draw->textures[0] && draw->textures[0]->level_count) {
+    bound = *draw;
+    uint32_t size[2] = {draw->textures[0]->levels[0].width, draw->textures[0]->levels[0].height};
+    for (unsigned axis = 0; axis < 2; ++axis) {
+      if (!size[axis]) return true;
+      double first = floor((double)draw->brush.texture_mins[axis] * size[axis] / 16) * 16;
+      double last = ceil((double)draw->brush.texture_maxs[axis] * size[axis] / 16) * 16;
+      double extent = fmax(16, last - first);
+      if (!isfinite(first) || fabs(first) > FLT_MAX || !isfinite(extent) || extent > UINT32_MAX) return true;
+      bound.brush.texture_size[axis] = size[axis];
+      bound.brush.texture_mins[axis] = (float)first;
+      bound.brush.texture_extents[axis] = (uint32_t)extent;
+      for (unsigned c = 0; c < 4; ++c) bound.brush.texel_projection[axis][c] *= (float)size[axis];
+      for (unsigned c = 0; c < 2; ++c) bound.brush.lightmap_from_texel[c][axis] /= (float)size[axis];
+    }
+    bound.brush.normalized_texture = false;
+    draw = &bound;
+  }
   CPU_STATS_ADD(renderer, brush_candidates, 1);
   if (!ordinary_brush(renderer, draw)) {
     CPU_STATS_ADD(renderer, brush_predicate_rejects, 1);

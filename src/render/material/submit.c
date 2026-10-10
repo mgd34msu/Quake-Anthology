@@ -448,6 +448,12 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
                                    previous_colors[0], &color, error)) return false;
         draw.vertex_inputs = (qa_scene_vertex_inputs){.constant_color = true,
             .swap_uv = swap, .color = color};
+        if (context->brush && context->brush->present && !swap && !material->deform_count &&
+            !first_binding->is_lightmap && (!second_binding || second_binding->is_lightmap) &&
+            environment == QA_TEXTURE_MODULATE && draw.mesh.identity && draw.mesh.geometry) {
+            draw.brush = *context->brush;
+            draw.single_coverage = true;
+        }
         for (size_t i = 0; i < geometry->vertex_count; ++i) previous_colors[i] = color;
         return qa_scene_frame_draw(frame, &draw, error);
     }

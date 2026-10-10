@@ -6,6 +6,10 @@
 
 typedef struct qaw_legacy qaw_legacy;
 typedef struct qaw_patch qaw_patch;
+typedef struct qaw_brush_geometry {
+    qa_scene_brush_surface draw, *parts;
+    uint32_t *winding;
+} qaw_brush_geometry;
 typedef struct qaw_surface {
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
@@ -14,6 +18,7 @@ typedef struct qaw_surface {
     const qa_material *base_material;
     float material_time_offset;
     qa_scene_image *lightmap;
+    qaw_brush_geometry brush;
     qa_scene_plane plane;
     bool has_plane, skip, sky, flare;
     qa_bsp_surface_type type;
@@ -127,6 +132,8 @@ struct qa_scene_source_world_view {
 bool qaw_world_owners_retain(qa_scene_world *, qa_scene_resources *, qa_material_library *, qa_error *);
 
 bool qaw_build_legacy(qa_scene_world *, qa_error *);
+bool qaw_brush_prepare(const qa_scene_mesh *, const qa_scene_image *, qaw_brush_geometry *, qa_error *);
+void qaw_brush_destroy(qaw_brush_geometry *);
 bool qawl_light_styles(qa_scene_world *, const qa_scene_world_input *, qa_error *);
 void qaw_destroy_legacy(qa_scene_world *);
 bool qaw_submit_legacy(qa_scene_world *, qaw_surface *, const qa_material_context *,

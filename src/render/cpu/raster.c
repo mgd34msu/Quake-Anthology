@@ -1457,6 +1457,16 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     }
   }
   const qa_scene_draw *draw = &resolved;
+  if (draw->brush.present && draw->brush.part_count) {
+    for (size_t i = 0; i < draw->brush.part_count; ++i) {
+      qa_scene_draw part = *draw;
+      part.brush = draw->brush.parts[i];
+      part.mesh.indices = part.brush.polygon_indices;
+      part.mesh.index_count = part.brush.polygon_vertices;
+      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
+    }
+    return true;
+  }
   if (!draw_valid(draw, error)) {
     if (fused) return cpu_draw_impl(renderer, &base, error, queued) &&
                       cpu_draw_impl(renderer, &lightmap, error, queued);

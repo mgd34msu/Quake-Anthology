@@ -455,6 +455,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         if ((effective->surface_flags & 128u) != 0) return true;
         if (effective->sky)
             return qaw_submit_material_sky(world, surface->material, effective, &surface->mesh, &selected, input, frame, error);
+        selected.brush = &surface->brush.draw;
         return qa_material_submit(surface->material, &surface->mesh, &selected, frame, error);
     }
     bool q1 = world->bsp.family == QA_BSP_Q1;
@@ -516,10 +517,10 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
             draw.vertex_inputs.swap_uv = true;
         }
     }
-    if (legacy->brush.polygon_vertices && !texture->fullbright && !diagnostic && !blended &&
+    if (surface->brush.draw.polygon_vertices && !texture->fullbright && !diagnostic && !blended &&
         (!paired || draw.lighting == QA_LIGHT_VERTEX) && !draw.light_count &&
         !draw.shadow_atlas && !draw.vertex_inputs.swap_uv) {
-        draw.brush = legacy->brush;
+        draw.brush = surface->brush.draw;
         draw.brush.present = !lightmapped || paired;
     }
     if (!qa_scene_frame_draw(frame, &draw, error)) return false;
