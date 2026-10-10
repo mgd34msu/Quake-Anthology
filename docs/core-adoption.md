@@ -252,6 +252,37 @@ external packet-policy branch or guest string syscall; their remaining fixed
 packet readers remain explicitly listed under THE-3177. No timing gain,
 audio proof, rerelease census or new installation is claimed.
 
+## Entity store: THE-2876
+
+`src/world/actors_internal.h:9,17` is the single store: actor pages contain
+identity, generation, player and body columns; the registry owns the liveness
+free-bit words and slot-indexed area links. `qa_actors_create` at
+`src/world/actors.c:118` sizes every page, source index and link at load.
+Claim/release at `actors.c:222,325` update that store without allocating a page.
+`src/session/session.c:308,792,805` routes session creation, claims and releases
+through it. World body access at `src/world/collision/world_internal.h:83`
+returns the body in the actor page, rather than a world-owned body array.
+
+| Migrated consumer | Common path |
+| --- | --- |
+| Player and map bindings | `src/app/application/map_players.c:86,1101` resolve actor/source identity through the registry. |
+| Body binding, release and clipping | `src/world/body.c:27,363`; `src/world/collision/world.c:161,181` use actor-page bodies and the registry's live identity. |
+| External native entity bindings | `src/compat/native_host/world.c:16,327` resolve the shared actor and read live boundary fields; native edicts remain module-format data. |
+| Area-grid link/unlink | `src/world/spatial.c:42,59` modify the registry's u32 previous/next links. Q3 inserts at the head; Q1/Q2 at the tail. No per-link allocation remains. |
+| Authored target routing | `src/campaign/targets.c:405` updates one changed slot in the target and authored-order indexes. Bind/unbind and targetname edits call it at `targets.c:212,223,254`. Q1 maps (`maps/runtime.c:182`), Q2 routes (`entities/routes.c:26`) and Q3 maps (`map/runtime.c:266`) use the same index. |
+
+The code check finds no secondary world body owner, heap-allocated area-link
+node or actor-revision-driven whole-capacity target rebuild in these paths.
+Foreign edicts and source slot numbers are module boundaries, not another
+engine identity owner. The collision-family policy enum remains the explicit
+THE-3177 follow-up; it does not own entity identity or liveness.
+
+The existing normal build/core suites pass. The THE-2859 census and repeat on
+e1m1, base1 and q3dm1 also record zero frame heap calls and pool overflows after
+warm-up. No new timing,
+demo comparison or target-refresh counter is claimed. This section supplies
+the requested code/adoption check; supervisor closure remains separate.
+
 ## Output event ring: THE-870
 
 The application owns one load-sized `qa_event_ring` in
