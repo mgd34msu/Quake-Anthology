@@ -23,7 +23,8 @@ void qa_arena_init(qa_arena *arena, size_t block_size)
 
 void qa_arena_init_pool(qa_arena *arena, qa_pool *pages)
 {
-    *arena=(qa_arena){.sealed=true,.pages=pages};
+    *arena=(qa_arena){.sealed=true,.pages=pages,
+        .block_size=pages->stride>sizeof(qa_arena_block)?pages->stride-sizeof(qa_arena_block):1};
 }
 
 static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
