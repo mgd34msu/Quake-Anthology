@@ -212,6 +212,18 @@ static void test_arena(void)
     CHECK(held[0]==0x37 && held[6999]==0x37);
     qa_arena_destroy(&right);qa_arena_destroy(&left);
     CHECK(pages.active==0);
+    size_t slot;
+    uint8_t *first_slot=qa_pool_take(&pages,&slot);
+    CHECK(first_slot && slot==0);
+    first_slot[64]=73;
+    qa_pool_reset(&pages);
+    CHECK(pages.active==0 && first_slot[64]==73);
+    for(size_t i=0;i<pages.capacity;++i) {
+        CHECK(qa_pool_take(&pages,&slot)==qa_pool_at(&pages,i));
+        CHECK(slot==i);
+    }
+    CHECK(pages.active==pages.capacity && first_slot[64]==73);
+    qa_pool_reset(&pages);
     qa_arena_destroy(&backing);
 
     qa_unified_frame_pool *frames=qa_unified_frame_pool_create(128*1024,2,&error);

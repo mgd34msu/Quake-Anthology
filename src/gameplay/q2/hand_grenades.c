@@ -99,9 +99,8 @@ bool qa_q2_hand_grenade_prepare(qa_q2_game *g, qa_actor_id id,
     if (!qa_q2_hand_grenade_validate(&staged, e))
         return false;
     if (!a) {
-        staged.prepared_actor = calloc(1, sizeof(q2_actor));
+        staged.prepared_actor = q2_actor_storage_take(g, e);
         if (!staged.prepared_actor) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Preparing Q2 grenade actor state");
             return false;
         }
     }
@@ -141,7 +140,7 @@ bool qa_q2_hand_grenade_commit(qa_q2_hand_grenade_admission *staged, qa_error *e
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing prepared Q2 grenade actor state");
             return false;
         }
-        q2_actor_publish_prepared(staged->game, a, staged->actor, true);
+        q2_actor_publish_prepared(staged->game, a, staged->actor);
         staged->prepared_actor = NULL;
     }
     ++a->hand_revision;
@@ -155,7 +154,7 @@ bool qa_q2_hand_grenade_commit(qa_q2_hand_grenade_admission *staged, qa_error *e
 void qa_q2_hand_grenade_abort(qa_q2_hand_grenade_admission *staged) {
     if (!staged)
         return;
-    free(staged->prepared_actor);
+    if (staged->prepared_actor) q2_actor_storage_release(staged->game, staged->prepared_actor);
     *staged = (qa_q2_hand_grenade_admission){0};
 }
 bool qa_q2_hand_grenade_configure(qa_q2_game *g, qa_actor_id id,

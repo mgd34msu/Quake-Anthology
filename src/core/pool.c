@@ -64,6 +64,14 @@ void qa_pool_release(qa_pool *pool, size_t slot)
     --pool->active;
 }
 
+void qa_pool_reset(qa_pool *pool)
+{
+    pool->head = pool->capacity ? 0 : SIZE_MAX;
+    pool->active = 0;
+    for (size_t i = 0; i < pool->capacity; ++i)
+        pool->next[i] = i + 1 < pool->capacity ? i + 1 : SIZE_MAX;
+}
+
 void *qa_pool_at(const qa_pool *pool, size_t slot)
 { return pool->values + slot * pool->stride; }
 

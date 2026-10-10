@@ -23,6 +23,8 @@ void *qa_pool_take(qa_pool *, size_t *slot);
 /* Runtime callers supply their already-owned slot; no separate admission or
  * generation checks. Releasing a slot never changes another leased payload. */
 void qa_pool_release(qa_pool *, size_t slot);
+/* At a drained owner boundary, invalidate all leases and retain payloads. */
+void qa_pool_reset(qa_pool *);
 /* Contiguous pages for the common arena. Slots keep the same lifetime and
  * exhaustion accounting as single-slot leases. */
 void *qa_pool_take_run(qa_pool *, size_t count, size_t *slot);

@@ -21,11 +21,25 @@ bool qa_q2_run_actor(qa_q2_game *g, qa_actor_id id, qa_q2_actor_fn callback, voi
     g->current_actor = previous;
     return ok;
 }
-void q2_actor_publish_prepared(qa_q2_game *g, q2_actor *a, qa_actor_id id, bool new_storage) {
-    if (new_storage) {
-        a->all_next = g->all_actors;
-        g->all_actors = a;
+q2_actor *q2_actor_storage_take(qa_q2_game *g, qa_error *e) {
+    size_t slot;
+    q2_actor *a = qa_pool_take(&g->actor_records, &slot);
+    if (!a) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 actor extension pool exhausted");
+        return NULL;
     }
+    q2_monster_release_state(a);
+    q2_items_release_state(a);
+    q2_client_release_state(a);
+    q2_entity_release_state(a);
+    q2_actor *next = a->all_next;
+    *a = (q2_actor){.all_next = next, .storage_slot = slot};
+    return a;
+}
+void q2_actor_storage_release(qa_q2_game *g, q2_actor *a) {
+    qa_pool_release(&g->actor_records, a->storage_slot);
+}
+void q2_actor_publish_prepared(qa_q2_game *g, q2_actor *a, qa_actor_id id) {
     a->id = id;
     a->alpha = 1;
     g->actors[id.slot] = a;
@@ -52,30 +66,13 @@ q2_actor *q2_actor_get(qa_q2_game *g, qa_actor_id id, bool create, qa_error *e) 
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 actor source order exhausted");
             return NULL;
         }
-        bool new_storage = g->spare_actors == NULL;
-        if (!new_storage) {
-            a = g->spare_actors;
-            g->spare_actors = a->free_next;
-            q2_monster_release_state(a);
-            q2_items_release_state(a);
-            q2_client_release_state(a);
-            q2_entity_release_state(a);
-            q2_actor *next = a->all_next;
-            memset(a, 0, sizeof(*a));
-            a->all_next = next;
-        } else {
-            a = calloc(1, sizeof(*a));
-            if (a == NULL) {
-                qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 actor extension");
-                return NULL;
-            }
-        }
+        a = q2_actor_storage_take(g, e);
+        if (!a) return NULL;
         if (!q2_wire_admit(g, a, id, e)) {
-            if (new_storage) free(a);
-            else { a->free_next = g->spare_actors; g->spare_actors = a; }
+            q2_actor_storage_release(g, a);
             return NULL;
         }
-        q2_actor_publish_prepared(g, a, id, new_storage);
+        q2_actor_publish_prepared(g, a, id);
     }
     if (create && !q2_wire_admit(g, a, id, e)) return NULL;
     return a;
@@ -203,8 +200,7 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     while (g->retired_actors != NULL) {
         q2_actor *a = g->retired_actors;
         g->retired_actors = a->free_next;
-        a->free_next = g->spare_actors;
-        g->spare_actors = a;
+        q2_actor_storage_release(g, a);
     }
     g->now_ns = frame->time_ns;
     g->wire_frame = frame->number;
@@ -314,9 +310,9 @@ static void close_game(void *context) {
         q2_items_release_state(g->all_actors);
         q2_client_release_state(g->all_actors);
         q2_entity_release_state(g->all_actors);
-        free(g->all_actors);
         g->all_actors = next;
     }
+    qa_arena_destroy(&g->actor_storage);
     q2_entities_close(g);
     q2_monsters_close(g);
     q2_players_close(g);
@@ -362,6 +358,20 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 actor state");
         return false;
     }
+    /* A prior generation survives callbacks until the next frame boundary. */
+    if (!qa_pool_prepare(&g->actor_records, &g->actor_storage, g->capacity * 2,
+            sizeof(q2_actor), _Alignof(q2_actor), e)) {
+        close_game(g);
+        return false;
+    }
+    memset(g->actor_records.values, 0, g->actor_records.capacity * g->actor_records.stride);
+    for (size_t i = 0; i < g->actor_records.capacity; ++i) {
+        q2_actor *a = qa_pool_at(&g->actor_records, i);
+        a->storage_slot = i;
+        a->all_next = g->all_actors;
+        g->all_actors = a;
+    }
+    qa_arena_seal(&g->actor_storage);
     g->frame_ns = qa_q2_component(g).clock.interval_ns;
     if (!q2_definitions(g, e) || !q2_items_init(g, e) || !q2_players_init(g, e) ||
         !q2_entities_init(g, e) || !q2_monsters_init(g, e)) {

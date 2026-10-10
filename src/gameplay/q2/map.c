@@ -42,12 +42,12 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
         q2_client_release_state(actor);
         q2_entity_release_state(actor);
         q2_actor *next = actor->all_next;
-        *actor = (q2_actor){.all_next = next, .free_next = next};
+        *actor = (q2_actor){.all_next = next, .storage_slot = actor->storage_slot};
     }
     if (game->capacity)
         memset(game->actors, 0, game->capacity * sizeof(*game->actors));
     game->first_actor = game->last_actor = game->retired_actors = NULL;
-    game->spare_actors = game->all_actors;
+    qa_pool_reset(&game->actor_records);
     game->actor_sequence = 0;
     q2_wire_reset(game);
     game->widow_damage_multiplier = 1;

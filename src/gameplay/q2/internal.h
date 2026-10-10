@@ -3,6 +3,7 @@
 #include "qa/game_q2.h"
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
+#include "qa/pool.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -110,6 +111,7 @@ typedef struct q2_client_state {
 
 typedef struct q2_actor {
     struct q2_actor *all_next, *free_next;
+    size_t storage_slot;
     struct q2_actor *live_next, *live_previous;
     uint64_t source_order;
     uint32_t wire_slot, wire_event;
@@ -193,7 +195,9 @@ struct qa_q2_game {
     qa_q2_edition equipment_hook_edition;
     qa_item_id items[QA_Q2_WEAPON_COUNT], ammo[QA_Q2_WEAPON_COUNT];
     qa_string_id view_models[QA_Q2_WEAPON_COUNT];
-    q2_actor **actors, *all_actors, *retired_actors, *spare_actors;
+    q2_actor **actors, *all_actors, *retired_actors;
+    qa_arena actor_storage;
+    qa_pool actor_records;
     q2_actor *first_actor, *last_actor;
     size_t capacity;
     qa_builtin_snapshot_frame *trace_frames;
@@ -271,7 +275,9 @@ qa_vec3 q2_mine_velocity(qa_vec3 direction,float speed,float lift,float side);
 uint64_t q2_animation_native(const q2_weapon_call *);
 float q2_mine_lift(q2_projectile_kind,bool rerelease,float gravity,float noise);
 q2_actor *q2_actor_get(qa_q2_game *, qa_actor_id, bool create, qa_error *);
-void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id, bool new_storage);
+q2_actor *q2_actor_storage_take(qa_q2_game *, qa_error *);
+void q2_actor_storage_release(qa_q2_game *, q2_actor *);
+void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id);
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
 bool q2_wire_admit(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_player_source_motion_rules(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
