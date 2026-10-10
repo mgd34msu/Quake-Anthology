@@ -11,7 +11,7 @@ typedef struct resource_capture {
     application_native_q2_protocol_resources *out;
     size_t ordinal;
     qa_bytes payload;
-    bool counting;
+    bool counting, typed;
 } resource_capture;
 
 static bool retain_entity(resource_capture *capture, size_t offset, uint32_t source_slot,
@@ -21,7 +21,7 @@ static bool retain_entity(resource_capture *capture, size_t offset, uint32_t sou
     if (capture->counting) { ++out->reference_capacity; return true; }
     for (size_t i = 0; i < out->reference_count; ++i)
         if (out->references[i].offset == offset) return true;
-    if (capture->payload.size < 2 || offset > capture->payload.size - 2)
+    if (!capture->typed && (capture->payload.size < 2 || offset > capture->payload.size - 2))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 emitted entity word exceeds its actual packet");
     qa_native_host_q2_entity actual;
     if (!qa_native_host_q2_wire_entity_import(capture->engine->provider->state.native.host,
@@ -37,10 +37,10 @@ static bool retain_entity(resource_capture *capture, size_t offset, uint32_t sou
 static bool capture_entities(resource_capture *capture, const qa_q2_server_record *record, qa_error *error)
 {
     uintptr_t raw = (uintptr_t)record->raw.data, base = (uintptr_t)capture->payload.data;
-    if (raw < base || raw - base > capture->payload.size ||
-        record->raw.size > capture->payload.size - (size_t)(raw - base))
+    if (!capture->typed && (raw < base || raw - base > capture->payload.size ||
+        record->raw.size > capture->payload.size - (size_t)(raw - base)))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 entity capture leaves its actual Source packet");
-    size_t offset = (size_t)(raw - base);
+    size_t offset = capture->typed ? 0 : (size_t)(raw - base);
     const qa_q2_server_event *event = &record->event;
     if (event->kind == QA_Q2_SVC_MUZZLEFLASH)
         return retain_entity(capture, offset + 1, event->data.muzzle.entity, false, error);
@@ -123,7 +123,7 @@ bool application_native_q2_protocol_resources_capture(struct application_native_
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 resource capture requires its actual Original GAME packet");
     qa_application *app = engine->provider->application;
     qa_q2_messages *decoder = engine->event_decoder;
-    resource_capture capture = {.engine = engine, .out = out, .payload = payload, .counting = true};
+    resource_capture capture = {.engine = engine, .out = out, .payload = payload, .counting = true, .typed = typed != NULL};
     if (typed) {
         if (!capture_record(&capture, typed, error)) return false;
     } else {

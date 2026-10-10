@@ -15,14 +15,9 @@
 static bool protocol(struct application_native_q2 *engine, const qa_q2_server_event *source,
                        qa_actor_id recipient, bool reliable, qa_error *error)
 {
-    qa_q2_codec codec;
     qa_net_protocol_id id = {.kind = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
-    if (!qa_q2_codec_init(&codec, id, error)) return false;
-    uint8_t bytes[65536]; qa_net_writer writer;
-    qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_q2_server_event_write(&codec, &writer, source)) return false;
     qa_application_protocol_event event = {.recipient = recipient,
-        .payload = {bytes, qa_net_writer_size(&writer)}, .reliable = reliable,
+        .q2 = source, .encoding_protocol = id, .reliable = reliable,
         .multicast = !recipient.registry};
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_emit_protocol(engine->provider, &event, error);
@@ -31,7 +26,7 @@ static bool protocol(struct application_native_q2 *engine, const qa_q2_server_ev
     qa_application_q2_protocol_delivery delivery = {.profile = engine->profile, .original = true};
     if (engine->initialized && engine->map_ready && engine->calls &&
         !application_native_q2_message_capture(engine, &packet, &delivery, error)) return false;
-    qa_q2_server_record record = {.opcode = bytes[0], .raw = event.payload, .event = *source};
+    qa_q2_server_record record = {.event = *source};
     bool ok = application_emit_q2_protocol(engine->provider, &event, &delivery, NULL, &record, error);
     application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
@@ -267,21 +262,20 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         .time_offset = source->time_offset, .entity = slot,
         .channel = source->actor.registry ? source->channel & 7u : 0u,
         .has_position = positioned, .position = {origin.x, origin.y, origin.z}}};
-    qa_q2_codec codec; uint8_t bytes[64]; qa_net_writer writer;
+    qa_q2_codec codec;
     qa_net_protocol_id profile = {.kind = rerelease ? QA_NET_Q2REPRO_1038 : QA_NET_Q2_34};
     if (!qa_q2_codec_init(&codec, profile, error)) return false;
-    qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_q2_server_event_write(&codec, &writer, &event)) return false;
+    event.data.sound.flags = qa_q2_sound_flags(&codec, &event.data.sound);
     qa_native_host_message packet = {.target = source->local ? QA_NATIVE_HOST_UNICAST : QA_NATIVE_HOST_MULTICAST,
-        .payload = {bytes, qa_net_writer_size(&writer)}, .origin = origin, .client = source->client,
+        .origin = origin, .client = source->client,
         .destination = no_phs || source->attenuation == 0 ? 0 : 1,
         .flags = source->local ? source->flags : 0, .reliable = reliable, .positioned = true};
     qa_application_protocol_reference reference = {.actor = source->actor, .packed_sound = true};
     if (source->actor.registry)
-        reference.offset = 2u + ((bytes[1] & 32u) ? 2u : 1u) +
-            ((bytes[1] & 1u) != 0) + ((bytes[1] & 2u) != 0) + ((bytes[1] & 16u) != 0);
+        reference.offset = 2u + ((event.data.sound.flags & 32u) ? 2u : 1u) +
+            ((event.data.sound.flags & 1u) != 0) + ((event.data.sound.flags & 2u) != 0) + ((event.data.sound.flags & 16u) != 0);
     qa_application_protocol_event publication = {.recipient = packet.client, .origin = origin,
-        .payload = packet.payload, .destination = packet.destination, .reliable = reliable,
+        .q2 = &event, .encoding_protocol = profile, .destination = packet.destination, .reliable = reliable,
         .multicast = !source->local, .references = source->actor.registry ? &reference : NULL,
         .reference_count = source->actor.registry ? 1u : 0u};
     qa_application_q2_protocol_delivery delivery;
@@ -303,8 +297,7 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
     named.channel = event.data.sound.channel; named.recipients = recipients;
     named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
-    qa_q2_server_record record = {.opcode = bytes[0], .raw = publication.payload, .event = event};
-    record.event.data.sound.flags = bytes[1];
+    qa_q2_server_record record = {.event = event};
     bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, NULL, &record, error);
     if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);

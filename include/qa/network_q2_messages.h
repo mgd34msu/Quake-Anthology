@@ -95,6 +95,7 @@ typedef struct qa_q2_wire_fog {
 } qa_q2_wire_fog;
 bool qa_q2_fog_read(qa_net_reader *, qa_q2_wire_fog *);
 bool qa_q2_fog_write(qa_net_writer *, const qa_q2_wire_fog *);
+uint8_t qa_q2_sound_flags(const qa_q2_codec *, const qa_q2_kex_sound *);
 
 typedef enum qa_q2_server_event_kind {
     QA_Q2_SVC_NOP, QA_Q2_SVC_DISCONNECT, QA_Q2_SVC_RECONNECT, QA_Q2_SVC_LEVEL_RESTART,

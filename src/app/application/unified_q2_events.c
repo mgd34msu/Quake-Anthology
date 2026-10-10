@@ -32,6 +32,11 @@ static uint32_t player_slot(const q2_projection *p, qa_actor_id target)
 
 static bool reference_actor(const q2_projection *p, uint32_t slot, size_t relative_offset, qa_actor_id *out)
 {
+    if (p->message->q2) {
+        for (size_t i = 0; i < p->message->reference_count; ++i)
+            if (p->message->references[i].offset == relative_offset) { *out = p->message->references[i].actor; return true; }
+        return false;
+    }
     if (!p->record || !p->record->raw.data || !p->message->payload.data) return false;
     if (p->record->event.kind != QA_Q2_SVC_SOUND && p->record->event.kind != QA_Q2_SVC_MUZZLEFLASH &&
         p->record->event.kind != QA_Q2_SVC_TEMP_ENTITY) return false;

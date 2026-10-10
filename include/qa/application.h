@@ -159,6 +159,7 @@ typedef struct qa_application_protocol_event {
     qa_vec3 origin;
     qa_bytes payload;
     const struct qa_nq_message *nq;
+    const struct qa_q2_server_event *q2;
     qa_net_protocol_id encoding_protocol;
     bool standard_quake;
     const qa_application_protocol_reference *references;

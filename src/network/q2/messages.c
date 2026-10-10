@@ -544,14 +544,10 @@ bool qa_q2_messages_read(qa_q2_messages *m, qa_bytes bytes, qa_q2_server_emit_fn
     return ok;
 }
 
-static bool write_sound(qa_q2_codec *c, qa_net_writer *w, const qa_q2_kex_sound *from) {
+uint8_t qa_q2_sound_flags(const qa_q2_codec *c, const qa_q2_kex_sound *from) {
     qa_q2_kex_sound s = *from;
     bool kex = is_kex(c);
-    if (s.channel > 7 || s.entity > (UINT32_MAX >> 3)) return qa_net_writer_fail(w, "Invalid Q2 sound channel");
-    if (!kex && s.index > UINT8_MAX) {
-        if (!is_rerelease(c) && !extended(c)) return qa_net_writer_fail(w, "Q2 sound needs extended index");
-        s.flags |= 32u;
-    }
+    if (!kex && s.index > UINT8_MAX) s.flags |= 32u;
     if (s.has_position) s.flags |= 4u;
     if (s.entity || s.channel) s.flags |= 8u;
     if (s.volume != 1) s.flags |= 1u;
@@ -559,6 +555,17 @@ static bool write_sound(qa_q2_codec *c, qa_net_writer *w, const qa_q2_kex_sound 
     if (s.time_offset != 0) s.flags |= 16u;
     uint32_t channel = (s.entity << 3) | s.channel;
     if (kex && channel > UINT16_MAX) s.flags |= 64u;
+    return s.flags;
+}
+
+static bool write_sound(qa_q2_codec *c, qa_net_writer *w, const qa_q2_kex_sound *from) {
+    qa_q2_kex_sound s = *from;
+    bool kex = is_kex(c);
+    if (s.channel > 7 || s.entity > (UINT32_MAX >> 3)) return qa_net_writer_fail(w, "Invalid Q2 sound channel");
+    if (!kex && s.index > UINT8_MAX && !is_rerelease(c) && !extended(c))
+        return qa_net_writer_fail(w, "Q2 sound needs extended index");
+    s.flags = qa_q2_sound_flags(c, from);
+    uint32_t channel = (s.entity << 3) | s.channel;
     if (!s.has_position && (s.flags & 4u)) return qa_net_writer_fail(w, "Positioned Q2 sound has no position");
     if (!qa_net_write_u8(w, 9)) return false;
     if (kex) return qa_q2_kex_write_sound(c, w, &s);

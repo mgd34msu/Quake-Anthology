@@ -522,6 +522,13 @@ bool application_unified_event_append(qa_application *app,
     application_event_write *write = app->event_write;
     qa_bytes payload = write->envelope->kind == QA_APPLICATION_EVENT_PROTOCOL ?
         write->envelope->raw.protocol.event.payload : (qa_bytes){0};
+    const qa_q2_server_event *q2 = write->envelope->kind == QA_APPLICATION_EVENT_PROTOCOL ?
+        write->envelope->raw.protocol.event.q2 : NULL;
+    if (q2) {
+        const char *text = q2->kind == QA_Q2_SVC_CONFIGSTRING ? q2->data.config.value :
+            q2->kind == QA_Q2_SVC_PRINT || q2->kind == QA_Q2_SVC_CENTERPRINT ? q2->data.print.text : NULL;
+        if (text) payload = (qa_bytes){(const uint8_t *)text, strlen(text) + 1};
+    }
     application_event_view *view = application_event_stream_alloc(app, sizeof(*view),
         _Alignof(application_event_view), error);
     if (!view) return false;

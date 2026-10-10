@@ -865,11 +865,33 @@ static bool retain_nq_message(qa_application *app, qa_application_protocol_event
     }
 }
 
+static bool retain_q2_service(qa_application *app, qa_application_protocol_event *event, qa_error *error)
+{
+    if (!event->q2) return true;
+    qa_q2_server_event *service = application_event_stream_alloc(app, sizeof(*service), _Alignof(qa_q2_server_event), error);
+    if (!service) return false;
+    *service = *event->q2;
+    event->q2 = service;
+    switch (service->kind) {
+    case QA_Q2_SVC_PRINT: case QA_Q2_SVC_CENTERPRINT: case QA_Q2_SVC_COMMAND:
+    case QA_Q2_SVC_LAYOUT: case QA_Q2_SVC_ACHIEVEMENT:
+        return retain_protocol_text(app, &service->data.print.text, error);
+    case QA_Q2_SVC_CONFIGSTRING:
+        return retain_protocol_text(app, &service->data.config.value, error);
+    default: return true;
+    }
+}
+
 bool qa_application_protocol_event_encode(qa_application_protocol_event *event, qa_net_writer *writer)
 {
-    if (!event->nq) return true;
-    if (!qa_nq_write(writer, event->encoding_protocol, (qa_nq_options){.standard_quake = event->standard_quake},
-            event->nq, NULL, 0)) return false;
+    if (event->nq) {
+        if (!qa_nq_write(writer, event->encoding_protocol, (qa_nq_options){.standard_quake = event->standard_quake},
+                event->nq, NULL, 0)) return false;
+    } else if (event->q2) {
+        qa_q2_codec codec;
+        if (!qa_q2_codec_init(&codec, event->encoding_protocol, writer->error) ||
+            !qa_q2_server_event_write(&codec, writer, event->q2)) return false;
+    } else return true;
     event->payload = (qa_bytes){writer->data, qa_net_writer_size(writer)};
     return true;
 }
@@ -889,7 +911,7 @@ static bool emit_protocol(application_provider *provider,
         (event->resource_count && !event->resources) ||
         event->resource_count > SIZE_MAX / sizeof(*event->resources))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid source protocol event");
-    for (size_t i = 0; !event->nq && i < event->reference_count; ++i)
+    for (size_t i = 0; !event->nq && !event->q2 && i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
     if (source) for (size_t i = 0; i < source->reference_count; ++i)
@@ -917,10 +939,13 @@ static bool emit_protocol(application_provider *provider,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
     if (event->payload.size) memcpy(payload, event->payload.data, event->payload.size);
+    qa_application_protocol_event copied = *event;
+    if (!retain_nq_message(application, &copied, error) || !retain_q2_service(application, &copied, error)) goto abort;
     qa_q2_server_record typed_record;
     if (typed) {
         typed_record = *typed;
         typed_record.raw = (qa_bytes){payload, event->payload.size};
+        if (copied.q2) typed_record.event = *copied.q2;
         typed = &typed_record;
     }
     application_native_q2_protocol_resources captured = {0};
@@ -944,8 +969,6 @@ static bool emit_protocol(application_provider *provider,
         if (!name) goto abort;
         memcpy(name, resources[i].name, length + 1); resources[i].name = name;
     }
-    qa_application_protocol_event copied = *event;
-    if (!retain_nq_message(application, &copied, error)) goto abort;
     copied.event_id = write->envelope->id;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;

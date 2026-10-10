@@ -51,20 +51,22 @@ static bool entity(q2_event_packet *packet, const qa_q2_server_record *record,
     size_t relative_offset, uint32_t source_number, uint32_t *number, qa_error *error)
 {
     uintptr_t raw = (uintptr_t)record->raw.data, first = (uintptr_t)packet->source->payload.data;
-    if (raw < first || raw - first > packet->source->payload.size ||
-        record->raw.size > packet->source->payload.size - (size_t)(raw - first))
+    if (!packet->source->q2 && (raw < first || raw - first > packet->source->payload.size ||
+        record->raw.size > packet->source->payload.size - (size_t)(raw - first)))
         return fail(error, QA_ERROR_FORMAT, "Q2 event entity leaves its captured packet");
-    size_t begin = (size_t)(raw - first);
-    if (record->raw.size < 2 || relative_offset > record->raw.size - 2)
+    size_t begin = packet->source->q2 ? 0 : (size_t)(raw - first);
+    if (!packet->source->q2 && (record->raw.size < 2 || relative_offset > record->raw.size - 2))
         return fail(error, QA_ERROR_FORMAT, "Q2 Source entity field exceeds its actual record");
     size_t offset = begin + relative_offset;
     for (size_t i = 0; i < packet->source->reference_count; ++i) {
         const qa_application_protocol_reference *reference = packet->source->references + i;
         if (reference->offset != offset) continue;
-        uint32_t original = qa_load_u16le(packet->source->payload.data + reference->offset);
-        if (reference->packed_sound) original >>= 3;
-        if (original != source_number)
-            return fail(error, QA_ERROR_FORMAT, "Q2 captured entity receipt differs from its actual Source word");
+        if (!packet->source->q2) {
+            uint32_t original = qa_load_u16le(packet->source->payload.data + reference->offset);
+            if (reference->packed_sound) original >>= 3;
+            if (original != source_number)
+                return fail(error, QA_ERROR_FORMAT, "Q2 captured entity receipt differs from its actual Source word");
+        }
         return qa_application_network_q2_event_entity(packet->publisher, packet->source->provider,
             reference->actor, number, error);
     }
@@ -216,7 +218,9 @@ bool frontend_network_q2_event_packet(qa_application_network_q2 *publisher, qa_a
     qa_q2_message_options options = {.config_strings = delivery->profile == QA_NATIVE_Q2_GAME_API3 ? 2080u : 12448u,
         .inventory_slots = 256, .native_api2023 = delivery->profile == QA_NATIVE_Q2_GAME_API2023};
     qa_q2_messages *decoder = NULL;
-    bool ok = qa_q2_messages_create(protocol, &options, &decoder, error) &&
+    qa_q2_server_record record = {.event = source->q2 ? *source->q2 : (qa_q2_server_event){0}};
+    bool ok = source->q2 ? emit(&packet, &record, error) :
+        qa_q2_messages_create(protocol, &options, &decoder, error) &&
         qa_q2_messages_read(decoder, source->payload, emit, &packet, error);
     qa_q2_messages_destroy(decoder);
     if (!ok) { qa_buffer_free(&bytes); return false; }
