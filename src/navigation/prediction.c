@@ -69,13 +69,19 @@ void nav_prediction_close(nav_prediction *p) {
         p->navigation->services.traversal_end(p->navigation->services.context, p->lease);
     if (p->has_lease)
         p->navigation->services.prediction_end(p->navigation->services.context, p->lease);
-    qa_movement_result_free(&p->result);
+    if (p->result) qa_pool_release(&p->navigation->prediction_results, p->result_slot);
     qa_navigation *n = p->navigation;
     *p = (nav_prediction){.navigation = n};
 }
 static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error *e) {
     qa_navigation *n = p->navigation;
     if (!nav_services_valid(&n->services, actor.registry != 0, e)) return false;
+    p->result = qa_pool_take(&n->prediction_results, &p->result_slot);
+    if (!p->result) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation prediction result pool exhausted");
+        return false;
+    }
+    qa_movement_result_clear(p->result);
     if (actor.registry) {
         if (!n->services.movement_input(n->services.context, actor, &p->input, e)) return false;
         if (!qa_actor_id_equal(p->input.actor, actor) ||
@@ -266,11 +272,11 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
         p->supplied.effect == NULL && p->supplied.firing == NULL && p->supplied.is_bsp == NULL;
     float seconds = 0;
     for (unsigned index = 0; index < 512 && seconds < 8; ++index) {
-        qa_movement_result previous = p->result;
+        qa_movement_result previous = *p->result;
         qa_usercmd previous_command = p->input.command;
         if (!command(p, to, mode, e))
             return false;
-        qa_movement_result *result = &p->result;
+        qa_movement_result *result = p->result;
         if (!qa_movement_move(&p->input, &p->services, result, e))
             return false;
         if ((p->input.profile.kind == QA_RULESET_Q2_CLASSIC ||
@@ -386,7 +392,7 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
             ok = false;
             break;
         }
-        qa_movement_result *result = &p.result;
+        qa_movement_result *result = p.result;
         p.damaging_fall = false;
         if (!qa_movement_move(&p.input, &p.services, result, e)) {
             ok = false;

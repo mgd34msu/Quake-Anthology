@@ -2,6 +2,7 @@
 #define QA_NAVIGATION_INTERNAL_H
 #include "asset_internal.h"
 #include "qa/navigation.h"
+#include "qa/pool.h"
 #include <float.h>
 
 struct qa_nav_graph {
@@ -34,6 +35,8 @@ struct qa_navigation {
     float *admission_seconds;
     uint64_t generation, world_revision, topology_revision;
     nav_estimate_cache *estimates;
+    qa_arena prediction_storage;
+    qa_pool prediction_results;
 };
 struct qa_nav_workspace {
     qa_aas_query *aas;
@@ -48,7 +51,8 @@ struct qa_nav_workspace {
 };
 typedef struct nav_prediction {
     qa_navigation *navigation;
-    qa_movement_result result;
+    qa_movement_result *result;
+    size_t result_slot;
     qa_movement_input input;
     qa_movement_services supplied, services;
     qa_actor_id pass_actor;

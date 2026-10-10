@@ -47,6 +47,19 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
     memset(n->enabled, -1, nodes);
     for (size_t i = 0; i < edges; ++i)
         n->admission_seconds[i] = NAN;
+    if (!qa_pool_prepare(&n->prediction_results, &n->prediction_storage, 32,
+            sizeof(qa_movement_result), _Alignof(qa_movement_result), e)) {
+        qa_navigation_destroy(n);
+        return false;
+    }
+    memset(n->prediction_results.values, 0,
+        n->prediction_results.capacity * n->prediction_results.stride);
+    for (size_t i = 0; i < n->prediction_results.capacity; ++i)
+        if (!qa_movement_result_reserve(qa_pool_at(&n->prediction_results, i), 64, e)) {
+            qa_navigation_destroy(n);
+            return false;
+        }
+    qa_arena_seal(&n->prediction_storage);
     n->world_revision = s->revision == NULL ? 0 : s->revision(s->context);
     *out = n;
     return true;
@@ -58,6 +71,9 @@ void qa_navigation_destroy(qa_navigation *n) {
     if (n == NULL)
         return;
     nav_estimates_free(n);
+    for (size_t i = 0; i < n->prediction_results.capacity; ++i)
+        qa_movement_result_free(qa_pool_at(&n->prediction_results, i));
+    qa_arena_destroy(&n->prediction_storage);
     qa_nav_graph_release(n->graph);
     free(n->enabled);
     free(n->blocked);

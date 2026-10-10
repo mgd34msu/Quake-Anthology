@@ -234,7 +234,6 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
     }
     w->costs[first] = 0;
     if (!nav_queue_push(w, (nav_queue_entry){first, 0}, e)) return false;
-    qa_movement_result scratch = {0};
     bool ok = true;
     for (;;) {
         size_t count;
@@ -246,11 +245,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         ok = nav_route_point(route, q->start, e);
         if (!ok)
             break;
-        nav_prediction prediction = {
-            .navigation = n,
-            .result = {.contacts = scratch.contacts, .contact_capacity = scratch.contact_capacity}};
-        scratch.contacts = NULL;
-        scratch.contact_capacity = 0;
+        nav_prediction prediction = {.navigation = n};
         bool failed = false, goal_admitted = true;
         for (size_t i = 0; ok && i < count; ++i) {
             bool admitted;
@@ -268,10 +263,6 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             ok = nav_predict(&prediction, q->actor, cursor(route), q->goal, QA_NAV_WALK, route,
                              &goal_admitted, e);
         }
-        scratch.contacts = prediction.result.contacts;
-        scratch.contact_capacity = prediction.result.contact_capacity;
-        prediction.result.contacts = NULL;
-        prediction.result.contact_capacity = 0;
         nav_prediction_close(&prediction);
         if (!ok || !goal_admitted)
             break;
@@ -297,7 +288,6 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         route->found = true;
         break;
     }
-    qa_movement_result_free(&scratch);
     return ok;
 }
 bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, qa_vec3 origin,
