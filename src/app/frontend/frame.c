@@ -241,13 +241,12 @@ static bool selected_bindings(qa_frontend *frontend,qa_error *error)
         if (count>sizeof(local)/sizeof(*local)) {
             if (count>SIZE_MAX/sizeof(*items))
                 return frontend_fail(error,QA_ERROR_MEMORY,"Selected binding catalog storage overflow");
-            items=malloc(count*sizeof(*items));
-            if (!items) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating selected binding catalog");
+            items=qa_arena_alloc(&frontend->frame.storage,count*sizeof(*items),_Alignof(qa_item_definition),error);
+            if (!items) return false;
         }
         bool ok=qa_inventory_item_definitions(inventory,actor,items,count,&count,error) &&
             frontend_config_store_select_bindings(frontend->config_store,launch_seat,strings,items,count,
                 qa_input_platform_controller(frontend->input,ordinal),error);
-        if (items!=local) free(items);
         if (!ok) return false;
     }
     return true;

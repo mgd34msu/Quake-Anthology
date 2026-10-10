@@ -107,14 +107,17 @@ static bool impacts(application_provider *provider, qa_actor_id actor,
 }
 
 static bool snapshot_contacts(application_provider *provider, const qa_movement_result *result,
-    qa_actor_id *storage, size_t capacity, qa_actor_id **out, size_t *count, qa_error *error)
+    qa_actor_id *storage, size_t capacity, qa_unified_frame_lease **lease,
+    qa_actor_id **out, size_t *count, qa_error *error)
 {
     if (result->contact_count > SIZE_MAX / sizeof(**out))
         return application_fail(error, QA_ERROR_MEMORY, "Native Q3 contact snapshot overflow");
-    qa_actor_id *ids = result->contact_count <= capacity ? storage
-        : malloc(result->contact_count * sizeof(*ids));
-    if (result->contact_count && !ids)
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q3 command contacts");
+    qa_actor_id *ids=storage;
+    if (result->contact_count>capacity) {
+        *lease=application_control_storage_acquire(provider->application,error);
+        ids=*lease?qa_unified_frame_lease_alloc(*lease,result->contact_count,sizeof(*ids),_Alignof(qa_actor_id),error):NULL;
+        if (!ids) { qa_unified_frame_lease_release(*lease);*lease=NULL;return false; }
+    }
     size_t used = 0;
     for (size_t i = 0; i < result->contact_count; ++i) {
         if (result->contacts[i].trace.hit == QA_TRACE_HIT_ACTOR)
@@ -122,7 +125,7 @@ static bool snapshot_contacts(application_provider *provider, const qa_movement_
         else if (result->contacts[i].trace.hit == QA_TRACE_HIT_WORLD) {
             qa_q3_source_binding world;
             if (!qa_q3_source_binding_read(provider->state.q3, QA_Q3_SOURCE_WORLD, &world, error)) {
-                if (ids != storage) free(ids);
+                qa_unified_frame_lease_release(*lease);*lease=NULL;
                 return false;
             }
             if (world.in_use && world.actor.registry) ids[used++] = world.actor;
@@ -370,9 +373,10 @@ static bool client_think_body(void *opaque, qa_session *session,
             if (live(app, call->actor) && !qa_world_unlink(app->world, call->actor, error)) return false;
         } else {
             qa_actor_id storage[32];
+            qa_unified_frame_lease *contact_lease=NULL;
             qa_actor_id *contacts = NULL; size_t count = 0;
             if (!snapshot_contacts(provider, result, storage,
-                sizeof(storage) / sizeof(*storage), &contacts, &count, error)) return false;
+                sizeof(storage) / sizeof(*storage), &contact_lease, &contacts, &count, error)) return false;
             bool ok = qa_q3_client_think_event_time(provider->state.q3, call->actor, old_sequence, error);
             int32_t smooth;
             if (ok) ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_SMOOTH_CLIENTS, &smooth, error);
@@ -418,7 +422,7 @@ static bool client_think_body(void *opaque, qa_session *session,
                     application_bots_test_aas(provider, origin, error);
             }
             if (ok && live(app, call->actor)) ok = impacts(provider, call->actor, contacts, count, error);
-            if (contacts != storage) free(contacts);
+            qa_unified_frame_lease_release(contact_lease);
             if (ok && live(app, call->actor))
                 ok = qa_q3_client_think_event_time(provider->state.q3, call->actor, old_sequence, error);
             if (!ok || !live(app, call->actor)) return ok;
