@@ -281,6 +281,12 @@ static bool snapshots_prepare(struct application_native_q3_wire *wire,qa_error *
     qa_arena_seal(storage);wire->snapshot_storage=storage;return true;
 }
 
+static void snapshots_bind(native_q3_wire_client *client,qa_q3_entity *entities)
+{
+    if (entities) for (size_t i=0;i<QA_Q3_PACKET_BACKUP;++i)
+        client->snapshots[i]=(native_q3_wire_snapshot){.entities=entities+i*256,.capacity=256,.reserved=true};
+}
+
 bool qa_application_native_q3_wire_preconstruction_current(const qa_application *app,
     qa_actor_owner owner, uint32_t seat, const qa_q3_host_options *services)
 {
@@ -401,11 +407,13 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
     char *copy = copy_text(userinfo, error);
     if (!copy) return false;
     native_q3_wire_client *client = &wire->clients[slot];
+    qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     free(client->userinfo);
     free(client->drop_reason);
     *client = (native_q3_wire_client){.actor = actor, .seat = seat,
         .userinfo = copy, .admitted = true, .bot = bot, .sensitivity = 1,
         .entered_ns = qa_session_elapsed(provider->application->session)};
+    snapshots_bind(client,snapshots);
     qa_q3_reliable_init(&client->reliable);
     ++wire->client_revision[slot];
     return true;
@@ -435,12 +443,11 @@ bool application_native_q3_wire_disconnect(application_provider *provider, uint3
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire Disconnect exceeds source capacity");
     native_q3_wire_client *client = &wire->clients[slot];
     char *userinfo = client->userinfo;
+    qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     free(client->drop_reason);
-    free(client->gamestate);
-    free(client->big_configstring);
-    for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
-        free(client->snapshots[i].entities);
+    client_world_clear(client);
     *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo, .sensitivity = 1};
+    snapshots_bind(client,snapshots);
     qa_q3_reliable_init(&client->reliable);
     ++wire->client_revision[slot];
     return true;
