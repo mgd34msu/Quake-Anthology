@@ -497,7 +497,7 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                     &(qa_sys_event){.kind=QA_PLATFORM_EVENT_USERCMD,.time_ns=f->wall_time_ns,.data.usercmd.seat=input.seat},
                     (qa_bytes){(const uint8_t *)&input.command,sizeof(input.command)}, (qa_bytes){0});
                 queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
-                ok=!queue_pending && frontend_platform_drain(f,error);
+                ok=!queue_pending && frontend_platform_drain(f,true,error);
                 if (ok) {
                     queue_pending=qa_platform_events_statistics(f->platform_events).records!=0;
                     ok=!queue_pending;
@@ -521,7 +521,7 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                         &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=command.wall_ns},(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
                         (qa_bytes){(const uint8_t *)command.text,strlen(command.text)+1});
                     queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
-                    ok=!queue_pending && frontend_platform_drain(f,error);
+                    ok=!queue_pending && frontend_platform_drain(f,true,error);
                     if (ok) {
                         queue_pending=qa_platform_events_statistics(f->platform_events).records!=0;
                         ok=!queue_pending;

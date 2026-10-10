@@ -824,7 +824,7 @@ bool frontend_network_q2_host_stop(frontend_network_q2_host *host,uint64_t now,
      * Retain the Source publisher until final delivery and drop return. */
     if(channels) {
         qa_frontend *f=host->options.frontend;
-        if(!frontend_platform_drain(f,error) || !qa_network_tick(host->options.runtime,now,error)) return false;
+        if(!frontend_platform_drain(f,false,error) || !qa_network_tick(host->options.runtime,now,error)) return false;
     }
     for(size_t i=0;i<host->capacity;++i) {
         q2_host_peer *peer=&host->peers[i];

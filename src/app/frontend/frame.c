@@ -407,7 +407,7 @@ static bool runtime_console(qa_frontend *frontend, qa_console **console,
     }
     return true;
 }
-bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
+bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *error)
 {
     qa_sys_event event; qa_bytes payload;
     qa_platform_event_cursor cursor = {0};
@@ -433,6 +433,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             break;
         }
         case QA_PLATFORM_EVENT_CONSOLE_LINE:
+            if (!input_ready) continue;
             if (!qa_application_should_stop(frontend->application)) {
                 qa_console *console; qa_command_context context;
                 ok=runtime_console(frontend,&console,&context,error) &&
@@ -440,6 +441,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             }
             break;
         case QA_PLATFORM_EVENT_USERCMD: {
+            if (!input_ready) continue;
             qa_usercmd command;
             memcpy(&command,payload.data,sizeof(command));
             qa_actor_id actor; uint32_t ordinal;
@@ -454,6 +456,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             break;
         }
         case QA_PLATFORM_EVENT_CONSOLE_COMMAND: {
+            if (!input_ready) continue;
             frontend_replay_command command;
             memcpy(&command,payload.data,sizeof(command));
             frontend->wall_time_ns=command.wall_ns;
@@ -464,6 +467,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             break;
         }
         default:
+            if (!input_ready) continue;
             if (!frontend->options.dedicated && !qa_application_should_stop(frontend->application)) {
                 if (event.kind==QA_PLATFORM_EVENT_WINDOW && event.data.window.action==QA_SYS_WINDOW_RESIZED &&
                     event.data.window.id==frontend->observed_display.window_id)
@@ -489,10 +493,10 @@ static bool platform_events(qa_frontend *frontend, qa_error *error)
 {
     if (qa_application_should_stop(frontend->application)) return true;
     if (!frontend_ui_features_sync(frontend,error)) return false;
-    if (!frontend_platform_drain(frontend,error)) return false;
+    if (!frontend_platform_drain(frontend,true,error)) return false;
     if (qa_application_should_stop(frontend->application) || frontend->options.dedicated) return true;
     return qa_input_platform_sample(frontend->input,frontend->platform_events,frontend->wall_time_ns,error) &&
-        frontend_platform_drain(frontend,error);
+        frontend_platform_drain(frontend,true,error);
 }
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
@@ -795,18 +799,19 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
     } else frontend->wall_time_ns+=elapsed_ns;
     (void)qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
     bool ok=true,ready=false;
-    if(replay) ok=frontend_platform_drain(frontend,error);
+    if(replay) ok=frontend_platform_drain(frontend,true,error);
     else {
         ok=platform_collect(frontend,error);
         if(qa_platform_events_quit_requested(frontend->platform_events))
             qa_application_request_stop(frontend->application);
+        if (ok) ok=frontend_platform_drain(frontend,false,error);
     }
     if(replay) ready=true;
     else if(ok && !qa_application_should_stop(frontend->application))
         ok=continue_mode(frontend,elapsed_ns,&ready,error);
-    if(ok && ready && !qa_application_should_stop(frontend->application)) {
+    if(ok && !qa_application_should_stop(frontend->application)) {
         qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
-        if(!replay) {
+        if(!replay && ready) {
             if (!qa_profiler_push(profiler,"source_maintenance",error)) return false;
             bool maintained = true;
             if (maintained) maintained = qa_profiler_push(profiler,"source_color_retirement",error);
@@ -830,10 +835,10 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
             pending.target.kind==QA_TRAVEL_MAP;
         frontend->stepping = true;
         uint64_t raw_elapsed=elapsed_ns;
-        ok = ok && (replay || (frontend_tools_pump(frontend, error) &&
+        if (ready) ok = ok && (replay || (frontend_tools_pump(frontend, error) &&
             frontend_startup_menus_pump(frontend,error) && platform_events(frontend, error)));
-        if(ok && !qa_application_should_stop(frontend->application)) ok=commands(frontend,*playing,!replay,error);
-        if (ok && !replay && !qa_application_should_stop(frontend->application) &&
+        if(ok && ready && !qa_application_should_stop(frontend->application)) ok=commands(frontend,*playing,!replay,error);
+        if (ok && ready && !replay && !qa_application_should_stop(frontend->application) &&
             frontend->server_stop_owner && !frontend->server_stopped) {
             bool complete=false;
             frontend->stepping=false;
@@ -921,11 +926,11 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
                 }
             }
         }
-        if (ok && ready && !qa_application_should_stop(frontend->application)) {
+        if (ok && !qa_application_should_stop(frontend->application)) {
             if (!replay) ok=platform_collect(frontend,error);
-            if (ok) ok=frontend_platform_drain(frontend,error);
+            if (ok) ok=frontend_platform_drain(frontend,ready,error);
             /* Older journal tails retain their recorded command-wait cadence. */
-            if (ok && !replay && !qa_application_should_stop(frontend->application))
+            if (ok && ready && !replay && !qa_application_should_stop(frontend->application))
                 ok=commands(frontend,*playing,true,error);
         }
         if (ok && ready && !qa_application_should_stop(frontend->application) && cinematic) {
