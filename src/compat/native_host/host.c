@@ -242,6 +242,11 @@ static qa_native_host *allocate_host(qa_native_module *module, native_host_kind 
         host->edict = &rerelease_edict;
     }
     host->maximum_string_bytes = maximum_string ? maximum_string : 1024u * 1024u;
+    if (kind == NATIVE_HOST_Q2_GAME && !native_host_movement_prepare(host, error)) {
+        free_records(host);
+        free(host);
+        return NULL;
+    }
     return host;
 }
 
@@ -362,6 +367,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
 
 static void free_records(qa_native_host *host)
 {
+    native_host_movement_dispose(host);
     native_host_memory_state memory={host->strings,host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=NULL; host->cvar_shadows=NULL;
     while (host->surfaces) {

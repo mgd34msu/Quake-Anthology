@@ -149,7 +149,6 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
     uint8_t bytes[RR_PM_BYTES];
     if(!qa_native_read(frame->client.native,frame->address,bytes,sizeof(bytes),error)) return false;
     qa_movement_input input=qa_movement_input_default(QA_RULESET_Q2_RERELEASE,frame->client.actor);
-    qa_movement_result physical={0};
     /* Read only the incoming state; touch/view outputs are not initialized yet. */
     input.state.data.q2r=(qa_q2r_movement_state){.type=qa_load_i32le(bytes),.origin=load_vector(bytes+4),
         .velocity=load_vector(bytes+16),.flags=qa_load_u16le(bytes+28),.time_ms=qa_load_u16le(bytes+30),
@@ -166,15 +165,18 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
     if(!present) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(engine);
     qa_movement_services services=movement.kernel;
+    size_t movement_slot;
+    qa_movement_result *physical=qa_native_host_movement_acquire(frame->client.host,&movement_slot,error);
+    if(!physical) return false;
     bool ok=movement.prepare(movement.context,frame->client.host,frame->address,&input,error)&&
-        movement.execute(movement.context,frame->client.host,frame->address,&input,&services,&physical,error);
-    if(ok&&physical.status==QA_MOVEMENT_ACTOR_REMOVED&&
-        !qa_actors_get(qa_session_actors(engine->provider->application->session),physical.actor)) {
-        qa_movement_result_free(&physical); return true;
+        movement.execute(movement.context,frame->client.host,frame->address,&input,&services,physical,error);
+    if(ok&&physical->status==QA_MOVEMENT_ACTOR_REMOVED&&
+        !qa_actors_get(qa_session_actors(engine->provider->application->session),physical->actor)) {
+        qa_native_host_movement_release(frame->client.host,movement_slot); return true;
     }
-    if(ok) ok=frame_live(engine->source_control,frame,error)&&raw_store(frame,bytes,&physical,error);
-    if(ok) ok=movement.commit(movement.context,frame->client.host,frame->address,&physical,error);
-    qa_movement_result_free(&physical); return ok;
+    if(ok) ok=frame_live(engine->source_control,frame,error)&&raw_store(frame,bytes,physical,error);
+    if(ok) ok=movement.commit(movement.context,frame->client.host,frame->address,physical,error);
+    qa_native_host_movement_release(frame->client.host,movement_slot); return ok;
 }
 static bool raw_native_commit(control_frame *frame,qa_error *error)
 {

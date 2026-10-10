@@ -1,6 +1,41 @@
 #include "internal.h"
 #include <math.h>
 
+bool native_host_movement_prepare(qa_native_host *host, qa_error *error)
+{
+    if (!qa_pool_prepare(&host->movement_results, &host->movement_storage, 32,
+            sizeof(qa_movement_result), _Alignof(qa_movement_result), error)) return false;
+    memset(host->movement_results.values, 0,
+        host->movement_results.capacity * host->movement_results.stride);
+    for (size_t i = 0; i < host->movement_results.capacity; ++i)
+        if (!qa_movement_result_reserve(qa_pool_at(&host->movement_results, i), 64, error))
+            return false;
+    qa_arena_seal(&host->movement_storage);
+    return true;
+}
+
+void native_host_movement_dispose(qa_native_host *host)
+{
+    for (size_t i = 0; i < host->movement_results.capacity; ++i)
+        qa_movement_result_free(qa_pool_at(&host->movement_results, i));
+    qa_arena_destroy(&host->movement_storage);
+}
+
+qa_movement_result *qa_native_host_movement_acquire(qa_native_host *host, size_t *slot,
+    qa_error *error)
+{
+    qa_movement_result *result = qa_pool_take(&host->movement_results, slot);
+    if (!result) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "native movement result pool exhausted");
+        return NULL;
+    }
+    qa_movement_result_clear(result);
+    return result;
+}
+
+void qa_native_host_movement_release(qa_native_host *host, size_t slot)
+{ qa_pool_release(&host->movement_results, slot); }
+
 static int16_t load_i16(const uint8_t *bytes, size_t offset)
 {
     return (int16_t)qa_load_u16le(bytes + offset);
@@ -249,8 +284,14 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     movement_bridge bridge = {.host = host, .source = host->movement.kernel};
     bridge.trace = bridge_pointer(host, bytes + layout->pmove.bytes - 2 * host->pointer_bytes);
     bridge.contents = bridge_pointer(host, bytes + layout->pmove.bytes - host->pointer_bytes);
+    size_t movement_slot;
+    qa_movement_result *movement = qa_native_host_movement_acquire(host, &movement_slot, error);
+    if (!movement) return false;
     if ((bridge.trace || bridge.contents) &&
-        !qa_native_allocate(host->instance, 48, INT32_MIN + 8, &bridge.scratch, error)) return false;
+        !qa_native_allocate(host->instance, 48, INT32_MIN + 8, &bridge.scratch, error)) {
+        qa_native_host_movement_release(host, movement_slot);
+        return false;
+    }
     qa_movement_services services = {
         .context = &bridge,
         .trace = bridge_trace,
@@ -260,32 +301,31 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
         .effect = bridge_effect,
         .firing = bridge_firing,
         .is_bsp = bridge_is_bsp};
-    qa_movement_result movement = {0};
     bool moved = host->movement.execute
         ? host->movement.execute(host->movement.context, host, address, &input,
-            &services, &movement, error)
-        : qa_movement_move(&input, &services, &movement, error);
+            &services, movement, error)
+        : qa_movement_move(&input, &services, movement, error);
     if (bridge.scratch) {
         qa_error cleanup = {0};
         bool freed = qa_native_free(host->instance, bridge.scratch, &cleanup);
         if (!freed && moved) { moved = false; if (error) *error = cleanup; }
     }
     if (!moved) {
-        qa_movement_result_free(&movement);
+        qa_native_host_movement_release(host, movement_slot);
         return false;
     }
-    if(movement.status==QA_MOVEMENT_ACTOR_REMOVED &&
-        qa_actor_id_equal(movement.actor,input.actor) &&
+    if(movement->status==QA_MOVEMENT_ACTOR_REMOVED &&
+        qa_actor_id_equal(movement->actor,input.actor) &&
         !qa_actors_get(qa_session_actors(host->world.session),input.actor)) {
-        qa_movement_result_free(&movement); return true;
+        qa_native_host_movement_release(host, movement_slot); return true;
     }
-    if (movement.state.kind != QA_RULESET_Q2_CLASSIC ||
-        !qa_actor_id_equal(movement.actor, input.actor)) {
-        qa_movement_result_free(&movement);
+    if (movement->state.kind != QA_RULESET_Q2_CLASSIC ||
+        !qa_actor_id_equal(movement->actor, input.actor)) {
+        qa_native_host_movement_release(host, movement_slot);
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
             "classic Q2 Pmove result differs from its physical Source actor or dialect");
     }
-    const qa_q2_movement_state *state = &movement.state.data.q2;
+    const qa_q2_movement_state *state = &movement->state.data.q2;
     qa_store_u32le(bytes, (uint32_t)state->type);
     for (size_t index = 0; index < 3; ++index) {
         store_i16(bytes, 4 + index * 2, state->origin_eighths[index]);
@@ -295,43 +335,43 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     bytes[16] = (uint8_t)state->flags;
     bytes[17] = state->time_eight_ms;
     store_i16(bytes, 18, state->gravity);
-    size_t contacts = movement.contact_count;
+    size_t contacts = movement->contact_count;
     if (contacts > 32)
         contacts = 32;
     qa_store_u32le(bytes + 48, (uint32_t)contacts);
     memset(bytes + layout->pmove.touches, 0, 32u * host->pointer_bytes);
     for (size_t index = 0; index < contacts; ++index) {
         qa_native_address entity;
-        if (!contact_address(host, movement.contacts[index].trace.hit,
-                             movement.contacts[index].trace.actor, &entity, error)) {
-            qa_movement_result_free(&movement);
+        if (!contact_address(host, movement->contacts[index].trace.hit,
+                             movement->contacts[index].trace.actor, &entity, error)) {
+            qa_native_host_movement_release(host, movement_slot);
             return false;
         }
         if (!native_host_store_pointer(host, bytes + layout->pmove.touches +
                                                  index * host->pointer_bytes,
                                         entity, error)) {
-            qa_movement_result_free(&movement);
+            qa_native_host_movement_release(host, movement_slot);
             return false;
         }
     }
-    store_vec3(bytes, layout->pmove.view_angles, movement.view_angles);
-    store_f32_at(bytes, layout->pmove.view_height, movement.view_height);
-    store_vec3(bytes, layout->pmove.mins, movement.bounds.mins);
-    store_vec3(bytes, layout->pmove.maxs, movement.bounds.maxs);
+    store_vec3(bytes, layout->pmove.view_angles, movement->view_angles);
+    store_f32_at(bytes, layout->pmove.view_height, movement->view_height);
+    store_vec3(bytes, layout->pmove.mins, movement->bounds.mins);
+    store_vec3(bytes, layout->pmove.maxs, movement->bounds.maxs);
     qa_native_address ground = 0;
-    if (!contact_address(host, movement.ground.hit, movement.ground.actor, &ground, error)) {
-        qa_movement_result_free(&movement);
+    if (!contact_address(host, movement->ground.hit, movement->ground.actor, &ground, error)) {
+        qa_native_host_movement_release(host, movement_slot);
         return false;
     }
     if (!native_host_store_pointer(host, bytes + layout->pmove.ground, ground, error)) {
-        qa_movement_result_free(&movement);
+        qa_native_host_movement_release(host, movement_slot);
         return false;
     }
-    qa_store_u32le(bytes + layout->pmove.water_type, (uint32_t)movement.water_type);
-    qa_store_u32le(bytes + layout->pmove.water_level, (uint32_t)movement.water_level);
+    qa_store_u32le(bytes + layout->pmove.water_type, (uint32_t)movement->water_type);
+    qa_store_u32le(bytes + layout->pmove.water_level, (uint32_t)movement->water_level);
     bool ok = native_host_write(host, address, bytes, layout->pmove.bytes, error);
     if (ok && host->movement.commit)
-        ok = host->movement.commit(host->movement.context, host, address, &movement, error);
-    qa_movement_result_free(&movement);
+        ok = host->movement.commit(host->movement.context, host, address, movement, error);
+    qa_native_host_movement_release(host, movement_slot);
     return ok;
 }

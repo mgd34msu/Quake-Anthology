@@ -294,6 +294,11 @@ bool qa_native_host_terminal_retired(const qa_native_host *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
+/* Load-reserved result storage shared by SDK imports and selected foreign
+ * movement. Nested imports retain distinct slots until their call completes. */
+qa_movement_result *qa_native_host_movement_acquire(qa_native_host *, size_t *slot,
+    qa_error *);
+void qa_native_host_movement_release(qa_native_host *, size_t slot);
 bool qa_native_host_source_public_bytes(qa_native_host *, uint32_t source_slot,
     size_t *, qa_error *);
 bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,

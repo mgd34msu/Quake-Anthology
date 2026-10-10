@@ -7,6 +7,7 @@
 #include "qa/native_process_resources.h"
 #include "qa/network.h"
 #include "qa/source_save.h"
+#include "qa/pool.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -106,6 +107,8 @@ struct qa_native_host {
     /* Borrowed only while a checked completed-boundary observation is active. */
     const qa_source_frame *q2_observation_frame;
     qa_native_host_movement_services movement;
+    qa_arena movement_storage;
+    qa_pool movement_results;
     qa_native_host_q2_application_fn q2_application;
     void *q2_application_context;
     uint32_t q2_seat;
@@ -215,6 +218,8 @@ bool native_host_trace(qa_native_host *, const qa_native_import_call *, qa_nativ
 bool native_host_box_edicts(qa_native_host *, const qa_native_import_call *,
                             qa_native_value *, qa_error *);
 bool native_host_pmove(qa_native_host *, qa_native_address, qa_error *);
+bool native_host_movement_prepare(qa_native_host *, qa_error *);
+void native_host_movement_dispose(qa_native_host *);
 
 bool native_host_message_write(qa_native_host *, const qa_native_import_call *, qa_error *);
 bool native_host_message_send(qa_native_host *, const qa_native_import_call *, qa_error *);
