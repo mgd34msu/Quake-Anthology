@@ -151,7 +151,7 @@ struct frontend_unified_q2 {
     q2_activation *inventory_owner,*score_owner;
     q2_activation *view_owner;
     const char *view_content,*view_provider;
-    qa_arena pose_storage;
+    qa_arena pose_storage,text_storage,help_storage[2];
     frontend_remote_q2_effects_pose *effect_poses;
     size_t effect_pose_capacity;
     frontend_remote_q2_effects_profile view_profile;
@@ -342,7 +342,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     }
     q2_visual **next=&o->visuals;
     while (*next) { q2_visual *v=*next;if (v->activation==a) { *next=v->next;visual_clear(v); }else next=&v->next; }
-    for (size_t i=0;i<2;++i) if (o->help_owner[i]==a) { free(o->help_text[i]);o->help_text[i]=NULL;o->help_owner[i]=NULL; }
+    for (size_t i=0;i<2;++i) if (o->help_owner[i]==a) {qa_arena_reset(&o->help_storage[i]);o->help_text[i]=NULL;o->help_owner[i]=NULL;}
     if (o->inventory_owner==a) inventory_clear(o);
     if (o->score_owner==a) scores_clear(o);
     if (o->story_owner==a) { qa_unified_document_destroy(o->story_document);o->story_document=NULL;o->story=NULL;o->story_owner=NULL; }
@@ -730,18 +730,25 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->native_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
     size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows))+
         2*o->native_capacity*sizeof(q2_native)+4*_Alignof(max_align_t);
-    if(!qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
+    size_t text_bytes=qa_unified_session_limits(r->session)->message_bytes*2;
+    if(!qa_arena_reserve(&o->text_storage,text_bytes,e) ||
+        !qa_arena_reserve(&o->help_storage[0],text_bytes,e) ||
+        !qa_arena_reserve(&o->help_storage[1],text_bytes,e) ||
+        !qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
         !(o->effect_poses=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->effect_poses),_Alignof(frontend_remote_q2_effects_pose),e)) ||
         !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e))) {
-        qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;
+        qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
+        qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*out=NULL;return false;
     }
     memset(o->visual_rows,0,o->effect_pose_capacity*sizeof(*o->visual_rows));
     for (size_t i=0;i<2 && o->native_capacity;++i) {
         o->native_buffers[i]=qa_arena_alloc(&o->pose_storage,o->native_capacity*sizeof(q2_native),_Alignof(q2_native),e);
-        if (!o->native_buffers[i]) {qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;}
+        if (!o->native_buffers[i]) {qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
+        qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*out=NULL;return false;}
         memset(o->native_buffers[i],0,o->native_capacity*sizeof(q2_native));
     }
-    qa_arena_seal(&o->pose_storage);
+    qa_arena_seal(&o->pose_storage);qa_arena_seal(&o->text_storage);
+    qa_arena_seal(&o->help_storage[0]);qa_arena_seal(&o->help_storage[1]);
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
@@ -1017,7 +1024,7 @@ static bool temporary_receive(frontend_unified_q2 *o,const qa_unified_presentati
     ++o->busy;bool okay=frontend_remote_q2_effects_temporary(b->effects,&t,actors,row->seconds*1000,row->seconds*1000,e);--o->busy;
     return okay;
 }
-static bool player_names_expand(frontend_unified_q2 *o,qa_buffer *text,qa_error *e)
+static bool player_names_expand(frontend_unified_q2 *o,qa_arena *storage,qa_buffer *text,qa_error *e)
 {
     const char *input=(const char *)text->data; size_t extent=0; char *output=NULL;
     for (unsigned pass=0;pass<2;++pass) {
@@ -1037,17 +1044,17 @@ static bool player_names_expand(frontend_unified_q2 *o,qa_buffer *text,qa_error 
                 while (name && name->slot!=slot) name=name->next;
                 part=name?name->name:""; length=strlen(part); i=next;
             } else ++i;
-            if (length>SIZE_MAX-1-used) { free(output);
+            if (length>SIZE_MAX-1-used) {
                 return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 player name expansion exceeds text storage"); }
             if (pass) memcpy(output+used,part,length);
             used+=length;
         }
         if (!pass) {
-            extent=used; output=malloc(extent+1);
+            extent=used; output=qa_arena_alloc(storage,extent+1,1,e);
             if (!output) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 localized player names");
         }
     }
-    output[extent]=0; qa_buffer_free(text); *text=(qa_buffer){(uint8_t *)output,extent}; return true;
+    output[extent]=0; *text=(qa_buffer){(uint8_t *)output,extent}; return true;
 }
 static bool userinfo(frontend_unified_q2 *o,const qa_q2_player_event *event,bool publish,qa_error *e)
 {
@@ -1058,12 +1065,12 @@ static bool userinfo(frontend_unified_q2 *o,const qa_q2_player_event *event,bool
     char *copy=text_copy(event->text);if (!copy)return false;free(v->name);v->name=copy;return true;
 }
 static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
-    const qa_builtin_message_arg *args,size_t count,qa_buffer *out,qa_error *e)
+    const qa_builtin_message_arg *args,size_t count,qa_arena *storage,qa_buffer *out,qa_error *e)
 {
-    char *text=text_copy(input?input:"");if (!text)return false;
+    const char *text=input?input:"";
     *out=(qa_buffer){(uint8_t *)text,strlen(text)};
     if (row->q2_profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)return true;
-    q2_bank *b=NULL;const char **arguments=count?calloc(count,sizeof(*arguments)):NULL;
+    q2_bank *b=NULL;const char **arguments=count?qa_arena_alloc(storage,count*sizeof(*arguments),_Alignof(const char *),e):NULL;
     bool okay=(!count || arguments) && bank(o,row->content,NULL,NULL,0,false,&b,e);
     for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=qa_strings_cstr(o->replica->strings,args[i].value.text);if (!arguments[i])arguments[i]="";}
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
@@ -1071,21 +1078,21 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
     okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
         qa_localization_acquire(o->localizations,b->files,preferences.language,&opts,&catalog,e);
     if (okay){char output[1024];size_t n=qa_localize_presentation(catalog,text,arguments,count,false,output,sizeof(output));
-        char *copy=malloc(n+1);if (!copy)okay=false;else{memcpy(copy,output,n+1);qa_buffer_free(out);*out=(qa_buffer){(uint8_t *)copy,n};}}
-    qa_localization_release(catalog);free(arguments);
-    if (okay)okay=player_names_expand(o,out,e);
-    if (!okay)qa_buffer_free(out);
+        char *copy=qa_arena_alloc(storage,n+1,1,e);if (!copy)okay=false;else{memcpy(copy,output,n+1);*out=(qa_buffer){(uint8_t *)copy,n};}}
+    qa_localization_release(catalog);
+    if (okay)okay=player_names_expand(o,storage,out,e);
     return okay;
 }
 static bool received_text(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
     const qa_builtin_message_arg *args,size_t count,bool center,bool console,bool chat,bool instant,double duration,qa_error *e)
 {
-    qa_buffer text={0};if (!localized(o,row,input,args,count,&text,e))return false;
+    qa_arena_reset(&o->text_storage);
+    qa_buffer text={0};if (!localized(o,row,input,args,count,&o->text_storage,&text,e))return false;
     bool okay=center?qa_hud_center_print(o->hud,(const char *)text.data,nanoseconds(row->seconds),nanoseconds(duration),(qa_hud_center_policy){.instant=instant,.character_ns=UINT64_C(50000000)},e):
         qa_hud_notify(o->hud,(const char *)text.data,chat,nanoseconds(row->seconds),UINT64_C(3000000000),e);
     if (okay && console){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         qa_console_emit(domain->console,&domain->command_context,(const char *)text.data);}
-    qa_buffer_free(&text);return okay;
+    return okay;
 }
 static bool viewer_matches(frontend_unified_q2 *o,qa_actor_id source,bool *matches,qa_error *e)
 {
@@ -1242,13 +1249,16 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
         qa_unified_document_destroy(o->story_document);o->story_document=document;o->story=row;o->story_owner=owner;return true;}
     case QA_Q2_MAP_FOG:return fog_receive(o,row,v->recipient,&v->fog,(double)v->duration*1000,e);
     case QA_Q2_MAP_HELP:{qa_buffer text={0};
-        if (v->slot<1 || v->slot>2 || !activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
-            !localized(o,row,event_text,v->arguments,v->argument_count,&text,e))return false;
-        char *print=malloc(text.size+2);if (!print){qa_buffer_free(&text);return false;}
+        if (v->slot<1 || v->slot>2 || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
+        qa_arena *storage=o->help_storage+v->slot-1;qa_arena_reset(storage);
+        if (!localized(o,row,event_text,v->arguments,v->argument_count,storage,&text,e))return false;
+        char *copy=qa_arena_alloc(storage,text.size+1,1,e),*print=qa_arena_alloc(storage,text.size+2,1,e);
+        if (!copy || !print)return false;
+        memcpy(copy,text.data,text.size);copy[text.size]=0;
         memcpy(print,text.data,text.size);print[text.size]='\n';print[text.size+1]=0;
-        free(o->help_text[v->slot-1]);o->help_text[v->slot-1]=(char *)text.data;o->help_owner[v->slot-1]=owner;
+        o->help_text[v->slot-1]=copy;o->help_owner[v->slot-1]=owner;
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
-        qa_console_emit(domain->console,&domain->command_context,print);free(print);*mirrored=true;return true;}
+        qa_console_emit(domain->console,&domain->command_context,print);*mirrored=true;return true;}
     case QA_Q2_MAP_SCREEN_BLEND:{bool matches;
         if (!viewer_matches(o,v->recipient,&matches,e) || !activation(o,&row->owner,&owner,e))return false;
         if (matches && o->view_provider && row->provider && !strcmp(o->view_provider,row->provider) && o->view_owner==owner){
@@ -1756,7 +1766,7 @@ static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,q
 {
     if (!o->story) return true;
     const qa_q2_map_event *story=&o->story->payload.value.q2_map;qa_buffer text={0};
-    if (!localized(o,o->story,qa_strings_cstr(o->replica->strings,story->text),story->arguments,story->argument_count,&text,e))return false;
+    if (!localized(o,o->story,qa_strings_cstr(o->replica->strings,story->text),story->arguments,story->argument_count,&frame->storage,&text,e))return false;
     qa_ui_presentation presentation; qa_font_layout layout;
     bool okay=qa_ui_presentation_read(ui,&presentation,e);
     qa_font_layout_options opts={.text={text.data,text.size},.color={1,1,1,1},
@@ -1767,7 +1777,7 @@ static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,q
         okay=qa_font_layout_build(&presentation.fonts,&opts,&frame->storage,&layout,e); }
     if (okay) okay=qa_font_draw_layout(frame,&layout,&(qa_font_draw_options){.seat=presentation.fonts.seat,
         .target=viewport,.origin={(640-layout.width)*.5f,(480-layout.height)*.5f},.space=QA_FONT_STRETCH_640},e);
-    qa_buffer_free(&text); return okay;
+    return okay;
 }
 static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
@@ -1904,7 +1914,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
     for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
-    free(o->help); free(o->help_text[0]); free(o->help_text[1]);
+    free(o->help);
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
     qa_unified_document_destroy(o->story_document);sky_clear(o);
@@ -1913,7 +1923,8 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
     while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
     while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
-    qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);free(o);*slot=NULL;return true;
+    qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
+    qa_arena_destroy(&o->text_storage);qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*slot=NULL;return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
