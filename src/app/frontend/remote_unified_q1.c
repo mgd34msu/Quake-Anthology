@@ -147,6 +147,7 @@ struct frontend_unified_q1 {
     double seconds,prepared_seconds,bonus_until,capture_until;
     bool has_frame,prepared,busy,ctf_present;
     bool monsters_present,secrets_present;
+    qa_arena semantic_storage;
     q1_entity_trail *trails;
     size_t trail_capacity;
     qa_scene_light *scene_lights;
@@ -476,12 +477,24 @@ bool frontend_unified_q1_create(qa_frontend *f,frontend_remote_unified *r,fronte
     frontend_unified_q1 *o=calloc(1,sizeof(*o));if(!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating Q1 CLIENT presentation");
     o->frontend=f;o->replica=r;o->media=m;o->options=*options;o->epoch=frontend_remote_unified_epoch(r);
     qa_builtin_random_seed(&o->random,1);
-    o->prompt_lines=calloc(Q1_PROMPT_CHOICES,sizeof(*o->prompt_lines));
-    if(!o->prompt_lines){free(o);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Reserving Q1 prompt labels");}
-    o->localizations=qa_localization_pool_create(e);const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
-    bool ok=o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o));
+    o->trail_capacity=qa_actors_capacity(frontend_remote_unified_registry(r));
+    size_t labels=Q1_PROMPT_CHOICES*sizeof(*o->prompt_lines);
+    if(o->trail_capacity>(SIZE_MAX-labels)/sizeof(*o->trails)){
+        free(o);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q1 semantic storage exceeds addressable capacity");
+    }
+    qa_arena_init(&o->semantic_storage,0);
+    bool ok=qa_arena_reserve(&o->semantic_storage,labels+o->trail_capacity*sizeof(*o->trails),e);
+    if(ok){
+        o->prompt_lines=qa_arena_alloc(&o->semantic_storage,labels,_Alignof(const char *),e);
+        o->trails=qa_arena_alloc(&o->semantic_storage,o->trail_capacity*sizeof(*o->trails),_Alignof(q1_entity_trail),e);
+        ok=o->prompt_lines && o->trails;
+    }
+    if(ok){memset(o->trails,0,o->trail_capacity*sizeof(*o->trails));qa_arena_seal(&o->semantic_storage);}
+    o->localizations=ok?qa_localization_pool_create(e):NULL;
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r);
+    ok=ok && o->localizations && d && (f->source_restoring?checkpoint_current(o,e):frontend_unified_q1_current(o));
     if(ok)o->hud=f->seats[d->physical_seat].hud;
-    if(!ok) {qa_localization_pool_destroy(o->localizations);free(o->prompt_lines);free(o);return false;}
+    if(!ok){qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);return false;}
     o->ctf[0].label="Red";o->ctf[1].label="Blue";o->ctf[2].label="Flags";o->ctf[3].label="Runes";*out=o;return true;
 }
 bool frontend_unified_q1_events(frontend_unified_q1 *o,frontend_unified_events *events,qa_error *e)
@@ -793,15 +806,7 @@ bool frontend_unified_q1_entity_effects(frontend_unified_q1 *o,
     q1_group *g;
     if (!group(o,product->identity,NULL,&g,e)) return false;
     size_t slot=entity->actor.slot;
-    if (slot>=o->trail_capacity) {
-        size_t extent=qa_actors_capacity(frontend_remote_unified_registry(o->replica));
-        size_t capacity=o->trail_capacity?o->trail_capacity:64;
-        while(capacity<=slot && capacity<extent) capacity=capacity>extent/2?extent:capacity*2;
-        q1_entity_trail *trails=realloc(o->trails,capacity*sizeof(*trails));
-        if (!trails) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received Q1 entity trail origins");
-        memset(trails+o->trail_capacity,0,(capacity-o->trail_capacity)*sizeof(*trails));
-        o->trails=trails;o->trail_capacity=capacity;
-    }
+    if(slot>=o->trail_capacity)return fail(e,"Q1 trail actor lies outside its loaded registry");
     q1_entity_trail *trail=o->trails+slot;
     bool actor_same=trail->present && qa_actor_id_equal(trail->actor,entity->actor);
     if (actor_same && trail->frame==o->frontend->frame_number) return true;
@@ -1051,5 +1056,5 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
     while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
     prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
-    qa_localization_pool_destroy(o->localizations);free(o->trails);free(o->prompt_lines);free(o);*slot=NULL;return true;
+    qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);*slot=NULL;return true;
 }
