@@ -97,17 +97,23 @@ bool qa_audio_bank_create(qa_vfs *view, qa_audio_bank **out, qa_error *error) {
     return true;
 }
 
-static uint64_t bank_name_hash(const char *prefix, const char *path, qa_game_family family) {
-    uint64_t hash = UINT64_C(14695981039346656037) ^ (uint64_t)family;
-    while (*prefix) { hash ^= (uint8_t)*prefix++; hash *= UINT64_C(1099511628211); }
-    while (*path) { hash ^= (uint8_t)*path++; hash *= UINT64_C(1099511628211); }
+static const char *bank_entry_name(const bank_entry *entry)
+{ return entry->asset?entry->asset->name:entry->missing_name; }
+static qa_game_family bank_entry_family(const bank_entry *entry)
+{ return entry->asset?entry->asset->family:entry->missing_family; }
+static uint64_t bank_name_hash(const qa_bytes *parts,size_t count,qa_game_family family)
+{
+    uint64_t hash=UINT64_C(14695981039346656037)^(uint64_t)family;
+    for(size_t i=0;i<count;++i)for(size_t j=0;j<parts[i].size;++j){hash^=parts[i].data[j];hash*=UINT64_C(1099511628211);}
     return hash;
 }
-static void bank_name_insert(qa_audio_bank *bank, size_t index) {
-    const qa_audio_asset *asset = bank->entries[index].asset;
-    size_t slot = (size_t)bank_name_hash("", asset->name, asset->family) & (bank->name_capacity - 1);
-    while (bank->names[slot]) slot = (slot + 1) & (bank->name_capacity - 1);
-    bank->names[slot] = index + 1;
+static void bank_name_insert(qa_audio_bank *bank,size_t index)
+{
+    bank_entry *entry=bank->entries+index;const char *name=bank_entry_name(entry);
+    qa_bytes part={(const uint8_t *)name,strlen(name)};
+    size_t slot=(size_t)bank_name_hash(&part,1,bank_entry_family(entry))&(bank->name_capacity-1);
+    while(bank->names[slot])slot=(slot+1)&(bank->name_capacity-1);
+    bank->names[slot]=index+1;
 }
 static void bank_name_rebuild(qa_audio_bank *bank) {
     if (!bank->name_capacity) return;
@@ -128,27 +134,35 @@ static bool bank_name_reserve(qa_audio_bank *bank, size_t count, qa_error *error
     free(bank->names); bank->names = names; bank->name_capacity = capacity;
     bank_name_rebuild(bank); return true;
 }
-static bank_entry *bank_name_find(qa_audio_bank *bank, const char *name, qa_game_family family) {
-    if (!bank->count) return NULL;
-    const char *path = name[0] == '#' ? name + 1 : name;
-    const char *prefix = name[0] != '#' && strncmp(name, "sound/", 6) ? "sound/" : "";
-    size_t prefix_length = strlen(prefix);
-    size_t slot = (size_t)bank_name_hash(prefix, path, family) & (bank->name_capacity - 1);
-    while (bank->names[slot]) {
-        bank_entry *entry = bank->entries + bank->names[slot] - 1;
-        const qa_audio_asset *asset = entry->asset;
-        if (asset->family == family && !strncmp(asset->name, prefix, prefix_length) &&
-            !strcmp(asset->name + prefix_length, path)) return entry;
-        slot = (slot + 1) & (bank->name_capacity - 1);
+static bank_entry *bank_name_find_parts(qa_audio_bank *bank,const qa_bytes *parts,size_t count,qa_game_family family)
+{
+    if(!bank->count)return NULL;
+    size_t slot=(size_t)bank_name_hash(parts,count,family)&(bank->name_capacity-1);
+    while(bank->names[slot]){
+        bank_entry *entry=bank->entries+bank->names[slot]-1;
+        const char *name=bank_entry_name(entry);bool equal=bank_entry_family(entry)==family;
+        for(size_t i=0;equal && i<count;++i){
+            equal=!strncmp(name,(const char *)parts[i].data,parts[i].size);
+            if(equal)name+=parts[i].size;
+        }
+        if(equal && !*name)return entry;
+        slot=(slot+1)&(bank->name_capacity-1);
     }
     return NULL;
 }
-
-static void bank_clear_entries(qa_audio_bank *bank) {
-    for (size_t i = 0; i < bank->count; ++i)
-        qa_audio_asset_release(bank->entries[i].asset);
-    bank->count = 0;
-    bank_name_rebuild(bank);
+static bank_entry *bank_name_find(qa_audio_bank *bank,const char *name,qa_game_family family)
+{
+    const char *path=name[0]=='#'?name+1:name;
+    const char *prefix=name[0]!='#' && strncmp(name,"sound/",6)?"sound/":"";
+    qa_bytes parts[]={{(const uint8_t *)prefix,strlen(prefix)},{(const uint8_t *)path,strlen(path)}};
+    return bank_name_find_parts(bank,parts,2,family);
+}
+static void bank_entry_release(bank_entry *entry)
+{ qa_audio_asset_release(entry->asset);free(entry->missing_name); }
+static void bank_clear_entries(qa_audio_bank *bank)
+{
+    for(size_t i=0;i<bank->count;++i)bank_entry_release(bank->entries+i);
+    bank->count=0;bank_name_rebuild(bank);
 }
 
 void qa_audio_bank_sync(qa_audio_bank *bank) {
@@ -195,7 +209,7 @@ void qa_audio_bank_end(qa_audio_bank *bank) {
         if (bank->entries[i].touched == bank->registration)
             bank->entries[retained++] = bank->entries[i];
         else
-            qa_audio_asset_release(bank->entries[i].asset);
+            bank_entry_release(bank->entries+i);
     }
     bank->count = retained;
     bank_name_rebuild(bank);
@@ -207,7 +221,7 @@ static bank_entry *bank_find(const qa_audio_bank *bank, uint64_t resource_id,
         return NULL;
     for (size_t i = 0; i < bank->count; ++i) {
         qa_audio_asset *asset = bank->entries[i].asset;
-        if (asset->resource_id == resource_id && asset->family == family)
+        if (asset && asset->resource_id == resource_id && asset->family == family)
             return &bank->entries[i];
     }
     return NULL;
@@ -263,6 +277,7 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_famil
     if (!bank_name_reserve(bank, bank->count, error)) return false;
     bank_entry *registered = bank_name_find(bank, name, family);
     if (registered) {
+        if(!registered->asset){registered->touched=bank->registration;*out=NULL;return true;}
         qa_audio_asset *asset = qa_audio_asset_retain(registered->asset);
         if (!asset) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Sound asset reference count overflow"); return false; }
         registered->touched = bank->registration; *out = asset; return true;
@@ -292,10 +307,17 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_famil
         free(prefixed);
         return false;
     }
-    if (resource == NULL) {
-        free(prefixed);
-        *out = NULL;
-        return true;
+    if(resource==NULL){
+        size_t length=strlen(path);
+        bool okay=bank_reserve(bank,error) && bank_name_reserve(bank,bank->count+1,error);
+        char *missing=okay?malloc(length+1):NULL;
+        if(okay && !missing){qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining optional sound name");okay=false;}
+        if(okay){
+            memcpy(missing,path,length+1);
+            bank->entries[bank->count]=(bank_entry){.touched=bank->registration,.missing_name=missing,.missing_family=family};
+            bank_name_insert(bank,bank->count++);
+        }
+        free(prefixed);*out=NULL;return okay;
     }
     uint64_t resource_id = qa_resource_id(resource);
     bank_entry *prior = bank_find(bank, resource_id, family);
@@ -350,7 +372,7 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_famil
     qa_audio_sample *shared = NULL;
     for (size_t i = 0; i < bank->count; ++i) {
         qa_audio_asset *cached = bank->entries[i].asset;
-        if (cached->resource_id == resource_id && cached->policy == policy) {
+        if (cached && cached->resource_id == resource_id && cached->policy == policy) {
             shared = cached->sample;
             break;
         }
@@ -378,11 +400,11 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_famil
     }
     if (prior != NULL) {
         qa_audio_asset *previous = prior->asset;
-        *prior = (bank_entry){asset, bank->registration};
+        *prior = (bank_entry){.asset=asset,.touched=bank->registration};
         qa_audio_asset_release(previous);
         bank_name_rebuild(bank);
     } else {
-        bank->entries[bank->count] = (bank_entry){asset, bank->registration};
+        bank->entries[bank->count] = (bank_entry){.asset=asset,.touched=bank->registration};
         bank_name_insert(bank, bank->count++);
     }
     *out = owned;
@@ -414,6 +436,21 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
     if (name_length > SIZE_MAX - fixed) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "player sound path length overflows storage");
         return false;
+    }
+    qa_audio_bank_sync(bank);
+    qa_bytes primary[]={{(const uint8_t *)"players/",8},{(const uint8_t *)model,model_length},
+        {(const uint8_t *)"/",1},{(const uint8_t *)name,name_length}};
+    bank_entry *cached=bank_name_find_parts(bank,primary,4,QA_GAME_Q2);
+    if(cached && !cached->asset){
+        cached->touched=bank->registration;
+        qa_bytes fallback[]={{(const uint8_t *)"sound/player/male/",18},{(const uint8_t *)name,name_length}};
+        cached=bank_name_find_parts(bank,fallback,2,QA_GAME_Q2);
+    }
+    if(cached){
+        cached->touched=bank->registration;
+        *out=qa_audio_asset_retain(cached->asset);
+        if(cached->asset && !*out){qa_error_set(error,QA_ERROR_MEMORY,0,"Sound asset reference count overflow");return false;}
+        return true;
     }
     char *path = malloc(fixed + name_length);
     if (path == NULL) {

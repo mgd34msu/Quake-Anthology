@@ -522,7 +522,32 @@ static void test_shared_audio_preparation(void)
         qa_audio_sample_release(first); qa_audio_sample_release(again);
         qa_audio_sample_release(expected); qa_audio_sample_release(changed); qa_audio_asset_release(asset);
     }
+    for(size_t i=0;i<sizeof(families)/sizeof(*families);++i){
+        qa_audio_asset *absent=NULL;
+        CHECK(qa_audio_bank_register(bank,"optional.wav",families[i],&absent,&error) && !absent);
+        CHECK(qa_audio_bank_register(bank,"sound/optional.wav",families[i],&absent,&error) && !absent);
+    }
+    char optional[160];CHECK(snprintf(optional,sizeof(optional),"%s/optional.wav",folder)>0);
+    fd=open(optional,O_WRONLY|O_CREAT|O_EXCL,0600);CHECK(fd>=0);
+    CHECK(write(fd,wave,sizeof(wave))==(ssize_t)sizeof(wave));CHECK(close(fd)==0);
+    CHECK(qa_vfs_mount_directory(view,directory,QA_ARCHIVE_EXACT,false,&mount,&error));
+    for(size_t i=0;i<sizeof(families)/sizeof(*families);++i){
+        qa_audio_asset *asset=NULL;
+        CHECK(qa_audio_bank_register(bank,"optional.wav",families[i],&asset,&error) && asset);
+        qa_audio_asset_release(asset);
+    }
+    char player[160],male[160],jump[192];
+    CHECK(snprintf(player,sizeof(player),"%s/player",folder)>0);CHECK(mkdir(player,0700)==0);
+    CHECK(snprintf(male,sizeof(male),"%s/male",player)>0);CHECK(mkdir(male,0700)==0);
+    CHECK(snprintf(jump,sizeof(jump),"%s/jump1.wav",male)>0);
+    fd=open(jump,O_WRONLY|O_CREAT|O_EXCL,0600);CHECK(fd>=0);
+    CHECK(write(fd,wave,sizeof(wave))==(ssize_t)sizeof(wave));CHECK(close(fd)==0);
+    qa_audio_asset *first=NULL,*again=NULL;
+    CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&first,&error) && first);
+    CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&again,&error) && again==first);
+    qa_audio_asset_release(first);qa_audio_asset_release(again);
     qa_audio_bank_destroy(bank); qa_vfs_destroy(view); qa_resource_pool_destroy(resources);
+    CHECK(unlink(jump)==0);CHECK(rmdir(male)==0);CHECK(rmdir(player)==0);CHECK(unlink(optional)==0);
     CHECK(!memcmp(held->samples, held_samples, sizeof(held_samples))); qa_audio_sample_release(held);
     CHECK(unlink(path) == 0); CHECK(rmdir(folder) == 0); CHECK(rmdir(directory) == 0);
 }

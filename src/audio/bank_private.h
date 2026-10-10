@@ -19,6 +19,8 @@ struct qa_audio_asset {
 typedef struct bank_entry {
     qa_audio_asset *asset;
     uint64_t touched;
+    char *missing_name;
+    qa_game_family missing_family;
 } bank_entry;
 
 struct qa_audio_bank {
