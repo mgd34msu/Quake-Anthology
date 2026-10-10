@@ -3,6 +3,7 @@
 
 #include "qa/network_q2_batch.h"
 #include "qa/network_q2_kex_game.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct qa_q2_entity_span { const qa_q2_entity *data; size_t count; } qa_q2_entity_span;
 typedef struct qa_q2_frame_player { qa_q2_player player; qa_bytes area_bits; } qa_q2_frame_player;
@@ -14,6 +15,7 @@ typedef struct qa_q2_wire_frame {
     qa_q2_frame_player players[QA_Q2_MAX_SEATS];
     qa_q2_entity *entities;
     size_t entity_count;
+    qa_unified_frame_lease *lease;
 } qa_q2_wire_frame;
 
 /* Clone/free own all area spans and entities. Frames passed to writers may borrow
@@ -27,6 +29,7 @@ void qa_q2_frame_history_clear(qa_q2_frame_history *);
 const qa_q2_wire_frame *qa_q2_frame_history_get(const qa_q2_frame_history *, int32_t);
 const qa_q2_wire_frame *qa_q2_frame_history_latest(const qa_q2_frame_history *);
 bool qa_q2_frame_history_accept(qa_q2_frame_history *, const qa_q2_wire_frame *, qa_error *);
+bool qa_q2_frame_history_clone(qa_q2_frame_history *,const qa_q2_wire_frame *,qa_q2_wire_frame *,qa_error *);
 /* Baselines and frame entities must be unique and sorted by entity number.
  * Read returns a frame borrowed until that history slot is replaced or cleared. */
 bool qa_q2_frame_history_read(qa_q2_frame_history *, qa_q2_codec *, qa_net_reader *,

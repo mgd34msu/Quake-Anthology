@@ -25,19 +25,23 @@ static const qa_q2_entity *baseline_find(qa_q2_entity_span entries, uint32_t num
 
 void qa_q2_frame_free(qa_q2_wire_frame *frame) {
     if (!frame) return;
+    if (frame->lease) { qa_unified_frame_lease_release(frame->lease);memset(frame,0,sizeof(*frame));return; }
     for (size_t i = 0; i < frame->player_count && i < QA_Q2_MAX_SEATS; ++i)
         free((void *)frame->players[i].area_bits.data);
     free(frame->entities);
     memset(frame, 0, sizeof(*frame));
 }
 
-bool qa_q2_frame_clone(const qa_q2_wire_frame *from, qa_q2_wire_frame *out, qa_error *error) {
+static bool frame_clone(const qa_q2_wire_frame *from,qa_unified_frame_lease *lease,
+    qa_q2_wire_frame *out,qa_error *error) {
     if (!from || !out || from == out || !from->player_count || from->player_count > QA_Q2_MAX_SEATS ||
         !ordered((qa_q2_entity_span){from->entities, from->entity_count})) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 frame clone");
+        qa_unified_frame_lease_release(lease);
         return false;
     }
     qa_q2_wire_frame copy = *from;
+    copy.lease=lease;
     copy.entities = NULL;
     for (size_t i = 0; i < copy.player_count; ++i) copy.players[i].area_bits = (qa_bytes){0};
     for (size_t i = 0; i < copy.player_count; ++i) {
@@ -48,14 +52,15 @@ bool qa_q2_frame_clone(const qa_q2_wire_frame *from, qa_q2_wire_frame *out, qa_e
             return false;
         }
         if (area.size) {
-            uint8_t *bytes = malloc(area.size);
+            uint8_t *bytes = lease?qa_unified_frame_lease_alloc(lease,area.size,1,1,error):malloc(area.size);
             if (!bytes) goto memory;
             memcpy(bytes, area.data, area.size);
             copy.players[i].area_bits = (qa_bytes){bytes, area.size};
         }
     }
     if (copy.entity_count) {
-        copy.entities = malloc(copy.entity_count * sizeof(*copy.entities));
+        copy.entities = lease?qa_unified_frame_lease_alloc(lease,copy.entity_count,sizeof(*copy.entities),_Alignof(qa_q2_entity),error):
+            malloc(copy.entity_count * sizeof(*copy.entities));
         if (!copy.entities) goto memory;
         memcpy(copy.entities, from->entities, copy.entity_count * sizeof(*copy.entities));
     }
@@ -66,9 +71,21 @@ memory:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot retain Q2 frame");
     return false;
 }
+bool qa_q2_frame_clone(const qa_q2_wire_frame *from,qa_q2_wire_frame *out,qa_error *error)
+{
+    qa_unified_frame_lease *lease=from?from->lease:NULL;
+    if (lease && !qa_unified_frame_lease_retain(lease,error)) return false;
+    return frame_clone(from,lease,out,error);
+}
+bool qa_q2_frame_history_clone(qa_q2_frame_history *history,const qa_q2_wire_frame *from,
+    qa_q2_wire_frame *out,qa_error *error)
+{
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(history?history->storage:NULL,error);
+    return lease && frame_clone(from,lease,out,error);
+}
 
 bool qa_q2_frame_history_create(size_t capacity, qa_q2_frame_history **out, qa_error *error) {
-    if (!capacity || !out || capacity > SIZE_MAX / sizeof(qa_q2_wire_frame)) {
+    if (!capacity || !out || capacity > SIZE_MAX / sizeof(qa_q2_wire_frame) || capacity>SIZE_MAX-8) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 history capacity");
         return false;
     }
@@ -76,8 +93,9 @@ bool qa_q2_frame_history_create(size_t capacity, qa_q2_frame_history **out, qa_e
     if (h) {
         h->frames = calloc(capacity, sizeof(*h->frames));
         h->present = calloc(capacity, sizeof(*h->present));
+        h->storage=qa_unified_frame_pool_create(0,capacity+8,error);
     }
-    if (!h || !h->frames || !h->present) {
+    if (!h || !h->frames || !h->present || !h->storage) {
         qa_q2_frame_history_destroy(h);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 frame history");
         return false;
@@ -99,6 +117,7 @@ void qa_q2_frame_history_clear(qa_q2_frame_history *h) {
 void qa_q2_frame_history_destroy(qa_q2_frame_history *h) {
     if (!h) return;
     qa_q2_frame_history_clear(h);
+    qa_unified_frame_pool_destroy(&h->storage);
     free(h->frames);
     free(h->present);
     free(h);
@@ -133,7 +152,7 @@ const qa_q2_wire_frame *qa_q2_frame_history_store_owned(qa_q2_frame_history *h, 
 bool qa_q2_frame_history_accept(qa_q2_frame_history *h, const qa_q2_wire_frame *frame, qa_error *error) {
     if (!h) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 history"); return false; }
     qa_q2_wire_frame copy;
-    if (!qa_q2_frame_clone(frame, &copy, error)) return false;
+    if (!qa_q2_frame_history_clone(h,frame,&copy,error)) return false;
     qa_q2_frame_history_store_owned(h, &copy);
     return true;
 }
@@ -144,8 +163,9 @@ static bool append_entity(qa_q2_wire_frame *frame, size_t *capacity, qa_q2_codec
     if (frame->entity_count == *capacity) {
         size_t next = *capacity ? *capacity * 2 : 64;
         if (next > UINT16_MAX) next = UINT16_MAX;
-        qa_q2_entity *entities = realloc(frame->entities, next * sizeof(*entities));
+        qa_q2_entity *entities=qa_unified_frame_lease_alloc(frame->lease,next,sizeof(*entities),_Alignof(qa_q2_entity),r->error);
         if (!entities) return qa_net_reader_fail(r, "Cannot retain Q2 frame entities");
+        if (frame->entity_count) memcpy(entities,frame->entities,frame->entity_count*sizeof(*entities));
         frame->entities = entities;
         *capacity = next;
     }
@@ -170,12 +190,14 @@ bool qa_q2_frame_history_read(qa_q2_frame_history *history, qa_q2_codec *c, qa_n
     frame.player_count = kex ? c->split_players : 1;
     if (!frame.player_count || frame.player_count > QA_Q2_MAX_SEATS)
         return qa_net_reader_fail(r, "Invalid Q2 split-player count");
+    frame.lease=qa_unified_frame_lease_acquire(history->storage,r->error);
+    if (!frame.lease) return false;
     qa_q2_player zero_player = {0};
     if (c->protocol.kind == QA_NET_Q2PRO_36 && c->has_server_clientnum)
         zero_player.clientnum = c->server_clientnum;
     for (size_t i = 0; i < frame.player_count; ++i) {
         size_t length = i == 0 ? header.areabytes : qa_net_read_u8(r);
-        uint8_t *area = length ? malloc(length) : NULL;
+        uint8_t *area = length ? qa_unified_frame_lease_alloc(frame.lease,length,1,1,r->error) : NULL;
         if (length && !area) { qa_net_reader_fail(r, "Cannot retain Q2 frame area bits"); goto failed; }
         frame.players[i].area_bits = (qa_bytes){area, length};
         if (i == 0 && length) memcpy(area, header.areabits, length);

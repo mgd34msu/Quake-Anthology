@@ -25,6 +25,7 @@
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q2_kex.h"
+#include "qa/network_q2_messages.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -1498,6 +1499,39 @@ static void test_q3_send_admission(void)
     qa_q3_channel_destroy(receiver);
 }
 
+static void test_q2_owned_frames(void)
+{
+    const qa_net_protocol protocols[]={QA_NET_Q2_34,QA_NET_Q2REPRO_1038};
+    for (size_t i=0;i<sizeof(protocols)/sizeof(*protocols);++i) {
+        qa_error error={0};qa_q2_frame_history *history=NULL;
+        CHECK(qa_q2_frame_history_create(2,&history,&error));
+        uint8_t area[]={1,4};
+        qa_q2_entity entity={.number=i?60000:1,.modelindex=1,.origin={1,2,3}};
+        qa_q2_wire_frame frame={.valid=true,.server_frame=1,.delta_frame=-1,.player_count=1,
+            .entities=&entity,.entity_count=1};
+        frame.players[0].area_bits=(qa_bytes){area,sizeof(area)};
+        CHECK(qa_q2_frame_history_accept(history,&frame,&error));
+        const qa_q2_wire_frame *stored=qa_q2_frame_history_latest(history);CHECK(stored && stored->lease);
+        qa_q2_wire_frame held={0};CHECK(qa_q2_frame_clone(stored,&held,&error));
+        held.entities[0].origin[0]=9;CHECK(stored->entities[0].origin[0]==1);
+        qa_q2_frame_history_clear(history);qa_q2_frame_history_destroy(history);history=NULL;
+        CHECK(held.entities[0].origin[0]==9 && held.players[0].area_bits.data[1]==4);
+        qa_q2_frame_free(&held);
+        CHECK(qa_q2_frame_history_create(2,&history,&error));
+        qa_q2_codec encoder,decoder;
+        CHECK(qa_q2_codec_init(&encoder,(qa_net_protocol_id){.kind=protocols[i]},&error));
+        CHECK(qa_q2_codec_init(&decoder,(qa_net_protocol_id){.kind=protocols[i]},&error));
+        uint8_t bytes[4096];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+        CHECK(qa_q2_frame_write(&encoder,&writer,&frame,NULL,(qa_q2_entity_span){0},1));
+        qa_net_reader reader;qa_net_reader_init(&reader,(qa_bytes){bytes,qa_net_writer_size(&writer)},&error);
+        CHECK(qa_net_read_u8(&reader)==20);
+        CHECK(qa_q2_frame_history_read(history,&decoder,&reader,(qa_q2_entity_span){0},&stored));
+        CHECK(stored->valid && stored->lease && stored->entity_count==1 && stored->entities[0].number==entity.number);
+        CHECK(stored->entities[0].origin[2]==3 && stored->players[0].area_bits.size==sizeof(area));
+        CHECK(!memcmp(stored->players[0].area_bits.data,area,sizeof(area)));
+        qa_q2_frame_history_destroy(history);
+    }
+}
 int main(int argc, char **argv)
 {
     int recovery_status;
@@ -1528,6 +1562,7 @@ int main(int argc, char **argv)
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();
+    test_q2_owned_frames();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);

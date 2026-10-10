@@ -5,6 +5,7 @@ struct qa_q2_frame_history {
     qa_q2_wire_frame *frames;
     bool *present;
     size_t capacity, next;
+    qa_unified_frame_pool *storage;
 };
 const qa_q2_wire_frame *qa_q2_frame_history_store_owned(qa_q2_frame_history *, qa_q2_wire_frame *);
 #endif

@@ -265,7 +265,7 @@ bool q2_server_projection(q2_session *session, const qa_q2_wire_frame *source,
     if (slower && settings->frame_divisor > 6)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source frame divisor exceeds its native link-history profile");
     if (slower && !motion_valid(motion, source->server_frame, error)) return false;
-    if (!qa_q2_frame_clone(source, out, error)) return false;
+    if (!qa_q2_frame_history_clone(session->state.server.frames,source,out,error)) return false;
     bool rerelease = session->codec.protocol.kind == QA_NET_Q2KEX_2023 ||
         session->codec.protocol.kind == QA_NET_Q2REPRO_1038 || session->codec.protocol.kind == QA_NET_Q2PRIVATE_4038;
     bool extended = rerelease ||
