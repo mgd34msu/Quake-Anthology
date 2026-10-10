@@ -68,9 +68,9 @@ void qa_q2_player_carry_free(qa_q2_player_carry *carry) {
 void q2_client_release_state(q2_actor *a) {
     if (!a->client)
         return;
-    qa_q2_player_carry_free(&a->client->coop);
-    free(a->client->spawn_inventory);
-    free(a->client->help_points);
+    qa_q2_player_carry_free(&a->client->rule.coop);
+    free(a->client->rule.spawn_inventory);
+    free(a->client->rule.help_points);
     free(a->client);
     a->client = NULL;
 }
@@ -158,8 +158,8 @@ bool qa_q2_clear_input(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     a->weapon.latched_attack = a->weapon.fire_buffered = false;
     a->weapon_turn = (qa_q2_weapon_turn_state){0};
     if (a->client) {
-        a->client->buttons = a->client->latched_buttons = 0;
-        a->client->weapon_thunk = false;
+        a->client->rule.buttons = a->client->rule.latched_buttons = 0;
+        a->client->rule.weapon_thunk = false;
     }
     return true;
 }
@@ -313,7 +313,7 @@ static bool player_carry_capture(void *context, qa_actor_id id, qa_error *e) {
               (a->client->info.notarget ? 32u : 0) |
               (combat.armor.powered.kind != QA_POWER_NONE ? 4096u : 0) |
               (a->client->info.flashlight ? 0x400000u : 0) |
-              (a->client->auto_shield_enabled ? 0x40000000u : 0);
+              (a->client->rule.auto_shield_enabled ? 0x40000000u : 0);
     c.power_cubes = powers->power_cubes;
     *out = c;
     return true;
@@ -362,7 +362,7 @@ static bool player_carry_restore(void *context, qa_actor_id id, qa_error *e) {
     s->info.god = (c->flags & 16) != 0;
     s->info.notarget = (c->flags & 32) != 0;
     s->info.flashlight = (c->flags & 0x400000) != 0;
-    s->auto_shield_enabled = (c->flags & 0x40000000u) != 0;
+    s->rule.auto_shield_enabled = (c->flags & 0x40000000u) != 0;
     qa_combat_state traits;
     if (!qa_combat_read_traits(g->services.combat, id, &traits, e))
         return false;
@@ -406,28 +406,55 @@ bool qa_q2_player_notarget(qa_q2_game *g, qa_actor_id id, bool *enabled, qa_erro
     *enabled = source->client->info.notarget = !source->client->info.notarget;
     return true;
 }
+const char *q2_player_source_name(const qa_q2_game *g, const q2_client_state *s) {
+    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), s->source_name);
+    return text ? text : "";
+}
+const char *q2_player_source_skin(const qa_q2_game *g, const q2_client_state *s) {
+    const char *text = qa_strings_cstr(qa_session_strings(g->services.session), s->source_skin);
+    return text ? text : "";
+}
+void q2_player_source_info_read(qa_q2_game *g, const q2_client_state *s, qa_q2_player_info *out) {
+    *out = (qa_q2_player_info){
+        .slot = s->info.slot,
+        .seat = s->info.seat,
+        .score = s->info.score,
+        .lives = s->info.lives,
+        .chase_target = s->info.chase_target,
+        .selected_item = s->info.selected_item,
+        .view_height = s->info.view_height,
+        .connected = s->info.connected,
+        .spectator = s->info.spectator,
+        .dead = s->info.dead,
+        .god = s->info.god,
+        .notarget = s->info.notarget,
+        .noclip = s->info.noclip,
+        .flashlight = s->info.flashlight,
+        .ping = s->player->ping};
+    snprintf(out->name, sizeof(out->name), "%s", q2_player_source_name(g, s));
+    snprintf(out->skin, sizeof(out->skin), "%s", q2_player_source_skin(g, s));
+}
 bool qa_q2_player_read(qa_q2_game *g, qa_actor_id id, qa_q2_player_info *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
-    if (!a || !a->client || !out)
-        return false;
-    *out = a->client->info;
+    if (!a || !a->client || !out) return false;
+    q2_player_source_info_read(g, a->client, out);
     return q2_player_score_read(g, id, &out->score, NULL);
 }
-bool qa_q2_player_projection(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) {
+bool qa_q2_player_projection(qa_q2_game *g, qa_actor_id id,
+    const qa_actor_player *identity, qa_builtin_player_info *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
-    if (!a || !a->client || !a->client->info.connected || !out)
-        return false;
-    q2_client_state *s = a->client;
-    *out = (qa_builtin_player_info){.name = s->info.name,
-                                   .skin = s->info.skin,
-                                   .slot = s->info.slot,
-                                   .ping = s->info.ping,
-                                   .entered_ns = s->entered_ns,
-                                   .view_height = s->info.view_height,
-                                   .killer_yaw = s->killer_yaw,
-                                   .connected = true,
-                                   .spectator = s->info.spectator,
-                                   .dead = s->info.dead};
+    if (!a || !a->client || !a->client->info.connected || !out) return false;
+    const q2_client_state *s = a->client;
+    const qa_actor_player *player = identity ? identity : s->player;
+    qa_strings *strings = qa_session_strings(g->services.session);
+    const char *name = qa_strings_cstr(strings, identity ? identity->name : s->source_name);
+    const char *skin = qa_strings_cstr(strings, identity ? identity->skin : s->source_skin);
+    *out = (qa_builtin_player_info){.name = identity || name ? name : "",
+        .skin = identity || skin ? skin : "", .slot = s->info.slot,
+        .ping = player->ping, .entered_ns = s->rule.entered_ns,
+        .view_height = s->info.view_height, .killer_yaw = s->rule.killer_yaw,
+        .connected = true, .spectator = identity ? identity->spectator : s->info.spectator,
+        .dead = s->info.dead};
     return true;
 }
 bool q2_player_info(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) {
@@ -435,7 +462,7 @@ bool q2_player_info(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) 
         return false;
     if (g->services.player_info)
         return g->services.player_info(g->services.context, id, out) && out->connected;
-    return qa_q2_player_projection(g, id, out);
+    return qa_q2_player_projection(g, id, NULL, out);
 }
 bool q2_player_score_read(qa_q2_game *g, qa_actor_id id, int32_t *out, qa_error *e) {
     qa_q2_player_services *services = &g->player_runtime->services;
@@ -495,14 +522,6 @@ fail:
     list->active = false;
     return NULL;
 }
-bool qa_q2_player_score(qa_q2_game *g, qa_actor_id id, int score, int ping, qa_error *e) {
-    q2_actor *a = q2_client(g, id, e);
-    if (!a)
-        return false;
-    a->client->info.score = score;
-    a->client->info.ping = ping;
-    return true;
-}
 bool q2_client_slot(qa_q2_game *g, qa_actor_id id, uint32_t *slot) {
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || !a->client || !a->client->info.connected)
@@ -515,15 +534,15 @@ bool q2_client_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *ou
     if (!a || !a->client)
         return false;
     q2_client_state *s = a->client;
-    if (!s->info.connected && !s->corpse)
+    if (!s->info.connected && !s->rule.corpse)
         return false;
     const qa_actor_record *r = qa_actors_get(qa_session_actors(g->services.session), id);
     *out = (qa_builtin_actor_traits){
         .classname = r ? r->definition : 0,
-        .player = !s->corpse,
-        .has_life = !s->corpse && a->character_birth_epoch != 0,
-        .birth_epoch = !s->corpse ? a->character_birth_epoch : 0,
-        .dead = !s->corpse && s->info.dead,
+        .player = !s->rule.corpse,
+        .has_life = !s->rule.corpse && a->character_birth_epoch != 0,
+        .birth_epoch = !s->rule.corpse ? a->character_birth_epoch : 0,
+        .dead = !s->rule.corpse && s->info.dead,
         .spectator = s->info.spectator,
         .no_target = s->info.notarget,
         .invisible = a->powers && a->powers->values.invisibility_until_ns > g->now_ns,
@@ -537,15 +556,15 @@ bool qa_q2_player_consumed_key(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (!a)
         return false;
     q2_client_state *s = a->client;
-    if (!s->has_coop)
+    if (!s->rule.has_coop)
         return true;
-    for (size_t i = 0; i < s->coop.count; i++) {
-        const qa_q2_item_definition *d = q2_item_by_id(g, s->coop.inventory[i].item);
+    for (size_t i = 0; i < s->rule.coop.count; i++) {
+        const qa_q2_item_definition *d = q2_item_by_id(g, s->rule.coop.inventory[i].item);
         if (d && d->kind == QA_Q2_ITEM_KEY &&
-            !qa_inventory_entry_read(g->services.inventory, id, d->item, &s->coop.inventory[i], e))
+            !qa_inventory_entry_read(g->services.inventory, id, d->item, &s->rule.coop.inventory[i], e))
             return false;
     }
     if (a->powers)
-        s->coop.power_cubes = a->powers->power_cubes;
+        s->rule.coop.power_cubes = a->powers->power_cubes;
     return true;
 }

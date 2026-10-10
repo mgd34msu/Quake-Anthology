@@ -18,18 +18,18 @@ static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 ang
         if (!q2_actor_live(g, a->id))
             return true;
     }
-    s->show_help = false;
-    s->show_scores = g->options.deathmatch || (!rr && g->options.cooperative);
-    s->damage_alpha = s->bonus_alpha = 0;
+    s->rule.show_help = false;
+    s->rule.show_scores = g->options.deathmatch || (!rr && g->options.cooperative);
+    s->rule.damage_alpha = s->rule.bonus_alpha = 0;
     if (!q2_player_loop(g, a, 0, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
     s->info.view_height = 0;
-    s->visual.visible = false;
-    s->visual.effects = 0;
+    s->rule.visual.visible = false;
+    s->rule.visual.effects = 0;
     if (rr) {
-        s->visual.models[0] = s->visual.models[1] = s->visual.models[2] = 0;
+        s->rule.visual.models[0] = s->rule.visual.models[1] = s->rule.visual.models[2] = 0;
         if (a->weapon_bound) {
             a->weapon.grenade_blew_up = false;
             a->weapon.grenade_ns = 0;
@@ -50,7 +50,7 @@ static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 ang
     body.origin = origin;
     body.velocity = qa_v3(0, 0, 0);
     if (!qa_world_body_write(g->services.world, a->id, &body, e) ||
-        !q2_publish_visual(g, a->id, &s->visual, e))
+        !q2_publish_visual(g, a->id, &s->rule.visual, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -59,7 +59,7 @@ static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 ang
             &(qa_q2_player_motion){.kind = QA_Q2_PLAYER_FREEZE, .origin = origin, .angles = angles},
             e))
         return false;
-    if (q2_actor_live(g, a->id) && s->show_scores && !q2_player_scoreboard(g, a, true, e))
+    if (q2_actor_live(g, a->id) && s->rule.show_scores && !q2_player_scoreboard(g, a, true, e))
         return false;
     return true;
 }
@@ -112,9 +112,9 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
         if (!q2_actor_live(g, id))
             continue;
         if (combat.health <= 0) {
-            if (rr && a->client->has_coop &&
+            if (rr && a->client->rule.has_coop &&
                 (p->rules.coop_instanced_items || p->rules.coop_squad_respawn))
-                a->client->coop.health = a->client->coop.maximum_health;
+                a->client->rule.coop.health = a->client->rule.coop.maximum_health;
             if (!qa_q2_player_spawn(g, id, true, NULL, e))
                 goto done;
         }
@@ -274,10 +274,10 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
                 !qa_q2_powerups_clear(g, a->id, e))
                 return false;
             a->client->info.god = a->client->info.notarget = a->client->info.flashlight = false;
-            a->client->auto_shield_enabled = false;
+            a->client->rule.auto_shield_enabled = false;
             a->client->info.selected_item = 0;
-            a->client->has_coop = false;
-            qa_q2_player_carry_free(&a->client->coop);
+            a->client->rule.has_coop = false;
+            qa_q2_player_carry_free(&a->client->rule.coop);
             if (a->powers)
                 a->powers->power_cubes = 0;
         } else {

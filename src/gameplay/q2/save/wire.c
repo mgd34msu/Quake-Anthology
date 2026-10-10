@@ -166,7 +166,7 @@ bool q2_save_wire(q2_save_io *io)
             ? qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor)
             : qa_actors_get(qa_session_actors(g->services.session), actors[slot]);
         q2_actor *a = record && record->id.slot < g->capacity ? g->actors[record->id.slot] : NULL;
-        bool player = a && a->client && !a->client->corpse;
+        bool player = a && a->client && !a->client->rule.corpse;
         if (!a || !qa_actor_id_equal(a->id, record->id) || seen[record->id.slot] ||
             (record->owner == g->options.owner && record->has_source && record->source_slot != slot) ||
             (player && a->client->info.slot + 1 != slot) ||

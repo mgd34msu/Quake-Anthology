@@ -80,7 +80,7 @@ static bool client_current(application_q3_component_client_adapter *a,qa_actor_i
     }
     if(source->kind==APPLICATION_PROVIDER_Q2) {
         qa_builtin_player_info v;
-        return qa_q2_player_projection(source->state.q2,actor,&v)&&v.connected&&v.slot==p->client_slot;
+        return qa_q2_player_projection(source->state.q2, actor, NULL, &v)&&v.connected&&v.slot==p->client_slot;
     }
     if(source->kind==APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine=source->state.qc.engine;

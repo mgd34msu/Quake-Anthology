@@ -156,7 +156,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
             if (!q2_actor_live(g, id))
                 continue;
             q2_actor *p = q2_actor_get(g, id, false, NULL);
-            if (p && p->client && p->client->info.connected && p->client->buttons) {
+            if (p && p->client && p->client->info.connected && p->client->rule.buttons) {
                 skip = true;
                 break;
             }

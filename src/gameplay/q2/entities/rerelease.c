@@ -103,7 +103,7 @@ static bool flashlight(qa_q2_game *g, qa_actor_id id, bool enabled, qa_error *e)
            q2_player_emit(g,
                           &(qa_q2_player_event){.kind = QA_Q2_PLAYER_FLASHLIGHT,
                                                 .actor = id,
-                                                .hand = a->client->hand,
+                                                .hand = a->client->rule.hand,
                                                 .visible = enabled},
                           e);
 }
@@ -147,19 +147,19 @@ static bool fog_touch(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *e) {
     q2_actor *player = q2_actor_get(g, id, false, NULL);
     if (player && player->client) {
         q2_client_state *p = player->client;
-        p->fog_transition = transition;
+        p->rule.fog_transition = transition;
         if (s->spawnflags & 1) {
-            p->wanted_fog.density = value.density;
-            p->wanted_fog.color = value.color;
-            p->wanted_fog.sky_factor = value.sky_factor;
+            p->rule.wanted_fog.density = value.density;
+            p->rule.wanted_fog.color = value.color;
+            p->rule.wanted_fog.sky_factor = value.sky_factor;
         }
         if (s->spawnflags & 2) {
-            p->wanted_fog.start_color = value.start_color;
-            p->wanted_fog.end_color = value.end_color;
-            p->wanted_fog.start_distance = value.start_distance;
-            p->wanted_fog.end_distance = value.end_distance;
-            p->wanted_fog.height_density = value.height_density;
-            p->wanted_fog.falloff = value.falloff;
+            p->rule.wanted_fog.start_color = value.start_color;
+            p->rule.wanted_fog.end_color = value.end_color;
+            p->rule.wanted_fog.start_distance = value.start_distance;
+            p->rule.wanted_fog.end_distance = value.end_distance;
+            p->rule.wanted_fog.height_density = value.height_density;
+            p->rule.wanted_fog.falloff = value.falloff;
         }
         return true;
     }
@@ -192,7 +192,7 @@ static bool eligible(qa_q2_game *g, qa_actor_id id, bool *result, qa_error *e) {
         }
         return services->relay_eligible(services->context, id, result, e);
     }
-    qa_q2_player_info *p = &a->client->info;
+    q2_player_source_info *p = &a->client->info;
     if (p->dead || p->spectator || p->noclip)
         return true;
     qa_combat_state combat;
@@ -463,7 +463,7 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
             r->primary_changes = r->secondary_changes = 0;
             for (q2_actor *p = g->first_actor; p; p = p->live_next)
                 if (p->client)
-                    p->client->mission_primary = p->client->mission_secondary = 0;
+                    p->client->rule.mission_primary = p->client->rule.mission_secondary = 0;
         }
         if (r->has_goals)
             r->primary_changes++;
@@ -763,9 +763,9 @@ bool qa_q2_entities_player_begin(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *player = q2_actor_get(g, id, false, NULL);
     if (player && player->client) {
         q2_client_state *p = player->client;
-        if (!fog_equal(p->fog, p->wanted_fog)) {
-            qa_q2_fog fog = p->wanted_fog;
-            float milliseconds = q2_clamp(truncf(p->fog_transition * 1000), 0, 65535);
+        if (!fog_equal(p->rule.fog, p->rule.wanted_fog)) {
+            qa_q2_fog fog = p->rule.wanted_fog;
+            float milliseconds = q2_clamp(truncf(p->rule.fog_transition * 1000), 0, 65535);
             if (!q2_map_event(g,
                               &(qa_q2_map_event){.kind = QA_Q2_MAP_FOG,
                                                  .recipient = id,
@@ -775,7 +775,7 @@ bool qa_q2_entities_player_begin(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                 return false;
             if (!q2_actor_live(g, id))
                 return true;
-            p->fog = fog;
+            p->rule.fog = fog;
         }
         if (!q2_rerelease_notify(g, player, e))
             return false;

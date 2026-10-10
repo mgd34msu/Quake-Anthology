@@ -44,7 +44,7 @@ static bool current(spectator_call *call, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator changed physical client slots");
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *row = app->players->records + i;
-        if (!row->retiring && row->spectator != call->ordinary && row->client_slot == slot &&
+        if (!row->retiring && application_player_identity(row)->spectator != call->ordinary && row->client_slot == slot &&
             qa_actor_id_equal(row->actor, call->actor)) return true;
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator has no trusted reserved roster row");
@@ -162,7 +162,7 @@ bool application_native_q1_spectator_track(application_provider *source, qa_acto
         for (size_t i = 0; i < roster->count; ++i) {
             const application_player_record *row = roster->records + i;
             if (row->client_slot == (uint32_t)slot && !row->retiring && !row->source_begin_pending &&
-                !row->deferred && !row->spectator &&
+                !row->deferred && !application_player_identity(row)->spectator &&
                 qa_actors_get(qa_session_actors(source->application->session), row->actor)) {
                 target = row->actor;
                 break;

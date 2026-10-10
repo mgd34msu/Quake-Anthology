@@ -103,7 +103,7 @@ bool qa_q2_player_field_of_view_read(qa_q2_game *g, qa_actor_id id,
     }
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     *found = a && a->client && a->client->info.connected;
-    *out = *found ? (a->wire_view.present ? a->wire_view.view.fov : a->client->fov) : 0;
+    *out = *found ? (a->wire_view.present ? a->wire_view.view.fov : a->client->rule.fov) : 0;
     return true;
 }
 
@@ -115,7 +115,7 @@ bool qa_q2_player_userinfo_read(qa_q2_game *g, qa_actor_id id, const char **out,
     }
     q2_actor *a = q2_client(g, id, e);
     if (!a) return false;
-    *out = a->client->userinfo;
+    *out = a->client->rule.userinfo;
     return true;
 }
 
@@ -132,19 +132,19 @@ static bool set_fov(void *context, qa_actor_id id, qa_error *e)
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || !a->client || !a->client->info.connected) return true;
     q2_client_state *state = a->client;
-    float previous = state->fov;
+    float previous = state->rule.fov;
     bool intermission = call->intermission || (call->source && g->player_runtime->intermission);
     if (call->source) {
         double requested;
-        if (!qa_q2_userinfo_field_of_view_read(state->userinfo, &requested, e)) return false;
+        if (!qa_q2_userinfo_field_of_view_read(state->rule.userinfo, &requested, e)) return false;
         bool fixed = g->options.edition != QA_Q2_RERELEASE && g->options.deathmatch &&
             (g->options.deathmatch_flags & 32768u);
         float ordinary = fixed ? 90 : g->options.edition == QA_Q2_RERELEASE ?
             q2_clamp((float)requested, 1, 160) : requested < 1 ? 90 : fminf((float)requested, 160);
-        bool preserve = !fixed && (call->preserve || state->info.chase_target.registry || state->sphere_vehicle ||
+        bool preserve = !fixed && (call->preserve || state->info.chase_target.registry || state->rule.sphere_vehicle ||
             (call->restoring && previous != ordinary));
         qa_buffer text = {0};
-        if (!qa_q2_userinfo_field_of_view(state->userinfo, call->value, &text, e)) return false;
+        if (!qa_q2_userinfo_field_of_view(state->rule.userinfo, call->value, &text, e)) return false;
         bool ok = qa_q2_player_userinfo(g, id, (const char *)text.data, e);
         qa_buffer_free(&text);
         if (!ok) return false;
@@ -153,10 +153,10 @@ static bool set_fov(void *context, qa_actor_id id, qa_error *e)
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 FOV callback replaced its actual player state");
             return false;
         }
-        if (preserve) state->fov = previous;
-    } else state->fov = (float)call->value;
+        if (preserve) state->rule.fov = previous;
+    } else state->rule.fov = (float)call->value;
     if (!intermission && a->wire_view.present && a->wire_view.view.fov == previous)
-        a->wire_view.view.fov = state->fov;
+        a->wire_view.view.fov = state->rule.fov;
     return true;
 }
 

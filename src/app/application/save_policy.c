@@ -40,7 +40,7 @@ static bool original_q1_roster(const qa_application *app,const application_provi
         if (qa_application_player_count(app)>1) return false;
         for (size_t i=0;i<app->players->count;++i) {
             const application_player_record *row=app->players->records+i;
-            if (!row->retiring && (row->remote || row->bot || row->spectator || row->client_slot!=0))
+            if (!row->retiring && (row->remote || application_player_identity(row)->bot || application_player_identity(row)->spectator || row->client_slot!=0))
                 return false;
         }
     }
@@ -95,7 +95,7 @@ static bool selected_player(const qa_application *app,const application_player_r
 {
     return !record->retiring && !record->deferred && !record->source_begin_pending &&
         qa_actors_get(qa_session_actors(app->session),record->actor) &&
-        (dedicated || (!record->remote && !record->bot));
+        (dedicated || (!record->remote && !application_player_identity(record)->bot));
 }
 static bool native_q2_player(application_provider *source,qa_actor_id actor,float *health,
     bool *intermission,qa_error *error)

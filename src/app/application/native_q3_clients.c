@@ -360,18 +360,15 @@ static bool connection(application_provider *provider, qa_actor_id actor,
 {
     qa_application *app = provider->application;
     qa_mode_player_view member;
-    qa_q3_native_client client;
     qa_mode_id mode;
-    uint32_t slot, flags;
+    uint32_t slot;
     if (!source(provider, actor, &slot, error) ||
-        !client_mode(provider,&mode,error)||!qa_modes_player_read(app->modes,mode,actor,&member,error)||
-        !qa_q3_client_read(provider->state.q3, actor, &client, error) ||
-        !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error)) return false;
+        !client_mode(provider,&mode,error)||!qa_modes_player_read(app->modes,mode,actor,&member,error)) return false;
     member.connection.connected = state != QA_Q3_CLIENT_DISCONNECTED;
     member.connection.connecting = state == QA_Q3_CLIENT_CONNECTING;
-    member.connection.bot = (flags & 8u) != 0;
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), client.netname,
-            &member.connection.name, error)) return false;
+    const qa_actor_player *identity = qa_actors_player(qa_session_actors(app->session), actor);
+    member.connection.bot = identity->bot;
+    member.connection.name = identity->name;
     return qa_modes_player(app->modes, &member.connection, error);
 }
 

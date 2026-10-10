@@ -399,7 +399,7 @@ static bool frame_players(qa_application *app, application_rankings *owner,
         application_player_record *actual=player(app,provider,slot,(qa_actor_id){0});
         if (!actual) continue;
         qa_actor_id actor=actual->actor;
-        if (actual->bot) {
+        if (application_player_identity(actual)->bot) {
             if (!application_rankings_source_effect(app,provider,actor,APPLICATION_RANKING_DROP_BOT,error)) return false;
             continue;
         }
@@ -439,7 +439,7 @@ static bool frame_players(qa_application *app, application_rankings *owner,
                 !application_rankings_source_effect(app,provider,actor,APPLICATION_RANKING_ACTIVATE,error)) return false;
             if (changed) for (uint32_t other=0; other<max_clients; ++other) {
                 application_player_record *peer=player(app,provider,other,(qa_actor_id){0});
-                if (!peer || peer->bot) continue;
+                if (!peer || application_player_identity(peer)->bot) continue;
                 qa_actor_id peer_actor=peer->actor;
                 if (other!=slot && qa_rankings_player(app->rankings,(int32_t)other).kind==QA_RANKING_ACTIVE_PLAYER &&
                     !backend_result(app,owner,qa_rankings_report_integer(app->rankings,(int32_t)slot,(int32_t)other,1210000002,1,false,error))) return false;

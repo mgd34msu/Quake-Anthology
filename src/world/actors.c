@@ -238,6 +238,7 @@ static bool allocate(qa_actor_registry *registry, qa_actor_owner owner,
     qa_actor_id id = {registry->identity, page->generations[offset], index};
     page->records[offset] = (qa_actor_record){id, owner, definition, source_slot, has_source};
     page->saved_slots[offset] = NO_SAVED_SLOT;
+    page->players[offset] = (qa_actor_player){0};
     registry->free_bits[word] &= ~(UINT64_C(1) << bit);
     if (has_source) source_insert(registry, owner, source_slot, index);
     if (registry->high_water <= index) registry->high_water = index + 1u;
@@ -265,6 +266,13 @@ const qa_actor_record *qa_actors_get(const qa_actor_registry *registry, qa_actor
     if (registry == NULL || actor.registry != registry->identity || actor.slot >= registry->high_water) return NULL;
     const qa_actor_record *record = record_at(registry, actor.slot);
     return record != NULL && qa_actor_id_equal(record->id, actor) ? record : NULL;
+}
+
+qa_actor_player *qa_actors_player(const qa_actor_registry *registry, qa_actor_id actor)
+{
+    if (qa_actors_get(registry, actor) == NULL) return NULL;
+    return &registry->pages[actor.slot >> QA_ACTOR_PAGE_SHIFT]
+        ->players[actor.slot & (QA_ACTOR_PAGE_SIZE - 1u)];
 }
 
 const qa_actor_record *qa_actors_at_source(const qa_actor_registry *registry,
@@ -333,6 +341,7 @@ bool qa_actors_release(qa_actor_registry *registry, qa_actor_id actor, qa_error 
         if (actor.slot / 64u < registry->first_free_word)
             registry->first_free_word = actor.slot / 64u;
     }
+    page->players[offset] = (qa_actor_player){0};
     --registry->live_count;
     ++registry->revision;
     ++registry->callback_depth;
@@ -422,7 +431,7 @@ bool qa_actors_checkpoint(const qa_actor_registry *registry,
         uint32_t offset = i & (QA_ACTOR_PAGE_SIZE - 1u);
         const qa_actor_record *record = &page->records[offset];
         slots[i] = (qa_actor_slot_checkpoint){page->generations[offset], record->owner,
-            record->definition, record->source_slot, record->id.registry != 0, record->has_source};
+            record->definition, record->source_slot, record->id.registry != 0, record->has_source, page->players[offset]};
     }
     *out = (qa_actor_checkpoint){slots, registry->high_water, registry->capacity};
     return true;
@@ -471,6 +480,7 @@ bool qa_actors_restore(const qa_actor_checkpoint *checkpoint,
         qa_actor_id id = {registry->identity, saved.generation, i};
         page->records[offset] = (qa_actor_record){id, saved.owner, saved.definition, saved.source_slot, saved.has_source};
         page->saved_slots[offset] = i;
+        page->players[offset] = saved.player;
         registry->history[i].reference = id;
         registry->history[i].live = id;
         ++registry->live_count;

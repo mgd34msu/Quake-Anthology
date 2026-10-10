@@ -285,7 +285,7 @@ bool qa_application_network_q2_player(qa_application_network_q2 *owner, qa_actor
         qa_builtin_player_info player;
         qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
         if (!qa_q2_wire_actor(game, actor, &binding, error) ||
-            !qa_q2_player_projection(game, actor, &player) || binding.source_slot != player.slot + 1)
+            !qa_q2_player_projection(game, actor, NULL, &player) || binding.source_slot != player.slot + 1)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 player lost its physical compiled GAME admission");
         slot = binding.source_slot;
     } else {
@@ -379,7 +379,7 @@ bool qa_application_network_q2_slot(qa_application_network_q2 *owner, uint32_t s
         if (!qa_q2_wire_binding_read(game, slot, &binding, error)) return false;
         value.actor = binding.actor; value.occupied = binding.in_use; value.reserved = binding.in_use;
         qa_builtin_player_info player;
-        if (binding.in_use && qa_q2_player_projection(game, binding.actor, &player)) {
+        if (binding.in_use && qa_q2_player_projection(game, binding.actor, NULL, &player)) {
             if (player.slot + 1 != slot)
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 client inventory aliases its real Source client slot");
             value.connected = player.connected;
@@ -763,7 +763,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             application_player_record *row = &roster->records[i];
             if (row->retiring || row->deferred) continue;
             qa_builtin_player_info player;
-            if (!qa_q2_player_projection(game, row->actor, &player))
+            if (!qa_q2_player_projection(game, row->actor, NULL, &player))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q2 gamestate player skin lacks physical Source admission");
             if (player.slot >= owner->host.client_slots) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source player skin leaves its physical client range");
             char text[512];

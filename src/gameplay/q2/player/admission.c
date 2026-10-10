@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "../entities/internal.h"
 
-static bool info_value(const char *info, const char *key, char *out, size_t capacity) {
+bool q2_player_userinfo_value(const char *info, const char *key, char *out, size_t capacity) {
     size_t wanted = strlen(key);
     bool found = false;
     out[0] = 0;
@@ -69,18 +69,18 @@ static bool info_remove(char *info, size_t capacity, const char *key, size_t *le
 }
 static int info_integer(const char *info, const char *key) {
     char value[64];
-    info_value(info, key, value, sizeof(value));
+    q2_player_userinfo_value(info, key, value, sizeof(value));
     char *end;
     long n = strtol(value, &end, 10);
     return end == value ? 0 : n > INT_MAX ? INT_MAX : n < INT_MIN ? INT_MIN : (int)n;
 }
 static bool wants_spectator(qa_q2_game *g, const char *info) {
     char value[128];
-    info_value(info, "spectator", value, sizeof(value));
+    q2_player_userinfo_value(info, "spectator", value, sizeof(value));
     return g->options.deathmatch && *value && strcmp(value, "0");
 }
 static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    if (!a->client->use_inventory)
+    if (!a->client->rule.use_inventory)
         return true;
     if (!g->options.deathmatch) {
         const qa_q2_item_definition *compass = qa_q2_item_lookup(g, "item_compass");
@@ -149,11 +149,11 @@ bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_conne
     char value[256];
     const char *reason = NULL;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
-    info_value(info, "ip", value, sizeof(value));
+    q2_player_userinfo_value(info, "ip", value, sizeof(value));
     if (!rr && p->services.banned && p->services.banned(p->services.context, value))
         reason = "Banned.";
     const char *password = spectator ? p->rules.spectator_password : p->rules.password;
-    info_value(info, spectator ? "spectator" : "password", value, sizeof(value));
+    q2_player_userinfo_value(info, spectator ? "spectator" : "password", value, sizeof(value));
     if (!reason && (spectator || !rr || !bot) && *password && strcmp(password, "none") &&
         strcmp(password, value))
         reason = spectator ? "Spectator password required or incorrect."
@@ -162,7 +162,7 @@ bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_conne
         size_t count = 0;
         for (size_t i = 0; i < g->capacity; i++) {
             q2_actor *a = g->actors[i];
-            if (a && a->client && a->client->info.connected && a->client->requested_spectator)
+            if (a && a->client && a->client->info.connected && a->client->rule.requested_spectator)
                 count++;
         }
         if (count >= p->rules.max_spectators)
@@ -198,45 +198,52 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     if (!rr && (strchr(source, '"') || strchr(source, ';')))
         source = "\\name\\badinfo\\skin\\male/grunt";
-    snprintf(s->userinfo, sizeof(s->userinfo), "%.*s", rr ? 2047 : 511, source);
-    char name[32], gender[32];
-    bool named = info_value(s->userinfo, "name", name, rr ? sizeof(name) : 16);
+    snprintf(s->rule.userinfo, sizeof(s->rule.userinfo), "%.*s", rr ? 2047 : 511, source);
+    char name[32], skin[256], gender[32];
+    bool named = q2_player_userinfo_value(s->rule.userinfo, "name", name, rr ? sizeof(name) : 16);
     if (!named && rr)
         snprintf(name, sizeof(name), "badinfo");
-    bool skinned = info_value(s->userinfo, "skin", s->info.skin, sizeof(s->info.skin));
+    bool skinned = q2_player_userinfo_value(s->rule.userinfo, "skin", skin, sizeof(skin));
     if (rr && !skinned)
-        snprintf(s->info.skin, sizeof(s->info.skin), "male/grunt");
-    info_value(s->userinfo, "gender", gender, sizeof(gender));
-    s->gender = tolower((unsigned char)gender[0]) == 'f'   ? 1
+        snprintf(skin, sizeof(skin), "male/grunt");
+    q2_player_userinfo_value(s->rule.userinfo, "gender", gender, sizeof(gender));
+    s->rule.gender = tolower((unsigned char)gender[0]) == 'f'   ? 1
                 : tolower((unsigned char)gender[0]) == 'm' ? 0
                                                            : 2;
-    s->requested_spectator = wants_spectator(g, s->userinfo);
-    int fov = info_integer(s->userinfo, "fov");
-    s->fov = rr ? q2_clamp((float)fov, 1, 160)
+    s->rule.requested_spectator = wants_spectator(g, s->rule.userinfo);
+    int fov = info_integer(s->rule.userinfo, "fov");
+    s->rule.fov = rr ? q2_clamp((float)fov, 1, 160)
              : g->options.deathmatch && (g->options.deathmatch_flags & 32768) ? 90
              : fov < 1 ? 90
                        : fminf((float)fov, 160);
-    int hand = info_integer(s->userinfo, "hand");
+    int hand = info_integer(s->rule.userinfo, "hand");
     if (rr)
         hand = (int)q2_clamp((float)hand, 0, 2);
-    s->hand = hand == 1 ? QA_Q2_LEFT_HAND : hand == 2 ? QA_Q2_CENTER_HAND : QA_Q2_RIGHT_HAND;
+    s->rule.hand = hand == 1 ? QA_Q2_LEFT_HAND : hand == 2 ? QA_Q2_CENTER_HAND : QA_Q2_RIGHT_HAND;
     if (rr) {
         char value[32];
-        s->auto_switch = (int)q2_clamp((float)info_integer(s->userinfo, "autoswitch"), 0, 3);
-        info_value(s->userinfo, "bobskip", value, sizeof(value));
-        s->bob_skip = value[0] == '1';
-        s->auto_shield = info_value(s->userinfo, "autoshield", value, sizeof(value))
-                             ? info_integer(s->userinfo, "autoshield")
+        s->rule.auto_switch = (int)q2_clamp((float)info_integer(s->rule.userinfo, "autoswitch"), 0, 3);
+        q2_player_userinfo_value(s->rule.userinfo, "bobskip", value, sizeof(value));
+        s->rule.bob_skip = value[0] == '1';
+        s->rule.auto_shield = q2_player_userinfo_value(s->rule.userinfo, "autoshield", value, sizeof(value))
+                             ? info_integer(s->rule.userinfo, "autoshield")
                              : -1;
-        info_value(s->userinfo, "dogtag", s->dogtag, sizeof(s->dogtag));
+        q2_player_userinfo_value(s->rule.userinfo, "dogtag", s->rule.dogtag, sizeof(s->rule.dogtag));
     }
-    snprintf(s->info.name, sizeof(s->info.name), "%s", name);
+    qa_strings *strings = qa_session_strings(g->services.session);
+    if (!qa_strings_intern_cstr(strings, name, &s->source_name, e) ||
+        !qa_strings_intern_cstr(strings, skin, &s->source_skin, e)) return false;
+    if (!s->player->present || !g->services.player_info) {
+        s->player->name = s->source_name;
+        s->player->skin = s->source_skin;
+        s->player->present = true;
+    }
     if (!q2_player_emit(g,
                         &(qa_q2_player_event){.kind = QA_Q2_PLAYER_USERINFO,
                                               .actor = id,
                                               .slot = s->info.slot,
                                               .text = name,
-                                              .skin = s->info.skin},
+                                              .skin = skin},
                         e))
         return false;
     if (!q2_actor_live(g, id))
@@ -244,13 +251,16 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
     if (rr) {
         if (!q2_player_emit(
                 g,
-                &(qa_q2_player_event){.kind = QA_Q2_PLAYER_DOGTAG, .actor = id, .text = s->dogtag},
+                &(qa_q2_player_event){.kind = QA_Q2_PLAYER_DOGTAG, .actor = id, .text = s->rule.dogtag},
                 e))
             return false;
         if (!q2_actor_live(g, id))
             return true;
-        if (!s->bot)
-            snprintf(s->info.name, sizeof(s->info.name), "##P%u", s->info.slot);
+        if (!s->player->bot) {
+            char projected[32];
+            snprintf(projected, sizeof(projected), "##P%u", s->info.slot);
+            if (!qa_strings_intern_cstr(strings, projected, &s->source_name, e)) return false;
+        }
     }
     return true;
 }
@@ -263,10 +273,10 @@ static bool userinfo_storage(void *context,qa_actor_id actor,qa_error *e) {
     q2_actor *a=q2_client(call->game,actor,e);
     if(!a || !call->source) return false;
     size_t length=strlen(call->source);
-    if(length>=sizeof(a->client->userinfo)) {
+    if(length>=sizeof(a->client->rule.userinfo)) {
         qa_error_set(e,QA_ERROR_FORMAT,0,"Q2 stored userinfo exceeds its actual client storage");return false;
     }
-    memcpy(a->client->userinfo,call->source,length+1);return true;
+    memcpy(a->client->rule.userinfo,call->source,length+1);return true;
 }
 bool qa_q2_player_userinfo_storage(qa_q2_game *g,qa_actor_id actor,const char *text,qa_error *e) {
     if(!text) {qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 stored userinfo is absent");return false;}
@@ -310,19 +320,20 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
     }
     a->client = s;
     a->source_pm = (qa_q2_player_pm_rules){.frame = g->wire_frame, .time_ns = g->now_ns};
-    s->info = (qa_q2_player_info){
+    s->info = (q2_player_source_info){
         .slot = admission->slot, .seat = admission->seat, .connected = true, .view_height = 22};
-    s->use_weapons = admission->use_q2_weapons;
-    s->use_inventory = admission->use_q2_inventory;
-    s->pending_start_items = admission->carry == NULL;
-    s->bot = admission->bot;
-    s->entered_ns = g->now_ns;
-    s->air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
-    s->drown_damage = 2;
-    s->animation_end = 39;
-    s->auto_shield = -1;
-    s->visual = (qa_q2_visual){.old_frame = -1, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true};
-    snprintf(s->social_id, sizeof(s->social_id), "%s",
+    s->rule.use_weapons = admission->use_q2_weapons;
+    s->rule.use_inventory = admission->use_q2_inventory;
+    s->rule.pending_start_items = admission->carry == NULL;
+    s->player = qa_actors_player(qa_world_actors(g->services.world), id);
+    if (!s->player->present) s->player->bot = admission->bot;
+    s->rule.entered_ns = g->now_ns;
+    s->rule.air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
+    s->rule.drown_damage = 2;
+    s->rule.animation_end = 39;
+    s->rule.auto_shield = -1;
+    s->rule.visual = (qa_q2_visual){.old_frame = -1, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true};
+    snprintf(s->rule.social_id, sizeof(s->rule.social_id), "%s",
              admission->social_id ? admission->social_id : "");
     if (g->options.cooperative && g->player_runtime->rules.coop_lives)
         s->info.lives = g->player_runtime->rules.coop_num_lives + 1;
@@ -347,23 +358,23 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_powers(g, id, e))
         return false;
-    if (admission->initialize_inventory && s->use_inventory &&
+    if (admission->initialize_inventory && s->rule.use_inventory &&
         !qa_q2_items_admit_player(g, id, true, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (s->use_weapons && !qa_q2_weapon_bind(g, id, QA_Q2_BLASTER, e))
+    if (s->rule.use_weapons && !qa_q2_weapon_bind(g, id, QA_Q2_BLASTER, e))
         return false;
-    s->info.selected_item = s->use_inventory ? g->items[QA_Q2_BLASTER] : 0;
+    s->info.selected_item = s->rule.use_inventory ? g->items[QA_Q2_BLASTER] : 0;
     if (admission->carry && !qa_q2_player_carry_restore(g, id, admission->carry, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE) {
         if (!q2_campaign_enter(g, e)) return false;
-        if (s->auto_shield >= 0)
-            s->auto_shield_enabled = true;
-        s->spawned = true;
+        if (s->rule.auto_shield >= 0)
+            s->rule.auto_shield_enabled = true;
+        s->rule.spawned = true;
         if (!qa_q2_entities_player_reset(g, id, e))
             return false;
         if (!q2_actor_live(g, id))
@@ -373,13 +384,13 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         if (!q2_actor_live(g, id))
             return true;
     }
-    if (!q2_player_inventory_copy(g, id, &s->spawn_inventory, &s->spawn_count, e))
+    if (!q2_player_inventory_copy(g, id, &s->rule.spawn_inventory, &s->rule.spawn_count, e))
         return false;
-    if (!qa_q2_player_carry_capture(g, id, &s->coop, e))
+    if (!qa_q2_player_carry_capture(g, id, &s->rule.coop, e))
         return false;
-    s->has_coop = true;
-    s->info.spectator = s->requested_spectator;
-    s->spawned = true;
+    s->rule.has_coop = true;
+    s->info.spectator = s->rule.requested_spectator;
+    s->rule.spawned = true;
     return true;
 }
 bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admission *admission,
@@ -408,7 +419,7 @@ static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
     if (!q2_player_trail_destroy(g, id, e)) return false;
     q2_client_state *s = a->client;
     char text[96];
-    snprintf(text, sizeof(text), "%s disconnected\n", s->info.name);
+    snprintf(text, sizeof(text), "%s disconnected\n", q2_player_source_name(g, s));
     if (!q2_player_print(g, (qa_actor_id){0}, 2, text, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -428,13 +439,13 @@ static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
     if (!q2_actor_live(g, id))
         return true;
     s->info.connected = false;
-    s->spawned = false;
-    s->visual.visible = false;
+    s->rule.spawned = false;
+    s->rule.visual.visible = false;
     if (!q2_player_loop(g, a, 0, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (!q2_player_collision(g, a, false, e) || !q2_publish_visual(g, id, &s->visual, e))
+    if (!q2_player_collision(g, a, false, e) || !q2_publish_visual(g, id, &s->rule.visual, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;

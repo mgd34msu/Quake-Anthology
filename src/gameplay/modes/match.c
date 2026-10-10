@@ -33,7 +33,7 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (!p)
             continue;
-        qa_match_player value = p->value;
+        qa_match_player value = mode_player_connection(p);
         int32_t source_team = -1;
         if (native && (!m->options.hooks.q3_rank_client ||
             !MODE_CALLBACK(m, m->options.hooks.q3_rank_client(m->options.hooks.context,
@@ -155,7 +155,7 @@ static size_t playing_team(qa_modes *m, mode_instance *v, qa_team_id team) {
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         qa_team_id current;
-        if (player && player->value.connected && !player->value.connecting &&
+        if (player && player->connected && !player->connecting &&
             !p->player.spectator && qa_modes_team(m, v->id, p->actor, &current, NULL) &&
             current == team)
             ++count;
@@ -215,7 +215,7 @@ static bool ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error
         return true;
     p->ghost_code = code;
     v->ghosts[p->actor.slot] = (mode_ghost){.actor = p->actor,
-                                            .name = player->value.name,
+                                            .name = player->identity->name,
                                             .team = team,
                                             .stats = p->stats,
                                             .code = code,
@@ -410,7 +410,7 @@ static bool duel_promote(qa_modes *m, mode_instance *v, qa_error *e) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (p && p->value.connected && !p->value.connecting && member->player.spectator &&
+        if (p && p->connected && !p->connecting && member->player.spectator &&
             (v->value.rules.source >= QA_MODE_Q3
                 ? member->player.q3_spectator_state != QA_MODE_Q3_SPECTATOR_SCOREBOARD &&
                   member->player.q3_spectator_client >= 0
@@ -532,11 +532,11 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
                 bool eligible;
                 if (!m->options.hooks.q3_intermission_client ||
                     !MODE_CALLBACK(m, m->options.hooks.q3_intermission_client(m->options.hooks.context,
-                        v->id, p->value.actor, &eligible, &client_ready, e))) return false;
+                        v->id, p->actor, &eligible, &client_ready, e))) return false;
                 if (!eligible) continue;
-                member = mode_member_get(m, v, p->value.actor);
+                member = mode_member_get(m, v, p->actor);
                 if (!member) return mode_fail(e, "native ready client retired during source access");
-            } else if (p->value.bot || !p->value.connected)
+            } else if (p->identity->bot || !p->connected)
                 continue;
             if (client_ready) {
                 ++ready;
@@ -545,7 +545,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
                     uint32_t slot;
                     if (!m->options.hooks.q3_client_slot ||
                         !MODE_CALLBACK(m, m->options.hooks.q3_client_slot(m->options.hooks.context,
-                            v->id, p->value.actor, &owner, &slot, e)) || owner != native_owner || slot >= 64)
+                            v->id, p->actor, &owner, &slot, e)) || owner != native_owner || slot >= 64)
                         return mode_fail(e, "intermission readiness lost its native source client");
                     if (slot < 16) ready_mask |= (int32_t)(1u << slot);
                 }

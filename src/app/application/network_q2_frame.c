@@ -213,7 +213,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     }
     qa_builtin_player_info player;
     if ((!selected_visual || selected.provider == owner->host.source.source_owner) &&
-        qa_q2_player_projection(game, source->binding.actor, &player)) {
+        qa_q2_player_projection(game, source->binding.actor, NULL, &player)) {
         value.modelindex = 255; value.skinnum = player.slot;
         if (source->has_weapon && source->weapon.weapon != QA_Q2_WEAPON_NONE) {
             const qa_q2_weapon_definition *weapon = qa_q2_weapon_definition_at(game, source->weapon.weapon);

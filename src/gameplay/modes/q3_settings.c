@@ -74,7 +74,7 @@ static bool enough_team(qa_modes *m, mode_instance *v, qa_team_id team, bool *fo
         qa_actor_id actor = m->players_order.ids[i];
         mode_member *member = mode_member_get(m, v, actor);
         mode_player *player = member ? mode_player_get(m, actor) : NULL;
-        if (!player || !player->value.connected || player->value.connecting || member->player.spectator) continue;
+        if (!player || !player->connected || player->connecting || member->player.spectator) continue;
         qa_team_id own;
         if (!qa_modes_team(m, v->id, actor, &own, e)) return false;
         if (mode_member_get(m, v, actor) && own == team) { *found = true; return true; }
@@ -132,7 +132,7 @@ bool mode_q3_limits(qa_modes *m, mode_instance *v, qa_error *e) {
             qa_actor_id actor = m->players_order.ids[i];
             mode_member *member = mode_member_get(m, v, actor);
             mode_player *player = member ? mode_player_get(m, actor) : NULL;
-            if (!player || !player->value.connected || player->value.connecting || member->player.spectator) continue;
+            if (!player || !player->connected || player->connecting || member->player.spectator) continue;
             qa_team_id team;
             int32_t score;
             if (!qa_modes_team(m, v->id, actor, &team, e)) return false;

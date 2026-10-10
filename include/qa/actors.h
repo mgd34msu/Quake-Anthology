@@ -2,6 +2,7 @@
 #define QA_ACTORS_H
 
 #include "qa/common.h"
+#include "qa/strings.h"
 
 typedef uint32_t qa_actor_owner;
 typedef uint32_t qa_actor_definition;
@@ -40,6 +41,15 @@ bool qa_actor_reference_present(qa_actor_reference);
 bool qa_actor_reference_equal(qa_actor_reference, qa_actor_reference);
 qa_actor_id qa_actor_reference_resolve(const qa_actor_registry *, qa_actor_reference);
 
+/* Canonical PLAYER identity lives in its existing actor page. Source slot,
+ * admission, userinfo bytes and dialect-specific name projections remain on
+ * each module binding. Names are IDs in the host's existing string table. */
+typedef struct qa_actor_player {
+    qa_string_id name, team, skin;
+    int32_t ping;
+    bool present, bot, spectator;
+} qa_actor_player;
+
 typedef struct qa_actor_record {
     qa_actor_id id;
     qa_actor_owner owner;
@@ -64,6 +74,7 @@ typedef struct qa_actor_slot_checkpoint {
     uint32_t source_slot;
     bool active;
     bool has_source;
+    qa_actor_player player;
 } qa_actor_slot_checkpoint;
 
 typedef struct qa_actor_checkpoint {
@@ -106,6 +117,8 @@ bool qa_actors_set_metadata(qa_actor_registry *, qa_actor_id,
 /* Record addresses remain fixed until destruction. Contents belong to the
  * current occupant and change on release/reuse; retain IDs for authority. */
 const qa_actor_record *qa_actors_get(const qa_actor_registry *registry, qa_actor_id actor);
+/* Borrowed current component; invalid/retired actors have no component. */
+qa_actor_player *qa_actors_player(const qa_actor_registry *, qa_actor_id);
 const qa_actor_record *qa_actors_at_source(const qa_actor_registry *registry,
                                          qa_actor_owner owner, uint32_t source_slot);
 /* Set cursor to zero. Visits current live records in ascending host-slot order.

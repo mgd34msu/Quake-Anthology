@@ -14,10 +14,17 @@
 
 typedef struct mode_player {
     qa_modes *modes;
-    qa_match_player value;
+    qa_actor_id actor;
+    qa_actor_player *identity;
+    bool connected, connecting;
     qa_inventory_lease items;
     bool active;
 } mode_player;
+static inline qa_match_player mode_player_connection(const mode_player *player) {
+    return (qa_match_player){.actor = player->actor, .name = player->identity->name,
+        .connected = player->connected, .connecting = player->connecting,
+        .bot = player->identity->bot};
+}
 typedef qa_mode_member_state mode_member;
 typedef qa_mode_ghost_state mode_ghost;
 typedef struct mode_match_owner {

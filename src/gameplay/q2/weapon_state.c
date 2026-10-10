@@ -674,9 +674,9 @@ bool qa_q2_weapon_turn_read(qa_q2_game *g, qa_actor_id actor,
     if (!a) return false;
     *out = a->weapon_turn;
     if (a->client) {
-        out->attack = (a->client->buttons & 1u) != 0;
-        out->latched_attack = (a->client->latched_buttons & 1u) != 0;
-        out->weapon_thunk = a->client->weapon_thunk;
+        out->attack = (a->client->rule.buttons & 1u) != 0;
+        out->latched_attack = (a->client->rule.latched_buttons & 1u) != 0;
+        out->weapon_thunk = a->client->rule.weapon_thunk;
     }
     if (out->firing_weapon != a->weapon.weapon) {
         out->firing_weapon = QA_Q2_WEAPON_NONE;

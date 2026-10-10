@@ -217,7 +217,7 @@ bool qa_q2_bot_max_clients(const qa_q2_game *game,uint32_t *out,qa_error *error)
 bool qa_q2_bot_activate(qa_q2_game *game,qa_actor_id actor,qa_error *error) {
     if(!game) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot activation requires its source owner");return false;}
     q2_actor *source=q2_actor_get(game,actor,false,NULL);
-    if(source && source->client) source->client->bot=true;
+    if(source && source->client) source->client->player->bot=true;
     return true;
 }
 qa_actor_id qa_q2_bot_world_actor(const qa_q2_game *game) {

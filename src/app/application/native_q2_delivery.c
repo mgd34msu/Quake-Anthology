@@ -221,7 +221,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         }
         if (physical->kind==APPLICATION_PROVIDER_Q2) {
             qa_builtin_player_info player;
-            if (!qa_q2_player_projection(physical->state.q2,row.actor,&player) ||
+            if (!qa_q2_player_projection(physical->state.q2, row.actor, NULL, &player) ||
                 !player.connected || player.slot!=row.client_slot) {
                 ok=application_fail(error,QA_ERROR_ARGUMENT,"Q2 recipient lost its physical client binding");
                 break;

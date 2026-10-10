@@ -340,7 +340,7 @@ bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
             .render_flags = monster.render_flags, .scale = monster.scale,
             .alpha = a->alpha, .visible = monster.visible};
     } else if (a->client)
-        view = a->client->visual;
+        view = a->client->rule.visual;
     else if (a->item)
         view = a->item->visual;
     else if (a->entity)

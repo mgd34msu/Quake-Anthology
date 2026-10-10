@@ -486,7 +486,7 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
         return false;
     }
     *out = a->wire_view;
-    if (!out->present) out->view.fov = a->client->fov;
+    if (!out->present) out->view.fov = a->client->rule.fov;
     return true;
 }
 
@@ -589,10 +589,10 @@ bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
     qa_movement_state *state = &out->state;
     a->source_pm.frame = g->wire_frame; a->source_pm.time_ns = g->now_ns;
     a->source_pm.command_angles = source_command_angles(command);
-    *run_pmove = !g->player_runtime->intermission && !(rr && client->awaiting_respawn) &&
+    *run_pmove = !g->player_runtime->intermission && !(rr && client->rule.awaiting_respawn) &&
         !client->info.chase_target.registry;
     int32_t type;
-    if (g->player_runtime->intermission || (rr && client->awaiting_respawn)) {
+    if (g->player_runtime->intermission || (rr && client->rule.awaiting_respawn)) {
         type = rr ? 6 : 4;
         if (rr) {
             out->view_height = g->player_runtime->intermission &&
@@ -604,7 +604,7 @@ bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
         type = rr ? state->data.q2r.type : state->data.q2.type;
     } else {
         type = client->info.noclip ? (rr ? (client->info.spectator ? 3 : 2) : 1) :
-            client->gibbed ? (rr ? 5 : 3) : client->info.dead ? (rr ? 4 : 2) :
+            client->rule.gibbed ? (rr ? 5 : 3) : client->info.dead ? (rr ? 4 : 2) :
             rr && a->grapples[QA_Q2_CTF_GRAPPLE].hook.registry &&
                 a->grapples[QA_Q2_CTF_GRAPPLE].phase >= QA_Q2_GRAPPLE_PULL ? 1 : 0;
         float gravity = g->services.physics->gravity;
@@ -613,7 +613,7 @@ bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
         if (rr) {
             state->data.q2r.gravity = source_short(gravity);
             bool collide = !g->options.cooperative ||
-                (g->player_runtime->rules.coop_player_collision && client->player_collision);
+                (g->player_runtime->rules.coop_player_collision && client->rule.player_collision);
             state->data.q2r.flags = collide ? state->data.q2r.flags & ~UINT32_C(512) :
                 state->data.q2r.flags | UINT32_C(512);
         } else state->data.q2.gravity = source_short(gravity);
@@ -769,7 +769,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         value.owner = qa_actor_reference_resolve(qa_session_actors(g->services.session), a->projectile.owner);
     } else if (a->client) {
         value.classname = a->entity ? a->entity->classname : 0;
-        value.loop_sound = a->client->loop_sound;
+        value.loop_sound = a->client->rule.loop_sound;
     } else if (a->monster) {
         value.classname = a->monster->controller_kind != Q2M_CONTROLLER_NONE && a->entity
             ? a->entity->classname : a->monster->classname;

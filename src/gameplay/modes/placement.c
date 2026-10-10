@@ -27,11 +27,11 @@ static float distance_to_players(qa_modes *m, mode_instance *v, qa_vec3 point, q
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (!p || member->player.spectator || qa_actor_id_equal(p->value.actor, except) ||
-            !mode_alive(m, p->value.actor))
+        if (!p || member->player.spectator || qa_actor_id_equal(p->actor, except) ||
+            !mode_alive(m, p->actor))
             continue;
         qa_body_state body;
-        if (!qa_world_body_read(m->options.services.world, p->value.actor, &body, NULL))
+        if (!qa_world_body_read(m->options.services.world, p->actor, &body, NULL))
             continue;
         qa_vec3 delta = qa_vec_sub(body.origin, point);
         float distance = qa_vec_dot(delta, delta);
@@ -140,7 +140,7 @@ static bool q3_choose(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_
                 native_team = true;
     for (size_t i = 0; i < v->spawn_count; ++i) {
         qa_mode_spawnpoint *p = &v->spawns[i];
-        if (filter_player && roster && (roster->value.bot ? p->no_bots : p->no_humans))
+        if (filter_player && roster && (roster->identity->bot ? p->no_bots : p->no_humans))
             continue;
         if (team ? (p->team != team || (native_team && !classname(m, p, native)))
                  : (p->team || !classname(m, p, "info_player_deathmatch")))

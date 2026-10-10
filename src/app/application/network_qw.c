@@ -125,7 +125,7 @@ bool qa_application_network_qw_ptrack(qa_application *app,qa_actor_id actor,
         if (!candidate->retiring && candidate->client_slot==slot && qa_actor_id_equal(candidate->actor,actor)) {row=candidate;break;}
     }
     if (okay && !row) okay=application_fail(error,QA_ERROR_ARGUMENT,"QuakeWorld ptrack lost its trusted physical client row");
-    if (okay && row->spectator)
+    if (okay && application_player_identity(row)->spectator)
         okay=application_native_q1_spectator_track(source.provider,actor,target_supplied,client_slot,error);
     application_native_q1_wire_end(&source);
     return okay;
@@ -515,26 +515,23 @@ static bool qw_userinfo(qa_application *app, qa_actor_id actor,
     }
     const char *name = qa_qw_info_get(&info, "name"), *team = qa_qw_info_get(&info, "team"),
         *skin = qa_qw_info_get(&info, "skin");
-    const char *values[] = {text, name ? name : "unnamed", team ? team : "", skin ? skin : ""};
-    char *copies[4] = {0}; bool ok = true;
-    for (size_t i = 0; ok && i < 4; ++i) {
-        size_t length = strlen(values[i]) + 1; copies[i] = malloc(length);
-        if (copies[i]) memcpy(copies[i], values[i], length);
-        else ok = application_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld source userinfo");
-    }
+    size_t size = strlen(text) + 1;
+    char *raw_copy = malloc(size);
+    bool ok = raw_copy != NULL;
+    if (ok) memcpy(raw_copy, text, size);
+    else application_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld source userinfo");
     application_player_record *record = NULL;
     for (size_t i = 0; app->players && i < app->players->count; ++i)
         if (qa_actor_id_equal(app->players->records[i].actor, actor) && !app->players->records[i].retiring)
             record = app->players->records + i;
     if (ok && !record) ok = application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld userinfo lost its canonical admission");
+    if (ok) ok = application_player_identity_text(record, name ? name : "unnamed", team ? team : "", skin ? skin : "", error);
     if (ok) {
-        free(record->userinfo); free(record->name); free(record->team); free(record->skin);
-        record->userinfo = copies[0]; record->name = copies[1]; record->team = copies[2]; record->skin = copies[3];
-        memset(copies, 0, sizeof(copies));
+        free(record->userinfo); record->userinfo = raw_copy; raw_copy = NULL;
         ok = application_qc_client_userinfo(engine->provider, actor, error);
         if (!ok) application_fault(app, error);
     }
-    for (size_t i = 0; i < 4; ++i) free(copies[i]);
+    free(raw_copy);
     qa_qw_info_free(&info); return ok;
 }
 

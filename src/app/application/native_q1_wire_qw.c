@@ -134,7 +134,7 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
     qa_application_network_qw_client value={.actor=actor,.stat_mask=UINT16_C(0xfffd)};
     if (okay) {
         value.source_slot=slot; value.begun=!row->source_begin_pending && !row->deferred;
-        value.spectator=row->spectator; value.frags=client.frags;
+        value.spectator=application_player_identity(row)->spectator; value.frags=client.frags;
         if (client.spectator_track_slot>32)
             okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld tracker leaves its physical client table");
         else if (client.spectator_track_slot)
@@ -157,7 +157,7 @@ static bool client_read(application_native_q1_wire_source *held,qa_actor_id acto
             okay=qa_q1_wire_qw_stats_read(&source.receipt,client.spectator_track_slot,value.stats,error);
             if (okay && value.spectator_track.registry) {
                 okay=binding(&source,value.spectator_track,&tracked_slot,&tracked,error);
-                if (okay) {stats_actor=value.spectator_track;has_stats=!tracked->spectator &&
+                if (okay) {stats_actor=value.spectator_track;has_stats=!application_player_identity(tracked)->spectator &&
                     !tracked->source_begin_pending && !tracked->deferred;}
             }
             value.stats[10]=0;
@@ -209,7 +209,7 @@ bool application_native_q1_qw_retire_capture(application_provider *p,qa_actor_id
     if (!application_native_q1_wire_retain(p,&source,error)) return false;
     uint32_t slot;const application_player_record *row;
     bool okay=binding(&source,actor,&slot,&row,error);
-    if (okay && !row->spectator && !row->source_begin_pending && !row->deferred) {
+    if (okay && !application_player_identity(row)->spectator && !row->source_begin_pending && !row->deferred) {
         qa_application_network_qw_client value;
         okay=client_read(&source,actor,&value,error);
         if (okay) {
@@ -266,7 +266,7 @@ bool application_native_q1_qw_visible(qa_application *app,qa_actor_id viewer,qa_
     qa_q1_source_client_view client;
     if (okay) okay=qa_q1_source_client_read(source.provider->state.q1,viewer,&client);
     uint32_t target_slot;
-    bool tracked=okay && row->spectator && client.spectator_track_slot &&
+    bool tracked=okay && application_player_identity(row)->spectator && client.spectator_track_slot &&
         qa_q1_wire_actor_slot(&source.receipt,target,&target_slot) && target_slot==client.spectator_track_slot;
     if (okay && (qa_actor_id_equal(viewer,target) || tracked)) *out=true;
     else if (okay) {
@@ -370,7 +370,7 @@ bool application_native_q1_qw_kill(qa_application *app,qa_actor_id actor,bool *k
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
     uint32_t slot;const application_player_record *row;qa_combat_state combat;
     bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error);
-    if (okay && !row->source_begin_pending && !row->deferred && !row->spectator) {
+    if (okay && !row->source_begin_pending && !row->deferred && !application_player_identity(row)->spectator) {
         okay=qa_combat_read(app->combat,actor,&combat,error);
         if (okay && combat.health>0) {
             const char *args[]={"kill"};qa_console *console;qa_cvars *cvars;qa_command_context context;
@@ -395,7 +395,7 @@ bool application_native_q1_qw_pause(qa_application *app,qa_actor_id actor,qa_buf
     bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error) &&
         qa_q1_source_client_read(source.provider->state.q1,actor,&client);
     const qa_cvar_view *policy=qa_q1_source_read(source.provider->state.q1,QA_Q1_SOURCE_PAUSABLE);
-    const char *denial=policy && policy->number==0?"Pause not allowed.\n":okay && row->spectator?"Spectators can not pause.\n":NULL;
+    const char *denial=policy && policy->number==0?"Pause not allowed.\n":okay && application_player_identity(row)->spectator?"Spectators can not pause.\n":NULL;
     const char *suffix=app->q1_paused?" unpaused the game\n":" paused the game\n";
     size_t prefix=okay && !denial?strlen(client.name):0;
     size_t size=denial?strlen(denial):prefix+strlen(suffix);qa_buffer result={0};
@@ -419,28 +419,27 @@ bool application_native_q1_qw_userinfo(qa_application *app,qa_actor_id actor,con
     bool okay=app->operation==APPLICATION_IDLE && binding(&source,actor,&slot,&row,error) && qa_qw_info_parse(raw,&info,error);
     if (okay) {
         const char *spectator=qa_qw_info_get(&info,"*spectator");
-        if ((spectator && !strcmp(spectator,"1"))!=row->spectator)
+        if ((spectator && !strcmp(spectator,"1"))!=application_player_identity(row)->spectator)
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld userinfo changes its trusted source role");
     }
-    char *copies[4]={0};
+    char *raw_copy = NULL;
+    if (okay) {
+        size_t size = strlen(raw) + 1;
+        raw_copy = malloc(size);
+        if (raw_copy) memcpy(raw_copy, raw, size);
+        else okay = application_fail(error, QA_ERROR_MEMORY, "Retaining native QuakeWorld source userinfo");
+    }
     if (okay) {
         const char *name=qa_qw_info_get(&info,"name"),*team=qa_qw_info_get(&info,"team"),*skin=qa_qw_info_get(&info,"skin");
-        const char *values[]={raw,name?name:"unnamed",team?team:"",skin?skin:""};
-        for (size_t i=0;okay && i<4;++i) {
-            size_t size=strlen(values[i])+1;copies[i]=malloc(size);
-            if (copies[i]) memcpy(copies[i],values[i],size);
-            else okay=application_fail(error,QA_ERROR_MEMORY,"Retaining native QuakeWorld source userinfo");
+        application_player_record *actual=&app->players->records[row-app->players->records];
+        okay = application_player_identity_text(actual, name ? name : "unnamed", team ? team : "", skin ? skin : "", error);
+        if (okay) {
+            free(actual->userinfo); actual->userinfo = raw_copy; raw_copy = NULL;
+            okay=application_native_q1_wire_client_userinfo(source.provider,actor,error);
+            if (!okay) application_fault(app,error);
         }
     }
-    if (okay) {
-        application_player_record *actual=&app->players->records[row-app->players->records];
-        free(actual->userinfo);free(actual->name);free(actual->team);free(actual->skin);
-        actual->userinfo=copies[0];actual->name=copies[1];actual->team=copies[2];actual->skin=copies[3];
-        memset(copies,0,sizeof(copies));
-        okay=application_native_q1_wire_client_userinfo(source.provider,actor,error);
-        if (!okay) application_fault(app,error);
-    }
-    for (size_t i=0;i<4;++i) free(copies[i]);
+    free(raw_copy);
     qa_qw_info_free(&info);application_native_q1_wire_end(&source);return okay;
 }
 
@@ -645,7 +644,7 @@ bool application_native_q1_qw_admission(qa_application *app,bool spectator,bool 
         for (size_t j=0;app->players && j<app->players->count;++j)
             if (qa_actor_id_equal(app->players->records[j].actor,actor)) {row=&app->players->records[j];break;}
         if (!row || row->client_slot!=i) {okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld admission lost an occupied physical row");break;}
-        if (row->spectator) ++spectators;else ++clients;
+        if (application_player_identity(row)->spectator) ++spectators;else ++clients;
     }
     if (okay) okay=admission_limits(source.provider,
         clients,spectators,spectator,allowed,error);

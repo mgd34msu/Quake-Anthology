@@ -331,7 +331,7 @@ bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot
         const qa_actor_record *actor;
         while (qa_actors_next(qa_session_actors(app->session), &cursor, &actor)) {
             qa_builtin_player_info client;
-            occupied |= qa_q2_player_projection(source->state.q2, actor->id, &client) &&
+            occupied |= qa_q2_player_projection(source->state.q2, actor->id, NULL, &client) &&
                 client.connected && client.slot == slot;
         }
     } else if (source->kind == APPLICATION_PROVIDER_Q3) {
@@ -378,7 +378,7 @@ static bool physical_player(application_provider *source, const application_play
     }
     if (source->kind == APPLICATION_PROVIDER_Q2) {
         qa_builtin_player_info client;
-        if (!qa_q2_player_projection(source->state.q2, row->actor, &client) ||
+        if (!qa_q2_player_projection(source->state.q2, row->actor, NULL, &client) ||
             !client.connected || client.slot != row->client_slot) {
             application_fail(error, QA_ERROR_ARGUMENT, "Unified player differs from its physical Q2 client");
             return false;
@@ -716,14 +716,13 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         qa_buffer userinfo = {0}; qa_q1_source_client_view current;
         if (okay) okay = qa_q1_source_client_read(source->state.q1,player.actor,&current) &&
             qa_q1_source_client_userinfo_read(source->state.q1,player.actor,true,&userinfo,error);
-        char *declared = okay ? malloc(strlen(current.name)+1) : NULL;
-        if (okay && !declared) okay = application_fail(error,QA_ERROR_MEMORY,"Retaining changed Source client name");
         if (okay) {
-            strcpy(declared,current.name);
             application_player_record *actual = (application_player_record *)row;
-            free(actual->name); actual->name=declared;
-            free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
-            okay=application_client_userinfo_changed(app,player.actor,error);
+            okay = application_player_identity_text(actual, current.name, NULL, NULL, error);
+            if (okay) {
+                free(actual->userinfo); actual->userinfo=(char *)userinfo.data; userinfo=(qa_buffer){0};
+                okay=application_client_userinfo_changed(app,player.actor,error);
+            }
         }
         qa_buffer_free(&userinfo);
     }

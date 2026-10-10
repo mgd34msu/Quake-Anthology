@@ -28,7 +28,7 @@ static bool admission(qa_application *app, uint32_t physical,
         return application_fail(error, QA_ERROR_ARGUMENT, "bot admission lost its actual native or shared GAME owner");
     for (size_t i = 0; i < app->players->count; ++i) {
         application_player_record *record = &app->players->records[i];
-        if (record->retiring || record->remote || !record->bot || record->client_slot != physical) continue;
+        if (record->retiring || record->remote || !application_player_identity(record)->bot || record->client_slot != physical) continue;
         const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), record->actor);
         if (!actor || !record->character || actor->owner != record->character->owner ||
             !actor->has_source || actor->source_slot != record->source_slot)
@@ -65,17 +65,15 @@ bool application_players_bot_userinfo(qa_application *app, uint32_t physical,
     qa_q3_client_info_value(text, "name", name, sizeof(name));
     qa_q3_client_info_value(text, "team", team, sizeof(team));
     qa_q3_client_info_value(text, "model", skin, sizeof(skin));
-    char *raw = retain(text, error), *new_name = raw ? retain(name, error) : NULL;
-    char *new_team = new_name ? retain(team, error) : NULL;
-    char *new_skin = new_team ? retain(skin, error) : NULL;
-    if (!new_skin) { free(raw); free(new_name); free(new_team); return false; }
+    char *raw = retain(text, error);
+    if (!raw) return false;
     application_provider *source = app->players->map_provider;
     bool okay = app->bots->shared_world
         ? application_bot_world_userinfo_set(app->bots->shared_world, physical, text, error)
         : application_native_q3_wire_userinfo(source, physical, text, error);
-    if (!okay) { free(raw); free(new_name); free(new_team); free(new_skin); return false; }
-    free(record->userinfo); free(record->name); free(record->team); free(record->skin);
-    record->userinfo = raw; record->name = new_name; record->team = new_team; record->skin = new_skin;
+    if (okay) okay = application_player_identity_text(record, name, team, skin, error);
+    if (!okay) { free(raw); return false; }
+    free(record->userinfo); record->userinfo = raw;
     return true;
 }
 
@@ -107,15 +105,15 @@ bool application_players_bot_connect(qa_application *app, uint32_t physical,
             okay = application_bot_world_drop(app->bots->shared_world, physical, reason, error);
         if (okay && !reason) {
             qa_string_id name;
-            okay = qa_strings_intern_cstr(qa_session_strings(app->session), record->name, &name, error) &&
+            okay = qa_strings_intern_cstr(qa_session_strings(app->session), application_player_name(record), &name, error) &&
                 qa_modes_player(app->modes, &(qa_match_player){.actor = actor, .name = name,
                     .connected = true, .connecting = true, .bot = true}, error);
             for (size_t i = 0; okay && i < app->mode_count; ++i) {
                 qa_team_id team = 0;
-                if (record->team[0]) okay = qa_strings_intern_cstr(
-                    qa_session_strings(app->session), record->team, &team, error);
+                if (application_player_team(record)[0]) okay = qa_strings_intern_cstr(
+                    qa_session_strings(app->session), application_player_team(record), &team, error);
                 if (okay) okay = qa_modes_join(app->modes, app->mode_ids[i], actor,
-                    team, record->spectator, error);
+                    team, application_player_identity(record)->spectator, error);
             }
             if (okay) *accepted = true;
         }

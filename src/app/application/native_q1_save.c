@@ -43,7 +43,7 @@ static application_player_record *local_player(qa_application *app,
             application_fail(error, QA_ERROR_ARGUMENT, "Original native save requires one admitted local Source client");
             return NULL;
         }
-        if (player || row->remote || row->bot || row->spectator || row->client_slot != 0) {
+        if (player || row->remote || application_player_identity(row)->bot || application_player_identity(row)->spectator || row->client_slot != 0) {
             application_fail(error, QA_ERROR_UNSUPPORTED, "Original text save cannot represent this admitted Source client roster");
             return NULL;
         }

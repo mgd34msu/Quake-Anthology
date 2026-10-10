@@ -160,7 +160,7 @@ bool qa_application_native_q3_presentation_local(qa_application *app,
     application_provider *provider = source(app, view->source_owner);
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *row = &app->players->records[i];
-        if (row->seat != seat || row->retiring || row->remote || row->bot ||
+        if (row->seat != seat || row->retiring || row->remote || application_player_identity(row)->bot ||
             !qa_actors_get(qa_session_actors(app->session), row->actor)) continue;
         uint32_t physical;
         application_native_q3_wire_client_view wire;

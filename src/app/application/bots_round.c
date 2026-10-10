@@ -453,7 +453,7 @@ bool application_bots_round_reconnect(application_bots_round *cut,
     application_player_record *record=NULL;
     for(size_t i=0;bots->application->players && i<bots->application->players->count;++i) {
         application_player_record *candidate=bots->application->players->records+i;
-        if(!candidate->retiring && candidate->bot && candidate->source_slot==row->source_slot &&
+        if(!candidate->retiring && application_player_identity(candidate)->bot && candidate->source_slot==row->source_slot &&
            qa_actor_id_equal(candidate->actor,actor)) {record=candidate;break;}
     }
     if(!record || record->character!=cut->provider)

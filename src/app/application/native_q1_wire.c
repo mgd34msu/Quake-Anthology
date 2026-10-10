@@ -997,7 +997,7 @@ static bool emit_text(qa_application *app, application_provider *wire,
         if (event->actor.registry && !qa_actor_id_equal(event->actor, actor)) continue;
         const application_player_record *recipient = roster(app, actor);
         if (!recipient) { okay = application_fail(error, QA_ERROR_NOT_FOUND, "Q1 wire text lost its actual recipient connection"); break; }
-        if (recipient->bot && !recipient->remote) continue;
+        if (application_player_identity(recipient)->bot && !recipient->remote) continue;
         char output[1024]; const char *value = format;
         if (formatted) {
             native_q1_wire_language *row = source->native_q1_wire->languages;
@@ -1232,7 +1232,7 @@ bool application_native_q1_wire_client_userinfo(application_provider *p, qa_acto
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !record ||
         !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) || slot != record->client_slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source admission lost its actual connection");
-    if (!record->name) {
+    if (!application_player_name(record)) {
         const qa_launch_snapshot *publication = p->application->routing_snapshot;
         if (!publication) publication = qa_application_launch(p->application);
         const qa_launch_choices *choices = qa_launch_snapshot_choices(publication);
@@ -1240,16 +1240,12 @@ bool application_native_q1_wire_client_userinfo(application_provider *p, qa_acto
         for (size_t i = 0; choices && i < choices->seat_count; ++i)
             if (choices->seats[i].id == record->seat) { name = choices->seats[i].name; break; }
         if (!name) return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 source client lost its declared logical seat name");
-        size_t length = strlen(name);
-        char *copy = malloc(length + 1);
-        if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q1 source seat name");
-        memcpy(copy, name, length + 1);
         application_player_record *actual = &p->application->players->records[record - p->application->players->records];
-        actual->name = copy;
+        if (!application_player_identity_text(actual, name, NULL, NULL, error)) return false;
         record = actual;
     }
     return qa_q1_source_client_userinfo_named(p->state.q1, actor,
-        record->userinfo ? record->userinfo : "", record->name, error);
+        record->userinfo ? record->userinfo : "", application_player_name(record), error);
 }
 bool application_native_q1_wire_client_admit(application_provider *p, qa_actor_id actor,
     qa_error *error) {
@@ -1272,7 +1268,7 @@ bool application_native_q1_wire_client_publish(void *opaque,
         const application_player_record *record = roster(p->application, view->actor);
         const char *language = NULL;
         if (!record) return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 text recipient lost its actual connection");
-        if (record->bot && !record->remote) return application_native_q1_wire_observe(p->application, error);
+        if (application_player_identity(record)->bot && !record->remote) return application_native_q1_wire_observe(p->application, error);
         if (record->remote) {
             if (!qa_q1_source_client_info(p->state.q1, view->actor, "language", &language) || !language || !*language)
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q1 text requires its declared source language");
@@ -1495,9 +1491,9 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     const qa_cvar_view *spectalk = qw ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_SPECTALK) : NULL;
     if (okay && qw && !spectalk)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source spectator policy");
-    bool spectator_only = qw && player && player->spectator && (team_only || (spectalk && spectalk->number == 0));
+    bool spectator_only = qw && player && application_player_identity(player)->spectator && (team_only || (spectalk && spectalk->number == 0));
     char sender_team[32] = {0};
-    if (okay && qw && sender.registry && team_only && !player->spectator) {
+    if (okay && qw && sender.registry && team_only && !application_player_identity(player)->spectator) {
         const char *team = NULL;
         if (!qa_q1_source_client_info(source->provider->state.q1, sender, "team", &team))
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source team userinfo");
@@ -1529,13 +1525,13 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
             if (!recipient->userinfo) {
                 okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its recipient userinfo"); break;
             }
-            if (spectator_only && !recipient->spectator) continue;
-            if (sender.registry && team_only && !player->spectator) {
+            if (spectator_only && !application_player_identity(recipient)->spectator) continue;
+            if (sender.registry && team_only && !application_player_identity(player)->spectator) {
                 const char *team = NULL;
                 if (!qa_q1_source_client_info(source->provider->state.q1, actor, "team", &team)) {
                     okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its recipient team"); break;
                 }
-                if (recipient->spectator || strcmp(sender_team, team ? team : "")) continue;
+                if (application_player_identity(recipient)->spectator || strcmp(sender_team, team ? team : "")) continue;
             }
             values[count++] = actor;
         } else if (!filtered || view.team == from.team) values[count++] = actor;
@@ -1603,13 +1599,11 @@ static bool source_roster_refresh(application_native_q1_wire_source *source, qa_
         qa_buffer_free(&userinfo);
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 continuation lost its typed source name");
     }
-    size_t length = strlen(name);
-    char *copy = malloc(length + 1);
-    if (!copy) { qa_buffer_free(&userinfo); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q1 source name"); }
-    memcpy(copy, name, length + 1);
     application_player_record *actual = &app->players->records[record - app->players->records];
-    free(actual->name); free(actual->userinfo);
-    actual->name = copy; actual->userinfo = (char *)userinfo.data;
+    if (!application_player_identity_text(actual, name, NULL, NULL, error)) {
+        qa_buffer_free(&userinfo); return false;
+    }
+    free(actual->userinfo); actual->userinfo = (char *)userinfo.data;
     return true;
 }
 bool application_native_q1_wire_name(qa_application *app, qa_actor_id actor, const char *name,

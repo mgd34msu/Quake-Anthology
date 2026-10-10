@@ -48,7 +48,7 @@ bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                                    .actor = a->id,
                                                    .inventory = entries,
                                                    .count = count,
-                                                   .visible = a->client->show_inventory,
+                                                   .visible = a->client->rule.show_inventory,
                                                    .selected_item = a->client->info.selected_item},
                              e);
     free(entries);
@@ -194,27 +194,27 @@ static bool flood_allowed(qa_q2_game *g, q2_actor *a, bool *allowed, qa_error *e
     if (!r->flood_messages)
         return true;
     char text[128];
-    if (g->now_ns < s->flood_until_ns) {
+    if (g->now_ns < s->rule.flood_until_ns) {
         *allowed = false;
         snprintf(text, sizeof(text), "You can't talk for %d more seconds\n",
-                 (int)q2_seconds_left(s->flood_until_ns, g->now_ns));
+                 (int)q2_seconds_left(s->rule.flood_until_ns, g->now_ns));
         return q2_player_print(g, a->id, 2, text, e);
     }
     size_t messages = r->flood_messages > 10 ? 10 : r->flood_messages;
-    size_t index = s->flood_count > messages ? s->flood_count - messages : 0;
-    if (s->flood_count >= r->flood_messages &&
-        g->now_ns - s->flood_times[index] < q2_item_seconds(r->flood_seconds)) {
-        s->flood_until_ns = q2_deadline(g->now_ns, q2_item_seconds(r->flood_wait_seconds));
+    size_t index = s->rule.flood_count > messages ? s->rule.flood_count - messages : 0;
+    if (s->rule.flood_count >= r->flood_messages &&
+        g->now_ns - s->rule.flood_times[index] < q2_item_seconds(r->flood_seconds)) {
+        s->rule.flood_until_ns = q2_deadline(g->now_ns, q2_item_seconds(r->flood_wait_seconds));
         *allowed = false;
         snprintf(text, sizeof(text), "Flood protection:  You can't talk for %d seconds.\n",
                  (int)r->flood_wait_seconds);
         return q2_player_print(g, a->id, 2, text, e);
     }
-    if (s->flood_count == 10) {
-        memmove(s->flood_times, s->flood_times + 1, 9 * sizeof(*s->flood_times));
-        s->flood_count--;
+    if (s->rule.flood_count == 10) {
+        memmove(s->rule.flood_times, s->rule.flood_times + 1, 9 * sizeof(*s->rule.flood_times));
+        s->rule.flood_count--;
     }
-    s->flood_times[s->flood_count++] = g->now_ns;
+    s->rule.flood_times[s->rule.flood_count++] = g->now_ns;
     return true;
 }
 static void team_name(const char *skin, bool model, char *out, size_t capacity) {
@@ -243,14 +243,14 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
     size_t n = strlen(text);
     if (n && text[n - 1] == '"')
         n--;
-    snprintf(message, sizeof(message), team ? "(%s): %.*s" : "%s: %.*s", a->client->info.name,
+    snprintf(message, sizeof(message), team ? "(%s): %.*s" : "%s: %.*s", q2_player_source_name(g, a->client),
              (int)fmin((double)n, 150), text);
     size_t length = strlen(message);
     if (length > 150)
         length = 150;
     message[length++] = '\n';
     message[length] = 0;
-    team_name(a->client->info.skin, (g->options.deathmatch_flags & 64) != 0, own_team,
+    team_name(q2_player_source_skin(g, a->client), (g->options.deathmatch_flags & 64) != 0, own_team,
               sizeof(own_team));
     qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
     if (!players)
@@ -359,9 +359,9 @@ static bool power_after_give(qa_q2_game *g, q2_actor *a, qa_error *e) {
         !q2_count(g, a->id, shield->item, &owned, e) ||
         !qa_combat_read(g->services.combat, a->id, &combat, e))
         return false;
-    int automatic = a->client->auto_shield;
+    int automatic = a->client->rule.auto_shield;
     bool enough =
-             fuel != 0 && (automatic < 0 || (a->client->auto_shield_enabled && fuel > automatic)),
+             fuel != 0 && (automatic < 0 || (a->client->rule.auto_shield_enabled && fuel > automatic)),
          active = combat.armor.powered.kind != QA_POWER_NONE;
     bool used;
     return !((active && !enough) || (!active && automatic != -1 && enough)) ||
@@ -653,25 +653,25 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         if (g->options.edition == QA_Q2_RERELEASE && !g->options.deathmatch &&
             equal_name(command, "help"))
             return qa_q2_player_help_computer(g, id, e);
-        s->show_inventory = false;
+        s->rule.show_inventory = false;
         if (equal_name(command, "score")) {
-            s->show_help = false;
-            s->show_scores = !s->show_scores;
+            s->rule.show_help = false;
+            s->rule.show_scores = !s->rule.show_scores;
         } else {
-            s->show_scores = g->options.deathmatch;
+            s->rule.show_scores = g->options.deathmatch;
             if (!g->options.deathmatch)
-                s->show_help = !s->show_help;
+                s->rule.show_help = !s->rule.show_help;
         }
         if (!q2_player_publish_inventory(g, a, e))
             return false;
         if (!q2_actor_live(g, id))
             return true;
-        if (s->show_scores && (g->options.deathmatch || g->options.cooperative))
+        if (s->rule.show_scores && (g->options.deathmatch || g->options.cooperative))
             return q2_player_scoreboard(g, a, true, e);
         return !equal_name(command, "help") || g->options.deathmatch ||
                q2_player_emit(g,
                               &(qa_q2_player_event){
-                                  .kind = QA_Q2_PLAYER_HELP, .actor = id, .visible = s->show_help},
+                                  .kind = QA_Q2_PLAYER_HELP, .actor = id, .visible = s->rule.show_help},
                               e);
     }
     if (p->intermission)
@@ -679,8 +679,8 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
     if (equal_name(command, "use") || equal_name(command, "drop"))
         return item_command(g, a, text, equal_name(command, "use"), e);
     if (equal_name(command, "inven")) {
-        s->show_scores = s->show_help = false;
-        s->show_inventory = !s->show_inventory;
+        s->rule.show_scores = s->rule.show_help = false;
+        s->rule.show_inventory = !s->rule.show_inventory;
         return q2_player_publish_inventory(g, a, e);
     }
     if (equal_name(command, "invnext") || equal_name(command, "invprev") ||
@@ -693,7 +693,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
             return qa_q2_player_chase(g, id, next ? 1 : -1, false, e);
         if (!select_item(g, a, next ? 1 : -1, filter, e))
             return false;
-        return !s->show_inventory || q2_player_publish_inventory(g, a, e);
+        return !s->rule.show_inventory || q2_player_publish_inventory(g, a, e);
     }
     if (equal_name(command, "invuse") || equal_name(command, "invdrop")) {
         int owned = 0;
@@ -729,7 +729,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
     }
     if (equal_name(command, "kill")) {
         if ((g->options.edition == QA_Q2_RERELEASE && s->info.spectator) ||
-            g->now_ns < q2_deadline(s->respawn_ns, 5 * Q2_NS))
+            g->now_ns < q2_deadline(s->rule.respawn_ns, 5 * Q2_NS))
             return true;
         qa_combat_state combat;
         if (!qa_combat_read(g->services.combat, id, &combat, e))
@@ -768,23 +768,23 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         return q2_player_death(g, a, &death, e);
     }
     if (equal_name(command, "putaway")) {
-        s->show_inventory = s->show_scores = s->show_help = false;
+        s->rule.show_inventory = s->rule.show_scores = s->rule.show_help = false;
         return true;
     }
     if (equal_name(command, "wave")) {
         qa_q2_player_movement m;
         if (!q2_player_observe(g, a, &m, e))
             return false;
-        if (m.ducked || s->animation_priority > 1)
+        if (m.ducked || s->rule.animation_priority > 1)
             return true;
         int wave = count ? argument_integer(args[0]) : 0;
         if (wave < 0 || wave > 4)
             wave = 4;
         static const int first[] = {72, 84, 95, 112, 123}, last[] = {83, 94, 111, 122, 134};
         static const char *names[] = {"flipoff\n", "salute\n", "taunt\n", "wave\n", "point\n"};
-        s->animation_priority = 1;
-        s->visual.frame = first[wave] - 1;
-        s->animation_end = last[wave];
+        s->rule.animation_priority = 1;
+        s->rule.visual.frame = first[wave] - 1;
+        s->rule.animation_end = last[wave];
         return q2_player_print(g, id, 2, names[wave], e);
     }
     if (equal_name(command, "god") ||

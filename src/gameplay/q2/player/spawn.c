@@ -2,7 +2,7 @@
 
 static bool post_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (g->options.edition == QA_Q2_RERELEASE &&
-        (a->client->awaiting_respawn || !a->client->visual.visible))
+        (a->client->rule.awaiting_respawn || !a->client->rule.visual.visible))
         return true;
     qa_body_state body;
     qa_q2_player_movement movement;
@@ -23,19 +23,19 @@ static bool post_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                         e))
         return false;
     if (q2_actor_live(g, a->id)) {
-        a->client->respawn_ns = g->now_ns;
-        a->client->event = 6;
+        a->client->rule.respawn_ns = g->now_ns;
+        a->client->rule.event = 6;
     }
     return true;
 }
 static bool fresh_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_client_state *s = a->client;
-    if (!q2_player_inventory_set(g, a->id, s->use_inventory ? NULL : s->spawn_inventory,
-                                 s->use_inventory ? 0 : s->spawn_count, e))
+    if (!q2_player_inventory_set(g, a->id, s->rule.use_inventory ? NULL : s->rule.spawn_inventory,
+                                 s->rule.use_inventory ? 0 : s->rule.spawn_count, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (s->use_inventory && !qa_q2_items_admit_player(g, a->id, true, e))
+    if (s->rule.use_inventory && !qa_q2_items_admit_player(g, a->id, true, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -48,11 +48,11 @@ static bool fresh_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!powers)
         return false;
     powers->maximum_health = 100;
-    s->info.selected_item = s->use_inventory ? g->items[QA_Q2_BLASTER] : 0;
-    if (s->use_inventory)
-        s->pending_start_items = true;
+    s->info.selected_item = s->rule.use_inventory ? g->items[QA_Q2_BLASTER] : 0;
+    if (s->rule.use_inventory)
+        s->rule.pending_start_items = true;
     qa_q2_player_services *services = &g->player_runtime->services;
-    if (s->use_inventory && services->persistent_inventory &&
+    if (s->rule.use_inventory && services->persistent_inventory &&
         !services->persistent_inventory(services->context, a->id, e))
         return false;
     if (!q2_actor_live(g, a->id))
@@ -64,14 +64,14 @@ bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (!a)
         return false;
     q2_client_state *s = a->client;
-    if (!s->pending_start_items)
+    if (!s->rule.pending_start_items)
         return true;
     const char *expression = g->player_runtime->rules.start_items;
     if (*expression && !qa_q2_items_start(g, id, expression, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    s->pending_start_items = false;
+    s->rule.pending_start_items = false;
     qa_inventory_entry *entries = NULL;
     size_t count = 0;
     if (!q2_player_inventory_copy(g, id, &entries, &count, e))
@@ -80,9 +80,9 @@ bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         free(entries);
         return true;
     }
-    free(s->spawn_inventory);
-    s->spawn_inventory = entries;
-    s->spawn_count = count;
+    free(s->rule.spawn_inventory);
+    s->rule.spawn_inventory = entries;
+    s->rule.spawn_count = count;
     if (g->options.cooperative) {
         qa_q2_player_carry carry = {0};
         if (!qa_q2_player_carry_capture(g, id, &carry, e))
@@ -91,9 +91,9 @@ bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
             qa_q2_player_carry_free(&carry);
             return true;
         }
-        qa_q2_player_carry_free(&s->coop);
-        s->coop = carry;
-        s->has_coop = true;
+        qa_q2_player_carry_free(&s->rule.coop);
+        s->rule.coop = carry;
+        s->rule.has_coop = true;
     }
     return true;
 }
@@ -105,8 +105,8 @@ bool qa_q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
 }
 static bool spawn_completed(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_actor_live(g, id) ? q2_actor_get(g, id, false, NULL) : NULL;
-    if (!a || !a->client || !a->client->info.connected || !a->client->spawned ||
-        a->client->awaiting_respawn)
+    if (!a || !a->client || !a->client->info.connected || !a->client->rule.spawned ||
+        a->client->rule.awaiting_respawn)
         return true;
     qa_q2_player_services *services = &g->player_runtime->services;
     return !services->spawn_completed || services->spawn_completed(services->context, id, e);
@@ -125,23 +125,23 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         return true;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     if (landmark) {
-        s->pending_landmark = *landmark;
-        s->has_pending_landmark = true;
+        s->rule.pending_landmark = *landmark;
+        s->rule.has_pending_landmark = true;
     }
     qa_body_state body;
     qa_vec3 command_view;
     bool found;
     if (!q2_player_spawn_select(g, a, &movement,
-                                s->has_pending_landmark ? &s->pending_landmark : NULL, &body,
+                                s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, &body,
                                 &command_view, &found, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
     if (!found) {
-        if (!s->awaiting_respawn)
-            s->respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
-        s->awaiting_respawn = true;
-        s->spawned = false;
+        if (!s->rule.awaiting_respawn)
+            s->rule.respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        s->rule.awaiting_respawn = true;
+        s->rule.spawned = false;
         qa_actor_id camera = {0};
         size_t cameras = 0;
         while (q2_map_find(g, "info_player_intermission", UINT32_MAX, cameras, &camera))
@@ -161,10 +161,10 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         body.velocity = qa_v3(0, 0, 0);
         s->info.dead = false;
         s->info.noclip = true;
-        s->visual.visible = false;
+        s->rule.visual.visible = false;
         if (!q2_player_collision(g, a, false, e) ||
             !qa_world_body_write(g->services.world, id, &body, e) ||
-            !q2_publish_visual(g, id, &s->visual, e))
+            !q2_publish_visual(g, id, &s->rule.visual, e))
             return false;
         if (!q2_actor_live(g, id))
             return true;
@@ -176,32 +176,32 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
             return false;
         return !q2_actor_live(g, id) || qa_world_link(g->services.world, id, NULL, e);
     }
-    bool was_waiting = s->awaiting_respawn;
+    bool was_waiting = s->rule.awaiting_respawn;
     if (a->character_birth_epoch == UINT64_MAX) {
         qa_error_set(e, QA_ERROR_ARGUMENT, id.slot, "Q2 character birth epoch exhausted");
         return false;
     }
-    s->awaiting_respawn = false;
-    s->respawn_timeout_ns = 0;
-    s->has_pending_landmark = false;
+    s->rule.awaiting_respawn = false;
+    s->rule.respawn_timeout_ns = 0;
+    s->rule.has_pending_landmark = false;
     qa_combat_state combat;
     if (!qa_combat_read(g->services.combat, id, &combat, e))
         return false;
     if (restore) {
-        if (g->options.cooperative && s->has_coop) {
+        if (g->options.cooperative && s->rule.has_coop) {
             int32_t score;
             if (!q2_player_score_read(g, id, &score, e))
                 return false;
             if (!q2_actor_live(g, id))
                 return true;
-            s->coop.score = score > s->coop.score ? score : s->coop.score;
-            if (!qa_q2_player_carry_restore(g, id, &s->coop, e))
+            s->rule.coop.score = score > s->rule.coop.score ? score : s->rule.coop.score;
+            if (!qa_q2_player_carry_restore(g, id, &s->rule.coop, e))
                 return false;
-            if (rr && s->coop.health <= 0) {
+            if (rr && s->rule.coop.health <= 0) {
                 if (!fresh_inventory(g, a, e))
                     return false;
                 s->info.god = s->info.notarget = false;
-                s->auto_shield_enabled = false;
+                s->rule.auto_shield_enabled = false;
                 if (a->powers)
                     a->powers->power_cubes = 0;
             }
@@ -215,28 +215,28 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     ++a->character_birth_epoch;
     a->pickup_icon = a->pickup_text = a->selected_item_name = 0;
     a->pickup_until_ns = a->selected_item_name_until_ns = 0;
-    s->info.dead = s->gibbed = false;
-    s->old_water = 0;
-    s->air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
-    s->drown_damage = 2;
-    s->damage_alpha = s->bonus_alpha = s->damage_blood = s->damage_armor = s->damage_power =
-        s->damage_knockback = 0;
-    s->fall_ns = 0;
-    s->bob_time = s->bob_move = 0;
-    s->animation_priority = 0;
-    s->animation_end = 39;
-    s->info.spectator = s->requested_spectator;
+    s->info.dead = s->rule.gibbed = false;
+    s->rule.old_water = 0;
+    s->rule.air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
+    s->rule.drown_damage = 2;
+    s->rule.damage_alpha = s->rule.bonus_alpha = s->rule.damage_blood = s->rule.damage_armor = s->rule.damage_power =
+        s->rule.damage_knockback = 0;
+    s->rule.fall_ns = 0;
+    s->rule.bob_time = s->rule.bob_move = 0;
+    s->rule.animation_priority = 0;
+    s->rule.animation_end = 39;
+    s->info.spectator = s->rule.requested_spectator;
     s->info.noclip = s->info.spectator;
     s->info.chase_target = (qa_actor_id){0};
-    s->player_collision = !rr || !g->options.cooperative || p->rules.coop_player_collision;
-    s->old_velocity = qa_v3(0, 0, 0);
+    s->rule.player_collision = !rr || !g->options.cooperative || p->rules.coop_player_collision;
+    s->rule.old_velocity = qa_v3(0, 0, 0);
     s->info.view_height = 22;
-    s->visual.frame = 0;
-    s->visual.old_frame = -1;
-    s->visual.effects = 0;
-    s->visual.render_flags = rr ? 32768 : 0;
-    s->visual.visible = !s->info.spectator;
-    s->visual.alpha = 1;
+    s->rule.visual.frame = 0;
+    s->rule.visual.old_frame = -1;
+    s->rule.visual.effects = 0;
+    s->rule.visual.render_flags = rr ? 32768 : 0;
+    s->rule.visual.visible = !s->info.spectator;
+    s->rule.visual.alpha = 1;
     if (!q2_player_clear_powerups(g, a, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -254,12 +254,12 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         return true;
     if (movement.animate_q2) {
         char model[320];
-        size_t length = strcspn(s->info.skin, "/");
+        size_t length = strcspn(q2_player_source_skin(g, s), "/");
         if (!length)
             snprintf(model, sizeof(model), "players/male/tris.md2");
         else
-            snprintf(model, sizeof(model), "players/%.*s/tris.md2", (int)length, s->info.skin);
-        if (!qa_builtin_resource(&g->services, model, &s->visual.models[0], e))
+            snprintf(model, sizeof(model), "players/%.*s/tris.md2", (int)length, q2_player_source_skin(g, s));
+        if (!qa_builtin_resource(&g->services, model, &s->rule.visual.models[0], e))
             return false;
         a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
         a->physics_bound = true;
@@ -295,9 +295,9 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     }
     if (!q2_actor_live(g, id))
         return true;
-    if (s->use_weapons && a->weapon_bound) {
+    if (s->rule.use_weapons && a->weapon_bound) {
         qa_q2_weapon weapon = g->options.deathmatch           ? QA_Q2_BLASTER
-                              : s->has_coop && s->coop.weapon ? s->coop.weapon
+                              : s->rule.has_coop && s->rule.coop.weapon ? s->rule.coop.weapon
                               : a->weapon.weapon              ? a->weapon.weapon
                                                               : QA_Q2_BLASTER;
         qa_q2_weapon_state reset = {
@@ -305,7 +305,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         if (!qa_q2_weapon_restore(g, id, &reset, e) || !qa_q2_weapon_silencer(g, id, 0, e))
             return false;
     }
-    if (movement.animate_q2 && !q2_publish_visual(g, id, &s->visual, e))
+    if (movement.animate_q2 && !q2_publish_visual(g, id, &s->rule.visual, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
@@ -322,14 +322,14 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     if (!q2_actor_live(g, id))
         return true;
     if (rr && p->services.player_collision &&
-        !p->services.player_collision(p->services.context, id, s->player_collision, e))
+        !p->services.player_collision(p->services.context, id, s->rule.player_collision, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    s->spawned = true;
+    s->rule.spawned = true;
     if (rr) {
-        s->slime_ns = s->animation_ns = s->invisibility_fade_ns = 0;
-        s->slow_view_angles = qa_v3(0, 0, 0);
+        s->rule.slime_ns = s->rule.animation_ns = s->rule.invisibility_fade_ns = 0;
+        s->rule.slow_view_angles = qa_v3(0, 0, 0);
         if (!qa_q2_entities_player_reset(g, id, e))
             return false;
         if (!q2_actor_live(g, id))
@@ -338,7 +338,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
                 g,
                 &(qa_q2_player_event){.kind = QA_Q2_PLAYER_FLASHLIGHT,
                                       .actor = id,
-                                      .hand = s->hand,
+                                      .hand = s->rule.hand,
                                       .visible = s->info.flashlight && !p->intermission},
                 e))
             return false;
@@ -346,7 +346,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     if (!q2_actor_live(g, id))
         return true;
     if (rr && !g->options.deathmatch && q2_player_map_is(p->rules.map_name, "rboss") &&
-        s->use_inventory) {
+        s->rule.use_inventory) {
         const qa_q2_item_definition *key = qa_q2_item_lookup(g, "key_nuke");
         if (key &&
             !qa_inventory_configure(g->services.inventory, id,
@@ -372,21 +372,21 @@ bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds 
     if (!a) return false;
     q2_client_state *s = a->client;
     if (landmark) {
-        s->pending_landmark = *landmark;
-        s->has_pending_landmark = true;
+        s->rule.pending_landmark = *landmark;
+        s->rule.has_pending_landmark = true;
     }
     qa_q2_player_movement movement = {.standing_bounds = *bounds};
     if (!q2_player_spawn_select(g, a, &movement,
-            s->has_pending_landmark ? &s->pending_landmark : NULL, out, NULL, found, e)) return false;
+            s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, out, NULL, found, e)) return false;
     if (!q2_actor_live(g, id)) return true;
     if (!*found) {
-        if (!s->awaiting_respawn) s->respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
-        s->awaiting_respawn = true;
-        s->spawned = false;
+        if (!s->rule.awaiting_respawn) s->rule.respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        s->rule.awaiting_respawn = true;
+        s->rule.spawned = false;
     } else {
-        s->awaiting_respawn = false;
-        s->respawn_timeout_ns = 0;
-        s->has_pending_landmark = false;
+        s->rule.awaiting_respawn = false;
+        s->rule.respawn_timeout_ns = 0;
+        s->rule.has_pending_landmark = false;
     }
     return true;
 }
@@ -400,7 +400,7 @@ bool qa_q2_player_map_spawn_complete(qa_q2_game *g, qa_actor_id id, qa_error *e)
     if (!q2_actor_live(g, id)) return true;
     a = q2_client(g, id, e);
     if (!a) return false;
-    a->client->spawned = true;
+    a->client->rule.spawned = true;
     return true;
 }
 bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -418,7 +418,7 @@ bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     if (!player_spawn(g, id, true, NULL, false, e))
         return false;
-    if (!q2_actor_live(g, id) || a->client->awaiting_respawn)
+    if (!q2_actor_live(g, id) || a->client->rule.awaiting_respawn)
         return true;
     return post_respawn(g, a, e) && spawn_completed(g, id, e);
 }
@@ -430,7 +430,7 @@ bool qa_q2_player_teleport(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_vec
     qa_q2_player_movement m;
     if (!q2_player_observe(g, a, &m, e))
         return false;
-    a->client->event = 6;
+    a->client->rule.event = 6;
     return q2_player_move(g, a,
                           &(qa_q2_player_motion){.kind = QA_Q2_PLAYER_TELEPORT,
                                                  .origin = origin,

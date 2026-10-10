@@ -929,9 +929,9 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
     if (present) {
         qa_q2_player_state coop = state->player;
         qa_q2_weapon last_weapon = QA_Q2_WEAPON_NONE;
-        if (!io->reading) coop.info.score = state->player.coop.score;
-        if (!persistent_record(g, &child, &coop, &state->player.coop, true, &last_weapon)) return false;
-        if (io->reading) state->player.has_coop = true;
+        if (!io->reading) coop.info.score = state->player.rule.coop.score;
+        if (!persistent_record(g, &child, &coop, &state->player.rule.coop, true, &last_weapon)) return false;
+        if (io->reading) state->player.rule.has_coop = true;
     }
     if (!q2_original_object_end(io) || !q2_original_record(io, Q2_ORIGINAL_CLIENT, &state->player) ||
         !q2_original_record(io, Q2_ORIGINAL_WEAPON, &state->weapon) ||
@@ -945,20 +945,20 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         return false;
     if (io->edition == QA_Q2_CLASSIC) {
         if (!q2_original_scalar(io, "connected", Q2_ORIGINAL_BOOL, 720, 720, 720, &state->player.info.connected) ||
-            !q2_original_scalar(io, "showscores", Q2_ORIGINAL_BOOL, 3496, 3512, 3528, &state->player.show_scores) ||
-            !q2_original_scalar(io, "showinventory", Q2_ORIGINAL_BOOL, 3500, 3516, 3532, &state->player.show_inventory) ||
-            !q2_original_scalar(io, "showhelp", Q2_ORIGINAL_BOOL, 3504, 3520, 3536, &state->player.show_help) ||
-            !q2_original_scalar(io, "buttons", Q2_ORIGINAL_U32, 3516, 3532, 3548, &state->player.buttons) ||
-            !q2_original_scalar(io, "latched_buttons", Q2_ORIGINAL_U32, 3524, 3540, 3556, &state->player.latched_buttons) ||
-            !q2_original_scalar(io, "weapon_thunk", Q2_ORIGINAL_BOOL, 3528, 3544, 3560, &state->player.weapon_thunk))
+            !q2_original_scalar(io, "showscores", Q2_ORIGINAL_BOOL, 3496, 3512, 3528, &state->player.rule.show_scores) ||
+            !q2_original_scalar(io, "showinventory", Q2_ORIGINAL_BOOL, 3500, 3516, 3532, &state->player.rule.show_inventory) ||
+            !q2_original_scalar(io, "showhelp", Q2_ORIGINAL_BOOL, 3504, 3520, 3536, &state->player.rule.show_help) ||
+            !q2_original_scalar(io, "buttons", Q2_ORIGINAL_U32, 3516, 3532, 3548, &state->player.rule.buttons) ||
+            !q2_original_scalar(io, "latched_buttons", Q2_ORIGINAL_U32, 3524, 3540, 3556, &state->player.rule.latched_buttons) ||
+            !q2_original_scalar(io, "weapon_thunk", Q2_ORIGINAL_BOOL, 3528, 3544, 3560, &state->player.rule.weapon_thunk))
             return false;
         if (io->product == QA_Q2_ROGUE &&
             !q2_original_reference(g, io, "owned_sphere", 3852, &state->sphere)) return false;
         const struct {const char *name; uint16_t offsets[3]; float *value;} damage[] = {
-            {"damage_armor", {3536, 3552, 3568}, &state->player.damage_armor},
-            {"damage_parmor", {3540, 3556, 3572}, &state->player.damage_power},
-            {"damage_blood", {3544, 3560, 3576}, &state->player.damage_blood},
-            {"damage_knockback", {3548, 3564, 3580}, &state->player.damage_knockback},
+            {"damage_armor", {3536, 3552, 3568}, &state->player.rule.damage_armor},
+            {"damage_parmor", {3540, 3556, 3572}, &state->player.rule.damage_power},
+            {"damage_blood", {3544, 3560, 3576}, &state->player.rule.damage_blood},
+            {"damage_knockback", {3548, 3564, 3580}, &state->player.rule.damage_knockback},
         };
         for (size_t i = 0; i < sizeof(damage) / sizeof(damage[0]); ++i) {
             int32_t value = io->reading ? 0 : qa_source_float_to_i32(*damage[i].value);
@@ -967,14 +967,14 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
             if (io->reading) *damage[i].value = (float)value;
         }
         if (!q2_original_scalar(io, "damage_from", Q2_ORIGINAL_VECTOR, 3552, 3568, 3584,
-            &state->player.damage_from)) return false;
+            &state->player.rule.damage_from)) return false;
     }
     if (io->reading) {
         state->weapon.weapon = state->persistent.weapon;
         state->weapon.gun_rate = 10;
         if (io->edition == QA_Q2_CLASSIC) state->weapon.kick_seconds = .2f;
-        state->player.fov = state->view.fov;
-        state->player.loop_sound = state->weapon.loop_sound;
+        state->player.rule.fov = state->view.fov;
+        state->player.rule.loop_sound = state->weapon.loop_sound;
         state->movement.view_offset = state->view.offset;
         state->movement.status = QA_MOVEMENT_ACTIVE;
     }
@@ -985,9 +985,9 @@ void q2_original_client_free(q2_original_client_state *state)
 {
     if (!state) return;
     qa_q2_player_carry_free(&state->persistent);
-    qa_q2_player_carry_free(&state->player.coop);
-    free(state->player.spawn_inventory);
-    free(state->player.help_points);
+    qa_q2_player_carry_free(&state->player.rule.coop);
+    free(state->player.rule.spawn_inventory);
+    free(state->player.rule.help_points);
     *state = (q2_original_client_state){0};
 }
 
@@ -1151,25 +1151,27 @@ bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
 {
     *state = (q2_original_client_state){.weapon.phase = QA_Q2_READY};
     if (!actor || !actor->client) return true;
-    state->player = *actor->client;
-    state->player.coop.inventory = NULL;
-    state->player.spawn_inventory = NULL;
-    state->player.spawn_count = 0;
-    state->player.help_points = NULL;
-    state->player.help_count = state->player.help_capacity = 0;
-    if (actor->client->coop.count) {
-        size_t count = actor->client->coop.count;
-        if (count > SIZE_MAX / sizeof(*state->player.coop.inventory)) {
+    state->player.rule = actor->client->rule;
+    state->player.bot = actor->client->player->bot;
+    q2_player_source_info_read(g, actor->client, &state->player.info);
+    state->player.rule.coop.inventory = NULL;
+    state->player.rule.spawn_inventory = NULL;
+    state->player.rule.spawn_count = 0;
+    state->player.rule.help_points = NULL;
+    state->player.rule.help_count = state->player.rule.help_capacity = 0;
+    if (actor->client->rule.coop.count) {
+        size_t count = actor->client->rule.coop.count;
+        if (count > SIZE_MAX / sizeof(*state->player.rule.coop.inventory)) {
             qa_error_set(error, QA_ERROR_MEMORY, count, "Original Q2 coop inventory extent overflows");
             return false;
         }
-        state->player.coop.inventory = malloc(count * sizeof(*state->player.coop.inventory));
-        if (!state->player.coop.inventory) {
+        state->player.rule.coop.inventory = malloc(count * sizeof(*state->player.rule.coop.inventory));
+        if (!state->player.rule.coop.inventory) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Capturing actual Q2 coop inventory");
             return false;
         }
-        memcpy(state->player.coop.inventory, actor->client->coop.inventory,
-            count * sizeof(*state->player.coop.inventory));
+        memcpy(state->player.rule.coop.inventory, actor->client->rule.coop.inventory,
+            count * sizeof(*state->player.rule.coop.inventory));
     }
     if (!qa_q2_player_carry_capture(g, actor->id, &state->persistent, error)) return false;
     for (size_t i = 0; i < state->persistent.count; ++i) {

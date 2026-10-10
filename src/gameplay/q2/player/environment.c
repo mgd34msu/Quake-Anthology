@@ -20,7 +20,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
     uint64_t now = g->now_ns;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     if (s->info.noclip || s->info.spectator) {
-        s->air_ns = q2_deadline(now, 12 * Q2_NS);
+        s->rule.air_ns = q2_deadline(now, 12 * Q2_NS);
         return true;
     }
     qa_q2_powerups powers;
@@ -29,8 +29,8 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    int level = m->water_level, old = s->old_water;
-    s->old_water = level;
+    int level = m->water_level, old = s->rule.old_water;
+    s->rule.old_water = level;
     bool breather = powers.breather_until_ns > now, suit = powers.enviro_until_ns > now;
     if ((old == 0 && level != 0) || (old != 0 && level == 0)) {
         if (!q2_player_noise(g, a->id, body.origin, false, e))
@@ -54,12 +54,12 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
     if (!qa_combat_read(g->services.combat, a->id, &combat, e))
         return false;
     if (old == 3 && level != 3 && (!rr || combat.health > 0)) {
-        if (s->air_ns < now) {
+        if (s->rule.air_ns < now) {
             if (!q2_player_sound(g, a->id, "player/gasp1.wav", 2, e))
                 return false;
             if (q2_actor_live(g, a->id) && !q2_player_noise(g, a->id, body.origin, false, e))
                 return false;
-        } else if (s->air_ns < q2_deadline(now, 11 * Q2_NS) &&
+        } else if (s->rule.air_ns < q2_deadline(now, 11 * Q2_NS) &&
                    !q2_player_sound(g, a->id, "player/gasp2.wav", 2, e))
             return false;
     }
@@ -67,7 +67,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         return true;
     if (level == 3) {
         if (breather || suit) {
-            s->air_ns = q2_deadline(now, 10 * Q2_NS);
+            s->rule.air_ns = q2_deadline(now, 10 * Q2_NS);
             uint64_t unit = rr ? Q2_MS : 100 * Q2_MS;
             bool positive = powers.breather_until_ns >= now;
             uint64_t delta =
@@ -78,9 +78,9 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (remainder % (rr ? 2500u : 25u) == 0) {
                 if (!q2_player_sound(
                         g, a->id,
-                        s->breather_sound ? "player/u_breath2.wav" : "player/u_breath1.wav", 0, e))
+                        s->rule.breather_sound ? "player/u_breath2.wav" : "player/u_breath1.wav", 0, e))
                     return false;
-                s->breather_sound ^= 1;
+                s->rule.breather_sound ^= 1;
                 if (!q2_actor_live(g, a->id))
                     return true;
                 if (!q2_player_noise(g, a->id, body.origin, false, e))
@@ -89,10 +89,10 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         }
         if (!q2_actor_live(g, a->id))
             return true;
-        if (s->air_ns < now && s->drown_ns < now && combat.health > 0) {
-            s->drown_ns = q2_deadline(now, Q2_NS);
-            s->drown_damage = s->drown_damage + 2 > 15 ? 15 : s->drown_damage + 2;
-            const char *sound = combat.health <= (float)s->drown_damage
+        if (s->rule.air_ns < now && s->rule.drown_ns < now && combat.health > 0) {
+            s->rule.drown_ns = q2_deadline(now, Q2_NS);
+            s->rule.drown_damage = s->rule.drown_damage + 2 > 15 ? 15 : s->rule.drown_damage + 2;
+            const char *sound = combat.health <= (float)s->rule.drown_damage
                                     ? (rr ? "*drown1.wav" : "player/drown1.wav")
                                 : q2_random(g) < .5f ? "*gurp2.wav"
                                                      : "*gurp1.wav";
@@ -100,28 +100,28 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
-            s->pain_ns = now;
-            if (!q2_player_environment_damage(g, a, (float)s->drown_damage, 17, 2, e))
+            s->rule.pain_ns = now;
+            if (!q2_player_environment_damage(g, a, (float)s->rule.drown_damage, 17, 2, e))
                 return false;
-        } else if (rr && s->air_ns <= q2_deadline(now, 3 * Q2_NS) && s->drown_ns < now) {
+        } else if (rr && s->rule.air_ns <= q2_deadline(now, 3 * Q2_NS) && s->rule.drown_ns < now) {
             char sound[32];
             snprintf(sound, sizeof(sound), "player/wade%u.wav", 1 + (unsigned)((now / Q2_NS) % 3));
-            s->drown_ns = q2_deadline(now, Q2_NS);
+            s->rule.drown_ns = q2_deadline(now, Q2_NS);
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 return false;
         }
     } else {
-        s->air_ns = q2_deadline(now, 12 * Q2_NS);
-        s->drown_damage = 2;
+        s->rule.air_ns = q2_deadline(now, 12 * Q2_NS);
+        s->rule.drown_damage = 2;
     }
     if (!q2_actor_live(g, a->id))
         return true;
-    if (level && (m->water_type & 24) && (!rr || s->slime_ns <= now)) {
+    if (level && (m->water_type & 24) && (!rr || s->rule.slime_ns <= now)) {
         if (m->water_type & 8) {
             if (!qa_combat_read(g->services.combat, a->id, &combat, e))
                 return false;
-            if (combat.health > 0 && s->pain_ns <= now && powers.invulnerability_until_ns < now) {
-                s->pain_ns = q2_deadline(now, Q2_NS);
+            if (combat.health > 0 && s->rule.pain_ns <= now && powers.invulnerability_until_ns < now) {
+                s->rule.pain_ns = q2_deadline(now, Q2_NS);
                 if (!q2_player_sound(g, a->id,
                                      q2_random(g) < .5f ? "player/burn2.wav" : "player/burn1.wav",
                                      2, e))
@@ -137,7 +137,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if ((m->water_type & 16) && !suit &&
             !q2_player_environment_damage(g, a, (float)level, 18, 0, e))
             return false;
-        s->slime_ns = q2_deadline(now, 100 * Q2_MS);
+        s->rule.slime_ns = q2_deadline(now, 100 * Q2_MS);
     }
     return true;
 }
@@ -159,12 +159,12 @@ bool q2_player_falling(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
-        if (s->old_velocity.z < 0 && body.velocity.z > s->old_velocity.z && !m->grounded)
-            delta = s->old_velocity.z;
+        if (s->rule.old_velocity.z < 0 && body.velocity.z > s->rule.old_velocity.z && !m->grounded)
+            delta = s->rule.old_velocity.z;
         else {
             if (!m->grounded)
                 return true;
-            delta = body.velocity.z - s->old_velocity.z;
+            delta = body.velocity.z - s->rule.old_velocity.z;
         }
     }
     delta *= delta * .0001f;
@@ -175,30 +175,30 @@ bool q2_player_falling(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
     if (delta < 1)
         return true;
     if (rr)
-        s->bob_time = 0;
-    if (s->landmark_free_fall) {
+        s->rule.bob_time = 0;
+    if (s->rule.landmark_free_fall) {
         delta = fminf(30, delta);
-        s->landmark_free_fall = false;
-        s->landmark_noise_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
+        s->rule.landmark_free_fall = false;
+        s->rule.landmark_noise_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
     }
     if (delta < 15) {
         if (!rr || !m->on_ladder)
-            s->event = 2;
+            s->rule.event = 2;
         return true;
     }
-    s->fall_value = fminf(delta * .5f, 40);
+    s->rule.fall_value = fminf(delta * .5f, 40);
     uint64_t fall = rr ? g->frame_ns < 400 * Q2_MS ? 400 * Q2_MS - g->frame_ns : 0 : 300 * Q2_MS;
-    s->fall_ns = q2_deadline(g->now_ns, fall);
+    s->rule.fall_ns = q2_deadline(g->now_ns, fall);
     if (delta > 30) {
-        s->event = delta >= 55 ? 5 : 4;
-        s->pain_ns = q2_deadline(g->now_ns, rr ? g->frame_ns : 0);
+        s->rule.event = delta >= 55 ? 5 : 4;
+        s->rule.pain_ns = q2_deadline(g->now_ns, rr ? g->frame_ns : 0);
         bool no_damage = g->options.deathmatch && (rr ? g->player_runtime->rules.no_fall_damage
                                                       : (g->options.deathmatch_flags & 8) != 0);
         if (!no_damage &&
             !q2_player_environment_damage(g, a, fmaxf(1, truncf((delta - 30) / 2)), 22, 0, e))
             return false;
     } else
-        s->event = 3;
+        s->rule.event = 3;
     if (rr && q2_actor_live(g, a->id)) {
         qa_body_state body;
         qa_combat_state combat;

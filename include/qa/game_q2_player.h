@@ -205,8 +205,7 @@ typedef struct qa_q2_player_noise_record {
     uint64_t time_ns;
     bool present;
 } qa_q2_player_noise_record;
-typedef struct qa_q2_player_state {
-    qa_q2_player_info info;
+typedef struct qa_q2_player_rule_tail {
     qa_q2_visual visual;
     qa_q2_player_carry coop;
     qa_inventory_entry *spawn_inventory;
@@ -241,7 +240,7 @@ typedef struct qa_q2_player_state {
     qa_q2_fog fog, wanted_fog;
     float fog_transition;
     size_t flood_count;
-    bool use_weapons, use_inventory, requested_spectator, bot, gibbed, weapon_thunk;
+    bool use_weapons, use_inventory, requested_spectator, gibbed, weapon_thunk;
     bool animation_duck, animation_run, landmark_free_fall;
     bool show_scores, show_inventory, show_help, bob_skip, nuke_inside, auto_shield_enabled;
     bool awaiting_respawn, spawned, player_collision, has_coop, has_pending_landmark, squad_spawn,
@@ -249,6 +248,13 @@ typedef struct qa_q2_player_state {
     bool pending_start_items;
     qa_q2_landmark pending_landmark;
     qa_vec3 squad_origin, squad_angles;
+} qa_q2_player_rule_tail;
+
+/* Immutable checkpoint/legacy projection, not retained live client state. */
+typedef struct qa_q2_player_state {
+    qa_q2_player_info info;
+    qa_q2_player_rule_tail rule;
+    bool bot;
 } qa_q2_player_state;
 typedef struct qa_q2_player_checkpoint {
     bool present;
@@ -300,8 +306,10 @@ bool qa_q2_player_userinfo_read(qa_q2_game *, qa_actor_id, const char **, qa_err
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
 bool qa_q2_player_notarget(qa_q2_game *, qa_actor_id, bool *enabled, qa_error *);
 bool qa_q2_player_controlled(const qa_q2_game *, qa_actor_id);
-bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
-bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);
+/* Optional borrowed canonical identity changes generic fields only; NULL retains
+ * authored Source name/skin/spectator projection and physical admission. */
+bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, const qa_actor_player *,
+    qa_builtin_player_info *);
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,
                         qa_error *);
 /* The Q2 map places an admitted player with its source slot/start-point rules,

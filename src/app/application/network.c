@@ -434,7 +434,7 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
             }
         if (!record || record->retiring)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause lacks its actual source roster admission");
-        name = record->name ? record->name : "unconnected";
+        name = application_player_name(record) ? application_player_name(record) : "unconnected";
     }
     size_t length = denial ? strlen(denial) : strlen(name);
     if (!denial && length > SIZE_MAX - strlen(suffix) - 1)
@@ -475,16 +475,14 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     if (!record || record->retiring)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name lacks its actual source roster admission");
     size_t length = strlen(name); if (length > 15) length = 15;
-    char *copy = malloc(length + 1);
-    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 client name");
+    char copy[16];
     memcpy(copy, name, length); copy[length] = 0;
     int32_t reference, string; qa_qc_instance *vm = engine->provider->state.qc.instance;
     const qa_qc_definition *field = application_qc_field(engine, "netname", QA_QC_STRING, error);
     bool ok = field && q1_entity_reference(engine, player, &reference, error) &&
         qa_qc_string_allocate(vm, copy, &string, error) &&
         qa_qc_set_entity_int(vm, reference, field->offset, string, error);
-    if (!ok) { free(copy); return false; }
-    free(record->name); record->name = copy; return true;
+    return ok && application_player_identity_text(record, copy, NULL, NULL, error);
 }
 
 bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,

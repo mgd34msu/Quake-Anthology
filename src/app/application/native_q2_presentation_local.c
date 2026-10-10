@@ -19,12 +19,12 @@ bool qa_application_native_q2_presentation_local(qa_application *app,
     bool present = false;
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *row = &app->players->records[i];
-        if (row->seat != seat || row->retiring || row->remote || row->bot || row->source_begin_pending ||
+        if (row->seat != seat || row->retiring || row->remote || application_player_identity(row)->bot || row->source_begin_pending ||
             !qa_actors_get(qa_session_actors(app->session), row->actor)) continue;
         if (source->kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
             qa_builtin_player_info physical;
             if (provider->kind != APPLICATION_PROVIDER_Q2 || provider->state.q2 != source->source.game ||
-                !qa_q2_player_projection(provider->state.q2, row->actor, &physical) ||
+                !qa_q2_player_projection(provider->state.q2, row->actor, NULL, &physical) ||
                 !physical.connected || physical.slot != row->client_slot)
                 return application_fail(error, QA_ERROR_ARGUMENT,
                     "Q2 local recipient differs from its physical GAME client");

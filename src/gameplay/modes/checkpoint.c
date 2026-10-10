@@ -131,8 +131,8 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->actor_capacity; ++i) {
         mode_player *p = &m->players[i];
         mode_object *o = &m->objects[i];
-        if (p->active && mode_live(m, p->value.actor)) {
-            qa_mode_player_checkpoint player = {.value = p->value};
+        if (p->active && mode_live(m, p->actor)) {
+            qa_mode_player_checkpoint player = {.value = mode_player_connection(p)};
             saved.players[saved.player_count++] = player;
         }
         if (o->active && mode_live(m, o->actor))
@@ -616,7 +616,15 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
     for (size_t i = 0; i < saved->player_count; ++i) {
         const qa_mode_player_checkpoint *player = &saved->players[i];
         mode_player *p = &m->players[player->value.actor.slot];
-        p->value = player->value;
+        p->actor = player->value.actor;
+        p->identity = qa_actors_player(qa_session_actors(m->options.services.session), p->actor);
+        p->connected = player->value.connected;
+        p->connecting = player->value.connecting;
+        if (!p->identity->present) {
+            p->identity->name = player->value.name;
+            p->identity->bot = player->value.bot;
+            p->identity->present = true;
+        }
         p->active = true;
         p->modes = m;
     }
@@ -701,7 +709,7 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
         if (object->active && !object->objective.serial && !mode_object_bind_objective(m, object, e))
             return false;
         mode_player *player = &m->players[i];
-        if (player->active && !mode_items_reconnect(m, player->value.actor, e)) return false;
+        if (player->active && !mode_items_reconnect(m, player->actor, e)) return false;
     }
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
         !qa_builtin_observations(&m->options.services, &m->observations, e)) return false;

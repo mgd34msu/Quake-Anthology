@@ -68,8 +68,8 @@ static qa_actor_id q3_client(qa_modes *m, mode_instance *v, const char *text,
         qa_actor_id actor = m->players_order.ids[i];
         mode_player *player = mode_player_get(m, actor);
         if (!player || !mode_member_get(m, v, actor) ||
-            (!player->value.connected && !(team_vote && player->value.connecting)) ||
-            (!team_vote && player->value.connecting))
+            (!player->connected && !(team_vote && player->connecting)) ||
+            (!team_vote && player->connecting))
             continue;
         qa_builtin_player_info info;
         if (!m->options.services.player_info ||

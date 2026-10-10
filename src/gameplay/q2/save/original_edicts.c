@@ -282,10 +282,10 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
     if (slot >= game->wire_clients || !engine)
         return malformed(io, 60, "Original Q2 player model has no physical client skin");
     q2_actor *player = q2_actor_get(game, game->wire_actors[slot + 1], false, NULL);
-    if (component == 0 && player && player->client && player->client->visual.models[0]) {
-        *model = player->client->visual.models[0];
-        *native_skin = player->client->visual.skin;
-        if (actor->client && actor->client->corpse) actor->client->info.slot = slot;
+    if (component == 0 && player && player->client && player->client->rule.visual.models[0]) {
+        *model = player->client->rule.visual.models[0];
+        *native_skin = player->client->rule.visual.skin;
+        if (actor->client && actor->client->rule.corpse) actor->client->info.slot = slot;
         return true;
     }
     qa_q2_config_layout layout;
@@ -308,7 +308,7 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
     int size = snprintf(path, sizeof(path), "players/%.*s/%s", (int)length, name, member);
     if (size < 0 || (size_t)size >= sizeof(path))
         return malformed(io, 60, "Original Q2 player model exceeds its content path");
-    *native_skin = player && player->client ? player->client->visual.skin : 0;
+    *native_skin = player && player->client ? player->client->rule.visual.skin : 0;
     return qa_builtin_resource(&game->services, path, model, io->error);
 }
 
@@ -317,7 +317,7 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
 {
     static const char *names[] = {"s.modelindex", "s.modelindex2", "s.modelindex3", "s.modelindex4"};
     q2_actor *player = appearance_player(game, actor);
-    bool virtual_player = (actor->client && !actor->client->gibbed) ||
+    bool virtual_player = (actor->client && !actor->client->rule.gibbed) ||
         (actor->entity && actor->entity->kind == Q2E_CAMERA_DUMMY) ||
         (actor->item && actor->item->companion && actor->item->companion->kind == Q2_DOPPLEGANGER_BODY);
     int32_t skin = visual->skin;
@@ -366,7 +366,7 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
         visual->old_frame = visual->frame;
         visual->visible = true;
         visual->scale = visual->alpha = 1;
-        if (actor->client) actor->client->gibbed = !custom_skin && visual->models[0] && (visual->effects & 2u);
+        if (actor->client) actor->client->rule.gibbed = !custom_skin && visual->models[0] && (visual->effects & 2u);
     }
     if (io->edition == QA_Q2_RERELEASE) {
         if (!q2_original_scalar(io, "s.alpha", Q2_ORIGINAL_F32,
@@ -396,7 +396,7 @@ bool q2_original_edict_visual(qa_q2_game *game, q2_original_record_io *io,
     visual.visible = (flags & 1u) == 0;
     if (actor->entity) actor->entity->visual = visual;
     if (actor->item) { actor->item->visual = visual; actor->item->visible = visual.visible; }
-    if (actor->client) actor->client->visual = visual;
+    if (actor->client) actor->client->rule.visual = visual;
     if (actor->projectile.kind != Q2_PROJECTILE_NONE) {
         actor->projectile.model = visual.models[0]; actor->projectile.frame = visual.frame;
         actor->projectile.skin = visual.skin; actor->projectile.effects = visual.effects;
@@ -418,7 +418,7 @@ bool q2_original_edict_visual(qa_q2_game *game, q2_original_record_io *io,
     if (!(actor->entity && actor->entity->kind == Q2E_SPEAKER) &&
         !q2_original_resource(game, io, engine, "s.sound", 76, 76, 76, 288, &sound)) return false;
     if (actor->projectile.kind != Q2_PROJECTILE_NONE) actor->projectile.loop_sound = sound;
-    else if (actor->client) actor->client->loop_sound = sound;
+    else if (actor->client) actor->client->rule.loop_sound = sound;
     else if (actor->monster) actor->monster->weapon_sound = sound;
     else if (actor->item && actor->item->companion) actor->item->companion->loop_sound = sound;
     else if (actor->entity && actor->entity->kind != Q2E_SPEAKER) actor->entity->loop_sound = sound;
@@ -446,9 +446,9 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             actor->client->info.view_height = (float)height;
             if (actor->powers) actor->powers->maximum_health = (float)maximum;
         } else if (!q2_original_function(game, io, "pain", 452,
-                actor->client->corpse ? NULL : "player_pain") ||
+                actor->client->rule.corpse ? NULL : "player_pain") ||
             !q2_original_function(game, io, "die", 456,
-                actor->client->corpse ? actor->client->info.dead ? "body_die" : NULL : "player_die")) return false;
+                actor->client->rule.corpse ? actor->client->info.dead ? "body_die" : NULL : "player_die")) return false;
     }
     if (!io->reading && actor->wire_lifetime.link_count > UINT32_MAX)
         return malformed(io, 92, "Q2 Source link count exceeds its original field");
@@ -464,13 +464,13 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     if (!beam && !q2_original_scalar(io, "s.old_origin", Q2_ORIGINAL_VECTOR, 28, 28, 28, &previous)) return false;
     bool speaker = actor->entity && actor->entity->kind == Q2E_SPEAKER;
     qa_string_id sound = actor->projectile.kind != Q2_PROJECTILE_NONE ? actor->projectile.loop_sound :
-        actor->client ? actor->client->loop_sound : actor->monster ? actor->monster->weapon_sound :
+        actor->client ? actor->client->rule.loop_sound : actor->monster ? actor->monster->weapon_sound :
         actor->item && actor->item->companion ? actor->item->companion->loop_sound :
         actor->entity ? actor->entity->loop_sound : 0;
     if (!speaker && !q2_original_resource(game, io, engine, "s.sound", 76, 76, 76, 288, &sound)) return false;
     if (io->reading) {
         if (actor->projectile.kind != Q2_PROJECTILE_NONE) actor->projectile.loop_sound = sound;
-        else if (actor->client) actor->client->loop_sound = sound;
+        else if (actor->client) actor->client->rule.loop_sound = sound;
         else if (actor->monster) actor->monster->weapon_sound = sound;
         else if (actor->item && actor->item->companion) actor->item->companion->loop_sound = sound;
     else if (actor->entity && actor->entity->kind != Q2E_SPEAKER) actor->entity->loop_sound = sound;
@@ -491,7 +491,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         (actor->physics.flags & QA_PHYSICS_PARTIAL_GROUND ? 256u : 0) |
         (actor->physics.flags & QA_PHYSICS_TEAM_SLAVE ? 1024u : 0) |
         (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0) |
-        (actor->environment_flags & 200u) | (actor->client && actor->client->sphere_camera.registry ? 16384u : 0);
+        (actor->environment_flags & 200u) | (actor->client && actor->client->rule.sphere_camera.registry ? 16384u : 0);
     qa_q2_visual visual = {.alpha = 1, .scale = 1};
     if (!io->reading) (void)qa_q2_presentation_read(game, actor->id, &visual);
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
@@ -506,7 +506,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             flags |= UINT64_C(1) << 29;
         flags |= actor->physics.flags & QA_PHYSICS_ALWAYS_TOUCH ? UINT64_C(1) << 28 : 0;
         flags |= actor->character_no_damage_effects ? UINT64_C(1) << 20 : 0;
-        if (actor->client && !actor->client->corpse) svflags |= 8u;
+        if (actor->client && !actor->client->rule.corpse) svflags |= 8u;
         if (actor->item && game->options.cooperative && game->item_runtime->options.instanced_coop) svflags |= 256u;
         q2_projectile_kind kind = actor->projectile.kind;
         if (actor->projectile.dodgeable) flags |= UINT64_C(1) << 25;
@@ -533,7 +533,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     if (!io->reading && !visual_record(game, io, actor, engine, &visual)) return false;
     if (io->reading) {
         actor->environment_flags = (uint32_t)flags & 200u;
-        if (actor->client) actor->client->sphere_vehicle = (flags & 16384u) != 0;
+        if (actor->client) actor->client->rule.sphere_vehicle = (flags & 16384u) != 0;
         actor->physics.flags = (flags & 1u ? QA_PHYSICS_FLYING : 0) |
             (flags & 2u ? QA_PHYSICS_SWIMMING : 0) |
             (flags & 256u ? QA_PHYSICS_PARTIAL_GROUND : 0) |
@@ -541,7 +541,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             (svflags & 4u ? QA_PHYSICS_MONSTER : 0) |
             (svflags & 2u ? QA_PHYSICS_DEAD : 0) |
             (io->edition == QA_Q2_RERELEASE && (flags & (UINT64_C(1) << 28)) ? QA_PHYSICS_ALWAYS_TOUCH : 0) |
-            (actor->client && !actor->client->corpse ? QA_PHYSICS_PLAYER : 0);
+            (actor->client && !actor->client->rule.corpse ? QA_PHYSICS_PLAYER : 0);
         actor->character_no_damage_effects = io->edition == QA_Q2_RERELEASE && (flags & (UINT64_C(1) << 20)) != 0;
         combat.health = (float)health; combat.mass = (float)mass;
         combat.can_take_damage = damage != 0; combat.invulnerable = (flags & 16u) != 0;

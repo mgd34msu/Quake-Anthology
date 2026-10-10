@@ -6,7 +6,7 @@ void q2_player_feedback_begin(qa_q2_game *game) {
     if (game->options.edition != QA_Q2_RERELEASE) return;
     for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next)
         if (actor->client && actor->client->info.connected && q2_actor_live(game, actor->id))
-            actor->client->hit_marker_damage = 0;
+            actor->client->rule.hit_marker_damage = 0;
 }
 
 bool q2_player_end_server_frames(qa_q2_game *game, qa_error *error) {
@@ -59,8 +59,8 @@ bool qa_q2_player_hit_marker_add(qa_q2_game *game, qa_actor_id id, int64_t damag
     *found = false;
     q2_actor *actor = q2_actor_get(game, id, false, NULL);
     if (!actor || !actor->client || !actor->client->info.connected) return true;
-    uint16_t word = (uint16_t)((uint64_t)actor->client->hit_marker_damage + (uint64_t)damage);
-    actor->client->hit_marker_damage = word <= INT16_MAX ? (int32_t)word :
+    uint16_t word = (uint16_t)((uint64_t)actor->client->rule.hit_marker_damage + (uint64_t)damage);
+    actor->client->rule.hit_marker_damage = word <= INT16_MAX ? (int32_t)word :
         (int32_t)word - INT32_C(65536);
     *found = true;
     return true;
@@ -79,7 +79,7 @@ bool qa_q2_player_power_armor_activate(qa_q2_game *game, qa_actor_id id,
         *found = false;
         return true;
     }
-    actor->client->power_armor_ns = q2_deadline(game->now_ns, 200 * Q2_MS);
+    actor->client->rule.power_armor_ns = q2_deadline(game->now_ns, 200 * Q2_MS);
     *found = true;
     return true;
 }

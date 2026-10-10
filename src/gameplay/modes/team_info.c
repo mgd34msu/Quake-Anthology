@@ -68,7 +68,7 @@ bool mode_team_info_frame(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_member *member = mode_member_get(m, v, actor);
         mode_player *player = mode_player_get(m, actor);
         qa_team_id team;
-        if (!member || !player || !player->value.connected || player->value.connecting ||
+        if (!member || !player || !player->connected || player->connecting ||
             !qa_modes_team(m, v->id, actor, &team, NULL) ||
             (team != v->value.rules.teams[0] && team != v->value.rules.teams[1]))
             continue;
@@ -81,8 +81,8 @@ bool mode_team_info_frame(qa_modes *m, mode_instance *v, qa_error *e) {
         qa_actor_id actor = m->players_order.ids[ordinal];
         mode_player *player = mode_player_get(m, actor);
         qa_team_id team;
-        if (!mode_member_get(m, v, actor) || !player || !player->value.connected ||
-            player->value.connecting || !qa_modes_team(m, v->id, actor, &team, NULL) ||
+        if (!mode_member_get(m, v, actor) || !player || !player->connected ||
+            player->connecting || !qa_modes_team(m, v->id, actor, &team, NULL) ||
             (team != v->value.rules.teams[0] && team != v->value.rules.teams[1]))
             continue;
         if (!mode_event(m, v, QA_MODE_TEAM_INFO, actor, (qa_actor_id){0}, (qa_actor_id){0}, team, 0,

@@ -721,7 +721,7 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
             client.slot == record->client_slot) return true;
     } else if (source->kind == APPLICATION_PROVIDER_Q2) {
         qa_builtin_player_info client;
-        if (qa_q2_player_projection(source->state.q2, actor, &client) &&
+        if (qa_q2_player_projection(source->state.q2, actor, NULL, &client) &&
             client.slot == record->client_slot) return true;
     } else if (source->kind == APPLICATION_PROVIDER_Q3) {
         uint32_t slot;
@@ -1202,7 +1202,7 @@ bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply 
     } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
         qa_builtin_player_info player;
         qa_q2_weapon_state weapon;
-        if (!qa_q2_player_projection(provider->state.q2, actor, &player) &&
+        if (!qa_q2_player_projection(provider->state.q2, actor, NULL, &player) &&
             !qa_q2_weapon_read(provider->state.q2, actor, &weapon, error)) return false;
     } else if (!original_player_current(provider, actor, error)) return false;
     *out = NULL;
