@@ -28,7 +28,7 @@ typedef struct rr_record {
     qa_scene_image *image;
     char *localized, *secondary_localized;
     union {
-        struct { int32_t key, flags, color; qa_vec3 origin; double duration; char *path; qa_scene_vec4 tint; } poi;
+        struct { int32_t key, flags, color; qa_vec3 origin; double duration; char *path; qa_vec4 tint; } poi;
         struct { int32_t key; } remove;
         struct { int32_t slot; char *name; double fraction; bool visible; } bar;
         struct { qa_vec3 direction; double amount; bool health, armor, shield; } damage;
@@ -156,7 +156,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         r->value.poi.path=map?map->resource:protocol->resource;
         r->value.poi.duration=map?map->duration:protocol->poi.duration;
         r->value.poi.color=map?map->count:protocol->poi.color;
-        r->value.poi.tint=(qa_scene_vec4){1,1,1,1};
+        r->value.poi.tint=(qa_vec4){1,1,1,1};
         okay=okay && qa_vec_finite(r->value.poi.origin) && r->value.poi.path && *r->value.poi.path &&
             isfinite(r->value.poi.duration) && isfinite(r->seconds*1000+r->value.poi.duration); break;
     case RR_REMOVE_POI: r->value.remove.key=map?map->slot:protocol->poi.key; break;
@@ -342,7 +342,7 @@ static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
     }
     if (okay && palette.data && palette.size>=768) {
         size_t color=(uint32_t)r->value.poi.color&255u;
-        r->value.poi.tint=(qa_scene_vec4){palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,1};
+        r->value.poi.tint=(qa_vec4){palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,1};
     }
     if (!okay) return false;
     if (index==o->poi_count) ++o->poi_count;
@@ -635,7 +635,7 @@ typedef struct rr_draw {
     float scale, x, y;
 } rr_draw;
 static bool draw_text(rr_draw *draw, const char *text_value, float x, float y,
-    qa_font_alignment alignment, qa_scene_vec4 color, qa_error *e)
+    qa_font_alignment alignment, qa_vec4 color, qa_error *e)
 {
     if (!text_value || !*text_value) return true;
     qa_font_layout layout;
@@ -647,11 +647,11 @@ static bool draw_text(rr_draw *draw, const char *text_value, float x, float y,
         .target=draw->viewport,.origin={draw->x+x*draw->scale,draw->y+y*draw->scale},
         .space=QA_FONT_PIXELS,.shadow_offset=draw->scale},e);
 }
-static bool draw_fill(rr_draw *draw, float x, float y, float width, float height, qa_scene_vec4 color, qa_error *e)
+static bool draw_fill(rr_draw *draw, float x, float y, float width, float height, qa_vec4 color, qa_error *e)
 {
     return draw->white && qa_scene_frame_picture_f(draw->frame,draw->white,draw->viewport,
         (qa_scene_rect_f){draw->x+x*draw->scale,draw->y+y*draw->scale,width*draw->scale,height*draw->scale},
-        (qa_scene_vec4){0,0,1,1},color,e);
+        (qa_vec4){0,0,1,1},color,e);
 }
 static bool draw_pois(frontend_unified_q2_rr_hud *o, qa_actor_id viewer, rr_draw *draw, double edge, double maximum, qa_error *e)
 {
@@ -661,7 +661,7 @@ static bool draw_pois(frontend_unified_q2_rr_hud *o, qa_actor_id viewer, rr_draw
     for (size_t i=0; i<o->poi_count; ++i) {
         rr_record *row=o->pois+i;
         if (!qa_actor_id_equal(row->actor,viewer) || row->seconds*1000+row->value.poi.duration<=o->seconds*1000 || !row->image) continue;
-        qa_scene_vec4 clip=qa_scene_matrix_point(projector,row->value.poi.origin);
+        qa_vec4 clip=qa_scene_matrix_point(projector,row->value.poi.origin);
         float divisor=clip.w==0?1:clip.w, x=left+(clip.x/divisor*.5f+.5f)*width,
             y=top+(-clip.y/divisor*.5f+.5f)*height;
         if (clip.w<0) {
@@ -679,10 +679,10 @@ static bool draw_pois(frontend_unified_q2_rr_hud *o, qa_actor_id viewer, rr_draw
             }
         }
         float w=(float)row->image->logical_width*draw->scale*image_scale, h=(float)row->image->logical_height*draw->scale*image_scale;
-        qa_scene_vec4 tint=row->value.poi.tint;
+        qa_vec4 tint=row->value.poi.tint;
         if (row->value.poi.flags&1) tint.w*=fmaxf(.25f,fminf(1,hypotf(x-left-width*.5f,y-top-height*.5f)/fmaxf(1,w*3)));
         qa_scene_rect_f rect={fmaxf(left,fminf(left+width-w,x-w*.5f)),fmaxf(top,fminf(top+height-h,y-h*.5f)),w,h};
-        if (!qa_scene_frame_picture_f(draw->frame,row->image,draw->viewport,rect,(qa_scene_vec4){0,0,1,1},tint,e)) return false;
+        if (!qa_scene_frame_picture_f(draw->frame,row->image,draw->viewport,rect,(qa_vec4){0,0,1,1},tint,e)) return false;
     }
     return true;
 }
@@ -697,13 +697,13 @@ static bool draw_damage(frontend_unified_q2_rr_hud *o, qa_actor_id viewer, rr_dr
         float angle=yaw-atan2f(entry->direction.y,entry->direction.x)-3.14159265358979323846f,
             width=(float)fmin(image->logical_width,3*entry->amount), height=(float)image->logical_height,
             radius=(draw->prefs.crosshair?draw->prefs.crosshair_size:0)+height*.5f;
-        qa_scene_vec4 tint={entry->color.x,entry->color.y,entry->color.z,
+        qa_vec4 tint={entry->color.x,entry->color.y,entry->color.z,
             (float)fmax(0,fmin(1,(entry->expires_ms-o->seconds*1000)/lifetime))};
         if (width<=0 || height<=0) continue;
         if (!qa_scene_frame_picture_f(draw->frame,image,draw->viewport,
             (qa_scene_rect_f){draw->x+(320+radius*sinf(angle)-width*.5f)*draw->scale,
                 draw->y+(240-radius*cosf(angle)-height*.5f)*draw->scale,width*draw->scale,height*draw->scale},
-            (qa_scene_vec4){0,0,1,1},tint,e)) return false;
+            (qa_vec4){0,0,1,1},tint,e)) return false;
     }
     return true;
 }
@@ -717,8 +717,8 @@ static int level_compare(const void *a, const void *b)
 }
 static bool draw_report(frontend_unified_q2_rr_hud *o, rr_draw *draw, qa_error *e)
 {
-    const qa_scene_vec4 white={1,1,1,1}, accent={1,.8f,.3f,1};
-    if (!draw_fill(draw,48,48,544,360,(qa_scene_vec4){0,0,0,.8f},e) ||
+    const qa_vec4 white={1,1,1,1}, accent={1,.8f,.3f,1};
+    if (!draw_fill(draw,48,48,544,360,(qa_vec4){0,0,0,.8f},e) ||
         !draw_text(draw,"Unit complete",320,68,QA_FONT_ALIGN_CENTER,accent,e)) return false;
     size_t count=o->report.value.report.count;
     rr_level_order *order=count?qa_arena_alloc(&draw->frame->storage,count*sizeof(*order),_Alignof(rr_level_order),e):NULL;
@@ -776,12 +776,12 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
         o->path.seconds*1000+10000>o->seconds*1000) {
         qa_scene_matrix projector=qa_scene_matrix_multiply(o->view.projection,qa_scene_view_matrix(&o->view));
         for (unsigned i=0; okay && i<3; ++i) {
-            qa_scene_vec4 point=qa_scene_matrix_point(projector,qa_vec_add(o->path.value.path.origin,
+            qa_vec4 point=qa_scene_matrix_point(projector,qa_vec_add(o->path.value.path.origin,
                 qa_vec_scale(o->path.value.path.direction,(float)i*24)));
             if (point.w>0) okay=qa_scene_frame_picture_f(frame,draw.white,viewport,
                 (qa_scene_rect_f){(float)viewport.x+(point.x/point.w*.5f+.5f)*(float)viewport.width-3,
                     (float)viewport.y+(-point.y/point.w*.5f+.5f)*(float)viewport.height-3,6,6},
-                (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,.8f,.3f,1},e);
+                (qa_vec4){0,0,1,1},(qa_vec4){1,.8f,.3f,1},e);
         }
     }
     size_t index=0;
@@ -789,29 +789,29 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     for (rr_bar *bar=o->bars; okay && bar; bar=bar->next) {
         if (!qa_actor_id_equal(bar->row.actor,viewer)) continue;
         rr_record *row=&bar->row; float y=24+(float)index*36;
-        okay=draw_text(&grouped,row->localized,320,y,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,1,1,1},e) &&
-            draw_fill(&grouped,160,y+20,320,8,(qa_scene_vec4){0,0,0,.8f},e) &&
-            draw_fill(&grouped,160,y+20,320*(float)fmax(0,fmin(1,row->value.bar.fraction)),8,(qa_scene_vec4){.8f,.12f,.08f,1},e);
+        okay=draw_text(&grouped,row->localized,320,y,QA_FONT_ALIGN_CENTER,(qa_vec4){1,1,1,1},e) &&
+            draw_fill(&grouped,160,y+20,320,8,(qa_vec4){0,0,0,.8f},e) &&
+            draw_fill(&grouped,160,y+20,320*(float)fmax(0,fmin(1,row->value.bar.fraction)),8,(qa_vec4){.8f,.12f,.08f,1},e);
         ++index;
     }
     if (okay && o->mission.event && qa_actor_id_equal(o->mission.actor,viewer) &&
         o->mission.value.mission.visible && o->objective.event && qa_actor_id_equal(o->objective.actor,viewer) &&
         o->objective.localized && *o->objective.localized)
-        okay=draw_text(&draw,"New objective",320,394,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e);
+        okay=draw_text(&draw,"New objective",320,394,QA_FONT_ALIGN_CENTER,(qa_vec4){1,.8f,.3f,1},e);
     if (okay && o->coop.event && qa_actor_id_equal(o->coop.actor,viewer)) {
         if (o->coop.value.coop.state)
-            okay=draw_text(&draw,o->coop.localized,320,360,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e);
+            okay=draw_text(&draw,o->coop.localized,320,360,QA_FONT_ALIGN_CENTER,(qa_vec4){1,.8f,.3f,1},e);
         if (okay && o->coop.value.coop.lives!=0) {
             char lives[32]; okay=qa_format_number(o->coop.value.coop.lives,lives,e) &&
-                draw_text(&draw,lives,624,2,QA_FONT_ALIGN_RIGHT,(qa_scene_vec4){1,1,1,1},e) &&
-                draw_text(&draw,o->coop.secondary_localized,624,28,QA_FONT_ALIGN_RIGHT,(qa_scene_vec4){1,1,1,1},e);
+                draw_text(&draw,lives,624,2,QA_FONT_ALIGN_RIGHT,(qa_vec4){1,1,1,1},e) &&
+                draw_text(&draw,o->coop.secondary_localized,624,28,QA_FONT_ALIGN_RIGHT,(qa_vec4){1,1,1,1},e);
         }
     }
     if (okay && o->report.event) okay=draw_report(o,&draw,e);
     else if (okay && frontend_unified_q2_rr_help_visible(o))
-        okay=draw_fill(&draw,48,48,544,360,(qa_scene_vec4){0,0,0,.8f},e) &&
-            draw_text(&draw,"Help computer",320,68,QA_FONT_ALIGN_CENTER,(qa_scene_vec4){1,.8f,.3f,1},e) &&
-            draw_text(&draw,o->help.localized,68,104,QA_FONT_ALIGN_LEFT,(qa_scene_vec4){1,1,1,1},e) &&
-            draw_text(&draw,o->help.secondary_localized,68,144,QA_FONT_ALIGN_LEFT,(qa_scene_vec4){1,1,1,1},e);
+        okay=draw_fill(&draw,48,48,544,360,(qa_vec4){0,0,0,.8f},e) &&
+            draw_text(&draw,"Help computer",320,68,QA_FONT_ALIGN_CENTER,(qa_vec4){1,.8f,.3f,1},e) &&
+            draw_text(&draw,o->help.localized,68,104,QA_FONT_ALIGN_LEFT,(qa_vec4){1,1,1,1},e) &&
+            draw_text(&draw,o->help.secondary_localized,68,144,QA_FONT_ALIGN_LEFT,(qa_vec4){1,1,1,1},e);
     o->busy=false; return okay;
 }

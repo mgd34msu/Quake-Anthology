@@ -18,7 +18,7 @@ struct qa_font_world_store {
     size_t count, capacity;
 };
 
-static bool finite_color(qa_scene_vec4 value) {
+static bool finite_color(qa_vec4 value) {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z) && isfinite(value.w);
 }
 
@@ -149,7 +149,7 @@ static void fixed_axis(qa_vec3 angles, qa_vec3 axis[3]) {
 }
 
 static bool world_quad(qa_scene_frame *frame, const qa_scene_view *view, const qa_font_glyph *glyph,
-                       qa_scene_vec4 color, qa_vec3 origin, qa_vec3 right, qa_vec3 down,
+                       qa_vec4 color, qa_vec3 origin, qa_vec3 right, qa_vec3 down,
                        float column, float row, bool depth_test, qa_error *error) {
     qa_scene_vertex *vertices =
         qa_arena_alloc(&frame->storage, 4 * sizeof(*vertices), _Alignof(qa_scene_vertex), error);

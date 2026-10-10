@@ -201,10 +201,10 @@ bool qa_q3_presentation_movie_draw(qa_q3_presentation *p, int32_t handle, qa_err
         bool ok=qa_q3_cinematic_image(p->options.cinematics,handle,p->frame,&image,&source,error);
         if (ok && image) ok=qa_cinematic_pixel_rect(source,p->options.viewport,&rect,error);
         if (ok && image) rect=(qa_scene_rect_f){truncf(rect.x),truncf(rect.y),truncf(rect.width),truncf(rect.height)};
-        qa_scene_vec4 uv={0,0,1,1},color={p->options.identity_light,p->options.identity_light,p->options.identity_light,1};
+        qa_vec4 uv={0,0,1,1},color={p->options.identity_light,p->options.identity_light,p->options.identity_light,1};
         if (ok && image) {
             float u=0.5f/(float)image->logical_width,v=0.5f/(float)image->logical_height;
-            uv=(qa_scene_vec4){u,v,1-u,1-v};
+            uv=(qa_vec4){u,v,1-u,1-v};
         }
         if (ok && image && p->options.picture_capture) {
             qa_q3_picture_receipt receipt={.source_raw=true,.assets=p->options.assets,.image=image,.rect=rect,.uv=uv,
@@ -231,7 +231,7 @@ bool qa_q3_presentation_movie_draw(qa_q3_presentation *p, int32_t handle, qa_err
             .milliseconds = p->options.milliseconds ? p->options.milliseconds(p->options.context) : p->render_milliseconds};
         ok = p->options.picture_capture(p->options.context, &receipt, error);
     } else if (ok) ok = qa_scene_frame_picture_f(p->frame, image, p->options.viewport, rect,
-        (qa_scene_vec4){0, 0, 1, 1}, p->color, error);
+        (qa_vec4){0, 0, 1, 1}, p->color, error);
     return q3p_end(p, ok);
 }
 

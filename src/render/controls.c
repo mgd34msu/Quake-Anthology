@@ -610,7 +610,7 @@ bool qa_render_controls_source_dlight_read(const qa_render_controls *controls,co
     }
     return true;
 }
-bool qa_render_controls_source_texture_border(qa_render_controls *controls,qa_scene_vec4 color,qa_error *error)
+bool qa_render_controls_source_texture_border(qa_render_controls *controls,qa_vec4 color,qa_error *error)
 {
     if (!source_current(controls) || controls->ticket ||
         !controls->attributes.actual_empty[controls->attributes.texture_unit] ||
@@ -873,7 +873,7 @@ bool qa_render_source_attributes_resolve(qa_render_controls *controls,qa_scene_d
     return true;
 }
 void qa_render_source_attributes_vertex(qa_render_controls *controls,const qa_scene_draw *draw,
-    qa_render_primitive_mode mode,size_t index,const qa_scene_vertex *vertex,qa_scene_vec4 *color,qa_vec2 uv[2])
+    qa_render_primitive_mode mode,size_t index,const qa_scene_vertex *vertex,qa_vec4 *color,qa_vec2 uv[2])
 {
     qa_render_source_attributes *attributes=&controls->attributes;
     *color=draw->vertex_inputs.constant_color?draw->vertex_inputs.color:vertex->color;
@@ -886,7 +886,7 @@ void qa_render_source_attributes_vertex(qa_render_controls *controls,const qa_sc
         return;
     }
     if (draw->source_arrays && !attributes->color_array)
-        *color=attributes->color_known?attributes->color:(qa_scene_vec4){1,1,1,1};
+        *color=attributes->color_known?attributes->color:(qa_vec4){1,1,1,1};
     for (size_t unit=0;unit<2;++unit) {
         if (unit==0 && source_direct_coordinates(draw)) continue;
         if (!draw->source_arrays || !attributes->coordinate_array[unit])
@@ -912,7 +912,7 @@ void qa_render_source_attributes_finish(qa_render_controls *controls,const qa_sc
         if (source_direct_coordinates(draw)) {
             attributes->coordinates[0]=last->texcoord; attributes->coordinates_known[0]=true;
         }
-        if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) attributes->color=(qa_scene_vec4){1,1,1,1};
+        if (draw->source_direct==QA_SOURCE_DIRECT_SHADOW_FINISH) attributes->color=(qa_vec4){1,1,1,1};
         return;
     }
     if (mode==QA_RENDER_PRIMITIVES_INDEXED) {
@@ -930,7 +930,7 @@ void qa_render_source_attributes_finish(qa_render_controls *controls,const qa_sc
     while (qa_render_strip_next(draw->mesh.indices,draw->mesh.index_count,&cursor,&strip))
         for (size_t ordinal=0;ordinal<strip.triangles+2;++ordinal) {
             uint32_t index=qa_render_strip_vertex(&strip,ordinal);
-            qa_scene_vec4 color; qa_vec2 uv[2];
+            qa_vec4 color; qa_vec2 uv[2];
             qa_render_source_attributes_vertex(controls,draw,mode,index,draw->mesh.vertices+index,&color,uv);
             if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS || attributes->color_array) {
                 attributes->color=color; attributes->color_known=true;
@@ -1044,7 +1044,7 @@ static bool source_attribute_issue(qa_material_source_scratch *source,qa_error *
     return (material_source_current(source,error) && source->issuing) ||
         fail(error,"Source texture/client state requires its actual reached command issue");
 }
-bool material_source_color(qa_material_source_scratch *source, qa_scene_vec4 color, qa_error *error)
+bool material_source_color(qa_material_source_scratch *source, qa_vec4 color, qa_error *error)
 {
     if (!source_attribute_issue(source, error) || !isfinite(color.x) || !isfinite(color.y) ||
         !isfinite(color.z) || !isfinite(color.w))

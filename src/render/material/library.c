@@ -2062,9 +2062,9 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     qa_scene_image_level fog_level = {256, 32, fog, sizeof(fog)};
     qa_scene_image_level light_level = {16, 16, dlight, sizeof(dlight)};
     bool ok = qa_scene_image_create(resources, "*fog", QA_SCENE_RGBA8, &fog_level, 1,
-        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){1, 1, 1, 1}, &library->fog_image, error);
+        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){1, 1, 1, 1}, &library->fog_image, error);
     if (ok) ok = qa_scene_image_create(resources, "*dlight", QA_SCENE_RGBA8, &light_level, 1,
-        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 1}, &library->dlight_image, error);
+        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0, 0, 0, 1}, &library->dlight_image, error);
     const qa_material *internal;
     if (ok) ok = qa_material_register_kind(library, "*default", NULL, QA_MATERIAL_DEFAULT, &internal, error);
     if (ok) ok = qa_material_register_kind(library, "<stencil shadow>", NULL, QA_MATERIAL_STENCIL_SHADOW, &internal, error);

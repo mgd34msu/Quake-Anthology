@@ -148,9 +148,9 @@ bool remote_q2_player_fog_receive(frontend_remote_q2 *row, qa_error *error)
     if (changed) { row->fog_duration_ms = 0; row->fog_received = true; }
     return true;
 }
-static qa_scene_vec4 player_blend(const float current[4], const float *previous, float fraction)
+static qa_vec4 player_blend(const float current[4], const float *previous, float fraction)
 {
-    qa_scene_vec4 value = {current[0], current[1], current[2], current[3]};
+    qa_vec4 value = {current[0], current[1], current[2], current[3]};
     if (previous && previous[3] != 0) {
         value.x = previous[0] + (current[0] - previous[0]) * fraction;
         value.y = previous[1] + (current[1] - previous[1]) * fraction;
@@ -160,7 +160,7 @@ static qa_scene_vec4 player_blend(const float current[4], const float *previous,
     return value;
 }
 static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
-    qa_scene_vec4 color, qa_error *error)
+    qa_vec4 color, qa_error *error)
 {
     if (color.w <= 0) return true;
     const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.gl_damageblend_frac);
@@ -168,7 +168,7 @@ static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 damage blend has no actual CLIENT fraction control");
     float fraction = (float)fmin(.5, fmax(0, setting->number));
     if (fraction == 0) return qa_scene_frame_picture(&row->frontend->frame, row->white, viewport, viewport,
-        (qa_scene_vec4){0, 0, 1, 1}, color, error);
+        (qa_vec4){0, 0, 1, 1}, color, error);
     qa_scene_frame *frame = &row->frontend->frame;
     qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, 8 * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
     uint32_t *indices = qa_arena_alloc(&frame->storage, 24 * sizeof(*indices), _Alignof(uint32_t), error);
@@ -264,7 +264,7 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect_f rect = {(float)viewport.x + truncf(((float)viewport.width - width) * .5f) + dx,
         (float)viewport.y + truncf(((float)viewport.height - height) * .5f) + dy, width, height};
     return qa_scene_frame_picture_f(&row->frontend->frame, image, viewport, rect,
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 0, 0, opacity * (1 - fraction * fraction)}, error);
+        (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 0, 0, opacity * (1 - fraction * fraction)}, error);
 }
 static const char *hud_config(void *context, int32_t index)
 { return index >= 0 && index <= UINT16_MAX ? frontend_remote_q2_config(context, (uint16_t)index) : ""; }
@@ -422,7 +422,7 @@ static bool submit_model(frontend_remote_q2 *row, const char *path, const char *
         transform.axes[i][0] = basis[i].x; transform.axes[i][1] = basis[i].y; transform.axes[i][2] = basis[i].z;
         transform.scale[i] = current->scale != 0 ? current->scale : 1;
     }
-    qa_scene_vec4 color = {1, 1, 1, current->renderfx & 32 ? 0.30f : 1};
+    qa_vec4 color = {1, 1, 1, current->renderfx & 32 ? 0.30f : 1};
     uint32_t flags = current->renderfx;
     if (current->alpha != 0) {
         color.w = previous && previous->alpha != 0 ? previous->alpha + row->fraction * (current->alpha - previous->alpha) : current->alpha;
@@ -753,10 +753,10 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok && policy.lighting.polyblend && (!blend_setting || blend_setting->number != 0)) {
         bool extended = remote_q2_rerelease_presentation(row) || (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 &&
             row->data.protocol_revision >= 1025 && (row->data.wire_flags & 16u));
-        qa_scene_vec4 blend = player_blend(frame->player.blend,
+        qa_vec4 blend = player_blend(frame->player.blend,
             extended && continuous ? before->player.blend : NULL, row->fraction);
         if (blend.w > 0) ok = qa_scene_frame_picture(&f->frame, row->white, view.viewport, view.viewport,
-            (qa_scene_vec4){0, 0, 1, 1}, blend, error);
+            (qa_vec4){0, 0, 1, 1}, blend, error);
         if (ok && extended) ok = damage_blend_draw(row, view.viewport,
             player_blend(frame->player.damage_blend, continuous ? before->player.damage_blend : NULL, row->fraction), error);
     }

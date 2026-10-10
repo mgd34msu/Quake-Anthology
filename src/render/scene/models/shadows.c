@@ -72,7 +72,7 @@ bool qa_scene_model_shadow_caster(qa_scene_model *model, const qa_scene_model_in
         hash = hash_word(hash, (uint32_t)mesh->vertex_count);
         hash = hash_word(hash, (uint32_t)mesh->index_count);
         for (size_t vertex = 0; vertex < mesh->vertex_count; ++vertex) {
-            qa_scene_vec4 point = qa_scene_matrix_point(draw->model, vertices[vertex].position);
+            qa_vec4 point = qa_scene_matrix_point(draw->model, vertices[vertex].position);
             vertices[vertex].position = qa_v3(point.x, point.y, point.z);
             qa_vec3 normal = vertices[vertex].normal;
             const float *matrix = draw->model.m;

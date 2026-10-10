@@ -151,7 +151,7 @@ typedef struct qa_q3_picture_receipt {
     const qa_scene_image *image;
     int32_t shader, milliseconds;
     qa_scene_rect_f rect;
-    qa_scene_vec4 uv, color;
+    qa_vec4 uv, color;
     qa_scene_rect viewport;
     uint32_t seat;
     float identity_light;
@@ -342,9 +342,9 @@ bool qa_q3_presentation_selected_world_models(qa_q3_presentation *,
 bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *,
     const qa_q3_presentation_assets *, const qa_material *, qa_vec3 origin, qa_vec3 end,
     double width, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
-void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
+void qa_q3_presentation_color(qa_q3_presentation *, const qa_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
-                                qa_scene_vec4 uv, qa_error *);
+                                qa_vec4 uv, qa_error *);
 bool qa_q3_presentation_selected_picture(qa_q3_presentation *, const qa_q3_picture_receipt *,
     const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 bool qa_q3_presentation_completed_picture(qa_q3_presentation *, const qa_q3_picture_receipt *,

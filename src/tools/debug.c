@@ -5,14 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct shape_lines { qa_debug_line *lines; size_t count, capacity; qa_scene_vec4 color; bool depth; } shape_lines;
-static bool finite_color(qa_scene_vec4 c) { return isfinite(c.x) && isfinite(c.y) && isfinite(c.z) && isfinite(c.w); }
+typedef struct shape_lines { qa_debug_line *lines; size_t count, capacity; qa_vec4 color; bool depth; } shape_lines;
+static bool finite_color(qa_vec4 c) { return isfinite(c.x) && isfinite(c.y) && isfinite(c.z) && isfinite(c.w); }
 static bool valid_line(qa_debug_line line) { return qa_vec_finite(line.start) && qa_vec_finite(line.end) && finite_color(line.color); }
-static void line(shape_lines *s, qa_vec3 a, qa_vec3 b, qa_scene_vec4 color) {
+static void line(shape_lines *s, qa_vec3 a, qa_vec3 b, qa_vec4 color) {
     /* Counts are fixed by the bounded source tessellation below. */
     if (s->count < s->capacity) s->lines[s->count++] = (qa_debug_line){a, b, color, s->depth};
 }
-static void arrow(shape_lines *s, qa_vec3 start, qa_vec3 end, float size, qa_scene_vec4 cap_color) {
+static void arrow(shape_lines *s, qa_vec3 start, qa_vec3 end, float size, qa_vec4 cap_color) {
     qa_vec3 delta = qa_vec_sub(end, start); float length = qa_vec_length(delta);
     qa_vec3 dir = qa_vec_normalize(delta), apex = length > size ? qa_vec_add(start, qa_vec_scale(dir, length - size)) : end;
     if (length > size) line(s, start, apex, s->color);
@@ -33,7 +33,7 @@ static qa_vec3 sphere_ring(qa_vec3 origin, float radius, int stack, int slice, i
 static qa_vec3 corner(qa_bounds bounds, int i, float z) {
     return qa_v3(i > 1 ? bounds.mins.x : bounds.maxs.x, (i + 1) % 4 > 1 ? bounds.mins.y : bounds.maxs.y, z);
 }
-bool qa_debug_shape_lines(const qa_debug_shape *shape, qa_scene_vec4 color, bool depth,
+bool qa_debug_shape_lines(const qa_debug_shape *shape, qa_vec4 color, bool depth,
                            qa_arena *scratch, const qa_debug_line **out, size_t *count, qa_error *error) {
     if (!shape || !scratch || !out || !count || !finite_color(color)) return tools_fail(error, "invalid debug shape output");
     shape_lines s = {.capacity = 608, .color = color, .depth = depth};
@@ -131,7 +131,7 @@ bool tools_debug_fields(qa_source_save_io *io, qa_debug_store **holder) {
         if (!store->lines) return tool_save_fail(io, "allocating debug continuation lines");
     }
     for (size_t i = 0; i < store->count; ++i) {
-        timed_line *v = &store->lines[i]; qa_scene_vec4 *color = &v->line.color;
+        timed_line *v = &store->lines[i]; qa_vec4 *color = &v->line.color;
         if (!qa_source_save_vec3(io, &v->line.start) || !qa_source_save_vec3(io, &v->line.end) ||
             !qa_source_save_f32(io, &color->x) || !qa_source_save_f32(io, &color->y) ||
             !qa_source_save_f32(io, &color->z) || !qa_source_save_f32(io, &color->w) ||

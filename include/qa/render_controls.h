@@ -49,7 +49,7 @@ bool qa_render_controls_source_scene_limits_read(const qa_render_controls *,uint
 bool qa_render_controls_source_image_admit(qa_render_controls *,const qa_scene_image *,
     const qa_scene_image *binding,uint32_t texture_unit,qa_error *);
 bool qa_render_controls_source_dlight_read(const qa_render_controls *,const qa_scene_image **,qa_error *);
-bool qa_render_controls_source_texture_border(qa_render_controls *,qa_scene_vec4,qa_error *);
+bool qa_render_controls_source_texture_border(qa_render_controls *,qa_vec4,qa_error *);
 bool qa_render_controls_source_texture_upload(qa_render_controls *,const qa_scene_image *registered_slot,
     const qa_scene_image *version,const qa_scene_image *selected_binding,bool redefine,bool dirty,qa_error *);
 bool qa_render_controls_source_images_metadata(const qa_render_controls *,size_t *count,qa_error *);

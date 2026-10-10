@@ -1754,7 +1754,7 @@ static bool world_submit(qa_scene_world *world, const qa_scene_world_input *inpu
 
 static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
                                  const qa_model_transform *transform, const qa_scene_world_input *input,
-                                 uint32_t entity, qa_scene_vec4 color, qa_scene_frame *frame, qa_error *error)
+                                 uint32_t entity, qa_vec4 color, qa_scene_frame *frame, qa_error *error)
 {
     if (frame == NULL) return world_error(error, QA_ERROR_ARGUMENT, "inline model submission requires frame");
     if (!valid_input(world, input, error)) return false;
@@ -1991,7 +1991,7 @@ bool qa_scene_world_source_model_admission(const qa_scene_world *world, uint32_t
 
 bool qa_scene_world_submit_model(qa_scene_world *world, uint32_t model,
                                  const qa_model_transform *transform, const qa_scene_world_input *input,
-                                 uint32_t entity, qa_scene_vec4 color, qa_scene_frame *frame, qa_error *error)
+                                 uint32_t entity, qa_vec4 color, qa_scene_frame *frame, qa_error *error)
 {
     if (world == NULL || frame == NULL || world->restore_pending || world->checkpoint_active || world->capture || world->image_policy)
         return world_error(error, QA_ERROR_ARGUMENT, "inline model submission requires world and frame");

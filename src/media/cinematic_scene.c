@@ -89,7 +89,7 @@ static bool publish_image(qa_cinematic *movie, qa_scene_resources *resources, qa
             }
         } else if (!qa_scene_image_create(resources, movie->name, QA_SCENE_RGBA8, &level, 1,
                                           QA_SCENE_CLAMP, QA_SCENE_LINEAR,
-                                          (qa_scene_vec4){0, 0, 0, 1}, &next, error)) {
+                                          (qa_vec4){0, 0, 0, 1}, &next, error)) {
             free(transparent);
             return false;
         }
@@ -147,8 +147,8 @@ bool qa_cinematic_fullscreen(qa_cinematic *movie, qa_cinematic_focus focus, qa_s
     if (visible) {
         const qa_scene_image *image;
         if (!qa_cinematic_image(movie, resources, frame, &image, error) ||
-            !qa_scene_frame_picture(frame, image, viewport, viewport, (qa_scene_vec4){0, 0, 1, 1},
-                                    (qa_scene_vec4){1, 1, 1, 1}, error))
+            !qa_scene_frame_picture(frame, image, viewport, viewport, (qa_vec4){0, 0, 1, 1},
+                                    (qa_vec4){1, 1, 1, 1}, error))
             return false;
     } else {
         qa_scene_command clear = {.kind = QA_SCENE_COMMAND_VIEW,

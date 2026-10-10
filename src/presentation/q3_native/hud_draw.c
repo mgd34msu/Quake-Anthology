@@ -34,22 +34,22 @@ void q3nh_health(int32_t health,int32_t armor,float color[4])
 }
 bool q3nh_color(q3n_hud_draw *d,const float c[4])
 {
-    qa_scene_vec4 color;
-    if(c) { float mapped[4]; q3nh_palette(d,c,mapped); color=(qa_scene_vec4){mapped[0],mapped[1],mapped[2],mapped[3]}; }
+    qa_vec4 color;
+    if(c) { float mapped[4]; q3nh_palette(d,c,mapped); color=(qa_vec4){mapped[0],mapped[1],mapped[2],mapped[3]}; }
     qa_q3_presentation_color(d->frame->presentation,c?&color:NULL); return q3nh_current(d->owner,d->frame,d->error);
 }
-bool q3nh_pixels(q3n_hud_draw *d,float x,float y,float w,float h,int32_t shader,qa_scene_vec4 uv)
+bool q3nh_pixels(q3n_hud_draw *d,float x,float y,float w,float h,int32_t shader,qa_vec4 uv)
 { return qa_q3_presentation_picture(d->frame->presentation,shader,(qa_scene_rect_f){x,y,w,h},uv,d->error) &&
     q3nh_current(d->owner,d->frame,d->error); }
 bool q3nh_picture(q3n_hud_draw *d,float x,float y,float w,float h,int32_t shader)
 { qa_scene_rect_f r=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
-  return q3nh_pixels(d,r.x,r.y,r.width,r.height,shader,(qa_scene_vec4){0,0,1,1}); }
+  return q3nh_pixels(d,r.x,r.y,r.width,r.height,shader,(qa_vec4){0,0,1,1}); }
 bool q3nh_fill(q3n_hud_draw *d,float x,float y,float w,float h,const float c[4])
 {
     if(!q3nh_color(d,c))return false;
     qa_scene_rect_f r=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
     bool ok=q3nh_pixels(d,r.x,r.y,r.width,r.height,
-        q3n_media_read(d->frame->media)->graphics[Q3N_G_WHITE],(qa_scene_vec4){0,0,0,0});
+        q3n_media_read(d->frame->media)->graphics[Q3N_G_WHITE],(qa_vec4){0,0,0,0});
     return q3nh_color(d,NULL) && ok;
 }
 static bool glyph(q3n_hud_draw *d,float x,float y,float w,float h,uint8_t code)
@@ -58,7 +58,7 @@ static bool glyph(q3n_hud_draw *d,float x,float y,float w,float h,uint8_t code)
     float row=(float)(code>>4)*0.0625f,column=(float)(code&15)*0.0625f;
     qa_scene_rect_f r=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
     return q3nh_pixels(d,r.x,r.y,r.width,r.height,
-        q3n_media_read(d->frame->media)->graphics[Q3N_G_CHARSET],(qa_scene_vec4){column,row,column+0.0625f,row+0.0625f});
+        q3n_media_read(d->frame->media)->graphics[Q3N_G_CHARSET],(qa_vec4){column,row,column+0.0625f,row+0.0625f});
 }
 bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,const float c[4],bool force,bool shadow,int32_t limit)
 {
@@ -111,7 +111,7 @@ bool q3nh_field(q3n_hud_draw *d,float x,float y,int32_t width,int32_t value)
     if(d->frame->preferences.typeface==QA_UI_TYPEFACE_BOLD) {
         /* The actual selected font replaces the authored numeral shaders only
          * when the user requests that typography. */
-        qa_scene_vec4 color=d->frame->presentation->color;
+        qa_vec4 color=d->frame->presentation->color;
         float tint[4]={color.x,color.y,color.z,color.w};
         return q3nh_text(d,x,y,text,32,48,tint,true,false,(int32_t)count);
     }

@@ -175,7 +175,7 @@ bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_ci
             qa_scene_image_level level = {image.width, image.height, image.rgba.data,
                                           image.rgba.size};
             ok = qa_scene_image_create(library->resources, asset->name, QA_SCENE_RGBA8, &level, 1,
-                                       QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 1},
+                                       QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0, 0, 0, 1},
                                        &shared, error);
             if (ok) {
                 asset->source.data.image = shared;

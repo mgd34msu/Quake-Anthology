@@ -29,12 +29,12 @@ static float shadow_visibility(const qa_cpu_renderer *renderer,
                                 qa_vec3 position, bool model) {
   if (!shadow->shadow_valid || !draw->shadow_atlas)
     return 1;
-  qa_scene_vec4 rect = shadow->atlas_rect;
+  qa_vec4 rect = shadow->atlas_rect;
   float texel = 1.0f / (float)draw->shadow_atlas->levels[0].width;
   float base_x, base_y, low_x, low_y, high_x, high_y;
   float z = 0, axial = 0, bias = 0, pa = 0, pb = 0;
   if (!shadow->point_shadow) {
-    qa_scene_vec4 clip = qa_scene_matrix_point(shadow->shadow_matrix, position);
+    qa_vec4 clip = qa_scene_matrix_point(shadow->shadow_matrix, position);
     if (clip.w <= 0)
       return 1;
     float x = (float)clip.x / clip.w, y = (float)clip.y / clip.w;

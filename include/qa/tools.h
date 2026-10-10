@@ -42,7 +42,7 @@ bool qa_profiler_stamps(const qa_profiler *, qa_arena *, const qa_timer_stamp **
 bool qa_profiler_enabled(const qa_profiler *);
 bool qa_profiler_idle(const qa_profiler *);
 
-typedef struct qa_debug_line { qa_vec3 start, end; qa_scene_vec4 color; bool depth_test; } qa_debug_line;
+typedef struct qa_debug_line { qa_vec3 start, end; qa_vec4 color; bool depth_test; } qa_debug_line;
 typedef enum qa_debug_shape_kind { QA_DEBUG_LINE, QA_DEBUG_POINT, QA_DEBUG_CIRCLE, QA_DEBUG_SPHERE,
     QA_DEBUG_BOUNDS, QA_DEBUG_CYLINDER, QA_DEBUG_ARROW, QA_DEBUG_RAY } qa_debug_shape_kind;
 typedef struct qa_debug_shape {
@@ -53,11 +53,11 @@ typedef struct qa_debug_shape {
         struct { qa_vec3 origin; float radius; } round;
         qa_bounds bounds;
         struct { qa_vec3 origin; float half_height, radius; } cylinder;
-        struct { qa_vec3 start, end; float size; qa_scene_vec4 cap_color; } arrow;
+        struct { qa_vec3 start, end; float size; qa_vec4 cap_color; } arrow;
         struct { qa_vec3 origin, direction; float length, size; } ray;
     } data;
 } qa_debug_shape;
-bool qa_debug_shape_lines(const qa_debug_shape *, qa_scene_vec4, bool depth_test,
+bool qa_debug_shape_lines(const qa_debug_shape *, qa_vec4, bool depth_test,
                            qa_arena *, const qa_debug_line **, size_t *, qa_error *);
 /* Decodes actual API2023 Draw_* imports through checked direct/runner memory.
  * Unknown imports return handled=false. Geometry is detached into scratch;

@@ -278,7 +278,7 @@ static bool q3_page(qa_font *font, int32_t point_size, uint32_t page, uint32_t f
     qa_scene_image *image = NULL;
     bool success = qa_scene_image_create(font->library->resources, name, QA_SCENE_RGBA8, &level, 1,
                                          QA_SCENE_CLAMP, QA_SCENE_LINEAR,
-                                         (qa_scene_vec4){0, 0, 0, 0}, &image, error);
+                                         (qa_vec4){0, 0, 0, 0}, &image, error);
     free(rgba);
     if (!success)
         return false;

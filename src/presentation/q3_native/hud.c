@@ -216,9 +216,9 @@ static bool crosshair(q3n_hud_draw *d)
     if(d->frame->preferences.high_contrast) {
         float black[4]={0,0,0,1};
         if(!q3nh_color(d,black) || !q3nh_pixels(d,x-2,y-2,w+4,h+4,q3n_media_read(d->frame->media)->crosshairs[index],
-           (qa_scene_vec4){0,0,1,1}) || !q3nh_color(d,q3nh_white))return false;
+           (qa_vec4){0,0,1,1}) || !q3nh_color(d,q3nh_white))return false;
     }
-    return q3nh_pixels(d,x,y,w,h,q3n_media_read(d->frame->media)->crosshairs[index],(qa_scene_vec4){0,0,1,1});
+    return q3nh_pixels(d,x,y,w,h,q3n_media_read(d->frame->media)->crosshairs[index],(qa_vec4){0,0,1,1});
 }
 static bool crosshair_names(q3n_hud_draw *d)
 {
@@ -374,7 +374,7 @@ static bool lagometer(q3n_hud_draw *d)
         float value=(((float)o->frame_samples[(uint32_t)q3ne_sub(q3ne_sub(o->frame_count,1),a)&127u]) * scale);
         if(value==0.0f)continue;
         float h=fminf(fabsf(value),range);
-        if(!q3nh_color(d,value>0?yellow:blue) || !q3nh_pixels(d,ax+aw-(float)a,value>0?mid-h:mid,1,h,shader,(qa_scene_vec4){0}))return false;
+        if(!q3nh_color(d,value>0?yellow:blue) || !q3nh_pixels(d,ax+aw-(float)a,value>0?mid-h:mid,1,h,shader,(qa_vec4){0}))return false;
     }
     range=(ah / 2); scale=(range / 900);
     for(int32_t a=0;(float)a<aw;++a) {
@@ -382,7 +382,7 @@ static bool lagometer(q3n_hud_draw *d)
         if(!value)continue;
         float h=value<0?range:fminf(((float)value * scale),range);
         if(!q3nh_color(d,value<0?q3nh_red:o->snapshot_flags[i]&1?yellow:green) ||
-           !q3nh_pixels(d,ax+aw-(float)a,ay+ah-h,1,h,shader,(qa_scene_vec4){0}))return false;
+           !q3nh_pixels(d,ax+aw-(float)a,ay+ah-h,1,h,shader,(qa_vec4){0}))return false;
     }
     if(!q3nh_color(d,NULL))return false;
     if((d->settings->no_predict || d->settings->synchronous_clients) && !q3nh_big(d,592,y,"snc",1))return false;
@@ -485,7 +485,7 @@ bool q3n_hud_tile_clear(q3n_hud *o,const q3n_frame *f,qa_scene_rect viewport,qa_
     o->busy=true; bool ok=q3nh_color(&d,NULL);
     for(unsigned i=0;ok && i<4;++i) { float *b=boxes[i];
         ok=q3nh_pixels(&d,b[0],b[1],b[2],b[3],q3n_media_read(f->media)->graphics[Q3N_G_BACK_TILE],
-            (qa_scene_vec4){b[0]/64,b[1]/64,(b[0]+b[2])/64,(b[1]+b[3])/64}); }
+            (qa_vec4){b[0]/64,b[1]/64,(b[0]+b[2])/64,(b[1]+b[3])/64}); }
     o->busy=false; return ok;
 }
 void q3n_hud_round(q3n_hud *o)

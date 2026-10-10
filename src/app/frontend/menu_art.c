@@ -14,7 +14,7 @@ static bool picture(qa_frontend *f, const char *name,
 {
     qa_scene_image *image = NULL;
     bool ok = qa_scene_image_load_embedded(f->ui_images, name, QA_SCENE_CLAMP,
-        QA_SCENE_LINEAR, (qa_scene_vec4){0}, &image, error);
+        QA_SCENE_LINEAR, (qa_vec4){0}, &image, error);
     if (ok) *out = image;
     return ok;
 }

@@ -333,7 +333,7 @@ static bool source_entity_surface_read(void *opaque, const qa_q3_ref_entity *cur
     const qa_q3_ref_entity *entity = current ? current : &surface->value;
     *mesh = (qa_scene_mesh){0}; *direct = false;
     context->source_writer = QA_SOURCE_WRITE_FULL;
-    qa_scene_vec4 color = q3p_color(entity->color);
+    qa_vec4 color = q3p_color(entity->color);
     if (entity->kind == QA_Q3_REF_SPRITE)
         return qa_scene_sprite_geometry(frame, &context->view, entity->origin,
             entity->radius, entity->rotation, color, mesh, error);
@@ -773,7 +773,7 @@ static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets
                 qa_scene_white(assets->options.provider.images), &options->state, error)) return false;
     } else {
         qa_scene_mesh mesh;
-        qa_scene_vec4 color = q3p_color(entity->color);
+        qa_vec4 color = q3p_color(entity->color);
         if (entity->kind == QA_Q3_REF_SPRITE) {
             if (!qa_scene_sprite_geometry(p->frame, &options->world.view, entity->origin,
                     entity->radius, entity->rotation, color, &mesh, error)) return false;
@@ -1054,7 +1054,7 @@ bool qa_q3_presentation_selected_world_beam(qa_q3_presentation *p,
         &rail.retained_vertices, &rail.retained_count, error)) return false;
     qa_scene_mesh mesh;
     if (!qa_scene_rail_geometry(frame, &options->world.view, QA_RAIL_CORE, end, origin,
-            (qa_scene_vec4){1, 1, 1, 1}, &rail, &mesh, error)) return false;
+            (qa_vec4){1, 1, 1, 1}, &rail, &mesh, error)) return false;
     qa_material_context context = effect_context(options);
     size_t commands = frame->command_count, groups = frame->group_count;
     context.source_writer = QA_SOURCE_WRITE_RAIL;
@@ -1349,12 +1349,12 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
     if (ok && options.world.source_scratch) {
         if (options.world.fast_sky && !options.world.no_world) {
             options.world.view.clear_color = true;
-            options.world.view.color = (qa_scene_vec4){0, 0, 0, 1};
+            options.world.view.color = (qa_vec4){0, 0, 0, 1};
         }
         if (options.world.source_hyperspace) {
             float gray = (float)((uint32_t)refdef->time & 255u) / 255;
             options.world.view.clear_color = true;
-            options.world.view.color = (qa_scene_vec4){gray, gray, gray, 1};
+            options.world.view.color = (qa_vec4){gray, gray, gray, 1};
         }
     }
     if (ok && p->world) ok = qa_scene_world_source_begin_scene(p->world, &options.world, error);

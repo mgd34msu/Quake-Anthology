@@ -11,6 +11,7 @@ _Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT
 
 typedef struct qa_vec2 { float x, y; } qa_vec2;
 typedef struct qa_vec3 { float x, y, z; } qa_vec3;
+typedef struct qa_vec4 { float x, y, z, w; } qa_vec4;
 typedef struct qa_bounds { qa_vec3 mins, maxs; } qa_bounds;
 
 #define QA_BYTE_NORMAL_COUNT 162u

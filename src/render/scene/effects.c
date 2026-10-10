@@ -70,7 +70,7 @@ void qa_effect_draw(qa_scene_draw *draw, const qa_scene_view *view,
 bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
                               qa_game_family family, bool quakeworld,
                               const qa_scene_light *lights, size_t count,
-                              qa_scene_vec4 *blend, qa_error *error)
+                              qa_vec4 *blend, qa_error *error)
 {
     if (!frame || !view || !blend || (count && !lights) ||
         (family != QA_GAME_Q1 && family != QA_GAME_Q2)) {
@@ -102,14 +102,14 @@ bool qa_scene_legacy_dlights(qa_scene_frame *frame, const qa_scene_view *view,
         vertices[0].position = qa_vec_sub(light->origin, qa_vec_scale(view->axis[0], radius));
         qa_vec3 center = family == QA_GAME_Q2 ? qa_vec_scale(light->color, .2f) :
             quakeworld ? light->color : qa_v3(.2f, .1f, 0);
-        vertices[0].color = (qa_scene_vec4){center.x, center.y, center.z, 1};
+        vertices[0].color = (qa_vec4){center.x, center.y, center.z, 1};
         for (unsigned i = 0; i <= 16; ++i) {
             double angle = (double)(16 - i) / 16 * QA_EFFECT_PI * 2;
             float sine = (float)sin(angle), cosine = (float)cos(angle);
             qa_vec3 right = qa_vec_scale(view->axis[1], -cosine * radius);
             vertices[i + 1].position = qa_vec_add(light->origin,
                 qa_vec_add(right, qa_vec_scale(view->axis[2], sine * radius)));
-            vertices[i + 1].color = (qa_scene_vec4){0, 0, 0, 1};
+            vertices[i + 1].color = (qa_vec4){0, 0, 0, 1};
             if (i < 16) {
                 indices[i * 3] = 0;
                 indices[i * 3 + 1] = i + 1;
@@ -185,7 +185,7 @@ bool qa_scene_portal_surface_visible(const qa_scene_mesh *mesh, const qa_scene_v
     qa_scene_matrix matrix = qa_scene_matrix_multiply(view->projection, qa_scene_view_matrix(view));
     unsigned common = 63;
     for (size_t i = 0; i < mesh->vertex_count; ++i) {
-        qa_scene_vec4 clip = qa_scene_matrix_point(matrix, mesh->vertices[i].position);
+        qa_vec4 clip = qa_scene_matrix_point(matrix, mesh->vertices[i].position);
         float components[3] = {clip.x, clip.y, clip.z};
         unsigned flags = 0;
         for (unsigned j = 0; j < 3; ++j) {
@@ -207,7 +207,7 @@ bool qa_scene_portal_surface_visible(const qa_scene_mesh *mesh, const qa_scene_v
 }
 
 bool qa_scene_sprite_geometry(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
-                              float radius, float rotation, qa_scene_vec4 color,
+                              float radius, float rotation, qa_vec4 color,
                               qa_scene_mesh *out, qa_error *error)
 {
     if (!frame || !view || !out || !qa_vec_finite(origin) || !isfinite(radius) || !isfinite(rotation)) {
@@ -246,7 +246,7 @@ bool qa_scene_sprite_geometry(qa_scene_frame *frame, const qa_scene_view *view, 
 
 
 bool qa_scene_beam(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 start,
-                   qa_vec3 end, float width, qa_scene_vec4 color,
+                   qa_vec3 end, float width, qa_vec4 color,
                    const qa_scene_image *image, qa_error *error)
 {
     if (!frame || !view || !qa_vec_finite(start) || !qa_vec_finite(end) || !isfinite(width)) {

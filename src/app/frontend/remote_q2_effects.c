@@ -915,7 +915,7 @@ bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_act
         input.transform.axes[i][0]=basis[i].x; input.transform.axes[i][1]=basis[i].y;
         input.transform.axes[i][2]=basis[i].z; input.transform.scale[i]=m->scale;
     }
-    input.previous_origin=origin; input.flags=8|16|4|32; input.color=(qa_scene_vec4){1,1,1,1};
+    input.previous_origin=origin; input.flags=8|16|4|32; input.color=(qa_vec4){1,1,1,1};
     input.frame=0; input.old_frame=0; input.skin=0; input.back_lerp=0;
     input.ambient=qa_v3(1,1,1); input.source_path=q2fx_model_paths[m->model];
     input.pose=NULL; input.pose_count=0; input.material_library=NULL; input.custom_material=NULL; input.custom_skin=NULL;
@@ -1086,13 +1086,13 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
     if (ok && (particles || entities)) ok=qa_scene_resources_palette_read(o->source.images,QA_GAME_Q2,&palette) && palette.size>=768;
     if (entities) for (size_t i=0;ok && i<Q2FX_LASER_CAPACITY;++i) {
         const q2fx_laser *row=&o->lasers[i]; if (!row->active || row->die<=s->milliseconds) continue;
-        uint32_t index=row->color&255; qa_scene_vec4 color;
+        uint32_t index=row->color&255; qa_vec4 color;
         if (row->color==UINT32_MAX) {
             if (row->die<=row->born) continue;
             float alpha=(float)((row->die-s->milliseconds)/(row->die-row->born));
-            color=(qa_scene_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,(float)((row->rgba>>16)&255)/255.f,
+            color=(qa_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,(float)((row->rgba>>16)&255)/255.f,
                 floorf((float)(row->rgba>>24)*alpha)/255.f};
-        } else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,.3f};
+        } else color=(qa_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,.3f};
         ok=qa_scene_beam(frame,&s->view,row->start,row->end,row->width,color,o->source.white,e);
     }
     qa_scene_particle_sample *particle_samples=ok && particles?qa_scene_particles_alloc(frame,o->particles.count,e):NULL;
@@ -1101,10 +1101,10 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
     if (particles) for (size_t i=o->particles.count;ok && i>0;--i) {
         const frontend_fx_q2_particle *row=&o->particles.values.q2[i-1]; qa_vec3 origin; float alpha;
         if (!frontend_fx_q2_sample(row,s->milliseconds,&origin,&alpha)) continue;
-        uint32_t index=row->color&255; qa_scene_vec4 color;
-        if (row->color==UINT32_MAX) color=(qa_scene_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,
+        uint32_t index=row->color&255; qa_vec4 color;
+        if (row->color==UINT32_MAX) color=(qa_vec4){(float)(row->rgba&255)/255.f,(float)((row->rgba>>8)&255)/255.f,
             (float)((row->rgba>>16)&255)/255.f,floorf((float)(row->rgba>>24)*alpha)/255.f};
-        else color=(qa_scene_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,alpha};
+        else color=(qa_vec4){palette.data[index*3]/255.f,palette.data[index*3+1]/255.f,palette.data[index*3+2]/255.f,alpha};
         particle_samples[batch.count++]=(qa_scene_particle_sample){.origin=origin,.color=color};
     }
     if (ok && batch.count) ok=qa_scene_particles(frame,&batch,e);

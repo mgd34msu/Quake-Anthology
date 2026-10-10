@@ -498,7 +498,7 @@ static bool level_valid(const qa_scene_image_level *level, qa_error *error)
 
 bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_scene_image_kind kind,
                            const qa_scene_image_level *levels, size_t count, qa_scene_wrap wrap,
-                           qa_scene_filter filter, qa_scene_vec4 border, qa_scene_image **out,
+                           qa_scene_filter filter, qa_vec4 border, qa_scene_image **out,
                            qa_error *error)
 {
     if (resources == NULL || name == NULL || out == NULL || count == 0 || levels == NULL ||
@@ -568,7 +568,7 @@ bool qa_scene_image_stream_create(qa_scene_resources *resources, const char *nam
     for (size_t i = 3; i < bytes; i += 4) pixels[i] = 255;
     qa_scene_image_level level = {width, height, pixels, bytes};
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, &level, 1,
-        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 1}, out, error);
+        QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0, 0, 0, 1}, out, error);
     free(pixels);
     if (ok) (*out)->streamed = true;
     return ok;
@@ -620,7 +620,7 @@ bool qa_scene_resources_bind_embedded_images(qa_scene_resources *resources,
     return true;
 }
 bool qa_scene_image_load_embedded(qa_scene_resources *resources, const char *name,
-    qa_scene_wrap wrap, qa_scene_filter filter, qa_scene_vec4 border,
+    qa_scene_wrap wrap, qa_scene_filter filter, qa_vec4 border,
     qa_scene_image **out, qa_error *error)
 {
     if (!resources || !name || !out || !admission_ready(resources, error)) {
@@ -852,7 +852,7 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
     const uint8_t white[4] = {255,255,255,255};
     qa_scene_image_level level = {1,1,white,sizeof(white)};
     if (!qa_scene_image_create(resources, "*white", QA_SCENE_RGBA8, &level, 1, QA_SCENE_REPEAT,
-                               QA_SCENE_NEAREST, (qa_scene_vec4){1,1,1,1}, &resources->white, error)) {
+                               QA_SCENE_NEAREST, (qa_vec4){1,1,1,1}, &resources->white, error)) {
         qa_scene_resources_destroy(resources); return NULL;
     }
     uint8_t pixels[16 * 16 * 4];
@@ -867,7 +867,7 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
     if (!image_from_rgba(resources, "*default", &missing, &missing_options, &resources->missing, error)) {
         qa_scene_resources_destroy(resources); return NULL;
     }
-    resources->missing->border = (qa_scene_vec4){0,0,0,1};
+    resources->missing->border = (qa_vec4){0,0,0,1};
     resources->registrations_started = false;
     resources->detached = false;
     return resources;
@@ -1706,7 +1706,7 @@ static bool image_uses_texture_mode(const qa_scene_image_options *options)
 }
 
 static bool image_from_rgba_complete(qa_scene_resources *resources, const char *name, const qa_image *source,
-    const qa_scene_image_options *options, bool after_border, qa_scene_vec4 upload_border,
+    const qa_scene_image_options *options, bool after_border, qa_vec4 upload_border,
     bool dlight, qa_scene_image **out, qa_error *error)
 {
     if (options->source_q3) {
@@ -1730,7 +1730,7 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
         qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
         qa_scene_filter filter = options->source_upload.mipmap ? options->filter : QA_SCENE_LINEAR;
         bool ok = qa_scene_image_create(resources, name, kind, levels, uploaded.count,
-            options->wrap, filter, (qa_scene_vec4){0}, out, error);
+            options->wrap, filter, (qa_vec4){0}, out, error);
         if (ok) {
             (*out)->logical_width = source->width; (*out)->logical_height = source->height;
             owned_image *owned = (owned_image *)*out;
@@ -1779,14 +1779,14 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
         levels[i+1] = (qa_scene_image_level){image->width,image->height,image->rgba.data,image->rgba.size};
     }
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, levels, count, options->wrap,
-                                    options->filter, (qa_scene_vec4){0}, out, error);
+                                    options->filter, (qa_vec4){0}, out, error);
     if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
     free(levels); qa_mip_chain_free(&chain); qa_image_free(&scaled);
     return ok;
 }
 static bool image_from_rgba(qa_scene_resources *resources, const char *name, const qa_image *source,
     const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
-{ return image_from_rgba_complete(resources, name, source, options, false, (qa_scene_vec4){0}, false, out, error); }
+{ return image_from_rgba_complete(resources, name, source, options, false, (qa_vec4){0}, false, out, error); }
 
 static bool source_builtin(qa_scene_resources *resources, const char *name,
     const qa_q3_image_upload_options *profile, uint32_t size, uint8_t value,
@@ -1841,12 +1841,12 @@ bool scene_resource_source_builtin_create(qa_scene_resources *resources, const c
     if (!strcmp(name,"*dlight")) {
         uint8_t pixels[16*16*4]; scene_image_dlight_pixels(pixels);
         qa_image input={.width=16,.height=16,.rgba={pixels,sizeof(pixels)}};
-        return image_from_rgba_complete(resources,name,&input,&options,false,(qa_scene_vec4){0},true,out,error);
+        return image_from_rgba_complete(resources,name,&input,&options,false,(qa_vec4){0},true,out,error);
     }
     if (!strcmp(name,"*fog")) {
         uint8_t pixels[256*32*4]; scene_image_fog_pixels(pixels);
         qa_image input={.width=256,.height=32,.rgba={pixels,sizeof(pixels)}};
-        return image_from_rgba_complete(resources,name,&input,&options,true,(qa_scene_vec4){1,1,1,1},false,out,error);
+        return image_from_rgba_complete(resources,name,&input,&options,true,(qa_vec4){1,1,1,1},false,out,error);
     }
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Unknown Source constructor image"); return false;
 }
@@ -2061,7 +2061,7 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
                         images[i].rgba.data,images[i].rgba.size};
                 }
                 if (ok) ok = qa_scene_image_create(resources, image_name, QA_SCENE_RGBA8, levels, 4,
-                    options->wrap, options->filter, (qa_scene_vec4){0}, out, error);
+                    options->wrap, options->filter, (qa_vec4){0}, out, error);
                 if (ok) (*out)->texture_mode = image_uses_texture_mode(options);
                 for (size_t i = 0; i < 4; ++i) qa_image_free(&images[i]);
                 qa_mip_texture_free(&mip);
@@ -2158,7 +2158,7 @@ bool scene_image_asset_source_bind(qa_scene_image *image, const qa_resource *sou
 }
 bool scene_resource_indexed_image(qa_scene_resources *resources, const char *name,
     const qa_indexed_level *indices, size_t count, const qa_scene_image_options *options,
-    const qa_palette_options *colors, bool generate_mips, qa_scene_vec4 border,
+    const qa_palette_options *colors, bool generate_mips, qa_vec4 border,
     qa_scene_image **out, qa_error *error)
 {
     qa_image expanded[4] = {0}; qa_scene_image_level levels[4]; qa_mip_chain chain = {0};
@@ -2223,7 +2223,7 @@ bool scene_resource_sky_layer(qa_scene_resources *resources, const char *name,
         for (size_t c = 0; c < 3; ++c) pixels[i * 4 + c] = (uint8_t)(sum[c] / count);
     qa_scene_image_level level = {width, height, pixels, count * 4};
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, &level, 1, QA_SCENE_REPEAT,
-        QA_SCENE_LINEAR, (qa_scene_vec4){0}, out, error);
+        QA_SCENE_LINEAR, (qa_vec4){0}, out, error);
     free(pixels); return ok;
 }
 static bool image_slice_decode(qa_scene_resources *resources, const char *name,
@@ -2248,7 +2248,7 @@ static bool image_slice_decode(qa_scene_resources *resources, const char *name,
         }
         qa_scene_image_level level = {recipe->widths[0], recipe->heights[0], pixels, count * 4};
         bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGB8, &level, 1, recipe->options.wrap,
-            recipe->options.filter, (qa_scene_vec4){0}, out, error);
+            recipe->options.filter, (qa_vec4){0}, out, error);
         if (ok) (*out)->texture_mode = image_uses_texture_mode(&recipe->options);
         free(pixels); return ok;
     }
@@ -2273,7 +2273,7 @@ static bool image_slice_decode(qa_scene_resources *resources, const char *name,
         .fullbright_last = recipe->fullbright_last, .translation = options.translation.size ? options.translation.data : NULL,
         .layer = recipe->layer};
     bool ok = scene_resource_indexed_image(resources, name, indexed, recipe->level_count, &options, &colors,
-        recipe->generate_mips, (qa_scene_vec4){0}, out, error);
+        recipe->generate_mips, (qa_vec4){0}, out, error);
     qa_buffer_free(&flooded); return ok;
 }
 static bool image_asset_bind(qa_scene_resources *resources, qa_scene_image *image, const char *path,
@@ -2768,8 +2768,8 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
     }
     variant->source_variant_source = source; qa_scene_image_retain(source);
     variant->generic_variant = true; variant->generic_variant_mipmap = mipmap;
-    if (source == source_owner->source_fog) variant->image.border = (qa_scene_vec4){1,1,1,1};
-    else if (source == source_owner->source_dlight) variant->image.border = (qa_scene_vec4){0,0,0,1};
+    if (source == source_owner->source_fog) variant->image.border = (qa_vec4){1,1,1,1};
+    else if (source == source_owner->source_dlight) variant->image.border = (qa_vec4){0,0,0,1};
     variant->variant_next = resources->variants; resources->variants = variant;
     qa_scene_image_retain(*out); return true;
 }

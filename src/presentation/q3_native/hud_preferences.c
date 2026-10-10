@@ -99,7 +99,7 @@ bool q3nh_font_text(q3n_hud_draw *d,float x,float y,const char *text,float heigh
             }
             g->rect=q3nh_rect(d,(qa_scene_rect_f){x+g->rect.x-offset,y+g->rect.y-ascent,g->rect.width,g->rect.height});
             float raw[4]={g->color.x,g->color.y,g->color.z,g->color.w},mapped[4]; q3nh_palette(d,raw,mapped);
-            g->color=(qa_scene_vec4){mapped[0],mapped[1],mapped[2],mapped[3]};
+            g->color=(qa_vec4){mapped[0],mapped[1],mapped[2],mapped[3]};
         }
     }
     qa_font_draw_options options={.seat=d->owner->options.presentation_seat,.target=d->viewport,.space=QA_FONT_PIXELS,

@@ -39,7 +39,7 @@ typedef struct material_source_operation {
     material_source_view view;
 } material_source_operation;
 typedef struct material_source_entity {
-    qa_scene_vec4 color;
+    qa_vec4 color;
     qa_vec2 texcoord;
     qa_scene_matrix model;
     qa_vec3 ambient, directed, light_direction;
@@ -60,7 +60,7 @@ struct qa_material_source_scratch {
     qa_render_controls *owner;
     qa_scene_vertex vertices[QA_SOURCE_TESS_VERTICES];
     uint32_t indices[QA_SOURCE_TESS_INDEXES];
-    qa_scene_vec4 colors[QA_SOURCE_TESS_VERTICES];
+    qa_vec4 colors[QA_SOURCE_TESS_VERTICES];
     qa_vec2 coordinates[2][QA_SOURCE_TESS_VERTICES];
     size_t vertex_count, index_count;
     bool entered;
@@ -124,7 +124,7 @@ bool material_source_polygon_offset(qa_material_source_scratch *, bool enabled, 
 bool material_source_cull(qa_material_source_scratch *, qa_scene_cull, qa_error *);
 bool material_source_cull_disable(qa_material_source_scratch *, qa_error *);
 bool material_source_cull_invalidate(qa_material_source_scratch *, qa_error *);
-bool material_source_color(qa_material_source_scratch *, qa_scene_vec4, qa_error *);
+bool material_source_color(qa_material_source_scratch *, qa_vec4, qa_error *);
 bool material_source_client_arrays(qa_material_source_scratch *, bool color, bool current_unit_uv, qa_error *);
 bool material_source_client_coordinate_pointer(qa_material_source_scratch *, material_source_coordinate_kind,
     uint32_t bank, qa_error *);

@@ -1110,11 +1110,11 @@ static bool particles(void *context,const qa_scene_world_input *input_value,qa_s
     return frontend_unified_q1_world_particles(p->q1,input_value,frame_value,error) &&
         frontend_unified_q2_world_particles(p->q2,input_value,frame_value,error);
 }
-static bool dlights(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_scene_vec4 *overlay,qa_error *error)
+static bool dlights(void *context,const qa_scene_world_input *input_value,qa_scene_frame *frame_value,qa_vec4 *overlay,qa_error *error)
 {
     return frontend_unified_q1_world_dlights(((unified_presentation *)context)->q1,input_value,frame_value,overlay,error);
 }
-static bool blend(void *context,const qa_scene_world_input *input_value,qa_scene_vec4 overlay,qa_scene_frame *frame_value,qa_error *error)
+static bool blend(void *context,const qa_scene_world_input *input_value,qa_vec4 overlay,qa_scene_frame *frame_value,qa_error *error)
 {
     return frontend_unified_q1_world_blend(((unified_presentation *)context)->q1,input_value,overlay,frame_value,error);
 }
@@ -1221,8 +1221,8 @@ static bool selected_weapon(void *context,const qa_unified_model_state *model_va
     return frontend_unified_q3_selected_weapon(((unified_presentation *)context)->q3,
         model_value,world_value,frame_value,submitted,error);
 }
-static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_scene_vec4 *value,
-    bool damage_present,const qa_scene_vec4 *damage,qa_scene_rect viewport,qa_scene_frame *frame_value,qa_error *error)
+static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_vec4 *value,
+    bool damage_present,const qa_vec4 *damage,qa_scene_rect viewport,qa_scene_frame *frame_value,qa_error *error)
 {
     unified_presentation *p=context;
     return frontend_unified_q2_player_blend(p->q2,actor,present,value,damage_present,damage,viewport,frame_value,error);

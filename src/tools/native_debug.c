@@ -23,12 +23,12 @@ static bool scalar(const qa_native_import_call *call, size_t index, float *out, 
     return isfinite(*out) || tools_fail(error, "native debug source float must be finite");
 }
 static bool color(qa_native_instance *instance, const qa_native_import_call *call, size_t index,
-                    qa_scene_vec4 *out, qa_error *error) {
+                    qa_vec4 *out, qa_error *error) {
     if (!argument(call, index, QA_NATIVE_ADDRESS, error) || !call->arguments[index].as.address)
         return tools_fail(error, "native debug color requires a source pointer");
     uint8_t bytes[4];
     if (!qa_native_read(instance, call->arguments[index].as.address, bytes, sizeof bytes, error)) return false;
-    *out = (qa_scene_vec4){bytes[0] / 255.0f, bytes[1] / 255.0f, bytes[2] / 255.0f, bytes[3] / 255.0f}; return true;
+    *out = (qa_vec4){bytes[0] / 255.0f, bytes[1] / 255.0f, bytes[2] / 255.0f, bytes[3] / 255.0f}; return true;
 }
 bool qa_debug_native_q2(qa_native_instance *instance, const qa_native_import_call *call, qa_arena *scratch,
                          const qa_debug_line **out, size_t *count, uint32_t *lifetime,
@@ -66,7 +66,7 @@ bool qa_debug_native_q2(qa_native_instance *instance, const qa_native_import_cal
         ok = vector(instance, call, 0, &shape.data.arrow.start, error) && vector(instance, call, 1, &shape.data.arrow.end, error) && scalar(call, 2, &shape.data.arrow.size, error) && color(instance, call, 4, &shape.data.arrow.cap_color, error); break;
     default: return tools_fail(error, "unknown admitted native debug shape");
     }
-    float seconds; qa_scene_vec4 rgba;
+    float seconds; qa_vec4 rgba;
     if (!ok || !color(instance, call, rows[row].color, &rgba, error) ||
         !scalar(call, rows[row].lifetime, &seconds, error) ||
         !argument(call, rows[row].lifetime + 1, QA_NATIVE_U8, error)) return false;

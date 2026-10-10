@@ -81,7 +81,7 @@ bool frontend_view_background(qa_frontend *frontend, qa_scene_rect output,
     qa_scene_command clear = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = *view};
     clear.data.view.viewport = output;
     clear.data.view.clear_color = clear.data.view.clear_depth = true;
-    clear.data.view.color = (qa_scene_vec4){0, 0, 0, 1};
+    clear.data.view.color = (qa_vec4){0, 0, 0, 1};
     clear.data.view.depth = 1;
     return qa_scene_frame_emit(&frontend->frame, &clear, error);
 }
@@ -538,7 +538,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             if (!local_product || !frontend_legacy_local_policy_read(frontend,i,local_product,&policy,error)) return false;
             if (policy.lighting.polyblend && !qa_scene_frame_picture(&frontend->frame,
                 qa_scene_white(frontend->ui_images),view.viewport,view.viewport,
-                (qa_scene_vec4){0,0,1,1},seat->q1_blend,error)) return false;
+                (qa_vec4){0,0,1,1},seat->q1_blend,error)) return false;
         }
         if (live && !ui.fullscreen && !source.source_world && !native_rendered && seat->q2_view_ready &&
                 qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0 && !preferences.reduced_flashes) {
@@ -547,9 +547,9 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             frontend_legacy_render_policy policy;
             if (!product || !frontend_legacy_local_policy_read(frontend,i,product,&policy,error)) return false;
             if (policy.lighting.polyblend) {
-                qa_q2_blend blend = seat->q2_view.blend;
+                qa_vec4 blend = seat->q2_view.blend;
                 if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
-                        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
+                        (qa_vec4){0, 0, 1, 1}, (qa_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
             }
         }
         if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;

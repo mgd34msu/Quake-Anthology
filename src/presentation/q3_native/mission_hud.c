@@ -142,7 +142,7 @@ static void picture(float x,float y,float w,float h,int asset) { q3n_mission_hud
 static void stretch(float x,float y,float w,float h,float s,float t,float s2,float t2,int asset)
 { q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return;
     qa_scene_rect_f r=q3nh_rect(&o->draw,(qa_scene_rect_f){x/o->display.xscale,y/o->display.yscale,w/o->display.xscale,h/o->display.yscale});
-    q3nm_result(q3nh_pixels(&o->draw,r.x,r.y,r.width,r.height,asset,(qa_scene_vec4){s,t,s2,t2})); }
+    q3nm_result(q3nh_pixels(&o->draw,r.x,r.y,r.width,r.height,asset,(qa_vec4){s,t,s2,t2})); }
 static void fill(float x,float y,float w,float h,const float c[4]) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(q3nh_fill(&o->draw,x,y,w,h,c)); }
 static void sides(float x,float y,float w,float h,float size) { picture(x,y,size,h,q3nm_active()->display.whiteShader); picture(x+w-size,y,size,h,q3nm_active()->display.whiteShader); }
 static void top_bottom(float x,float y,float w,float h,float size) { picture(x,y,w,size,q3nm_active()->display.whiteShader); picture(x,y+h-size,w,size,q3nm_active()->display.whiteShader); }

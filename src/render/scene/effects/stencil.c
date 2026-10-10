@@ -72,7 +72,7 @@ static bool stencil_shadow(qa_scene_frame *frame, const qa_scene_view *view,
     for (size_t i = 0; i < source->vertex_count; ++i) {
         vertices[i].position = source->vertices[i].position;
         vertices[i + source->vertex_count].position = qa_vec_add(source->vertices[i].position, extrusion);
-        vertices[i].color = vertices[i + source->vertex_count].color = (qa_scene_vec4){0.2f, 0.2f, 0.2f, 1};
+        vertices[i].color = vertices[i + source->vertex_count].color = (qa_vec4){0.2f, 0.2f, 0.2f, 1};
     }
     size_t cursor = 0;
     for (size_t start = 0; start < source->vertex_count; ++start)
@@ -142,7 +142,7 @@ static bool stencil_finish(qa_scene_frame *frame, const qa_scene_view *view,
     const qa_vec3 points[4] = {{-100, 100, -10}, {100, 100, -10}, {100, -100, -10}, {-100, -100, -10}};
     for (size_t i = 0; i < 4; ++i) {
         vertices[i].position = points[i];
-        vertices[i].color = (qa_scene_vec4){0.6f, 0.6f, 0.6f, 1};
+        vertices[i].color = (qa_vec4){0.6f, 0.6f, 0.6f, 1};
     }
     const uint32_t order[6] = {0, 1, 2, 0, 2, 3};
     memcpy(indices, order, sizeof(order));

@@ -553,7 +553,7 @@ static qa_font *policy_clone(qa_font_library *destination,const qa_font *source,
                 glyph.height=glyph.bearing_y=(float)next->logical_height/16;
                 float x=(float)(glyph.codepoint&15u)*glyph.width;
                 float y=(float)(glyph.codepoint>>4)*glyph.height;
-                glyph.uv=(qa_scene_vec4){x/(float)next->logical_width,y/(float)next->logical_height,
+                glyph.uv=(qa_vec4){x/(float)next->logical_width,y/(float)next->logical_height,
                     (x+glyph.width)/(float)next->logical_width,(y+glyph.height)/(float)next->logical_height};
                 font->line_height=font->ascent=glyph.height; font->descent=0;
             } else if (font->kind==QA_FONT_KFONT) {

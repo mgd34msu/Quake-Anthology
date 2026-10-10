@@ -14,16 +14,16 @@ static qa_scene_rect clip_rect(qa_ui *ui, qa_scene_rect target, qa_scene_rect_f 
         (uint32_t)fmax(0, right - x), (uint32_t)fmax(0, bottom - y)};
 }
 bool ui_fill(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, qa_scene_rect_f rect,
-              qa_scene_vec4 color, qa_error *error) {
+              qa_vec4 color, qa_error *error) {
     if (!target.width || !target.height)
         return true;
     qa_scene_rect_f pixels = {ui->bias_x + rect.x * ui->scale, ui->bias_y + rect.y * ui->scale,
                              rect.width * ui->scale, rect.height * ui->scale};
     return qa_scene_frame_picture_f(frame, ui->options.white, target, pixels,
-                                     (qa_scene_vec4){0, 0, 1, 1}, color, error);
+                                     (qa_vec4){0, 0, 1, 1}, color, error);
 }
 static bool text_layout(qa_ui *ui, qa_scene_frame *frame, const char *text,
-                         qa_scene_vec4 color, float scale, qa_font_alignment alignment,
+                         qa_vec4 color, float scale, qa_font_alignment alignment,
                          bool literal, bool localize, qa_font_layout *layout, qa_error *error) {
     *layout = (qa_font_layout){.seat = ui->options.seat};
     if (!text || !*text)
@@ -59,7 +59,7 @@ static bool draw_layout(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
     return qa_font_draw_layout(frame, layout, &draw, error);
 }
 static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
-                       const char *text, qa_scene_vec4 color, float scale,
+                       const char *text, qa_vec4 color, float scale,
                        qa_font_alignment alignment, bool literal, bool localize, qa_error *error) {
     if (!text || !*text || !target.width || !target.height)
         return true;
@@ -68,16 +68,16 @@ static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, fl
         draw_layout(ui, frame, target, x, y, &layout, error);
 }
 bool ui_draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
-                   const char *text, qa_scene_vec4 color, float scale,
+                   const char *text, qa_vec4 color, float scale,
                    qa_font_alignment alignment, qa_error *error) {
     return draw_text(ui, frame, target, x, y, text, color, scale, alignment, true, true, error);
 }
 bool ui_draw_source_text(qa_ui *ui,qa_scene_frame *frame,qa_scene_rect target,float x,float y,
-    const char *text,qa_scene_vec4 color,float scale,qa_font_alignment alignment,qa_error *error)
+    const char *text,qa_vec4 color,float scale,qa_font_alignment alignment,qa_error *error)
 { return draw_text(ui,frame,target,x,y,text,color,scale,alignment,true,false,error); }
 static bool field_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                         const qa_ui_control *control, bool focused,
-                        qa_scene_vec4 color, qa_error *error) {
+                        qa_vec4 color, qa_error *error) {
     const char *text = control->value.field.text ? control->value.field.text : "";
     ui_field *state = ui_field_get(ui, control->id, error);
     if (!state) return false;
@@ -132,7 +132,7 @@ static void layout_scale(qa_font_layout *layout, float factor) {
 }
 static bool column_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                         const char *value, float x, float y, float width, float height,
-                        qa_scene_vec4 color, qa_error *error) {
+                        qa_vec4 color, qa_error *error) {
     value = value ? value : "";
     float available = fmaxf(0, width - 16);
     qa_font_layout layout;
@@ -172,9 +172,9 @@ static bool column_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
         x + 8, y + (height - 8 * scale * ui->text_scale) * .5f, &layout, error);
 }
 static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
-                       const qa_ui_control *control, qa_scene_vec4 color,
-                       qa_scene_vec4 focused, qa_scene_vec4 accent, qa_scene_vec4 disabled,
-                       qa_scene_vec4 background, bool active, qa_error *error) {
+                       const qa_ui_control *control, qa_vec4 color,
+                       qa_vec4 focused, qa_vec4 accent, qa_vec4 disabled,
+                       qa_vec4 background, bool active, qa_error *error) {
     ui_field *state = ui_list_state(ui, control, error);
     if (!state) return false;
     float height = fmaxf(1, control->value.list.row_height);
@@ -189,7 +189,7 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
         float y = control->rect.y + (float)(i - state->top) * height;
         if (i == selected && !ui_fill(ui, frame, clipped,
             (qa_scene_rect_f){control->rect.x, y, content_width, height}, focused, error)) return false;
-        qa_scene_vec4 text_color = !control->enabled || !row->enabled ? disabled : i == selected ? accent : color;
+        qa_vec4 text_color = !control->enabled || !row->enabled ? disabled : i == selected ? accent : color;
         if (row->cells) {
             if (control->value.list.column_count) {
                 float x = control->rect.x;
@@ -231,7 +231,7 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
             qa_scene_rect_f pixels = {ui->bias_x + label_x * ui->scale,
                 ui->bias_y + (y + 2) * ui->scale, (height - 4) * ui->scale, (height - 4) * ui->scale};
             if (!qa_scene_frame_picture_f(frame, row->image, clipped, pixels,
-                (qa_scene_vec4){0, 0, 1, 1}, text_color, error)) return false;
+                (qa_vec4){0, 0, 1, 1}, text_color, error)) return false;
             label_x += height;
         }
         if (!clipped.width || !clipped.height) continue;
@@ -264,7 +264,7 @@ static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
             12, thumb}, active ? accent : disabled, error);
 }
 typedef struct menu_colors {
-    qa_scene_vec4 text, disabled, accent, control, focused, panel;
+    qa_vec4 text, disabled, accent, control, focused, panel;
 } menu_colors;
 static menu_colors menu_palette(const qa_ui *ui, bool contrast, bool narrow) {
     menu_colors colors = {
@@ -274,18 +274,18 @@ static menu_colors menu_palette(const qa_ui *ui, bool contrast, bool narrow) {
         .panel = {.025f, .035f, .045f, narrow ? .86f : .96f}
     };
     if (contrast) {
-        colors.text = (qa_scene_vec4){1, 1, 1, 1};
-        colors.disabled = (qa_scene_vec4){.65f, .65f, .65f, 1};
-        colors.accent = (qa_scene_vec4){1, 1, 0, 1};
-        colors.panel = colors.control = (qa_scene_vec4){0, 0, 0, 1};
-        colors.focused = (qa_scene_vec4){.2f, .2f, .2f, 1};
+        colors.text = (qa_vec4){1, 1, 1, 1};
+        colors.disabled = (qa_vec4){.65f, .65f, .65f, 1};
+        colors.accent = (qa_vec4){1, 1, 0, 1};
+        colors.panel = colors.control = (qa_vec4){0, 0, 0, 1};
+        colors.focused = (qa_vec4){.2f, .2f, .2f, 1};
     }
     if (ui->color_mode == QA_UI_COLOR_MONOCHROME) {
-        colors.text = colors.accent = (qa_scene_vec4){1, 1, 1, 1};
-        colors.focused = (qa_scene_vec4){.25f, .25f, .25f, 1};
+        colors.text = colors.accent = (qa_vec4){1, 1, 1, 1};
+        colors.focused = (qa_vec4){.25f, .25f, .25f, 1};
     } else if (ui->color_mode == QA_UI_COLOR_BLUE_YELLOW) {
-        colors.accent = (qa_scene_vec4){1, .9f, .2f, 1};
-        colors.focused = (qa_scene_vec4){.06f, .2f, .42f, 1};
+        colors.accent = (qa_vec4){1, .9f, .2f, 1};
+        colors.focused = (qa_vec4){.06f, .2f, .42f, 1};
     }
     return colors;
 }
@@ -300,17 +300,17 @@ static bool menu_backdrop(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewpo
     return qa_scene_frame_picture_f(frame, image, viewport,
         (qa_scene_rect_f){(float)viewport.x, (float)viewport.y,
             (float)viewport.width, (float)viewport.height},
-        (qa_scene_vec4){crop_x, crop_y, 1 - crop_x, 1 - crop_y},
-        (qa_scene_vec4){1, 1, 1, 1}, error);
+        (qa_vec4){crop_x, crop_y, 1 - crop_x, 1 - crop_y},
+        (qa_vec4){1, 1, 1, 1}, error);
 }
 static bool menu_panel(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport,
-                       bool narrow, qa_scene_vec4 color, qa_error *error) {
+                       bool narrow, qa_vec4 color, qa_error *error) {
     float fit = fminf((float)viewport.width / 640, (float)viewport.height / 480);
     float x = (float)viewport.x + ((float)viewport.width - 640 * fit) * .5f;
     float y = (float)viewport.y + ((float)viewport.height - 480 * fit) * .5f;
     return qa_scene_frame_picture_f(frame, ui->options.white, viewport,
         (qa_scene_rect_f){x + 40 * fit, y + 28 * fit, (narrow ? 264 : 560) * fit, 420 * fit},
-        (qa_scene_vec4){0, 0, 1, 1}, color, error);
+        (qa_vec4){0, 0, 1, 1}, color, error);
 }
 bool qa_ui_menu_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                        qa_vec2 origin, const char *text,
@@ -374,8 +374,8 @@ static bool menu_text_controls(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect t
     return true;
 }
 static bool slider_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
-                        const qa_ui_control *control, qa_scene_vec4 color,
-                        qa_scene_vec4 disabled, qa_error *error) {
+                        const qa_ui_control *control, qa_vec4 color,
+                        qa_vec4 disabled, qa_error *error) {
     char numeric[32];
     snprintf(numeric, sizeof(numeric), "%g", control->value.slider.value);
     const char *value = control->value.slider.label ? control->value.slider.label : numeric;
@@ -424,7 +424,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
         !menu_panel(ui, frame, viewport, menu.narrow, colors.panel, error) ||
         !menu_title(ui, frame, viewport, &menu, error) ||
         !ui_fill(ui, frame, viewport, (qa_scene_rect_f){64, 104, menu.narrow ? 224 : 512, 1},
-            (qa_scene_vec4){.6f, .39f, .18f, .65f}, error))) return false;
+            (qa_vec4){.6f, .39f, .18f, .65f}, error))) return false;
     if (!menu_text_controls(ui, frame, viewport, &menu, false, error)) return false;
     qa_ui_id focused = ui->stack[ui->depth - 1].control;
     for (size_t i = 0; i < menu.count; ++i) {
@@ -433,7 +433,7 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
         qa_scene_rect target = control.scrolls && menu.scrollable
             ? clip_rect(ui, viewport, menu.scroll_rect) : viewport;
         bool selected = control.id == focused;
-        qa_scene_vec4 color = !control.enabled ? colors.disabled : selected ? colors.accent : colors.text;
+        qa_vec4 color = !control.enabled ? colors.disabled : selected ? colors.accent : colors.text;
         if (control.kind == QA_UI_OWNER_DRAW) {
             if (control.value.owner.draw && !control.value.owner.draw(control.context,
                 ui->options.seat, frame, target, control.rect, error)) return false;

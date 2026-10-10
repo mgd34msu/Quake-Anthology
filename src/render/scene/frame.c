@@ -485,14 +485,14 @@ void qa_scene_state_default(qa_scene_state *state)
 }
 
 bool qa_scene_frame_picture(qa_scene_frame *frame, const qa_scene_image *image, qa_scene_rect target,
-                           qa_scene_rect rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *error)
+                           qa_scene_rect rect, qa_vec4 uv, qa_vec4 color, qa_error *error)
 {
     qa_scene_rect_f destination = {(float)rect.x, (float)rect.y, (float)rect.width, (float)rect.height};
     return qa_scene_frame_picture_f(frame, image, target, destination, uv, color, error);
 }
 
 bool qa_scene_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
-                               qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color,
+                               qa_scene_rect_f rect, qa_vec4 uv, qa_vec4 color,
                                qa_scene_mesh *out, qa_error *error)
 {
     if (frame == NULL || out == NULL || target.width == 0 || target.height == 0 ||
@@ -541,7 +541,7 @@ static bool picture_view_current(const qa_scene_frame *frame, qa_scene_rect targ
 }
 
 bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image, qa_scene_rect target,
-                              qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *error)
+                              qa_scene_rect_f rect, qa_vec4 uv, qa_vec4 color, qa_error *error)
 {
     if (!image) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "picture requires an image"); return false;

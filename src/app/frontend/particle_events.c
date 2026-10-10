@@ -2359,7 +2359,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
         for (size_t i = 0; owner->q2 && i < FRONTEND_Q2_LASER_CAPACITY; ++i) {
             const frontend_q2_laser *laser = &owner->lasers[i];
             if (!laser->active || (double)laser->end_milliseconds < sample.milliseconds) continue;
-            qa_scene_vec4 color = {palette.data[laser->color * 3] / 255.0f,
+            qa_vec4 color = {palette.data[laser->color * 3] / 255.0f,
                 palette.data[laser->color * 3 + 1] / 255.0f,
                 palette.data[laser->color * 3 + 2] / 255.0f, .3f};
             if (!qa_scene_beam(&frontend->frame, view, laser->start, laser->end,
@@ -2381,7 +2381,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
                 if (!frontend_fx_q2_sample(particle, sample.milliseconds, &origin, &alpha)) continue;
                 index = particle->color & 255;
             }
-            qa_scene_vec4 color = {palette.data[index * 3] / 255.0f, palette.data[index * 3 + 1] / 255.0f,
+            qa_vec4 color = {palette.data[index * 3] / 255.0f, palette.data[index * 3 + 1] / 255.0f,
                 palette.data[index * 3 + 2] / 255.0f, alpha};
             particles[batch.count++] = (qa_scene_particle_sample){.origin = origin, .color = color};
             if (owner->q2 && owner->q2[i-1].alpha_velocity==-10000)

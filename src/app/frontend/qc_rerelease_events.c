@@ -124,7 +124,7 @@ static bool event_body(qa_frontend *f,const qa_builtin_event *event,qa_error *er
     (void)sounds;
     unsigned color=(unsigned)values[0]*3;
     if (palette.size<color+3) return frontend_fail(error,QA_ERROR_FORMAT,"QC debug palette lacks its actual color");
-    qa_scene_vec4 rgba={palette.data[color]/255.f,palette.data[color+1]/255.f,palette.data[color+2]/255.f,1};
+    qa_vec4 rgba={palette.data[color]/255.f,palette.data[color+1]/255.f,palette.data[color+2]/255.f,1};
     qa_debug_shape shape={0};
     switch (event->code) {
     case QA_QC_BUILTIN_EX_DRAW_POINT: shape.kind=QA_DEBUG_POINT; shape.data.point.origin=event->origin; shape.data.point.size=event->value; break;

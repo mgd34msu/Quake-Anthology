@@ -154,7 +154,7 @@ struct frontend_unified_q2 {
     frontend_remote_q2_effects_profile view_profile;
     qa_vec3 view_gun_offset;
     qa_actor_id view_actor;
-    qa_scene_vec4 view_blend,view_damage_blend;
+    qa_vec4 view_blend,view_damage_blend;
     bool view_blend_present,view_damage_present;
     uint64_t view_layouts, marker_frame, marker_wall_ns;
     uint32_t marker_count;
@@ -341,7 +341,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     if (o->fog_owner==a) { o->fog_received=false;o->fog_owner=NULL;o->fog_start=(qa_scene_fog){0};o->fog_target=(qa_scene_fog){0};o->fog_started_ms=0;o->fog_duration_ms=0; }
     if (o->view_owner==a) { free(o->view_content);free(o->view_provider);o->view_content=NULL;o->view_provider=NULL;
         o->view_owner=NULL;o->view_profile=0;o->view_layouts=0;o->view_gun_offset=qa_v3(0,0,0);o->view_actor=(qa_actor_id){0};
-        o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_scene_vec4){0};o->view_damage_blend=(qa_scene_vec4){0}; }
+        o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_vec4){0};o->view_damage_blend=(qa_vec4){0}; }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a) {
         for (size_t i=0;i<256;++i) {free(b->styles[i]);b->styles[i]=NULL;b->style_sequences[i]=0;}
         if (b->effects && !frontend_remote_q2_effects_retire_presentation(b->effects,e)) return false;
@@ -1094,7 +1094,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         free(o->view_content);free(o->view_provider);o->view_content=content;o->view_provider=provider;
         o->view_profile=(frontend_remote_q2_effects_profile)row->q2_profile;o->view_owner=owner;o->view_layouts=(uint32_t)view->layouts;
         o->view_gun_offset=view->gun_offset;o->view_actor=a;o->view_blend_present=true;o->view_damage_present=false;
-        o->view_blend=(qa_scene_vec4){view->blend.x,view->blend.y,view->blend.z,view->blend.w};o->view_damage_blend=(qa_scene_vec4){0};
+        o->view_blend=(qa_vec4){view->blend.x,view->blend.y,view->blend.z,view->blend.w};o->view_damage_blend=(qa_vec4){0};
         return true;
     }
     if (event->kind==QA_Q2_PLAYER_INVENTORY){
@@ -1236,7 +1236,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     case QA_Q2_MAP_SCREEN_BLEND:{bool matches;
         if (!viewer_matches(o,v->recipient,&matches,e) || !activation(o,&row->owner,&owner,e))return false;
         if (matches && o->view_provider && row->provider && !strcmp(o->view_provider,row->provider) && o->view_owner==owner){
-            o->view_blend=(qa_scene_vec4){v->color.x,v->color.y,v->color.z,v->alpha};o->view_blend_present=true;}return true;}
+            o->view_blend=(qa_vec4){v->color.x,v->color.y,v->color.z,v->alpha};o->view_blend_present=true;}return true;}
     case QA_Q2_MAP_DYNAMIC_LIGHT:{qa_actor_id a;if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
         frontend_remote_q2_effects_shadow_light light={.actor=a,.origin=v->origin,.color=v->color,.radius=v->radius,.intensity=v->intensity,
             .resolution=(int32_t)v->resolution,.fade_start=v->fade_start,.fade_end=v->fade_end,.lightstyle=v->style,.visible=v->visible,
@@ -1616,10 +1616,10 @@ bool frontend_unified_q2_world_particles(frontend_unified_q2 *o,const qa_scene_w
     qa_scene_frame *frame,qa_error *e)
 { return retained_world(o,world,true,false,frame,e); }
 static bool damage_blend_draw(qa_scene_frame *frame,const qa_scene_image *white,qa_scene_rect viewport,
-    qa_scene_vec4 rgba,qa_error *e)
+    qa_vec4 rgba,qa_error *e)
 {
     if (rgba.w==0 || !viewport.width || !viewport.height) return true;
-    rgba=(qa_scene_vec4){fog_fraction(rgba.x),fog_fraction(rgba.y),fog_fraction(rgba.z),fog_fraction(rgba.w)};
+    rgba=(qa_vec4){fog_fraction(rgba.x),fog_fraction(rgba.y),fog_fraction(rgba.z),fog_fraction(rgba.w)};
     qa_scene_vertex *vertices=qa_arena_alloc(&frame->storage,8*sizeof(*vertices),_Alignof(qa_scene_vertex),e);
     uint32_t *indices=qa_arena_alloc(&frame->storage,24*sizeof(*indices),_Alignof(uint32_t),e);
     if (!vertices || !indices) return false;
@@ -1643,7 +1643,7 @@ static bool damage_blend_draw(qa_scene_frame *frame,const qa_scene_image *white,
     return qa_scene_frame_emit(frame,&view,e) && qa_scene_frame_draw(frame,&draw,e);
 }
 bool frontend_unified_q2_player_blend(frontend_unified_q2 *o,qa_actor_id full_viewer,
-    bool blend_present,const qa_scene_vec4 *blend,bool damage_present,const qa_scene_vec4 *damage,
+    bool blend_present,const qa_vec4 *blend,bool damage_present,const qa_vec4 *damage,
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || o->busy || !current(o,e)) return false;
@@ -1662,7 +1662,7 @@ bool frontend_unified_q2_player_blend(frontend_unified_q2 *o,qa_actor_id full_vi
     const qa_scene_image *white=qa_scene_white(media_bank.images);
     ++o->busy;
     bool okay=(!blend_present || qa_scene_frame_picture(frame,white,viewport,viewport,
-        (qa_scene_vec4){0,0,1,1},*blend,e)) && (!damage_present || damage_blend_draw(frame,white,viewport,*damage,e));
+        (qa_vec4){0,0,1,1},*blend,e)) && (!damage_present || damage_blend_draw(frame,white,viewport,*damage,e));
     --o->busy;
     return okay && current(o,e);
 }
@@ -1720,7 +1720,7 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
     --o->busy; if (okay) { *out=o->lights; *count=o->light_count; } return okay;
 }
 static bool overlay_text(qa_ui *ui,qa_scene_rect target,qa_scene_frame *frame,const char *text,float x,float y,
-    qa_scene_vec4 color,qa_error *e)
+    qa_vec4 color,qa_error *e)
 {
     qa_ui_presentation presentation; qa_font_layout layout;
     if (!qa_ui_presentation_read(ui,&presentation,e)) return false;
@@ -1772,8 +1772,8 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
     qa_scene_rect_f rect={(float)viewport.x+truncf(((float)viewport.width-width)*.5f)+dx,
         (float)viewport.y+truncf(((float)viewport.height-height)*.5f)+dy,width,height};
     float opacity=(float)fmax(0,fmin(1,alpha->number));
-    return qa_scene_frame_picture_f(frame,o->marker_image,viewport,rect,(qa_scene_vec4){0,0,1,1},
-        (qa_scene_vec4){1,0,0,opacity*(1-fraction*fraction)},e);
+    return qa_scene_frame_picture_f(frame,o->marker_image,viewport,rect,(qa_vec4){0,0,1,1},
+        (qa_vec4){1,0,0,opacity*(1-fraction*fraction)},e);
 }
 static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,
     const int32_t inventory[256],const char *layout,int32_t player_number,
@@ -1822,19 +1822,19 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     --o->busy;
     if (okay) okay=marker_draw(o,viewport,frame,e);
     if (okay && o->inventory_visible && !o->status.hud && !replacement) {
-        okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_scene_vec4){1,1,1,1},e);
+        okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_vec4){1,1,1,1},e);
         for (size_t i=0;okay && i<o->item_count;++i) {
             char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
             size_t label_size=strlen(o->items[i].label); if (label_size>SIZE_MAX-64) { okay=false; break; }
             char *row=malloc(label_size+64); if (!row) { okay=false; break; }
             snprintf(row,label_size+64,"%s  %s",count,o->items[i].label);
             okay=overlay_text(ui,viewport,frame,row,160,108+(float)i*16,
-                o->items[i].selected?(qa_scene_vec4){1,.8f,.3f,1}:(qa_scene_vec4){1,1,1,1},e); free(row);
+                o->items[i].selected?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e); free(row);
         }
     }
     if (okay && (o->score_visible || qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)))
         for (size_t i=0;okay && i<o->score_count;++i)
-            okay=overlay_text(ui,viewport,frame,o->score_rows[i],64,110+(float)i*20,(qa_scene_vec4){1,1,1,1},e);
+            okay=overlay_text(ui,viewport,frame,o->score_rows[i],64,110+(float)i*20,(qa_vec4){1,1,1,1},e);
     if (okay) okay=story_draw(o,ui,viewport,frame,e);
     if (okay) okay=frontend_unified_q2_rr_draw(o->rr_hud,ui,viewport,frame,e);
     return okay;

@@ -50,7 +50,7 @@ typedef struct qa_material_stage {
     bool lightmap, is_lightmap, vertex_lightmap, clamp, detail, video, retain_texture, invalid_blend;
     qa_scene_fog_effect fog_adjustment;
     qa_material_color_kind rgb, alpha;
-    qa_scene_vec4 constant;
+    qa_vec4 constant;
     qa_material_wave rgb_wave, alpha_wave;
     float portal_range;
     qa_material_tcgen tcgen;
@@ -105,7 +105,7 @@ typedef struct qa_material_context {
     qa_scene_view view;
     qa_scene_matrix model;
     /* Color and light channel units are normalized: one equals source byte 255. */
-    qa_scene_vec4 entity_color;
+    qa_vec4 entity_color;
     qa_vec3 ambient, directed, light_direction, local_view_origin;
     qa_vec2 entity_texcoord;
     float identity_light, time_offset, shadow_plane;

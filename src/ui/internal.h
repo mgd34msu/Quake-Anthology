@@ -49,10 +49,10 @@ bool ui_change(qa_ui *, const qa_ui_control *, int, qa_error *);
 bool ui_text(qa_ui *, const qa_ui_control *, const char *, qa_error *);
 bool ui_activate(qa_ui *, const qa_ui_control *, qa_error *);
 bool ui_inside(qa_scene_rect_f, qa_vec2);
-bool ui_fill(qa_ui *, qa_scene_frame *, qa_scene_rect, qa_scene_rect_f, qa_scene_vec4, qa_error *);
+bool ui_fill(qa_ui *, qa_scene_frame *, qa_scene_rect, qa_scene_rect_f, qa_vec4, qa_error *);
 bool ui_draw_text(qa_ui *, qa_scene_frame *, qa_scene_rect, float, float, const char *,
-                  qa_scene_vec4, float, qa_font_alignment, qa_error *);
-bool ui_draw_source_text(qa_ui *,qa_scene_frame *,qa_scene_rect,float,float,const char *,qa_scene_vec4,
+                  qa_vec4, float, qa_font_alignment, qa_error *);
+bool ui_draw_source_text(qa_ui *,qa_scene_frame *,qa_scene_rect,float,float,const char *,qa_vec4,
     float,qa_font_alignment,qa_error *);
 float ui_glyph_width(qa_ui *, uint32_t);
 bool ui_search(const char *, const char *, const char *, qa_bytes, bool *, qa_error *);

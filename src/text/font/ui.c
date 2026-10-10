@@ -53,8 +53,8 @@ static bool draw_pass(qa_scene_frame *frame, const qa_font_layout *layout,
             positioned->rect.width * transform.scale_x,
             positioned->rect.height * transform.scale_y,
         };
-        qa_scene_vec4 color =
-            shadow ? (qa_scene_vec4){0, 0, 0, positioned->color.w} : positioned->color;
+        qa_vec4 color =
+            shadow ? (qa_vec4){0, 0, 0, positioned->color.w} : positioned->color;
         if (!qa_scene_frame_picture_f(frame, positioned->glyph.image, options->target, rect,
                                       positioned->glyph.uv, color, error))
             return false;

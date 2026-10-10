@@ -17,7 +17,7 @@ struct qa_scene_q1_sky {
     qa_scene_world_input input;
     qa_scene_q1_sky_environment environment;
     qa_scene_sky_bounds bounds[6];
-    qa_scene_vec4 flat;
+    qa_vec4 flat;
     const qa_scene_image *layers[2];
     q1_sky_polygon *head, *tail;
     bool finished;
@@ -72,11 +72,11 @@ bool qa_scene_world_q1_sky_begin(qa_scene_world *world, const qa_scene_world_inp
         }
         if (opaque) {
             double denominator = (double)opaque * 255.0;
-            sky->flat = (qa_scene_vec4){(float)(sum[0] / denominator),
+            sky->flat = (qa_vec4){(float)(sum[0] / denominator),
                 (float)(sum[1] / denominator), (float)(sum[2] / denominator), 1};
         }
     }
-    if (input->fog.density > 0) sky->flat = (qa_scene_vec4){input->fog.color.x, input->fog.color.y, input->fog.color.z, 1};
+    if (input->fog.density > 0) sky->flat = (qa_vec4){input->fog.color.x, input->fog.color.y, input->fog.color.z, 1};
     *out = sky; return true;
 }
 bool qaw_q1_sky_collect(qa_scene_q1_sky *sky, const qa_scene_mesh *source,
@@ -114,7 +114,7 @@ static bool draw_mesh(qa_scene_q1_sky *sky, const qa_scene_mesh *mesh,
     return qa_scene_frame_draw(sky->frame, &draw, error);
 }
 static bool colored_mesh(qa_scene_q1_sky *sky, const qa_scene_mesh *source,
-    qa_scene_vec4 color, unsigned layer, bool cloud, qa_scene_mesh *out, qa_error *error)
+    qa_vec4 color, unsigned layer, bool cloud, qa_scene_mesh *out, qa_error *error)
 {
     qa_scene_vertex *vertices; uint32_t *indices;
     if (!qa_effect_mesh(sky->frame, source->vertex_count, source->index_count, out, &vertices, &indices, error)) return false;
@@ -141,7 +141,7 @@ static bool fog_mesh(qa_scene_q1_sky *sky, const qa_scene_mesh *mesh, qa_error *
 {
     if (!(sky->input.fog.density > 0 && sky->environment.fog > 0)) return true;
     qa_scene_mesh overlay;
-    qa_scene_vec4 color = {sky->input.fog.color.x, sky->input.fog.color.y,
+    qa_vec4 color = {sky->input.fog.color.x, sky->input.fog.color.y,
         sky->input.fog.color.z, fminf(1, sky->environment.fog)};
     return colored_mesh(sky, mesh, color, 0, false, &overlay, error) &&
         draw_mesh(sky, &overlay, NULL, true, false, error);
@@ -181,7 +181,7 @@ static bool face_mesh(qa_scene_q1_sky *sky, unsigned face, const qa_scene_sky_bo
             qa_scene_vertex *vertex = vertices + base + v;
             qa_vec3 direction = qa_effect_sky_vector(face, horizontal[v] * 2 - 1, height[v] * 2 - 1, radius);
             vertex->position = qa_vec_add(sky->input.view.origin, direction);
-            vertex->color = (qa_scene_vec4){1, 1, 1, 1};
+            vertex->color = (qa_vec4){1, 1, 1, 1};
             if (boxed) {
                 float w = (float)image->levels[0].width, h = (float)image->levels[0].height;
                 vertex->texcoord = (qa_vec2){horizontal[v] * (w - 1) / w + .5f / w,
@@ -216,7 +216,7 @@ bool qa_scene_world_q1_sky_finish(qa_scene_q1_sky *sky, qa_scene_frame *frame, q
                 if (!draw_mesh(sky, &mesh, sky->environment.images[face], false, false, error)) goto failed;
             } else for (unsigned layer = 0; layer < 2; ++layer) {
                 qa_scene_mesh clouds;
-                if (!colored_mesh(sky, &mesh, (qa_scene_vec4){1, 1, 1,
+                if (!colored_mesh(sky, &mesh, (qa_vec4){1, 1, 1,
                     layer && sky->environment.alpha < 1 ? sky->environment.alpha : 1}, layer, true, &clouds, error) ||
                     !draw_mesh(sky, &clouds, sky->layers[layer], layer != 0, false, error)) goto failed;
             }

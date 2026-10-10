@@ -15,7 +15,7 @@ static void source_index_admit(qa_gl_renderer *renderer, gl_texture_entry *entry
                         entry->source_owner, entry);
 }
 
-static bool finite4(qa_scene_vec4 value)
+static bool finite4(qa_vec4 value)
 {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z) &&
            isfinite(value.w);
@@ -489,7 +489,7 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
     }
     return gl_check(renderer,"Source completed image admission",error);
 }
-bool qa_gl_source_texture_border(qa_render_controls *controls,qa_scene_vec4 color,qa_error *error)
+bool qa_gl_source_texture_border(qa_render_controls *controls,qa_vec4 color,qa_error *error)
 {
     qa_gl_renderer *renderer=controls->owner.gl;
     if (!qa_display_make_current(renderer->options.display,error)) return false;

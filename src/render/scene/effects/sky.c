@@ -132,7 +132,7 @@ static bool visible(qa_scene_sky_bounds bounds)
 static bool submit_face(qa_scene_frame *frame, const qa_scene_view *view,
                          const qa_scene_image *image, unsigned face,
                          qa_scene_sky_bounds range, float radius, float rotation,
-                         qa_vec3 axis, float seam, qa_scene_vec4 color, qa_error *error)
+                         qa_vec3 axis, float seam, qa_vec4 color, qa_error *error)
 {
     qa_scene_mesh mesh;
     qa_scene_vertex *vertices;
@@ -165,7 +165,7 @@ static bool submit_face(qa_scene_frame *frame, const qa_scene_view *view,
 
 bool qa_scene_sky(qa_scene_frame *frame, const qa_scene_view *view,
                   const qa_scene_image *const images[6], float radius, float rotation,
-                  qa_vec3 axis, qa_scene_vec4 color, qa_error *error)
+                  qa_vec3 axis, qa_vec4 color, qa_error *error)
 {
     if (!frame || !view || !images || !isfinite(radius) || radius <= 0 || !isfinite(rotation) || !qa_vec_finite(axis)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid sky parameters");
@@ -180,7 +180,7 @@ bool qa_scene_sky(qa_scene_frame *frame, const qa_scene_view *view,
 
 bool qa_scene_q2_sky(qa_scene_frame *frame, const qa_scene_view *view,
                      const qa_scene_image *const images[6], const qa_scene_sky_bounds bounds[6],
-                     float rotation, qa_vec3 axis, bool rotating, qa_scene_vec4 color, qa_error *error)
+                     float rotation, qa_vec3 axis, bool rotating, qa_vec4 color, qa_error *error)
 {
     if (!frame || !view || !images || !bounds || !isfinite(rotation) || !qa_vec_finite(axis)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 sky parameters");
@@ -250,7 +250,7 @@ bool qa_scene_q3_sky_geometry(qa_scene_frame *frame, qa_vec3 origin, float far_c
             vertices[cursor].position = qa_vec_add(origin, direction);
             vertices[cursor].normal = qa_vec_normalize(qa_vec_scale(direction, -1));
             vertices[cursor].texcoord = (qa_vec2){((float)s / 4 + 1) * 0.5f, 1 - ((float)t / 4 + 1) * 0.5f};
-            vertices[cursor++].color = (qa_scene_vec4){1, 1, 1, 1};
+            vertices[cursor++].color = (qa_vec4){1, 1, 1, 1};
         }
         cursor = 0;
         for (size_t t = 0; t + 1 < height; ++t) for (size_t s = 0; s + 1 < width; ++s) {

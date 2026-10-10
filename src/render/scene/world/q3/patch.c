@@ -18,7 +18,7 @@ static qa_scene_vertex midpoint(qa_scene_vertex a, qa_scene_vertex b) {
                                (a.texcoord.y + b.texcoord.y) * 0.5f};
     p.lightmap = (qa_vec2){(a.lightmap.x + b.lightmap.x) * 0.5f,
                                (a.lightmap.y + b.lightmap.y) * 0.5f};
-    p.color = (qa_scene_vec4){floorf((roundf(a.color.x * 255) + roundf(b.color.x * 255)) * 0.5f) / 255,
+    p.color = (qa_vec4){floorf((roundf(a.color.x * 255) + roundf(b.color.x * 255)) * 0.5f) / 255,
                             floorf((roundf(a.color.y * 255) + roundf(b.color.y * 255)) * 0.5f) / 255,
                             floorf((roundf(a.color.z * 255) + roundf(b.color.z * 255)) * 0.5f) / 255,
                             floorf((roundf(a.color.w * 255) + roundf(b.color.w * 255)) * 0.5f) / 255};
@@ -342,7 +342,7 @@ bool qaw_patch_prepare(qa_scene_world *world, qa_error *error) {
 bool qaw_patch_lod(const qaw_surface *surface, qa_material_context *context, float curve_error,
                    qa_scene_frame *frame, qa_scene_mesh *mesh, qa_error *error) {
     const qaw_patch *p = surface->patch;
-    qa_scene_vec4 transformed = qa_scene_matrix_point(context->model, p->lod_origin);
+    qa_vec4 transformed = qa_scene_matrix_point(context->model, p->lod_origin);
     qa_vec3 origin = qa_v3(transformed.x, transformed.y, transformed.z);
     float distance = fabsf(qa_vec_dot(qa_vec_sub(origin, context->view.origin), context->view.axis[0])) - p->lod_radius;
     float threshold = curve_error < 0 ? 0 : curve_error / fmaxf(1, distance);

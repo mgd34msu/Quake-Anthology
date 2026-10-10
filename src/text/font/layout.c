@@ -7,7 +7,7 @@
 
 typedef struct layout_cell {
     qa_font_glyph glyph;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     size_t source_offset;
     uint32_t codepoint;
     bool newline, tab, breakable;
@@ -18,16 +18,16 @@ typedef struct row_span {
     float width;
 } row_span;
 
-static bool finite_color(qa_scene_vec4 color) {
+static bool finite_color(qa_vec4 color) {
     return isfinite(color.x) && isfinite(color.y) && isfinite(color.z) && isfinite(color.w);
 }
 
-static qa_scene_vec4 q3_color(uint32_t codepoint, float alpha) {
-    static const qa_scene_vec4 colors[8] = {
+static qa_vec4 q3_color(uint32_t codepoint, float alpha) {
+    static const qa_vec4 colors[8] = {
         {0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 1, 0, 1},
         {0, 0, 1, 1}, {0, 1, 1, 1}, {1, 0, 1, 1}, {1, 1, 1, 1},
     };
-    qa_scene_vec4 result = colors[(codepoint - (uint32_t)'0') & 7u];
+    qa_vec4 result = colors[(codepoint - (uint32_t)'0') & 7u];
     result.w = alpha;
     return result;
 }
@@ -125,7 +125,7 @@ bool qa_font_layout_build(const qa_font_selection *selection, const qa_font_layo
         return false;
 
     size_t cell_count = 0, glyph_limit_count = 0, at = 0;
-    qa_scene_vec4 color = options->color;
+    qa_vec4 color = options->color;
     while (at < options->text.size) {
         size_t source_offset = at;
         uint32_t codepoint;
@@ -157,11 +157,11 @@ bool qa_font_layout_build(const qa_font_selection *selection, const qa_font_layo
         if (!qa_font_resolve(selection, resolved, options->alternate, &glyph))
             return qa_font_fail(error, QA_ERROR_FORMAT, source_offset,
                                 "Font selection cannot resolve replacement glyph");
-        qa_scene_vec4 tint = color;
+        qa_vec4 tint = color;
         if (glyph.baked_color)
-            tint = (qa_scene_vec4){1, 1, 1, color.w};
+            tint = (qa_vec4){1, 1, 1, color.w};
         else if (options->alternate)
-            tint = (qa_scene_vec4){0.85f, 0.65f, 0.12f, color.w};
+            tint = (qa_vec4){0.85f, 0.65f, 0.12f, color.w};
         cells[cell_count++] = (layout_cell){
             .glyph = glyph,
             .color = tint,

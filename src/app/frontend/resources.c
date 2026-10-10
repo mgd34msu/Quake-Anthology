@@ -31,7 +31,7 @@ static bool bootstrap_charset(qa_frontend *frontend, qa_error *error)
     qa_scene_image *image = NULL;
     qa_scene_image_level level = {128, 128, pixels, sizeof(pixels)};
     if (!qa_scene_image_create(frontend->ui_images, "frontend:bootstrap-charset", QA_SCENE_RGBA8,
-        &level, 1, QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_scene_vec4){0}, &image, error)) return false;
+        &level, 1, QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_vec4){0}, &image, error)) return false;
     bool ok = qa_font_classic_create(frontend->fonts, "bootstrap charset", image,
         QA_FONT_TINTED, &frontend->classic, error);
     qa_scene_image_release(image);
@@ -73,7 +73,7 @@ bool frontend_resources(qa_frontend *frontend, qa_error *error)
     const uint8_t background[] = {8, 8, 12, 235};
     qa_scene_image_level pixel = {1, 1, background, sizeof(background)};
     if (!qa_scene_image_create(frontend->ui_images, "frontend:console-background", QA_SCENE_RGBA8,
-        &pixel, 1, QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_scene_vec4){0},
+        &pixel, 1, QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_vec4){0},
         &frontend->console_background, error)) return false;
     frontend->fonts = qa_font_library_create(frontend->ui_mounts, frontend->ui_images, error);
     if (!frontend->fonts || !frontend_ui_features_prepare(frontend, error)) return false;

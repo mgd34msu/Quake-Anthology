@@ -431,7 +431,7 @@ bool remote_q1_effects_models(frontend_remote_q1 *row,const qa_scene_view *view,
     return remote_q1_live(row,error);
 }
 bool remote_q1_effects_blend(frontend_remote_q1 *row,const qa_scene_view *view,
-    double seconds,qa_scene_vec4 blend,qa_error *error)
+    double seconds,qa_vec4 blend,qa_error *error)
 {
     if(!row || !view || !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
     frontend_remote_q1_effects *fx=row->effects;
@@ -444,7 +444,7 @@ bool remote_q1_effects_blend(frontend_remote_q1 *row,const qa_scene_view *view,
         blend.z=blend.z*(1-weight)+(69.0f/255)*weight; blend.w=alpha;
     }
     return blend.w<=0 || qa_scene_frame_picture(&row->frontend->frame,qa_scene_white(row->images),
-        view->viewport,view->viewport,(qa_scene_vec4){0,0,1,1},blend,error);
+        view->viewport,view->viewport,(qa_vec4){0,0,1,1},blend,error);
 }
 bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_error *error)
@@ -479,7 +479,7 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
         qa_scene_q1_particle_state *p=fx->particles.values.q1+i-1;
         if(p->die<world->seconds) continue;
         uint32_t n=(p->color&255)*3;
-        qa_scene_vec4 color={palette.data[n]/255.0f,palette.data[n+1]/255.0f,palette.data[n+2]/255.0f,1};
+        qa_vec4 color={palette.data[n]/255.0f,palette.data[n+1]/255.0f,palette.data[n+2]/255.0f,1};
         particles[batch.count++]=(qa_scene_particle_sample){.origin=p->origin,.color=color};
     }
     if(!qa_scene_particles(&row->frontend->frame,&batch,error)) return false;

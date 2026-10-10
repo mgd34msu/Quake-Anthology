@@ -1,11 +1,11 @@
 #include "internal.h"
 #include "../entities/internal.h"
 
-static qa_q2_blend blend_add(qa_q2_blend b, qa_vec3 color, float alpha) {
+static qa_vec4 blend_add(qa_vec4 b, qa_vec3 color, float alpha) {
     if (alpha <= 0)
         return b;
     float total = b.w + (1 - b.w) * alpha, old = b.w / total;
-    return (qa_q2_blend){b.x * old + color.x * (1 - old), b.y * old + color.y * (1 - old),
+    return (qa_vec4){b.x * old + color.x * (1 - old), b.y * old + color.y * (1 - old),
                          b.z * old + color.z * (1 - old), total};
 }
 static float kick_ratio(uint64_t until, uint64_t now, float duration, float slack) {
@@ -494,11 +494,11 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                    (s->rule.show_inventory && combat.health > 0 ? 2 : 0);
     if (intermission) {
         view.offset = view.kick_angles = qa_v3(0, 0, 0);
-        view.blend = (qa_q2_blend){0};
+        view.blend = (qa_vec4){0};
         view.underwater = false;
     }
     if (players->fade_ns)
-        view.blend = (qa_q2_blend){
+        view.blend = (qa_vec4){
             0, 0, 0, q2_clamp(1 - (q2_seconds_left(players->fade_ns, g->now_ns) - .3f), 0, 1)};
     a->wire_view = (qa_q2_wire_view){.view = view, .frame = g->wire_frame,
         .time_ns = g->now_ns, .present = true};

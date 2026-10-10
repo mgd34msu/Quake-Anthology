@@ -332,7 +332,7 @@ bool frontend_view_q1_local_bonus(qa_frontend *f, qa_actor_id actor, qa_error *e
 { return local_bonus(f, actor, NULL, error); }
 bool frontend_view_q1_local_bonus_commands(qa_frontend *f, qa_actor_id actor, const char *commands, qa_error *error)
 { return local_bonus(f, actor, commands, error); }
-qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
+qa_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
     const frontend_q1_view_motion *state, int32_t contents, bool quakeworld, uint32_t items)
 {
     qa_vec3 colors[4] = {{0,0,0}, state->damage_color, {215,186,69}, {0,0,0}};
@@ -358,7 +358,7 @@ qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings
         color.y = color.y * (1 - weight) + colors[i].y * weight;
         color.z = color.z * (1 - weight) + colors[i].z * weight;
     }
-    return (qa_scene_vec4){color.x/255,color.y/255,color.z/255,fmaxf(0,fminf(1,alpha))};
+    return (qa_vec4){color.x/255,color.y/255,color.z/255,fmaxf(0,fminf(1,alpha))};
 }
 const char *frontend_view_q1_face(int32_t health, uint32_t items, double seconds,
     const frontend_q1_view_motion *state)

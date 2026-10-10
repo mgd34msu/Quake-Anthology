@@ -396,12 +396,12 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         qa_q3_refdef view;
         ok = refdef(call, &view, error) && render(call, seat, &view, error);
     } else if (service == (ui ? 26 : 45)) {
-        qa_scene_vec4 color;
+        qa_vec4 color;
         uint8_t bytes[16];
         if (call->arguments[0]) {
             if (!q3_read(call, call->arguments[0], bytes, sizeof(bytes), error))
                 return Q3_FAILED;
-            color = (qa_scene_vec4){qa_load_f32le(bytes), qa_load_f32le(bytes + 4),
+            color = (qa_vec4){qa_load_f32le(bytes), qa_load_f32le(bytes + 4),
                                     qa_load_f32le(bytes + 8), qa_load_f32le(bytes + 12)};
         }
         qa_q3_presentation_color(seat, call->arguments[0] ? &color : NULL);
@@ -409,7 +409,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
     } else if (service == (ui ? 27 : 46)) {
         ok = qa_q3_presentation_picture(seat, q3_integer(call, 8),
             (qa_scene_rect_f){q3_float(call, 0), q3_float(call, 1), q3_float(call, 2), q3_float(call, 3)},
-            (qa_scene_vec4){q3_float(call, 4), q3_float(call, 5), q3_float(call, 6), q3_float(call, 7)}, error);
+            (qa_vec4){q3_float(call, 4), q3_float(call, 5), q3_float(call, 6), q3_float(call, 7)}, error);
     } else if (service == (ui ? 56 : 47)) {
         q3_record minimum, maximum;
         qa_bounds bounds;

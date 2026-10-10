@@ -49,9 +49,9 @@ typedef struct frontend_unified_render_children {
     bool (*reflected_world)(void *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
     bool (*world_models)(void *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
     bool (*particles)(void *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
-    bool (*dlights)(void *,const qa_scene_world_input *,qa_scene_frame *,qa_scene_vec4 *,qa_error *);
-    bool (*blend)(void *,const qa_scene_world_input *,qa_scene_vec4,qa_scene_frame *,qa_error *);
-    bool (*player_blend)(void *,qa_actor_id,bool,const qa_scene_vec4 *,bool,const qa_scene_vec4 *,
+    bool (*dlights)(void *,const qa_scene_world_input *,qa_scene_frame *,qa_vec4 *,qa_error *);
+    bool (*blend)(void *,const qa_scene_world_input *,qa_vec4,qa_scene_frame *,qa_error *);
+    bool (*player_blend)(void *,qa_actor_id,bool,const qa_vec4 *,bool,const qa_vec4 *,
         qa_scene_rect,qa_scene_frame *,qa_error *);
     bool (*hud)(void *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
     bool (*model)(void *, qa_actor_id, const char *content, const char *path, qa_scene_model_input *, qa_error *);

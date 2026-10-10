@@ -32,7 +32,6 @@ typedef struct qa_scene_source_diagnostics {
 } qa_scene_source_diagnostics;
 typedef bool (*qa_scene_source_diagnostics_read_fn)(void *, qa_scene_source_diagnostics *, qa_error *);
 
-typedef struct qa_scene_vec4 { float x, y, z, w; } qa_scene_vec4;
 typedef struct qa_scene_matrix { float m[16]; } qa_scene_matrix;
 typedef struct qa_scene_rect { int32_t x, y; uint32_t width, height; } qa_scene_rect;
 typedef struct qa_scene_rect_f { float x, y, width, height; } qa_scene_rect_f;
@@ -55,7 +54,7 @@ typedef struct qa_scene_image {
     qa_scene_image_kind kind;
     qa_scene_wrap wrap;
     qa_scene_filter filter;
-    qa_scene_vec4 border;
+    qa_vec4 border;
     const qa_scene_image_level *levels;
     size_t level_count;
     uint32_t logical_width, logical_height;
@@ -72,7 +71,7 @@ typedef struct qa_scene_image {
     uint32_t source_texture_unit;
     bool source_after_upload_border;
     bool source_dlight;
-    qa_scene_vec4 source_upload_border;
+    qa_vec4 source_upload_border;
     /* Original decoded embedded model/BSP pixels may admit a recipient upload;
      * dynamic cinematic and generated control surfaces retain their identity. */
     bool recipient_upload_pixels, recipient_mipmap;
@@ -285,10 +284,10 @@ typedef struct qa_scene_embedded_image { const char *name; qa_bytes png; } qa_sc
 bool qa_scene_resources_bind_embedded_images(qa_scene_resources *,
     const qa_scene_embedded_image *, size_t count, qa_error *);
 bool qa_scene_image_load_embedded(qa_scene_resources *, const char *name, qa_scene_wrap,
-    qa_scene_filter, qa_scene_vec4 border, qa_scene_image **, qa_error *);
+    qa_scene_filter, qa_vec4 border, qa_scene_image **, qa_error *);
 bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_kind,
                           const qa_scene_image_level *, size_t, qa_scene_wrap,
-                          qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);
+                          qa_scene_filter, qa_vec4, qa_scene_image **, qa_error *);
 bool qa_scene_image_stream_create(qa_scene_resources *, const char *, uint32_t, uint32_t,
                                   qa_scene_image **, qa_error *);
 /* Construction writes need no frame. Live writes use frame_image_stream_write.
@@ -380,7 +379,7 @@ const qa_scene_image *qa_scene_missing(const qa_scene_resources *);
 typedef struct qa_scene_vertex {
     qa_vec3 position, normal;
     qa_vec2 texcoord, lightmap;
-    qa_scene_vec4 color;
+    qa_vec4 color;
 } qa_scene_vertex;
 /* Takes both malloc-compatible arrays only on success, without copying. Finish
  * writing before publishing the first frame; replace rather than mutate a
@@ -490,7 +489,7 @@ typedef struct qa_scene_light {
 } qa_scene_light;
 typedef struct qa_scene_shadow_light {
     qa_scene_light light;
-    qa_scene_vec4 atlas_rect;
+    qa_vec4 atlas_rect;
     qa_scene_matrix shadow_matrix;
     bool point_shadow, shadow_valid;
     qa_vec3 model_fraction;
@@ -503,7 +502,7 @@ typedef enum qa_scene_source_direct {
     QA_SOURCE_DIRECT_SHADOW_FINISH, QA_SOURCE_DIRECT_SHADOW_VOLUME_END, QA_SOURCE_DIRECT_RAW, QA_SOURCE_DIRECT_IMAGE_GRID
 } qa_scene_source_direct;
 typedef struct qa_scene_vertex_inputs {
-    qa_scene_vec4 color;
+    qa_vec4 color;
     bool constant_color, swap_uv;
 } qa_scene_vertex_inputs;
 typedef struct qa_scene_brush_surface {
@@ -536,7 +535,7 @@ typedef struct qa_scene_skin_sample {
 typedef struct qa_scene_skinning {
     const qa_scene_skin_pose *pose;
     qa_vec3 shade_direction, light;
-    qa_scene_vec4 tint;
+    qa_vec4 tint;
     float shell;
     bool shade;
     qa_scene_skin_sample *sample;
@@ -590,14 +589,14 @@ typedef struct qa_scene_view {
     qa_vec3 origin, axis[3];
     qa_scene_matrix projection;
     bool clear_color, clear_depth, clear_stencil, clip_enabled, mirror;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     float depth;
     qa_scene_plane clip_plane;
     uint32_t seat;
 } qa_scene_view;
 typedef struct qa_scene_particle_sample {
     qa_vec3 origin;
-    qa_scene_vec4 color;
+    qa_vec4 color;
 } qa_scene_particle_sample;
 typedef struct qa_scene_particle_batch {
     qa_scene_view view;
@@ -731,18 +730,18 @@ bool qa_scene_frame_group(qa_scene_frame *, size_t first, qa_scene_group_kind,
  * sorts pending groups once and optionally appends the Q2 depth-fog pass. */
 bool qa_scene_frame_finish(qa_scene_frame *, const qa_scene_view *, const qa_scene_fog *, qa_error *);
 bool qa_scene_frame_picture(qa_scene_frame *, const qa_scene_image *, qa_scene_rect target,
-                            qa_scene_rect rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *);
+                            qa_scene_rect rect, qa_vec4 uv, qa_vec4 color, qa_error *);
 bool qa_scene_frame_picture_f(qa_scene_frame *, const qa_scene_image *, qa_scene_rect target,
-                              qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *);
+                              qa_scene_rect_f rect, qa_vec4 uv, qa_vec4 color, qa_error *);
 /* Clipped pixel-space quad owned by frame storage. Empty output means no overlap. */
 bool qa_scene_picture_geometry(qa_scene_frame *, qa_scene_rect target, qa_scene_rect_f,
-                               qa_scene_vec4 uv, qa_scene_vec4 color, qa_scene_mesh *, qa_error *);
+                               qa_vec4 uv, qa_vec4 color, qa_scene_mesh *, qa_error *);
 void qa_scene_state_default(qa_scene_state *);
 void qa_scene_matrix_identity(qa_scene_matrix *);
 qa_scene_matrix qa_scene_matrix_multiply(qa_scene_matrix, qa_scene_matrix);
 qa_scene_matrix qa_scene_view_matrix(const qa_scene_view *);
 qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, float far_clip);
-qa_scene_vec4 qa_scene_matrix_point(qa_scene_matrix, qa_vec3);
+qa_vec4 qa_scene_matrix_point(qa_scene_matrix, qa_vec3);
 qa_scene_matrix qa_scene_model_matrix(const qa_model_transform *);
 /* Four lateral planes plus the optional portal plane; near/far clipping belongs
  * to rasterization. Q3 source traversal deliberately selects only the first4. */
@@ -899,7 +898,7 @@ bool qa_scene_world_source_sky_submit(const qa_scene_world *, const qa_material 
 bool qa_scene_world_submit(qa_scene_world *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool qa_scene_world_submit_model(qa_scene_world *, uint32_t model, const qa_model_transform *,
                                  const qa_scene_world_input *, uint32_t entity,
-                                 qa_scene_vec4 color, qa_scene_frame *, qa_error *);
+                                 qa_vec4 color, qa_scene_frame *, qa_error *);
 bool qa_scene_world_source_model_admission(const qa_scene_world *, uint32_t model,
     const qa_model_transform *, const qa_scene_world_input *, bool *visible, qa_error *);
 bool qa_scene_world_sample_light(const qa_scene_world *, qa_vec3 point, qa_vec3 *ambient,
@@ -957,7 +956,7 @@ struct qa_scene_model_input {
     qa_scene_view view;
     qa_model_transform transform;
     qa_vec3 previous_origin, ambient, directed, light_direction;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     qa_game_family family;
     qa_scene_alias_lighting alias_lighting;
     qa_vec3 alias_light;
@@ -1041,10 +1040,10 @@ bool qa_scene_world_portal_view(qa_scene_world *, const qa_scene_world_input *,
 bool qa_scene_portal_view(const qa_scene_view *, qa_scene_plane, const qa_scene_portal *,
                           double seconds, qa_scene_view *, qa_vec3 *pvs_origin);
 bool qa_scene_beam(qa_scene_frame *, const qa_scene_view *, qa_vec3 start, qa_vec3 end,
-                   float width, qa_scene_vec4 color, const qa_scene_image *, qa_error *);
+                   float width, qa_vec4 color, const qa_scene_image *, qa_error *);
 bool qa_scene_sky(qa_scene_frame *, const qa_scene_view *,
                   const qa_scene_image *const images[6], float radius, float rotation,
-                  qa_vec3 axis, qa_scene_vec4 color, qa_error *);
+                  qa_vec3 axis, qa_vec4 color, qa_error *);
 typedef struct qa_scene_shadow_caster {
     const qa_scene_mesh *meshes;
     size_t mesh_count;

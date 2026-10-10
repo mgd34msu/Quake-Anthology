@@ -7,7 +7,7 @@ const qa_material *q3p_default_material(const qa_q3_presentation *p)
     return qa_material_find(p->options.assets->options.provider.materials, "*default");
 }
 static bool source_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
-    qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_scene_mesh *mesh, qa_error *error)
+    qa_scene_rect_f rect, qa_vec4 uv, qa_vec4 color, qa_scene_mesh *mesh, qa_error *error)
 {
     if (!target.width || !target.height || !isfinite(rect.x) || !isfinite(rect.y) ||
         !isfinite(rect.width) || !isfinite(rect.height) || !isfinite(rect.x + rect.width) ||
@@ -30,13 +30,13 @@ static bool source_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
 }
 
 static bool picture_emit(qa_q3_presentation *p, const qa_material *material,
-    qa_scene_rect_f rect, qa_scene_vec4 uv, const qa_q3_picture_receipt *receipt, qa_error *error)
+    qa_scene_rect_f rect, qa_vec4 uv, const qa_q3_picture_receipt *receipt, qa_error *error)
 {
     if (!p->frame) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 picture has no frame owner");
     if (!material) material = q3p_default_material(p);
     if (!material) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 renderer has no default material");
     qa_scene_rect target = receipt ? receipt->viewport : p->options.viewport;
-    qa_scene_vec4 color = receipt ? receipt->color : p->color;
+    qa_vec4 color = receipt ? receipt->color : p->color;
     uint32_t seat = receipt ? receipt->seat : p->options.seat;
     rect.x += (float)target.x; rect.y += (float)target.y;
     qa_scene_mesh mesh;
@@ -102,11 +102,11 @@ static bool picture_emit(qa_q3_presentation *p, const qa_material *material,
     return true;
 }
 bool q3p_picture(qa_q3_presentation *p, const qa_material *material,
-    qa_scene_rect_f rect, qa_scene_vec4 uv, qa_error *error)
+    qa_scene_rect_f rect, qa_vec4 uv, qa_error *error)
 { return picture_emit(p, material, rect, uv, NULL, error); }
 
 static bool raw_picture_emit(qa_q3_presentation *p,const qa_scene_image *image,qa_scene_rect_f rect,
-    qa_scene_vec4 uv,qa_scene_vec4 color,const qa_q3_picture_receipt *receipt,qa_error *error)
+    qa_vec4 uv,qa_vec4 color,const qa_q3_picture_receipt *receipt,qa_error *error)
 {
     const qa_q3_presentation_assets *assets=p?p->options.assets:NULL;
     if (!p || !p->frame || !p->busy || !assets || assets->busy!=1 || !image)
@@ -139,7 +139,7 @@ static bool raw_picture_emit(qa_q3_presentation *p,const qa_scene_image *image,q
     return qa_scene_frame_emit(p->frame,&view,error) && qa_scene_frame_draw(p->frame,&draw,error);
 }
 bool q3p_source_raw_picture(qa_q3_presentation *p,const qa_scene_image *image,qa_scene_rect_f rect,
-    qa_scene_vec4 uv,qa_scene_vec4 color,qa_error *error)
+    qa_vec4 uv,qa_vec4 color,qa_error *error)
 {
     if (!p || !p->options.assets || !image || (qa_scene_image_resource_owner(image)!=p->options.assets->options.provider.images &&
         (!p->options.cinematics || !qa_q3_cinematic_handles_image_is(
@@ -149,7 +149,7 @@ bool q3p_source_raw_picture(qa_q3_presentation *p,const qa_scene_image *image,qa
 }
 
 bool qa_q3_presentation_picture(qa_q3_presentation *p, int32_t shader,
-                                qa_scene_rect_f rect, qa_scene_vec4 uv, qa_error *error)
+                                qa_scene_rect_f rect, qa_vec4 uv, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
     const qa_material *material;

@@ -33,12 +33,9 @@ typedef struct qa_q2_player_motion {
     bool has_command_view_angles, preserve_view_angles;
     const qa_movement_result *restore;
 } qa_q2_player_motion;
-typedef struct qa_q2_blend {
-    float x, y, z, w;
-} qa_q2_blend;
 typedef struct qa_q2_player_view {
     qa_vec3 angles, offset, kick_angles, gun_angles, gun_offset;
-    qa_q2_blend blend;
+    qa_vec4 blend;
     float fov, health, ammo;
     double armor;
     qa_string_id ammo_icon, armor_icon;

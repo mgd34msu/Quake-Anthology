@@ -300,7 +300,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     out->crosshair_visible = !source.source_hud && preferences.crosshair;
     out->crosshair_size = preferences.crosshair_size;
     out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
-        (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+        (qa_vec4){1, .9f, .2f, 1} : (qa_vec4){1, 1, 1, 1};
     if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
     if (frame->actor.registry && !source.source_hud && !frame->source_status_native && !frame->weapon_only) {
         if (!qa_application_native_q2_hud_read(seat->frontend->application, frame->actor,

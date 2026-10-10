@@ -145,7 +145,7 @@ static bool upload_indexed(qa_scene_model *model, const char *name, const qa_ind
         .translation = model->options.translation.size ? model->translation : NULL, .layer = layer};
     qa_scene_image_options image_options = model->options;
     bool ok = scene_resource_indexed_image(model->resources, name, indices, 1, &image_options, &options,
-        model->options.mipmap && !sprite, (qa_scene_vec4){0}, out, error);
+        model->options.mipmap && !sprite, (qa_vec4){0}, out, error);
     if (ok) {
         (*out)->recipient_upload_pixels = true;
         (*out)->recipient_mipmap = model->options.mipmap && !sprite;

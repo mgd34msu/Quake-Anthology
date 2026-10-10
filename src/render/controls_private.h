@@ -19,12 +19,12 @@ typedef struct qa_render_source_texture {
     qa_scene_filter filter;
     bool magnification_linear;
     qa_scene_wrap wrap;
-    qa_scene_vec4 border;
+    qa_vec4 border;
     uint32_t count;
 } qa_render_source_texture;
 typedef struct qa_render_source_attributes {
-    qa_scene_vec4 color;
-    qa_scene_vec4 zero_border;
+    qa_vec4 color;
+    qa_vec4 zero_border;
     qa_vec2 coordinates[2];
     bool color_known, coordinates_known[2];
     bool color_array, coordinate_array[2], texture_enabled[2];
@@ -89,7 +89,7 @@ bool qa_cpu_source_polygon_offset(qa_render_controls *, bool enabled, float fact
 bool qa_gl_source_polygon_offset(qa_render_controls *, bool enabled, float factor, float units, qa_error *);
 bool qa_cpu_source_cull(qa_render_controls *, qa_scene_cull, qa_error *);
 bool qa_gl_source_cull(qa_render_controls *, qa_scene_cull, qa_error *);
-bool qa_gl_source_color(qa_render_controls *, qa_scene_vec4, qa_error *);
+bool qa_gl_source_color(qa_render_controls *, qa_vec4, qa_error *);
 bool qa_cpu_source_texture_bind(qa_render_controls *, const qa_scene_image *, qa_error *);
 bool qa_gl_source_texture_bind(qa_render_controls *, const qa_scene_image *, qa_error *);
 bool qa_gl_source_texture_select(qa_render_controls *, uint32_t, qa_error *);
@@ -101,7 +101,7 @@ bool qa_gl_source_stage_state(qa_render_controls *, const qa_scene_state *, qa_e
 bool qa_cpu_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_image_admit(qa_render_controls *,const qa_scene_image *,const qa_scene_image *,uint32_t,qa_error *);
-bool qa_gl_source_texture_border(qa_render_controls *,qa_scene_vec4,qa_error *);
+bool qa_gl_source_texture_border(qa_render_controls *,qa_vec4,qa_error *);
 bool qa_cpu_source_image_admit(qa_render_controls *,const qa_scene_image *,const qa_scene_image *,uint32_t,qa_error *);
 size_t qa_cpu_source_images_metadata_count(const qa_render_controls *);
 size_t qa_cpu_source_texture_metadata_count(const qa_render_controls *);
@@ -164,7 +164,7 @@ void qa_render_source_attributes_init(qa_render_source_attributes *);
 bool qa_render_source_attributes_resolve(qa_render_controls *, qa_scene_draw *, const qa_scene_image *const[2],
     qa_render_primitive_mode, qa_error *);
 void qa_render_source_attributes_vertex(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode,
-    size_t index, const qa_scene_vertex *, qa_scene_vec4 *, qa_vec2[2]);
+    size_t index, const qa_scene_vertex *, qa_vec4 *, qa_vec2[2]);
 void qa_render_source_attributes_finish(qa_render_controls *, const qa_scene_draw *, qa_render_primitive_mode);
 /* The caller supplies its already validated triangle indices. */
 bool qa_render_strip_next(const uint32_t *, size_t, size_t *, qa_render_strip *);

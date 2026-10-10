@@ -278,6 +278,6 @@ bool frontend_q2_entity_beam(qa_builtin_random *random,qa_bytes palette,const qa
 {
     if (palette.size<768 || !palette.data) return fail(error,QA_ERROR_FORMAT,"Q2 entity beam requires the actual palette");
     uint32_t color=(packed_colors>>((qa_builtin_random_integer(random)%4)*8))&255;
-    qa_scene_vec4 rgba={palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,.3f};
+    qa_vec4 rgba={palette.data[color*3]/255.f,palette.data[color*3+1]/255.f,palette.data[color*3+2]/255.f,.3f};
     return qa_scene_beam(frame,view,start,end,(float)(width/2)*2,rgba,white,error);
 }

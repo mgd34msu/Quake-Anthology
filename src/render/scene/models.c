@@ -1526,7 +1526,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 beam requires its source palette"); return false;
         }
         unsigned color = (input.skin & 255u) * 3;
-        qa_scene_vec4 tint = {model->palette[color] / 255.0f, model->palette[color + 1] / 255.0f,
+        qa_vec4 tint = {model->palette[color] / 255.0f, model->palette[color + 1] / 255.0f,
                               model->palette[color + 2] / 255.0f, input.color.w};
         return qa_scene_beam(frame, &input.view, model_origin(&input), input.previous_origin,
                               (float)input.frame, tint, qa_scene_white(model->resources), error);

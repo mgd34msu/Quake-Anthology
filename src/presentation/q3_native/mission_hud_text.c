@@ -32,7 +32,7 @@ static void glyph(glyphInfo_t *g,float x,float y,float scale)
     q3n_mission_hud *o=q3nm_active(); if(!g->glyph||o->menus->failed)return;
     qa_scene_rect_f r=q3nh_rect(&o->draw,(qa_scene_rect_f){x,y-scale*(float)g->top,(float)g->imageWidth*scale,(float)g->imageHeight*scale});
     q3nm_result(q3nh_pixels(&o->draw,r.x,r.y,r.width,r.height,g->glyph,
-        (qa_scene_vec4){g->s,g->t,g->s2,g->t2}));
+        (qa_vec4){g->s,g->t,g->s2,g->t2}));
 }
 static void colored(unsigned char code,float alpha,float out[4])
 {

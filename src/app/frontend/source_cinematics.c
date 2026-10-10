@@ -22,8 +22,8 @@ static bool fullscreen_draw(void *context,const qa_scene_image *image,qa_scene_r
     qa_scene_state_default(&draw.state);
     float u=0.5f/(float)image->logical_width,v=0.5f/(float)image->logical_height;
     qa_scene_rect_f rect={(float)viewport.x,(float)viewport.y,(float)viewport.width,(float)viewport.height};
-    qa_scene_vec4 color={policy.identity_light,policy.identity_light,policy.identity_light,1};
-    if (!qa_scene_picture_geometry(frame,viewport,rect,(qa_scene_vec4){u,v,1-u,1-v},color,&draw.mesh,error)) return false;
+    qa_vec4 color={policy.identity_light,policy.identity_light,policy.identity_light,1};
+    if (!qa_scene_picture_geometry(frame,viewport,rect,(qa_vec4){u,v,1-u,1-v},color,&draw.mesh,error)) return false;
     qa_scene_vertex *vertices=(qa_scene_vertex *)draw.mesh.vertices;
     for (size_t i=0;i<draw.mesh.vertex_count;++i) vertices[i].normal=qa_v3(0,0,0);
     qa_scene_matrix_identity(&draw.model);

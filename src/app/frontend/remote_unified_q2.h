@@ -26,8 +26,8 @@ bool frontend_unified_q2_world_models(frontend_unified_q2 *, const qa_scene_worl
 bool frontend_unified_q2_world_particles(frontend_unified_q2 *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool frontend_unified_q2_world_input(frontend_unified_q2 *, qa_scene_world_input *, qa_error *);
 bool frontend_unified_q2_view_origin(frontend_unified_q2 *, qa_actor_id, qa_vec3, float player_fov, qa_error *);
-bool frontend_unified_q2_player_blend(frontend_unified_q2 *, qa_actor_id, bool, const qa_scene_vec4 *,
-    bool, const qa_scene_vec4 *, qa_scene_rect, qa_scene_frame *, qa_error *);
+bool frontend_unified_q2_player_blend(frontend_unified_q2 *, qa_actor_id, bool, const qa_vec4 *,
+    bool, const qa_vec4 *, qa_scene_rect, qa_scene_frame *, qa_error *);
 bool frontend_unified_q2_lights(frontend_unified_q2 *, const qa_scene_view *, const qa_scene_world_input *, const qa_scene_light **, size_t *, qa_error *);
 bool frontend_unified_q2_hud(frontend_unified_q2 *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
 bool frontend_unified_q2_entity_beam(frontend_unified_q2 *,const char *,const qa_scene_view *,

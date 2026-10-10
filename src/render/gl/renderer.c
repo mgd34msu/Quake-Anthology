@@ -82,7 +82,7 @@ static bool finite3(qa_vec3 value)
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
 }
 
-static bool finite4(qa_scene_vec4 value)
+static bool finite4(qa_vec4 value)
 {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z) &&
            isfinite(value.w);
@@ -617,7 +617,7 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
         gl_state_active_texture(renderer, GL_TEXTURE0+unit);
         gl_state_bind_texture(renderer, GL_TEXTURE_2D,name);
         if (!name) {
-            const qa_scene_vec4 *border=&attributes->zero_border;
+            const qa_vec4 *border=&attributes->zero_border;
             GLfloat values[4]={border->x,border->y,border->z,border->w};
             gl->TexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,values);
         }
@@ -634,7 +634,7 @@ void gl_source_pipeline_restore(qa_gl_renderer *renderer)
     }
     if (attributes->color_array) gl->EnableVertexAttribArray(4); else gl->DisableVertexAttribArray(4);
     if (attributes->color_known) {
-        qa_scene_vec4 color=attributes->color;
+        qa_vec4 color=attributes->color;
         gl->Color4f(color.x,color.y,color.z,color.w);
         gl->VertexAttrib4f(4,color.x,color.y,color.z,color.w);
     }
@@ -790,7 +790,7 @@ static void draw_source_strips(qa_gl_renderer *renderer, const qa_scene_draw *dr
             if (!discrete) gl->ArrayElement((GLint)index);
             else {
                 const qa_scene_vertex *v = draw->mesh.vertices + index;
-                qa_scene_vec4 color; qa_vec2 uv[2];
+                qa_vec4 color; qa_vec2 uv[2];
                 qa_render_source_attributes_vertex(&renderer->controls,draw,QA_RENDER_PRIMITIVES_DISCRETE_STRIPS,index,v,&color,uv);
                 gl->VertexAttrib4f(1, v->normal.x, v->normal.y, v->normal.z, 1);
                 gl->VertexAttrib4f(2, uv[0].x, uv[0].y, 0, 1);
@@ -923,7 +923,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     if (!qa_render_source_attributes_resolve(&renderer->controls,&draw,renderer->bound,mode,error)) {
         if (mode==QA_RENDER_PRIMITIVES_DISCRETE_STRIPS && renderer->controls.attributes.texture_unit!=0 &&
             renderer->controls.attributes.color_known) {
-            qa_scene_vec4 color=renderer->controls.attributes.color;
+            qa_vec4 color=renderer->controls.attributes.color;
             renderer->gl.Color4f(color.x,color.y,color.z,color.w);
             renderer->gl.VertexAttrib4f(4,color.x,color.y,color.z,color.w);
         }
@@ -961,7 +961,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     size_t vertex_storage=draw.source_vertex_storage?draw.source_vertex_storage:draw.mesh.vertex_count;
     if (draw.source_arrays && vertex_storage<=QA_SOURCE_TESS_VERTICES) {
         for (size_t i=0;i<vertex_storage;++i) {
-            qa_scene_vec4 color; qa_vec2 uv[2];
+            qa_vec4 color; qa_vec2 uv[2];
             qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,i,draw.mesh.vertices+i,&color,uv);
             renderer->source_vertices[i]=draw.mesh.vertices[i];
             renderer->source_vertices[i].color=color; renderer->source_vertices[i].texcoord=uv[0];
@@ -982,7 +982,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
                       !source_pipeline && !draw.source_primitives,&index_offset,&base_vertex,error)) return false;
     if (draw.skinning && !gl_skeletal_bind(renderer, &draw, error)) return false;
     if (source_pipeline && draw.mesh.vertex_count) {
-        qa_scene_vec4 color; qa_vec2 uv[2];
+        qa_vec4 color; qa_vec2 uv[2];
         qa_render_source_attributes_vertex(&renderer->controls,&draw,mode,0,draw.mesh.vertices,&color,uv);
         if (draw.source_arrays && !renderer->controls.attributes.color_array) {
             renderer->gl.DisableVertexAttribArray(4);
@@ -1022,7 +1022,7 @@ static bool draw_scene(qa_gl_renderer *renderer, const qa_scene_draw *source,
     if (locked) renderer->gl.UnlockArraysEXT();
     qa_render_source_attributes_finish(&renderer->controls,&draw,mode);
     if (source_pipeline && renderer->controls.attributes.color_known) {
-        qa_scene_vec4 color=renderer->controls.attributes.color;
+        qa_vec4 color=renderer->controls.attributes.color;
         renderer->gl.Color4f(color.x,color.y,color.z,color.w);
     }
     if (source_pipeline || draw.source_primitives || !renderer->gl.GenVertexArrays) {
@@ -1464,7 +1464,7 @@ static bool source_texture_owner(qa_render_controls *controls,qa_error *error)
     }
     return qa_display_make_current(controls->owner.gl->options.display,error);
 }
-bool qa_gl_source_color(qa_render_controls *controls, qa_scene_vec4 color, qa_error *error)
+bool qa_gl_source_color(qa_render_controls *controls, qa_vec4 color, qa_error *error)
 {
     if (!source_texture_owner(controls, error)) return false;
     qa_gl_renderer *renderer = controls->owner.gl;
@@ -2231,7 +2231,7 @@ bool qa_gl_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error 
         if (!ok) break;
         size_t first=frame.command_count;
         ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
-            (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
+            (qa_vec4){0,0,1,1},controls->attributes.color,error);
         for (size_t c=first;ok && c<frame.command_count;++c) {
             if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
       qa_scene_draw *draw=&frame.commands[c].data.draw;

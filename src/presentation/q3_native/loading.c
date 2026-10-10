@@ -276,7 +276,7 @@ typedef struct loading_draw {
     q3n_loading_media media;
     float sx,sy;
 } loading_draw;
-static bool picture(loading_draw *d,float x,float y,float w,float h,int32_t handle,qa_scene_vec4 uv,bool pixels)
+static bool picture(loading_draw *d,float x,float y,float w,float h,int32_t handle,qa_vec4 uv,bool pixels)
 {
     if(!pixels) { x=(x * d->sx); y=(y * d->sy); w=(w * d->sx); h=(h * d->sy); }
     return qa_q3_presentation_picture(d->owner->options.presentation,handle,(qa_scene_rect_f){x,y,w,h},uv,d->error) &&
@@ -319,7 +319,7 @@ static bool text(loading_draw *d,int32_t y,const char *value)
     int32_t scaled=(int32_t)((float)width * size),x=320-scaled/2;
     int32_t handle=d->media.proportional;
     for(unsigned pass=0;pass<2;++pass) {
-        qa_scene_vec4 color=pass?(qa_scene_vec4){1,1,1,1}:(qa_scene_vec4){0,0,0,1};
+        qa_vec4 color=pass?(qa_vec4){1,1,1,1}:(qa_vec4){0,0,0,1};
         qa_q3_presentation_color(d->owner->options.presentation,&color);
         float ax=((float)(x+(pass?0:2)) * d->sx),ay=((float)(y+(pass?0:2)) * d->sy),aw=0;
         float gap=((3 * d->sx) * size),height=((27 * d->sy) * size);
@@ -328,7 +328,7 @@ static bool text(loading_draw *d,int32_t y,const char *value)
             if(code==32)aw=((8 * d->sx) * size);
             else if(m) {
                 aw=(((float)m[2] * d->sx) * size);
-                if(!picture(d,ax,ay,aw,height,handle,(qa_scene_vec4){(float)m[0]/256,(float)m[1]/256,
+                if(!picture(d,ax,ay,aw,height,handle,(qa_vec4){(float)m[0]/256,(float)m[1]/256,
                     (float)(m[0]+m[2])/256,(float)(m[1]+27)/256},true))return false;
             }
             ax=(ax + (aw + gap));
@@ -367,14 +367,14 @@ static bool draw_information(loading_draw *d)
     if(!shader(o,f,path,false,&levelshot,d->error) ||
        (!levelshot && !shader(o,f,"menu/art/unknownmap",false,&levelshot,d->error)))return false;
     qa_q3_presentation_color(o->options.presentation,NULL);
-    if(!picture(d,0,0,640,480,levelshot,(qa_scene_vec4){0,0,1,1},false) ||
+    if(!picture(d,0,0,640,480,levelshot,(qa_vec4){0,0,1,1},false) ||
        !shader(o,f,"levelShotDetail",true,&detail,d->error) ||
        !picture(d,0,0,(float)d->backend.options.viewport.width,(float)d->backend.options.viewport.height,detail,
-        (qa_scene_vec4){0,0,2.5f,2},true))return false;
+        (qa_vec4){0,0,2.5f,2},true))return false;
     for(uint32_t i=0;i<o->state.player_count;++i)
-        if(!picture(d,(float)(16+i*78),284,64,64,o->state.player_icons[i],(qa_scene_vec4){0,0,1,1},false))return false;
+        if(!picture(d,(float)(16+i*78),284,64,64,o->state.player_icons[i],(qa_vec4){0,0,1,1},false))return false;
     for(uint32_t i=0;i<o->state.item_count;++i)
-        if(!picture(d,(float)(16+i%13*48),i>=13?400:360,32,32,o->state.item_icons[i],(qa_scene_vec4){0,0,1,1},false))return false;
+        if(!picture(d,(float)(16+i%13*48),i>=13?400:360,32,32,o->state.item_icons[i],(qa_vec4){0,0,1,1},false))return false;
     char loading[1100];
     if(o->state.text[0])snprintf(loading,sizeof(loading),"Loading... %s",o->state.text);
     else snprintf(loading,sizeof(loading),"Awaiting snapshot...");

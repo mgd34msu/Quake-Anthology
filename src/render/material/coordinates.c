@@ -3,7 +3,7 @@
 
 qa_vec2 qa_material_fog_coordinates(const qa_material_context *context, qa_vec3 local_position)
 {
-    qa_scene_vec4 point = qa_scene_matrix_point(context->model, local_position);
+    qa_vec4 point = qa_scene_matrix_point(context->model, local_position);
     qa_vec3 position = qa_v3(point.x, point.y, point.z);
     qa_vec3 distance_vector = qa_vec_scale(context->view.axis[0], context->fog_tc_scale);
     float offset = qa_vec_dot(qa_vec_scale(context->view.origin, -1.0f), context->view.axis[0]);

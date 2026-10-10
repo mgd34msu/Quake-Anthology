@@ -140,7 +140,7 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
                     free(table); qa_error_set(error, QA_ERROR_FORMAT, triangle, "model corner has no texture coordinate"); return false;
                 }
                 output->texcoord = (qa_vec2){coordinate[0], coordinate[1]};
-                output->color = (qa_scene_vec4){1, 1, 1, 1};
+                output->color = (qa_vec4){1, 1, 1, 1};
                 model_bounds_add(&bounds, output->position);
             }
             mesh->indices[(size_t)triangle * 3 + corner] = table[slot].index;

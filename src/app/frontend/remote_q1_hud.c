@@ -88,7 +88,7 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
     out->crosshair_visible = data->health > 0 && preferences.crosshair;
     out->crosshair_size = preferences.crosshair_size;
     out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
-        (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+        (qa_vec4){1, .9f, .2f, 1} : (qa_vec4){1, 1, 1, 1};
     if (out->q1.present || frame->source_status_native) { out->vital_count = 0; out->bar_count = 0; }
     return remote_q1_live(row,error);
 }

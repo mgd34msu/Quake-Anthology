@@ -10,7 +10,7 @@ bool qa_scene_portal_surface_visible(const qa_scene_mesh *, const qa_scene_view 
  * the caller's current view blend; Q2 always emits its colored fan. */
 bool qa_scene_legacy_dlights(qa_scene_frame *, const qa_scene_view *, qa_game_family,
                              bool quakeworld, const qa_scene_light *, size_t,
-                             qa_scene_vec4 *view_blend, qa_error *);
+                             qa_vec4 *view_blend, qa_error *);
 qa_scene_particle_sample *qa_scene_particles_alloc(qa_scene_frame *, size_t, qa_error *);
 bool qa_scene_particles(qa_scene_frame *, const qa_scene_particle_batch *, qa_error *);
 
@@ -20,7 +20,7 @@ bool qa_scene_sky_clip(const qa_scene_mesh *, size_t count, qa_vec3 origin,
                        qa_scene_sky_bounds bounds[6], qa_error *);
 bool qa_scene_q2_sky(qa_scene_frame *, const qa_scene_view *, const qa_scene_image *const images[6],
                      const qa_scene_sky_bounds bounds[6], float rotation, qa_vec3 axis,
-                     bool rotating, qa_scene_vec4 color, qa_error *);
+                     bool rotating, qa_vec4 color, qa_error *);
 typedef struct qa_scene_sky_geometry {
     qa_scene_mesh faces[6], clouds;
     bool visible[6];
@@ -41,10 +41,10 @@ typedef struct qa_scene_rail_options {
     size_t retained_count;
 } qa_scene_rail_options;
 bool qa_scene_rail_geometry(qa_scene_frame *, const qa_scene_view *, qa_scene_rail_kind,
-                            qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4,
+                            qa_vec3 origin, qa_vec3 old_origin, qa_vec4,
                             const qa_scene_rail_options *, qa_scene_mesh *, qa_error *);
 bool qa_scene_source_rail_geometry(qa_scene_frame *, const qa_scene_view *, qa_scene_rail_kind,
-    qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4,
+    qa_vec3 origin, qa_vec3 old_origin, qa_vec4,
     const qa_scene_rail_options *, qa_scene_mesh *, qa_error *);
 typedef struct qa_scene_flare_options {
     qa_vec3 color, rim_color;
@@ -63,7 +63,7 @@ bool qa_scene_poly_geometry(qa_scene_frame *, const qa_scene_vertex *, size_t,
                             qa_scene_mesh *, qa_error *);
 /* Geometry is owned by the frame until reset; no draw or material is emitted. */
 bool qa_scene_sprite_geometry(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
-                              float radius, float rotation, qa_scene_vec4,
+                              float radius, float rotation, qa_vec4,
                               qa_scene_mesh *, qa_error *);
 bool qa_scene_default_model(qa_scene_frame *, const qa_scene_view *, qa_scene_matrix model,
                             const qa_scene_image *white, const qa_scene_state *, qa_error *);

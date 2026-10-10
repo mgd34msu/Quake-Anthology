@@ -67,12 +67,12 @@ static bool embedded_texture(qa_scene_world *world, qawl_texture *texture,
     upload.wrap = QA_SCENE_REPEAT;
     upload.transparent = recipe.options.transparent; upload.transparent_index = recipe.options.transparent_index;
     if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
-        &options, recipe.generate_mips, (qa_scene_vec4){0,0,0,1}, &texture->image, error) ||
+        &options, recipe.generate_mips, (qa_vec4){0,0,0,1}, &texture->image, error) ||
         !scene_image_asset_copy(texture->image, &recipe, error)) return false;
     if (fullbright) {
         options.layer = QA_PALETTE_FULLBRIGHT; recipe.layer = QA_PALETTE_FULLBRIGHT;
         if (!scene_resource_indexed_image(world->resources, texture->name, levels, count, &upload,
-            &options, recipe.generate_mips, (qa_scene_vec4){0}, &texture->fullbright, error) ||
+            &options, recipe.generate_mips, (qa_vec4){0}, &texture->fullbright, error) ||
             !scene_image_asset_copy(texture->fullbright, &recipe, error)) return false;
     }
     texture->image->recipient_upload_pixels = true;

@@ -81,7 +81,7 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_game_family family,qa_
         }
         qa_scene_image_level pixels={rgba.width,rgba.height,rgba.rgba.data,rgba.rgba.size};
         if(okay)okay=qa_scene_image_create(images,name,QA_SCENE_RGBA8,&pixels,1,options.wrap,QA_SCENE_LINEAR,
-            (qa_scene_vec4){0},&image,error);
+            (qa_vec4){0},&image,error);
         if(okay) {
             image_asset_recipe recipe={.kind=1,.level_count=1,.source=resource,
                 .offsets={(uint64_t)(bytes.data-qa_resource_bytes(resource).data)+8},

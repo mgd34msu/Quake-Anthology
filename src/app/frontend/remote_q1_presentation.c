@@ -76,7 +76,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         transform.axes[i][0] = axes[i].x; transform.axes[i][1] = axes[i].y; transform.axes[i][2] = axes[i].z;
         transform.scale[i] = entity->scale;
     }
-    qa_scene_vec4 color = {1, 1, 1, entity->alpha};
+    qa_vec4 color = {1, 1, 1, entity->alpha};
     if (entity->model[0] == '*') {
         char *end; unsigned long number = strtoul(entity->model + 1, &end, 10);
         if (end == entity->model + 1 || *end || number > UINT32_MAX)
@@ -132,7 +132,7 @@ static bool scene_current(void *context)
     return scene->row->busy==1 && scene->row->revision==scene->revision &&
         remote_q1_mutable(scene->row) && remote_q1_live(scene->row,NULL);
 }
-static bool scene_view_blend(void *context,const qa_scene_world_input *world,qa_scene_vec4 *out,qa_error *error)
+static bool scene_view_blend(void *context,const qa_scene_world_input *world,qa_vec4 *out,qa_error *error)
 {
     remote_scene *scene=context;
     return scene_current(scene) && remote_q1_camera_contents_blend(scene->row,&world->view,out,error) && scene_current(scene);
@@ -159,7 +159,7 @@ static bool scene_particles(void *context,const qa_scene_world_input *world,qa_s
     return frame==&scene->row->frontend->frame && scene_current(scene) &&
         remote_q1_effects_draw(scene->row,&world->view,world,error);
 }
-static bool scene_blend(void *context,const qa_scene_world_input *world,qa_scene_vec4 blend,qa_error *error)
+static bool scene_blend(void *context,const qa_scene_world_input *world,qa_vec4 blend,qa_error *error)
 {
     remote_scene *scene=context;
     return scene_current(scene) && remote_q1_effects_blend(scene->row,&world->view,world->seconds,blend,error);

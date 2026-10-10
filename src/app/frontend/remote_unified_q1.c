@@ -935,7 +935,7 @@ bool frontend_unified_q1_world_particles(frontend_unified_q1 *o,const qa_scene_w
     o->busy=false;return ok && mutable(o,e);
 }
 bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_world_input *world,
-    qa_scene_frame *frame,qa_scene_vec4 *overlay,qa_error *e)
+    qa_scene_frame *frame,qa_vec4 *overlay,qa_error *e)
 {
     if(!overlay || !world_enter(o,world,frame,e))return false;
     qa_executable_recipe *recipe=frontend_unified_media_recipe(o->media);
@@ -949,7 +949,7 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
             float radius=fmaxf(0,l->radius-(float)(world->seconds-l->born)*l->decay);
             if(radius>0)lights[count++]=(qa_scene_light){.family=QA_GAME_Q1,.origin=l->origin,.color=l->color,
                 .radius=radius,.minimum=l->minimum,.scale=1,.additive=true,.identity=l->identity};}
-        frontend_legacy_render_policy policy;qa_scene_vec4 blend={0};
+        frontend_legacy_render_policy policy;qa_vec4 blend={0};
         if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_GAME_Q1?
                 frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product,&policy,e):
@@ -957,12 +957,12 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
             if(ok && policy.flashblend)ok=qa_scene_legacy_dlights(frame,&world->view,QA_GAME_Q1,
                 policy.quakeworld,lights,count,&blend,e);}
         if(ok && blend.w>0){float alpha=overlay->w+(1-overlay->w)*blend.w,weight=blend.w/alpha;
-            *overlay=(qa_scene_vec4){overlay->x*(1-weight)+blend.x*weight,overlay->y*(1-weight)+blend.y*weight,
+            *overlay=(qa_vec4){overlay->x*(1-weight)+blend.x*weight,overlay->y*(1-weight)+blend.y*weight,
                 overlay->z*(1-weight)+blend.z*weight,alpha};}
     }
     o->busy=false;return ok && mutable(o,e);
 }
-bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_scene_vec4 overlay,qa_scene_frame *frame,qa_error *e)
+bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world_input *world,qa_vec4 overlay,qa_scene_frame *frame,qa_error *e)
 {
     if(!world_enter(o,world,frame,e))return false;
     const qa_scene_view *view=&world->view;
@@ -970,13 +970,13 @@ bool frontend_unified_q1_world_blend(frontend_unified_q1 *o,const qa_scene_world
     if(ok && !view->mirror && o->groups && (!world->legacy_policy.present || world->legacy_policy.polyblend)){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_ui_preferences preferences;
         ok=qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e);
-        if(ok){if(preferences.reduced_flashes)overlay=(qa_scene_vec4){0};
+        if(ok){if(preferences.reduced_flashes)overlay=(qa_vec4){0};
             float bonus=(float)fmin(50,fmax(0,(o->bonus_until-world->seconds)*100))/255;
             if(bonus>0){float alpha=overlay.w+(1-overlay.w)*bonus,weight=bonus/alpha;
-                overlay=(qa_scene_vec4){overlay.x*(1-weight)+(215.0f/255)*weight,overlay.y*(1-weight)+(186.0f/255)*weight,
+                overlay=(qa_vec4){overlay.x*(1-weight)+(215.0f/255)*weight,overlay.y*(1-weight)+(186.0f/255)*weight,
                     overlay.z*(1-weight)+(69.0f/255)*weight,alpha};}
             if(overlay.w>0)ok=qa_scene_frame_picture(frame,qa_scene_white(o->groups->images),view->viewport,view->viewport,
-                (qa_scene_vec4){0,0,1,1},overlay,e);}
+                (qa_vec4){0,0,1,1},overlay,e);}
     }
     o->busy=false;return ok && mutable(o,e);
 }
@@ -1015,7 +1015,7 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
     if(o->finale && o->finale_banner && o->finale_image){float scale=fminf((float)viewport.width/320,(float)viewport.height/200);
         uint32_t width=(uint32_t)((float)o->finale_image->logical_width*scale),height=(uint32_t)((float)o->finale_image->logical_height*scale);
         qa_scene_rect rectangle={.x=viewport.x+(int32_t)(((int64_t)viewport.width-width)/2),.y=viewport.y+(int32_t)(16*scale),.width=width,.height=height};
-        ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},e);}
+        ok=qa_scene_frame_picture(frame,o->finale_image,rectangle,viewport,(qa_vec4){0,0,1,1},(qa_vec4){1,1,1,1},e);}
     if(ok)ok=qa_hud_draw_content(o->hud,&(qa_hud_options){.ui=ui,.application=d->application,
         .seat=d->physical_seat,.context=o,.read=hud_read},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,.time_ns=ns(o->seconds),
         .viewport=viewport,.safe_area=viewport,.scale=1,.visible=true,.show_scores=qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},frame,e);

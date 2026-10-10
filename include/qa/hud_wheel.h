@@ -50,7 +50,7 @@ typedef struct qa_hud_wheel_draw_options {
     qa_scene_rect viewport;
     qa_font_selection fonts;
     const qa_scene_image *white;
-    qa_scene_vec4 text, accent, disabled, panel;
+    qa_vec4 text, accent, disabled, panel;
     float scale;
     bool reduced_flashes;
 } qa_hud_wheel_draw_options;

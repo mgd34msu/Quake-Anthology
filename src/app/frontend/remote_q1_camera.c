@@ -216,7 +216,7 @@ bool remote_q1_camera_fields(frontend_remote_q1 *row, qa_source_save_io *io)
 }
 
 bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view *view,
-    qa_scene_vec4 *out,qa_error *error)
+    qa_vec4 *out,qa_error *error)
 {
     if (!row || !view || !out || !row->world || view->seat!=row->options.domain.physical_seat ||
         !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;

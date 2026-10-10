@@ -47,9 +47,9 @@ static bool draw(void *context,uint32_t seat,qa_scene_frame *frame,qa_scene_rect
     qa_scene_rect_f picture={(float)viewport.x+((float)viewport.width-320*scale)*.5f,
         (float)viewport.y+((float)viewport.height-200*scale)*.5f,320*scale,200*scale};
     return qa_scene_frame_picture(frame,qa_scene_white(help->seat->frontend->ui_images),viewport,
-        viewport,(qa_scene_vec4){0,0,1,1},(qa_scene_vec4){0,0,0,1},error) &&
-        qa_scene_frame_picture_f(frame,image,viewport,picture,(qa_scene_vec4){0,0,1,1},
-            (qa_scene_vec4){1,1,1,1},error);
+        viewport,(qa_vec4){0,0,1,1},(qa_vec4){0,0,0,1},error) &&
+        qa_scene_frame_picture_f(frame,image,viewport,picture,(qa_vec4){0,0,1,1},
+            (qa_vec4){1,1,1,1},error);
 }
 static bool input(void *context,uint32_t seat,const qa_input_event *event,bool *consumed,qa_error *error)
 {

@@ -102,7 +102,7 @@ bool qa_scene_particle_image(qa_scene_resources *resources, qa_game_family famil
     qa_scene_image_level level = {8, 8, pixels, sizeof(pixels)};
     return qa_scene_image_create(resources, family == QA_GAME_Q1 ? "*q1-particle" : "*q2-particle",
                                  QA_SCENE_RGBA8, &level, 1, QA_SCENE_CLAMP, QA_SCENE_LINEAR,
-                                 (qa_scene_vec4){0, 0, 0, 0}, out, error);
+                                 (qa_vec4){0, 0, 0, 0}, out, error);
 }
 
 bool qa_scene_flags_cast_shadow(qa_game_family family, uint32_t flags, float alpha,

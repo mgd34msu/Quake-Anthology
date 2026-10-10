@@ -246,14 +246,14 @@ typedef struct wheel_draw {
     float scale, x, y;
 } wheel_draw;
 static bool draw_quad(wheel_draw *d, const qa_scene_image *image, float x, float y, float w, float h,
-                      qa_scene_vec4 uv, qa_scene_vec4 color) {
+                      qa_vec4 uv, qa_vec4 color) {
     return !image || qa_scene_frame_picture_f(d->frame, image, d->options->viewport,
         (qa_scene_rect_f){d->x + x * d->scale, d->y + y * d->scale, w * d->scale, h * d->scale}, uv, color, d->error);
 }
-static bool draw_fill(wheel_draw *d, float x, float y, float w, float h, qa_scene_vec4 color) {
-    return draw_quad(d, d->options->white, x, y, w, h, (qa_scene_vec4){0, 0, 1, 1}, color);
+static bool draw_fill(wheel_draw *d, float x, float y, float w, float h, qa_vec4 color) {
+    return draw_quad(d, d->options->white, x, y, w, h, (qa_vec4){0, 0, 1, 1}, color);
 }
-static bool draw_text(wheel_draw *d, const char *text, float x, float y, qa_scene_vec4 color) {
+static bool draw_text(wheel_draw *d, const char *text, float x, float y, qa_vec4 color) {
     if (!text || !*text) return true;
     qa_font_layout layout;
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)}, .scale = d->scale,
@@ -270,7 +270,7 @@ static bool draw_text(wheel_draw *d, const char *text, float x, float y, qa_scen
         .space = QA_FONT_PIXELS, .shadow_offset = d->scale};
     return qa_font_draw_layout(d->frame, &layout, &draw, d->error);
 }
-static bool color_valid(qa_scene_vec4 color) {
+static bool color_valid(qa_vec4 color) {
     return isfinite(color.x) && isfinite(color.y) && isfinite(color.z) && isfinite(color.w);
 }
 bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options,
@@ -291,21 +291,21 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
     if (w->opacity > 0 || w->open) {
         ok = observe(w, w->mode, false, error);
         float opacity = options->reduced_flashes ? 1 : w->opacity;
-        qa_scene_vec4 panel = options->panel; panel.w *= opacity;
+        qa_vec4 panel = options->panel; panel.w *= opacity;
         if (ok) ok = draw_fill(&d, 128, 48, 384, 384, panel);
         for (size_t i = 0; ok && i < w->count; ++i) {
             const qa_hud_wheel_item *item = &w->items[i];
             double angle = (double)i * 6.2831853071795864769 / (double)w->count;
             float x = 320 + (float)sin(angle) * 136, y = 240 - (float)cos(angle) * 136;
             bool selected = item->identity.key == w->selected;
-            qa_scene_vec4 tint = selected ? options->accent : item->owned ? options->text : options->disabled;
+            qa_vec4 tint = selected ? options->accent : item->owned ? options->text : options->disabled;
             tint.w = opacity;
             const qa_scene_image *icon = selected && item->selected_icon ? item->selected_icon : item->icon;
-            if (icon) ok = draw_quad(&d, icon, x - 20, y - 20, 40, 40, (qa_scene_vec4){0, 0, 1, 1}, tint);
+            if (icon) ok = draw_quad(&d, icon, x - 20, y - 20, 40, 40, (qa_vec4){0, 0, 1, 1}, tint);
             else ok = draw_text(&d, item->label, x, y - 8, tint);
             if (ok && item->has_count) {
                 char count[32]; ok = qa_format_number(item->count, count, error);
-                qa_scene_vec4 color = item->count <= item->warning_count ? options->accent : tint; color.w = opacity;
+                qa_vec4 color = item->count <= item->warning_count ? options->accent : tint; color.w = opacity;
                 if (ok) ok = draw_text(&d, count, x, y + 24, color);
             }
             if (ok && selected) ok = draw_text(&d, item->label, 320, 220, tint);
@@ -327,7 +327,7 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
             if (selected) ok = draw_fill(&d, x, 324, width - 2, 50, options->accent);
             const qa_scene_image *icon = selected && item->selected_icon ? item->selected_icon : item->icon;
             if (ok && icon && width > 10) ok = draw_quad(&d, icon, x + 4, 328, width - 10, width - 10,
-                                                       (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1});
+                                                       (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 1, 1, 1});
             if (ok && item->has_count) {
                 char count[32]; ok = qa_format_number(item->count, count, error);
                 if (ok) ok = draw_text(&d, count, x + width / 2, 358, selected ? options->accent : options->text);

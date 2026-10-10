@@ -754,7 +754,7 @@ bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_e
         if (!resources_read(frontend, entry->owner, QA_GAME_Q1, &resources, error) ||
             !qa_scene_resources_palette(resources->images, QA_GAME_Q1, &palette, error)) return false;
         unsigned color = entry->color * 3;
-        qa_scene_vec4 rgba = {palette.data[color] / 255.0f, palette.data[color + 1] / 255.0f, palette.data[color + 2] / 255.0f, 1};
+        qa_vec4 rgba = {palette.data[color] / 255.0f, palette.data[color + 1] / 255.0f, palette.data[color + 2] / 255.0f, 1};
         qa_debug_shape shape = {.kind = QA_DEBUG_BOUNDS, .data.bounds = entry->bounds};
         const qa_debug_line *lines; size_t count;
         if (!qa_debug_shape_lines(&shape, rgba, entry->depth, &frontend->frame.storage, &lines, &count, error) ||

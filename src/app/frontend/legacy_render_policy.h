@@ -44,12 +44,12 @@ bool frontend_legacy_model_input(const qa_scene_world *,
 typedef struct frontend_legacy_scene_services {
     void *context;
     bool (*current)(void *);
-    bool (*view_blend)(void *,const qa_scene_world_input *,qa_scene_vec4 *,qa_error *);
+    bool (*view_blend)(void *,const qa_scene_world_input *,qa_vec4 *,qa_error *);
     bool (*visuals)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
     bool (*particles)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
-    bool (*dlights)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_scene_vec4 *, qa_error *);
+    bool (*dlights)(void *, const qa_scene_world_input *, qa_scene_frame *, qa_vec4 *, qa_error *);
     bool (*reflected_lights)(void *, qa_scene_world_input *, qa_scene_frame *, qa_error *);
-    bool (*blend)(void *, const qa_scene_world_input *, qa_scene_vec4, qa_error *);
+    bool (*blend)(void *, const qa_scene_world_input *, qa_vec4, qa_error *);
     bool (*policy)(void *, const qa_product *, frontend_legacy_render_policy *, qa_error *);
 } frontend_legacy_scene_services;
 bool frontend_legacy_scene_submit_product(qa_frontend *, qa_scene_world *, const qa_product *,

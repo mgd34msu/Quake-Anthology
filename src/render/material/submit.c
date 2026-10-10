@@ -62,7 +62,7 @@ static bool active_stage(const qa_material_stage *stage)
     return stage->video || stage->lightmap || stage->retain_texture ||
            (stage->image_count != 0 && stage->images != NULL && stage->images[0] != NULL);
 }
-static qa_scene_vec4 attenuate_fog(qa_scene_vec4 color, qa_scene_fog_effect effect, qa_vec2 uv)
+static qa_vec4 attenuate_fog(qa_vec4 color, qa_scene_fog_effect effect, qa_vec2 uv)
 {
     float attenuation = 1.0f - qa_material_fog_factor(uv.x, uv.y);
     if (effect == QA_FOG_RGB || effect == QA_FOG_RGBA) {
@@ -232,7 +232,7 @@ static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *g
     material_color_state rgb_state;
     if (geometry->vertex_count && !material_color_prepare(&rgb, context, time, &rgb_state, error)) return false;
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
-        qa_scene_vec4 color;
+        qa_vec4 color;
         if (!material_color_vertex(&rgb, geometry->vertices + i, context, &rgb_state, source->colors[i], &color, error)) return false;
         source->colors[i] = color;
     }
@@ -246,7 +246,7 @@ static bool source_colors(const qa_material_stage *stage, const qa_scene_mesh *g
         material_color_state alpha_state;
         if (geometry->vertex_count && !material_color_prepare(&alpha, context, time, &alpha_state, error)) return false;
         for (size_t i = 0; i < geometry->vertex_count; ++i) {
-            qa_scene_vec4 color;
+            qa_vec4 color;
             if (!material_color_vertex(&alpha, geometry->vertices + i, context, &alpha_state, source->colors[i], &color, error)) return false;
             source->colors[i] = color;
         }
@@ -334,7 +334,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
                         const qa_material_stage *stage, const qa_material_stage *second,
                         qa_scene_texture_environment environment, qa_scene_state state,
                         const qa_scene_mesh *geometry, const qa_material_context *context,
-                        float time, qa_scene_vec4 *previous_colors, qa_material_iterator iterator, size_t source_storage,
+                        float time, qa_vec4 *previous_colors, qa_material_iterator iterator, size_t source_storage,
                         qa_scene_frame *frame, qa_error *error)
 {
     qa_material_source_scratch *source = context->source_scratch;
@@ -442,7 +442,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
          (adjustment != QA_FOG_RGB && adjustment != QA_FOG_ALPHA && adjustment != QA_FOG_RGBA)) &&
         retained_coordinates(first_binding, second_binding, &swap)) {
         material_color_state uniform;
-        qa_scene_vec4 color;
+        qa_vec4 color;
         if (!material_color_prepare(stage, context, time, &uniform, error) ||
             !material_color_vertex(stage, geometry->vertices, context, &uniform,
                                    previous_colors[0], &color, error)) return false;
@@ -466,7 +466,7 @@ static bool emit_stage(const qa_material *material, const qa_material *original,
         vertices[i] = i < geometry->vertex_count ? geometry->vertices[i] : source->vertices[i];
         if (source) {
             bool lightmapped = iterator == QA_MATERIAL_LIGHTMAPPED, vertex_lit = iterator == QA_MATERIAL_VERTEX_LIT;
-            vertices[i].color = lightmapped ? (qa_scene_vec4){1, 1, 1, 1} : source->colors[i];
+            vertices[i].color = lightmapped ? (qa_vec4){1, 1, 1, 1} : source->colors[i];
             vertices[i].texcoord = lightmapped || vertex_lit ? vertices[i].texcoord :
                 source->coordinates[first_binding == stage ? 0 : 1][i];
             if (second_binding) vertices[i].lightmap = lightmapped ? vertices[i].lightmap :
@@ -538,7 +538,7 @@ static bool emit_dlights(const qa_material *material, const qa_material *origina
                 qa_error_set(error, QA_ERROR_FORMAT, i, "Projected light color exceeds source byte-conversion range");
                 return false;
             }
-            vertices[v].color = (qa_scene_vec4){dlight_byte(color.x), dlight_byte(color.y), dlight_byte(color.z), 1};
+            vertices[v].color = (qa_vec4){dlight_byte(color.x), dlight_byte(color.y), dlight_byte(color.z), 1};
             clip[v] = mask;
         }
         size_t count = 0;
@@ -613,8 +613,8 @@ static bool emit_fog_pass(const qa_material *material, const qa_material *origin
     for (size_t i = 0; i < geometry->vertex_count; ++i) {
         vertices[i] = geometry->vertices[i];
         vertices[i].texcoord = volume ? qa_material_fog_coordinates(context, vertices[i].position) : (qa_vec2){0, 0};
-        vertices[i].color = volume ? (qa_scene_vec4){context->fog_volume_color.x, context->fog_volume_color.y, context->fog_volume_color.z, 1} :
-            (qa_scene_vec4){1, 1, 1, 1};
+        vertices[i].color = volume ? (qa_vec4){context->fog_volume_color.x, context->fog_volume_color.y, context->fog_volume_color.z, 1} :
+            (qa_vec4){1, 1, 1, 1};
         if (volume && context->source_scratch) {
             context->source_scratch->colors[i] = vertices[i].color;
             context->source_scratch->coordinates[0][i] = vertices[i].texcoord;
@@ -679,8 +679,8 @@ static bool execute_material(const qa_material *material, const qa_material *ori
                               const qa_scene_mesh *geometry, const qa_material_context *context,
                               float time, qa_scene_frame *frame, qa_error *error)
 {
-    qa_scene_vec4 *previous = context->source_scratch ? context->source_scratch->colors :
-        frame_array(frame, geometry->vertex_count, sizeof(*previous), alignof(qa_scene_vec4), error);
+    qa_vec4 *previous = context->source_scratch ? context->source_scratch->colors :
+        frame_array(frame, geometry->vertex_count, sizeof(*previous), alignof(qa_vec4), error);
     if (previous == NULL) return false;
     if (!context->source_scratch) memset(previous, 0, geometry->vertex_count * sizeof(*previous));
     qa_scene_state collapsed_state = {0}; qa_scene_texture_environment collapsed_environment = QA_TEXTURE_MODULATE;
@@ -768,7 +768,7 @@ static void source_entity_apply(const qa_material_source_scratch *source, qa_mat
     if (source->entity_is_cell && source->scene_bank) {
         qa_q3_source_entity_cell cell;
         if (qa_q3_source_scene_bank_entity_read(source->scene_bank, source->entity_cell, &cell)) {
-            context->entity_color = (qa_scene_vec4){cell.value.color[0] / 255.f, cell.value.color[1] / 255.f,
+            context->entity_color = (qa_vec4){cell.value.color[0] / 255.f, cell.value.color[1] / 255.f,
                 cell.value.color[2] / 255.f, cell.value.color[3] / 255.f};
             context->entity_texcoord = cell.value.shader_texcoord;
             context->time_offset = cell.value.shader_time;
@@ -793,7 +793,7 @@ static bool source_decoded_entity(qa_material_source_scratch *source, qa_materia
     qa_scene_matrix_identity(&context->model);
     context->local_view_origin = source->view_origin;
     if (context->entity == 1022) {
-        context->entity_color = (qa_scene_vec4){1, 1, 1, 1};
+        context->entity_color = (qa_vec4){1, 1, 1, 1};
         context->entity_texcoord = (qa_vec2){0}; context->time_offset = 0;
         context->source_entity_cell = context->source_depth_hack = false;
         context->non_normalized_axis = context->projection_shadow = false;
@@ -804,7 +804,7 @@ static bool source_decoded_entity(qa_material_source_scratch *source, qa_materia
         qa_error_set(error, QA_ERROR_FORMAT, context->entity, "Source packed sort selects no physical entity cell"); return false;
     }
     const qa_q3_ref_entity *entity = &cell.value;
-    context->entity_color = (qa_scene_vec4){entity->color[0] / 255.f, entity->color[1] / 255.f,
+    context->entity_color = (qa_vec4){entity->color[0] / 255.f, entity->color[1] / 255.f,
         entity->color[2] / 255.f, entity->color[3] / 255.f};
     context->entity_texcoord = entity->shader_texcoord; context->time_offset = entity->shader_time;
     context->shadow_plane = entity->shadow_plane; context->non_normalized_axis = entity->non_normalized_axes;
@@ -871,7 +871,7 @@ static bool source_debug(const qa_material *material, const qa_material *origina
         qa_scene_vertex *vertices = frame_array(frame, mesh->vertex_count, sizeof(*vertices), alignof(qa_scene_vertex), error);
         if (mesh->vertex_count && !vertices) return false;
         for (size_t i = 0; i < mesh->vertex_count; ++i) {
-            vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_scene_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_vec2){0};
+            vertices[i] = mesh->vertices[i]; vertices[i].color = (qa_vec4){1, 1, 1, 1}; vertices[i].texcoord = (qa_vec2){0};
         }
         draw.mesh.vertices = vertices; draw.textures[0] = context->source_white; draw.texture_count = 1;
         if (context->source_diagnostics.no_bind &&
@@ -1140,7 +1140,7 @@ bool qa_material_source_raw_submit(qa_material_source_scratch *source, qa_scene_
         ok = qa_scene_frame_output_domain(frame, view.viewport, true, error) &&
             qa_scene_frame_preblend_gamma(frame, false, error) &&
             qa_scene_frame_emit(frame, &command, error) && source_set_2d_state(source, error) &&
-            material_source_color(source, (qa_scene_vec4){context->identity_light, context->identity_light,
+            material_source_color(source, (qa_vec4){context->identity_light, context->identity_light,
                 context->identity_light, 1}, error) && qa_scene_frame_draw(frame, draw, error);
     }
     if (source->issue_started) {
@@ -1726,7 +1726,7 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
                 view->clear_color = policy->hyperspace || (policy->diagnostics.fast_sky && !policy->no_world);
                 if (view->clear_color) {
                     float gray = policy->hyperspace ? (float)((uint32_t)policy->milliseconds & 255u) / 255 : 0;
-                    view->color = (qa_scene_vec4){gray, gray, gray, 1};
+                    view->color = (qa_vec4){gray, gray, gray, 1};
                 }
             }
     }

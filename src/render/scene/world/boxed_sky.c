@@ -93,7 +93,7 @@ bool qaw_boxed_sky_collect(qa_scene_boxed_sky *sky, const qa_scene_mesh *source,
             uint32_t index = source->indices[i + j];
             if (index >= source->vertex_count)
                 return fail(error, "Boxed sky polygon has an invalid vertex");
-            qa_scene_vec4 point = qa_scene_matrix_point(context->model,
+            qa_vec4 point = qa_scene_matrix_point(context->model,
                 source->vertices[index].position);
             vertices[j].position = qa_v3(point.x, point.y, point.z);
         }
@@ -125,7 +125,7 @@ bool qa_scene_world_boxed_sky_finish(qa_scene_boxed_sky *sky,
             sky->images[i] = image;
         }
     if (!qa_scene_q2_sky(frame, &sky->view, sky->images, sky->bounds,
-        sky->angle, sky->axis, sky->rotating, (qa_scene_vec4){1, 1, 1, 1}, error))
+        sky->angle, sky->axis, sky->rotating, (qa_vec4){1, 1, 1, 1}, error))
         return false;
     if (frame->command_count != first) {
         if (sky->fog.kind == QA_FOG_EXP2 && sky->fog.density > 0)

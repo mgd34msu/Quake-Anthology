@@ -175,7 +175,7 @@ typedef struct frontend_seat {
     char setting_value[1024];
     frontend_q1_view_motion q1_view_motion;
     frontend_q1_view_pose q1_view_pose;
-    qa_scene_vec4 q1_blend;
+    qa_vec4 q1_blend;
     qa_actor_id q1_view_actor;
     bool q1_view_ready, q1_chase;
     q3n_damage_feedback q3_damage;

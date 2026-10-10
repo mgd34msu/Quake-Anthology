@@ -55,7 +55,7 @@ void frontend_view_q1_bonus(frontend_q1_view_motion *);
 bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *,const char *,qa_error *);
 bool frontend_view_q1_local_bonus(qa_frontend *,qa_actor_id,qa_error *);
 bool frontend_view_q1_local_bonus_commands(qa_frontend *,qa_actor_id,const char *,qa_error *);
-qa_scene_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
+qa_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
     const frontend_q1_view_motion *,int32_t contents,bool quakeworld,uint32_t items);
 const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
     const frontend_q1_view_motion *);

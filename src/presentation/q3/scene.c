@@ -1,9 +1,9 @@
 #include "internal.h"
 #include "qa/q3_source_scene_bank.h"
 
-qa_scene_vec4 q3p_color(const uint8_t bytes[4])
+qa_vec4 q3p_color(const uint8_t bytes[4])
 {
-    return (qa_scene_vec4){bytes[0] / 255.0f, bytes[1] / 255.0f,
+    return (qa_vec4){bytes[0] / 255.0f, bytes[1] / 255.0f,
         bytes[2] / 255.0f, bytes[3] / 255.0f};
 }
 
@@ -189,10 +189,10 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
     return q3p_end(p, ok);
 }
 
-void qa_q3_presentation_color(qa_q3_presentation *p, const qa_scene_vec4 *color)
+void qa_q3_presentation_color(qa_q3_presentation *p, const qa_vec4 *color)
 {
     qa_error ignored = {0};
     if (!q3p_begin(p, &ignored)) return;
-    p->color = color ? *color : (qa_scene_vec4){1, 1, 1, 1};
+    p->color = color ? *color : (qa_vec4){1, 1, 1, 1};
     q3p_end(p, true);
 }

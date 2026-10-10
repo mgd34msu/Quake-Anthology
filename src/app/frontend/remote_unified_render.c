@@ -55,7 +55,7 @@ struct frontend_unified_render {
     qa_ui_preferences preferences;
     char *ammo_label;
     qa_vec3 origin, angles, kick;
-    qa_scene_vec4 blend,damage_blend;
+    qa_vec4 blend,damage_blend;
     float height;
     double seconds, field_of_view;
     int64_t milliseconds;
@@ -156,14 +156,14 @@ static bool player_blend_read(frontend_unified_render *r,qa_error *e)
     if (!frame || !frame->player) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified render lost its typed player view");
     const qa_unified_player_view *view=&frame->player->view;
     r->has_blend=view->has_blend; r->has_damage_blend=view->has_damage_blend;
-    r->blend=(qa_scene_vec4){view->blend[0],view->blend[1],view->blend[2],view->blend[3]};
-    r->damage_blend=(qa_scene_vec4){view->damage_blend[0],view->damage_blend[1],view->damage_blend[2],view->damage_blend[3]};
+    r->blend=(qa_vec4){view->blend[0],view->blend[1],view->blend[2],view->blend[3]};
+    r->damage_blend=(qa_vec4){view->damage_blend[0],view->damage_blend[1],view->damage_blend[2],view->damage_blend[3]};
     if (frame->components) for (size_t i=0;i<frame->components->native_count;++i) {
         const qa_unified_native_camera *native=frame->components->native[i].view;
         if (!native) continue;
         r->has_blend=true; r->has_damage_blend=native->rerelease;
-        r->blend=(qa_scene_vec4){(float)native->blend[0],(float)native->blend[1],(float)native->blend[2],(float)native->blend[3]};
-        r->damage_blend=(qa_scene_vec4){(float)native->damage_blend[0],(float)native->damage_blend[1],(float)native->damage_blend[2],(float)native->damage_blend[3]};
+        r->blend=(qa_vec4){(float)native->blend[0],(float)native->blend[1],(float)native->blend[2],(float)native->blend[3]};
+        r->damage_blend=(qa_vec4){(float)native->damage_blend[0],(float)native->damage_blend[1],(float)native->damage_blend[2],(float)native->damage_blend[3]};
     }
     return true;
 }
@@ -209,7 +209,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         m->input.family=kind; m->input.skin=source->skin<0 && !m->flat_beam?0:(uint32_t)source->skin;
         m->input.flags=source->render_flags;
         m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
-        m->input.color=(qa_scene_vec4){1,1,1,source->has_alpha?source->alpha:1}; m->input.seconds=r->seconds;
+        m->input.color=(qa_vec4){1,1,1,source->has_alpha?source->alpha:1}; m->input.seconds=r->seconds;
         m->input.has_milliseconds=true; m->input.milliseconds=r->milliseconds;
         m->input.view_model=source->view_weapon; m->native_held_weapon=source->native_held_weapon; m->previous_origin=source->previous_origin;
         m->has_previous_origin=source->has_previous_origin; m->input.back_lerp=source->back_lerp;
@@ -473,14 +473,14 @@ static bool unified_scene_particles(void *context,const qa_scene_world_input *wo
     }
     return unified_scene_current(c);
 }
-static bool unified_scene_blend(void *context,const qa_scene_world_input *world,qa_scene_vec4 blend,qa_error *e)
+static bool unified_scene_blend(void *context,const qa_scene_world_input *world,qa_vec4 blend,qa_error *e)
 {
     unified_scene_context *c=context;
     const frontend_unified_render_children *children=c->children;
     return (!children || !children->blend || children->blend(children->context,world,blend,&c->renderer->frontend->frame,e)) &&
         unified_scene_current(c);
 }
-static bool unified_scene_dlights(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_scene_vec4 *blend,qa_error *e)
+static bool unified_scene_dlights(void *context,const qa_scene_world_input *world,qa_scene_frame *frame,qa_vec4 *blend,qa_error *e)
 {
     unified_scene_context *c=context;
     const frontend_unified_render_children *children=c->children;

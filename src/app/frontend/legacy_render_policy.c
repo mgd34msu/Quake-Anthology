@@ -258,7 +258,7 @@ static bool scene_current(const frontend_legacy_scene_services *services, qa_err
 
 static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_services *services,
     const qa_scene_world_input *input, const frontend_legacy_render_policy *policy,
-    qa_scene_frame *frame, qa_scene_vec4 *blend, qa_error *error)
+    qa_scene_frame *frame, qa_vec4 *blend, qa_error *error)
 {
     if (services->view_blend && (!scene_current(services,error) ||
         !services->view_blend(services->context,input,blend,error) || !scene_current(services,error))) return false;
@@ -482,7 +482,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     bool mirror = false;
     if (policy.texture_sort && policy.mirror_alpha != 1 && !qa_scene_world_q1_mirror(actual_world,
         &input, frame, &input.q1_mirror, &reflected, &mirror, error)) return false;
-    qa_scene_vec4 blend = {0};
+    qa_vec4 blend = {0};
     size_t first = frame->command_count;
     size_t scene_first = first;
     if (!scene(actual_world, services, &input, &policy, frame, &blend, error)) return false;
@@ -499,7 +499,7 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
             !services->reflected_lights(services->context,&child,frame,error) ||
             !scene_current(services,error))) return false;
         first = frame->command_count;
-        blend = (qa_scene_vec4){0};
+        blend = (qa_vec4){0};
         if (!scene(actual_world, services, &child, &policy, frame, &blend, error)) return false;
         depth_range(frame, first, .5f, 1);
         if (!scene_current(services, error) || !qa_scene_world_q1_mirror_overlay(actual_world, &input,
@@ -509,14 +509,14 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
     if ((policy.lighting.polyblend || !policy.lighting.present) && (blend.w > 0 || services->blend)) {
         qa_ui_preferences preferences;
         if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), world->view.seat, &preferences, error)) return false;
-        if (preferences.reduced_flashes) blend = (qa_scene_vec4){0};
+        if (preferences.reduced_flashes) blend = (qa_vec4){0};
         if (services->blend) {
             if (!scene_current(services, error) ||
                 !services->blend(services->context, &input, blend, error) ||
                 !scene_current(services, error)) return false;
         } else if (blend.w > 0 && !qa_scene_frame_picture(frame,
             qa_scene_white(frontend->ui_images), world->view.viewport, world->view.viewport,
-            (qa_scene_vec4){0, 0, 1, 1}, blend, error)) return false;
+            (qa_vec4){0, 0, 1, 1}, blend, error)) return false;
     }
     if (policy.lighting.present && !policy.lighting.cull)
         for (size_t i = scene_first; i < frame->command_count; ++i)

@@ -193,19 +193,19 @@ static void expire(hud_message *messages, size_t *count, uint64_t now) {
     *count = retained;
 }
 static bool text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, float x, float y,
-                  const char *value, qa_scene_vec4 color, float scale, qa_font_alignment align,
+                  const char *value, qa_vec4 color, float scale, qa_font_alignment align,
                   qa_error *error) {
     return ui_draw_text(hud->options.ui, scene, target, x, y, value, color, scale, align, error);
 }
 static bool icon(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
-                  const qa_scene_image *image, qa_scene_rect_f rect, qa_scene_vec4 color,
+                  const qa_scene_image *image, qa_scene_rect_f rect, qa_vec4 color,
                   qa_error *error) {
     if (!image) return true;
     qa_ui *ui = hud->options.ui;
     qa_scene_rect_f pixels = {ui->bias_x + rect.x * ui->scale, ui->bias_y + rect.y * ui->scale,
                              rect.width * ui->scale, rect.height * ui->scale};
     return qa_scene_frame_picture_f(scene, image, target, pixels,
-        (qa_scene_vec4){0, 0, 1, 1}, color, error);
+        (qa_vec4){0, 0, 1, 1}, color, error);
 }
 static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, float x, float y,
                     const char *label, double value, bool warning, qa_error *error) {
@@ -225,7 +225,7 @@ static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, flo
     float row = compact ? 14 / ui->scale : fmaxf(13, cap * label_scale + 4);
     float height = row + cap * number_scale;
     y = fminf(y, 476 - height);
-    qa_scene_vec4 color = warning ? (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+    qa_vec4 color = warning ? (qa_vec4){1, .3f, .2f, 1} : (qa_vec4){1, 1, 1, 1};
     return ui_draw_text(ui, scene, target, x, y - top * label_scale, label, color,
                label_scale / ui->text_scale, QA_FONT_ALIGN_CENTER, error) &&
            ui_draw_text(ui, scene, target, x, y + row - top * number_scale, numeric, color,
@@ -235,7 +235,7 @@ static const char *flag_status(uint32_t bits) {
     return bits & 4 ? "dropped" : bits & 2 ? "carried" : "home";
 }
 static bool weapon_layout(qa_hud *hud, qa_scene_frame *scene, const char *value,
-    float scale, float width, qa_scene_vec4 color, qa_font_layout *out, qa_error *error)
+    float scale, float width, qa_vec4 color, qa_font_layout *out, qa_error *error)
 {
     qa_font_layout_options options = {.text = {(const uint8_t *)value, strlen(value)},
         .scale = scale, .max_width = width, .color = color, .color_codes = QA_FONT_COLOR_Q3,
@@ -244,7 +244,7 @@ static bool weapon_layout(qa_hud *hud, qa_scene_frame *scene, const char *value,
 }
 static bool weapon_text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target,
     const char *value, float x, float y, float scale, float width, float height,
-    float cap_height, qa_scene_vec4 color, bool ellipsis, qa_error *error)
+    float cap_height, qa_vec4 color, bool ellipsis, qa_error *error)
 {
     qa_font_layout layout;
     if (!weapon_layout(hud, scene, value, scale, width, color, &layout, error)) return false;
@@ -282,8 +282,8 @@ static bool weapon_picture(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect tar
     const qa_material *material, qa_scene_rect_f rect, uint64_t time_ns, qa_error *error)
 {
     qa_scene_mesh mesh;
-    qa_scene_vec4 white = {1, 1, 1, 1};
-    if (!qa_scene_picture_geometry(scene, target, rect, (qa_scene_vec4){0, 0, 1, 1}, white, &mesh, error)) return false;
+    qa_vec4 white = {1, 1, 1, 1};
+    if (!qa_scene_picture_geometry(scene, target, rect, (qa_vec4){0, 0, 1, 1}, white, &mesh, error)) return false;
     if (!mesh.vertex_count) return true;
     qa_material_context context = {.entity_color = white, .identity_light = 1,
         .seconds = (double)time_ns / 1e9, .source_primitives = true,
@@ -356,11 +356,11 @@ static bool team_face_draw(qa_hud *hud,const qa_hud_frame *frame,const qa_hud_te
     qa_ui *ui=hud->options.ui;
     float sx=rect.width/24,sy=rect.height/24;
     if (!qa_scene_frame_picture_f(scene,face->border,frame->safe_area,rect,
-        (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},error) ||
+        (qa_vec4){0,0,1,1},(qa_vec4){1,1,1,1},error) ||
         !qa_scene_frame_picture_f(scene,ui->options.white,frame->safe_area,
-            (qa_scene_rect_f){rect.x+sx,rect.y+3*sy,22*sx,9*sy},(qa_scene_vec4){0,0,1,1},face->top,error) ||
+            (qa_scene_rect_f){rect.x+sx,rect.y+3*sy,22*sx,9*sy},(qa_vec4){0,0,1,1},face->top,error) ||
         !qa_scene_frame_picture_f(scene,ui->options.white,frame->safe_area,
-            (qa_scene_rect_f){rect.x+sx,rect.y+12*sy,22*sx,9*sy},(qa_scene_vec4){0,0,1,1},face->bottom,error)) return false;
+            (qa_scene_rect_f){rect.x+sx,rect.y+12*sy,22*sx,9*sy},(qa_vec4){0,0,1,1},face->bottom,error)) return false;
     char number[32]; snprintf(number,sizeof(number),"%3ld",(long)face->score);
     for (unsigned i=0;i<3;++i) {
         unsigned character=(uint8_t)number[i];
@@ -371,7 +371,7 @@ static bool team_face_draw(qa_hud *hud,const qa_hud_frame *frame,const qa_hud_te
             return ui_fail(error,"Rogue team score lost its original conchars glyph");
         if (glyph.visible && !qa_scene_frame_picture_f(scene,glyph.image,frame->safe_area,
             (qa_scene_rect_f){rect.x+(1+7*(float)i)*sx,rect.y+3*sy,8*sx,8*sy},
-            glyph.uv,(qa_scene_vec4){1,1,1,1},error)) return false;
+            glyph.uv,(qa_vec4){1,1,1,1},error)) return false;
     }
     return true;
 }
@@ -384,18 +384,18 @@ static bool status_vital(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_va
     qa_scene_rect_f rect = layout.rect;
     if (rect.width <= 8 || rect.height <= 8) return true;
     if (!qa_scene_frame_picture_f(scene, hud->options.ui->options.white, frame->safe_area, rect,
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.055f, .06f, .065f, .94f}, error)) return false;
+        (qa_vec4){0, 0, 1, 1}, (qa_vec4){.055f, .06f, .065f, .94f}, error)) return false;
     qa_scene_rect_f face_rect={rect.x+6*layout.scale,rect.y+8*layout.scale,24*layout.scale,24*layout.scale};
     bool team=team_face && team_face->border;
     if (team ? !team_face_draw(hud,frame,team_face,face_rect,scene,error) :
         vital->icon && !qa_scene_frame_picture_f(scene,vital->icon,frame->safe_area,face_rect,
-            (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){1,1,1,1},error)) return false;
+            (qa_vec4){0,0,1,1},(qa_vec4){1,1,1,1},error)) return false;
     char value[32];
     if (!qa_format_number(vital->value, value, error)) return false;
     const char *label = vital->label ? vital->label : "";
     float left = (vital->icon || team ? 34 : 4) * layout.scale;
     float available = rect.width - left - 4 * layout.scale;
-    qa_scene_vec4 color = vital->warning ? (qa_scene_vec4){1, .65f, .22f, 1} : (qa_scene_vec4){.92f, .88f, .78f, 1};
+    qa_vec4 color = vital->warning ? (qa_vec4){1, .65f, .22f, 1} : (qa_vec4){.92f, .88f, .78f, 1};
     if (layout.compact) {
         size_t size = strlen(label) + strlen(value) + 2;
         char *combined = qa_arena_alloc(&scene->storage, size, 1, error);
@@ -444,11 +444,11 @@ static bool weapon_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_dat
     qa_scene_rect_f rect = {0, 0, pixels.width / scale, pixels.height / scale};
     if (rect.width <= 8 || rect.height <= 8) return true;
     if (!qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area, pixels,
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){.055f, .06f, .065f, .94f}, error)) return false;
+        (qa_vec4){0, 0, 1, 1}, (qa_vec4){.055f, .06f, .065f, .94f}, error)) return false;
     bool unavailable = weapon->finite_ammo && !weapon->has_ammo_to_start;
     const char *warning = weapon->aggregate_empty ? "OUT OF AMMO" : weapon->aggregate_low ? "LOW AMMO WARNING" :
         weapon->suppress_active_warning ? NULL : unavailable ? "NO AMMO" : weapon->finite_ammo && weapon->low_ammo ? "LOW AMMO" : NULL;
-    qa_scene_vec4 color = warning || unavailable ? (qa_scene_vec4){1, .65f, .22f, 1} : (qa_scene_vec4){.92f, .88f, .78f, 1};
+    qa_vec4 color = warning || unavailable ? (qa_vec4){1, .65f, .22f, 1} : (qa_vec4){.92f, .88f, .78f, 1};
     char numeric[32] = "";
     if (weapon->finite_ammo && !qa_format_number(weapon->ammo_count, numeric, error)) return false;
     qa_font_layout measured;
@@ -521,7 +521,7 @@ static bool ctf_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *sce
     if (!qa_format_number(hud->ctf_status.red, red, error) ||
         !qa_format_number(hud->ctf_status.blue, blue, error)) return false;
     snprintf(row, sizeof(row), "Red %s - Blue %s", red, blue);
-    qa_scene_vec4 color = {1, 1, 1, 1};
+    qa_vec4 color = {1, 1, 1, 1};
     if (!text(hud, scene, frame->safe_area, 320, 56, row, color, 1, QA_FONT_ALIGN_CENTER, error)) return false;
     uint32_t flags = (uint32_t)qa_source_float_to_i32((float)hud->ctf_status.flags);
     uint32_t runes = (uint32_t)qa_source_float_to_i32((float)hud->ctf_status.rune_items);
@@ -580,7 +580,7 @@ static bool caption_draw(qa_ui *ui,const qa_active_caption *values,size_t count,
     float panel_height=(float)visible*line_height+8;
     float x=area.x,y=area.y+area.height-panel_height;
     if (!qa_scene_frame_picture_f(scene,ui->options.white,target,(qa_scene_rect_f){x,y,width,panel_height},
-        (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){0,0,0,.92f},error)) return false;
+        (qa_vec4){0,0,1,1},(qa_vec4){0,0,0,.92f},error)) return false;
     size_t skip=lines-visible,shown=0;
     for (size_t i=0;i<count;++i) {
         qa_font_layout *layout=layouts+i;
@@ -633,7 +633,7 @@ static bool q1_picture(const qa_hud_q1_status *status, const qa_hud_frame *frame
     float width = (float)image->logical_width, height = (float)image->logical_height;
     return qa_scene_frame_picture_f(scene, image, frame->safe_area,
         (qa_scene_rect_f){place.x + x * place.scale, place.y + y * place.scale, width * place.scale, height * place.scale},
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1}, error);
+        (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 1, 1, 1}, error);
 }
 static bool q1_character(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_placement place,
     unsigned character, float x, float y, qa_scene_frame *scene, qa_error *error)
@@ -643,7 +643,7 @@ static bool q1_character(qa_hud *hud, const qa_hud_frame *frame, qa_hud_q1_place
         return ui_fail(error, "Q1 inventory lost its source conchars glyph");
     return !glyph.visible || qa_scene_frame_picture_f(scene, glyph.image, frame->safe_area,
         (qa_scene_rect_f){place.x + (x + 4) * place.scale, place.y + y * place.scale, 8 * place.scale, 8 * place.scale},
-        glyph.uv, (qa_scene_vec4){1, 1, 1, 1}, error);
+        glyph.uv, (qa_vec4){1, 1, 1, 1}, error);
 }
 static bool q1_number(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_frame *frame,
     qa_hud_q1_placement place, float x, float y, int32_t value, unsigned digits_count, bool alternate, qa_scene_frame *scene, qa_error *error)
@@ -653,13 +653,13 @@ static bool q1_number(qa_hud *hud, const qa_hud_q1_status *status, const qa_hud_
     length = strlen(digits); x += (float)(digits_count - length) * 24;
     qa_ui *ui = hud->options.ui;
     if (ui->text_scale != 1 || ui->high_contrast || ui->color_mode != QA_UI_COLOR_STANDARD) {
-        qa_scene_vec4 color = alternate ? ui->color_mode == QA_UI_COLOR_BLUE_YELLOW ?
-            (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
-        if (ui->color_mode == QA_UI_COLOR_MONOCHROME) color = (qa_scene_vec4){1, 1, 1, 1};
+        qa_vec4 color = alternate ? ui->color_mode == QA_UI_COLOR_BLUE_YELLOW ?
+            (qa_vec4){1, .9f, .2f, 1} : (qa_vec4){1, .3f, .2f, 1} : (qa_vec4){1, 1, 1, 1};
+        if (ui->color_mode == QA_UI_COLOR_MONOCHROME) color = (qa_vec4){1, 1, 1, 1};
         float left = place.x + x * place.scale, width = (float)length * 24 * place.scale;
         if (ui->high_contrast && !qa_scene_frame_picture_f(scene, ui->options.white, frame->safe_area,
-            (qa_scene_rect_f){left, place.y + y * place.scale, width, 24 * place.scale}, (qa_scene_vec4){0, 0, 1, 1},
-            (qa_scene_vec4){0, 0, 0, 1}, error)) return false;
+            (qa_scene_rect_f){left, place.y + y * place.scale, width, 24 * place.scale}, (qa_vec4){0, 0, 1, 1},
+            (qa_vec4){0, 0, 0, 1}, error)) return false;
         qa_font_layout layout;
         if (!weapon_layout(hud, scene, digits, 3 * place.scale * ui->text_scale, width, color, &layout, error)) return false;
         return qa_font_draw_layout(scene, &layout, &(qa_font_draw_options){.seat = frame->seat,
@@ -741,9 +741,9 @@ static bool q1_inventory(qa_hud *hud, const qa_hud_q1_status *status, const qa_h
             float x = status->hud_swap ? 0 : logical_width - 42;
             if (!qa_scene_frame_picture_f(scene, image, frame->safe_area,
                 (qa_scene_rect_f){side.x + x * place.scale, place.y + y * place.scale, 42 * place.scale, 11 * place.scale},
-                (qa_scene_vec4){(float)(3 + i * 48) / (float)image->logical_width, 0,
+                (qa_vec4){(float)(3 + i * 48) / (float)image->logical_width, 0,
                     (float)(45 + i * 48) / (float)image->logical_width, 11.0f / (float)image->logical_height},
-                (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+                (qa_vec4){1, 1, 1, 1}, error)) return false;
         }
         for (unsigned j = 0; j < 3; ++j) {
             float x = heads_up ? (status->hud_swap ? 3 : logical_width - 39) + (float)j * 8 :
@@ -814,9 +814,9 @@ static bool q1_backtile(const qa_hud_q1_status *status, const qa_hud_frame *fram
         if (end <= x) continue;
         if (!qa_scene_frame_picture_f(scene, image, frame->safe_area,
             (qa_scene_rect_f){x, y, end - x, (float)place.reserved},
-            (qa_scene_vec4){(x - left) / tile_width, (y - top) / tile_height,
+            (qa_vec4){(x - left) / tile_width, (y - top) / tile_height,
                 (end - left) / tile_width, (bottom - top) / tile_height},
-            (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+            (qa_vec4){1, 1, 1, 1}, error)) return false;
     }
     return true;
 }
@@ -877,7 +877,7 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
     if (data->health_team_face.border) {
         if (!team_face_draw(hud, frame, &data->health_team_face, face, scene, error)) return false;
     } else if (status->face && !qa_scene_frame_picture_f(scene, status->face, frame->safe_area, face,
-        (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1}, error)) return false;
+        (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 1, 1, 1}, error)) return false;
     if (!q1_number(hud, status, frame, place, 136, 0, status->health, 3, status->health <= 25, scene, error)) return false;
     static const char *const ammunition[] = {"sb_shells", "sb_nails", "sb_rocket", "sb_cells",
         "r_ammolava", "r_ammoplasma", "r_ammomulti"};
@@ -1017,10 +1017,10 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
             float width = bar->maximum > 0 ? (float)fmax(0, fmin(1, bar->value / bar->maximum)) * 240 : 0;
             float y = 90 + (float)i * 24;
             if (!ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, 240, 16},
-                           (qa_scene_vec4){.1f, .1f, .1f, .8f}, error) ||
+                           (qa_vec4){.1f, .1f, .1f, .8f}, error) ||
                 !ui_fill(ui, scene, target, (qa_scene_rect_f){200, y, width, 16},
-                           (qa_scene_vec4){.7f, .2f, .1f, .9f}, error) ||
-                !text(hud, scene, target, 320, y + 2, bar->label, (qa_scene_vec4){1, 1, 1, 1},
+                           (qa_vec4){.7f, .2f, .1f, .9f}, error) ||
+                !text(hud, scene, target, 320, y + 2, bar->label, (qa_vec4){1, 1, 1, 1},
                         .9f, QA_FONT_ALIGN_CENTER, error)) return false;
         }
         for (size_t i = 0; i < data.timer_count; ++i) {
@@ -1029,7 +1029,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
             double seconds = ceil((double)(timer->until_ns - frame->time_ns) / 1e9);
             float y = 120 + (float)i * 40;
             if (!icon(hud, scene, target, timer->icon, (qa_scene_rect_f){544, y, 28, 28},
-                (qa_scene_vec4){1, 1, 1, 1}, error) ||
+                (qa_vec4){1, 1, 1, 1}, error) ||
                 !number(hud, scene, target, 590, y, timer->label, seconds, seconds <= 5, error)) return false;
         }
         if (data.crosshair_visible && !frame->show_scores && !frame->show_inventory) {
@@ -1044,7 +1044,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
                     ui->bias_y + (center_y-picture_size*.5f) * ui->scale,
                     picture_size * ui->scale, picture_size * ui->scale};
                 if (!qa_scene_frame_picture_f(scene, data.crosshair, target, pixels,
-                    (qa_scene_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
+                    (qa_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
             } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.125f, center_y-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
                        !ui_fill(ui, scene, target, (qa_scene_rect_f){center_x-size*.5f, center_y-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
         }
@@ -1072,7 +1072,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
                 snprintf(row, sizeof(row), "%s  %s  %d  %d%s", score->name ? score->name : "",
                     score->team ? score->team : "", score->score, score->ping, score->spectator ? "  spectator" : "");
                 if (!text(hud, scene, target, 64, 110 + (float)i * 20, row,
-                    score->local ? (qa_scene_vec4){1, .8f, .3f, 1} : (qa_scene_vec4){1, 1, 1, 1},
+                    score->local ? (qa_vec4){1, .8f, .3f, 1} : (qa_vec4){1, 1, 1, 1},
                     1, QA_FONT_ALIGN_LEFT, error)) return false;
             }
         }
@@ -1082,24 +1082,24 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
             const hud_message *notice = &hud->notices[i];
             if (notice->starts > frame->time_ns) continue;
             if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
-                notice->chat ? (qa_scene_vec4){.6f, 1, .6f, 1} : (qa_scene_vec4){1, 1, 1, 1},
+                notice->chat ? (qa_vec4){.6f, 1, .6f, 1} : (qa_vec4){1, 1, 1, 1},
                 1, QA_FONT_ALIGN_LEFT, error)) return false;
         }
         if (!center_draw(hud, frame, scene, target, error)) return false;
         if (hud->pickup.text && hud->pickup.until_ns > frame->time_ns &&
             !(frame->center_owned && hud->pickup.family == QA_GAME_Q3) &&
             (!icon(hud, scene, target, hud->pickup.icon, (qa_scene_rect_f){304, 328, 32, 32},
-                (qa_scene_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup.text, (qa_scene_vec4){1, 1, .5f, 1},
+                (qa_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup.text, (qa_vec4){1, 1, .5f, 1},
                    1, QA_FONT_ALIGN_CENTER, error))) return false;
         if (hud->hit_damage > 0 && hud->hit_until > frame->time_ns &&
-            !text(hud, scene, target, 320, 256, "X", (qa_scene_vec4){1, 1, 1, 1}, 1,
+            !text(hud, scene, target, 320, 256, "X", (qa_vec4){1, 1, 1, 1}, 1,
                    QA_FONT_ALIGN_CENTER, error)) return false;
     }
     if (content && data.help_title && !text(hud, scene, target, 24, 90, data.help_title,
-        (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
+        (qa_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
     for (size_t i = 0; content && i < data.help_count; ++i)
         if (!text(hud, scene, target, 24, 108 + (float)i * 16, data.help_lines[i],
-            (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
+            (qa_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
     if (messages && !frame->weapon_only && !ctf_draw(hud, frame, scene, error)) return false;
     float fit=fminf((float)target.width/640,(float)target.height/480);
     return !content || caption_draw(ui,data.captions,data.caption_count,target,

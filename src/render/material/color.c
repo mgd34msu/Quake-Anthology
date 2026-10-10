@@ -28,7 +28,7 @@ static bool wave_byte(float value, float *out, qa_error *error)
     }
     return normalized_byte(fmaxf(0.0f, fminf(1.0f, value)), out, error);
 }
-static bool quantize(qa_scene_vec4 input, qa_scene_vec4 *out, qa_error *error)
+static bool quantize(qa_vec4 input, qa_vec4 *out, qa_error *error)
 {
     return normalized_byte(input.x, &out->x, error) && normalized_byte(input.y, &out->y, error) &&
            normalized_byte(input.z, &out->z, error) && normalized_byte(input.w, &out->w, error);
@@ -38,7 +38,7 @@ static bool source_component(float input, float *out, qa_error *error)
     float value = input * 255.0f;
     return out ? byte_value(roundf(value), out, error) : byte_input_valid(value, error);
 }
-static bool source_color(qa_scene_vec4 input, qa_scene_vec4 *out, qa_error *error)
+static bool source_color(qa_vec4 input, qa_vec4 *out, qa_error *error)
 {
     return source_component(input.x, out ? &out->x : NULL, error) &&
            source_component(input.y, out ? &out->y : NULL, error) &&
@@ -78,18 +78,18 @@ bool material_color_prepare(const qa_material_stage *stage, const qa_material_co
 }
 bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex *vertex,
                            const qa_material_context *context, const material_color_state *state,
-                           qa_scene_vec4 previous, qa_scene_vec4 *out, qa_error *error)
+                           qa_vec4 previous, qa_vec4 *out, qa_error *error)
 {
-    qa_scene_vec4 result = {0, 0, 0, previous.w};
-    qa_scene_vec4 entity = state->entity, color;
+    qa_vec4 result = {0, 0, 0, previous.w};
+    qa_vec4 entity = state->entity, color;
     if (!source_color(vertex->color, state->validate_unused_color ? NULL : &color, error)) return false;
     switch (stage->rgb) {
-    case QA_COLOR_IDENTITY: result = (qa_scene_vec4){1, 1, 1, 1}; break;
+    case QA_COLOR_IDENTITY: result = (qa_vec4){1, 1, 1, 1}; break;
     case QA_COLOR_IDENTITY_LIGHTING:
     case QA_COLOR_BAD: {
         float value;
         if (!normalized_byte(context->identity_light, &value, error)) return false;
-        result = (qa_scene_vec4){value, value, value, value};
+        result = (qa_vec4){value, value, value, value};
         break;
     }
     case QA_COLOR_VERTEX:
@@ -106,7 +106,7 @@ bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex
         break;
     case QA_COLOR_ENTITY: result = entity; break;
     case QA_COLOR_ONE_MINUS_ENTITY:
-        result = (qa_scene_vec4){1.0f - entity.x, 1.0f - entity.y, 1.0f - entity.z, 1.0f - entity.w};
+        result = (qa_vec4){1.0f - entity.x, 1.0f - entity.y, 1.0f - entity.z, 1.0f - entity.w};
         break;
     case QA_COLOR_CONSTANT:
         if (!quantize(stage->constant, &result, error)) return false;
@@ -115,7 +115,7 @@ bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex
     case QA_COLOR_WAVE: {
         float value = state->rgb_wave;
         if (!wave_byte(value, &value, error)) return false;
-        result = (qa_scene_vec4){value, value, value, 1};
+        result = (qa_vec4){value, value, value, 1};
         break;
     }
     case QA_COLOR_LIGHTING_DIFFUSE: {
@@ -173,7 +173,7 @@ bool material_color_vertex(const qa_material_stage *stage, const qa_scene_vertex
 }
 bool qa_material_stage_color(const qa_material_stage *stage, const qa_scene_vertex *vertex,
                              const qa_material_context *context, float time,
-                             qa_scene_vec4 previous, qa_scene_vec4 *out, qa_error *error)
+                             qa_vec4 previous, qa_vec4 *out, qa_error *error)
 {
     material_color_state state;
     return material_color_prepare(stage, context, time, &state, error) &&

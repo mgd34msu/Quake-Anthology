@@ -5,7 +5,7 @@
 #include <string.h>
 
 static void rail_vertex(qa_scene_vertex *vertex, qa_vec3 position, float s, float t,
-                         qa_scene_vec4 color, bool dim)
+                         qa_vec4 color, bool dim)
 {
     vertex->position = position;
     vertex->texcoord = (qa_vec2){s, t};
@@ -16,7 +16,7 @@ static void rail_vertex(qa_scene_vertex *vertex, qa_vec3 position, float s, floa
 
 static bool rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
                             qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin,
-                            qa_scene_vec4 color, const qa_scene_rail_options *options,
+                            qa_vec4 color, const qa_scene_rail_options *options,
                             qa_scene_mesh *out, bool source, qa_error *error)
 {
     const qa_scene_rail_options defaults = {.core_width = 6, .ring_width = 16, .segment_length = 32};
@@ -99,11 +99,11 @@ static bool rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
 }
 
 bool qa_scene_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
-    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4 color,
+    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_vec4 color,
     const qa_scene_rail_options *options, qa_scene_mesh *out, qa_error *error)
 { return rail_geometry(frame, view, kind, origin, old_origin, color, options, out, false, error); }
 bool qa_scene_source_rail_geometry(qa_scene_frame *frame, const qa_scene_view *view,
-    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_scene_vec4 color,
+    qa_scene_rail_kind kind, qa_vec3 origin, qa_vec3 old_origin, qa_vec4 color,
     const qa_scene_rail_options *options, qa_scene_mesh *out, qa_error *error)
 { return rail_geometry(frame, view, kind, origin, old_origin, color, options, out, true, error); }
 
@@ -140,7 +140,7 @@ bool qa_scene_flare(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 or
         vertices[i].normal = qa_vec_scale(direction, -1);
         vertices[i].texcoord = uv[i];
         qa_vec3 rgb = i == 0 ? options->color : rim;
-        vertices[i].color = (qa_scene_vec4){rgb.x, rgb.y, rgb.z, alpha};
+        vertices[i].color = (qa_vec4){rgb.x, rgb.y, rgb.z, alpha};
     }
     const uint32_t order[12] = {0, 2, 3, 0, 3, 4, 0, 4, 1, 0, 1, 2};
     memcpy(indices, order, sizeof(order));
@@ -172,7 +172,7 @@ bool qa_scene_q3_beam_draw(qa_scene_frame *frame, const qa_scene_view *view, qa_
         qa_vec3 start = qa_effect_rotate(perpendicular, direction, (float)i * 60);
         vertices[i * 2].position = start;
         vertices[i * 2 + 1].position = qa_vec_add(start, delta);
-        vertices[i * 2].color = vertices[i * 2 + 1].color = (qa_scene_vec4){1, 0, 0, 1};
+        vertices[i * 2].color = vertices[i * 2 + 1].color = (qa_vec4){1, 0, 0, 1};
     }
     for (uint32_t i = 0; i < 12; ++i) {
         indices[i * 3] = (i + i % 2) % 12;
@@ -239,7 +239,7 @@ bool qa_scene_default_model_draw(qa_scene_frame *frame, const qa_scene_view *vie
     for (uint32_t i = 0; i < 3; ++i) {
         vertices[i * 2 + 1].position = qa_v3(i == 0 ? 16 : 0, i == 1 ? 16 : 0, i == 2 ? 16 : 0);
         vertices[i * 2].color = vertices[i * 2 + 1].color =
-            (qa_scene_vec4){i == 0 ? 1 : 0, i == 1 ? 1 : 0, i == 2 ? 1 : 0, 1};
+            (qa_vec4){i == 0 ? 1 : 0, i == 1 ? 1 : 0, i == 2 ? 1 : 0, 1};
         indices[i * 2] = i * 2;
         indices[i * 2 + 1] = i * 2 + 1;
     }

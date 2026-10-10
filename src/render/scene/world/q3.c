@@ -55,7 +55,7 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
         (void)snprintf(name, sizeof(name), "*world-%" PRIu64 "-q3-lightmap-%zu", world->identity, i);
         qa_scene_image_level level = {Q3_LIGHTMAP_EDGE, Q3_LIGHTMAP_EDGE, pixels, Q3_LIGHTMAP_IMAGE_BYTES};
         if (!qa_scene_image_create(world->resources, name, QA_SCENE_RGB8, &level, 1,
-                                  QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0},
+                                  QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0},
                                   data->lightmaps + i, error)) { free(pixels); return false; }
         image_asset_recipe recipe = {.kind = 2, .level_count = 1,
             .offsets = {(uint64_t)(bytes.data + i * Q3_LIGHTMAP_BYTES - world->bytes.data)},
@@ -425,7 +425,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
         if (!vertices) return false;
         for (size_t i = 0; i < mesh->vertex_count; ++i) {
             vertices[i] = mesh->vertices[i];
-            qa_scene_vec4 p = qa_scene_matrix_point(context->model, vertices[i].position);
+            qa_vec4 p = qa_scene_matrix_point(context->model, vertices[i].position);
             vertices[i].position = qa_v3(p.x, p.y, p.z);
         }
         transformed.vertices = vertices;
@@ -435,7 +435,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
     if (input->override_sky) {
         float rotation = input->sky_rotation * (input->sky_auto_rotate ? (float)input->seconds : 1);
         return qa_scene_q2_sky(frame, &input->view, input->sky_images, bounds, rotation, input->sky_axis,
-                               input->sky_rotation != 0, (qa_scene_vec4){1,1,1,1}, error);
+                               input->sky_rotation != 0, (qa_vec4){1,1,1,1}, error);
     }
     float far_clip = 2048;
     for (unsigned i = 0; world && i < 8; ++i) {
@@ -501,7 +501,7 @@ static bool submit_material_sky(const qa_scene_world *world, qa_material_library
         if (!vertices) return false;
         memcpy(vertices, draw.mesh.vertices, draw.mesh.vertex_count * sizeof(*vertices));
         for (size_t v = 0; v < draw.mesh.vertex_count; ++v)
-            vertices[v].color = (qa_scene_vec4){context->identity_light, context->identity_light, context->identity_light, 1};
+            vertices[v].color = (qa_vec4){context->identity_light, context->identity_light, context->identity_light, 1};
         draw.mesh.vertices = vertices;
         if (!qa_scene_frame_draw(frame, &draw, error)) return false;
     }
@@ -545,7 +545,7 @@ bool qaw_submit_q3(qa_scene_world *world, qaw_surface *surface, const qa_materia
         if (!input->flare) return true;
         qa_bsp_surface source;
         if (!qa_bsp_read_surface(&world->bsp, surface->source_index, &source, error)) return false;
-        qa_scene_vec4 point = qa_scene_matrix_point(context->model, source.lightmap_origin);
+        qa_vec4 point = qa_scene_matrix_point(context->model, source.lightmap_origin);
         qa_vec3 normal = qa_vec_normalize(matrix_vector(context->model, source.lightmap_vectors[2]));
         return input->flare(input->flare_context, surface->source_index, qa_v3(point.x, point.y, point.z),
                             source.lightmap_vectors[0], normal, &context->view, frame, error);

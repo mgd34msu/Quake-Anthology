@@ -118,7 +118,7 @@ struct qa_q3_presentation {
     size_t light_count, light_capacity;
     qa_scene_portal *portals;
     size_t portal_capacity;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     int32_t render_milliseconds;
     qa_scene_view material_view;
     q3p_movie movies[16];
@@ -156,10 +156,10 @@ bool q3p_skin_shared(const qa_q3_presentation_assets *, const q3p_skin *);
 bool q3p_assets_fork(qa_q3_presentation_assets *, qa_q3_presentation_assets **, qa_error *);
 char *q3p_movie_path(const char *, qa_error *);
 bool q3p_movie_close(qa_q3_presentation *, uint32_t, qa_cinematic_end, qa_error *);
-bool q3p_picture(qa_q3_presentation *, const qa_material *, qa_scene_rect_f, qa_scene_vec4, qa_error *);
+bool q3p_picture(qa_q3_presentation *, const qa_material *, qa_scene_rect_f, qa_vec4, qa_error *);
 bool q3p_source_raw_picture(qa_q3_presentation *,const qa_scene_image *,qa_scene_rect_f,
-    qa_scene_vec4 uv,qa_scene_vec4 color,qa_error *);
-qa_scene_vec4 q3p_color(const uint8_t[4]);
+    qa_vec4 uv,qa_vec4 color,qa_error *);
+qa_vec4 q3p_color(const uint8_t[4]);
 const qa_material *q3p_default_material(const qa_q3_presentation *);
 
 #endif

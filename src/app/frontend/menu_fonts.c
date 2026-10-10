@@ -63,7 +63,7 @@ bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *
             qa_resource_bytes(palette), &colors, &expanded, error);
         if (ok) ok = qa_scene_image_create(f->ui_images, "frontend:source-conchars", QA_SCENE_RGBA8,
             &(qa_scene_image_level){128, 128, expanded.rgba.data, expanded.rgba.size}, 1, QA_SCENE_CLAMP,
-            QA_SCENE_NEAREST, (qa_scene_vec4){0}, &image, error);
+            QA_SCENE_NEAREST, (qa_vec4){0}, &image, error);
         if (ok) {
             image_asset_recipe recipe = {.kind = 1, .level_count = 1, .source = wad_source,
                 .palette_source = palette, .palette_attempted = true,

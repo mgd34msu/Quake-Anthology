@@ -346,7 +346,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
         qa_scene_vertex *vertices;
         if (!transient_mesh(surface, frame, &mesh, &vertices, error)) return false;
         for (size_t i = 0; i < mesh.vertex_count; ++i) {
-            qa_scene_vec4 p = qa_scene_matrix_point(context->model, vertices[i].position);
+            qa_vec4 p = qa_scene_matrix_point(context->model, vertices[i].position);
             vertices[i].position = qa_v3(p.x, p.y, p.z);
         }
         qa_scene_sky_bounds bounds[6];
@@ -360,7 +360,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
         float angle = input->sky_auto_rotate ? (float)(input->seconds * input->sky_rotation) : input->sky_rotation;
         size_t first = frame->command_count;
         if (!qa_scene_q2_sky(frame, &input->view, images, bounds, angle, input->sky_axis,
-                             input->sky_rotation != 0, (qa_scene_vec4){1,1,1,1}, error)) return false;
+                             input->sky_rotation != 0, (qa_vec4){1,1,1,1}, error)) return false;
         if (input->fog.kind == QA_FOG_EXP2 && input->fog.density > 0)
             for (size_t i = first; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW)
                 frame->commands[i].data.draw.fog = (qa_scene_fog){.kind = QA_FOG_CONSTANT, .effect = QA_FOG_COLOR,
@@ -379,7 +379,7 @@ static bool sky_submit(qa_scene_world *world, const qaw_surface *surface,
             float length = qa_vec_length(p), scale = length > 0 ? 378 / length : 0;
             vertices[i].texcoord = (qa_vec2){(float)(scroll + p.x * scale) / 128,
                                                   (float)(scroll + p.y * scale) / 128};
-            vertices[i].color = (qa_scene_vec4){1,1,1,1};
+            vertices[i].color = (qa_vec4){1,1,1,1};
         }
         qa_scene_draw draw;
         draw_state(&draw, context, &mesh);
@@ -502,7 +502,7 @@ bool qaw_submit_legacy(qa_scene_world *world, qaw_surface *surface, const qa_mat
         draw.textures[0] = surface->lightmap;
         draw.state.blend_source = QA_BLEND_ONE;
         draw.state.blend_destination = QA_BLEND_ZERO;
-        draw.vertex_inputs.color = (qa_scene_vec4){1, 1, 1, 1};
+        draw.vertex_inputs.color = (qa_vec4){1, 1, 1, 1};
         draw.vertex_inputs.swap_uv = true;
     }
     if ((!lightmapped || paired) && !diagnostic)

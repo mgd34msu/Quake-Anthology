@@ -311,7 +311,7 @@ static bool create_atlas(qa_scene_shadows *shadows, qa_error *error)
     qa_scene_image_level level = {SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE, pixels, count * sizeof(*pixels)};
     bool ok = qa_scene_image_create(shadows->resources, "*q2-shadow-atlas", QA_SCENE_DEPTH32F,
                                     &level, 1, QA_SCENE_CLAMP, QA_SCENE_NEAREST,
-                                    (qa_scene_vec4){1, 1, 1, 1}, &shadows->atlas, error);
+                                    (qa_vec4){1, 1, 1, 1}, &shadows->atlas, error);
     free(pixels);
     return ok;
 }
@@ -439,7 +439,7 @@ bool qa_scene_shadows_prepare_options(qa_scene_shadows *shadows, const qa_scene_
         if (!candidate->packed) continue;
         qa_scene_shadow_light *prepared = &lights[candidate->light_index];
         const qa_scene_light *light = &prepared->light;
-        prepared->atlas_rect = (qa_scene_vec4){(float)candidate->rect.x / (float)SHADOW_ATLAS_SIZE,
+        prepared->atlas_rect = (qa_vec4){(float)candidate->rect.x / (float)SHADOW_ATLAS_SIZE,
             (float)candidate->rect.y / (float)SHADOW_ATLAS_SIZE, (float)candidate->rect.width / (float)SHADOW_ATLAS_SIZE,
             (float)candidate->rect.height / (float)SHADOW_ATLAS_SIZE};
         prepared->point_shadow = !light->spot;

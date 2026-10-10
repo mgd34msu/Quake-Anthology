@@ -137,10 +137,10 @@ typedef struct draw_context {
 } draw_context;
 
 static bool clipped_picture(draw_context *context, const qa_font_glyph *glyph, qa_scene_rect_f rect,
-                            qa_scene_vec4 color) {
+                            qa_vec4 color) {
     if (!glyph->visible || !glyph->image || rect.width <= 0 || rect.height <= 0)
         return true;
-    qa_scene_vec4 uv = glyph->uv;
+    qa_vec4 uv = glyph->uv;
     float bottom = rect.y + rect.height;
     if (!isfinite(rect.x) || !isfinite(rect.y) || !isfinite(rect.width) || !isfinite(rect.height) ||
         !isfinite(bottom))
@@ -164,7 +164,7 @@ static bool clipped_picture(draw_context *context, const qa_font_glyph *glyph, q
 }
 
 static bool draw_scalar(draw_context *context, uint32_t scalar, float x, float y,
-                        qa_scene_vec4 color, bool alternate) {
+                        qa_vec4 color, bool alternate) {
     qa_font_glyph glyph;
     qa_font_info info;
     if (!font_metrics(context->font, scalar, alternate, &glyph, &info, context->error))
@@ -181,11 +181,11 @@ static bool draw_scalar(draw_context *context, uint32_t scalar, float x, float y
         glyph.width * scale,
         glyph.height * scale,
     };
-    qa_scene_vec4 tint = color;
+    qa_vec4 tint = color;
     if (glyph.baked_color)
-        tint = (qa_scene_vec4){1, 1, 1, color.w};
+        tint = (qa_vec4){1, 1, 1, color.w};
     else if (alternate)
-        tint = (qa_scene_vec4){0.85f, 0.65f, 0.12f, color.w};
+        tint = (qa_vec4){0.85f, 0.65f, 0.12f, color.w};
     return clipped_picture(context, &glyph, rect, tint);
 }
 
@@ -203,7 +203,7 @@ static size_t scalar_count(const char *text) {
 }
 
 static bool draw_string_range(draw_context *context, const char *text, size_t first, size_t maximum,
-                              float x, float y, qa_scene_vec4 color, size_t *drawn) {
+                              float x, float y, qa_vec4 color, size_t *drawn) {
     qa_bytes bytes = {(const uint8_t *)text, strlen(text)};
     size_t at = 0, index = 0, count = 0;
     uint32_t scalar;
@@ -221,7 +221,7 @@ static bool draw_string_range(draw_context *context, const char *text, size_t fi
 }
 
 static bool draw_fitted(draw_context *context, const char *text, size_t maximum, bool ellipsis,
-                        float x, float y, qa_scene_vec4 color) {
+                        float x, float y, qa_vec4 color) {
     size_t count = scalar_count(text);
     size_t content = count < maximum ? count : maximum;
     size_t dots = 0;
@@ -354,7 +354,7 @@ static bool draw_field(draw_context *context, const qa_field_view *field, const 
     double room = available - ((double)prefix + 1.0) * context->cell_width;
     if (room > 0)
         maximum = cells_that_fit(room, context->cell_width);
-    const qa_scene_vec4 white = {1, 1, 1, 1};
+    const qa_vec4 white = {1, 1, 1, 1};
     if (!draw_string_range(context, prompt, 0, prefix, x, y, white, NULL) ||
         !draw_string_range(context, field->text, scroll, maximum, x + (float)prefix * context->cell_width, y, white,
                            NULL))
@@ -404,7 +404,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         qa_scene_rect_f background = {(float)options->target.x, (float)options->target.y,
                                       (float)options->target.width, (float)visible_height};
         if (!qa_scene_frame_picture_f(frame, options->background, options->target, background,
-                                      (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){1, 1, 1, 1},
+                                      (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 1, 1, 1},
                                       error))
             return false;
     }
@@ -441,7 +441,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
     float y = options->notify_rows ? (float)options->target.y :
         (float)((double)options->target.y + bottom -
                       (double)line_height * ((double)row_count + (double)field_lines + (double)help_count));
-    static const qa_scene_vec4 colors[8] = {
+    static const qa_vec4 colors[8] = {
         {0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 1, 0, 1},
         {0, 0, 1, 1}, {0, 1, 1, 1}, {1, 0, 1, 1}, {1, 1, 1, 1},
     };
@@ -456,7 +456,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         size_t cell_count = row.count < maximum_cells ? row.count : maximum_cells;
         for (size_t column = 0; column < cell_count; ++column) {
             const qa_console_cell *cell = &row.cells[column];
-            qa_scene_vec4 color = cell->color < 8 ? colors[cell->color] : colors[7];
+            qa_vec4 color = cell->color < 8 ? colors[cell->color] : colors[7];
             if (!draw_scalar(&context, cell->scalar, x0 + (float)column * cell_width, y, color,
                              cell->alternate))
                 return false;
@@ -473,7 +473,7 @@ bool qa_console_draw(qa_scene_frame *frame, const qa_console_draw_options *optio
         if (!draw_field(&context, options->field, options->prompt ? options->prompt : "]", options->now_milliseconds, x0, y, available))
             return false;
         y += line_height;
-        const qa_scene_vec4 help_color = {0.65f, 0.85f, 1, 1};
+        const qa_vec4 help_color = {0.65f, 0.85f, 1, 1};
         for (size_t i = 0; i < help_count; ++i) {
             if (!draw_fitted(&context, help[i], maximum_cells, true, x0, y, help_color))
                 return false;

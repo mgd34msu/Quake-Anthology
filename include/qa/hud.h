@@ -44,7 +44,7 @@ typedef struct qa_hud_score {
 } qa_hud_score;
 typedef struct qa_hud_team_face {
     const qa_scene_image *border;
-    qa_scene_vec4 top, bottom;
+    qa_vec4 top, bottom;
     int32_t score;
     bool alternate_digits;
 } qa_hud_team_face;
@@ -103,7 +103,7 @@ typedef struct qa_hud_data {
     const qa_scene_image *crosshair, *health_icon;
     qa_hud_team_face health_team_face;
     qa_hud_q1_status q1;
-    qa_scene_vec4 crosshair_color;
+    qa_vec4 crosshair_color;
     float crosshair_size; /* Zero retains the source default. */
     bool crosshair_visible, source_vitals;
     qa_item_id selected_weapon;

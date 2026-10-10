@@ -1021,7 +1021,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
     clear.clear_color = renderer->pipeline.color_write;
     clear.clear_depth = renderer->pipeline.depth_write;
     clear.clear_stencil = false;
-    clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
+    clear.color = (qa_vec4){1, 0, 0.5f, 1};
     renderer->clear_color=clear.color;
     clear.depth = renderer->clear_depth;
     clear_view(renderer, &clear);
@@ -1162,7 +1162,7 @@ static bool cpu_execute_range(qa_cpu_renderer *renderer, const qa_scene_frame *f
         clear.clear_color = !frame->source_backend || renderer->pipeline.color_write;
         clear.clear_depth = !frame->source_backend || renderer->pipeline.depth_write;
         clear.clear_stencil = false;
-        clear.color = (qa_scene_vec4){1, 0, 0.5f, 1};
+        clear.color = (qa_vec4){1, 0, 0.5f, 1};
     renderer->clear_color=clear.color;
         clear.depth = frame->source_backend ? renderer->clear_depth : 1;
         if (!frame->source_backend) {
@@ -1907,7 +1907,7 @@ bool qa_cpu_source_image_grid(qa_render_controls *controls,int32_t mode,qa_error
     cpu_source_bind(renderer,binding);
     size_t first=frame.command_count;
     ok=qa_scene_frame_picture_f(&frame,binding,target,(qa_scene_rect_f){x,y,w,h},
-      (qa_scene_vec4){0,0,1,1},controls->attributes.color,error);
+      (qa_vec4){0,0,1,1},controls->attributes.color,error);
     for (size_t c=first;ok && c<frame.command_count;++c) {
       if (frame.commands[c].kind!=QA_SCENE_COMMAND_DRAW) continue;
       qa_scene_draw *draw=&frame.commands[c].data.draw;

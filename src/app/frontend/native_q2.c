@@ -105,11 +105,11 @@ static bool vector_argument(const qa_native_host_q2_application_call *call, size
     return true;
 }
 static bool color_argument(const qa_native_host_q2_application_call *call, size_t index,
-    qa_scene_vec4 *out, qa_error *error)
+    qa_vec4 *out, qa_error *error)
 {
     uint8_t bytes[4];
     if (!qa_native_read(call->instance, call->import->arguments[index].as.address, bytes, sizeof(bytes), error)) return false;
-    *out = (qa_scene_vec4){bytes[0] / 255.f, bytes[1] / 255.f, bytes[2] / 255.f, bytes[3] / 255.f};
+    *out = (qa_vec4){bytes[0] / 255.f, bytes[1] / 255.f, bytes[2] / 255.f, bytes[3] / 255.f};
     return true;
 }
 static bool catalog_for(frontend_native_q2 *source, qa_localization **out, qa_error *error)
@@ -215,7 +215,7 @@ static const char *binding_name(frontend_native_q2 *source, const char *command,
     out[0] = 0; return out;
 }
 static bool font_layout(frontend_native_q2 *source, const char *text, int32_t scale,
-    qa_scene_vec4 color, qa_font_alignment alignment, qa_arena *scratch, qa_font_layout *out,
+    qa_vec4 color, qa_font_alignment alignment, qa_arena *scratch, qa_font_layout *out,
     qa_error *error)
 {
     if (!seat_ready(source, error) || scale <= 0) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 font scale or seat is invalid");
@@ -231,7 +231,7 @@ static bool font_layout(frontend_native_q2 *source, const char *text, int32_t sc
     return qa_font_layout_build(&selection, &options, scratch, out, error);
 }
 static bool draw_text(frontend_native_q2 *source, const char *text, int32_t x, int32_t y,
-    int32_t scale, qa_scene_vec4 color, bool shadow, qa_font_alignment alignment, qa_error *error)
+    int32_t scale, qa_vec4 color, bool shadow, qa_font_alignment alignment, qa_error *error)
 {
     qa_arena scratch; qa_arena_init(&scratch, 16384); qa_font_layout layout;
     bool ok = font_layout(source, text, scale, color, alignment, &scratch, &layout, error);
@@ -353,7 +353,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             binding_name(source, (const char *)command.data, key);
             snprintf(line, sizeof(line), "%s%s%s %s", *key ? "[" : "<", *key ? key : "unbound", *key ? "]" : ">", label);
             ok = draw_text(source, line, args[3].as.i32, args[4].as.i32, args[5].as.i32,
-                (qa_scene_vec4){1, 1, 1, 1}, false, QA_FONT_ALIGN_CENTER, error);
+                (qa_vec4){1, 1, 1, 1}, false, QA_FONT_ALIGN_CENTER, error);
             if (ok) result->as.i32 = 8;
         }
         qa_localization_release(catalog); qa_buffer_free(&command); qa_buffer_free(&purpose); return ok;
@@ -371,7 +371,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             !glyph.visible || !glyph.image) return true;
         return qa_scene_frame_picture_f(&source->frontend->frame, glyph.image, source->viewport,
             (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32, 8.f * (float)scale, 8.f * (float)scale},
-            glyph.uv, (qa_scene_vec4){1, 1, 1, 1}, error);
+            glyph.uv, (qa_vec4){1, 1, 1, 1}, error);
     }
     if (!strcmp(import->name, "Draw_RegisterPic") || !strcmp(import->name, "Draw_GetPicSize") ||
         !strcmp(import->name, "SCR_DrawPic") || !strcmp(import->name, "SCR_DrawColorPic")) {
@@ -384,18 +384,18 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             ok = qa_native_write(call->instance, args[0].as.address, (qa_bytes){width, 4}, error) &&
                 qa_native_write(call->instance, args[1].as.address, (qa_bytes){height, 4}, error);
         } else if (ok) {
-            ok = seat_ready(source, error); qa_scene_vec4 color = {1, 1, 1, 1};
+            ok = seat_ready(source, error); qa_vec4 color = {1, 1, 1, 1};
             if (ok && import->slot == 25) ok = color_argument(call, 5, &color, error);
             if (ok && image) ok = qa_scene_frame_picture_f(&source->frontend->frame, image, source->viewport,
                 (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32,
-                    (float)args[2].as.i32, (float)args[3].as.i32}, (qa_scene_vec4){0, 0, 1, 1}, color, error);
+                    (float)args[2].as.i32, (float)args[3].as.i32}, (qa_vec4){0, 0, 1, 1}, color, error);
         }
         qa_buffer_free(&name); return ok;
     }
     if (import->slot == 27 || import->slot == 28) {
         qa_buffer text = {0}; bool ok = text_argument(call, 0, &text, error);
         if (ok && import->slot == 27) {
-            qa_scene_vec4 color; int32_t align = args[6].as.i32;
+            qa_vec4 color; int32_t align = args[6].as.i32;
             if (align < 0 || align > 2) ok = frontend_fail(error, QA_ERROR_FORMAT, "native Q2 text alignment is invalid");
             else if (color_argument(call, 4, &color, error)) ok = draw_text(source, (const char *)text.data,
                 args[1].as.i32, args[2].as.i32, args[3].as.i32, color, args[5].as.u8 != 0,
@@ -403,7 +403,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             else ok = false;
         } else if (ok) {
             qa_arena scratch; qa_arena_init(&scratch, 16384); qa_font_layout layout;
-            ok = font_layout(source, (const char *)text.data, args[1].as.i32, (qa_scene_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
+            ok = font_layout(source, (const char *)text.data, args[1].as.i32, (qa_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
             if (ok && (result->type != QA_NATIVE_BYTES || result->as.bytes.size < 8 || !result->as.bytes.data))
                 ok = frontend_fail(error, QA_ERROR_FORMAT, "native Q2 text measurement result storage is invalid");
             if (ok) {
@@ -416,7 +416,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
     }
     if (import->slot == 29) {
         qa_arena scratch; qa_arena_init(&scratch, 4096); qa_font_layout layout;
-        bool ok = font_layout(source, "", args[0].as.i32, (qa_scene_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
+        bool ok = font_layout(source, "", args[0].as.i32, (qa_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
         if (ok) result->as.f32 = layout.line_height;
         qa_arena_destroy(&scratch); return ok;
     }

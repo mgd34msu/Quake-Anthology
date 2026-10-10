@@ -1207,7 +1207,7 @@ const qa_unified_record_layout qa_unified_events_layout;
 static const qa_unified_record_layout qa_unified_message_arg_layout;
 static const qa_unified_record_layout qa_unified_prompt_choice_layout;
 static const qa_unified_record_layout qa_unified_builtin_event_layout;
-static const qa_unified_record_layout qa_q2_blend_layout;
+static const qa_unified_record_layout qa_unified_vector4_layout;
 static const qa_unified_record_layout qa_unified_q2_player_view_layout;
 static const qa_unified_record_layout qa_unified_q2_score_row_layout;
 static const qa_unified_record_layout qa_unified_q2_player_event_layout;
@@ -1324,13 +1324,13 @@ static const qa_unified_field qa_unified_builtin_event_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_builtin_event_layout = QA_UNIFIED_LAYOUT(qa_unified_builtin_event, qa_unified_builtin_event_fields);
 
-static const qa_unified_field qa_q2_blend_fields[] = {
-    QA_UNIFIED_FIELD(qa_q2_blend, x, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_q2_blend, y, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_q2_blend, z, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_q2_blend, w, QA_UNIFIED_FIELD_F32),
+static const qa_unified_field qa_unified_vector4_fields[] = {
+    QA_UNIFIED_FIELD(qa_vec4, x, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_vec4, y, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_vec4, z, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_vec4, w, QA_UNIFIED_FIELD_F32),
 };
-static const qa_unified_record_layout qa_q2_blend_layout = QA_UNIFIED_LAYOUT(qa_q2_blend, qa_q2_blend_fields);
+static const qa_unified_record_layout qa_unified_vector4_layout = QA_UNIFIED_LAYOUT(qa_vec4, qa_unified_vector4_fields);
 
 static const qa_unified_field qa_unified_q2_player_view_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_q2_player_view, angles, qa_unified_vector_layout),
@@ -1338,7 +1338,7 @@ static const qa_unified_field qa_unified_q2_player_view_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_q2_player_view, kick_angles, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_q2_player_view, gun_angles, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_q2_player_view, gun_offset, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, blend, qa_q2_blend_layout),
+    QA_UNIFIED_RECORD(qa_unified_q2_player_view, blend, qa_unified_vector4_layout),
     QA_UNIFIED_FIELD(qa_unified_q2_player_view, fov, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_q2_player_view, health, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_q2_player_view, ammo, QA_UNIFIED_FIELD_F32),

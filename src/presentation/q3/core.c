@@ -168,7 +168,7 @@ bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
             free(p); return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 presentation cinematic source differs from its actual provider/seat");
         }
     }
-    p->options = *options; p->color = (qa_scene_vec4){1, 1, 1, 1};
+    p->options = *options; p->color = (qa_vec4){1, 1, 1, 1};
     ++options->assets->users;
     if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) {
         --options->assets->users; free(p); return false;

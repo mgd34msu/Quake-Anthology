@@ -44,7 +44,7 @@ bool q3nh_fade(int32_t time,int32_t start,int32_t duration,float color[4]);
 void q3nh_health(int32_t health,int32_t armor,float color[4]);
 bool q3nh_color(q3n_hud_draw *,const float color[4]);
 bool q3nh_picture(q3n_hud_draw *,float x,float y,float width,float height,int32_t);
-bool q3nh_pixels(q3n_hud_draw *,float x,float y,float width,float height,int32_t,qa_scene_vec4 uv);
+bool q3nh_pixels(q3n_hud_draw *,float x,float y,float width,float height,int32_t,qa_vec4 uv);
 bool q3nh_fill(q3n_hud_draw *,float x,float y,float width,float height,const float color[4]);
 bool q3nh_text(q3n_hud_draw *,float x,float y,const char *,float width,float height,
     const float color[4],bool force,bool shadow,int32_t limit);

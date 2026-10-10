@@ -288,7 +288,7 @@ static cpu_scissor scissor(const qa_cpu_renderer *renderer) {
 static bool finite3(qa_vec3 v) {
   return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
 }
-static bool finite4(qa_scene_vec4 v) {
+static bool finite4(qa_vec4 v) {
   return isfinite(v.x) && isfinite(v.y) && isfinite(v.z) && isfinite(v.w);
 }
 bool cpu_image_valid(const qa_scene_image *image, qa_error *error) {
@@ -483,7 +483,7 @@ static bool transform(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
                        normal[c * 3 + 1] * v->normal.y +
                        normal[c * 3 + 2] * v->normal.z : 0;
     }
-    qa_scene_vec4 color; qa_vec2 uv[2];
+    qa_vec4 color; qa_vec2 uv[2];
     qa_render_source_attributes_vertex(&renderer->controls,draw,mode,i,v,&color,uv);
     out->color[0] = color.x;
     out->color[1] = color.y;

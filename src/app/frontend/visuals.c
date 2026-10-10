@@ -1335,7 +1335,7 @@ static bool static_source_submit(qa_frontend *frontend, qa_actor_owner provider,
         if (row->is_inline || row->brush) {
             if (!qa_scene_world_submit_model(row->is_inline ? frontend->scene_world : row->brush->world,
                 row->is_inline ? row->inline_model : 0, &row->transform, world, 0,
-                (qa_scene_vec4){1, 1, 1, 1}, frame, error)) return false;
+                (qa_vec4){1, 1, 1, 1}, frame, error)) return false;
             continue;
         }
         qa_vec3 origin = qa_v3(row->baseline.origin[0], row->baseline.origin[1], row->baseline.origin[2]);
@@ -1424,7 +1424,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         qa_vec3 angles;
         if (!entity_angles(frontend, &view, NULL, &angles, error)) return false;
         qa_model_transform placement = transform(&view, angles);
-        qa_scene_vec4 color = {1, 1, 1, view.alpha};
+        qa_vec4 color = {1, 1, 1, view.alpha};
         if (view.has_inline_model) {
             if (!qa_scene_world_submit_model(frontend->scene_world, view.inline_model,
                 &placement, world, actor.slot, color, frame, error)) return false;

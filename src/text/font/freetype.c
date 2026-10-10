@@ -168,7 +168,7 @@ static bool flush_page(qa_font *font, atlas_page *page, qa_error *error) {
                                   (size_t)page->width * used_height * 4u};
     qa_scene_image *image = NULL;
     if (!qa_scene_image_create(font->library->resources, name, QA_SCENE_RGBA8, &level, 1,
-                               QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_scene_vec4){0, 0, 0, 0}, &image,
+                               QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0, 0, 0, 0}, &image,
                                error))
         return false;
     if (!qa_font_internal_take_image(font, image, error))
@@ -177,7 +177,7 @@ static bool flush_page(qa_font *font, atlas_page *page, qa_error *error) {
         raster_glyph item = page->glyphs[i];
         item.glyph.image = image;
         item.glyph.uv =
-            (qa_scene_vec4){(float)item.x / (float)page->width, (float)item.y / (float)used_height,
+            (qa_vec4){(float)item.x / (float)page->width, (float)item.y / (float)used_height,
                             (float)(item.x + (uint32_t)item.glyph.width) / (float)page->width,
                             (float)(item.y + (uint32_t)item.glyph.height) / (float)used_height};
         if (!qa_font_internal_add_glyph(font, item.glyph, error))
@@ -194,7 +194,7 @@ static bool place_glyph(qa_font *font, atlas_page *page, qa_font_glyph glyph,
     uint32_t width = bitmap->width, height = bitmap->rows;
     if (!width || !height) {
         glyph.image = NULL;
-        glyph.uv = (qa_scene_vec4){0};
+        glyph.uv = (qa_vec4){0};
         return qa_font_internal_add_glyph(font, glyph, error);
     }
     if (width > page->width || height > page->height)

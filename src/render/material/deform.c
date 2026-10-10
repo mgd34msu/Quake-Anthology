@@ -96,7 +96,7 @@ static bool require_quads(const deform_mesh *geometry, const char *kind, qa_erro
 
 static void stamp_quad(deform_mesh *geometry, size_t start, qa_vec3 center,
                        qa_vec3 left, qa_vec3 up, qa_vec3 normal,
-                       qa_scene_vec4 color, float s, float t, float step)
+                       qa_vec4 color, float s, float t, float step)
 {
     qa_vec3 positions[4] = {
         qa_vec_add(qa_vec_add(center, left), up),
@@ -264,7 +264,7 @@ static bool text_geometry(deform_mesh *geometry, uint32_t text_index,
             float s = (float)(ch & 15u) * 0.0625f;
             float t = (float)(ch >> 4u) * 0.0625f;
             stamp_quad(geometry, start, origin, width, height, normal,
-                       (qa_scene_vec4){1, 1, 1, 1}, s, t, 0.0625f);
+                       (qa_vec4){1, 1, 1, 1}, s, t, 0.0625f);
             start += 4;
         }
         origin = qa_vec_add(origin, qa_vec_scale(width, -2.0f));

@@ -16,7 +16,7 @@ typedef struct cpu_surface_stamp {
   uint32_t base_width, base_height;
   qa_q3_texture_format base_format, light_format;
   bool base_alpha, light_alpha, light_linear;
-  qa_scene_vec4 color;
+  qa_vec4 color;
   qa_scene_texture_environment environment;
   qa_scene_lighting_kind lighting;
   uint8_t texture_count;

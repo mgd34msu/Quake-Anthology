@@ -18,7 +18,7 @@ typedef struct layout_context {
     bool rerelease, failed;
     qa_hud_q2_stat_references *references;
 } layout_context;
-static const qa_scene_vec4 white = {1, 1, 1, 1}, black = {0, 0, 0, 1};
+static const qa_vec4 white = {1, 1, 1, 1}, black = {0, 0, 0, 1};
 static void fail(layout_context *c, const char *message) {
     if (!c->failed) qa_error_set(c->error, QA_ERROR_FORMAT, c->parser.offset, "%s", message);
     c->failed = true;
@@ -79,7 +79,7 @@ static int32_t stat_int(layout_context *c, int32_t index) {
     return (int32_t)value;
 }
 static bool quad(layout_context *c, const qa_scene_image *image, float x, float y, float w, float h,
-                 qa_scene_vec4 uv, qa_scene_vec4 color) {
+                 qa_vec4 uv, qa_vec4 color) {
     if (c->failed || !image) return !c->failed;
     const qa_hud_q2_options *o = c->options;
     if (!qa_scene_frame_picture_f(c->scene, image, o->viewport,
@@ -87,8 +87,8 @@ static bool quad(layout_context *c, const qa_scene_image *image, float x, float 
                           w * o->scale, h * o->scale}, uv, color, c->error)) c->failed = true;
     return !c->failed;
 }
-static void fill(layout_context *c, float x, float y, float w, float h, qa_scene_vec4 color) {
-    quad(c, c->options->white, x, y, w, h, (qa_scene_vec4){0, 0, 1, 1}, color);
+static void fill(layout_context *c, float x, float y, float w, float h, qa_vec4 color) {
+    quad(c, c->options->white, x, y, w, h, (qa_vec4){0, 0, 1, 1}, color);
 }
 static void picture(layout_context *c, const char *name, float x, float y, float w, float h, bool before) {
     if (c->failed || !*name || !c->options->picture) return;
@@ -96,7 +96,7 @@ static void picture(layout_context *c, const char *name, float x, float y, float
     if (!image) return;
     if (before) x -= (float)image->logical_width + 2;
     quad(c, image, x, y, w > 0 ? w : (float)image->logical_width, h > 0 ? h : (float)image->logical_height,
-         (qa_scene_vec4){0, 0, 1, 1}, white);
+         (qa_vec4){0, 0, 1, 1}, white);
 }
 static void classic_glyph(layout_context *c, uint32_t code, float x, float y, bool shadow) {
     code &= 255;
@@ -153,7 +153,7 @@ static void text(layout_context *c, const char *value, bool alternate, float x, 
     if (!font) { classic_text(c, value, x, y, alternate, c->rerelease, c->rerelease); return; }
     qa_font_layout layout;
     if (!font_layout(c, value, &layout)) return;
-    qa_scene_vec4 color = alternate ? (qa_scene_vec4){112.f / 255, 1, 52.f / 255, 1} : white;
+    qa_vec4 color = alternate ? (qa_vec4){112.f / 255, 1, 52.f / 255, 1} : white;
     float offset = (c->options->font_line_height - 8) / 2;
     for (size_t pass = 0; pass < 2; ++pass) {
         for (size_t i = 0; i < layout.glyph_count; ++i) {
@@ -283,7 +283,7 @@ static void item_picture(layout_context *c, int32_t index) {
         if (!isfinite(aspect) || aspect <= 0) { fail(c, "HUD arsenal image has invalid aspect"); return; }
         float w = 24 * fminf(1, aspect), h = 24 / fmaxf(1, aspect);
         quad(c, image, c->x + (24 - w) / 2, c->y + (24 - h) / 2, w, h,
-             (qa_scene_vec4){0, 0, 1, 1}, white);
+             (qa_vec4){0, 0, 1, 1}, white);
     }
 }
 static bool initialize(layout_context *c, const qa_hud_q2_options *options,
@@ -569,8 +569,8 @@ static bool execute(layout_context *c, const char *source) {
                 uint32_t packed = (value >> (i * 8)) & 255; if (!(packed & 128)) continue;
                 float fraction = (float)(packed & 127u) / 127.f;
                 fill(c, left, c->y, w + 1, 5, black);
-                if (fraction > 0) fill(c, left, c->y, w * fraction, 4, (qa_scene_vec4){1, 0, 0, 1});
-                if (fraction < 1) fill(c, left + w * fraction, c->y, w * (1 - fraction), 4, (qa_scene_vec4){80.f / 255, 80.f / 255, 80.f / 255, 1});
+                if (fraction > 0) fill(c, left, c->y, w * fraction, 4, (qa_vec4){1, 0, 0, 1});
+                if (fraction < 1) fill(c, left + w * fraction, c->y, w * (1 - fraction), 4, (qa_vec4){80.f / 255, 80.f / 255, 80.f / 255, 1});
                 c->y += 12;
             }
         } else if (c->rerelease && !strcmp(command, "story")) {

@@ -37,7 +37,7 @@ typedef struct qa_font_glyph {
     uint32_t codepoint;
     const qa_font *font;
     const qa_scene_image *image;
-    qa_scene_vec4 uv;
+    qa_vec4 uv;
     float width, height, advance, bearing_x, bearing_y;
     bool visible, baked_color;
 } qa_font_glyph;
@@ -145,7 +145,7 @@ typedef enum qa_font_alignment {
 typedef struct qa_font_layout_options {
     qa_bytes text;
     float scale;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     qa_font_color_codes color_codes;
     qa_font_alignment alignment;
     bool force_color, alternate;
@@ -159,7 +159,7 @@ typedef struct qa_font_layout_options {
 typedef struct qa_font_positioned_glyph {
     qa_font_glyph glyph;
     qa_scene_rect_f rect;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     size_t source_offset;
 } qa_font_positioned_glyph;
 
@@ -219,7 +219,7 @@ typedef enum qa_font_world_source {
 typedef struct qa_font_world_text {
     qa_bytes text;
     qa_vec3 origin, angles;
-    qa_scene_vec4 color;
+    qa_vec4 color;
     float cell_size, distance_cull_factor;
     qa_font_world_orientation orientation;
     qa_font_world_source font;
