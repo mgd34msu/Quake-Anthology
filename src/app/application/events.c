@@ -11,6 +11,7 @@
 #include "unified_q2_native_events.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
+#include "native_q2_protocol_resources.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
 #include "qa/qc_observation.h"
@@ -807,18 +808,24 @@ abort:
 
 static bool emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
-    const qa_application_q2_protocol_delivery *delivery, qa_error *error)
+    const qa_application_q2_protocol_delivery *delivery,
+    const qa_native_host_message *source, qa_error *error)
 {
     qa_application *application = provider ? provider->application : NULL;
     if (!application || !application->session || application->destroy_requested || !event ||
         (event->payload.size && !event->payload.data) || !qa_vec_finite(event->origin) ||
         (event->reference_count && !event->references) ||
         event->reference_count > SIZE_MAX / sizeof(*event->references) ||
+        (source && ((source->reference_count && !source->references) ||
+            source->reference_count > SIZE_MAX / sizeof(qa_application_protocol_reference))) ||
         (event->resource_count && !event->resources) ||
         event->resource_count > SIZE_MAX / sizeof(*event->resources))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid source protocol event");
     for (size_t i = 0; i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
+            return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
+    if (source) for (size_t i = 0; i < source->reference_count; ++i)
+        if (event->payload.size < 2 || source->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
     for (size_t i = 0; i < event->resource_count; ++i) {
         const qa_application_protocol_resource_reference *resource = event->resources + i;
@@ -839,17 +846,21 @@ static bool emit_protocol(application_provider *provider,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
     if (event->payload.size) memcpy(payload, event->payload.data, event->payload.size);
-    qa_application_protocol_reference *references = event->reference_count ?
+    application_native_q2_protocol_resources captured = {0};
+    if (delivery && !application_native_q2_protocol_resources_capture(provider->state.native.q2_engine,
+        (qa_bytes){payload, event->payload.size}, event->references, event->reference_count,
+        source, &captured, error)) goto abort;
+    qa_application_protocol_reference *references = delivery ? captured.references : event->reference_count ?
         application_event_stream_alloc(application, event->reference_count * sizeof(*references),
                          _Alignof(qa_application_protocol_reference), error) : NULL;
-    if (event->reference_count && !references) goto abort;
-    if (event->reference_count)
+    if (!delivery && event->reference_count && !references) goto abort;
+    if (!delivery && event->reference_count)
         memcpy(references, event->references, event->reference_count * sizeof(*references));
-    qa_application_protocol_resource_reference *resources = event->resource_count ?
+    qa_application_protocol_resource_reference *resources = delivery ? captured.rows : event->resource_count ?
         application_event_stream_alloc(application, event->resource_count * sizeof(*resources),
             _Alignof(qa_application_protocol_resource_reference), error) : NULL;
-    if (event->resource_count && !resources) goto abort;
-    for (size_t i = 0; i < event->resource_count; ++i) {
+    if (!delivery && event->resource_count && !resources) goto abort;
+    for (size_t i = 0; !delivery && i < event->resource_count; ++i) {
         resources[i] = event->resources[i];
         size_t length = strlen(resources[i].name);
         char *name = application_event_stream_alloc(application, length + 1, 1, error);
@@ -880,6 +891,10 @@ static bool emit_protocol(application_provider *provider,
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
     copied.resources = resources;
+    if (delivery) {
+        copied.reference_count = captured.reference_count;
+        copied.resource_count = captured.count;
+    }
     application_protocol_record record = {.event = copied};
     if (delivery) {
         record.q2 = *delivery;
@@ -900,17 +915,18 @@ abort:
 
 bool application_emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event, qa_error *error)
-{ return emit_protocol(provider, event, NULL, error); }
+{ return emit_protocol(provider, event, NULL, NULL, error); }
 
 bool application_emit_q2_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
-    const qa_application_q2_protocol_delivery *delivery, qa_error *error)
+    const qa_application_q2_protocol_delivery *delivery,
+    const qa_native_host_message *source, qa_error *error)
 {
     if (!provider || !delivery || !delivery->original ||
         (delivery->profile != QA_NATIVE_Q2_GAME_API3 && delivery->profile != QA_NATIVE_Q2_GAME_API2023) ||
         (delivery->audience.captured && delivery->audience.source != provider->owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 protocol lost its actual source receipt");
-    return emit_protocol(provider, event, delivery, error);
+    return emit_protocol(provider, event, delivery, source, error);
 }
 
 uint64_t qa_application_events_first(const qa_application *app)

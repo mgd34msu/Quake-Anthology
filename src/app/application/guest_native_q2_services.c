@@ -6,7 +6,6 @@
 #include "guest_native_q2_input.h"
 #include "native_q2_delivery.h"
 #include "native_q2_callbacks.h"
-#include "native_q2_protocol_resources.h"
 #include "unified_events.h"
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
@@ -32,15 +31,7 @@ static bool protocol(struct application_native_q2 *engine, const qa_q2_server_ev
     qa_application_q2_protocol_delivery delivery = {.profile = engine->profile, .original = true};
     if (engine->initialized && engine->map_ready && engine->calls &&
         !application_native_q2_message_capture(engine, &packet, &delivery, error)) return false;
-    application_native_q2_protocol_resources resources = {0};
-    bool ok = application_native_q2_protocol_resources_capture(engine, event.payload,
-        event.references, event.reference_count, &resources, error);
-    if (ok) {
-        event.resources = resources.rows; event.resource_count = resources.count;
-        event.references = resources.references; event.reference_count = resources.reference_count;
-        ok = application_emit_q2_protocol(engine->provider, &event, &delivery, error);
-    }
-    application_native_q2_protocol_resources_dispose(&resources);
+    bool ok = application_emit_q2_protocol(engine->provider, &event, &delivery, NULL, error);
     application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }
@@ -199,43 +190,23 @@ static bool command(void *opaque, qa_native_host_command_view *out, qa_error *er
 static bool message(void *opaque, const qa_native_host_message *source, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
-    if (source->reference_count > SIZE_MAX / sizeof(qa_application_protocol_reference) ||
-        (source->reference_count && !source->references))
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q2 message reference extent is invalid");
-    qa_application_protocol_reference *references = source->reference_count ?
-        calloc(source->reference_count, sizeof(*references)) : NULL;
-    if (source->reference_count && !references)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining written native Q2 message identities");
-    for (size_t i = 0; i < source->reference_count; ++i)
-        references[i] = (qa_application_protocol_reference){.offset = source->references[i].offset,
-            .actor = source->references[i].actor};
     qa_application_protocol_event event = {.recipient = source->client, .origin = source->origin,
         .payload = source->payload, .destination = source->destination,
-        .references = references, .reference_count = source->reference_count,
         .reliable = source->reliable, .multicast = source->target == QA_NATIVE_HOST_MULTICAST};
     qa_application_q2_protocol_delivery delivery;
-    if (!application_native_q2_message_capture(engine,source,&delivery,error)) { free(references); return false; }
+    if (!application_native_q2_message_capture(engine,source,&delivery,error)) return false;
     bool duplicate = false;
     bool keyed = delivery.dupe_key && delivery.audience.captured && delivery.audience.count;
     if (keyed && !qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, false, &duplicate, error)) {
-        free(references); application_native_q2_delivery_dispose(&delivery.audience); return false;
+        application_native_q2_delivery_dispose(&delivery.audience); return false;
     }
     if (duplicate) {
-        free(references); application_native_q2_delivery_dispose(&delivery.audience); return true;
+        application_native_q2_delivery_dispose(&delivery.audience); return true;
     }
-    application_native_q2_protocol_resources resources = {0};
-    bool emitted = application_native_q2_protocol_resources_capture(engine, event.payload,
-        event.references, event.reference_count, &resources, error);
-    if (emitted) {
-        event.resources = resources.rows; event.resource_count = resources.count;
-        event.references = resources.references; event.reference_count = resources.reference_count;
-        emitted = application_emit_q2_protocol(engine->provider,&event,&delivery,error);
-    }
+    bool emitted = application_emit_q2_protocol(engine->provider,&event,&delivery,source,error);
     if (emitted && keyed) emitted = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
-    free(references);
-    application_native_q2_protocol_resources_dispose(&resources);
     application_native_q2_delivery_dispose(&delivery.audience);
     if (!emitted) return false;
     return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
@@ -330,19 +301,11 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
     named.channel = event.data.sound.channel; named.recipients = recipients;
     named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;
-    application_native_q2_protocol_resources resources = {0};
-    bool ok = application_native_q2_protocol_resources_capture(engine, publication.payload,
-        publication.references, publication.reference_count, &resources, error);
-    if (ok) {
-        publication.resources = resources.rows; publication.resource_count = resources.count;
-        publication.references = resources.references; publication.reference_count = resources.reference_count;
-        ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, error);
-    }
+    bool ok = application_emit_q2_protocol(engine->provider, &publication, &delivery, NULL, error);
     if (ok && keyed) ok = qa_application_network_q2_unicast(engine->provider->application,
         engine->provider->owner, source->client, delivery.dupe_key, true, &duplicate, error);
     if (ok && named.audience_captured && engine->platform.sound)
         ok = engine->platform.sound(engine->platform.context, &named, error);
-    application_native_q2_protocol_resources_dispose(&resources);
     free(recipients); application_native_q2_delivery_dispose(&delivery.audience);
     return ok;
 }

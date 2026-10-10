@@ -3,26 +3,21 @@
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/application_network_q2.h"
+#include "event_stream.h"
 
 typedef struct resource_capture {
     struct application_native_q2 *engine;
     application_native_q2_protocol_resources *out;
     size_t ordinal;
     qa_bytes payload;
+    bool counting;
 } resource_capture;
-
-void application_native_q2_protocol_resources_dispose(application_native_q2_protocol_resources *resources)
-{
-    if (!resources) return;
-    for (size_t i = 0; i < resources->count; ++i) free((void *)resources->rows[i].name);
-    free(resources->rows); free(resources->references);
-    *resources = (application_native_q2_protocol_resources){0};
-}
 
 static bool retain_entity(resource_capture *capture, size_t offset, uint32_t source_slot,
     bool packed_sound, qa_error *error)
 {
     application_native_q2_protocol_resources *out = capture->out;
+    if (capture->counting) { ++out->reference_capacity; return true; }
     for (size_t i = 0; i < out->reference_count; ++i)
         if (out->references[i].offset == offset) return true;
     if (capture->payload.size < 2 || offset > capture->payload.size - 2)
@@ -33,14 +28,6 @@ static bool retain_entity(resource_capture *capture, size_t offset, uint32_t sou
     uint32_t admitted_number;
     if (!qa_application_network_q2_entity_number(capture->engine->provider->application,
         capture->engine->provider->owner, actual.binding.actor, &admitted_number, error)) return false;
-    if (out->reference_count == out->reference_capacity) {
-        size_t capacity = out->reference_capacity ? out->reference_capacity * 2 : 8;
-        if (capacity <= out->reference_capacity || capacity > SIZE_MAX / sizeof(*out->references))
-            return application_fail(error, QA_ERROR_MEMORY, "Q2 emitted entity receipt extent overflows");
-        void *references = realloc(out->references, capacity * sizeof(*out->references));
-        if (!references) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 primitive Source entity receipt");
-        out->references = references; out->reference_capacity = capacity;
-    }
     out->references[out->reference_count++] = (qa_application_protocol_reference){
         .offset = offset, .actor = actual.binding.actor, .packed_sound = packed_sound};
     return true;
@@ -81,25 +68,17 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
     application_native_q2_protocol_resources *resources = capture->out;
     if (!name || index >= capture->engine->resource_limit[kind])
         return application_fail(error, QA_ERROR_FORMAT, "Q2 protocol resource leaves its actual Source table");
+    if (capture->counting) { ++resources->capacity; return true; }
     qa_application_protocol_resource_reference row = {.record_ordinal = ordinal, .kind = kind, .source_index = index};
     size_t length = strlen(name);
     if (length == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Q2 resource spelling extent overflows");
-    char *owned = malloc(length + 1);
-    if (!owned) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 emitted resource spelling");
+    char *owned = application_event_stream_alloc(capture->engine->provider->application, length + 1, 1, error);
+    if (!owned) return false;
     memcpy(owned, name, length + 1); row.name = owned;
     bool found = false;
     if (*name && !application_unified_event_resource_lookup_receipt(capture->engine->provider->application,
         capture->engine->provider->owner, kind, name, row.resource_key, &row.resource_custody, &found, error)) {
-        free(owned); return false;
-    }
-    if (resources->count == resources->capacity) {
-        size_t capacity = resources->capacity ? resources->capacity * 2 : 8;
-        if (capacity <= resources->capacity || capacity > SIZE_MAX / sizeof(*resources->rows)) {
-            free(owned); return application_fail(error, QA_ERROR_MEMORY, "Q2 emitted resource receipt extent overflows");
-        }
-        void *rows = realloc(resources->rows, capacity * sizeof(*resources->rows));
-        if (!rows) { free(owned); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q2 emitted resource receipts"); }
-        resources->rows = rows; resources->capacity = capacity;
+        return false;
     }
     resources->rows[resources->count++] = row; return true;
 }
@@ -132,27 +111,39 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
 
 bool application_native_q2_protocol_resources_capture(struct application_native_q2 *engine,
     qa_bytes payload, const qa_application_protocol_reference *references, size_t reference_count,
-    application_native_q2_protocol_resources *out, qa_error *error)
+    const qa_native_host_message *source, application_native_q2_protocol_resources *out, qa_error *error)
 {
     if (!engine || !out || out->rows || out->count || out->capacity || out->references ||
         out->reference_count || out->reference_capacity || (reference_count && !references) ||
         reference_count > SIZE_MAX / sizeof(*references) ||
         (payload.size && !payload.data) || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 resource capture requires its actual Original GAME packet");
-    if (reference_count) {
-        out->references = malloc(reference_count * sizeof(*references));
-        if (!out->references) return application_fail(error, QA_ERROR_MEMORY, "Retaining exact Source WriteEntity receipts");
-        memcpy(out->references, references, reference_count * sizeof(*references));
-        out->reference_count = out->reference_capacity = reference_count;
+    qa_application *app = engine->provider->application;
+    qa_q2_messages *decoder = engine->event_decoder;
+    resource_capture capture = {.engine = engine, .out = out, .payload = payload, .counting = true};
+    qa_q2_messages_reset(decoder);
+    if (!qa_q2_messages_read(decoder, payload, capture_record, &capture, error)) return false;
+    size_t provided = source ? source->reference_count : reference_count;
+    if (out->reference_capacity > SIZE_MAX / sizeof(*out->references) - provided)
+        return application_fail(error, QA_ERROR_MEMORY, "Q2 emitted entity receipt extent overflows");
+    out->reference_capacity += provided;
+    if (out->reference_capacity) {
+        out->references = application_event_stream_alloc(app,
+            out->reference_capacity * sizeof(*out->references), _Alignof(qa_application_protocol_reference), error);
+        if (!out->references) return false;
+        for (size_t i = 0; i < provided; ++i) {
+            if (source) out->references[i] = (qa_application_protocol_reference){
+                .offset = source->references[i].offset, .actor = source->references[i].actor};
+            else out->references[i] = references[i];
+        }
+        out->reference_count = provided;
     }
-    qa_net_protocol_id protocol = {.kind = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
-    qa_q2_message_options options = {.config_strings = engine->configstring_count, .inventory_slots = 256,
-        .native_api2023 = engine->profile == QA_NATIVE_Q2_GAME_API2023};
-    qa_q2_messages *decoder = NULL;
-    resource_capture capture = {.engine = engine, .out = out, .payload = payload};
-    bool ok = qa_q2_messages_create(protocol, &options, &decoder, error) &&
-        qa_q2_messages_read(decoder, payload, capture_record, &capture, error);
-    qa_q2_messages_destroy(decoder);
-    if (!ok) application_native_q2_protocol_resources_dispose(out);
-    return ok;
+    if (out->capacity) {
+        out->rows = application_event_stream_alloc(app, out->capacity * sizeof(*out->rows),
+            _Alignof(qa_application_protocol_resource_reference), error);
+        if (!out->rows) return false;
+    }
+    capture.ordinal = 0; capture.counting = false;
+    qa_q2_messages_reset(decoder);
+    return qa_q2_messages_read(decoder, payload, capture_record, &capture, error);
 }
