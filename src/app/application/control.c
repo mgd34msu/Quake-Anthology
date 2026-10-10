@@ -1139,9 +1139,9 @@ bool application_control_mod_usercmd(void *context, qa_actor_id actor,
         rule = (qa_input_axis_rule){0};
     }
     qa_input_command_convert(&input, NULL, &from, &to, rule, &converted);
-    memcpy(result.angles, converted.angle_words, sizeof(result.angles));
-    result.forwardmove = (int8_t)converted.forward_move;
-    result.rightmove = (int8_t)converted.side_move; result.upmove = (int8_t)converted.up_move;
+    converted.server_time_ms = result.serverTime; converted.buttons = (uint32_t)result.buttons;
+    converted.weapon = result.weapon;
+    qa_usercmd_to_q3(&converted, &result);
     if (!component_input_current(scope, error)) return false;
     *out = result; return true;
 }

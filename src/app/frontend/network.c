@@ -3644,7 +3644,7 @@ bool frontend_network_prediction_input_current(const qa_frontend *f, const front
         source->media_owner!=now.media_owner) return false;
     const qa_input_command_frame *v=&source->frame;
     return v->kind==now.frame.kind && v->sequence==now.frame.sequence && v->server_time_ms==now.frame.server_time_ms &&
-        v->weapon==now.frame.weapon && v->acknowledged_server_seconds == 0 && !v->server_frame && !v->light_level &&
+        v->weapon==now.frame.weapon && v->acknowledged_server_seconds == 0 && v->server_frame == 0 && v->light_level == 0 &&
         v->sensitivity == 0 && !v->attack_allowed && !v->has_pitch_drift && !v->grounded && !v->drift_disabled &&
         v->ideal_pitch == 0 && v->delta_angles.x == 0 && v->delta_angles.y == 0 && v->delta_angles.z == 0 &&
         !source->has_initial_angles && source->initial_angles.x == 0 && source->initial_angles.y == 0 && source->initial_angles.z == 0;
@@ -6486,9 +6486,8 @@ bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id a
     uint64_t number=peer?qa_q3_client_peer_usercmd_number(peer):0;
     if(!peer || raw.kind!=QA_RULESET_Q3 || raw.sequence!=number+1 || number==UINT64_MAX)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Paired raw input differs from its genuine next transport command");
-    qa_q3_usercmd command={.serverTime=raw.server_time_ms,.buttons=(int32_t)raw.buttons,.weapon=raw.weapon,
-        .forwardmove=(int8_t)raw.forward_move,.rightmove=(int8_t)raw.side_move,.upmove=(int8_t)raw.up_move};
-    memcpy(command.angles,raw.angle_words,sizeof(command.angles));
+    qa_q3_usercmd command;
+    qa_usercmd_to_q3(&raw,&command);
     if(!qa_network_q3_client_usercmd(n->runtime,n->q3_client,&command,error)) return false;
     const qa_q3_usercmd *stored=qa_q3_client_peer_usercmd_at(peer,raw.sequence);
     if(!stored || stored->serverTime!=command.serverTime || stored->buttons!=command.buttons || stored->weapon!=command.weapon ||
@@ -7538,7 +7537,7 @@ bool frontend_network_restore_prediction_input_current(const qa_frontend *f,
     const qa_input_command_frame *v=&source->frame;
     return v->kind==actual.frame.kind && v->sequence==actual.frame.sequence &&
         v->server_time_ms==actual.frame.server_time_ms && v->weapon==actual.frame.weapon &&
-        v->acknowledged_server_seconds == 0 && !v->server_frame && !v->light_level && v->sensitivity == 0 &&
+        v->acknowledged_server_seconds == 0 && v->server_frame == 0 && v->light_level == 0 && v->sensitivity == 0 &&
         !v->attack_allowed && !v->has_pitch_drift && !v->grounded && !v->drift_disabled &&
         v->ideal_pitch == 0 && v->delta_angles.x == 0 && v->delta_angles.y == 0 && v->delta_angles.z == 0 &&
         !source->has_initial_angles && source->initial_angles.x == 0 && source->initial_angles.y == 0 && source->initial_angles.z == 0;

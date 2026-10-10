@@ -250,23 +250,13 @@ static bool selected_command(native_q3_think_call *call,
     qa_application *app = call->provider->application;
     application_control_record *record = &app->controls[call->actor.slot];
     const qa_q3_usercmd *raw = &call->movement;
-    *out = (qa_usercmd){.kind = record->player.state.kind,
-        .sequence = record->player.command_sequence,
-        .milliseconds = call->movement_milliseconds,
-        .server_time_ms = raw->serverTime, .buttons = (uint32_t)raw->buttons,
-        .weapon = raw->weapon};
-    if (out->kind == QA_RULESET_Q3) {
-        memcpy(out->angle_words, raw->angles, sizeof(out->angle_words));
-        out->forward_move = raw->forwardmove; out->side_move = raw->rightmove;
-        out->up_move = raw->upmove;
-        return true;
-    }
+    qa_usercmd_from_q3(raw, record->player.command_sequence, out);
+    out->kind = record->player.state.kind; out->milliseconds = call->movement_milliseconds;
+    if (out->kind == QA_RULESET_Q3) return true;
     uint32_t slot;
     qa_q3_player source;
     if (!qa_q3_native_client_slot(call->provider->state.q3, call->actor, &slot, error) ||
         !qa_q3_wire_player_read(call->provider->state.q3, slot, &source, error)) return false;
-    memcpy(out->angle_words, raw->angles, sizeof(out->angle_words));
-    out->forward_move = raw->forwardmove; out->side_move = raw->rightmove; out->up_move = raw->upmove;
     qa_input_command_basis from = {.kind = QA_RULESET_Q3, .words = true, .relative = true};
     memcpy(from.delta_words, source.deltaAngles, sizeof(from.delta_words));
     qa_input_command_basis to = {.kind = out->kind};

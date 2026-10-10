@@ -336,15 +336,6 @@ static bool q2_raw_valid(const qa_usercmd *command)
     return true;
 }
 
-static qa_usercmd q3_command(const qa_q3_usercmd *raw, uint64_t sequence)
-{
-    qa_usercmd command = {.kind = QA_RULESET_Q3, .sequence = sequence,
-        .server_time_ms = raw->serverTime, .buttons = (uint32_t)raw->buttons, .weapon = raw->weapon,
-        .forward_move = raw->forwardmove, .side_move = raw->rightmove, .up_move = raw->upmove};
-    memcpy(command.angle_words, raw->angles, sizeof(command.angle_words));
-    return command;
-}
-
 static qa_q3_usercmd q3_source_command(const qa_usercmd *command, bool raw)
 {
     qa_usercmd converted;
@@ -352,11 +343,8 @@ static qa_q3_usercmd q3_source_command(const qa_usercmd *command, bool raw)
     qa_input_command_convert(command, NULL, &basis, &basis,
         raw ? (qa_input_axis_rule){0} : (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_NEAREST,
             .clamp = true, .minimum = -127, .maximum = 127, .float_product = true}, &converted);
-    qa_q3_usercmd out = {.serverTime = command->server_time_ms,
-        .buttons = (int32_t)command->buttons, .weapon = command->weapon,
-        .forwardmove = (int8_t)converted.forward_move,
-        .rightmove = (int8_t)converted.side_move, .upmove = (int8_t)converted.up_move};
-    memcpy(out.angles, command->angle_words, sizeof(out.angles));
+    qa_q3_usercmd out;
+    qa_usercmd_to_q3(&converted, &out);
     return out;
 }
 
@@ -420,9 +408,9 @@ static bool unified_mod_command(const control_unified *receipt, const qa_q3_play
     qa_input_axis_rule rule = raw.kind == QA_RULESET_Q3 ? (qa_input_axis_rule){0} :
         (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE, .clamp = true, .minimum = -127, .maximum = 127};
     qa_input_command_convert(&input, &moves, &from, &to, rule, &converted);
-    memcpy(command.angles, converted.angle_words, sizeof(command.angles));
-    command.forwardmove = (int8_t)converted.forward_move;
-    command.rightmove = (int8_t)converted.side_move; command.upmove = (int8_t)converted.up_move;
+    converted.server_time_ms = command.serverTime; converted.buttons = (uint32_t)command.buttons;
+    converted.weapon = command.weapon;
+    qa_usercmd_to_q3(&converted, &command);
     *out = command; return true;
 }
 
@@ -915,7 +903,8 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     control_group *group = deferred ? NULL : malloc(sizeof(*group) + sizeof(qa_usercmd));
     if (!deferred && !group)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
-    qa_usercmd command = q3_command(raw, sequence);
+    qa_usercmd command;
+    qa_usercmd_from_q3(raw, sequence, &command);
     application_snapshot_mutated(app);
     if (!qc_receipt(app, actor, ordinal, &command, error)) {
         free(group); application_fault(app, error); return false;
@@ -1386,9 +1375,9 @@ bool application_control_last_mod_command(const qa_application *app, qa_actor_id
         qa_input_command_convert(&source_command, NULL, &from, &to,
             (qa_input_axis_rule){.quantization = QA_INPUT_AXIS_TRUNCATE,
                 .clamp = true, .minimum = -127, .maximum = 127}, &converted);
-        result.forwardmove = (int8_t)converted.forward_move;
-        result.rightmove = (int8_t)converted.side_move; result.upmove = (int8_t)converted.up_move;
-        memcpy(result.angles, converted.angle_words, sizeof(result.angles));
+        converted.server_time_ms = result.serverTime; converted.buttons = (uint32_t)result.buttons;
+        converted.weapon = result.weapon;
+        qa_usercmd_to_q3(&converted, &result);
     }
     *out = result; return true;
 }
@@ -1714,9 +1703,7 @@ static qa_usercmd selected_command(const application_control_record *record,
     const int32_t words[3], qa_vec3 axes)
 {
     qa_usercmd out = {.kind = record->player.state.kind, .sequence = raw->sequence,
-        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u,
-        .angles = {(float)(words[0] * 360.0 / 65536.0), (float)(words[1] * 360.0 / 65536.0),
-            (float)(words[2] * 360.0 / 65536.0)}};
+        .milliseconds = raw->milliseconds, .buttons = raw->buttons & 1u};
     uint32_t time = out.kind == QA_RULESET_Q3 ?
         (uint32_t)record->player.state.data.q3.command_time_ms : (uint32_t)(source_time_ns / UINT64_C(1000000));
     time += raw->milliseconds; memcpy(&out.server_time_ms, &time, sizeof(time));

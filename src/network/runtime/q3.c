@@ -59,11 +59,8 @@ static bool client_command(void *context, const qa_usercmd *command, qa_error *e
         command->side_move < -127 || command->side_move > 127 ||
         command->up_move < -127 || command->up_move > 127)
         return qa_network_fail(error, "Q3 source command requires its original movement and weapon fields");
-    const qa_usercmd *move = command;
-    qa_q3_usercmd value = {.serverTime = move->server_time_ms, .buttons = (int32_t)move->buttons,
-        .weapon = move->weapon, .forwardmove = (int8_t)move->forward_move,
-        .rightmove = (int8_t)move->side_move, .upmove = (int8_t)move->up_move};
-    memcpy(value.angles, move->angle_words, sizeof(value.angles));
+    qa_q3_usercmd value;
+    qa_usercmd_to_q3(command, &value);
     return qa_q3_client_peer_usercmd(p->source, &value, error);
 }
 static bool client_restart(void *context, uint64_t epoch, const uint64_t *composition, qa_error *error)

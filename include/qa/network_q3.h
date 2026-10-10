@@ -3,6 +3,8 @@
 #include "qa/network.h"
 #include "qa/game_q3_product.h"
 #include "qa/world.h"
+#include "qa/movement.h"
+#include <string.h>
 
 #define QA_Q3_PROTOCOL 68
 #define QA_Q3_MESSAGE_BYTES 16384
@@ -55,6 +57,20 @@ typedef struct qa_q3_usercmd {
     int32_t buttons;
     uint8_t weapon;
 } qa_q3_usercmd;
+
+static inline void qa_usercmd_from_q3(const qa_q3_usercmd *source, uint64_t sequence, qa_usercmd *out) {
+    *out = (qa_usercmd){.kind = QA_RULESET_Q3, .sequence = sequence,
+        .server_time_ms = source->serverTime, .buttons = (uint32_t)source->buttons, .weapon = source->weapon,
+        .forward_move = source->forwardmove, .side_move = source->rightmove, .up_move = source->upmove};
+    memcpy(out->angle_words, source->angles, sizeof(out->angle_words));
+}
+static inline void qa_usercmd_to_q3(const qa_usercmd *source, qa_q3_usercmd *out) {
+    *out = (qa_q3_usercmd){.serverTime = source->server_time_ms, .buttons = (int32_t)source->buttons,
+        .weapon = source->weapon, .forwardmove = (int8_t)source->forward_move,
+        .rightmove = (int8_t)source->side_move, .upmove = (int8_t)source->up_move};
+    memcpy(out->angles, source->angle_words, sizeof(out->angles));
+}
+
 
 /* Static protocol Huffman and adaptive connect compression have separate state.
  * Cursors own no storage. Every failing operation sets a sticky error. */
