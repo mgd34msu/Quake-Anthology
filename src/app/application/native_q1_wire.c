@@ -629,8 +629,11 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
                  physics.motion == QA_PHYSICS_STEP;
     for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app);
          id < next; ++id) {
-        qa_builtin_event event;
-        if (qa_application_event_at(app, id, &event) && event.family == QA_GAME_Q1 &&
+        qa_application_event_view output;
+        if (!qa_application_event_at(app, id, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        const qa_builtin_event event = *output.value.builtin;
+        if (event.family == QA_GAME_Q1 &&
             event.kind == QA_BUILTIN_MUZZLE && qa_actor_id_equal(event.actor, actor)) value.effects |= 2;
     }
     vector(value.origin, visual.body.origin); vector(value.angles, visual.body.angles);

@@ -116,14 +116,14 @@ uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
         frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound requires its actual delivery boundary");
         return QA_AUDIO_NO_ACTOR;
     }
-    qa_application_protocol_event queued;
+    qa_application_event_view output;
     const qa_application_protocol_event *retained=message;
     if (message->event_id) {
-        if (!qa_application_protocol_event_at(frontend->application,message->event_id,0,&queued)) {
+        if (!qa_application_event_at(frontend->application,message->event_id,0,&output) || !output.protocol) {
             frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its retained event ID");
             return QA_AUDIO_NO_ACTOR;
         }
-        retained=&queued;
+        retained=output.protocol;
     }
     bool referenced=false;
     for (size_t i=0;i<retained->reference_count;++i)

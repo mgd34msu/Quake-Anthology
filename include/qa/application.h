@@ -567,26 +567,31 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_PROTOCOL
 } qa_application_event_kind;
 
-/* Every consumer traverses the same monotonic record IDs. Typed accessors
- * return false for another tag. A pointer remains valid until the record is
- * retired by every consumer; persistent owners retain its page lease. */
+struct qa_application_q2_audience;
+struct qa_application_q2_protocol_delivery;
+typedef struct qa_application_event_view {
+    qa_application_event_kind kind;
+    union {
+        const qa_builtin_event *builtin;
+        const qa_application_q2_map_event *q2_map;
+        const qa_application_q3_map_event *q3_map;
+        const qa_application_q2_player_event *q2_player;
+    } value;
+    const qa_application_protocol_event *protocol;
+    const struct qa_application_q2_audience *q2_audience;
+    const struct qa_application_q2_protocol_delivery *q2_delivery;
+} qa_application_event_view;
+
+/* Every consumer reads the same tagged record IDs. Projection selects an
+ * attached protocol view; zero also reads records without protocol output.
+ * Borrowed fields remain valid until every consumer retires the record. */
 uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
 uint64_t qa_application_events_output_failures(const qa_application *);
-bool qa_application_event_kind_at(const qa_application *, uint64_t,
-    qa_application_event_kind *);
 bool qa_application_event_at(const qa_application *, uint64_t,
-                             qa_builtin_event *);
-bool qa_application_q2_map_event_at(const qa_application *, uint64_t,
-                                    qa_application_q2_map_event *);
-bool qa_application_q3_map_event_at(const qa_application *, uint64_t,
-                                    qa_application_q3_map_event *);
-bool qa_application_q2_player_event_at(const qa_application *, uint64_t,
-                                       qa_application_q2_player_event *);
+    size_t projection, qa_application_event_view *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);
-bool qa_application_protocol_event_at(const qa_application *, uint64_t,
-                                      size_t projection, qa_application_protocol_event *);
 /* Typed module records encode only at consumption. The writer owns the
  * resulting bytes; already encoded external records keep their payload. */
 bool qa_application_protocol_event_encode(qa_application_protocol_event *, qa_net_writer *);

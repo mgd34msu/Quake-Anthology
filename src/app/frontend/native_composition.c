@@ -150,8 +150,10 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects require their actual entered native frame");
     uint64_t next = qa_application_events_next(frame->application);
     for (uint64_t i = qa_application_events_local_first(frame->application); i < next; ++i) {
-        qa_builtin_event event;
-        if (!qa_application_event_at(frame->application, i, &event)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frame->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        qa_builtin_event event = *output.value.builtin;
         if (event.family != QA_GAME_Q3) continue;
         effect_pose_scope scope = {.owner = owner, .actor = event.actor}; bool found;
         if (!captured_origin(owner, event.actor, &scope.origin, &found, error)) return false;

@@ -639,14 +639,19 @@ static bool publish_events(q2_host_peer *peer,const qa_net_client *client,qa_err
         qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player;
         bool reliable=false,print=false;
-        if(qa_application_protocol_event_at(app,cursor,0,&event)) {
-            if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original) {
+        qa_application_event_view output={0};
+        (void)qa_application_event_at(app,cursor,0,&output);
+        if(output.protocol) {
+            event=*output.protocol; delivery=*output.q2_delivery;
+            if(!event.signon && delivery.original) {
                 if(!frontend_network_q2_event_packet(peer->source,peer->host->source.source.source_owner,
                     &event,&delivery,client,qa_network_epoch(peer->host->options.runtime,peer->client),codec,
                     peer->event_storage,peer->event_capacity,&peer->event_packet,error)) return false;
                 reliable=event.reliable;
             }
-        } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT) {
+        } else if(output.kind==QA_APPLICATION_EVENT_Q2_PLAYER &&
+            output.value.q2_player->event.kind==QA_Q2_PLAYER_PRINT) {
+            player=*output.value.q2_player;
             if(!frontend_network_q2_print_packet(&player,client,
                 qa_network_epoch(peer->host->options.runtime,peer->client),codec,peer->event_storage,
                 peer->event_capacity,&peer->event_packet,error)) return false;
@@ -973,14 +978,20 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     while(cursor<next) {
         qa_application_protocol_event event; qa_application_q2_protocol_delivery delivery;
         qa_application_q2_player_event player; qa_bytes bytes={0}; bool ok=true;
-        if(qa_application_protocol_event_at(app,cursor,0,&event)) {
-            if(qa_application_protocol_q2_delivery_at(app,cursor,&delivery) && !event.signon && delivery.original)
+        qa_application_event_view output={0};
+        (void)qa_application_event_at(app,cursor,0,&output);
+        if(output.protocol) {
+            event=*output.protocol; delivery=*output.q2_delivery;
+            if(!event.signon && delivery.original)
                 ok=frontend_network_q2_event_packet(host->discovery,host->source.source.source_owner,&event,&delivery,
                     client,qa_network_epoch(host->options.runtime,client->id),&host->demo_codec,
                     host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
-        } else if(qa_application_q2_player_event_at(app,cursor,&player) && player.event.kind==QA_Q2_PLAYER_PRINT)
+        } else if(output.kind==QA_APPLICATION_EVENT_Q2_PLAYER &&
+            output.value.q2_player->event.kind==QA_Q2_PLAYER_PRINT) {
+            player=*output.value.q2_player;
             ok=frontend_network_q2_print_packet(&player,client,qa_network_epoch(host->options.runtime,client->id),
                 &host->demo_codec,host->demo_bytes,sizeof(host->demo_bytes),&bytes,error);
+        }
         if(ok && bytes.size) ok=demo_host_packet(host,(qa_bytes){bytes.data,bytes.size},error);
         if(!ok) return false;
         ++cursor;

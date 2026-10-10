@@ -1984,8 +1984,10 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     if (!frontend_native_q2_messages(frontend,error)) return false;
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
-        qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        qa_builtin_event event = *output.value.builtin;
         if (event.family==QA_GAME_Q2 && (event.kind==QA_BUILTIN_TELEPORT ||
             (event.kind==QA_BUILTIN_Q2_ENTITY_EVENT && (event.code==6 || event.code==7))) &&
             frontend->particles && (size_t)event.actor.slot<frontend->particles->visual_sample_capacity) {
@@ -1999,8 +2001,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             frontend_q2_beam_recipe recipe;qa_q2_temp_entity temporary;
             bool named=frontend_q2_named_temporary(resource,event.origin,event.end,&temporary);
             if (named || frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
-                qa_application_q2_audience audience={0};
-                (void)qa_application_event_q2_audience_at(frontend->application,i,&audience);
+                qa_application_q2_audience audience=*output.q2_audience;
                 if (named) {
                     qa_application_protocol_event message={.provider=event.provider,
                         .dialect=audience.source_frame.kind,.time_ns=event.time_ns};
@@ -2009,8 +2010,7 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
             }
         } else if (event.family == QA_GAME_Q2 && event.kind == QA_BUILTIN_PARTICLES) {
             frontend_particle_owner *owner;
-            qa_application_q2_audience audience={0};
-            (void)qa_application_event_q2_audience_at(frontend->application, i, &audience);
+            qa_application_q2_audience audience=*output.q2_audience;
             if (!q2_delivery_admit(frontend,event.provider,&audience)) continue;
             for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
                 if (frontend_network_local_input_owned(frontend,seat)) continue;
@@ -2029,11 +2029,12 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
     }
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_q2_map_event source;
-        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
+        qa_application_q2_map_event source = *output.value.q2_map;
         if (source.event.kind != QA_Q2_MAP_STEAM && source.event.kind != QA_Q2_MAP_FORCE_WALL) continue;
-        qa_application_q2_audience audience={0};
-        (void)qa_application_q2_map_event_audience_at(frontend->application, i, &audience);
+        qa_application_q2_audience audience=*output.q2_audience;
         if (!q2_delivery_admit(frontend,source.provider,&audience)) continue;
         for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {
             if (frontend_network_local_input_owned(frontend,seat)) continue;

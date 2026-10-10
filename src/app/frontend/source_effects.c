@@ -108,8 +108,10 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
     scope->admitted = true;
     uint64_t next = qa_application_events_next(scope->application);
     for (uint64_t i = qa_application_events_local_first(scope->application); i < next; ++i) {
-        qa_builtin_event queued;
-        if (!qa_application_event_at(scope->application, i, &queued)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(scope->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        qa_builtin_event queued = *output.value.builtin;
         if (!frontend_source_effects_current(scope))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects owner changed during render entry");
         if (queued.family != QA_GAME_Q3 || queued.kind != QA_BUILTIN_ANIMATION) continue;

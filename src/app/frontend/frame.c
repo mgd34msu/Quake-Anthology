@@ -490,8 +490,10 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     uint64_t next = qa_application_events_next(frontend->application);
     for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {
-        qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        qa_builtin_event event = *output.value.builtin;
         if (event.kind == QA_BUILTIN_LOG) continue;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {

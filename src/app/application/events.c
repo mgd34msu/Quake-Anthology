@@ -1100,90 +1100,34 @@ uint64_t qa_application_events_next(const qa_application *app)
 uint64_t qa_application_events_output_failures(const qa_application *app)
 { return app ? app->event_reliable_declines : 0; }
 
-bool qa_application_event_kind_at(const qa_application *app, uint64_t id,
-    qa_application_event_kind *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out) return false;
-    *out = record->kind;
-    return true;
-}
-
-bool qa_application_q2_player_event_at(const qa_application *app, uint64_t id,
-    qa_application_q2_player_event *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_PLAYER) return false;
-    *out = record->raw.q2_player;
-    return true;
-}
-
 uint64_t qa_application_protocol_events_generation(const qa_application *app)
 { return app ? app->protocol_events_generation : 0; }
 
-bool qa_application_protocol_event_at(const qa_application *app, uint64_t id, size_t projection,
-    qa_application_protocol_event *out)
-{
-    const application_event_envelope *envelope = application_event_stream_at(app, id);
-    if (!envelope || !out) return false;
-    const application_protocol_record *record = envelope->protocols;
-    while (record && projection--) record = record->next;
-    if (!record) return false;
-    *out = record->event;
-    out->event_id = id;
-    return true;
-}
-
-bool qa_application_protocol_q2_delivery_at(const qa_application *app, uint64_t id,
-    qa_application_q2_protocol_delivery *out)
+bool qa_application_event_at(const qa_application *app, uint64_t id, size_t projection,
+    qa_application_event_view *out)
 {
     const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_PROTOCOL) return false;
-    *out = record->raw.protocol.q2;
-    return true;
-}
-
-bool qa_application_event_at(const qa_application *app, uint64_t id, qa_builtin_event *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
-    *out = record->raw.builtin.event;
-    return true;
-}
-
-bool qa_application_q2_map_event_at(const qa_application *app, uint64_t id,
-    qa_application_q2_map_event *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_MAP) return false;
-    *out = record->raw.q2_map.source;
-    return true;
-}
-
-bool qa_application_event_q2_audience_at(const qa_application *app, uint64_t id,
-    qa_application_q2_audience *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_BUILTIN) return false;
-    *out = record->raw.builtin.q2_audience;
-    return true;
-}
-
-bool qa_application_q2_map_event_audience_at(const qa_application *app, uint64_t id,
-    qa_application_q2_audience *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q2_MAP) return false;
-    *out = record->raw.q2_map.audience;
-    return true;
-}
-
-bool qa_application_q3_map_event_at(const qa_application *app, uint64_t id,
-    qa_application_q3_map_event *out)
-{
-    const application_event_envelope *record = application_event_stream_at(app, id);
-    if (!record || !out || record->kind != QA_APPLICATION_EVENT_Q3_MAP) return false;
-    *out = record->raw.q3_map;
+    if (!record || !out) return false;
+    const application_protocol_record *protocol = record->protocols;
+    size_t index = projection;
+    while (protocol && index--) protocol = protocol->next;
+    if (projection && !protocol) return false;
+    *out = (qa_application_event_view){.kind = record->kind,
+        .protocol = protocol ? &protocol->event : NULL,
+        .q2_delivery = protocol ? &protocol->q2 : NULL};
+    switch (record->kind) {
+    case QA_APPLICATION_EVENT_BUILTIN:
+        out->value.builtin = &record->raw.builtin.event;
+        out->q2_audience = &record->raw.builtin.q2_audience;
+        break;
+    case QA_APPLICATION_EVENT_Q2_MAP:
+        out->value.q2_map = &record->raw.q2_map.source;
+        out->q2_audience = &record->raw.q2_map.audience;
+        break;
+    case QA_APPLICATION_EVENT_Q3_MAP: out->value.q3_map = &record->raw.q3_map; break;
+    case QA_APPLICATION_EVENT_Q2_PLAYER: out->value.q2_player = &record->raw.q2_player; break;
+    case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL: break;
+    }
     return true;
 }
 

@@ -507,8 +507,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     }
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
-        qa_builtin_event event;
-        if (!qa_application_event_at(frontend->application, i, &event)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        qa_builtin_event event = *output.value.builtin;
         bool handled;
         if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
         if (handled) continue;
@@ -559,8 +561,10 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     }
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
-        qa_application_q2_map_event source;
-        if (!qa_application_q2_map_event_at(frontend->application, i, &source)) continue;
+        qa_application_event_view output;
+        if (!qa_application_event_at(frontend->application, i, 0, &output) ||
+            output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
+        qa_application_q2_map_event source = *output.value.q2_map;
         const qa_q2_map_event *event = &source.event;
         if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT) {
             frontend_retained_light *light = state->lights;

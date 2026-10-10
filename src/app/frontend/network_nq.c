@@ -824,7 +824,9 @@ static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_n
     for (uint64_t i = *saved_cursor; i < next; ++i) {
         qa_application_protocol_event event;
         *saved_cursor = i + 1;
-        for (size_t projection = 0; qa_application_protocol_event_at(app, i, projection, &event); ++projection) {
+        qa_application_event_view output;
+        for (size_t projection = 0; qa_application_event_at(app, i, projection, &output) && output.protocol; ++projection) {
+            event = *output.protocol;
             if (event.provider != host->owner || event.signon) continue;
             if (event.dialect != QA_RULESET_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
                 return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
