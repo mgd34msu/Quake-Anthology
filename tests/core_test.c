@@ -14,6 +14,7 @@
 #include "qa/recovery.h"
 #include "qa/localization.h"
 #include "qa/vfs.h"
+#include "qa/audio.h"
 #include "qa/q1_save.h"
 #include "qa/scene.h"
 #include "qa/tools.h"
@@ -404,6 +405,56 @@ static void test_localization_lookup_generation(void)
     CHECK(!strcmp(qa_localization_find(second,"GREETING")->format,"second"));
     qa_localization_release(first);qa_localization_release(second);
     for (size_t i=0;i<2;++i){CHECK(unlink(paths[i])==0);CHECK(rmdir(folders[i])==0);CHECK(rmdir(directories[i])==0);}
+}
+
+static void test_shared_audio_preparation(void)
+{
+    qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
+    CHECK(mkdtemp(directory));
+    char folder[128], path[160];
+    CHECK(snprintf(folder, sizeof(folder), "%s/sound", directory) > 0);
+    CHECK(mkdir(folder, 0700) == 0);
+    CHECK(snprintf(path, sizeof(path), "%s/test.wav", folder) > 0);
+    uint8_t wave[76] = {0};
+    memcpy(wave, "RIFF", 4); qa_store_u32le(wave + 4, sizeof(wave) - 8);
+    memcpy(wave + 8, "WAVEfmt ", 8); qa_store_u32le(wave + 16, 16);
+    qa_store_u16le(wave + 20, 1); qa_store_u16le(wave + 22, 1);
+    qa_store_u32le(wave + 24, 22050); qa_store_u32le(wave + 28, 44100);
+    qa_store_u16le(wave + 32, 2); qa_store_u16le(wave + 34, 16);
+    memcpy(wave + 36, "data", 4); qa_store_u32le(wave + 40, 32);
+    for (size_t i = 0; i < 16; ++i) qa_store_u16le(wave + 44 + 2 * i, (uint16_t)(i * 713));
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600); CHECK(fd >= 0);
+    CHECK(write(fd, wave, sizeof(wave)) == (ssize_t)sizeof(wave)); CHECK(close(fd) == 0);
+    qa_resource_pool *resources = qa_resource_pool_create(&error); CHECK(resources);
+    qa_vfs *view = qa_vfs_create(resources, &error); CHECK(view);
+    qa_mount_id mount;
+    CHECK(qa_vfs_mount_directory(view, directory, QA_ARCHIVE_EXACT, false, &mount, &error));
+    qa_audio_bank *bank = NULL; CHECK(qa_audio_bank_create(view, &bank, &error));
+    qa_audio_sample *held = NULL; int16_t held_samples[32];
+    qa_game_family families[] = {QA_GAME_Q1, QA_GAME_Q2, QA_GAME_Q3};
+    for (size_t i = 0; i < sizeof(families) / sizeof(*families); ++i) {
+        qa_audio_asset *asset = NULL; qa_audio_sample *first = NULL, *again = NULL, *expected = NULL, *changed = NULL;
+        CHECK(qa_audio_bank_register(bank, "test.wav", families[i], &asset, &error) && asset);
+        CHECK(qa_audio_asset_resample(asset, 44100, families[i], &first, &error));
+        CHECK(qa_audio_asset_resample(asset, 44100, families[i], &again, &error));
+        CHECK(first == again);
+        CHECK(qa_audio_resample_source(qa_audio_asset_sample(asset), 44100, families[i], &expected, &error));
+        CHECK(first->frame_count == expected->frame_count && first->loop_start == expected->loop_start);
+        CHECK(first->channels == expected->channels && first->sample_rate == expected->sample_rate);
+        CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
+        CHECK(qa_audio_asset_resample(asset, 32000, families[i], &changed, &error));
+        CHECK(changed != first && changed->sample_rate == 32000 && first->sample_rate == 44100);
+        CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
+        if (i + 1 == sizeof(families) / sizeof(*families)) {
+            CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
+            memcpy(held_samples, first->samples, sizeof(held_samples)); held = qa_audio_sample_retain(first); CHECK(held);
+        }
+        qa_audio_sample_release(first); qa_audio_sample_release(again);
+        qa_audio_sample_release(expected); qa_audio_sample_release(changed); qa_audio_asset_release(asset);
+    }
+    qa_audio_bank_destroy(bank); qa_vfs_destroy(view); qa_resource_pool_destroy(resources);
+    CHECK(!memcmp(held->samples, held_samples, sizeof(held_samples))); qa_audio_sample_release(held);
+    CHECK(unlink(path) == 0); CHECK(rmdir(folder) == 0); CHECK(rmdir(directory) == 0);
 }
 
 static void test_campaign_unit(void)
@@ -1258,6 +1309,7 @@ int main(int argc, char **argv)
     test_metadata_retention();
     test_files();
     test_localization_lookup_generation();
+    test_shared_audio_preparation();
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();

@@ -5,6 +5,8 @@
 struct qa_audio_asset {
     atomic_uint references;
     qa_audio_sample *sample;
+    qa_audio_sample *resampled[2];
+    uint32_t resampled_rate[2];
     qa_resource *resource;
     qa_vfs *files;
     uint64_t resource_id;

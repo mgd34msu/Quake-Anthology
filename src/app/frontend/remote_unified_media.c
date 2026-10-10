@@ -150,6 +150,19 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
             qa_scene_world_source_resource_bind(owner->world, map, error) &&
             frontend_world_scratch_create(owner->world,&owner->world_scratch,error);
     }
+    uint32_t rate = qa_audio_engine_rate(frontend->audio);
+    for (size_t i = 0; okay && rate && i < qa_executable_recipe_resource_count(recipe); ++i) {
+        qa_launch_resource resource; qa_vfs *files; const qa_vfs_acquisition *opening;
+        if (!qa_executable_recipe_resource(recipe, i, &resource, &files, &opening) ||
+            !resource.path || strncmp(resource.path, "sound/", 6)) continue;
+        const qa_product *content = qa_catalog_product(qa_executable_recipe_catalog(recipe), resource.product);
+        unified_media_bank *row = NULL;
+        qa_audio_asset *asset = NULL; qa_audio_sample *pcm = NULL;
+        okay = content && bank(owner, content->identity, &row, error) &&
+            qa_audio_bank_register(row->sounds, resource.path, content->family, &asset, error);
+        if (okay && asset) okay = qa_audio_asset_resample(asset, rate, content->family, &pcm, error);
+        qa_audio_sample_release(pcm); qa_audio_asset_release(asset);
+    }
     if (!okay) {
         if (!frontend_unified_media_destroy(owner, NULL)) *out = owner;
         return false;

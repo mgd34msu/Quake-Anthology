@@ -231,8 +231,11 @@ static qa_mixer_prepared *prepare(qa_audio_mixer *mixer, qa_audio_sample *sample
         }
     }
     qa_audio_sample *pcm = NULL;
-    if (!qa_audio_resample_source(sample, mixer->options.sample_rate,
-                                  q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error))
+    bool ready = asset ? qa_audio_asset_resample(asset, mixer->options.sample_rate,
+                                                q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error) :
+                         qa_audio_resample_source(sample, mixer->options.sample_rate,
+                                                 q3 ? QA_GAME_Q3 : QA_GAME_Q1, &pcm, error);
+    if (!ready)
         return NULL;
     if ((!q3 && !pcm->frame_count) || pcm->frame_count > INT64_MAX) {
         qa_audio_sample_release(pcm);

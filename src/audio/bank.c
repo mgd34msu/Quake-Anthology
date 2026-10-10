@@ -23,6 +23,7 @@ void qa_audio_asset_release(qa_audio_asset *asset) {
         atomic_fetch_sub_explicit(&asset->references, 1, memory_order_acq_rel) != 1)
         return;
     qa_audio_sample_release(asset->sample);
+    for (size_t i = 0; i < 2; ++i) qa_audio_sample_release(asset->resampled[i]);
     qa_resource_release(asset->resource);
     qa_vfs_destroy(asset->files);
     free(asset);
@@ -30,6 +31,30 @@ void qa_audio_asset_release(qa_audio_asset *asset) {
 
 qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset) {
     return asset != NULL ? asset->sample : NULL;
+}
+
+bool qa_audio_asset_resample(qa_audio_asset *asset, uint32_t rate, qa_game_family family,
+                             qa_audio_sample **out, qa_error *error) {
+    if (!asset || !out || !rate ||
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid audio asset preparation");
+        return false;
+    }
+    size_t slot = family == QA_GAME_Q3;
+    if (!asset->resampled[slot] || asset->resampled_rate[slot] != rate) {
+        qa_audio_sample *pcm = NULL;
+        if (!qa_audio_resample_source(asset->sample, rate, family, &pcm, error)) return false;
+        qa_audio_sample_release(asset->resampled[slot]);
+        asset->resampled[slot] = pcm;
+        asset->resampled_rate[slot] = rate;
+    }
+    qa_audio_sample *pcm = qa_audio_sample_retain(asset->resampled[slot]);
+    if (!pcm) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Audio PCM reference count is exhausted");
+        return false;
+    }
+    *out = pcm;
+    return true;
 }
 
 qa_resource *qa_audio_asset_resource(const qa_audio_asset *asset) {
@@ -302,6 +327,8 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_famil
     }
     atomic_init(&asset->references, 1);
     asset->sample = NULL;
+    memset(asset->resampled, 0, sizeof(asset->resampled));
+    memset(asset->resampled_rate, 0, sizeof(asset->resampled_rate));
     asset->resource = resource;
     asset->files = NULL;
     if (!qa_vfs_retain(bank->view, error)) {

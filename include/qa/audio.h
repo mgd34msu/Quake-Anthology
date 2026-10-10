@@ -100,6 +100,10 @@ qa_audio_asset *qa_audio_bank_get(const qa_audio_bank *bank, uint64_t resource_i
 qa_audio_asset *qa_audio_asset_retain(qa_audio_asset *asset);
 void qa_audio_asset_release(qa_audio_asset *asset);
 qa_audio_sample *qa_audio_asset_sample(const qa_audio_asset *asset);
+/* Serialized with bank registration. Returns retained immutable PCM; listener
+ * mixers share the asset's preparation for their output rate and rule set. */
+bool qa_audio_asset_resample(qa_audio_asset *, uint32_t output_rate, qa_game_family,
+                             qa_audio_sample **out, qa_error *);
 qa_resource *qa_audio_asset_resource(const qa_audio_asset *asset);
 /* Borrow the real registration view for this asset's retained lifetime. */
 const qa_vfs *qa_audio_asset_files(const qa_audio_asset *asset);
