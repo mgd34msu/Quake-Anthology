@@ -227,7 +227,7 @@ static void test_arena(void)
         .value.disconnect="session closed"};
     qa_unified_document *source=NULL,*decoded=NULL,*retained=NULL;
     qa_buffer wire={0};
-    CHECK(qa_unified_document_create_control(&control,&source,&error));
+    CHECK(qa_unified_document_create_control(&control,NULL,&source,&error));
     CHECK(qa_unified_document_encode(source,&wire,&error));
     frames=qa_unified_frame_pool_create(128*1024,2,&error);
     a=qa_unified_frame_lease_acquire(frames,&error);

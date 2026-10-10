@@ -247,7 +247,7 @@ static bool admitted_document(application_unified_server *owner, const qa_unifie
 {
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_ADMITTED,.epoch=owner->epoch,
         .value.admitted={.client=owner->client,.actor=player->actor,.source_entity=player->source_slot}};
-    return qa_unified_document_create_control(&value,out,error);
+    return qa_unified_document_create_control(&value,NULL,out,error);
 }
 
 static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_client_id client,

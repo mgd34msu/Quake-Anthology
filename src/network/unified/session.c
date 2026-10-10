@@ -133,6 +133,14 @@ static bool admit_delivery(void *context, const qa_unified_delivery *delivery)
     return true;
 }
 
+qa_unified_held *qa_unified_session_delivery_create(qa_unified_session *s,qa_unified_frame_lease *lease,qa_error *e)
+{
+    if (!lease) lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
+    if (!lease) return NULL;
+    qa_unified_held *held=qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e);
+    if (!held) { qa_unified_frame_lease_release(lease);return NULL; }
+    held->lease=lease;return held;
+}
 static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bool *accepted, qa_error *e)
 {
     qa_unified_session *s = context;
@@ -172,11 +180,10 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bo
         lease=frame->lease;
         if(!qa_unified_frame_lease_retain(lease,e)) { qa_unified_document_destroy(document);return false; }
     }
-    if(!held && !lease) lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
-    if(!held && lease) held=qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e);
-    if (!held) { qa_unified_document_destroy(document); qa_unified_frame_lease_release(lease);
+    if(!held) held=qa_unified_session_delivery_create(s,lease,e);
+    if (!held) { qa_unified_document_destroy(document);
         return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Retaining production document delivery"); }
-    held->lease=lease; held->document=document;
+    lease=held->lease;held->document=document;
     held->kind = kind;
     if (!held->event_lease) {
         held->wire.data=qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e);

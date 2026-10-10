@@ -551,5 +551,5 @@ bool application_unified_resource_control(uint32_t epoch,
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified resource control has an invalid actual dictionary extent");
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_RESOURCES,.epoch=epoch,
         .value.resources={.values=(qa_unified_resource_declaration *)resources,.count=count}};
-    return qa_unified_document_create_control(&value,out,error);
+    return qa_unified_document_create_control(&value,NULL,out,error);
 }

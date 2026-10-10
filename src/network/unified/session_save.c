@@ -306,7 +306,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         qa_unified_document_kind kind = (qa_unified_document_kind)qa_net_read_u8(&r);
         bool decoded = false;
         ok = flag(&r, &decoded);
-        qa_unified_held *held = calloc(1, sizeof(*held));
+        qa_unified_held *held = qa_unified_session_delivery_create(s,NULL,e);
         if (!held) { ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring held production delivery"); break; }
         held->kind = kind;
         if (s->tail) s->tail->next = held; else s->held = held; s->tail = held; ++s->held_count;
@@ -318,7 +318,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         if (ok && kind != QA_UNIFIED_CONTROL_DOCUMENT && kind != (s->server ? QA_UNIFIED_INPUT_DOCUMENT : QA_UNIFIED_FRAME_DOCUMENT))
             ok = qa_net_reader_fail(&r, "Held production document changes its authenticated role");
         if (ok) {
-            held->wire.data = malloc(wire.size ? wire.size : 1);
+            held->wire.data = qa_unified_frame_lease_alloc(held->lease,wire.size?wire.size:1,1,1,e);
             if (!held->wire.data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring full production delivery bytes");
         }
         if (ok) {
@@ -327,14 +327,14 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
             bool missing = false;
             ok = decoded ? (kind == QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
                 (qa_bytes){held->wire.data, held->wire.size}, &held->document, &missing, e) && !missing :
-                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, NULL, NULL, &held->document, e)) : s->server;
+                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, held->lease, NULL, &held->document, e)) : s->server;
             if (ok) ok = qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }
     bool timeout = false;
     ok = ok && flag(&r, &timeout);
     if (ok && timeout) {
-        qa_unified_held *held = calloc(1, sizeof(*held));
+        qa_unified_held *held = qa_unified_session_delivery_create(s,NULL,e);
         if (!held) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring actual timeout continuation");
         s->timeout_delivery = held;
         if (held) held->kind = QA_UNIFIED_CONTROL_DOCUMENT;
@@ -342,13 +342,13 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         if (ok) ok = blob(&r, &wire);
         if (ok && wire.size > s->limits.message_bytes) ok = qa_net_reader_fail(&r, "Local closure continuation exceeds its actual control extent");
         if (ok) {
-            held->wire.data = malloc(wire.size ? wire.size : 1);
+            held->wire.data = qa_unified_frame_lease_alloc(held->lease,wire.size?wire.size:1,1,1,e);
             if (!held->wire.data) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring actual timeout control bytes");
         }
         if (ok) {
             held->wire.size = held->bytes = wire.size;
             if (wire.size) memcpy(held->wire.data, wire.data, wire.size);
-            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, s->strings, NULL, NULL, &held->document, e) &&
+            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, s->strings, held->lease, NULL, &held->document, e) &&
                 qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }

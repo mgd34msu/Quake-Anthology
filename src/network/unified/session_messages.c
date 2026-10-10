@@ -194,6 +194,22 @@ static void commit_free(qa_unified_session_commit *commit)
     for (size_t i = 0; i < commit->followup_count && i < 8; ++i) qa_unified_document_destroy(commit->followups[i]);
 }
 
+bool qa_unified_session_control_delivery(qa_unified_session *s,const qa_unified_control *value,
+    qa_unified_held **out,qa_error *e)
+{
+    qa_unified_held *held=qa_unified_session_delivery_create(s,NULL,e);
+    if (!held) return false;
+    held->kind=QA_UNIFIED_CONTROL_DOCUMENT;
+    bool okay=qa_unified_document_create_control(value,held->lease,&held->document,e) &&
+        qa_unified_document_write(held->document,s->limits.message_bytes,&s->frame_wire,e);
+    if (okay) {
+        held->wire.data=qa_unified_frame_lease_alloc(held->lease,s->frame_wire.size,1,1,e);
+        okay=held->wire.data!=NULL;
+        if (okay) { memcpy(held->wire.data,s->frame_wire.data,s->frame_wire.size);held->wire.size=held->bytes=s->frame_wire.size; }
+    }
+    if (!okay) { qa_unified_session_delivery_free(held);return false; }
+    *out=held;return true;
+}
 void qa_unified_session_delivery_free(qa_unified_held *held)
 {
     if (!held) return;
@@ -366,13 +382,7 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
         const qa_unified_control timeout={.kind=QA_UNIFIED_CONTROL_DISCONNECT,
             .value.disconnect="Connection timed out"};
         if (!s->timeout_delivery) {
-            s->timeout_delivery = calloc(1, sizeof(*s->timeout_delivery));
-            if (!s->timeout_delivery) ok = qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual timeout control continuation");
-            if (ok) s->timeout_delivery->kind = QA_UNIFIED_CONTROL_DOCUMENT;
-            if (ok) ok = qa_unified_document_create_control(&timeout, &s->timeout_delivery->document, e);
-            if (ok) ok = qa_unified_document_encode(s->timeout_delivery->document, &s->timeout_delivery->wire, e);
-            if (ok) s->timeout_delivery->bytes = s->timeout_delivery->wire.size;
-            else { qa_unified_session_delivery_free(s->timeout_delivery); s->timeout_delivery = NULL; }
+            ok=qa_unified_session_control_delivery(s,&timeout,&s->timeout_delivery,e);
         }
         if (ok) ok = process_control(s, s->timeout_delivery, waiting, e);
         if (ok && !*waiting) {

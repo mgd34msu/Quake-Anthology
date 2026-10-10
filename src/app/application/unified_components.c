@@ -285,7 +285,7 @@ bool application_unified_components_prepare(application_unified_component_publis
                 .command_base=old?old->sequence:row->sequence};
             if (row->scene) ok=commands(v,source_row,context,source_row->command_base,row->sequence,e);
         }
-        if (ok) ok=qa_unified_document_create_control(&document,&v->control,e);
+        if (ok) ok=qa_unified_document_create_control(&document,v->lease,&v->control,e);
     }
     if (ok && !application_unified_components_current(v)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Component Source retired while its output was assembled");
     if (!ok) { application_unified_components_dispose(v); return false; }

@@ -121,11 +121,11 @@ static bool flag(qa_net_reader *r, bool *out)
     *out = value != 0; return !r->failed;
 }
 
-static bool document_read(qa_net_reader *r, qa_unified_document **out, qa_strings *strings)
+static bool document_read(qa_net_reader *r, qa_unified_document **out, qa_strings *strings,qa_unified_frame_lease *lease)
 {
     qa_bytes wire;
     return qa_net_read_bytes(r, qa_net_read_u32(r), &wire) &&
-        qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, strings, NULL, NULL, out, r->error);
+        qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, strings, lease, NULL, out, r->error);
 }
 
 bool qa_unified_session_continuation_read(qa_net_reader *r, qa_unified_held *held, qa_strings *strings)
@@ -139,9 +139,9 @@ bool qa_unified_session_continuation_read(qa_net_reader *r, qa_unified_held *hel
         okay = qa_net_reader_fail(r, "Source reply acknowledgement exceeds its genuine input domain");
     commit->acknowledged_input = acknowledged == UINT64_MAX ? -1 : (int64_t)acknowledged;
     bool present = false;
-    okay = okay && flag(r, &present) && (!present || document_read(r, &commit->reply, strings));
+    okay = okay && flag(r, &present) && (!present || document_read(r, &commit->reply, strings,held->lease));
     commit->followup_count = qa_net_read_u8(r);
     if (commit->followup_count > 8) return qa_net_reader_fail(r, "Source reply continuation exceeds its actual return extent");
-    for (size_t i = 0; okay && i < commit->followup_count; ++i) okay = document_read(r, commit->followups + i, strings);
+    for (size_t i = 0; okay && i < commit->followup_count; ++i) okay = document_read(r, commit->followups + i, strings,held->lease);
     return okay && !r->failed;
 }

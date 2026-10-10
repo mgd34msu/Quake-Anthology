@@ -64,7 +64,7 @@ typedef struct qa_unified_control {
 
 /* Copies the real typed setup/command record into immutable document custody.
  * Decode uses the same fixed field layout at the external packet boundary. */
-bool qa_unified_document_create_control(const qa_unified_control *, qa_unified_document **, qa_error *);
+bool qa_unified_document_create_control(const qa_unified_control *, qa_unified_frame_lease *, qa_unified_document **, qa_error *);
 const qa_unified_control *qa_unified_document_control(const qa_unified_document *);
 qa_unified_control_kind qa_unified_document_control_type(const qa_unified_document *);
 bool qa_unified_document_epoch(const qa_unified_document *, uint32_t *, qa_error *);

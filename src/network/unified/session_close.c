@@ -28,13 +28,8 @@ bool qa_unified_session_close(qa_unified_session *s, const char *reason, qa_erro
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production close retry changes its already retained cause or reason");
     }
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_DISCONNECT,.value.disconnect=retained};
-    qa_unified_held *held = calloc(1, sizeof(*held));
-    if (!held) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual Source close request");
-    held->kind = QA_UNIFIED_CONTROL_DOCUMENT;
-    bool okay=qa_unified_document_create_control(&value,&held->document,e) &&
-        qa_unified_document_encode(held->document,&held->wire,e);
-    if (!okay) { qa_unified_session_delivery_free(held); return false; }
-    held->bytes = held->wire.size;
+    qa_unified_held *held=NULL;
+    if (!qa_unified_session_control_delivery(s,&value,&held,e)) return false;
     s->timeout_delivery = held; s->timeout_pending = true; s->close_cause = 2;
     return true;
 }

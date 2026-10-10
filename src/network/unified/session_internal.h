@@ -56,6 +56,8 @@ bool qa_unified_session_player_read(const qa_unified_session *, qa_unified_sessi
 qa_json_id qa_unified_session_value(const qa_unified_document *);
 bool qa_unified_session_kind(const qa_unified_document *, const char *);
 void qa_unified_session_release(qa_unified_session *);
+qa_unified_held *qa_unified_session_delivery_create(qa_unified_session *,qa_unified_frame_lease *,qa_error *);
+bool qa_unified_session_control_delivery(qa_unified_session *,const qa_unified_control *,qa_unified_held **,qa_error *);
 void qa_unified_session_delivery_free(qa_unified_held *);
 bool qa_unified_session_reply_valid(const qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_continuation_valid(const qa_unified_session *, const qa_unified_held *, qa_error *);

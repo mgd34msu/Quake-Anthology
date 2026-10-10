@@ -404,7 +404,7 @@ static bool ready_document(frontend_remote_unified *owner, qa_unified_document *
     if (!owner->options.userinfo(owner->options.context,&owner->options.domain,&userinfo,error) || !userinfo) return false;
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_READY,.epoch=owner->epoch,
         .value.ready={.composition=*qa_executable_recipe_generation(owner->recipe),.userinfo=(char *)userinfo}};
-    return qa_unified_document_create_control(&value,out,error);
+    return qa_unified_document_create_control(&value,NULL,out,error);
 }
 
 static bool resources(frontend_remote_unified *owner, const qa_unified_document *document, qa_error *error)
@@ -601,7 +601,7 @@ static bool command_document(frontend_remote_unified *owner, const char *name,
             .arguments={.values=(char **)args,.count=count}};
     }
     qa_unified_document *document=NULL;
-    bool okay=qa_unified_document_create_control(&value,&document,error) && qa_unified_session_control(owner->session,document,error);
+    bool okay=qa_unified_document_create_control(&value,NULL,&document,error) && qa_unified_session_control(owner->session,document,error);
     qa_unified_document_destroy(document); return okay;
 }
 bool frontend_remote_unified_source_disconnect(frontend_remote_unified *owner,const char *reason,qa_error *error)
