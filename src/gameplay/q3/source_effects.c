@@ -170,12 +170,11 @@ static bool move_intermission(qa_q3_game *game, qa_actor_id actor, qa_vec3 origi
     if (!entry) return true;
     q3_source_origin_written(game, actor, origin);
     qa_q3_player_state *player = &entry->state.player;
-    player->view_angles = angles;
+    q3_player_view_write(game, actor, angles);
     player->flags = 0;
     memset(player->powerups, 0, sizeof(player->powerups));
     qa_q3_wire_policy policy = {.pm_type = 5};
-    if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_TYPE, &policy, error) ||
-        !q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_VIEW, error))
+    if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_TYPE, &policy, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry) return true;

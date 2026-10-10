@@ -136,6 +136,7 @@ void qa_q3_checkpoint_free(qa_q3_checkpoint *checkpoint) {
     if (!checkpoint)
         return;
     free(checkpoint->actors);
+    free(checkpoint->actor_player_motions);
     free(checkpoint->kamikaze_cooldowns);
     if (checkpoint->configstrings)
         for (size_t i = 0; i < checkpoint->configstring_count; ++i)
@@ -182,6 +183,8 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     memcpy(saved.source_entities, game->source_entities, sizeof(saved.source_entities));
     memcpy(saved.clients, game->clients, sizeof(saved.clients));
     memcpy(saved.source_clients, game->client_actors, sizeof(saved.source_clients));
+    for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
+        if (!q3_player_motion_slot_read(game, i, &saved.source_player_motions[i], error)) return false;
     for (size_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
         if (!qa_vec_finite(saved.clients[i].old_origin) ||
             (saved.clients[i].has_followed_player &&
@@ -226,11 +229,13 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
                           game->kamikaze_cooldowns[i].actor))
             ++saved.cooldown_count;
     }
-    if (saved.actor_count)
+    if (saved.actor_count) {
         saved.actors = malloc(saved.actor_count * sizeof(*saved.actors));
+        saved.actor_player_motions = calloc(saved.actor_count, sizeof(*saved.actor_player_motions));
+    }
     if (saved.cooldown_count)
         saved.kamikaze_cooldowns = malloc(saved.cooldown_count * sizeof(*saved.kamikaze_cooldowns));
-    if ((saved.actor_count && !saved.actors) ||
+    if ((saved.actor_count && (!saved.actors || !saved.actor_player_motions)) ||
         (saved.cooldown_count && !saved.kamikaze_cooldowns)) {
         qa_q3_checkpoint_free(&saved);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 checkpoint");
@@ -238,8 +243,14 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     }
     size_t actors = 0, cooldowns = 0;
     for (uint32_t i = 0; i < game->capacity; ++i) {
-        if (q3_actor_const(game, game->actors[i].actor))
-            saved.actors[actors++] = game->actors[i];
+        if (q3_actor_const(game, game->actors[i].actor)) {
+            saved.actors[actors] = game->actors[i];
+            if (game->actors[i].kind == Q3_ACTOR_PLAYER &&
+                !q3_player_motion_read(game, game->actors[i].actor, &saved.actor_player_motions[actors], error)) {
+                qa_q3_checkpoint_free(&saved); return false;
+            }
+            ++actors;
+        }
         if (game->kamikaze_cooldowns[i].actor.registry &&
             qa_actors_get(qa_session_actors(game->options.services.session),
                           game->kamikaze_cooldowns[i].actor))
@@ -280,12 +291,12 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
             (saved->clients[i].has_followed_player &&
              !q3_followed_player_saved_valid(game, &saved->clients[i].followed_player)))
             return q3_fail(error, "Q3 client restore has invalid retained source PS");
-    char **configstrings = NULL;
+    qa_string_id *configstrings = NULL;
     uint16_t *source_numbers = NULL;
     q3_wire_state *wire = NULL;
     qa_q3_shader_remap_state shader_remaps;
     if (!q3_source_prepare(game, saved, &source_numbers, error)) return false;
-    if (!q3_configstrings_prepare(saved, &configstrings, error))
+    if (!q3_configstrings_prepare(game, saved, &configstrings, error))
         goto invalid_strings;
     if (!q3_shader_remaps_prepare(&saved->shader_remaps, &shader_remaps, error) ||
         !q3_wire_prepare(game, (qa_bytes){saved->wire_state.data, saved->wire_state.size}, &wire, error) ||
@@ -387,6 +398,10 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     game->match_state = saved->match_state;
     q3_shader_remaps_commit(game, &shader_remaps);
     q3_wire_commit(game, wire);
+    q3_player_motion_slots_restore(game, saved->source_player_motions);
+    for (size_t i = 0; i < saved->actor_count; ++i)
+        if (saved->actors[i].kind == Q3_ACTOR_PLAYER)
+            q3_player_motion_restore(game, saved->actors[i].actor, &saved->actor_player_motions[i]);
     game->death_animation = saved->death_animation;
     game->body_queue_index = saved->body_queue_index;
     memcpy(game->body_queue, saved->body_queue, sizeof(game->body_queue));

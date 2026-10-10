@@ -1098,13 +1098,6 @@ static qa_actor_owner q3_combat_provider(void *opaque, qa_actor_id target,
     return selected == NULL ? fallback : selected->owner;
 }
 
-static bool q3_source_movement_state(void *context, qa_actor_id actor,
-                                     const qa_q3_player_state *state,
-                                     uint32_t fields, qa_error *error)
-{
-    return application_control_q3_source_state(context, actor, state, fields, error);
-}
-
 static bool q3_primary_attack_allowed(void *opaque, qa_actor_id actor)
 {
     application_provider *provider = opaque;
@@ -1302,7 +1295,6 @@ static bool construct_q3(qa_application *application,
                   .source_supply_take = application_supplies_q3_take,
                   .source_ammo_regeneration = application_supplies_q3_ammo_regeneration,
                   .source_ammo_timer_stored = application_supplies_q3_ammo_stored,
-                  .source_movement_state = q3_source_movement_state,
                   .primary_attack_allowed = q3_primary_attack_allowed,
                   .selected_damage_factor = application_q3_weapons_services_selected_damage,
                   .selected_client_effects = q3_selected_client_effects,

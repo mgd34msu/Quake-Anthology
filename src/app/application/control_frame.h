@@ -129,8 +129,6 @@ const qa_movement_call *application_control_frames_call_swap(qa_application *, c
 const qa_movement_call *application_control_frames_call_current(const qa_application *, qa_actor_id);
 bool application_control_q3_policy(application_provider *, qa_actor_id, uint8_t,
                                    const qa_q3_wire_policy *, qa_error *);
-bool application_control_q3_source_state(application_provider *, qa_actor_id,
-    const qa_q3_player_state *, uint32_t fields, qa_error *);
 const qa_movement_result *application_control_q3_result(application_provider *, qa_actor_id, qa_error *);
 bool application_arsenal_guest_output_admit(application_provider *, uint8_t, qa_error *);
 bool application_arsenal_guest_source_command(qa_application *, qa_actor_id,

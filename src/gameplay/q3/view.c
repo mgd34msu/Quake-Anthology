@@ -11,7 +11,8 @@ static bool source_model(const qa_q3_game *game, int32_t index, const char **out
                            qa_error *error) {
     if (index < 0 || index >= 256)
         return q3_fail(error, "Q3 Source presentation model index is out of range");
-    *out = index ? game->configstrings[32 + index] : NULL;
+    *out = index ? qa_strings_cstr(qa_session_strings(game->options.services.session),
+        game->configstrings[32 + index]) : NULL;
     return true;
 }
 
@@ -137,7 +138,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.position = source_trajectory(&s->pos);
         view.angular = source_trajectory(&s->apos);
         if (entry->kind == Q3_ACTOR_PODIUM && s->modelindex > 0 && s->modelindex <= 255)
-            view.model = game->configstrings[32 + s->modelindex];
+            view.model = qa_strings_cstr(qa_session_strings(game->options.services.session),
+                game->configstrings[32 + s->modelindex]);
         uint32_t client;
         if (q3_source_client_pointer(game, actor, &client)) {
             view.source_client = s->clientNum;
@@ -157,7 +159,9 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.legs_animation = player->legs_animation;
         view.torso_animation = player->torso_animation;
         view.loop_sound = player->loop_sound;
-        view.angular.base = player->view_angles;
+        qa_builtin_player_control control;
+        if (!q3_player_control(game, actor, &control, error)) return false;
+        view.angular.base = *control.view_angles;
         view.position.delta = view.body.velocity;
         view.angular.type = view.position.type = QA_TRAJECTORY_INTERPOLATE;
         for (unsigned i = 1; i < QA_Q3_POWERUP_COUNT; ++i)

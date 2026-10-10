@@ -40,7 +40,7 @@ static bool item_spawn(qa_source_save_io *io, qa_q3_item_spawn *p)
     return true;
 }
 
-static bool player(qa_source_save_io *io, qa_q3_player_state *p)
+static bool player(qa_source_save_io *io, qa_q3_player_state *p, qa_q3_player_motion *motion)
 {
     FIELD(u32, p->selections); FIELD(u32, p->flags); FIELD(u32, p->event_sequence);
     FIELD(u32, p->spawn_count);
@@ -68,24 +68,24 @@ static bool player(qa_source_save_io *io, qa_q3_player_state *p)
     FIELD(i32, p->last_hurt_mod);
     FIELD(i32, p->legs_animation); FIELD(i32, p->torso_animation);
     FIELD(i32, p->legs_timer_ms); FIELD(i32, p->torso_timer_ms);
-    FIELD(i32, p->delta_yaw_word); FIELD(i32, p->ground_entity_number);
-    FIELD(i32, p->delta_pitch_word); FIELD(i32, p->delta_roll_word);
+    FIELD(i32, motion->delta_yaw_word); FIELD(i32, motion->ground_entity_number);
+    FIELD(i32, motion->delta_pitch_word); FIELD(i32, motion->delta_roll_word);
     FIELD(i32, p->teleport_lock_ms); FIELD(u64, p->teleport_revision);
     FIELD(u32, p->selected_pm_flags); FIELD(i32, p->selected_pm_time_ms);
     FIELD(i32, p->damage_event); FIELD(i32, p->damage_count);
     FIELD(i32, p->damage_pitch); FIELD(i32, p->damage_yaw); FIELD(i32, p->last_command_ms);
-    FIELD(i32, p->command_time_ms);
+    FIELD(i32, motion->command_time_ms);
     FIELD(i32, p->portal_id);
     FIELD(i32, p->rank); FIELD(i32, p->persistent_team); FIELD(i32, p->generic1);
     FIELD(i32, p->defend_count); FIELD(i32, p->assist_count); FIELD(i32, p->captures);
     FIELD(i32, p->client_number);
-    FIELD(i32, p->fly_sound_after); FIELD(i32, p->jumppad_entity);
-    FIELD(i32, p->jumppad_frame); FIELD(i32, p->pmove_frame_count);
+    FIELD(i32, p->fly_sound_after); FIELD(i32, motion->jumppad_entity);
+    FIELD(i32, motion->jumppad_frame); FIELD(i32, motion->pmove_frame_count);
     for (size_t i = 0; i < 3; ++i) FIELD(i32, p->last_command_angles[i]);
     FIELD(f32, p->damage_blood); FIELD(f32, p->damage_armor); FIELD(f32, p->damage_knockback);
     FIELD(vec3, p->damage_from); FIELD(string, p->loop_sound);
-    FIELD(f32, p->fractional_weapon_ms); FIELD(f32, p->view_height);
-    FIELD(vec3, p->view_angles); FIELD(vec3, p->grapple_point);
+    FIELD(f32, p->fractional_weapon_ms); FIELD(f32, motion->view_height);
+    FIELD(vec3, motion->view_angles); FIELD(vec3, p->grapple_point);
     FIELD(vec3, p->cutscene.origin); FIELD(vec3, p->cutscene.angles);
     FIELD(vec3, p->cutscene.view_offset); FIELD(bool, p->cutscene.active);
     FIELD(actor, p->hook); FIELD(actor, p->attached_mine);
@@ -183,7 +183,7 @@ static bool wire_player(qa_source_save_io *io, qa_q3_player *p)
     return true;
 }
 
-static bool actor_state(qa_source_save_io *io, qa_q3_actor_state *p)
+static bool actor_state(qa_source_save_io *io, qa_q3_actor_state *p, qa_q3_player_motion *motion)
 {
     FIELD(actor, p->actor); ENUM(p->kind, Q3_ACTOR_VICTORY_MODEL);
     FIELD(actor, p->enemy); FIELD(bool, p->enemy_source_present); FIELD(u32, p->enemy_source_slot);
@@ -198,7 +198,7 @@ static bool actor_state(qa_source_save_io *io, qa_q3_actor_state *p)
         FIELD(i32, p->state.postgame.event_time_ms);
         FIELD(f32, p->state.postgame.physics_bounce); FIELD(bool, p->state.postgame.physics_object);
         return true;
-    case Q3_ACTOR_PLAYER: return player(io, &p->state.player);
+    case Q3_ACTOR_PLAYER: return player(io, &p->state.player, motion);
     case Q3_ACTOR_MISSILE: return missile(io, &p->state.missile);
     case Q3_ACTOR_MOVER: return mover(io, &p->state.mover);
     case Q3_ACTOR_ITEM:
@@ -387,7 +387,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         FIELD(bool, client->predict_item_pickup); FIELD(bool, client->pmove_fixed);
         FIELD(bool, client->team_info);
         FIELD(bool, client->ready_to_exit);
-        if (!actor_state(io, &p->source_clients[i]) ||
+        if (!actor_state(io, &p->source_clients[i], &p->source_player_motions[i]) ||
             p->source_clients[i].kind != Q3_ACTOR_PLAYER)
             return save_fail(io, "invalid Q3 retained source client");
     }
@@ -400,9 +400,10 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
     if (!qa_source_save_count(io, &p->actor_count, game->capacity)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && p->actor_count) {
         p->actors = allocate(io, p->actor_count, sizeof(*p->actors));
-        if (!p->actors) return false;
+        p->actor_player_motions = allocate(io, p->actor_count, sizeof(*p->actor_player_motions));
+        if (!p->actors || !p->actor_player_motions) return false;
     }
-    for (size_t i = 0; i < p->actor_count; ++i) if (!actor_state(io, &p->actors[i])) return false;
+    for (size_t i = 0; i < p->actor_count; ++i) if (!actor_state(io, &p->actors[i], &p->actor_player_motions[i])) return false;
     if (!qa_source_save_count(io, &p->cooldown_count, game->capacity)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && p->cooldown_count) {
         p->kamikaze_cooldowns = allocate(io, p->cooldown_count, sizeof(*p->kamikaze_cooldowns));

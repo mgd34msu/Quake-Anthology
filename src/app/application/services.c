@@ -1846,6 +1846,12 @@ static bool builtin_actor_callback(void *opaque, qa_builtin_actor_callback_kind 
         application_fail(error, QA_ERROR_ARGUMENT, "Native callback retired its source during observers");
 }
 
+static bool builtin_player_control(void *context, qa_actor_owner observer, qa_actor_id actor,
+                                   qa_builtin_player_control *out, qa_error *error)
+{
+    return application_control_borrow(context, observer, actor, out, error);
+}
+
 qa_builtin_services application_builtin_services(qa_application *application,
                                                   qa_world *world,
                                                   qa_physics *physics)
@@ -1862,6 +1868,7 @@ qa_builtin_services application_builtin_services(qa_application *application,
                                  .actor_traits = builtin_traits,
                                  .players = builtin_players,
                                  .player_info = builtin_player_info,
+                                 .player_control = builtin_player_control,
                                  .powerups = builtin_powerups,
                                  .motion_changed = builtin_motion_changed,
                                  .actor_callback = builtin_actor_callback};

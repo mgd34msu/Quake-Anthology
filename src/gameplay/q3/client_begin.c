@@ -175,16 +175,6 @@ qa_q3_player *q3_client_follow_player(qa_q3_game *game, uint32_t slot) {
     return game && slot < QA_Q3_NATIVE_CLIENTS && game->clients[slot].has_followed_player
         ? &game->clients[slot].followed_player : NULL;
 }
-bool q3_source_movement_write(qa_q3_game *game, qa_actor_id actor, uint32_t fields,
-                               qa_error *error) {
-    uint32_t slot;
-    if (!qa_q3_native_client_slot(game, actor, &slot, NULL)) return true;
-    if (!game->options.hooks.source_movement_state)
-        return q3_fail(error, "Q3 source PS assignment has no actual selected control writer");
-    qa_q3_player_state source = game->client_actors[slot].state.player;
-    return game->options.hooks.source_movement_state(game->options.hooks.context,
-                                                      actor, &source, fields, error);
-}
 bool qa_q3_client_follow_read(const qa_q3_game *game, uint32_t slot,
                               qa_q3_player *out, bool *present, qa_error *error) {
     if (!game || !out || !present || slot >= QA_Q3_NATIVE_CLIENTS)
@@ -237,13 +227,15 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     client->followed_player = copied;
     client->has_followed_player = true;
     qa_q3_player_state *player = &q3_actor_get(game, actor)->state.player;
-    player->command_time_ms = copied.commandTime;
+    qa_q3_player_motion motion = {.command_time_ms = copied.commandTime,
+        .delta_pitch_word = copied.deltaAngles[0], .delta_yaw_word = copied.deltaAngles[1],
+        .delta_roll_word = copied.deltaAngles[2], .ground_entity_number = copied.groundEntityNum,
+        .view_angles = qa_v3(copied.viewangles[0], copied.viewangles[1], copied.viewangles[2]),
+        .view_height = (float)copied.viewheight, .pmove_frame_count = copied.pmoveFramecount,
+        .jumppad_frame = copied.jumppadFrame, .jumppad_entity = copied.jumppadEnt};
+    q3_player_motion_restore(game, actor, &motion);
     player->flags = (uint32_t)copied.eFlags;
     player->client_number = copied.clientNum;
-    player->delta_pitch_word = copied.deltaAngles[0];
-    player->delta_yaw_word = copied.deltaAngles[1];
-    player->delta_roll_word = copied.deltaAngles[2];
-    player->ground_entity_number = copied.groundEntityNum;
     player->weapon = (qa_q3_weapon)copied.weapon;
     player->weapon_phase = (qa_q3_weapon_phase)copied.weaponState;
     player->weapon_time_ms = copied.weaponTime;
@@ -252,8 +244,6 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     player->legs_timer_ms = copied.legsTimer; player->legs_animation = copied.legsAnim;
     player->torso_timer_ms = copied.torsoTimer; player->torso_animation = copied.torsoAnim;
     player->grapple_point = qa_v3(copied.grapplePoint[0], copied.grapplePoint[1], copied.grapplePoint[2]);
-    player->view_angles = qa_v3(copied.viewangles[0], copied.viewangles[1], copied.viewangles[2]);
-    player->view_height = (float)copied.viewheight;
     memcpy(&player->event_sequence, &copied.eventSequence, sizeof(player->event_sequence));
     memcpy(player->events, copied.events, sizeof(player->events));
     memcpy(player->event_parameters, copied.eventParms, sizeof(player->event_parameters));
@@ -266,8 +256,6 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     player->damage_pitch = copied.damagePitch; player->damage_count = copied.damageCount;
     memcpy(player->powerups, copied.powerups, sizeof(player->powerups));
     player->generic1 = copied.generic1;
-    player->pmove_frame_count = copied.pmoveFramecount;
-    player->jumppad_frame = copied.jumppadFrame; player->jumppad_entity = copied.jumppadEnt;
     player->rank = copied.persistant[2]; player->persistent_team = copied.persistant[3];
     player->deaths = copied.persistant[8];
     memcpy(&player->spawn_count, &copied.persistant[4], sizeof(player->spawn_count));
@@ -278,7 +266,7 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     player->impressive_count = copied.persistant[9]; player->excellent_count = copied.persistant[10];
     player->defend_count = copied.persistant[11]; player->assist_count = copied.persistant[12];
     player->gauntlet_frag_count = copied.persistant[13]; player->captures = copied.persistant[14];
-    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error);
+    return true;
 }
 bool qa_q3_client_follow_scoreboard(qa_q3_game *game, qa_actor_id actor, bool enabled,
                                     qa_error *error) {
@@ -332,7 +320,7 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
         game->source_entities[slot].server_flags |= 8u;
         game->source_entities[slot].in_use = true;
     }
-    if (!q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error)) return false;
+    q3_player_motion_clear(game, actor);
     uint32_t actual_slot;
     /* A new human's ClientConnect clears PS before G_InitGentity makes its
      * Source row live. ClientBegin publishes that clear after activation. */
@@ -385,18 +373,13 @@ bool qa_q3_client_begin_state(qa_q3_game *game, qa_actor_id actor, qa_error *err
     player->selected_pm_time_ms = 0;
     player->legs_animation = player->torso_animation = 0;
     player->legs_timer_ms = player->torso_timer_ms = 0;
-    player->delta_pitch_word = player->delta_yaw_word = player->delta_roll_word = 0;
-    player->ground_entity_number = 0;
-    player->view_angles = player->grapple_point = qa_v3(0, 0, 0);
-    player->view_height = 0;
-    player->jumppad_entity = player->jumppad_frame = player->pmove_frame_count = 0;
+    player->grapple_point = qa_v3(0, 0, 0);
     player->damage_event = player->damage_count = player->damage_pitch = player->damage_yaw = 0;
     memset(player->powerups, 0, sizeof(player->powerups));
     player->holdable = QA_Q3_H_NONE;
     player->max_health = 0;
-    player->command_time_ms = 0;
     player->client_number = 0;
-    if (!q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error)) return false;
+    q3_player_motion_clear(game, actor);
     uint32_t actual_slot;
     return !qa_q3_native_client_slot(game, actor, &actual_slot, NULL) ||
         !game->options.hooks.source_flags_cleared ||
@@ -588,20 +571,24 @@ bool qa_q3_client_command_time(const qa_q3_game *game, qa_actor_id actor,
     uint32_t slot;
     if (!out || !q3_client_slot(game, actor, &slot))
         return q3_fail(error, "Q3 command time needs its actual source client");
-    *out = game->clients[slot].has_followed_player ? game->clients[slot].followed_player.commandTime
-        : game->client_actors[slot].state.player.command_time_ms;
+    if (game->clients[slot].has_followed_player) *out = game->clients[slot].followed_player.commandTime;
+    else {
+        qa_q3_player_motion motion;
+        if (!q3_player_motion_read(game, actor, &motion, error)) return false;
+        *out = motion.command_time_ms;
+    }
     return true;
 }
 
 bool qa_q3_client_think_complete(qa_q3_game *game, qa_actor_id actor,
     int32_t command_time_ms, qa_error *error) {
     if (!q3_client_actor(game, actor, error)) return false;
-    q3_actor_get(game, actor)->state.player.command_time_ms = command_time_ms;
+    q3_player_command_time_write(game, actor, command_time_ms);
     uint32_t slot;
     if (!qa_q3_native_client_slot(game, actor, &slot, error)) return false;
     qa_q3_player *copied = q3_client_follow_player(game, slot);
     if (copied) copied->commandTime = command_time_ms;
-    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_COMMAND, error);
+    return true;
 }
 
 static bool teleport_temporary(qa_q3_game *game, qa_actor_id actor,

@@ -564,10 +564,12 @@ bool qa_q3_actor_traits(const qa_q3_game *game, qa_actor_id actor, qa_builtin_ac
         out->dead = out->has_life && entry->state.player.dead;
         out->spectator = entry->state.player.spectator;
         out->no_target = entry->state.player.no_target;
-        out->view_height = entry->state.player.view_height;
+        qa_builtin_player_control control;
+        if (q3_player_control(game, actor, &control, NULL)) {
+            out->view_height = *control.view_height;
+            out->grounded = control.ground->hit != QA_TRACE_HIT_NONE;
+        }
         out->max_health = (float)entry->state.player.max_health;
-        out->grounded = entry->state.player.ground_entity_number >= 0 &&
-                        entry->state.player.ground_entity_number != 1023;
         out->invisible = entry->state.player.powerups[QA_Q3_P_INVIS] != 0;
     } else if (entry->kind == Q3_ACTOR_MISSILE)
         out->owner = entry->state.missile.owner;
@@ -696,10 +698,11 @@ static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         return q3_postgame_think_override(game, actor, &handled, error);
     uint32_t native_slot;
     if (entry->kind == Q3_ACTOR_PLAYER &&
-        !qa_q3_native_client_slot(game, actor, &native_slot, NULL) &&
-        entry->state.player.jumppad_frame != entry->state.player.pmove_frame_count) {
-        entry->state.player.jumppad_frame = 0;
-        entry->state.player.jumppad_entity = 0;
+        !qa_q3_native_client_slot(game, actor, &native_slot, NULL)) {
+        qa_q3_player_motion motion;
+        if (!q3_player_motion_read(game, actor, &motion, error)) return false;
+        if (motion.jumppad_frame != motion.pmove_frame_count)
+            q3_player_jumppad_write(game, actor, (qa_actor_id){0}, 0);
     }
     switch (entry->kind) {
     case Q3_ACTOR_PODIUM: case Q3_ACTOR_VICTORY_MODEL:

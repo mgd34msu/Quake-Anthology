@@ -144,6 +144,11 @@ typedef struct qa_movement_state {
     } data;
 } qa_movement_state;
 
+/* Current angle field for state-owning movers; other movers supply their live result. */
+qa_vec3 *qa_movement_view(qa_movement_state *, qa_vec3 *fallback);
+float *qa_movement_height(qa_movement_state *, float *fallback);
+qa_movement_ground *qa_movement_ground_ref(qa_movement_state *, qa_movement_ground *fallback);
+
 typedef struct qa_q1_movement_parameters {
     float gravity, stop_speed, max_speed, spectator_max_speed;
     float accelerate, air_accelerate, water_accelerate, friction, water_friction;
@@ -265,6 +270,8 @@ typedef struct qa_movement_call {
     qa_movement_state *state;
     qa_movement_command *command;
     qa_bounds *bounds;
+    qa_vec3 *view_angles;
+    qa_movement_ground *ground;
     float *view_height;
     int32_t *water_level, *water_type;
     uint64_t time_ns;

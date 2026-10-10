@@ -1535,8 +1535,9 @@ void application_control_frames_state(qa_application *app, qa_actor_id actor, qa
 qa_movement_state *application_control_frames_state_current(const qa_application *app, qa_actor_id actor)
 {
     const struct application_control_frames *owner = app ? app->control_frames : NULL;
-    return owner && owner->state && qa_actor_id_equal(owner->state_actor, actor) &&
-        application_control_frame_current(app, actor) ? owner->state : NULL;
+    if (!owner || !application_control_frame_current(app, actor)) return NULL;
+    if (owner->call && qa_actor_id_equal(owner->call->actor, actor)) return owner->call->state;
+    return owner->state && qa_actor_id_equal(owner->state_actor, actor) ? owner->state : NULL;
 }
 
 const qa_movement_call *application_control_frames_call_swap(qa_application *app,

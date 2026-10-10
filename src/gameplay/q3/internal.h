@@ -74,7 +74,6 @@ bool q3_level_state_valid(const qa_q3_game *, const qa_q3_source_team_state *,
 bool q3_followed_player_valid(const qa_q3_game *, const qa_q3_player *);
 bool q3_followed_player_saved_valid(const qa_q3_game *, const qa_q3_player *);
 qa_q3_player *q3_client_follow_player(qa_q3_game *, uint32_t slot);
-bool q3_source_movement_write(qa_q3_game *, qa_actor_id, uint32_t fields, qa_error *);
 bool q3_source_client_pointer(const qa_q3_game *, qa_actor_id, uint32_t *);
 bool q3_source_row_body_ensure(qa_q3_game *, uint32_t, qa_actor_id *, qa_error *);
 bool q3_spawn_raw_actor(qa_q3_game *, qa_string_id, qa_actor_id *, qa_error *);
@@ -126,7 +125,7 @@ struct qa_q3_game {
     q3_map_runtime *map;
     q3_wire_state *wire;
     qa_q3_shader_remap_state shader_remaps;
-    char *configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
+    qa_string_id configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_table_revision;
     qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
@@ -170,9 +169,9 @@ static inline bool q3_fail(qa_error *error, const char *message) {
 }
 void q3_configstrings_clear(qa_q3_game *);
 bool q3_configstrings_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
-bool q3_configstrings_prepare(const qa_q3_checkpoint *, char ***, qa_error *);
-void q3_configstrings_discard(char **);
-void q3_configstrings_commit(qa_q3_game *, char **);
+bool q3_configstrings_prepare(qa_q3_game *, const qa_q3_checkpoint *, qa_string_id **, qa_error *);
+void q3_configstrings_discard(qa_string_id *);
+void q3_configstrings_commit(qa_q3_game *, qa_string_id *);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 qa_builtin_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
@@ -182,7 +181,23 @@ bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable bef
 size_t q3_inventory_arsenal_entries(const qa_q3_game *, bool spawn, qa_inventory_entry *);
 bool q3_player_state_valid(const qa_q3_player_state *);
 bool q3_player_state_valid_source_client(const qa_q3_player_state *, const qa_q3_native_client *);
-void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);
+bool q3_player_motion_read(const qa_q3_game *, qa_actor_id, qa_q3_player_motion *, qa_error *);
+bool q3_player_motion_slot_read(const qa_q3_game *, uint32_t, qa_q3_player_motion *, qa_error *);
+void q3_player_motion_slots_restore(qa_q3_game *, const qa_q3_player_motion *);
+void q3_player_motion_restore(qa_q3_game *, qa_actor_id, const qa_q3_player_motion *);
+void q3_player_motion_clear(qa_q3_game *, qa_actor_id);
+void q3_player_command_time_write(qa_q3_game *, qa_actor_id, int32_t);
+void q3_player_jumppad_write(qa_q3_game *, qa_actor_id, qa_actor_id, int32_t);
+void q3_player_delta_write(qa_q3_game *, qa_actor_id, unsigned, int32_t);
+void q3_player_view_write(qa_q3_game *, qa_actor_id, qa_vec3);
+void q3_player_height_write(qa_q3_game *, qa_actor_id, float);
+static inline bool q3_player_control(const qa_q3_game *game, qa_actor_id actor,
+                                     qa_builtin_player_control *out, qa_error *error) {
+    return game->options.services.player_control &&
+        game->options.services.player_control(game->options.services.context,
+            game->options.owner, actor, out, error);
+}
+void q3_force_view(qa_q3_game *, qa_actor_id, qa_q3_player_state *, qa_vec3, int32_t lock_ms);
 int32_t q3_entity_number(const qa_q3_game *, qa_actor_id);
 bool q3_sound(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);
 bool q3_sound_report(qa_q3_game *, qa_actor_id, const char *, int32_t channel, qa_error *);

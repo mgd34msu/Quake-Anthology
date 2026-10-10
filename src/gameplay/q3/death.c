@@ -83,7 +83,7 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
             yaw += 360;
     }
     entry->state.player.dead_yaw = (int32_t)fmodf(yaw, 360);
-    entry->state.player.view_angles = qa_v3(0, body.angles.y, 0);
+    q3_player_view_write(game, victim, qa_v3(0, body.angles.y, 0));
     int32_t method = request->attack.cause.kind == QA_CAUSE_Q3
                          ? request->attack.cause.source.q3.means_of_death
                          : 0;

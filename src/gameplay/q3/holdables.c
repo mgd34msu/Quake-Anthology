@@ -103,14 +103,20 @@ static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
     if (entry && entry->kind == Q3_ACTOR_PLAYER) {
         qa_q3_player_state *player = &entry->state.player;
         player->flags ^= 4u;
-        q3_force_view(player, angles, 160);
+        q3_force_view(game, actor, player, angles, 160);
     }
     if (game->options.services.motion_changed) {
         qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_TELEPORT,
                                            .body = body,
                                            .view_angles = angles,
                                            .force_view_angles = true,
+                                           .preserve_command_angles = true,
                                            .hold_ns = UINT64_C(160000000)};
+        if (entry && entry->kind == Q3_ACTOR_PLAYER) {
+            change.has_source_command_angle_words = true;
+            memcpy(change.source_command_angle_words, entry->state.player.last_command_angles,
+                sizeof(change.source_command_angle_words));
+        }
         if (!game->options.services.motion_changed(game->options.services.context, actor, &change,
                                                    error))
             return false;
@@ -540,9 +546,11 @@ bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         if (!q3_actor_get(game, actor)) return true;
         if (!game->source_entities[slot].in_use ||
             !qa_actor_id_equal(game->source_entities[slot].actor, target)) continue;
-        if (!described && candidate && candidate->kind == Q3_ACTOR_PLAYER)
-            traits.grounded = candidate->state.player.ground_entity_number >= 0 &&
-                              candidate->state.player.ground_entity_number != 1023;
+        if (!described && candidate && candidate->kind == Q3_ACTOR_PLAYER) {
+            qa_builtin_player_control control;
+            if (!q3_player_control(game, target, &control, error)) return false;
+            traits.grounded = control.ground->hit != QA_TRACE_HIT_NONE;
+        }
         qa_body_state player_body;
         if (!q3_source_body_read(game, target, &player_body, error))
             return false;
@@ -557,10 +565,10 @@ bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         int32_t pitch = (int32_t)((angles.x - previous.x) * 65536 / 360) & 65535;
         candidate = q3_actor_get(game, target);
         if (candidate && candidate->kind == Q3_ACTOR_PLAYER) {
-            candidate->state.player.delta_yaw_word =
-                q3_add_time(candidate->state.player.delta_yaw_word, yaw);
-            candidate->state.player.delta_pitch_word =
-                q3_add_time(candidate->state.player.delta_pitch_word, pitch);
+            qa_q3_player_motion motion;
+            if (!q3_player_motion_read(game, target, &motion, error)) return false;
+            q3_player_delta_write(game, target, 1, q3_add_time(motion.delta_yaw_word, yaw));
+            q3_player_delta_write(game, target, 0, q3_add_time(motion.delta_pitch_word, pitch));
         }
         if (game->options.services.motion_changed) {
             qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_LAUNCH,

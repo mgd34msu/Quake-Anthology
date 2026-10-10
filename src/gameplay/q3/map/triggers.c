@@ -266,7 +266,9 @@ static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
         return true;
     if (!q3_map_get(game, source))
         return true;
-    if (!player || player->state.player.jumppad_entity != number) {
+    qa_q3_player_motion motion = {0};
+    if (player && !q3_player_motion_read(game, actor, &motion, error)) return false;
+    if (!player || motion.jumppad_entity != number) {
         double pitch = jump_pad_pitch(velocity);
         if (!q3_player_event(game, actor, 13, pitch < 45 ? 0 : 1, error))
             return false;
@@ -278,10 +280,7 @@ static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
         if (!player && !qa_actors_get(qa_session_actors(game->options.services.session), actor))
             return true;
     }
-    if (player) {
-        player->state.player.jumppad_entity = number;
-        player->state.player.jumppad_frame = player->state.player.pmove_frame_count;
-    }
+    if (player) q3_player_jumppad_write(game, actor, source, motion.pmove_frame_count);
     return q3_map_set_velocity(game, actor, velocity, error);
 }
 

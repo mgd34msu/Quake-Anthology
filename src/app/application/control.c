@@ -47,7 +47,6 @@ typedef struct application_move_call {
     qa_q1_game_operation q1_operations[5];
     size_t q1_operation_count;
     qa_movement_command applied_command;
-    const qa_vec3 *completed_view_angles;
     bool command_applied;
     bool qc_input_active;
     application_source_input_scope qc_command, qc_slice;
@@ -657,15 +656,7 @@ static bool q1_source_weapon_impulse(qa_application *app, qa_actor_id actor,
 
 static qa_vec3 call_view_angles(const application_move_call *move, const qa_movement_call *call)
 {
-    if (call->state->kind == QA_RULESET_NETQUAKE)
-        return call->state->data.nq.view_angles;
-    if (call->state->kind == QA_RULESET_QUAKEWORLD)
-        return call->state->data.qw.angles;
-    if (call->state->kind == QA_RULESET_Q3)
-        return call->state->data.q3.view_angles;
-    if (move->completed_view_angles)
-        return *move->completed_view_angles;
-    return call->command->angles;
+    return call->view_angles ? *call->view_angles : move->control->player.view_angles;
 }
 
 typedef struct application_q1_source_input_call {
@@ -1522,10 +1513,7 @@ static qa_movement_control move_phase_body(void *opaque, qa_movement_phase phase
             controls.gauntlet_contact_known = true; controls.gauntlet_contact = source.gauntlet_contact;
         }
         move->committed = true;
-        if (!qa_q3_player_set_view(move->arsenal->state.q3, actor,
-                call_view_angles(move, call),
-                *call->view_height, error) ||
-            !qa_q3_arsenal_step(move->arsenal->state.q3, actor, &controls,
+        if (!qa_q3_arsenal_step(move->arsenal->state.q3, actor, &controls,
                                 call->elapsed_seconds * 1000.0f, error))
             return QA_MOVEMENT_ERROR;
     }
@@ -2333,11 +2321,42 @@ static qa_movement_call input_call(application_move_call *move)
     return (qa_movement_call){.actor = input->actor, .state = &input->state,
         .command = &input->command, .bounds = input->state.kind == QA_RULESET_Q3
             ? &input->current_bounds : &input->shape.bounds,
-        .view_height = &move->control->player.view_height, .water_level = &move->control->player.water_level,
+        .view_angles = qa_movement_view(&input->state, &move->control->player.view_angles),
+        .ground = qa_movement_ground_ref(&input->state, &move->control->player.ground),
+        .view_height = qa_movement_height(&input->state, &move->control->player.view_height), .water_level = &move->control->player.water_level,
         .water_type = &move->control->player.water_type, .time_ns = input->time_ns,
         .milliseconds = input->command.milliseconds, .elapsed_seconds = (float)((double)input->elapsed_ns / 1e9),
         .source_time_ms = input->command.server_time_ms, .profile = &input->profile,
         .environment = &input->environment};
+}
+
+bool application_control_borrow(qa_application *app, qa_actor_owner observer, qa_actor_id actor,
+                                qa_builtin_player_control *out, qa_error *error)
+{
+    application_control_record *record = actor.slot < app->control_capacity
+        ? &app->controls[actor.slot] : NULL;
+    if (!record || !record->active || !qa_actor_id_equal(record->player.actor, actor)) {
+        qa_body_state body;
+        if (!qa_world_body_read(app->world, actor, &body, error) ||
+            !application_control_ensure(app, actor, body.angles, &record, error))
+            return false;
+    }
+    qa_movement_state *state = application_control_frames_state_current(app, actor);
+    if (!state) state = &record->player.state;
+    const qa_movement_call *call = application_control_frames_call_current(app, actor);
+    qa_vec3 *view = qa_movement_view(state, &record->player.view_angles);
+    float *height = qa_movement_height(state, &record->player.view_height);
+    qa_movement_ground *ground = qa_movement_ground_ref(state, &record->player.ground);
+    if (call) {
+        if (call->view_angles) view = call->view_angles;
+        if (call->view_height) height = call->view_height;
+        if (call->ground) ground = call->ground;
+    }
+    application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
+    *out = (qa_builtin_player_control){.player = &record->player, .state = state,
+        .view_angles = view, .view_height = height, .ground = ground,
+        .source_movement = movement && movement->owner == observer};
+    return true;
 }
 
 static bool external_stage_current(const application_control_external_stage *stage)
@@ -2570,8 +2589,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         qa_q3_controls input = {.attack = attack,
             .use_holdable = context->unified_intent && context->unified_holdable,
             .requested_weapon = player.requested_weapon};
-        okay = qa_q3_player_set_view(arsenal->state.q3, actor, physical.view_angles, physical.view_height, error) &&
-            (!live(app, actor) || qa_q3_arsenal_step(arsenal->state.q3, actor, &input, (float)applied.milliseconds, error));
+        okay = !live(app, actor) || qa_q3_arsenal_step(arsenal->state.q3, actor, &input, (float)applied.milliseconds, error);
     }
     return okay && (!live(app, actor) || native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error));
 }
@@ -2827,6 +2845,8 @@ static bool control_move(qa_application *application,
         move.execution->kind == APPLICATION_PROVIDER_QC && !move.execution->state.qc.qualified) {
         qa_movement_call call = input_call(&move);
         call.state = &record->result.state; call.bounds = &record->result.bounds;
+        call.view_angles = qa_movement_view(call.state, &record->result.view_angles);
+        call.ground = qa_movement_ground_ref(call.state, &record->result.ground);
         call.water_level = &record->result.water_level; call.water_type = &record->result.water_type;
         ok = application_qc_control_phase(move.execution, actor, context->path,
             QA_MOVE_INPUT_END, context, &call, error);
@@ -2870,17 +2890,20 @@ static bool control_move(qa_application *application,
         (record->player.state.kind == QA_RULESET_Q2_CLASSIC || record->player.state.kind == QA_RULESET_Q2_RERELEASE)) {
         qa_movement_call call = input_call(&move);
         call.state = &record->result.state; call.bounds = &record->result.bounds;
-        call.view_height = &record->result.view_height; call.water_level = &record->result.water_level;
+        call.view_angles = qa_movement_view(call.state, &record->result.view_angles);
+        call.ground = qa_movement_ground_ref(call.state, &record->result.ground);
+        call.view_height = qa_movement_height(call.state, &record->result.view_height); call.water_level = &record->result.water_level;
         call.water_type = &record->result.water_type;
         call.elapsed_seconds = (float)input.command.milliseconds / 1000.0f;
-        move.completed_view_angles = &record->result.view_angles;
         ok = move_phase(&move, QA_MOVE_WEAPON, &call, error) != QA_MOVEMENT_ERROR;
         if (ok && live(application, actor)) ok = refresh_source_call(&move, &call, error);
     }
     if (ok && mixed_outer && live(application, actor)) {
         qa_movement_call call = input_call(&move);
         call.state = &record->result.state; call.bounds = &record->result.bounds;
-        call.view_height = &record->result.view_height; call.water_level = &record->result.water_level;
+        call.view_angles = qa_movement_view(call.state, &record->result.view_angles);
+        call.ground = qa_movement_ground_ref(call.state, &record->result.ground);
+        call.view_height = qa_movement_height(call.state, &record->result.view_height); call.water_level = &record->result.water_level;
         call.water_type = &record->result.water_type;
         move.in_source_outer = true;
         ok = move_phase(&move, QA_MOVE_POSTTHINK, &call, error) != QA_MOVEMENT_ERROR;
@@ -2952,6 +2975,8 @@ static bool control_move(qa_application *application,
         ok = step_nq_equipment(&move, error);
         if (ok && live(application, actor)) {
             qa_movement_call call = input_call(&move); call.state = &record->player.state; call.bounds = &record->player.bounds;
+            call.view_angles = qa_movement_view(call.state, &record->player.view_angles);
+            call.ground = qa_movement_ground_ref(call.state, &record->player.ground);
             ok = refresh_source_call(&move, &call, error);
         }
     }
@@ -3069,53 +3094,6 @@ bool application_control_q3_policy(application_provider *provider, qa_actor_id a
     q3_policy_apply(&record->player.state.data.q3, fields, policy);
     qa_movement_state *active = application_control_frames_state_current(app, actor);
     if (active && active->kind == QA_RULESET_Q3) q3_policy_apply(&active->data.q3, fields, policy);
-    return true;
-}
-
-static void q3_source_state_apply(qa_q3_movement_state *state,
-    const qa_q3_player_state *source, uint32_t fields, qa_actor_id pad)
-{
-    if (fields & QA_Q3_SOURCE_PM_COMMAND) state->command_time_ms = source->command_time_ms;
-    if (fields & QA_Q3_SOURCE_PM_EVENTS) state->event_sequence = source->event_sequence;
-    if (fields & QA_Q3_SOURCE_PM_FRAME) state->movement_frame = source->pmove_frame_count;
-    if (fields & QA_Q3_SOURCE_PM_JUMPPAD) {
-        state->jump_pad = pad; state->jump_pad_frame = source->jumppad_frame;
-    }
-    if (fields & QA_Q3_SOURCE_PM_DELTAS) {
-        state->delta_angle_words[0] = source->delta_pitch_word;
-        state->delta_angle_words[1] = source->delta_yaw_word;
-        state->delta_angle_words[2] = source->delta_roll_word;
-    }
-    if (fields & QA_Q3_SOURCE_PM_VIEW) {
-        state->view_angles = source->view_angles; state->view_height = source->view_height;
-    }
-}
-
-bool application_control_q3_source_state(application_provider *provider, qa_actor_id actor,
-    const qa_q3_player_state *source, uint32_t fields, qa_error *error)
-{
-    qa_application *app = provider ? provider->application : NULL;
-    uint32_t slot;
-    if (!app || !source || !fields || (fields & ~(uint32_t)QA_Q3_SOURCE_PM_ALL) ||
-        provider->kind != APPLICATION_PROVIDER_Q3 || !provider->constructed || !provider->attached ||
-        provider->close_pending || actor.slot >= app->control_capacity || !live(app, actor) ||
-        ((fields & QA_Q3_SOURCE_PM_VIEW) &&
-         (!qa_vec_finite(source->view_angles) || !isfinite(source->view_height))))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native movement assignments need their actual source client");
-    if (!qa_q3_native_client_slot(provider->state.q3, actor, &slot, error)) return false;
-    application_control_record *record = &app->controls[actor.slot];
-    if (!record->active || record->retired || !qa_actor_id_equal(record->player.actor, actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native movement assignment lost its selected control");
-    if (record->player.state.kind != QA_RULESET_Q3) return true;
-    qa_actor_id pad = {0};
-    if ((fields & QA_Q3_SOURCE_PM_JUMPPAD) && source->jumppad_entity > 0) {
-        qa_q3_source_binding binding;
-        if (!qa_q3_source_binding_read(provider->state.q3, (uint32_t)source->jumppad_entity, &binding, error)) return false;
-        if (binding.in_use) pad = binding.actor;
-    }
-    q3_source_state_apply(&record->player.state.data.q3, source, fields, pad);
-    qa_movement_state *active = application_control_frames_state_current(app, actor);
-    if (active && active->kind == QA_RULESET_Q3) q3_source_state_apply(&active->data.q3, source, fields, pad);
     return true;
 }
 
@@ -3391,7 +3369,9 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         } else if (!source_weapons && command->milliseconds && move.arsenal && move.arsenal->kind == APPLICATION_PROVIDER_Q3) {
             qa_movement_call call = {.actor = actor, .state = &record->player.state,
                 .command = &input.command, .bounds = &record->player.bounds,
-                .view_height = &record->player.view_height, .water_level = &record->player.water_level,
+                .view_angles = qa_movement_view(&record->player.state, &record->player.view_angles),
+                .ground = qa_movement_ground_ref(&record->player.state, &record->player.ground),
+                .view_height = qa_movement_height(&record->player.state, &record->player.view_height), .water_level = &record->player.water_level,
                 .water_type = &record->player.water_type, .milliseconds = command->milliseconds,
                 .elapsed_seconds = (float)command->milliseconds / 1000.0f};
             qa_movement_control result = qa_q3_movement_phase_selected(move.arsenal->state.q3,
@@ -4024,7 +4004,7 @@ bool qa_application_control_end_cutscene(qa_application *application,
 }
 
 static void force_state_view(qa_movement_state *state, qa_vec3 view,
-                             qa_vec3 command_view, qa_vec3 command)
+                             qa_vec3 command_view, qa_vec3 command, const int32_t *source_words)
 {
     qa_vec3 delta = qa_vec_sub(command_view, command);
     float angles[3] = {delta.x, delta.y, delta.z};
@@ -4049,8 +4029,11 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
     case QA_RULESET_Q3: {
         float target[3] = {command_view.x, command_view.y, command_view.z};
         float base[3] = {command.x, command.y, command.z};
-        for (size_t i = 0; i < 3; ++i)
-            state->data.q3.delta_angle_words[i] = qa_angle_to_word(target[i]) - qa_angle_to_word(base[i]);
+        for (size_t i = 0; i < 3; ++i) {
+            uint32_t bits = (uint32_t)qa_angle_to_word(target[i]) -
+                (source_words ? (uint32_t)source_words[i] : (uint32_t)qa_angle_to_word(base[i]));
+            memcpy(&state->data.q3.delta_angle_words[i], &bits, sizeof(bits));
+        }
         state->data.q3.view_angles = view;
         break;
     }
@@ -4088,17 +4071,33 @@ bool application_control_motion_changed(
     if (!qa_combat_read_traits(application->combat, actor, &combat, error))
         return false;
     state_body(record, &change->body, combat.health);
+    qa_movement_state *active = application_control_frames_state_current(application, actor);
+    if (active && active != &record->player.state) {
+        (void)qa_movement_set_origin(active, change->body.origin, NULL);
+        (void)qa_movement_set_velocity(active, change->body.velocity, NULL);
+        if (active->kind == QA_RULESET_Q3) active->data.q3.ground = record->player.ground;
+    }
+    if (change->hold_ns && record->player.state.kind == QA_RULESET_Q3) {
+        int32_t milliseconds = (int32_t)(change->hold_ns / UINT64_C(1000000));
+        record->player.state.data.q3.movement_time_ms = milliseconds;
+        record->player.state.data.q3.movement_flags |= 0x40u;
+        if (active && active != &record->player.state) {
+            active->data.q3.movement_time_ms = milliseconds;
+            active->data.q3.movement_flags |= 0x40u;
+        }
+    }
     if (change->force_view_angles) {
-        qa_movement_state *active = application_control_frames_state_current(application, actor);
         qa_vec3 command_view = change->has_command_view_angles ? change->command_view_angles : change->view_angles;
         qa_vec3 command = change->preserve_command_angles ? record->player.command_angles : change->view_angles;
         if (!qa_vec_finite(qa_vec_sub(command_view, command)) ||
             (record->moving && !active) || (active && active->kind != record->player.state.kind))
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "Forced view lost its actual movement continuation");
-        force_state_view(&record->player.state, change->view_angles, command_view, command);
+        const int32_t *source_words = change->has_source_command_angle_words
+            ? change->source_command_angle_words : NULL;
+        force_state_view(&record->player.state, change->view_angles, command_view, command, source_words);
         if (active && active != &record->player.state)
-            force_state_view(active, change->view_angles, command_view, command);
+            force_state_view(active, change->view_angles, command_view, command, source_words);
         record->player.view_angles = change->view_angles;
         if (!change->preserve_command_angles)
             record->player.command_angles = change->view_angles;
@@ -4118,7 +4117,6 @@ bool application_control_motion_changed(
         }
         double until = (double)time / 1000000000.0 + (double)change->hold_ns / 1000000000.0;
         record->player.state.data.nq.teleport_time_seconds = until;
-        qa_movement_state *active = application_control_frames_state_current(application, actor);
         if (active) active->data.nq.teleport_time_seconds = until;
     }
     return true;

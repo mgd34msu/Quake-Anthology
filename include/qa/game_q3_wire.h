@@ -43,10 +43,6 @@ typedef enum qa_q3_wire_policy_fields {
 
 typedef struct qa_q3_wire_services {
     void *context;
-    /* False selected means this actor uses another movement family. The
-     * caller reads that source's native PM policy instead of borrowing it. */
-    bool (*movement)(void *, qa_actor_id, qa_q3_movement_state *, bool *selected,
-                     qa_error *);
     bool (*movement_flags)(void *, qa_actor_id, uint32_t clear, uint32_t set,
                            qa_error *);
     bool (*movement_policy)(void *, qa_actor_id, uint8_t fields,

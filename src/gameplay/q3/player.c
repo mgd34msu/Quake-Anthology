@@ -10,10 +10,12 @@ bool qa_q3_selected_client_effects_read(const qa_q3_game *game, qa_actor_id acto
         !(entry->state.player.selections & (QA_Q3_ARSENAL | QA_Q3_EQUIPMENT)))
         return q3_fail(error, "Selected client effects need their actual arsenal or equipment player");
     const qa_q3_player_state *player = &entry->state.player;
+    qa_q3_player_motion motion;
+    if (!q3_player_motion_read(game, actor, &motion, error)) return false;
     *out = (qa_q3_selected_client_effects){.teleport_bit = player->flags & 4u,
         .pm_flags = player->selected_pm_flags, .pm_time_ms = player->selected_pm_time_ms,
-        .view_angles = player->view_angles,
-        .delta_angle_words = {player->delta_pitch_word, player->delta_yaw_word, player->delta_roll_word},
+        .view_angles = motion.view_angles,
+        .delta_angle_words = {motion.delta_pitch_word, motion.delta_yaw_word, motion.delta_roll_word},
         .invulnerability_time_ms = player->invulnerability_until, .max_health = player->max_health};
     return true;
 }
@@ -165,13 +167,11 @@ bool qa_q3_bind_player_commit(qa_q3_game *game, qa_q3_player_binding *binding,
                                              .requested_weapon = QA_Q3_W_MACHINEGUN,
                                              .max_health = binding->handicap,
                                              .handicap = binding->handicap,
-                                             .view_height = 26,
                                              .legs_animation = 22,
                                              .torso_animation = 11,
                                              .air_out_time = q3_add_time(game->now_ms, 12000),
                                              .drowning_damage = 2,
-                                             .respawned = true,
-                                             .ground_entity_number = 1023}};
+                                             .respawned = true}};
     }
     entry->state.player.selections |= binding->selections;
     game->player_binding_tokens[binding->actor.slot] = 0;
@@ -317,8 +317,8 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
         }
         entry->state.player.max_health = pose.max_health;
         entry->state.player.persistent_team = pose.team;
-        entry->state.player.view_height = pose.view_height;
-        entry->state.player.view_angles = pose.view_angles;
+        q3_player_height_write(game, actor, pose.view_height);
+        q3_player_view_write(game, actor, pose.view_angles);
         entry->state.player.spectator = pose.team == 3;
         entry->state.player.powerups[QA_Q3_P_QUAD] = pose.quad_until_ms;
         entry->state.player.powerups[QA_Q3_P_HASTE] = pose.haste_until_ms;
@@ -336,15 +336,6 @@ bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     bool okay = release_grapple(game, actor, error);
     --game->observation_depth;
     return okay;
-}
-bool qa_q3_player_set_view(qa_q3_game *game, qa_actor_id actor, qa_vec3 angles, float height,
-                           qa_error *error) {
-    q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry || entry->kind != Q3_ACTOR_PLAYER || !qa_vec_finite(angles) || !isfinite(height))
-        return q3_fail(error, "invalid Q3 player view");
-    entry->state.player.view_angles = angles;
-    entry->state.player.view_height = height;
-    return true;
 }
 static int32_t q3_angle_word(float angle) {
     float scaled = ((angle * 65536.0f) / 360.0f);
@@ -379,9 +370,7 @@ bool qa_q3_character_cutscene(qa_q3_game *game, qa_actor_id actor, qa_vec3 origi
     qa_q3_cutscene_state cutscene = {
         .origin = origin, .angles = angles, .view_offset = view_offset, .active = true};
     entry->state.player.cutscene = cutscene;
-    entry->state.player.view_angles = angles;
-    entry->state.player.view_height = view_offset.z;
-    entry->state.player.ground_entity_number = 1023;
+
     entry->state.player.noclip = false;
     entry->state.player.gauntlet_contact = false;
     return true;
@@ -394,15 +383,18 @@ bool qa_q3_character_cutscene_clear(qa_q3_game *game, qa_actor_id actor, qa_erro
     entry->state.player.cutscene = (qa_q3_cutscene_state){0};
     return true;
 }
-void q3_force_view(qa_q3_player_state *player, qa_vec3 angles, int32_t lock_ms) {
-    player->view_angles = angles;
-    player->ground_entity_number = 1023;
-    player->delta_pitch_word =
-        q3_sub_time(q3_angle_word(angles.x), player->last_command_angles[0]);
-    player->delta_yaw_word =
-        q3_sub_time(q3_angle_word(angles.y), player->last_command_angles[1]);
-    player->delta_roll_word =
-        q3_sub_time(q3_angle_word(angles.z), player->last_command_angles[2]);
+void q3_force_view(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player,
+                   qa_vec3 angles, int32_t lock_ms) {
+    /* Only genuinely foreign native PM needs its own Source delta baseline. */
+    qa_builtin_player_control control;
+    uint32_t slot;
+    bool native = q3_source_client_pointer(game, actor, &slot);
+    if (q3_player_control(game, actor, &control, NULL) &&
+        (control.state->kind != QA_RULESET_Q3 || (native && !control.source_movement))) {
+        q3_player_delta_write(game, actor, 0, q3_sub_time(q3_angle_word(angles.x), player->last_command_angles[0]));
+        q3_player_delta_write(game, actor, 1, q3_sub_time(q3_angle_word(angles.y), player->last_command_angles[1]));
+        q3_player_delta_write(game, actor, 2, q3_sub_time(q3_angle_word(angles.z), player->last_command_angles[2]));
+    }
     ++player->teleport_revision;
     player->teleport_lock_ms = lock_ms;
     player->selected_pm_time_ms = lock_ms;
@@ -421,8 +413,7 @@ static bool player_state_valid(const qa_q3_player_state *state, bool source_clie
         state->handicap < (source_client ? 0 : 1) || state->handicap > 100 ||
         state->drowning_damage < 0 || state->drowning_damage > 15 ||
         !isfinite(state->fractional_weapon_ms) || state->fractional_weapon_ms < 0 ||
-        state->fractional_weapon_ms >= 1 || !qa_vec_finite(state->view_angles) ||
-        !qa_vec_finite(state->grapple_point) || !isfinite(state->view_height) ||
+        state->fractional_weapon_ms >= 1 || !qa_vec_finite(state->grapple_point) ||
         !qa_vec_finite(state->cutscene.origin) || !qa_vec_finite(state->cutscene.angles) ||
         !qa_vec_finite(state->cutscene.view_offset) ||
         (state->cutscene.active && !(state->selections & QA_Q3_CHARACTER)) ||
@@ -636,8 +627,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->respawned = true;
     player->respawn_after = game->now_ms;
     player->max_health = player->handicap;
-    player->view_angles = spawn->angles;
-    player->view_height = 26;
+    q3_player_height_write(game, actor, 26);
     player->cutscene = (qa_q3_cutscene_state){0};
     if (!(player->selections & QA_Q3_CHARACTER) && game->options.services.actor_traits) {
         qa_builtin_actor_traits traits = {0};
@@ -650,7 +640,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
                 traits.max_health < 2147483648.0f)
                 player->max_health = (int32_t)traits.max_health;
             if (isfinite(traits.view_height))
-                player->view_height = traits.view_height;
+                q3_player_height_write(game, actor, traits.view_height);
         }
     }
     player->invulnerability_until = 0;
@@ -658,7 +648,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->selected_pm_flags = 0;
     player->selected_pm_time_ms = 0;
     player->last_command_ms = game->now_ms;
-    player->command_time_ms = q3_sub_time(game->now_ms, 100);
+    q3_player_command_time_write(game, actor, q3_sub_time(game->now_ms, 100));
     player->damage_blood = player->damage_armor = player->damage_knockback = 0;
     player->loop_sound = 0;
     player->damage_count = player->damage_event = player->damage_pitch = player->damage_yaw = 0;
@@ -701,13 +691,15 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player = &entry->state.player;
     if (!(player->selections & QA_Q3_CHARACTER) && !native_client)
         return true;
-    q3_force_view(player, spawn->angles, 100);
+    q3_force_view(game, actor, player, spawn->angles, 100);
     if (native_client) {
-        player->pmove_frame_count = player->jumppad_entity = player->jumppad_frame = 0;
+        qa_q3_player_motion motion;
+        if (!q3_player_motion_read(game, actor, &motion, error)) return false;
+        motion.pmove_frame_count = motion.jumppad_entity = motion.jumppad_frame = 0;
+        q3_player_motion_restore(game, actor, &motion);
         qa_q3_wire_policy policy = {.pm_type = player->spectator ? 2 : 0,
             .pm_flags = 0x200 | 0x40, .pm_time = 100};
-        if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_ALL, &policy, error) ||
-            !q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_ALL, error)) return false;
+        if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_ALL, &policy, error)) return false;
     }
     if (!player->spectator && !q3_killbox(game, actor, error))
         return false;
@@ -733,7 +725,11 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
                                            .body = body,
                                            .view_angles = spawn->angles,
                                            .force_view_angles = true,
+                                           .preserve_command_angles = true,
+                                           .has_source_command_angle_words = true,
                                            .hold_ns = UINT64_C(100000000)};
+        memcpy(change.source_command_angle_words, player->last_command_angles,
+            sizeof(change.source_command_angle_words));
         if (!game->options.services.motion_changed(game->options.services.context, actor, &change,
                                                    error))
             return false;
@@ -1086,8 +1082,8 @@ bool qa_q3_arsenal_source_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_
     qa_q3_arsenal_source captured = *source;
     ++game->observation_depth;
     qa_q3_player_state *player = &entry->state.player;
-    player->view_angles = captured.view_angles;
-    player->view_height = captured.view_height;
+    q3_player_view_write(game, actor, captured.view_angles);
+    q3_player_height_write(game, actor, captured.view_height);
     player->legs_animation = captured.legs_animation;
     player->torso_animation = captured.torso_animation;
     player->legs_timer_ms = captured.legs_timer_ms;
@@ -1757,12 +1753,9 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
     uint32_t slot;
     if (!game || !source_command_active(game, actor) || !qa_vec_finite(view) || !isfinite(height) ||
         !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
-    qa_q3_player_state *player = &game->client_actors[slot].state.player;
-    player->command_time_ms = time;
-    player->view_angles = view;
-    player->view_height = height;
+    q3_player_command_time_write(game, actor, time);
     uint32_t source_slot;
-    player->ground_entity_number = ground.hit == QA_TRACE_HIT_WORLD ? (int32_t)QA_Q3_SOURCE_WORLD :
+    int32_t ground_entity_number = ground.hit == QA_TRACE_HIT_WORLD ? (int32_t)QA_Q3_SOURCE_WORLD :
         ground.hit == QA_TRACE_HIT_ACTOR && qa_q3_source_actor_slot(game, ground.actor, &source_slot, NULL)
         ? (int32_t)source_slot : (int32_t)QA_Q3_SOURCE_NONE;
     qa_q3_native_client *client = &game->clients[slot];
@@ -1772,10 +1765,11 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
         client->followed_player.viewangles[1] = view.y;
         client->followed_player.viewangles[2] = view.z;
         client->followed_player.viewheight = q3_source_float_to_int(height);
-        client->followed_player.groundEntityNum = player->ground_entity_number;
+        client->followed_player.groundEntityNum = ground_entity_number;
     }
-    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_COMMAND | QA_Q3_SOURCE_PM_VIEW, error);
+    return true;
 }
+
 bool qa_q3_client_movement_water(qa_q3_game *game, qa_actor_id actor, int32_t level,
                                  int32_t type, qa_error *error) {
     uint32_t slot;
@@ -1800,13 +1794,17 @@ bool qa_q3_client_jumppad_finish(qa_q3_game *game, qa_actor_id actor, qa_error *
     uint32_t slot;
     if (!game || !source_command_active(game, actor) ||
         !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
-    qa_q3_player_state *player = &game->client_actors[slot].state.player;
-    if (player->jumppad_frame != player->pmove_frame_count)
-        player->jumppad_frame = player->jumppad_entity = 0;
+    qa_q3_player_motion motion;
+    if (!q3_player_motion_read(game, actor, &motion, error)) return false;
+    if (motion.jumppad_frame != motion.pmove_frame_count) {
+        motion.jumppad_frame = motion.jumppad_entity = 0;
+        q3_player_jumppad_write(game, actor, (qa_actor_id){0}, 0);
+    }
     qa_q3_player *copied = q3_client_follow_player(game, slot);
-    if (copied) { copied->jumppadFrame = player->jumppad_frame; copied->jumppadEnt = player->jumppad_entity; }
-    return q3_source_movement_write(game, actor, QA_Q3_SOURCE_PM_JUMPPAD, error);
+    if (copied) { copied->jumppadFrame = motion.jumppad_frame; copied->jumppadEnt = motion.jumppad_entity; }
+    return true;
 }
+
 bool qa_q3_client_touch_policy(const qa_q3_game *game, qa_actor_id actor,
                                bool *native, bool *touchable, bool *door, qa_error *error) {
     if (!game || !native || !touchable || !door)
@@ -2080,32 +2078,13 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
                 p->last_command_angles[i] = call->command->angle_words[i];
         if (call->state->kind == QA_RULESET_Q3) {
             p->noclip = call->state->data.q3.movement_type == 1;
-            call->state->data.q3.delta_angle_words[0] = p->delta_pitch_word;
-            call->state->data.q3.delta_angle_words[1] = p->delta_yaw_word;
-            call->state->data.q3.delta_angle_words[2] = p->delta_roll_word;
             if (source_command_active(game, call->actor)) {
                 call->state->data.q3.flags = p->flags;
-                call->state->data.q3.command_time_ms = p->command_time_ms;
                 call->state->data.q3.event_sequence = p->event_sequence;
-                call->state->data.q3.movement_frame = p->pmove_frame_count;
-                call->state->data.q3.jump_pad_frame = p->jumppad_frame;
             }
         }
     } else if (phase == QA_MOVE_INPUT_END && call->state->kind == QA_RULESET_Q3) {
         qa_q3_movement_state *movement = &call->state->data.q3;
-        p->command_time_ms = movement->command_time_ms;
-        p->ground_entity_number = movement->ground.hit == QA_TRACE_HIT_WORLD ? 1022
-                                  : movement->ground.hit == QA_TRACE_HIT_ACTOR
-                                      ? q3_entity_number(game, movement->ground.actor)
-                                      : 1023;
-        p->delta_pitch_word = movement->delta_angle_words[0];
-        p->delta_yaw_word = movement->delta_angle_words[1];
-        p->delta_roll_word = movement->delta_angle_words[2];
-        p->pmove_frame_count = movement->movement_frame;
-        p->jumppad_frame = movement->jump_pad_frame;
-        p->jumppad_entity = movement->jump_pad.registry
-                                ? q3_entity_number(game, movement->jump_pad)
-                                : 0;
         if (source_command_active(game, call->actor)) {
             p->flags = movement->flags;
             uint32_t slot;
@@ -2125,13 +2104,6 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
             movement->movement_flags |= 0x4000u;
     } else if (phase == QA_MOVE_WEAPON) {
         uint64_t teleport_revision = p->teleport_revision;
-        if (call->state->kind == QA_RULESET_Q3) {
-            p->view_angles = call->state->data.q3.view_angles;
-            p->view_height = *call->view_height;
-            p->delta_yaw_word = call->state->data.q3.delta_angle_words[1];
-            p->delta_pitch_word = call->state->data.q3.delta_angle_words[0];
-            p->delta_roll_word = call->state->data.q3.delta_angle_words[2];
-        }
         if (call->command->kind != QA_RULESET_Q3)
             return QA_MOVEMENT_CONTINUE;
         if (!arsenal_selected)
@@ -2159,22 +2131,8 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
         p = &entry->state.player;
         if (call->state->kind == QA_RULESET_Q3 && source_command_active(game, call->actor))
             call->state->data.q3.event_sequence = p->event_sequence;
-        if (p->teleport_revision != teleport_revision) {
-            qa_body_state body;
-            if (!qa_world_body_read(game->options.services.world, call->actor, &body, error) ||
-                !qa_movement_set_origin(call->state, body.origin, error) ||
-                !qa_movement_set_velocity(call->state, body.velocity, error))
-                return QA_MOVEMENT_ERROR;
-            if (call->state->kind == QA_RULESET_Q3) {
-                call->state->data.q3.view_angles = p->view_angles;
-                call->state->data.q3.movement_time_ms = p->teleport_lock_ms;
-                call->state->data.q3.movement_flags |= 0x40u;
-                call->state->data.q3.delta_angle_words[0] = p->delta_pitch_word;
-                call->state->data.q3.delta_angle_words[1] = p->delta_yaw_word;
-                call->state->data.q3.delta_angle_words[2] = p->delta_roll_word;
-            }
+        if (p->teleport_revision != teleport_revision)
             call->state_replaced = true;
-        }
     } else if (phase == QA_MOVE_DROP_TIMERS) {
         int32_t elapsed = (int32_t)call->milliseconds;
         p->legs_timer_ms = p->legs_timer_ms > elapsed ? p->legs_timer_ms - elapsed : 0;
