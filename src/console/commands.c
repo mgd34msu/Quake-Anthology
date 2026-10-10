@@ -1468,6 +1468,10 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
     console->alias_count = 0;
     size_t count = 0;
     bool success = true;
+    _Alignas(max_align_t) uint8_t scratch[16896];qa_arena storage={0};
+    if (!qa_arena_init_buffer(&storage,scratch,sizeof(scratch),error)) {
+        console->draining=false;return false;
+    }
     if (console->head == NULL && console->wait != 0) {
         qac_console_program_touch(console, false);
         console->drain_yielded = true;
@@ -1498,20 +1502,26 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         }
         qa_command_context context;
         if (!copy_context(&context, &first->context, error)) { success = false; break; }
-        qac_text text = {0};
-        if (!command_text(first, &text, error)) { free((char *)context.script); free(text.data); success = false; break; }
+        const qa_console_options *options=options_for(console,&context);
+        qa_arena_reset(&storage);
+        bool borrowed=buffer_limit(console,&context)<=16384;
+        qac_text text={0};
+        if (borrowed) {
+            text.data=qa_arena_alloc(&storage,16385,1,error);text.capacity=16385;
+            if (!text.data) { free((char *)context.script);success=false;break; }
+        }
+        if (!command_text(first, &text, error)) { free((char *)context.script); if (!borrowed) free(text.data); success = false; break; }
         size_t offset = qa_command_separator(text.data, text.size, context.dialect);
         size_t consumed = offset < text.size ? offset + 1 : offset;
-        const qa_console_options *options=options_for(console,&context);
         if (!options) { success=qac_fail(error,QA_ERROR_ARGUMENT,"queued command cvar view has retired");
             consume(console, consumed);
-            free((char *)context.script); free(text.data); break; }
+            free((char *)context.script); if (!borrowed) free(text.data); break; }
         size_t maximum = options->maximum_command == 0 ? 1024 : options->maximum_command;
         if (offset >= maximum) {
             if (context.dialect != QA_RULESET_Q3) {
                 success = qac_fail(error, QA_ERROR_FORMAT, "command line exceeds source buffer");
                 consume(console, consumed);
-                free((char *)context.script); free(text.data); break;
+                free((char *)context.script); if (!borrowed) free(text.data); break;
             }
             offset = maximum - 1;
             consumed = offset + 1;
@@ -1520,7 +1530,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         consume(console, consumed);
         success = dispatch(console, &context, text.data, error);
         free((char *)context.script);
-        free(text.data);
+        if (!borrowed) free(text.data);
         ++count;
         if (!success) break;
         if (console->wait_context.dialect != QA_RULESET_Q3 && console->wait != 0) {
@@ -1530,6 +1540,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             break;
         }
     }
+    qa_arena_destroy(&storage);
     console->draining = false;
     if (executed != NULL) *executed = count;
     return success;
