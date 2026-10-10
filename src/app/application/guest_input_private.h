@@ -3,6 +3,7 @@
 
 #include "guest_q3_private.h"
 #include "guest_q3_weapons.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct application_guest_input_profile {
     const application_q3_weapon_profile *source;
@@ -62,6 +63,7 @@ bool application_control_guest_complete(qa_application *, qa_actor_id,
                                          qa_error *);
 typedef struct application_source_input_scope {
     application_provider **owners;
+    qa_unified_frame_lease *owner_storage;
     size_t count;
     qa_actor_id actor;
     bool slice;

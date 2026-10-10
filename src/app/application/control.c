@@ -790,6 +790,7 @@ static void command_angle_feedback(const application_move_call *move,
 
 typedef struct application_control_mod_input {
     struct application_control_mod_input *next;
+    qa_unified_frame_lease *storage;
     qa_application *application;
     qa_actor_id actor;
     application_control_context source;
@@ -965,7 +966,7 @@ static void component_input_free(application_control_mod_input *scope)
     while (*link && *link != scope) link = &(*link)->next;
     if (*link) *link = scope->next;
     application_control_mod_head_set(scope->application, head);
-    free(scope->native_scopes); free(scope->scopes); free(scope);
+    qa_unified_frame_lease_release(scope->storage);
 }
 
 static bool component_input_close(application_control_mod_input **in, bool completed, qa_error *error)
@@ -1050,12 +1051,18 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
             return application_fail(error, QA_ERROR_ARGUMENT, "Component input requires its actual source admission");
         source = &move->context;
     }
-    application_control_mod_input *input = calloc(1, sizeof(*input));
-    if (!input) return application_fail(error, QA_ERROR_MEMORY, "Retaining canonical component input");
-    input->scopes = count ? calloc(count, sizeof(*input->scopes)) : NULL;
-    input->native_scopes = native_count ? calloc(native_count, sizeof(*input->native_scopes)) : NULL;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(move->application,error);
+    if (!storage) return false;
+    application_control_mod_input *input=qa_unified_frame_lease_alloc(storage,1,sizeof(*input),
+        _Alignof(application_control_mod_input),error);
+    if (!input) { qa_unified_frame_lease_release(storage);return false; }
+    input->storage=storage;
+    input->scopes=count?qa_unified_frame_lease_alloc(storage,count,sizeof(*input->scopes),
+        _Alignof(application_q3_component_input *),error):NULL;
+    input->native_scopes=native_count?qa_unified_frame_lease_alloc(storage,native_count,sizeof(*input->native_scopes),
+        _Alignof(struct application_native_q2_input *),error):NULL;
     if ((count && !input->scopes) || (native_count && !input->native_scopes)) {
-        free(input->native_scopes); free(input->scopes); free(input);
+        qa_unified_frame_lease_release(storage);
         return application_fail(error, QA_ERROR_MEMORY, "Retaining component input roster");
     }
     input->application = move->application; input->actor = move->control->player.actor; input->source = *source;
@@ -1153,6 +1160,12 @@ static void component_input_retarget(application_source_input_scope *scope,
     scope->components->suspended = suspended;
 }
 
+static void source_owners_clear(application_source_input_scope *scope)
+{
+    qa_unified_frame_lease_release(scope->owner_storage);scope->owner_storage=NULL;
+    scope->owners=NULL;
+}
+
 static bool qc_input_body(application_move_call *move, qa_movement_state *state,
                        qa_usercmd *command, const qa_vec3 *absolute_aim,
                        application_source_input_scope *scope,
@@ -1174,9 +1187,11 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
         if (move->application->provider_count > SIZE_MAX / sizeof(*scope->owners) - role_count)
             return application_fail(error, QA_ERROR_MEMORY, "Source input owner inventory is too large");
         size_t capacity = move->application->provider_count + role_count;
-        scope->owners = calloc(capacity, sizeof(*scope->owners));
-        if (!scope->owners)
-            return application_fail(error, QA_ERROR_MEMORY, "Allocating Source input owner inventory");
+        scope->owner_storage=application_control_storage_acquire(move->application,error);
+        if (!scope->owner_storage) return false;
+        scope->owners=qa_unified_frame_lease_alloc(scope->owner_storage,capacity,sizeof(*scope->owners),
+            _Alignof(application_provider *),error);
+        if (!scope->owners) { source_owners_clear(scope);return false; }
         for (size_t i = 0; i < role_count; ++i) {
             application_provider *owner = application_provider_for(move->application, move->control->player.actor, roles[i], "");
             if (!owner || owner->kind != APPLICATION_PROVIDER_QC) continue;
@@ -1197,13 +1212,13 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
             if (!subscribed) continue;
             bool member = false;
             if (!application_qc_control_source_client(owner, move->control->player.actor, &member, error)) {
-                free(scope->owners); scope->owners = NULL;
+                source_owners_clear(scope);
                 return false;
             }
             if (member) scope->owners[owner_count++] = owner;
         }
     }
-    if (!owner_count) { free(scope->owners); scope->owners = NULL; return true; }
+    if (!owner_count) { source_owners_clear(scope);return true; }
     if (before) { scope->actor = move->control->player.actor; scope->slice = slice; }
     move->qc_input_active = true;
     qa_usercmd semantic = *command;
@@ -1233,7 +1248,7 @@ static bool qc_input_body(application_move_call *move, qa_movement_state *state,
         }
     }
     if (!before) {
-        free(scope->owners); scope->owners = NULL;
+        source_owners_clear(scope);
         scope->count = 0; scope->actor = (qa_actor_id){0}; scope->slice = false;
     }
     bool changed_aim = !same_vector(original_aim, semantic.angles);
@@ -1310,7 +1325,7 @@ bool application_control_source_abort(application_source_input_scope *scope, qa_
             ok = false; first = current;
         }
     }
-    free(scope->owners); scope->owners = NULL;
+    source_owners_clear(scope);
     scope->actor = (qa_actor_id){0}; scope->slice = false;
     if (!ok && error) *error = first;
     return ok;
