@@ -23,6 +23,9 @@
 #include "qa/unified_frame_metadata.h"
 #include "../application/native_q2_publication.h"
 #include "qa/console_cvar_observer.h"
+#include "qa/arena.h"
+#include "qa/allocation_gate.h"
+
 #include <float.h>
 #include <math.h>
 
@@ -150,7 +153,10 @@ struct frontend_unified_q2 {
     size_t score_count;
     q2_activation *inventory_owner,*score_owner;
     q2_activation *view_owner;
-    char *view_content,*view_provider;
+    const char *view_content,*view_provider;
+    qa_arena pose_storage;
+    frontend_remote_q2_effects_pose *effect_poses;
+    size_t effect_pose_capacity;
     frontend_remote_q2_effects_profile view_profile;
     qa_vec3 view_gun_offset;
     qa_actor_id view_actor;
@@ -339,7 +345,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     if (o->story_owner==a) { record_free(o->story);o->story=NULL;o->story_owner=NULL; }
     if (o->sky_owner==a) sky_clear(o);
     if (o->fog_owner==a) { o->fog_received=false;o->fog_owner=NULL;o->fog_start=(qa_scene_fog){0};o->fog_target=(qa_scene_fog){0};o->fog_started_ms=0;o->fog_duration_ms=0; }
-    if (o->view_owner==a) { free(o->view_content);free(o->view_provider);o->view_content=NULL;o->view_provider=NULL;
+    if (o->view_owner==a) { o->view_content=NULL;o->view_provider=NULL;
         o->view_owner=NULL;o->view_profile=0;o->view_layouts=0;o->view_gun_offset=qa_v3(0,0,0);o->view_actor=(qa_actor_id){0};
         o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_vec4){0};o->view_damage_blend=(qa_vec4){0}; }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a) {
@@ -716,6 +722,13 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 normalized CLIENT state");
     o->frontend=f; o->replica=r; o->media=media; o->events=events;
     *out=o;
+    o->effect_pose_capacity=r->options.identity_capacity;
+    size_t pose_bytes=o->effect_pose_capacity*sizeof(*o->effect_poses);
+    if(!qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
+        !(o->effect_poses=qa_arena_alloc(&o->pose_storage,pose_bytes,_Alignof(frontend_remote_q2_effects_pose),e))) {
+        qa_arena_destroy(&o->pose_storage);free(o);*out=NULL;return false;
+    }
+    qa_arena_seal(&o->pose_storage);
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
@@ -1092,9 +1105,11 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
                 o->items[i].selected=selected && !strcmp(o->items[i].item,selected);
         }
         if (!(view->layouts&1)){o->help_visible=false;o->score_visible=false;}
-        char *content=text_copy(row->content),*provider=text_copy(row->q2_profile?row->provider:NULL);
-        if (!content || (row->q2_profile && !provider)){free(content);free(provider);return false;}
-        free(o->view_content);free(o->view_provider);o->view_content=content;o->view_provider=provider;
+        qa_string_id content,provider=QA_STRING_NONE;
+        if(!qa_strings_intern_cstr(o->replica->strings,row->content,&content,e) ||
+            (row->q2_profile && !qa_strings_intern_cstr(o->replica->strings,row->provider,&provider,e))) return false;
+        o->view_content=qa_strings_cstr(o->replica->strings,content);
+        o->view_provider=qa_strings_cstr(o->replica->strings,provider);
         o->view_profile=(frontend_remote_q2_effects_profile)row->q2_profile;o->view_owner=owner;o->view_layouts=(uint32_t)view->layouts;
         o->view_gun_offset=view->gun_offset;o->view_actor=a;o->view_blend_present=true;o->view_damage_present=false;
         o->view_blend=(qa_vec4){view->blend.x,view->blend.y,view->blend.z,view->blend.w};o->view_damage_blend=(qa_vec4){0};
@@ -1540,9 +1555,7 @@ static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,siz
     const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
     if (!frame || !frame->visuals) return false;
     size_t n=frame->visuals->model_count;
-    if (n>SIZE_MAX/sizeof(**out)) return false;
-    frontend_remote_q2_effects_pose *rows=n?calloc(n,sizeof(*rows)):NULL;
-    if (n && !rows) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 frame effect poses");
+    frontend_remote_q2_effects_pose *rows=o->effect_poses;
     size_t used=0; bool okay=true;
     for (size_t i=0;okay && i<n;++i) {
         const qa_unified_model_state *row=frame->visuals->models+i; qa_actor_id a;
@@ -1554,9 +1567,14 @@ static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,siz
         bool duplicate=false;
         for (size_t k=0;k<used;++k) if (qa_actor_id_equal(rows[k].actor,a)) { duplicate=true; break; }
         if (duplicate) continue;
+        if(used==o->effect_pose_capacity) {
+            qa_allocation_gate_capacity_exhausted();
+            return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 effect actor capacity exhausted");
+        }
         okay=pose_actor(b,a,rows+used,e); if (okay) ++used;
     }
-    if (!okay) { free(rows); return false; } *out=rows; *count=used; return true;
+    if (!okay) return false;
+    *out=rows; *count=used; return true;
 }
 bool frontend_unified_q2_world_input(frontend_unified_q2 *o,qa_scene_world_input *input,qa_error *e)
 {
@@ -1711,7 +1729,6 @@ bool frontend_unified_q2_lights(frontend_unified_q2 *o,const qa_scene_view *view
             if (okay) okay=frontend_remote_q2_effects_frame(b->effects,&sample,e) &&
                 frontend_remote_q2_effects_prepare(b->effects,&sample,&lights,&n,e);
         }
-        free(rows);
         if (!okay) break;
         if (n>SIZE_MAX-o->light_count || o->light_count+n>SIZE_MAX/sizeof(*o->lights)) {
             okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Unified Q2 light span overflow"); break;
@@ -1885,7 +1902,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     free(o->config); free(o->help); free(o->help_text[0]); free(o->help_text[1]);
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
-    free(o->view_content); free(o->view_provider);
+    qa_arena_destroy(&o->pose_storage);
     record_free(o->story); sky_clear(o);
     qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_free(v); }
