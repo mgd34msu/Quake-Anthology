@@ -1,30 +1,32 @@
 #include "guest_q3_gear_private.h"
 
-bool q3gear_reserve(application_q3_gear *gear, uint32_t slot, qa_error *error)
+bool q3gear_prepare_storage(application_q3_gear *gear, qa_error *error)
 {
-    if (slot < gear->capacity) return true;
     uint32_t capacity = qa_actors_capacity(qa_session_actors(gear->options.host.session));
-    if (slot >= capacity)
-        return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear actor exceeds its shared registry");
 #if SIZE_MAX <= UINT32_MAX
-    if (capacity > SIZE_MAX/sizeof(*gear->bindings) || capacity > SIZE_MAX/sizeof(*gear->tethers))
+    if (capacity > SIZE_MAX/sizeof(*gear->bindings) || capacity > SIZE_MAX/sizeof(*gear->tethers) ||
+        capacity > SIZE_MAX/sizeof(qa_actor_id))
         return q3gear_fail(error, QA_ERROR_MEMORY, "Separate QVM gear actor bindings exceed the native allocation extent");
 #endif
-    q3gear_binding *bindings = calloc(capacity, sizeof(*bindings));
-    q3gear_tether *tethers = calloc(capacity, sizeof(*tethers));
-    if (!bindings || !tethers) { free(bindings); free(tethers); return q3gear_fail(error, QA_ERROR_MEMORY, "Growing separate QVM gear actor bindings"); }
-    if (gear->capacity) {
-        memcpy(bindings, gear->bindings, gear->capacity*sizeof(*bindings));
-        memcpy(tethers, gear->tethers, gear->capacity*sizeof(*tethers));
-    }
-    free(gear->bindings); free(gear->tethers);
-    gear->bindings = bindings; gear->tethers = tethers; gear->capacity = capacity; return true;
+    qa_arena_init(&gear->actor_storage, 0);
+    gear->bindings = qa_arena_alloc(&gear->actor_storage, (size_t)capacity * sizeof(*gear->bindings),
+                                   _Alignof(q3gear_binding), error);
+    gear->tethers = qa_arena_alloc(&gear->actor_storage, (size_t)capacity * sizeof(*gear->tethers),
+                                 _Alignof(q3gear_tether), error);
+    if (!gear->bindings || !gear->tethers ||
+        !qa_pool_prepare(&gear->spatial_scratch, &gear->actor_storage, QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,
+                         (size_t)capacity * sizeof(qa_actor_id), _Alignof(qa_actor_id), error)) return false;
+    memset(gear->bindings, 0, (size_t)capacity * sizeof(*gear->bindings));
+    memset(gear->tethers, 0, (size_t)capacity * sizeof(*gear->tethers));
+    gear->capacity = capacity; qa_arena_seal(&gear->actor_storage); return true;
 }
 
 bool q3gear_mirror(application_q3_gear *gear, const application_q3_gear_target *input, qa_error *error)
 {
     application_q3_gear_target target;
-    if (!q3gear_target(gear, input->actor, &target, error) || !q3gear_reserve(gear, target.actor.slot, error)) return false;
+    if (!q3gear_target(gear, input->actor, &target, error)) return false;
+    if (target.actor.slot >= gear->capacity)
+        return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear actor exceeds its shared registry");
     qa_actor_id actor = target.actor;
     q3gear_binding binding = gear->bindings[actor.slot];
     if (binding.actor.registry && (!qa_actor_id_equal(binding.actor, actor) || binding.player != target.player))

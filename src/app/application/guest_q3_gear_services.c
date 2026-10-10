@@ -226,14 +226,15 @@ static bool spatial_trace(application_q3_gear *gear, const qa_qvm_call *call,
     if (!q3gear_layout(gear, &layout, error)) return false;
     if (words[5] >= 0 && words[5] < 1022 && (uint32_t)words[5] < layout.entity_count)
         query.pass_actor = q3gear_actor(gear, (int32_t)(layout.entities_address + (uint32_t)words[5]*layout.entity_stride));
-    qa_actor_id *excluded = gear->capacity ? malloc(gear->capacity * sizeof(*excluded)) : NULL;
-    if (gear->capacity && !excluded) return q3gear_fail(error, QA_ERROR_MEMORY, "Collecting separate QVM gear collision exclusions");
+    size_t scratch_slot;
+    qa_actor_id *excluded = qa_pool_take(&gear->spatial_scratch, &scratch_slot);
+    if (!excluded) return q3gear_fail(error, QA_ERROR_MEMORY, "Separate QVM gear spatial scratch exhausted");
     size_t count = 0;
     for (uint32_t i = 0; i < gear->capacity; ++i)
         if (gear->tethers[i].actor.registry) excluded[count++] = gear->tethers[i].actor;
     qa_trace_result hit;
     bool okay = qa_world_trace_excluding(gear->options.host.world, &query, excluded, count, &hit, error);
-    free(excluded); if (!okay) return false;
+    qa_pool_release(&gear->spatial_scratch, scratch_slot); if (!okay) return false;
     int32_t number = hit.fraction == 1 ? 1023 : 1022;
     if (hit.hit == QA_TRACE_HIT_ACTOR) {
         application_q3_gear_target target;
@@ -253,9 +254,9 @@ static bool area_entities(application_q3_gear *gear, const qa_qvm_call *call,
     qa_bounds bounds;
     if (!q3gear_vector(gear, qa_qvm_mask_address(gear->vm, words[0]), &bounds.mins, error) ||
         !q3gear_vector(gear, qa_qvm_mask_address(gear->vm, words[1]), &bounds.maxs, error)) return false;
-    size_t capacity = qa_actors_count(qa_session_actors(gear->options.host.session)), count = 0;
-    qa_actor_id *actors = capacity ? malloc(capacity*sizeof(*actors)) : NULL;
-    if (capacity && !actors) return q3gear_fail(error, QA_ERROR_MEMORY, "Collecting separate QVM gear area actors");
+    size_t capacity = gear->capacity, count = 0, scratch_slot;
+    qa_actor_id *actors = qa_pool_take(&gear->spatial_scratch, &scratch_slot);
+    if (!actors) return q3gear_fail(error, QA_ERROR_MEMORY, "Separate QVM gear spatial scratch exhausted");
     bool overflow, okay = qa_world_query(gear->options.host.world, bounds, QA_COLLISION_BOTH,
         actors, capacity, &count, &overflow, error);
     if (okay && overflow) okay = q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear area changed during query");
@@ -272,7 +273,7 @@ static bool area_entities(application_q3_gear *gear, const qa_qvm_call *call,
         if (okay) okay = q3gear_store(gear, (uint32_t)address, (int32_t)slot, error);
         if (okay) ++written;
     }
-    free(actors); if (okay) *result = (int32_t)written; return okay;
+    qa_pool_release(&gear->spatial_scratch, scratch_slot); if (okay) *result = (int32_t)written; return okay;
 }
 
 bool q3gear_syscall(void *context, const qa_qvm_call *call, int32_t trap, int32_t *result, qa_error *error)

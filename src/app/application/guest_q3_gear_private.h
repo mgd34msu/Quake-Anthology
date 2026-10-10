@@ -7,6 +7,7 @@
 #include "qa/cvars_save.h"
 #include "qa/source_save.h"
 #include "qa/bsp.h"
+#include "qa/pool.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -38,6 +39,8 @@ struct application_q3_gear {
     const qa_command_invocation *arguments;
     q3gear_binding *bindings;
     q3gear_tether *tethers;
+    qa_arena actor_storage;
+    qa_pool spatial_scratch;
     uint32_t capacity;
     qa_qvm_binding same_team, damage, pull, mover;
     int32_t milliseconds, frame;
@@ -61,7 +64,7 @@ bool q3gear_host_restore(void *, qa_bytes, qa_error *);
 bool q3gear_replace_text(char **, const char *, qa_error *);
 bool q3gear_target(application_q3_gear *, qa_actor_id, application_q3_gear_target *, qa_error *);
 bool q3gear_mirror(application_q3_gear *, const application_q3_gear_target *, qa_error *);
-bool q3gear_reserve(application_q3_gear *, uint32_t slot, qa_error *);
+bool q3gear_prepare_storage(application_q3_gear *, qa_error *);
 bool q3gear_forget(application_q3_gear *, qa_actor_id, qa_error *);
 bool q3gear_release(application_q3_gear *, qa_actor_id, bool, qa_error *);
 bool q3gear_hook(application_q3_gear *, qa_actor_id, uint32_t *, uint32_t *, qa_error *);

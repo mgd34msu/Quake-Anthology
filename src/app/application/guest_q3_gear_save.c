@@ -133,7 +133,7 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
     if (okay) okay = qa_source_save_count(&io, &bindings, bytes.size/30);
     for (size_t i = 0; i < bindings && okay; ++i) {
         q3gear_binding row = {0};
-        okay = binding_fields(&io, &row) && q3gear_reserve(gear, row.actor.slot, error) &&
+        okay = binding_fields(&io, &row) && row.actor.slot < gear->capacity &&
             qa_actors_get(qa_session_actors(gear->options.host.session), row.actor) &&
             !gear->bindings[row.actor.slot].actor.registry;
         for (uint32_t j = 0; j < gear->capacity && okay; ++j)

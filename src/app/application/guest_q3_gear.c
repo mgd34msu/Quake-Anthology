@@ -36,7 +36,8 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
     gear->image = (qa_qvm_image *)application_q3_grapple_profile_image(options->profile);
     gear->options.profile = NULL;
     qa_qvm_image_retain(gear->image);
-    bool okay = q3gear_replace_text(&gear->path, application_q3_grapple_profile_path(options->profile), error);
+    bool okay = q3gear_prepare_storage(gear, error) &&
+        q3gear_replace_text(&gear->path, application_q3_grapple_profile_path(options->profile), error);
     if (okay && restoring) {
         qa_bytes text = options->host.entity_text;
         if ((text.size && !text.data) || text.size == SIZE_MAX)
@@ -62,7 +63,8 @@ bool application_q3_gear_create(const application_q3_gear_options *options, bool
         if (gear->host) qa_q3_host_destroy(gear->host, &cleanup);
         qa_console_unbind_source(gear->console, qa_cvars_view_identity(gear->cvars), &cleanup);
         qa_cvars_detach_callbacks(gear->cvars); qa_cvars_destroy(gear->cvars);
-        qa_qvm_image_release(gear->image); qa_buffer_free(&gear->entities); free(gear->path); free(gear);
+        qa_qvm_image_release(gear->image); qa_buffer_free(&gear->entities);
+        qa_arena_destroy(&gear->actor_storage); free(gear->path); free(gear);
         return false;
     }
     *out = gear; return true;
@@ -409,6 +411,6 @@ bool application_q3_gear_destroy(application_q3_gear *gear, qa_error *error)
     qa_cvars_detach_callbacks(gear->cvars); qa_cvars_destroy(gear->cvars);
     for (size_t i = 0; i < 1024; ++i) free(gear->configstrings[i]);
     for (size_t i = 0; i < 64; ++i) free(gear->userinfo[i]);
-    free(gear->bindings); free(gear->tethers); free(gear->path); qa_buffer_free(&gear->entities);
+    qa_arena_destroy(&gear->actor_storage); free(gear->path); qa_buffer_free(&gear->entities);
     qa_qvm_image_release(gear->image); free(gear); return true;
 }
