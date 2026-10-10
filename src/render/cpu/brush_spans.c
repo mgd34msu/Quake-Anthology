@@ -285,19 +285,20 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
     if (vertices[i].clip[3] < nearest->clip[3]) nearest = &vertices[i];
   double q = 1 / nearest->clip[3];
   double s = nearest->texel[0], t = nearest->texel[1];
-  double rho = fmax(hypot((surface->s.x - s * surface->q.x) / q,
-                         (surface->t.x - t * surface->q.x) / q),
-                    hypot((surface->s.y - s * surface->q.y) / q,
-                          (surface->t.y - t * surface->q.y) / q));
+  double sx = (surface->s.x - s * surface->q.x) / q;
+  double tx = (surface->t.x - t * surface->q.x) / q;
+  double sy = (surface->s.y - s * surface->q.y) / q;
+  double ty = (surface->t.y - t * surface->q.y) / q;
+  double squared = fmax(sx * sx + tx * tx, sy * sy + ty * ty);
   cpu_sampler sampler;
   if (!cpu_sampler_prepare(renderer, draw->textures[0], &sampler)) return false;
-  bool magnification = !(rho > sampler.magnification_limit);
+  bool magnification = !(squared > sampler.magnification_limit);
   bool blend = sampler.blend;
   surface->linear = magnification ? sampler.magnification_linear : sampler.linear;
   unsigned maximum = sampler.level_count > CPU_SURFACE_MIPS ? CPU_SURFACE_MIPS - 1u : (unsigned)(sampler.level_count - 1);
-  double lod = !magnification && maximum && rho > 1 ? log2(rho) : 0;
+  double lod = !magnification && maximum && squared > 1 ? .5 * log2(squared) : 0;
   lod = fmin((double)maximum, fmax(0, lod));
-  unsigned first = (unsigned)floor(blend ? lod : lod + 0.5);
+  unsigned first = (unsigned)(blend ? floor(lod) : fmax(0, ceil(lod - 0.5)));
   unsigned second = blend && first < maximum ? first + 1 : first;
   surface->mip_blend = second != first ? lod - first : 0;
   if (!cpu_surface_cache_prepare(renderer, draw, first, &surface->mips[0])) return false;
