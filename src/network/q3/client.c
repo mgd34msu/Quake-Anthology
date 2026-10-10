@@ -302,18 +302,23 @@ bool qa_q3_client_peer_execute(qa_q3_client_peer *p, int32_t sequence, bool demo
     p->last_executed_server_command = sequence;
     return execute(p, sequence, p->server_commands[(uint32_t)sequence & 63], e);
 }
-static bool transmit_pending(qa_q3_client_peer *p, qa_error *e)
+static bool transmit_pending(qa_q3_client_peer *p, int32_t real_time, qa_error *e)
 {
     while (p->transmit_size || qa_q3_channel_pending(p->channel)) {
         if (!p->transmit_size) {
             bool present; qa_bytes packet;
-            if (!qa_q3_channel_next(p->channel, &present, &packet, e)) return false;
+            if (!qa_q3_channel_prepare(p->channel, &present, &packet, e)) return false;
             if (!present || packet.size > sizeof(p->transmit_packet))
                 return fail(e, QA_ERROR_FORMAT, "Q3 channel produced no bounded pending client datagram");
             memcpy(p->transmit_packet, packet.data, packet.size); p->transmit_size = (uint16_t)packet.size;
         }
         if (!p->hooks.send(p->hooks.context, &p->remote,
             (qa_bytes){p->transmit_packet, p->transmit_size}, e)) return false;
+        qa_bytes packet = {p->transmit_packet, p->transmit_size};
+        uint32_t sequence = qa_q3_channel_outgoing(p->channel);
+        qa_q3_channel_sent(p->channel, packet);
+        p->packets[sequence & 31].real_time = real_time;
+        p->last_packet_sent_time = real_time;
         p->transmit_size = 0;
         if (!current(p, e)) return false;
     }
@@ -322,7 +327,7 @@ static bool transmit_pending(qa_q3_client_peer *p, qa_error *e)
 bool qa_q3_client_peer_send(qa_q3_client_peer *p, const qa_q3_client_send *options, qa_error *e) {
     if (!p || !options || p->disconnected || p->demo) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 client send");
     if (!current(p, e)) return false;
-    if (p->transmit_size || qa_q3_channel_pending(p->channel)) return transmit_pending(p, e);
+    if (p->transmit_size || qa_q3_channel_pending(p->channel)) return transmit_pending(p, options->real_time, e);
     qa_q3_client_message message = {0};
     message.header = (qa_q3_client_header){p->server_id, p->server_message_sequence, p->server_command_sequence};
     int64_t pending = (int64_t)p->reliable.sequence - p->reliable.acknowledged;
@@ -347,9 +352,8 @@ bool qa_q3_client_peer_send(qa_q3_client_peer *p, const qa_q3_client_send *optio
     if (!qa_q3_xor_client(data, size, p->challenge, lookup, p, e)) return false;
     p->packets[sequence & 31] = (sent_packet){p->command_number,
         count ? message.usercmds[count - 1].serverTime : 0, options->real_time};
-    p->last_packet_sent_time = options->real_time;
     if (!qa_q3_channel_begin(p->channel, (qa_bytes){data, size}, e)) return false;
-    return transmit_pending(p, e);
+    return transmit_pending(p, options->real_time, e);
 }
 bool qa_q3_client_peer_ready(const qa_q3_client_peer *p, const qa_q3_client_readiness *o) {
     if (!p || !o || p->disconnected || p->disconnect_started || p->demo || o->cinematic) return false;
@@ -367,7 +371,7 @@ bool qa_q3_client_peer_disconnect(qa_q3_client_peer *p, const qa_q3_client_send 
     if (!p->disconnect_started) {
         /* Complete any older interrupted message before inserting disconnect;
          * its eventual delivery is not one of the three close packets. */
-        if ((p->transmit_size || qa_q3_channel_pending(p->channel)) && !transmit_pending(p, e)) return false;
+        if ((p->transmit_size || qa_q3_channel_pending(p->channel)) && !transmit_pending(p, o->real_time, e)) return false;
         if (!qa_q3_client_peer_command(p, "disconnect", e)) return false;
         p->disconnect_started = true;
     }

@@ -113,9 +113,11 @@ size_t qa_q3_channel_remaining(const qa_q3_channel *);
 uint32_t qa_q3_channel_outgoing(const qa_q3_channel *);
 uint32_t qa_q3_channel_incoming(const qa_q3_channel *);
 bool qa_q3_channel_pending(const qa_q3_channel *);
-/* Payload is copied by begin. next returns a borrowed datagram until next call. */
+/* Payload is copied by begin. Prepare leaves sequence and fragment position
+ * unchanged; sent commits only a datagram accepted by its transport. */
 bool qa_q3_channel_begin(qa_q3_channel *, qa_bytes, qa_error *);
-bool qa_q3_channel_next(qa_q3_channel *, bool *present, qa_bytes *, qa_error *);
+bool qa_q3_channel_prepare(qa_q3_channel *, bool *present, qa_bytes *, qa_error *);
+void qa_q3_channel_sent(qa_q3_channel *, qa_bytes);
 bool qa_q3_channel_receive(qa_q3_channel *, qa_bytes, qa_q3_packet *, qa_error *);
 typedef const char *(*qa_q3_command_lookup)(void *, int32_t sequence);
 bool qa_q3_xor_client(uint8_t *, size_t, int32_t challenge, qa_q3_command_lookup, void *, qa_error *);

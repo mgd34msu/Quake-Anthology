@@ -131,8 +131,14 @@ bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_re
 }
 static bool send_next(qa_q3_server_peer *p, bool *sent, qa_error *e) {
     qa_bytes packet;
-    if (!qa_q3_channel_next(p->channel, sent, &packet, e)) return false;
-    return !*sent || p->hooks.send(p->hooks.context, &p->remote, packet, e);
+    bool present;
+    *sent = false;
+    if (!qa_q3_channel_prepare(p->channel, &present, &packet, e)) return false;
+    if (!present) return true;
+    if (!p->hooks.send(p->hooks.context, &p->remote, packet, e)) return false;
+    qa_q3_channel_sent(p->channel, packet);
+    *sent = true;
+    return true;
 }
 bool qa_q3_server_peer_fragment(qa_q3_server_peer *p, bool *sent, qa_error *e) {
     if (!p || !sent) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 fragment send");

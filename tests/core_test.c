@@ -13,6 +13,7 @@
 #include "qa/tools.h"
 #include "qa/input.h"
 #include "qa/platform_events.h"
+#include "qa/network_q3.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -722,12 +723,45 @@ static void test_platform_event_retirement(void)
     qa_platform_events_destroy(events);
 }
 
+static void test_q3_send_admission(void)
+{
+    qa_error error = {0};
+    qa_q3_channel *sender, *receiver;
+    CHECK(qa_q3_channel_create(QA_Q3_SERVER, 0, &sender, &error));
+    CHECK(qa_q3_channel_create(QA_Q3_CLIENT, 0, &receiver, &error));
+    uint8_t message[2 * QA_Q3_FRAGMENT_BYTES];
+    for (size_t i = 0; i < sizeof(message); ++i) message[i] = (uint8_t)i;
+    CHECK(qa_q3_channel_begin(sender, (qa_bytes){message, sizeof(message)}, &error));
+    for (unsigned fragment = 0; fragment < 3; ++fragment) {
+        bool present;
+        qa_bytes first, retry;
+        uint8_t saved[QA_Q3_FRAGMENT_BYTES + 10];
+        size_t remaining = qa_q3_channel_remaining(sender);
+        CHECK(qa_q3_channel_prepare(sender, &present, &first, &error) && present);
+        memcpy(saved, first.data, first.size);
+        CHECK(qa_q3_channel_outgoing(sender) == 1);
+        CHECK(qa_q3_channel_remaining(sender) == remaining);
+        CHECK(qa_q3_channel_prepare(sender, &present, &retry, &error) && present);
+        CHECK(retry.size == first.size && !memcmp(retry.data, saved, retry.size));
+        qa_q3_packet received;
+        CHECK(qa_q3_channel_receive(receiver, retry, &received, &error));
+        CHECK(received.kind == (fragment == 2 ? QA_Q3_PACKET_MESSAGE : QA_Q3_PACKET_FRAGMENT));
+        if (fragment == 2) CHECK(received.payload.size == sizeof(message) &&
+            !memcmp(received.payload.data, message, sizeof(message)));
+        qa_q3_channel_sent(sender, retry);
+    }
+    CHECK(!qa_q3_channel_pending(sender) && qa_q3_channel_outgoing(sender) == 2);
+    qa_q3_channel_destroy(sender);
+    qa_q3_channel_destroy(receiver);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_platform_event_retirement();
+    test_q3_send_admission();
     test_shared_cvar_archive();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
