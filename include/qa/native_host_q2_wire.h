@@ -3,6 +3,31 @@
 
 #include "qa/native_host.h"
 #include "qa/network_q2.h"
+#include "qa/movement.h"
+#include "qa/binary.h"
+#include <string.h>
+
+static inline size_t qa_native_q2_write_usercmd(const qa_usercmd *command, uint8_t out[28])
+{
+    bool classic = command->kind == QA_RULESET_Q2_CLASSIC;
+    memset(out, 0, 28); out[0] = (uint8_t)command->milliseconds; out[1] = (uint8_t)command->buttons;
+    if (classic) {
+        const float axes[] = {command->forward_move, command->side_move, command->up_move};
+        for (size_t i = 0; i < 3; ++i) {
+            qa_store_u16le(out + 2 + i * 2, (uint16_t)command->angle_words[i]);
+            qa_store_u16le(out + 8 + i * 2, (uint16_t)(int16_t)axes[i]);
+        }
+        out[14] = command->impulse; out[15] = command->light_level;
+        return 16;
+    }
+    const float values[] = {command->angles.x, command->angles.y, command->angles.z,
+        command->forward_move, command->side_move};
+    for (size_t i = 0; i < 5; ++i) {
+        uint32_t bits; memcpy(&bits, values + i, sizeof(bits)); qa_store_u32le(out + 4 + i * 4, bits);
+    }
+    qa_store_u32le(out + 24, (uint32_t)command->server_frame);
+    return 28;
+}
 
 typedef struct qa_native_host_q2_origin {
     uint64_t source_frame;

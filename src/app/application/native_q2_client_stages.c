@@ -7,6 +7,7 @@
 #include "guest_native_q2_input.h"
 #include "qa/native_observe.h"
 #include "qa/network.h"
+#include "qa/native_host_q2_wire.h"
 #include <math.h>
 
 typedef struct native_input_store {
@@ -479,21 +480,13 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
     qa_input_command_basis from = {.kind = kind, .units = 1}, to = {.kind = kind, .words = !rerelease};
     qa_input_command_convert(&input, &moves, &from, &to,
         (qa_input_axis_rule){.quantization = rerelease ? QA_INPUT_AXIS_EXACT : QA_INPUT_AXIS_TRUNCATE}, &converted);
-    memset(s->command,0,sizeof(s->command));s->command[0]=(uint8_t)milliseconds;
-    s->command[1]=(uint8_t)((v[Q3_MOD_ATTACK].as.scalar!=0?1:0)|(rerelease&&v[Q3_MOD_JUMP].as.scalar!=0?8:0)|(rerelease&&moves.z<0?16:0));
-    const float angles[] = {converted.angles.x, converted.angles.y, converted.angles.z};
-    const float axes[] = {converted.forward_move, converted.side_move, converted.up_move};
-    for(size_t i=0;i<3;++i) {
-        if(rerelease) {uint32_t bits;memcpy(&bits,angles+i,4);qa_store_u32le(s->command+4+i*4,bits);}
-        else qa_store_u16le(s->command+2+i*2,(uint16_t)converted.angle_words[i]);
-    }
-    for(size_t i=0;i<(rerelease?2u:3u);++i) {
-        if(rerelease) {uint32_t bits;memcpy(&bits,axes+i,4);qa_store_u32le(s->command+16+i*4,bits);}
-        else qa_store_u16le(s->command+8+i*2,(uint16_t)(int16_t)axes[i]);
-    }
-    if(rerelease) qa_store_u32le(s->command+24,(uint32_t)application_native_q2_stages_frame(s->owner->engine));
-    else s->command[14]=(uint8_t)impulse;
-    *out=(application_native_callback_inputs){values,count,{s->command,rerelease?28u:16u}};return true;
+    converted.milliseconds=(uint32_t)milliseconds;
+    converted.buttons=(v[Q3_MOD_ATTACK].as.scalar!=0?1u:0u)|
+        (rerelease&&v[Q3_MOD_JUMP].as.scalar!=0?8u:0u)|(rerelease&&moves.z<0?16u:0u);
+    converted.impulse=(uint8_t)impulse;
+    converted.server_frame=(int32_t)(uint32_t)application_native_q2_stages_frame(s->owner->engine);
+    size_t command_bytes=qa_native_q2_write_usercmd(&converted,s->command);
+    *out=(application_native_callback_inputs){values,count,{s->command,command_bytes}};return true;
 }
 bool application_native_q2_input_values(struct application_native_q2 *n,qa_actor_id actor,
     application_native_callback_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *out,qa_error *e)

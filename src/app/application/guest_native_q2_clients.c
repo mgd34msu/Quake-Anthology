@@ -10,11 +10,6 @@
 #include "qa/native_host_q2_wire.h"
 #include <math.h>
 
-static void store_float(uint8_t *data, float value)
-{
-    uint32_t bits; memcpy(&bits, &value, sizeof(bits)); qa_store_u32le(data, bits);
-}
-
 static uint32_t source_client_slot(const application_provider *provider, qa_actor_id actor)
 {
     const struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
@@ -264,15 +259,14 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
     const qa_usercmd *raw=engine->input_command;
     qa_movement_state physical;
     if(!application_native_q2_declared_input_read(provider,actor,&physical,error)) return false;
-    qa_vec3 aim;
+    qa_input_command_basis from={.kind=physical.kind,.relative=true}, to={.kind=physical.kind};
     if(physical.kind==QA_RULESET_Q2_CLASSIC) {
-        float axes[3];
-        for(size_t i=0;i<3;++i) {
-            uint16_t word=(uint16_t)((uint16_t)raw->angle_words[i]+(uint16_t)physical.data.q2.delta_angle_shorts[i]);
-            axes[i]=(float)word*(360.f/65536.f);
-        }
-        aim=qa_v3(axes[0],axes[1],axes[2]);
-    } else aim=qa_vec_add(raw->angles,physical.data.q2r.delta_angles);
+        from.words=from.wrap_words=true;
+        for(size_t i=0;i<3;++i) from.delta_words[i]=physical.data.q2.delta_angle_shorts[i];
+    } else from.delta_angles=physical.data.q2r.delta_angles;
+    qa_usercmd absolute;
+    qa_input_command_convert(raw,NULL,&from,&to,(qa_input_axis_rule){0},&absolute);
+    qa_vec3 aim=absolute.angles;
     application_native_callback_value values[]={
         {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor},
         {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->input_stage->time_ns/1e9},
@@ -311,23 +305,14 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
         !isfinite(command->forward_move) || !isfinite(command->side_move) ||
         !isfinite(command->up_move) || !qa_vec_finite(command->angles))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 raw command differs from its physical SDK dialect");
-    uint8_t bytes[28] = {0}; bytes[0]=(uint8_t)command->milliseconds; bytes[1]=(uint8_t)command->buttons;
     if (classic) {
-        float axes[]={command->forward_move,command->side_move,command->up_move};
-        for (size_t i=0;i<3;++i) {
-            if (axes[i]<INT16_MIN || axes[i]>INT16_MAX)
-                return application_fail(error,QA_ERROR_ARGUMENT,"Classic Q2 raw axis exceeds its Source short");
-            qa_store_u16le(bytes+2+i*2,(uint16_t)command->angle_words[i]);
-            qa_store_u16le(bytes+8+i*2,(uint16_t)(int16_t)axes[i]);
-        }
-        bytes[14]=command->impulse; bytes[15]=command->light_level;
-    } else {
-        store_float(bytes+4,command->angles.x); store_float(bytes+8,command->angles.y);
-        store_float(bytes+12,command->angles.z); store_float(bytes+16,command->forward_move);
-        store_float(bytes+20,command->side_move); qa_store_u32le(bytes+24,(uint32_t)command->server_frame);
+        const float axes[] = {command->forward_move, command->side_move, command->up_move};
+        for (size_t i = 0; i < 3; ++i) if (axes[i] < INT16_MIN || axes[i] > INT16_MAX)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Classic Q2 raw axis exceeds its Source short");
     }
+    uint8_t bytes[28]; size_t command_bytes = qa_native_q2_write_usercmd(command, bytes);
     engine->input_stage=stage; engine->input_command=command; engine->current_command_sequence=command->sequence;
-    bool ok=application_native_q2_client_think(provider,slot,(qa_bytes){bytes,classic?16u:28u},error);
+    bool ok=application_native_q2_client_think(provider,slot,(qa_bytes){bytes,command_bytes},error);
     engine->input_stage=NULL; engine->input_command=NULL; engine->current_command_sequence=0;
     if (ok && qa_actors_get(qa_session_actors(provider->application->session),actor) &&
         !stage->current(stage->context,actor))
@@ -344,8 +329,10 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
         control->player.state=physical.state; control->player.bounds=physical.bounds;
         control->player.view_angles=physical.view_angles; control->player.view_offset=physical.view_offset;
         control->player.view_height=physical.view_height;
-        control->player.command_angles=classic?qa_v3((float)command->angle_words[0]*(360.f/65536.f),
-            (float)command->angle_words[1]*(360.f/65536.f),(float)command->angle_words[2]*(360.f/65536.f)):command->angles;
+        qa_input_command_basis from={.kind=command->kind,.words=classic}, to={.kind=command->kind};
+        qa_usercmd projected;
+        qa_input_command_convert(command,NULL,&from,&to,(qa_input_axis_rule){0},&projected);
+        control->player.command_angles=projected.angles;
         control->result.state=control->player.state; control->result.bounds=control->player.bounds;
         control->result.view_angles=control->player.view_angles; control->result.view_offset=control->player.view_offset;
         control->result.view_height=control->player.view_height;
@@ -381,25 +368,16 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
     if (!control->active || !qa_actor_id_equal(control->player.actor, actor) ||
         (stage ? !control->moving || !stage->current(stage) : control->moving))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement control is unavailable");
-    uint8_t bytes[28] = {0}; bytes[0] = (uint8_t)command->milliseconds; bytes[1] = (uint8_t)command->buttons;
     if (classic) {
-        float axes[] = {command->forward_move, command->side_move, command->up_move};
-        for (size_t i = 0; i < 3; ++i) {
-            if (axes[i] < INT16_MIN || axes[i] > INT16_MAX)
-                return application_fail(error, QA_ERROR_ARGUMENT, "Classic Q2 movement axis exceeds its source short");
-            qa_store_u16le(bytes + 2 + i * 2, (uint16_t)command->angle_words[i]);
-            qa_store_u16le(bytes + 8 + i * 2, (uint16_t)(int16_t)axes[i]);
-        }
-        bytes[14] = command->impulse; bytes[15] = command->light_level;
-    } else {
-        store_float(bytes + 4, command->angles.x); store_float(bytes + 8, command->angles.y);
-        store_float(bytes + 12, command->angles.z); store_float(bytes + 16, command->forward_move);
-        store_float(bytes + 20, command->side_move); qa_store_u32le(bytes + 24, (uint32_t)command->server_frame);
+        const float axes[] = {command->forward_move, command->side_move, command->up_move};
+        for (size_t i = 0; i < 3; ++i) if (axes[i] < INT16_MIN || axes[i] > INT16_MAX)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Classic Q2 movement axis exceeds its source short");
     }
+    uint8_t bytes[28]; size_t command_bytes = qa_native_q2_write_usercmd(command, bytes);
     control->moving = true; engine->current_command_sequence = command->sequence;
     engine->movement_stage = stage;
     bool ok = application_native_q2_client_think(provider, slot,
-        (qa_bytes){bytes, classic ? 16u : 28u}, error);
+        (qa_bytes){bytes, command_bytes}, error);
     engine->movement_stage = NULL; engine->current_command_sequence = 0;
     if (ok && qa_actors_get(qa_session_actors(app->session), actor)) {
         qa_q2_player player;
@@ -414,11 +392,10 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
             if (ok) {
                 control->player.state = state; control->player.bounds = body.bounds;
                 control->player.view_angles = view; control->player.view_offset = offset;
-                control->player.command_angles = classic
-                    ? qa_v3((float)command->angle_words[0] * (360.f / 65536.f),
-                            (float)command->angle_words[1] * (360.f / 65536.f),
-                            (float)command->angle_words[2] * (360.f / 65536.f))
-                    : command->angles;
+                qa_input_command_basis from={.kind=command->kind,.words=classic}, to={.kind=command->kind};
+                qa_usercmd projected;
+                qa_input_command_convert(command,NULL,&from,&to,(qa_input_axis_rule){0},&projected);
+                control->player.command_angles=projected.angles;
                 control->player.view_height = classic ? offset.z : state.data.q2r.view_height;
                 if (!stage) {
                     control->player.previous_buttons = control->player.buttons; control->player.buttons = command->buttons;
