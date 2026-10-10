@@ -55,13 +55,15 @@ typedef struct q2_visual {
 } q2_visual;
 typedef struct q2_loop {
     struct q2_loop *next;
+    size_t storage_slot;
     qa_actor_id actor;
     q2_activation *activation;
 } q2_loop;
 typedef struct q2_player_name {
     struct q2_player_name *next;
     uint32_t slot;
-    char *name;
+    const char *name;
+    qa_unified_document *document;
 } q2_player_name;
 typedef struct q2_native_picture q2_native_picture;
 typedef struct q2_bank {
@@ -122,7 +124,8 @@ struct frontend_unified_q2 {
     q2_activation *activations;
     q2_visual *visuals,*visual_rows;
     q2_loop *loops;
-    q2_player_name *names;
+    qa_pool loop_pool;
+    q2_player_name *names,*name_rows;
     const qa_unified_presentation_event *story;
     qa_unified_document *story_document;
     q2_activation *story_owner,*sky_owner,*fog_owner;
@@ -338,7 +341,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     while (*loop) { q2_loop *l=*loop;
         if (l->activation!=a) { loop=&l->next; continue; }
         if (!frontend_unified_events_sound_stop_loop(o->events,l->actor,e)) return false;
-        *loop=l->next;free(l);
+        *loop=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);
     }
     q2_visual **next=&o->visuals;
     while (*next) { q2_visual *v=*next;if (v->activation==a) { *next=v->next;visual_clear(v); }else next=&v->next; }
@@ -728,19 +731,23 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     *out=o;
     o->effect_pose_capacity=r->options.identity_capacity;
     o->native_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
-    size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows))+
-        2*o->native_capacity*sizeof(q2_native)+4*_Alignof(max_align_t);
-    size_t text_bytes=qa_unified_session_limits(r->session)->message_bytes*2;
+    size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows)+sizeof(*o->name_rows))+
+        (o->effect_pose_capacity+1)*(sizeof(q2_loop)+sizeof(size_t))+
+        2*o->native_capacity*sizeof(q2_native)+8*_Alignof(max_align_t);
+    size_t text_bytes=(size_t)qa_unified_session_limits(r->session)->message_bytes*2;
     if(!qa_arena_reserve(&o->text_storage,text_bytes,e) ||
         !qa_arena_reserve(&o->help_storage[0],text_bytes,e) ||
         !qa_arena_reserve(&o->help_storage[1],text_bytes,e) ||
         !qa_arena_reserve(&o->pose_storage,pose_bytes,e) ||
         !(o->effect_poses=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->effect_poses),_Alignof(frontend_remote_q2_effects_pose),e)) ||
-        !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e))) {
+        !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e)) ||
+        !(o->name_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->name_rows),_Alignof(q2_player_name),e)) ||
+        !qa_pool_prepare(&o->loop_pool,&o->pose_storage,o->effect_pose_capacity+1,sizeof(q2_loop),_Alignof(q2_loop),e)) {
         qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
         qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*out=NULL;return false;
     }
     memset(o->visual_rows,0,o->effect_pose_capacity*sizeof(*o->visual_rows));
+    memset(o->name_rows,0,o->effect_pose_capacity*sizeof(*o->name_rows));
     for (size_t i=0;i<2 && o->native_capacity;++i) {
         o->native_buffers[i]=qa_arena_alloc(&o->pose_storage,o->native_capacity*sizeof(q2_native),_Alignof(q2_native),e);
         if (!o->native_buffers[i]) {qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
@@ -1060,9 +1067,15 @@ static bool userinfo(frontend_unified_q2 *o,const qa_q2_player_event *event,bool
 {
     if (!event->text) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 userinfo lost its Source name");
     if (!publish) return true;
-    q2_player_name *v=o->names;while (v && v->slot!=event->slot)v=v->next;
-    if (!v){v=calloc(1,sizeof(*v));if (!v)return false;v->slot=event->slot;v->next=o->names;o->names=v;}
-    char *copy=text_copy(event->text);if (!copy)return false;free(v->name);v->name=copy;return true;
+    if (event->slot>=o->effect_pose_capacity) {
+        qa_allocation_gate_capacity_exhausted();
+        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 player name exceeds loaded actor capacity");
+    }
+    qa_unified_document *document=NULL;
+    if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
+    q2_player_name *v=o->name_rows+event->slot;
+    if (!v->name){v->slot=event->slot;v->next=o->names;o->names=v;}
+    qa_unified_document_destroy(v->document);v->document=document;v->name=event->text;return true;
 }
 static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
     const qa_builtin_message_arg *args,size_t count,qa_arena *storage,qa_buffer *out,qa_error *e)
@@ -1213,15 +1226,17 @@ static bool sound_receive(frontend_unified_q2 *o,const qa_unified_presentation_e
     bool paired=false,okay=true;q2_loop *retained=NULL;q2_activation *owner=NULL;
     if (!loop)okay=frontend_unified_events_sound_mirrored(o->events,row,&paired,e);
     else if (loop==1){okay=activation(o,&row->owner,&owner,e) && !(owner && owner->retired);
-        if (okay){retained=calloc(1,sizeof(*retained));okay=retained!=NULL;if (okay){retained->actor=a;retained->activation=owner;}}}
+        if (okay){size_t slot;retained=qa_pool_take(&o->loop_pool,&slot);okay=retained!=NULL;
+            if (okay)*retained=(q2_loop){.storage_slot=slot,.actor=a,.activation=owner};}}
     double ms=row->seconds*1000;
     if (okay && loop==2)okay=frontend_unified_events_sound_stop_loop(o->events,a,e);
     else if (okay && loop==1){uint32_t raw=(uint32_t)o->frame_number;int32_t frame;memcpy(&frame,&raw,sizeof(frame));
         okay=frontend_unified_events_sound_loop_path(o->events,row->content,path?path:"",a,origin,qa_v3(0,0,0),ms,channel,volume,attenuation,frame,true,e);}
     else if (okay && !paired)okay=frontend_unified_events_sound_path(o->events,row->content,path?path:"",a,origin,ms,channel,volume,attenuation,delay,e);
-    if (okay && loop){q2_loop **next=&o->loops;while (*next){q2_loop *l=*next;if (qa_actor_id_equal(l->actor,a)){*next=l->next;free(l);}else next=&l->next;}
+    if (okay && loop){q2_loop **next=&o->loops;while (*next){q2_loop *l=*next;if (qa_actor_id_equal(l->actor,a)){*next=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}else next=&l->next;}
         if (retained){retained->next=o->loops;o->loops=retained;retained=NULL;}}
-    free(retained);return okay;
+    if (retained)qa_pool_release(&o->loop_pool,retained->storage_slot);
+    return okay;
 }
 static bool fog_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,
     qa_actor_id source,const qa_q2_fog *fog,double duration,qa_error *e)
@@ -1921,8 +1936,8 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
-    while (o->loops) { q2_loop *l=o->loops; o->loops=l->next; free(l); }
-    while (o->names) { q2_player_name *n=o->names; o->names=n->next; free(n->name); free(n); }
+    while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}
+    while (o->names) {q2_player_name *n=o->names;o->names=n->next;qa_unified_document_destroy(n->document);}
     qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
     qa_arena_destroy(&o->text_storage);qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*slot=NULL;return true;
 }
