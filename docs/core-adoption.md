@@ -1,53 +1,48 @@
 # Core primitive adoption
 
-This is the implementation work list for the owner's 17:4x directive on
-2026-10-09. Complete the primitives and migrate their callers before resuming
-the event-system migration. No checker extensions are part of this work.
+This records implemented primitive and event-system adoption. The latest
+owner order completes the output ring and system events, then remaining common
+types. No checker extensions are part of this work.
 
-The initial source audit is against `73c9ffbe`. A row with remaining work is
-not complete. Protocol records, foreign module memory, immutable snapshots,
+Older issue sections retain their own scoped remaining work. A row with remaining
+work is not complete. Protocol records, foreign module memory, immutable snapshots,
 prediction history and game-specific rule state are distinct from a second
 authoritative engine store; preserve their required fields and numeric rules.
 
 ## Common types: THE-344
 
-| Capability | Canonical definition and current adoption | Remaining implementation or caller migration |
+The engine primitives and their current consumers are listed below. Foreign
+module ABI records, legacy packet records, immutable save/prediction projections
+and authored game rule tails retain their required fields. They do not own a
+second selected engine state.
+
+| Capability | One definition and implementation | Migrated consumers and deleted copies |
 | --- | --- | --- |
-| Entity identity and lifetime | `include/qa/actors.h:12,43`, `src/world/actors_internal.h:9,16`; created by `src/session/session.c:308`. Q1/Q2/Q3 rule attachments and QC/QVM/native bindings use this registry. Q1 frontend actor lookup at `src/app/frontend/remote_q1_client.c:237` now reads this source index; its separate actor type, array, scans, growth and cleanup are deleted. | Native rule-tail allocations are also allocation-gate work; their original rules remain. CLIENT ownership and saved actor references remain canonical lifecycle data. |
-| Body | `include/qa/world.h:7`, `src/world/entity_internal.h:12`; application controls, QC, owned native Q2/Q3 hosts and Unified prediction use the shared world. Q2 CLIENT publication and prediction now use it at `src/app/frontend/remote_q2_prediction.c:56,173`; their separate scan/merge/contents paths and scratch are deleted. Registry release forwards canonical body cleanup before observer reuse at `src/world/actors.c:317`. | Q1/QW and Q3 CLIENT also use the common query loop with original caller merge/pose data. Their independent entity trace/contents loops and scratch are deleted. Q3 trigger overlap keeps its single-model narrow phase. Exact source, byte parity, concurrency and pinned query evidence are in `docs/playtests/2026-10-09-shared-client-query.md`; snapshot storage and cold restore/validation remain outside this query slice. |
-| Body field selection | `include/qa/world.h:12` defines one `qa_body_vector_kind` and inline accessor. QVM, native Q2 and declared QC bindings resolve to it at load; their five-way getter/setter chains and seed copies are deleted. `src/world/live_fields.c:96` retains external scalar decoding. | Module encodings and ownership remain boundary rules. The bounded comparison and joint engine-build evidence are in `docs/playtests/2026-10-09-body-field-selector.md`; this is not whole-module gameplay or a frame-time speedup. |
-| Current player movement and view | `include/qa/player_state.h:9` defines the common current owner, stored once per actor in `src/app/application/internal.h:161`. All callers use `qa_player_state`. Q2 and Q3 borrow selected controls/body through the common owner and in-flight continuation at `control.c:2333` / `control_frame.c:1535`. Q3's ten generic fields, phase copies and full-movement bridge are deleted. | Foreign/inactive Q3 policy, original rule clocks, immutable checkpoint/history and ABI projections retain their required fields. Bounded byte, build and private stationary-gameplay evidence is in `docs/playtests/2026-10-09-q3-common-player-custody.md`; real input/audio and full application cold reconstruction remain open. Common roster/life custody remains in the next row. |
-| Player roster, life and travel | Common roster is `src/app/application/map_players_private.h:40`; combat and inventory have shared owners. | Generic view/life/connection fields coexist with rule tails in Q1/Q2/Q3 player records. Q2 score mirrors are `src/gameplay/q2/player/state.c:440,498`. Common travel combat is copied alongside Q2 carry health in `map_players_private.h:13` and `include/qa/game_q2_player.h:166`. Move current generic fields to their common owner; retain prior coop/spawn history and original rule tails. |
-| Item identity and inventory | `qa_item_id`, `qa_item_definition`, `qa_inventory_entry` and `qa_item_bit` in `include/qa/inventory.h`; one definition lookup in `src/gameplay/inventory.c:1020`. QC/QVM/native Q2 use the same item-bit type; their three former definitions are deleted. Equipment presentation at `src/app/application/equipment_presentation.c:305` reads the selected item through that lookup. Its catalog copy, scan and allocation are deleted. | No alternate selected-equipment definition lookup remains in this caller. Other current item consumers remain subject to the full custody audit. |
-| Weapon request state | `qa_weapon_request_status` in `include/qa/equipment_weapon_slot.h:10` now serves equipment and QVM requests/status/cancellation/checkpoints. The duplicate QVM enum and identity translation are deleted. | Original game weapon phases and foreign ABI constants remain rule data. Other common weapon custody still needs the full caller audit. |
-| Damage | One actor-indexed combat store in `src/gameplay/combat_internal.h`, and dispatch in `src/gameplay/combat.c:984`. Built-in, QC, QVM and owned-native callers enter `qa_combat_apply` / `qa_combat_run_source`; foreign actors bind that same store. | No alternate engine damage store or dispatcher found in the current caller audit. Q1/Q2/Q3 authored damage/armor arithmetic remains distinct original rule policy. This source audit does not prove every foreign authored instruction's gameplay. |
-| HUD state | Shared `qa_hud` in `src/ui/hud.c`; one fixed `qa_hud_center_state` in `include/qa/hud.h:17` serves local, legacy and Unified producers. Q3's separate store/API/validator are deleted; source-owned rendering suppresses duplicate common output. Original layout interpreters retain game presentation rules. | Actual component drawing, full builds and bounded private gameplay are recorded in `docs/playtests/2026-10-09-shared-centerprint.md`. Live centerprint screenshots remain unproved by that stationary integration check; other generic HUD custody remains subject to the caller audit. |
-| Cvars | One common table and canonical/alias definitions; current handle migration is recorded under THE-2859. Original Q3 trace/contact, Rogue team-face, tools debug width, QW camera/skin/sound, compiled Q1 policy, original QC fixed policy and native ABI shadow refresh use common handles/revisions. Their named hot reads or unchanged rewrites are deleted. Evidence is in the QW and common-cvar playtest records. | Fixed Q3 source/loading/authored HUD and remaining guest/frontend network readers are being migrated. Dynamic declarations/setters and external text imports remain boundary operations. A valid lookup is a plain canonical-name/alias lookup, with no added context or validation layer. |
+| Entity identity and player identity | `include/qa/actors.h:13,53`; `src/world/actors_internal.h:17`, created by `src/session/session.c:308` | Q1/Q2/Q3 attachments and QC/QVM/native bindings use the actor registry. The Q1 frontend's separate actor array/type and Q2/Q3 generic player identity stores are deleted. Source client numbering and source userinfo remain module boundary data. |
+| Body and visual fields | `include/qa/world.h:7,12`; the shared entity store in `src/world/entity_internal.h` | Application control, compiled gameplay, QC, owned native hosts and client prediction use `qa_body_state`; source/body field adapters select `qa_body_vector_kind`. Presentation and source rule tails use `qa_entity_visual`; the ten-field Unified model copy is deleted. |
+| Flare and world text | `include/qa/world.h:21,27` | Source publication, retained output, snapshots, the frame codec and rendering share `qa_entity_flare` and `qa_entity_text`. `3292af26` deletes the application/Unified flare copies; `c5c91b1d` deletes the Unified text record and per-frame text string copies. Native source emission and the existing save adapter convert only at their boundaries. |
+| Current player state | `include/qa/player_state.h:9`, owned by `src/app/application/internal.h:158` | Control, selected movement, built-in services and prediction use `qa_player_state`. Q3's generic current fields and the full-state bridge are deleted. Combat/inventory/score reads retain their shared owners; game-specific respawn, spectator, weapon and animation rules remain rule tails. |
+| Usercmd | `include/qa/usercmd.h:22`; `src/input/commands.c:227,371` | Human seats, both bot paths, command admission, simulation, history and Unified delivery use `qa_usercmd`. The five former input/source/Unified/network command types are deleted. `882194e8` also deletes the Unified builder wrapper and its builder/frame aliases. Protocol and module encoders alone apply native widths. See THE-869 below. |
+| Item and inventory | `include/qa/inventory.h:10,28`; `src/gameplay/inventory_internal.h:47` | QC/QVM/native and compiled sources use common item IDs, definitions, entries and item bits. The three item-bit definitions and selected-equipment catalog copy/scan are deleted. Authored pickup rules remain source data. |
+| Weapon request | `include/qa/equipment_weapon_slot.h:10,13`; `src/gameplay/modes/weapon_slot.c` | Equipment and QVM request/status/cancel/save paths share the request status and slot state. The second QVM enum and identity adapter are deleted. Original weapon firing phases remain rule data. |
+| Damage and armor | `include/qa/gameplay.h:42,83`; `src/gameplay/combat_internal.h:36`, `src/gameplay/combat.c:1011,1014` | Built-in, QC, QVM and owned native sources enter the actor-indexed combat owner. Shared player UI uses `qa_armor`; its separate Unified armor type and converter are deleted. Original damage arithmetic is policy selected by this owner. |
+| Output events and source ownership | `include/qa/builtin.h:100`, `include/qa/actors.h:48`; output ring under THE-870 | Compiled/QC/native/QVM outputs share builtin records, message arguments and prompt choices. `5a6f88e0` replaces both component/presentation owner records with `qa_source_owner` and deletes the second codec layout. Protocol-specific payloads retain their original discriminators. |
+| HUD and bot observations | `include/qa/hud.h:16`; `src/ui/hud.c:7`; `include/qa/bots_player.h:5` | Local, legacy and Unified centerprint producers use the common center state; the second Q3 store/API is deleted. `6f516484` deletes Q3's duplicate bot player observation and its field-copy adapter; bot chat/combat/catalog and native observation use the common record. Original HUD layout interpreters remain presentation rules. |
+| Cvars and role rule IDs | `include/qa/console.h:109`, `src/console/cvars_private.h:162`; `include/qa/ruleset.h:6` | Cvars are handles into one canonical-name/alias table. Movement, clocks and console policy use `qa_ruleset_id`; their duplicate enum types/casts are deleted. The withdrawn collision-family and by-name cvar audits are outside this slice. |
+| System events | `include/qa/platform_events.h:41`; the queue under THE-864 | Physical input, text, console commands, packet records and frame time use `qa_sys_event`. Foreign SDL/socket records convert at intake. |
 
-The item-type comparison checks actual request/status/cancel and inventory
-behavior, including high/private bits, signed counts, stale receipts and stored
-numeric layouts. GCC, Clang and both sanitizer pairs produce identical output.
-It is a component proof, not a full guest execution or checkpoint round trip.
-Production, ASan/UBSan and allocation-gate builds and all seven core checks in
-each pass for the isolated ten-source-path item-type slice. The full checklist
-above remains open; this does not close THE-344 or whole-frame allocation.
+The deleted type names and old movement/clock/console enum casts have no
+remaining references in `include`, `src` or `tests`. Their replaced wrappers
+and field-copy adapters are deleted, rather than retained as alternate APIs.
+Required packet/ABI projections are listed above; they preserve external
+layouts and are not additional engine primitive implementations.
 
-The Q1 source-index migration admits missing actors through the existing CLIENT
-boundary and retires prior-map actors once at loaded SETVIEW. Actual-source
-components cover busy receive, generation reuse, retired metadata and actor
-checkpoint references. Three engine builds and seven core checks each pass.
-Private copied-profile CPU runs show classic/rerelease start, retail NetQuake
-demo playback and the menu; all quit normally and their final images were
-reviewed. This does not prove every legacy protocol or a frame-time speedup.
-
-The Q2 custody slice preserves exact classic/rerelease save and packet fields
-in actual-source component comparisons, including foreign movement with the
-same dialect. All three engine builds and seven core checks each pass. Private
-copied-profile classic/rerelease and rerelease-with-Q3-movement CPU runs reach
-visible gameplay and quit normally; root reviewed the world/weapon/HUD images.
-Original-module gameplay, real input/audio and full save round trips remain
-unproved by those checks. Existing positional checkpoints consume the deleted
-store's former bytes without reinstalling a second current-state owner.
+Verification at `6f516484`: the normal engine build and existing seven core
+suites (`platform_services`, `core`, `archive`, `vfs`, `bsp`, `image`, `model`)
+passed. Its build log is
+`/tmp/qa-normal-common-bot-state-20261010/build.log`. These are source/build and
+component checks. No new installation, input/audio gameplay sweep, whole-frame
+allocation result or performance result is claimed by this report.
 
 ## Geometry and live entities: THE-2873 / THE-2861
 
@@ -151,28 +146,35 @@ to the verified slice. These are component overheads, not a full-frame speedup.
 
 ## Usercmd: THE-869
 
-`include/qa/input.h:178` defines the common command; `src/input/commands.c:231`
-builds it and `:320` converts command spaces. Human seats, Unified input and
-both bot paths use the same builder. Original protocol narrowing and module
-ABI projections remain boundary operations.
+`include/qa/usercmd.h:22` defines the one engine command.
+`src/input/commands.c:227` builds it from `qa_input_command_intent`, using one
+rule-set scale/button/angle policy. Human sampling at `commands.c:371` calls
+that builder; bots fill the same intent and call it at
+`src/bots/ai/frame.c:111` and `src/app/application/bots_submit.c:82`.
 
-Remaining duplicated conversion/projection bodies are
-`src/app/application/guest_qc_input.c:274`,
-`src/app/frontend/remote_prediction.c:480`,
-`remote_unified_prediction.c:251`, `remote_q2_client.c:459`, the three native
-Q2 ABI writers in `guest_native_q2_clients.c:311,381` and
-`native_q2_client_stages.c:482`, and raw Q3 projections in `control_frame.c:339`,
-`arsenal_guest.c:177`, frontend `network.c:6472` and `network/runtime/q3.c:63`.
-The QVM scalar/delta-angle adapter now uses the existing converter. Eight
-GCC/Clang original/candidate executions, with sanitizer and rounding-mode
-cases, compare 6,440,048 command bytes per pair. Its isolated production,
-ASan/UBSan and allocation-gate builds and all seven core checks each pass.
-This does not close the remaining adapters or the full guest gameplay proof.
+Human callers are `src/app/frontend/frame.c:385`, `remote_input.c:68`,
+`network_q1_client.c:981`, `remote_q2_presentation.c:394` and
+`remote_unified_input.c:171`. `882194e8` deletes the second Unified builder
+implementation and its two type aliases. The former bot-only Q3 builder and
+five input/source/Unified/network command types have no remaining callers.
+`qa_usercmd_equal` also serves admission and prediction, without a second
+command comparison implementation.
 
-The KEX wire API still narrows float angles into `int16_t` in
-`include/qa/network_q2.h:16` / `src/app/frontend/remote_q2_presentation.c:403`.
-Preserve rerelease floats at that boundary while keeping classic short widths;
-existing byte comparisons do not close this precision gap.
+Conversion between command bases is in `src/input/commands.c`.
+`include/qa/native_host_q2_wire.h:10` encodes both native Q2 API layouts for
+all three host writers. `include/qa/network_q3.h:67` projects the Q3 ABI for
+control, arsenal, bot source commands and the network client. These are
+boundary adapters; they do not build a second engine command or rescale bot
+intent separately. Legacy protocol records retain their native field widths.
+
+Remaining compatibility limitation: rerelease network input still projects
+angles through the short-angle `qa_q2_usercmd` record at
+`src/app/frontend/remote_q2_presentation.c:403` and
+`include/qa/network_q2.h:15`. This report closes the common command/type/builder
+migration, not that wire precision issue or all original-module gameplay.
+
+Verification: `882194e8` passed a normal engine build and the seven existing
+core suites. No new installation or frame-time claim is part of this slice.
 
 ## Interned names and per-role rules
 
