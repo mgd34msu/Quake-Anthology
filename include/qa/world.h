@@ -18,6 +18,12 @@ typedef struct qa_entity_visual {
     uint8_t player_colors;
     bool visible, has_inline_model, has_player_colors;
 } qa_entity_visual;
+typedef struct qa_entity_flare {
+    const char *image;
+    qa_vec3 color, rim_color;
+    float fade_start, fade_end, scale;
+    bool has_rim_color, lock_angle;
+} qa_entity_flare;
 typedef enum qa_body_vector_kind {
     QA_BODY_ORIGIN = offsetof(qa_body_state, origin),
     QA_BODY_VELOCITY = offsetof(qa_body_state, velocity),

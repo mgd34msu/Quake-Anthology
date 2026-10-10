@@ -1100,13 +1100,13 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
     frontend_visual_owner *owner = NULL;
-    if (view->family != QA_GAME_Q2 || !view->q2_flare.image || !*view->q2_flare.image)
+    if (view->family != QA_GAME_Q2 || !view->flare.image || !*view->flare.image)
         return frontend_fail(error, QA_ERROR_FORMAT, "Q2 flare requires its genuine image receipt");
     if (world->legacy_policy.present && !world->legacy_policy.flares) return true;
     if (!visual_owner(frontend, view, &owner, error)) return false;
     qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
-    const char *path = view->q2_flare.image;
+    const char *path = view->flare.image;
     qa_scene_image *image = NULL;
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         qa_error load = {0};
@@ -1116,10 +1116,10 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         path = "misc/flare.tga";
     }
     if (!image) return true;
-    qa_scene_flare_options options = {.color = view->q2_flare.color,
-        .rim_color = view->q2_flare.rim_color, .scale = view->visual.scale != 0 ? view->visual.scale : 1,
-        .fade_start = view->q2_flare.fade_start, .fade_end = view->q2_flare.fade_end,
-        .separate_rim = view->q2_flare.has_rim_color, .lock_angle = view->q2_flare.lock_angle,
+    qa_scene_flare_options options = {.color = view->flare.color,
+        .rim_color = view->flare.rim_color, .scale = view->flare.scale != 0 ? view->flare.scale : 1,
+        .fade_start = view->flare.fade_start, .fade_end = view->flare.fade_end,
+        .separate_rim = view->flare.has_rim_color, .lock_angle = view->flare.lock_angle,
         .standard_image = flare_standard_image(path)};
     bool ok = qa_scene_flare(frame, &world->view, view->body.origin, &options, image, error);
     qa_scene_image_release(image);
@@ -1418,7 +1418,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         bool q2_beam=false;
         if (!frontend_particle_q2_entity(frontend,seat,&view,world,frame,&q2_beam,error)) return false;
         if (q2_beam) continue;
-        if (view.q2_flare.present) {
+        if (view.has_flare) {
             if (!visual_flare(frontend, &view, world, frame, error)) return false;
             continue;
         }

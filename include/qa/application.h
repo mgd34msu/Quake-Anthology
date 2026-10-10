@@ -46,12 +46,6 @@ typedef struct qa_application_map_view {
     qa_resource *resource;
     uint64_t revision;
 } qa_application_map_view;
-typedef struct qa_application_q2_flare_view {
-    const char *image;
-    qa_vec3 color, rim_color;
-    float fade_start, fade_end;
-    bool present, has_rim_color, lock_angle;
-} qa_application_q2_flare_view;
 typedef struct qa_application_visual_view {
     qa_actor_id actor;
     qa_actor_owner provider, character;
@@ -70,7 +64,8 @@ typedef struct qa_application_visual_view {
     qa_q3_entity source_entity;
     int32_t source_number, source_client;
     bool has_source_entity;
-    qa_application_q2_flare_view q2_flare;
+    qa_entity_flare flare;
+    bool has_flare;
 } qa_application_visual_view;
 typedef struct qa_application_presentation_view {
     qa_actor_owner hud, menu;

@@ -5,12 +5,6 @@
 
 typedef struct qa_unified_model_attachment { char *path, *tag; } qa_unified_model_attachment;
 typedef struct qa_unified_weapon_anchor { char *path, *tag; qa_vec3 offset; float fov_above, fov_scale; } qa_unified_weapon_anchor;
-typedef struct qa_unified_q2_flare {
-    char *image;
-    float fade_start, fade_end, scale;
-    qa_vec3 color, rim_color;
-    bool has_rim_color, lock_angle;
-} qa_unified_q2_flare;
 typedef struct qa_unified_q3_weapon_view {
     int32_t time_ms, torso_animation, last_fire_ms, bob_cycle, weapon;
     bool has_last_fire_ms, firing;
@@ -27,7 +21,7 @@ typedef struct qa_unified_model_state {
     bool view_weapon, native_held_weapon, has_previous_origin, has_alpha;
     qa_unified_source_identity *render_source, *render_equipment;
     bool equipment_slot;
-    qa_unified_q2_flare *flare;
+    qa_entity_flare *flare;
     qa_unified_q3_weapon_view *q3_weapon;
     qa_unified_weapon_anchor *anchor;
     qa_unified_model_attachment *attachments;

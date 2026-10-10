@@ -71,14 +71,14 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         row->render_equipment->provider = equipment->provider; row->equipment_slot = equipment->equipment_slot;
         if (!application_unified_frame_string(frame->lease, &row->render_equipment->instance, equipment_source->selection.instance, error)) return false;
     }
-    if (v->q2_flare.present) {
-        const qa_application_q2_flare_view *f = &v->q2_flare;
+    if (v->has_flare) {
+        const qa_entity_flare *f = &v->flare;
         row->flare = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->flare), error);
         if (!row->flare) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 flare");
-        *row->flare = (qa_unified_q2_flare){.fade_start = f->fade_start, .fade_end = f->fade_end,
-            .scale = v->visual.scale, .color = f->color, .rim_color = f->rim_color,
-            .has_rim_color = f->has_rim_color, .lock_angle = f->lock_angle};
-        if (!application_unified_frame_string(frame->lease, &row->flare->image, f->image, error)) return false;
+        *row->flare = *f;
+        char *image = NULL;
+        if (!application_unified_frame_string(frame->lease, &image, f->image, error)) return false;
+        row->flare->image = image;
     }
     return true;
 }
@@ -381,7 +381,7 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                     if (path && *path && strcmp(path, qa_resource_path(map.resource)))
                         ok = model(frame, &model_capacity, &v, path, content->identity, NULL, false,NULL,NULL,error);
                 }
-                if (ok && v.q2_flare.present)
+                if (ok && v.has_flare)
                     ok = model(frame, &model_capacity, &v, "", content->identity, NULL, false,NULL,NULL,error);
             }
         }

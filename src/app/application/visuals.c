@@ -70,13 +70,14 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 flare lost its authored Source fields");
             uint32_t skin = (uint32_t)source.skin, shell = source.render_flags & 0x1c00;
             const char *image = (source.render_flags & 256) ? resource_text(application, entity.flare_image) : NULL;
-            out->q2_flare = (qa_application_q2_flare_view){
+            out->flare = (qa_entity_flare){
                 .image = image && *image ? image : "misc/flare.tga",
-                .fade_start = truncf(entity.flare_start), .fade_end = truncf(entity.flare_end),
+                .fade_start = truncf(entity.flare_start), .fade_end = truncf(entity.flare_end), .scale = source.scale,
                 .color = skin ? qa_v3((float)(skin >> 24) / 255,
                     (float)((skin >> 16) & 255) / 255, (float)((skin >> 8) & 255) / 255) : qa_v3(1, 1, 1),
                 .rim_color = qa_v3((shell & 0x400) ? 1.f : 0.f, (shell & 0x800) ? 1.f : 0.f, (shell & 0x1000) ? 1.f : 0.f),
-                .present = true, .has_rim_color = shell != 0, .lock_angle = (source.render_flags & 1) != 0};
+                .has_rim_color = shell != 0, .lock_angle = (source.render_flags & 1) != 0};
+            out->has_flare = true;
             memset(out->visual.models, 0, sizeof(out->visual.models));
         }
         return true;
@@ -306,7 +307,7 @@ static bool q2_visual_visible(const qa_application_visual_visibility *v, qa_acto
         state.renderfx = appearance->visual.render_flags;
         /* Source lasers and flares use modelindex 1 as a drawable marker,
          * including when their procedural presentation has no asset path. */
-        state.modelindex = appearance->q2_flare.present || (appearance->visual.render_flags & 128u) ||
+        state.modelindex = appearance->has_flare || (appearance->visual.render_flags & 128u) ||
             appearance->visual.has_inline_model ||
             qa_strings_text(qa_session_strings(app->session), appearance->visual.models[0]).size ||
             qa_strings_text(qa_session_strings(app->session), appearance->visual.models[1]).size ||
@@ -334,7 +335,7 @@ bool qa_application_visual_visibility_actor(const qa_application_visual_visibili
     if (v->q2) return q2_visual_visible(v, actor, appearance, out, error);
     /* A foreign beam/flare has no primary Source PHS classification. Its
      * origin or collision box cannot conservatively classify its draw. */
-    if (appearance && (appearance->model_beam || appearance->q2_flare.present ||
+    if (appearance && (appearance->model_beam || appearance->has_flare ||
         (appearance->family == QA_GAME_Q2 && (appearance->visual.render_flags & 128u)))) return true;
     if (qa_actor_id_equal(actor, v->recipient) || qa_actor_id_equal(actor, v->tracked)) return true;
     if (v->no_vis) return true;

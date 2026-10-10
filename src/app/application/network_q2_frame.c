@@ -180,7 +180,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     }
     if (!(selected_visual ? selected.visual.visible : source->has_visual && visual.visible)) return true;
     int32_t old_frame = selected_visual ? selected.visual.old_frame : visual.old_frame;
-    bool flare = selected_visual ? selected.q2_flare.present : source->flare;
+    bool flare = selected_visual ? selected.has_flare : source->flare;
     qa_q2_entity value = {.number = slot, .frame = (uint32_t)(selected_visual ? selected.visual.frame : visual.frame),
         .old_frame = old_frame >= 0 ? (uint32_t)old_frame : 0,
         .skinnum = (uint32_t)(selected_visual ? selected.visual.skin : visual.skin),
@@ -200,9 +200,9 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
             application_network_q2_resource(owner, 0, path, models[i], error))) return false;
     }
     if (flare) {
-        float start = selected_visual ? selected.q2_flare.fade_start : source->flare_start;
-        float end = selected_visual ? selected.q2_flare.fade_end : source->flare_end;
-        const char *image = selected_visual ? selected.q2_flare.image : text(owner, source->flare_image);
+        float start = selected_visual ? selected.flare.fade_start : source->flare_start;
+        float end = selected_visual ? selected.flare.fade_end : source->flare_end;
+        const char *image = selected_visual ? selected.flare.image : text(owner, source->flare_image);
         if (!isfinite(start) || !isfinite(end) || start < 0 || (double)start > UINT32_MAX ||
             end < 0 || (double)end > UINT32_MAX)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 flare leaves its actual Source wire field range");

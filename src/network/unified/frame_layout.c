@@ -60,7 +60,7 @@ static const qa_unified_record_layout qa_unified_model_state_layout;
 static const qa_unified_record_layout qa_unified_model_attachment_layout;
 static const qa_unified_record_layout qa_unified_weapon_anchor_layout;
 static const qa_unified_record_layout qa_unified_q3_weapon_view_layout;
-static const qa_unified_record_layout qa_unified_q2_flare_layout;
+static const qa_unified_record_layout qa_entity_flare_layout;
 static const qa_unified_record_layout qa_unified_source_identity_layout;
 const qa_unified_record_layout qa_unified_player_frame_layout;
 static const qa_unified_record_layout qa_unified_client_presentation_layout;
@@ -488,7 +488,7 @@ static const qa_unified_field qa_unified_model_state_fields[] = {
     QA_UNIFIED_POINTER(qa_unified_model_state, render_source, qa_unified_source_identity_layout),
     QA_UNIFIED_POINTER(qa_unified_model_state, render_equipment, qa_unified_source_identity_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, equipment_slot, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_POINTER(qa_unified_model_state, flare, qa_unified_q2_flare_layout),
+    QA_UNIFIED_POINTER(qa_unified_model_state, flare, qa_entity_flare_layout),
     QA_UNIFIED_POINTER(qa_unified_model_state, q3_weapon, qa_unified_q3_weapon_view_layout),
     QA_UNIFIED_POINTER(qa_unified_model_state, anchor, qa_unified_weapon_anchor_layout),
     QA_UNIFIED_ARRAY(qa_unified_model_state, attachments, attachment_count, qa_unified_model_attachment_layout, 256),
@@ -522,17 +522,17 @@ static const qa_unified_field qa_unified_q3_weapon_view_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_q3_weapon_view_layout = QA_UNIFIED_LAYOUT(qa_unified_q3_weapon_view, qa_unified_q3_weapon_view_fields);
 
-static const qa_unified_field qa_unified_q2_flare_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, image, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, fade_start, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, fade_end, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, scale, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_RECORD(qa_unified_q2_flare, color, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_flare, rim_color, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, has_rim_color, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_flare, lock_angle, QA_UNIFIED_FIELD_BOOL),
+static const qa_unified_field qa_entity_flare_fields[] = {
+    QA_UNIFIED_FIELD(qa_entity_flare, image, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_entity_flare, fade_start, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_flare, fade_end, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_entity_flare, scale, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_RECORD(qa_entity_flare, color, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_entity_flare, rim_color, qa_unified_vector_layout),
+    QA_UNIFIED_FIELD(qa_entity_flare, has_rim_color, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_entity_flare, lock_angle, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_q2_flare_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_flare, qa_unified_q2_flare_fields);
+static const qa_unified_record_layout qa_entity_flare_layout = QA_UNIFIED_LAYOUT(qa_entity_flare, qa_entity_flare_fields);
 
 static const qa_unified_field qa_unified_source_identity_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_source_identity, provider, QA_UNIFIED_FIELD_U32),
